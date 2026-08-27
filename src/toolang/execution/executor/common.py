@@ -43,7 +43,7 @@ from toolang.state.state import AgentState, state_program_module
 from toolang.setup import AgentSetup
 
 from ..events import RunEvent, StepBegin, StepEnd
-from ..records import RunControlRecord, SteerControlPayload, StopControlPayload
+from ..records import RunControlRecord, SteerControlPayload, CancelControlPayload
 from ..runnables import resolve_runnable
 from ..types import (
     AgentResources,
@@ -606,7 +606,7 @@ def value_text(value: Any) -> str:
 def control_text(control: RunControlRecord | None) -> str:
     if control is None:
         return ""
-    if not isinstance(control.payload, SteerControlPayload | StopControlPayload):
+    if not isinstance(control.payload, SteerControlPayload | CancelControlPayload):
         return ""
     primary = next((item for item in control.payload.locals if item.name == "_"), None)
     if primary is None or isinstance(primary.value, TypedPointer):

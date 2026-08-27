@@ -42,6 +42,7 @@ class AgentCore:
         self.store = RunStore(layout.run_store)
         self.ids = IdIssuer(layout.id_state)
         self.executor = RunExecutor(self.store, self.ids)
+        self.executor.start()
         self.threads = ThreadManager(self.store, self.ids)
         self.history = RunHistory(self.store)
         self.setup = SetupWatcher(
@@ -56,5 +57,5 @@ class AgentCore:
     async def close(self) -> None:
         """Stop local execution and close durable storage."""
 
-        await self.executor.shutdown()
+        await self.executor.stop()
         self.store.close()

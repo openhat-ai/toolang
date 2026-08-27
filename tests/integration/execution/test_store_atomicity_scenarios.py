@@ -8,7 +8,7 @@ import sqlite3
 import pytest
 
 from tests.support.execution_fixtures import (
-    accept_run_start,
+    accept_run,
     project_run_end,
     project_run_start,
     project_step,
@@ -21,7 +21,7 @@ from toolang.execution.records import (
     RerunControlPayload,
     RetryControlPayload,
     RunControlRef,
-    StartControlPayload,
+    RunControlPayload,
 )
 from toolang.execution.store import RunStore
 from toolang.execution.types import Local, ModelStepGiven, RunStatus, StepPath, Pointer
@@ -84,7 +84,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             assert connection.execute(
                 "SELECT parent FROM runs WHERE id = 'run_dot_child'"
             ).fetchone() == ("run_dot_path.2.3",)
-            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 29
+            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 30
         finally:
             connection.close()
     finally:
@@ -195,7 +195,7 @@ def test_invalid_execution_ids_are_rejected_before_any_rows_are_written(
         before_threads = _table_count(db_path, "threads")
 
         with pytest.raises(ValueError, match="invalid run id"):
-            accept_run_start(
+            accept_run(
                 store,
                 run_id="run.bad",
                 parent=None,
@@ -215,7 +215,7 @@ def test_invalid_execution_ids_are_rejected_before_any_rows_are_written(
         store.close()
 
 
-def test_start_acceptance_rolls_back_the_run_when_control_insert_fails(
+def test_run_acceptance_rolls_back_the_run_when_control_insert_fails(
     tmp_path: Path,
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
@@ -224,24 +224,24 @@ def test_start_acceptance_rolls_back_the_run_when_control_insert_fails(
         _execute_sql(
             store.db_path,
             """
-            CREATE TRIGGER reject_start_control
+            CREATE TRIGGER reject_run_control
             BEFORE INSERT ON controls
-            WHEN NEW.kind = 'start'
+            WHEN NEW.kind = 'run'
             BEGIN
-                SELECT RAISE(ABORT, 'injected start-control failure');
+                SELECT RAISE(ABORT, 'injected run-control failure');
             END;
             """,
         )
 
         with pytest.raises(ValueError):
-            accept_run_start(
+            accept_run(
                 store,
                 run_id="run_atomic_start",
                 parent=None,
                 thread="term_atomic_start",
                 input=Message.user("hello"),
                 context={},
-                request_id="atomic-start",
+                request_id="atomic-run",
                 created_at="2026-01-01T00:00:00Z",
             )
 
@@ -307,7 +307,7 @@ def test_retry_reopens_root_from_a_failed_value_step(
 
         start = store.get_run_control(run_id=run.id, index=0)
         assert start is not None
-        assert isinstance(start.payload, StartControlPayload)
+        assert isinstance(start.payload, RunControlPayload)
         with pytest.raises(
             ValueError,
             match="retry state no longer matches original run.*use rerun",
@@ -381,20 +381,20 @@ def test_retry_rejects_unknown_or_mismatched_sandbox_without_mutation(
         project_run_end(store, run_id=run.id, status="succeeded")
         start = store.get_run_control(run_id=run.id, index=0)
         assert start is not None
-        assert isinstance(start.payload, StartControlPayload)
-        start_payload = start.payload
-        assert start_payload.sandbox == "host"
+        assert isinstance(start.payload, RunControlPayload)
+        run_payload = start.payload
+        assert run_payload.sandbox == "host"
 
         def accept_retry(sandbox: str):
             return store.accept_retry(
                 run_id=run.id,
                 anchor=None,
-                resources=start_payload.resources,
-                limits=start_payload.limits,
-                state=start_payload.state,
-                runnable=start_payload.runnable,
-                model=start_payload.model,
-                locals=start_payload.locals,
+                resources=run_payload.resources,
+                limits=run_payload.limits,
+                state=run_payload.state,
+                runnable=run_payload.runnable,
+                model=run_payload.model,
+                locals=run_payload.locals,
                 sandbox=sandbox,
                 request_id=None,
                 created_at="2026-01-01T00:00:03Z",
@@ -417,7 +417,7 @@ def test_retry_rejects_unknown_or_mismatched_sandbox_without_mutation(
         )
         legacy = store.get_run_control(run_id=run.id, index=0)
         assert legacy is not None
-        assert isinstance(legacy.payload, StartControlPayload)
+        assert isinstance(legacy.payload, RunControlPayload)
         assert legacy.payload.sandbox is None
 
         with pytest.raises(ValueError, match="sandbox is unknown.*use rerun"):
@@ -498,7 +498,7 @@ def test_retry_anchor_selection_distinguishes_run_outcomes_and_explicit_values(
 
         start = store.get_run_control(run_id=run.id, index=0)
         assert start is not None
-        assert isinstance(start.payload, StartControlPayload)
+        assert isinstance(start.payload, RunControlPayload)
         _reopened, control, ejected = store.accept_retry(
             run_id=run.id,
             anchor=steps[explicit_anchor].path if explicit_anchor is not None else None,
@@ -520,7 +520,7 @@ def test_retry_anchor_selection_distinguishes_run_outcomes_and_explicit_values(
         store.close()
 
 
-def test_rerun_acceptance_ejects_the_source_with_the_new_start_control(
+def test_rerun_acceptance_ejects_the_source_with_the_new_run_control(
     tmp_path: Path,
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
@@ -540,7 +540,7 @@ def test_rerun_acceptance_ejects_the_source_with_the_new_start_control(
             finished_at="2026-01-01T00:00:01Z",
         )
 
-        rerun, control = accept_run_start(
+        rerun, control = accept_run(
             store,
             run_id="run_rerun",
             parent=None,
@@ -573,7 +573,7 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
     store = RunStore(tmp_path / "runs.db")
     try:
         store.create_thread(thread_id="term_atomic_event")
-        accept_run_start(
+        accept_run(
             store,
             run_id="run_atomic_event",
             parent=None,
@@ -681,7 +681,7 @@ def test_run_control_revision_only_advances_when_control_state_changes(
     store = RunStore(tmp_path / "runs.db")
     try:
         store.create_thread(thread_id="term_control_revision")
-        accept_run_start(
+        accept_run(
             store,
             run_id="run_control_revision",
             parent=None,
@@ -736,7 +736,7 @@ def test_run_store_rejects_a_legacy_execution_schema(
     path = tmp_path / "runs.db"
     store = RunStore(path)
     store.create_thread(thread_id="term_v18_revision")
-    accept_run_start(
+    accept_run(
         store,
         run_id="run_v18_revision",
         parent=None,
@@ -765,7 +765,7 @@ def test_claimed_control_cannot_be_canceled_before_its_event_is_persisted(
     store = RunStore(tmp_path / "runs.db")
     try:
         store.create_thread(thread_id="term_claimed_control")
-        accept_run_start(
+        accept_run(
             store,
             run_id="run_claimed_control",
             parent=None,

@@ -20,7 +20,7 @@ from toolang.execution.events import (
     RunTracer,
     run_event_to_data,
 )
-from toolang.execution.records import SteerControlPayload, StopControlPayload
+from toolang.execution.records import SteerControlPayload, CancelControlPayload
 from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.schemas import (
     ControlInfo,
@@ -133,8 +133,8 @@ def _detail(run_id: str = "run_remote") -> RunDetail:
 
 def _control(action: str, run_id: str = "run_remote") -> ControlInfo:
     if action == "cancel":
-        payload = StopControlPayload((Local.typed("Text", "finished", "_", 0),))
-        kind = "stop"
+        payload = CancelControlPayload((Local.typed("Text", "finished", "_", 0),))
+        kind = "cancel"
         timing = "immediate"
     else:
         payload = SteerControlPayload((Local.typed("Part[]", (), "_", 0),))
@@ -179,7 +179,7 @@ def _stream_response(
     )
 
 
-def test_remote_client_starts_traces_and_waits_for_detail() -> None:
+def test_remote_client_runs_traces_and_waits_for_detail() -> None:
     detail_reads = 0
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -201,7 +201,7 @@ def test_remote_client_starts_traces_and_waits_for_detail() -> None:
         client = RemoteRunClient("http://runtime.test/", client=http)
         tracer = _Tracer()
 
-        handle = await client.start(_request(), tracer=tracer)
+        handle = await client.run(_request(), tracer=tracer)
 
         assert handle.run_id == "run_remote"
         assert tracer.events == []
@@ -238,15 +238,15 @@ def test_remote_client_starts_traces_and_waits_for_detail() -> None:
             },
         )
 
-        await client.close()
-        await client.close()
+        await client.disconnect()
+        await client.disconnect()
         assert not http.is_closed
         await http.aclose()
 
     asyncio.run(scenario())
 
 
-def test_remote_client_maps_stop_and_empty_steer_controls() -> None:
+def test_remote_client_maps_cancel_and_empty_steer_controls() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         action = request.url.path.rsplit("/", 1)[-1]
         return httpx.Response(
@@ -265,7 +265,7 @@ def test_remote_client_maps_stop_and_empty_steer_controls() -> None:
         http = httpx.AsyncClient(transport=httpx.MockTransport(transport))
         client = RemoteRunClient("https://runtime.test", client=http)
 
-        stop = await client.stop(
+        cancellation = await client.cancel(
             "run_remote",
             timing="immediate",
             request_id="cancel_request",
@@ -277,7 +277,7 @@ def test_remote_client_maps_stop_and_empty_steer_controls() -> None:
             request_id="steer_request",
         )
 
-        assert stop == _control("cancel")
+        assert cancellation == _control("cancel")
         assert steer == _control("steer")
         assert transport.requests == [
             (
@@ -300,7 +300,7 @@ def test_remote_client_maps_stop_and_empty_steer_controls() -> None:
             ),
         ]
 
-        await client.close()
+        await client.disconnect()
         await http.aclose()
 
     asyncio.run(scenario())
@@ -384,13 +384,13 @@ def test_remote_client_rejects_invalid_stream_protocol(
 
         if "non-SSE" in error:
             with pytest.raises(RemoteRunClientError, match=error):
-                await client.start(_request())
+                await client.run(_request())
         else:
-            handle = await client.start(_request())
+            handle = await client.run(_request())
             with pytest.raises(RemoteRunClientError, match=error):
                 await handle.wait()
 
-        await client.close()
+        await client.disconnect()
         await http.aclose()
 
     asyncio.run(scenario())
@@ -412,12 +412,12 @@ def test_remote_client_does_not_retry_or_expose_transport_endpoint() -> None:
         client = RemoteRunClient("https://runtime.test", client=http)
 
         with pytest.raises(RemoteRunClientError) as caught:
-            await client.start(_request())
+            await client.run(_request())
 
-        assert str(caught.value) == ("remote run start transport failed: ConnectError")
+        assert str(caught.value) == ("remote run transport failed: ConnectError")
         assert "runtime.test" not in str(caught.value)
         assert requests == 1
-        await client.close()
+        await client.disconnect()
         await http.aclose()
 
     asyncio.run(scenario())
@@ -433,13 +433,13 @@ def test_remote_client_settles_unexpected_reader_failure() -> None:
 
         with pytest.raises(
             RemoteRunClientError,
-            match="remote run start failed: RuntimeError",
+            match="remote run failed: RuntimeError",
         ):
-            await asyncio.wait_for(client.start(_request()), timeout=1)
+            await asyncio.wait_for(client.run(_request()), timeout=1)
 
         await asyncio.sleep(0)
         assert not client._readers
-        await client.close()
+        await client.disconnect()
         await http.aclose()
 
     asyncio.run(scenario())
@@ -452,9 +452,9 @@ def test_remote_client_rejects_closed_injected_http_client() -> None:
         client = RemoteRunClient("https://runtime.test", client=http)
 
         with pytest.raises(RemoteRunClientError, match="HTTP client is closed"):
-            await client.start(_request())
+            await client.run(_request())
 
-        await client.close()
+        await client.disconnect()
 
     asyncio.run(scenario())
 
@@ -468,14 +468,14 @@ def test_remote_client_preserves_http_error_detail() -> None:
         client = RemoteRunClient("http://runtime.test", client=http)
 
         with pytest.raises(RemoteRunClientError) as caught:
-            await client.start(_request())
+            await client.run(_request())
 
         assert caught.value.status_code == 422
         assert caught.value.detail == "Runnable not found: chat"
         assert str(caught.value) == (
-            "remote run start failed: HTTP 422 Runnable not found: chat"
+            "remote run failed: HTTP 422 Runnable not found: chat"
         )
-        await client.close()
+        await client.disconnect()
         await http.aclose()
 
     asyncio.run(scenario())
@@ -540,12 +540,12 @@ def test_remote_client_rejects_invalid_run_detail(
     async def scenario() -> None:
         http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         client = RemoteRunClient("http://runtime.test", client=http)
-        handle = await client.start(_request())
+        handle = await client.run(_request())
 
         with pytest.raises(RemoteRunClientError, match=error):
             await handle.wait()
 
-        await client.close()
+        await client.disconnect()
         await http.aclose()
 
     asyncio.run(scenario())
@@ -585,15 +585,17 @@ def test_remote_client_rejects_invalid_control_data(response: httpx.Response) ->
         client = RemoteRunClient("http://runtime.test", client=http)
 
         with pytest.raises(RemoteRunClientError, match="invalid control data"):
-            await client.stop("run_remote")
+            await client.cancel("run_remote")
 
-        await client.close()
+        await client.disconnect()
         await http.aclose()
 
     asyncio.run(scenario())
 
 
-def test_remote_client_close_detaches_active_stream_and_closes_owned_http() -> None:
+def test_remote_client_disconnect_detaches_stream_without_canceling_remote_run() -> (
+    None
+):
     release = asyncio.Event()
 
     async def handler(_request: httpx.Request) -> httpx.Response:
@@ -613,21 +615,42 @@ def test_remote_client_close_detaches_active_stream_and_closes_owned_http() -> N
         http = httpx.AsyncClient(transport=httpx.MockTransport(transport))
         client = RemoteRunClient("http://runtime.test", client=http)
 
-        handle = await client.start(_request())
+        handle = await client.run(_request())
         await asyncio.sleep(0)
-        await client.close()
+        await client.disconnect()
 
-        with pytest.raises(RemoteRunClientError, match="client is closed"):
+        with pytest.raises(RemoteRunClientError, match="client is disconnected"):
             await handle.wait()
-        with pytest.raises(RemoteRunClientError, match="client is closed"):
-            await client.start(_request())
+        with pytest.raises(RemoteRunClientError, match="client is disconnected"):
+            await client.run(_request())
+        assert [(method, url) for method, url, _payload in transport.requests] == [
+            ("POST", "http://runtime.test/api/v1/runs/authored/stream")
+        ]
         assert not http.is_closed
         await http.aclose()
 
         owned = RemoteRunClient("http://runtime.test")
         owned_http = owned._http
-        await owned.close()
+        await owned.disconnect()
         assert owned_http.is_closed
+
+    asyncio.run(scenario())
+
+
+def test_remote_client_reconnects_with_a_fresh_owned_http_client() -> None:
+    async def scenario() -> None:
+        client = RemoteRunClient("http://runtime.test")
+        original = client._http
+
+        await client.disconnect()
+        assert original.is_closed
+
+        await client.connect()
+        assert client.connected
+        assert client._http is not original
+        assert not client._http.is_closed
+
+        await client.disconnect()
 
     asyncio.run(scenario())
 
@@ -646,12 +669,12 @@ def test_remote_client_isolates_tracer_failures() -> None:
         client = RemoteRunClient("http://runtime.test", client=http)
         tracer = _Tracer(fail=True)
 
-        handle = await client.start(_request(), tracer=tracer)
+        handle = await client.run(_request(), tracer=tracer)
         detail = await handle.wait()
 
         assert detail.status == "succeeded"
         assert [event.type for event in tracer.events] == ["run_begin", "run_end"]
-        await client.close()
+        await client.disconnect()
         await http.aclose()
 
     asyncio.run(scenario())

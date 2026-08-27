@@ -68,7 +68,7 @@ class _Client:
             output=(TextPart("result"),),
         )
 
-    def start_run(
+    def run(
         self,
         thread_id: str,
         message: str,
@@ -80,10 +80,10 @@ class _Client:
         del on_event, on_error, on_state
         self.starts.append((thread_id, message, dict(selects)))
 
-    def stop_run(self, run_id: str, on_error: Callable[[str], None]) -> None:
+    def cancel(self, run_id: str, on_error: Callable[[str], None]) -> None:
         del run_id, on_error
 
-    def steer_run(
+    def steer(
         self,
         run_id: str,
         message: str,
@@ -93,7 +93,7 @@ class _Client:
 
 
 class _FailedRunClient(_Client):
-    def start_run(
+    def run(
         self,
         thread_id: str,
         message: str,

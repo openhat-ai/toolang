@@ -86,7 +86,7 @@ both places.
 The following existing chat elements remain surface-specific:
 
 - the startup header;
-- the full-width start control bar;
+- the full-width run control bar;
 - the full-width steer control bar;
 - slash-command results;
 - queued-message presentation;
@@ -127,8 +127,8 @@ by its durable `/show` reference rather than an inline model preview.
 Run controls and step paths keep their existing distinct forms:
 
 ```text
-run_abc@0       accepted start control
-run_abc@1       later steer or stop control
+run_abc@0       accepted run control
+run_abc@1       later steer or cancel control
 run_abc.2       top-level step
 run_abc.2.0     nested step
 ```
@@ -228,9 +228,9 @@ characters.
 
 ## Control Bars
 
-### Start
+### Run
 
-Submitting a message immediately creates one mutable start control:
+Submitting a message immediately creates one mutable run control:
 
 ```text
 <full-width neutral bar>
@@ -566,7 +566,7 @@ Stable content moves to scrollback at these boundaries:
 
 | Content | Finalization boundary |
 | --- | --- |
-| start control | root `RunBegin` |
+| run control | root `RunBegin` |
 | steer control | consuming `StepBegin` or root `RunEnd` |
 | direct tool activity | tool `StepEnd` |
 | parallel lanes | owning statement `StepEnd`, as one aggregate |

@@ -216,7 +216,7 @@ Execution and scheduling have separate owner loops:
 - A dedicated scheduler thread and event loop own `JobScheduler`, `JobWatcher`,
   RRULE timers, the due heap, and `jobs.db` transitions.
 
-The scheduler never calls `RunExecutor.start()` from its own loop and execution
+The scheduler never calls `RunExecutor.run()` from its own loop and execution
 never calls back into the scheduler. The scheduler submits one coroutine with
 `asyncio.run_coroutine_threadsafe()`. That coroutine invokes `start()` and
 awaits the returned handle entirely on the execution loop. The scheduler awaits
@@ -278,7 +278,7 @@ run:
 2. Preallocate a run id.
 3. Atomically claim the activation in `jobs.db`, including its trigger and
    timestamp.
-4. Submit and await `RunExecutor.start(run_id=...)` through one cross-loop
+4. Submit and await `RunExecutor.run(run_id=...)` through one cross-loop
    future.
 5. Persist the terminal run in `runs.db` before reporting completion.
 6. Apply the terminal result to `jobs.db` on the scheduler loop.

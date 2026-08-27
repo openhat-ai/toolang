@@ -123,7 +123,7 @@ async def run(
                     kind=runnable_kind,
                 )
                 runnable = resolved.executable
-                handle = executor.start(
+                handle = executor.run(
                     RunSpec(
                         setup=setup,
                         state=state,
@@ -151,7 +151,7 @@ async def run(
                     )
                 except Exception:
                     try:
-                        handle.stop(reason="File run binding failed.")
+                        handle.cancel(reason="File run binding failed.")
                     except (RuntimeError, ValueError):
                         pass
                     raise

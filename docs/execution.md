@@ -196,10 +196,10 @@ There are no waiting, starting, steering, or stopping events. Control
 acceptance is durable record truth. Control application is represented by data
 edges:
 
-- `RunBegin.input` references the start control;
+- `RunBegin.input` references the run control;
 - `StepBegin.input` references every run control or prior step output consumed by
   the step;
-- `RunEnd.input` references the stop control that canceled the run.
+- `RunEnd.input` references the cancel control that canceled the run.
 
 Providers stream deltas when supported. A tracer may ignore `PartDelta` and
 observe only higher-level events.
@@ -207,8 +207,8 @@ observe only higher-level events.
 
 ## Run Controls
 
-Preparation control kinds are `start`, `rerun`, and `retry`; interactive
-control kinds are `steer` and `stop`. Control timing is:
+Preparation control kinds are `run`, `rerun`, and `retry`; interactive
+control kinds are `steer` and `cancel`. Control timing is:
 
 ```text
 immediate | next_step | next_call
@@ -224,13 +224,13 @@ revoked   explicitly withdrawn before application
 ```
 
 `applied` means the control was applied; it does not mean the run succeeded.
-A stop control that cancels a run is therefore `applied`. An unapplied steer
+A cancel control is therefore `applied` when it cancels a run. An unapplied steer
 left behind by a terminal run is `wontapply`.
 
 Every newly accepted preparation control stores top-level `RunBindings`,
 `RunLimits`, `RunnableInput`, and final `AgentResources` snapshots. Steer stores a
-`Message`; stop stores an optional reason. Root preparation controls also store
-the canonical sandbox in which the executor accepted them. Nested starts omit
+`Message`; cancel stores an optional reason. Root preparation controls also store
+the canonical sandbox in which the executor accepted them. Nested runs omit
 that redundant value, while its absence on a legacy root means unknown rather
 than `host`. These values are not duplicated in the control context. A durable
 run is a root exactly when `parent is None`; callers that need a root run ID

@@ -513,7 +513,7 @@ class ChatTuiApp:
         elif kind == "eof":
             self._handle_eof()
         elif kind == "cancel":
-            self._request_run_stop()
+            self._request_run_cancel()
         elif kind == "clear":
             self._handle_clear()
         elif kind == "quit":
@@ -529,7 +529,7 @@ class ChatTuiApp:
             return False
         if self.active_run_id is not None or self.run_in_flight.is_set():
             self.interrupt_exit_pending = False
-            self._request_run_stop()
+            self._request_run_cancel()
             return False
         if self.interrupt_exit_pending:
             if self.app.is_running:
@@ -644,7 +644,7 @@ class ChatTuiApp:
     def _handle_steer_error(self, message: str) -> None:
         self.status_bar.set_error(f"steer failed: {friendly_error(message)}")
 
-    def _request_run_stop(self) -> None:
+    def _request_run_cancel(self) -> None:
         if self.submission_blocked is not None:
             self.status_bar.set_error(self.submission_blocked)
             return
@@ -657,7 +657,7 @@ class ChatTuiApp:
         run_id = self.active_run_id
 
         def consume() -> None:
-            self.client.stop_run(
+            self.client.cancel(
                 run_id,
                 lambda message: self._enqueue_ui_event_from_thread(
                     ChatUIEvent("cancel_error", message)
@@ -688,7 +688,7 @@ class ChatTuiApp:
         )
 
         def consume() -> None:
-            self.client.steer_run(
+            self.client.steer(
                 run_id,
                 message,
                 lambda error: self._enqueue_ui_event_from_thread(
@@ -743,7 +743,7 @@ class ChatTuiApp:
             return
 
         def consume() -> None:
-            self.client.start_run(
+            self.client.run(
                 thread_id,
                 call.source,
                 call.selects,

@@ -106,7 +106,7 @@ def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     assert "Traceback" not in error_output
     assert "execution history is incompatible with toolang" in error_output
     assert f"uses schema {schema_version}" in error_output
-    assert "requires schema 29" in error_output
+    assert "requires schema 30" in error_output
     assert "backup" in error_output
     assert "database was not changed" in error_output.lower()
     connection = sqlite3.connect(layout.run_store)
@@ -463,9 +463,9 @@ def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> Non
     finally:
         reopened.close()
     assert [(item.kind, item.timing, item.status) for item in controls] == [
-        ("start", "immediate", "applied"),
+        ("run", "immediate", "applied"),
         ("steer", "next_step", "pending"),
-        ("stop", "immediate", "pending"),
+        ("cancel", "immediate", "pending"),
     ]
     assert isinstance(controls[1].payload, SteerControlPayload)
     assert controls[1].payload.locals == (
@@ -536,20 +536,20 @@ agic reply(_: Part[]) -> Part[]:
     monkeypatch.setattr(thread_commands, "SetupWatcher", _SetupSnapshot)
     monkeypatch.setattr(thread_commands, "StateWatcher", _StateSnapshot)
 
-    async def start_source():
+    async def run_source():
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-        source = await harness.executor.start(
+        source = await harness.executor.run(
             harness.run_spec(
                 thread=thread,
                 runnable="reply",
                 primary=resolve_input_parts("hello"),
             )
         )
-        await harness.executor.shutdown()
+        await harness.executor.stop()
         return source
 
     try:
-        source = asyncio.run(start_source())
+        source = asyncio.run(run_source())
         assert source.status == "failed"
 
         retry = _invoke(

@@ -2500,7 +2500,7 @@ def test_chat_tui_creates_a_thread_only_for_the_first_submission(
             self.created += 1
             return "term_lazy"
 
-        def start_run(self, *args: object, **kwargs: object) -> None:
+        def run(self, *args: object, **kwargs: object) -> None:
             del args, kwargs
             started.set()
 
@@ -3310,7 +3310,7 @@ class FakeClient(ChatClient):
             output=(TextPart("durable result"),),
         )
 
-    def start_run(
+    def run(
         self,
         thread_id: str,
         message: str,
@@ -3321,14 +3321,14 @@ class FakeClient(ChatClient):
     ) -> None:
         del thread_id, message, selects, on_event, on_error, on_state
 
-    def stop_run(
+    def cancel(
         self,
         run_id: str,
         on_error: Callable[[str], None],
     ) -> None:
         del run_id, on_error
 
-    def steer_run(
+    def steer(
         self,
         run_id: str,
         message: str,

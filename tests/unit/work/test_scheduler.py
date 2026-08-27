@@ -8,7 +8,7 @@ import threading
 from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult
 from toolang.catalog.job import AuthoredJobs, JobFile
-from toolang.execution.records import CreateControlPayload, StartControlPayload
+from toolang.execution.records import CreateControlPayload, RunControlPayload
 from toolang.execution.types import Local
 from toolang.work.authoring import new_job_file
 from toolang.work.records import JobRecord
@@ -80,7 +80,7 @@ async def _close_scheduler(
     harness: ExecutionHarness,
 ) -> None:
     await scheduler.pause()
-    await harness.executor.shutdown()
+    await harness.executor.stop()
     await scheduler.stop()
 
 
@@ -133,14 +133,14 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
         ":agic review focus=security\n\nReview this.",
     )
     scheduler = _scheduler(harness)
-    start_threads: list[int] = []
-    original_start = harness.executor.start
+    run_threads: list[int] = []
+    original_run = harness.executor.run
 
-    def record_start(*args, **kwargs):
-        start_threads.append(threading.get_ident())
-        return original_start(*args, **kwargs)
+    def record_run(*args, **kwargs):
+        run_threads.append(threading.get_ident())
+        return original_run(*args, **kwargs)
 
-    monkeypatch.setattr(harness.executor, "start", record_start)
+    monkeypatch.setattr(harness.executor, "run", record_run)
 
     async def scenario() -> None:
         execution_thread = threading.get_ident()
@@ -155,14 +155,14 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
             assert record.active_run_id is None
             assert scheduler._thread is not None
             assert scheduler._thread.ident != execution_thread
-            assert start_threads == [execution_thread]
+            assert run_threads == [execution_thread]
 
             runs = harness.store.list_runs(limit=None)
             assert len(runs) == 1
             assert runs[0].thread == "task_review"
             control = harness.store.get_run_control(run_id=runs[0].id, index=0)
             assert control is not None
-            assert isinstance(control.payload, StartControlPayload)
+            assert isinstance(control.payload, RunControlPayload)
             assert control.payload.runnable == "agic:review"
             assert control.payload.locals == (
                 Local.typed("Part[]", Message.user("Review this.").parts, "_"),

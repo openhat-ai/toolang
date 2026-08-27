@@ -616,13 +616,13 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
     assert capsys.readouterr() == ("", "")
 
 
-def test_remote_script_cancellation_stops_the_accepted_run(
+def test_remote_script_cancellation_cancels_the_accepted_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     entered = asyncio.Event()
-    stopped = asyncio.Event()
+    canceled = asyncio.Event()
     calls: list[object] = []
 
     class Handle:
@@ -631,7 +631,7 @@ def test_remote_script_cancellation_stops_the_accepted_run(
         async def wait(self):
             calls.append("wait")
             entered.set()
-            await stopped.wait()
+            await canceled.wait()
             return SimpleNamespace(id=self.run_id)
 
     class Client:
@@ -641,17 +641,17 @@ def test_remote_script_cancellation_stops_the_accepted_run(
             assert endpoint == self.endpoint
             del client
 
-        async def start(self, request, *, tracer=None):
-            calls.append(("start", request, tracer))
+        async def run(self, request, *, tracer=None):
+            calls.append(("run", request, tracer))
             return Handle()
 
-        async def stop(self, run_id: str, **kwargs):
-            calls.append(("stop", run_id, kwargs))
-            stopped.set()
+        async def cancel(self, run_id: str, **kwargs):
+            calls.append(("cancel", run_id, kwargs))
+            canceled.set()
             return object()
 
-        async def close(self) -> None:
-            calls.append("close")
+        async def disconnect(self) -> None:
+            calls.append("disconnect")
 
     async def inspect(*_args, **_kwargs):
         return object()
@@ -687,11 +687,13 @@ def test_remote_script_cancellation_stops_the_accepted_run(
 
     asyncio.run(scenario())
 
-    stop = next(item for item in calls if isinstance(item, tuple) and item[0] == "stop")
-    assert stop[1] == "run_remote"
-    assert cast(dict[str, object], stop[2])["reason"] == "script interrupted"
+    cancel = next(
+        item for item in calls if isinstance(item, tuple) and item[0] == "cancel"
+    )
+    assert cancel[1] == "run_remote"
+    assert cast(dict[str, object], cancel[2])["reason"] == "script interrupted"
     assert calls.count("wait") == 2
-    assert calls[-1] == "close"
+    assert calls[-1] == "disconnect"
 
 
 def test_remote_script_default_returns_to_the_dynamic_runnable() -> None:

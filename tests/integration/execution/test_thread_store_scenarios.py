@@ -74,7 +74,7 @@ agic chat(_: Part[]) -> Part[]:
     async def scenario() -> tuple[str, str, ModelCall]:
         async with harness:
             thread_id = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread_id,
                     runnable="chat",
@@ -128,14 +128,14 @@ agic chat(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            first = await harness.executor.start(
+            first = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
                     primary=resolve_input_parts("first question"),
                 )
             )
-            await harness.executor.start(
+            await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
@@ -188,14 +188,14 @@ agic chat(_: Part[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            first = await harness.executor.start(
+            first = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
                     primary=resolve_input_parts("first question"),
                 )
             )
-            second = await harness.executor.start(
+            second = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
@@ -212,7 +212,7 @@ agic chat(_: Part[]) -> Part[]:
                 thread_id=thread,
                 run_id=first.id,
             )
-            branch_run = await harness.executor.start(
+            branch_run = await harness.executor.run(
                 harness.run_spec(
                     thread=branch,
                     runnable="chat",
@@ -285,7 +285,7 @@ agic calculate(_: Text) -> Text:
     async def scenario() -> tuple[str, tuple[ModelCall, ...]]:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",

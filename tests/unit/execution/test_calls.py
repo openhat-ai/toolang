@@ -153,7 +153,7 @@ def test_invalid_explicit_model_is_rejected_before_run_persistence(tmp_path) -> 
         )
 
         with pytest.raises(ToolangError, match="model"):
-            harness.executor.start(spec)
+            harness.executor.run(spec)
 
         assert not harness.store.list_runs(thread_id=thread, limit=None)
 
@@ -188,7 +188,7 @@ def test_missing_default_model_is_rejected_before_run_persistence(tmp_path) -> N
         )
 
         with pytest.raises(ToolangError, match="model"):
-            harness.executor.start(spec)
+            harness.executor.run(spec)
 
         assert not harness.store.list_runs(thread_id=thread, limit=None)
 

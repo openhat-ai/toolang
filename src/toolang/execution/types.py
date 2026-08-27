@@ -1346,11 +1346,11 @@ def _validate_decimal_text(value: str | None, *, label: str) -> None:
 
 ControlTiming = Literal["immediate", "next_step", "next_call"]
 ControlKind = Literal[
-    "start",
+    "run",
     "rerun",
     "retry",
     "steer",
-    "stop",
+    "cancel",
     "create",
     "fork",
     "rewind",

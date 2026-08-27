@@ -116,7 +116,7 @@ class ChatClient(Protocol):
         thread_id: str | None,
     ) -> ChatResult: ...
 
-    def start_run(
+    def run(
         self,
         thread_id: str,
         message: str,
@@ -126,13 +126,13 @@ class ChatClient(Protocol):
         on_state: Callable[[ChatRunState], None] | None = None,
     ) -> None: ...
 
-    def stop_run(
+    def cancel(
         self,
         run_id: str,
         on_error: Callable[[str], None],
     ) -> None: ...
 
-    def steer_run(
+    def steer(
         self,
         run_id: str,
         message: str,

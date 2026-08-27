@@ -55,7 +55,7 @@ finished_at
 ```
 
 `parent` is the calling `StepPath` for a child run. `input` normally references
-the index-zero start control and remains persisted rather than inferred from
+the index-zero run control and remains persisted rather than inferred from
 the first step. `output` is a `ValueRef`, so a pass-through run may point
 directly to a control input while computed output points to a step.
 `ejected` identifies the thread or run control that removed this run from the
@@ -256,7 +256,7 @@ must keep requests globally unique across both control tables or pass
 Control acceptance is not event projection:
 
 ```text
-RunExecutor.start/rerun/retry/steer/stop/cancel_control
+RunExecutor.run/rerun/retry/steer/cancel/cancel_control
     -> RunStore -> RunControlRecord
 ThreadManager operations     -> RunStore -> ThreadControlRecord
 ```
@@ -283,9 +283,9 @@ The runtime projects each event fact and its referenced control transitions in
 one SQLite write transaction:
 
 ```text
-RunBegin.input  -> apply start control
+RunBegin.input  -> apply run control
 StepBegin.input -> apply steer controls
-RunEnd.input    -> apply stop control
+RunEnd.input    -> apply cancel control
 RunEnd          -> mark remaining pending controls wontapply
 ```
 

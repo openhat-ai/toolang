@@ -30,12 +30,12 @@ from .records import (
     ForkControlPayload,
     PreparationControlPayload,
     RerunControlPayload,
-    RunControlPayload,
+    RunScopedControlPayload,
     RetryControlPayload,
     RewindControlPayload,
-    StartControlPayload,
+    RunControlPayload,
     SteerControlPayload,
-    StopControlPayload,
+    CancelControlPayload,
     control_payload_from_data,
     control_payload_to_data,
     RunControlRecord,
@@ -84,8 +84,8 @@ from .types import (
 )
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 29
-_MIGRATABLE_SCHEMA_VERSIONS = (28, _SCHEMA_VERSION)
+_SCHEMA_VERSION = 30
+_MIGRATABLE_SCHEMA_VERSIONS = (28, 29, _SCHEMA_VERSION)
 
 
 class RunStore:
@@ -185,7 +185,7 @@ class RunStore:
             ),
         )
 
-    def accept_start(
+    def accept_run(
         self,
         *,
         run_id: str,
@@ -201,17 +201,17 @@ class RunStore:
         occurrence: Occurrence | None,
         request_id: str | None,
         created_at: str,
-        kind: Literal["start", "rerun"] = "start",
+        kind: Literal["run", "rerun"] = "run",
         source: str | None = None,
     ) -> tuple[RunRecord, RunControlRecord]:
-        """Atomically insert one new run and its start control."""
+        """Atomically insert one new run and its entry control."""
 
         validate_execution_id(run_id, label="run id")
         validate_execution_id(thread, label="thread id")
         if parent is None:
             _validate_canonical_sandbox(sandbox)
-        if kind == "start" and source is not None:
-            raise ValueError("start control cannot have a source run")
+        if kind == "run" and source is not None:
+            raise ValueError("run control cannot have a source run")
         if kind == "rerun" and source is None:
             raise ValueError("rerun control requires a source run")
         if source is not None:
@@ -316,7 +316,7 @@ class RunStore:
                     ),
                 )
                 payload = (
-                    StartControlPayload(
+                    RunControlPayload(
                         resources=resources,
                         limits=limits,
                         state=state,
@@ -325,7 +325,7 @@ class RunStore:
                         locals=locals,
                         sandbox=sandbox,
                     )
-                    if kind == "start"
+                    if kind == "run"
                     else RerunControlPayload(
                         resources=resources,
                         limits=limits,
@@ -390,10 +390,10 @@ class RunStore:
         request_id: str | None,
         created_at: str,
     ) -> RunControlRecord:
-        """Atomically allocate and accept one steer or stop control."""
+        """Atomically allocate and accept one steer or cancel control."""
 
         validate_execution_id(run_id, label="run id")
-        if kind not in {"steer", "stop"}:
+        if kind not in {"steer", "cancel"}:
             raise ValueError(f"unsupported run control kind: {kind}")
         if timing not in {"immediate", "next_step", "next_call"}:
             raise ValueError(f"unsupported run control timing: {timing}")
@@ -419,7 +419,7 @@ class RunStore:
                 or not isinstance(locals[0].value, str)
             )
         ):
-            raise ValueError("stop control accepts only one primary Text local")
+            raise ValueError("cancel control accepts only one primary Text local")
         _validate_request_id(request_id)
 
         with self._lock:
@@ -472,7 +472,7 @@ class RunStore:
                 payload = (
                     SteerControlPayload(locals)
                     if kind == "steer"
-                    else StopControlPayload(locals)
+                    else CancelControlPayload(locals)
                 )
                 self._insert_control(
                     scope="run",
@@ -562,7 +562,7 @@ class RunStore:
                 )
                 if not isinstance(
                     preparation_payload,
-                    StartControlPayload | RerunControlPayload | RetryControlPayload,
+                    RunControlPayload | RerunControlPayload | RetryControlPayload,
                 ):
                     raise ValueError(f"run preparation not found: {run_id}")
                 if preparation_payload.state != state:
@@ -790,7 +790,7 @@ class RunStore:
         index: int,
         canceled_at: str,
     ) -> RunControlRecord:
-        """Cancel one pending steer or stop control."""
+        """Revoke one pending steer or cancel control."""
 
         with self.write_transaction():
             row = self._conn.execute(
@@ -800,7 +800,7 @@ class RunStore:
             if row is None:
                 raise ValueError(f"run control not found: {run_id}:{index}")
             control = _run_control_from_row(row)
-            if control.kind in {"start", "rerun"}:
+            if control.kind in {"run", "rerun"}:
                 raise ValueError("run entry controls cannot be canceled")
             if control.status != "pending":
                 raise ValueError(f"run control is not pending: {run_id}:{index}")
@@ -1428,11 +1428,11 @@ class RunStore:
             control = self.get_run_control(run_id=target, index=int(raw_index))
             if control is None or not isinstance(
                 control.payload,
-                StartControlPayload
+                RunControlPayload
                 | RerunControlPayload
                 | RetryControlPayload
                 | SteerControlPayload
-                | StopControlPayload,
+                | CancelControlPayload,
             ):
                 raise ValueError(f"control value pointer target is missing: {pointer}")
             segments = _json_pointer_segments(suffix)
@@ -1886,7 +1886,7 @@ class RunStore:
                 control is not None
                 and isinstance(
                     control.payload,
-                    StartControlPayload | RerunControlPayload | RetryControlPayload,
+                    RunControlPayload | RerunControlPayload | RetryControlPayload,
                 )
                 and control.payload.runnable.startswith("agic:")
             ):
@@ -2265,7 +2265,7 @@ class RunStore:
         for run in runs:
             inputs = self.list_run_controls(run_id=run.id)
             for item in inputs:
-                if item.kind not in {"start", "rerun", "steer"} or not isinstance(
+                if item.kind not in {"run", "rerun", "steer"} or not isinstance(
                     item.payload,
                     PreparationControlPayload | SteerControlPayload,
                 ):
@@ -2517,6 +2517,13 @@ class RunStore:
             _create_steps_table(self._conn)
             if version == 28:
                 _migrate_model_cont(self._conn)
+            if version in {28, 29}:
+                self._conn.execute(
+                    "UPDATE controls SET kind = 'run' WHERE kind = 'start'"
+                )
+                self._conn.execute(
+                    "UPDATE controls SET kind = 'cancel' WHERE kind = 'stop'"
+                )
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS model_texts (
@@ -2887,11 +2894,11 @@ def _step_kind_from_data(value: object) -> StepKind:
 
 def _run_control_from_row(row: sqlite3.Row) -> RunControlRecord:
     kind = cast(
-        Literal["start", "rerun", "retry", "steer", "stop"],
+        Literal["run", "rerun", "retry", "steer", "cancel"],
         row["kind"],
     )
     payload = cast(
-        RunControlPayload,
+        RunScopedControlPayload,
         control_payload_from_data(kind, _load_json(str(row["payload"]))),
     )
     return RunControlRecord(

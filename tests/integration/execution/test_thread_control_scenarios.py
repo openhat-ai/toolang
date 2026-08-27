@@ -87,14 +87,14 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
                 request_id="thread-create-1",
                 peer=peer,
             )
-            first = await harness.executor.start(
+            first = await harness.executor.run(
                 harness.run_spec(
                     thread=source,
                     runnable="chat",
                     primary=resolve_input_parts("first"),
                 )
             )
-            second = await harness.executor.start(
+            second = await harness.executor.run(
                 harness.run_spec(
                     thread=source,
                     runnable="chat",
@@ -186,7 +186,7 @@ def test_rewind_controls_form_a_monotonic_head_chain(
             runs = []
             for prompt in ("first", "second", "third"):
                 runs.append(
-                    await harness.executor.start(
+                    await harness.executor.run(
                         harness.run_spec(
                             thread=thread,
                             runnable="chat",
@@ -203,7 +203,7 @@ def test_rewind_controls_form_a_monotonic_head_chain(
                 )
                 is None
             )
-            replacement = await harness.executor.start(
+            replacement = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
@@ -299,14 +299,14 @@ def test_fork_accepts_an_earlier_terminal_anchor_while_source_runs(
     async def scenario() -> None:
         async with harness:
             source = manager.create(prefix=ThreadPrefix.TERM)
-            terminal = await harness.executor.start(
+            terminal = await harness.executor.run(
                 harness.run_spec(
                     thread=source,
                     runnable="chat",
                     primary=resolve_input_parts("first"),
                 )
             )
-            active = harness.executor.start(
+            active = harness.executor.run(
                 harness.run_spec(
                     thread=source,
                     runnable="chat",
@@ -351,14 +351,14 @@ def test_fork_accepts_an_earlier_terminal_anchor_while_source_runs(
                 "thread_forked",
             ]
 
-            active.stop(reason="test complete")
+            active.cancel(reason="test complete")
             active_record = await asyncio.wait_for(active, timeout=2)
             assert active_record.status == "canceled"
 
     asyncio.run(scenario())
 
 
-def test_rewind_rejects_a_running_thread_without_stopping_it(
+def test_rewind_rejects_a_running_thread_without_canceling_it(
     tmp_path: Path,
 ) -> None:
     gate = AsyncGate()
@@ -379,14 +379,14 @@ def test_rewind_rejects_a_running_thread_without_stopping_it(
     async def scenario() -> None:
         async with harness:
             thread = manager.create(prefix=ThreadPrefix.TERM)
-            terminal = await harness.executor.start(
+            terminal = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
                     primary=resolve_input_parts("first"),
                 )
             )
-            active = harness.executor.start(
+            active = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
@@ -409,20 +409,20 @@ def test_rewind_rejects_a_running_thread_without_stopping_it(
             assert [
                 control.kind
                 for control in harness.store.list_run_controls(run_id=active.run_id)
-            ] == ["start"]
+            ] == ["run"]
             assert [
                 control.kind
                 for control in harness.store.list_thread_controls(thread_id=thread)
             ] == ["create"]
             assert [event.type for event in listener.events] == ["thread_created"]
 
-            active.stop(reason="caller stopped before rewind")
-            stopped = await asyncio.wait_for(active, timeout=2)
-            assert stopped.status == "canceled"
+            active.cancel(reason="caller canceled before rewind")
+            canceled = await asyncio.wait_for(active, timeout=2)
+            assert canceled.status == "canceled"
             assert (
                 manager.rewind(
                     thread_id=thread,
-                    request_id="rewind-after-stop",
+                    request_id="rewind-after-cancel",
                 )
                 is None
             )
@@ -432,7 +432,7 @@ def test_rewind_rejects_a_running_thread_without_stopping_it(
             )
             assert rewind is not None
             assert rewind.payload == RewindControlPayload(
-                rewind_from=stopped.id,
+                rewind_from=canceled.id,
                 rewind_if=0,
             )
             assert [
@@ -464,7 +464,7 @@ def test_failed_thread_controls_leave_no_record_or_event(
                 prefix=ThreadPrefix.TERM,
                 request_id="thread-request-1",
             )
-            run = await harness.executor.start(
+            run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",

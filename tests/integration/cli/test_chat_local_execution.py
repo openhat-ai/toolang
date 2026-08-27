@@ -66,10 +66,17 @@ def test_local_chat_close_cancels_watchers_without_waiting_for_polling() -> None
         session._stop_signal = asyncio.Event()
 
         class RunClient:
-            async def close(self) -> None:
+            async def disconnect(self) -> None:
                 pass
 
+        class Executor:
+            stopped = False
+
+            async def stop(self) -> None:
+                self.stopped = True
+
         session.run_client = RunClient()
+        session.executor = Executor()
 
         async def wait_forever() -> None:
             await asyncio.Event().wait()
@@ -83,6 +90,7 @@ def test_local_chat_close_cancels_watchers_without_waiting_for_polling() -> None
         await asyncio.wait_for(session._close(), timeout=0.1)
 
         assert session._stop_signal.is_set()
+        assert session.executor.stopped is True
         assert all(task.cancelled() for task in session._watch_tasks)
 
     asyncio.run(scenario())
@@ -98,7 +106,7 @@ def test_local_chat_run_request_keeps_chat_fallback_agic_only() -> None:
             pass
 
     class RunClient:
-        async def start(self, request, *, tracer=None):
+        async def run(self, request, *, tracer=None):
             del tracer
             requests.append(request)
             return Handle()
@@ -117,7 +125,7 @@ def test_local_chat_run_request_keeps_chat_fallback_agic_only() -> None:
 
 def test_local_chat_owner_loop_control_does_not_wait_on_itself() -> None:
     class RunClient:
-        async def stop(self, _run_id: str, **_kwargs: object) -> None:
+        async def cancel(self, _run_id: str, **_kwargs: object) -> None:
             pass
 
     class Submitted:
@@ -144,7 +152,7 @@ def test_local_chat_owner_loop_control_does_not_wait_on_itself() -> None:
     session._submit = submit
     errors: list[str] = []
 
-    session.stop_run("run_test", errors.append)
+    session.cancel("run_test", errors.append)
 
     assert submitted.result_calls == 0
     assert len(submitted.callbacks) == 1
@@ -223,7 +231,7 @@ agic chat(_: Part[]) -> Part[]:
             sandbox_detail="macOS 27.0 arm64",
         )
         thread_id = session.create_thread()
-        session.start_run(
+        session.run(
             thread_id,
             "hello",
             {},

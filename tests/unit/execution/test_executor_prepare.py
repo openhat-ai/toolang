@@ -36,7 +36,7 @@ from toolang.execution.executor.prepare import prepare_agic
 from toolang.execution.history import RunHistory
 from toolang.execution.records import (
     StoredModelStepGiven,
-    StartControlPayload,
+    RunControlPayload,
     model_call_from_data,
 )
 from toolang.execution.schemas import RunDetail
@@ -534,7 +534,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
     try:
 
         async def execute() -> Any:
-            return await executor.start(
+            return await executor.run(
                 RunSpec(
                     setup=setup,
                     state=state,
@@ -573,9 +573,9 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert steps[0].noted == ModelStepNoted()
         detail = RunHistory(store).get_run(record.id)
         assert detail is not None
-        start_payload = detail.controls[0].payload
-        assert isinstance(start_payload, StartControlPayload)
-        assert start_payload.locals == (
+        run_payload = detail.controls[0].payload
+        assert isinstance(run_payload, RunControlPayload)
+        assert run_payload.locals == (
             RecordLocal.typed("Part[]", (TextPart("hello"), image), "_"),
             RecordLocal.typed("Text", "events", "focus"),
         )
@@ -606,5 +606,5 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         finally:
             connection.close()
     finally:
-        asyncio.run(executor.shutdown())
+        asyncio.run(executor.stop())
         store.close()

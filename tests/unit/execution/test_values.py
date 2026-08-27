@@ -19,9 +19,9 @@ from toolang.base.types.policy import RunLimits
 from toolang.execution.records import (
     RunControlRecord,
     RetryControlPayload,
-    StartControlPayload,
+    RunControlPayload,
     SteerControlPayload,
-    StopControlPayload,
+    CancelControlPayload,
     control_payload_from_data,
     control_payload_to_data,
     local_from_data,
@@ -336,7 +336,7 @@ def test_protocol_projection_does_not_reinterpret_ordinary_json(
 
 
 def test_preparation_payload_round_trips_resolved_locals() -> None:
-    payload = StartControlPayload(
+    payload = RunControlPayload(
         resources=AgentResources(models=("test/model",)),
         limits=RunLimits(tokens=10),
         state="0" * 64,
@@ -348,11 +348,11 @@ def test_preparation_payload_round_trips_resolved_locals() -> None:
 
     data = control_payload_to_data(payload)
     assert data["sandbox"] == "docker:python:3.13-slim"
-    assert control_payload_from_data("start", data) == payload
+    assert control_payload_from_data("run", data) == payload
 
 
 def test_preparation_payload_reads_legacy_missing_sandbox_as_unknown() -> None:
-    payload = StartControlPayload(
+    payload = RunControlPayload(
         resources=AgentResources(),
         limits=RunLimits(),
         state="0" * 64,
@@ -361,9 +361,9 @@ def test_preparation_payload_reads_legacy_missing_sandbox_as_unknown() -> None:
         locals=(),
     )
 
-    restored = control_payload_from_data("start", control_payload_to_data(payload))
+    restored = control_payload_from_data("run", control_payload_to_data(payload))
 
-    assert isinstance(restored, StartControlPayload)
+    assert isinstance(restored, RunControlPayload)
     assert restored.sandbox is None
     assert "sandbox" not in control_payload_to_data(restored)
 
@@ -371,7 +371,7 @@ def test_preparation_payload_reads_legacy_missing_sandbox_as_unknown() -> None:
 @pytest.mark.parametrize("sandbox", ("", " host", "host "))
 def test_preparation_payload_rejects_noncanonical_sandbox(sandbox: str) -> None:
     with pytest.raises(ValueError, match="canonical sandbox"):
-        StartControlPayload(
+        RunControlPayload(
             resources=AgentResources(),
             limits=RunLimits(),
             state="0" * 64,
@@ -383,7 +383,7 @@ def test_preparation_payload_rejects_noncanonical_sandbox(sandbox: str) -> None:
 
 
 def test_preparation_payload_rejects_instead_of_dropping_invalid_locals() -> None:
-    payload = StartControlPayload(
+    payload = RunControlPayload(
         resources=AgentResources(models=("test/model",)),
         limits=RunLimits(),
         state="0" * 64,
@@ -397,7 +397,7 @@ def test_preparation_payload_rejects_instead_of_dropping_invalid_locals() -> Non
     cast(list[object], raw_locals).append("invalid")
 
     with pytest.raises(ValueError, match="invalid local"):
-        control_payload_from_data("start", data)
+        control_payload_from_data("run", data)
 
 
 def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:
@@ -437,12 +437,12 @@ def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:
                 (Local.typed("Part[]", (TextPart("continue"),), "_", 0),)
             ),
         ),
-        ("stop", StopControlPayload()),
+        ("cancel", CancelControlPayload()),
     ),
 )
 def test_control_protocol_uses_kind_to_restore_payload_variant(
-    kind: Literal["steer", "stop"],
-    payload: SteerControlPayload | StopControlPayload,
+    kind: Literal["steer", "cancel"],
+    payload: SteerControlPayload | CancelControlPayload,
 ) -> None:
     record = RunControlRecord(
         target="run_test",

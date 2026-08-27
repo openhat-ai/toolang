@@ -390,5 +390,5 @@ class ExecutionHarness:
     async def close(self) -> None:
         """Stop owned tasks before closing the durable store."""
 
-        await self.executor.shutdown()
+        await self.executor.stop()
         self.store.close()

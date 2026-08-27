@@ -41,7 +41,7 @@ from toolang.base.types.run import (
 from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd
 from toolang.execution.executor import RunLimits
-from toolang.execution.records import RunControlRef, StartControlPayload
+from toolang.execution.records import RunControlRef, RunControlPayload
 from toolang.execution.types import (
     ModelStepNoted,
     ModelTokenCount,
@@ -73,7 +73,7 @@ agic reply(_: Part[], tone: Text) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
@@ -133,7 +133,7 @@ agic decide(_: Text) -> Boolean:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="decide",
@@ -181,7 +181,7 @@ agic reply(_: Part[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            run = await harness.executor.start(
+            run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
@@ -233,7 +233,7 @@ agic reply(topic: Text) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
@@ -271,7 +271,7 @@ agic inspect(_: Part[]) -> Part[]:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.WEB)
             input = resolve_input_parts((TextPart("Inspect this: "), image))
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="inspect",
@@ -318,7 +318,7 @@ agic stream(_: Part[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.WEB)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="stream",
@@ -377,7 +377,7 @@ agic stream(_: Part[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.WEB)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="stream",
@@ -440,7 +440,7 @@ agic stream(_: Part[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.WEB)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="stream",
@@ -522,7 +522,7 @@ agic calculate(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
@@ -591,7 +591,7 @@ agic illustrate(_: Text) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.WEB)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="illustrate",
@@ -650,7 +650,7 @@ agic stream(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="stream",
@@ -709,7 +709,7 @@ agic stream(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            handle = harness.executor.start(
+            handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="stream",
@@ -718,7 +718,7 @@ agic stream(_: Text) -> Text:
                 tracer=tracer,
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
-            control = handle.stop(reason="cancel partial stream")
+            control = handle.cancel(reason="cancel partial stream")
             record = await asyncio.wait_for(handle, timeout=2)
 
             assert record.status == "canceled"
@@ -781,7 +781,7 @@ agic calculate(_: Part[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
@@ -867,7 +867,7 @@ agic calculate(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
@@ -952,7 +952,7 @@ agic calculate(_: Text) -> Number:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
@@ -1007,7 +1007,7 @@ agic loop(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="loop",
@@ -1035,7 +1035,7 @@ agic loop(_: Text) -> Text:
     asyncio.run(scenario())
 
 
-def test_agent_setup_limits_are_used_and_start_can_override_them(
+def test_agent_setup_limits_are_used_and_run_can_override_them(
     tmp_path: Path,
 ) -> None:
     harness = ExecutionHarness.create(
@@ -1057,14 +1057,14 @@ agic reply(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            rejected = await harness.executor.start(
+            rejected = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
                     primary=resolve_input_parts("first"),
                 )
             )
-            accepted = await harness.executor.start(
+            accepted = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
@@ -1077,20 +1077,20 @@ agic reply(_: Text) -> Text:
             assert rejected.error == "Agic model call limit exceeded: 0"
             assert accepted.status == "succeeded"
             assert len(harness.adapter.invocations) == 1
-            rejected_start = harness.store.get_run_control(
+            rejected_run_control = harness.store.get_run_control(
                 run_id=rejected.id,
                 index=0,
             )
-            accepted_start = harness.store.get_run_control(
+            accepted_run_control = harness.store.get_run_control(
                 run_id=accepted.id,
                 index=0,
             )
-            assert rejected_start is not None
-            assert accepted_start is not None
-            assert isinstance(rejected_start.payload, StartControlPayload)
-            assert isinstance(accepted_start.payload, StartControlPayload)
-            assert rejected_start.payload.limits == RunLimits(agic_model_calls=0)
-            assert accepted_start.payload.limits == RunLimits(agic_model_calls=1)
+            assert rejected_run_control is not None
+            assert accepted_run_control is not None
+            assert isinstance(rejected_run_control.payload, RunControlPayload)
+            assert isinstance(accepted_run_control.payload, RunControlPayload)
+            assert rejected_run_control.payload.limits == RunLimits(agic_model_calls=0)
+            assert accepted_run_control.payload.limits == RunLimits(agic_model_calls=1)
 
     asyncio.run(scenario())
 
@@ -1124,7 +1124,7 @@ agic loop(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="loop",
@@ -1163,7 +1163,7 @@ agic reply(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
@@ -1232,7 +1232,7 @@ agic reply(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
@@ -1273,7 +1273,7 @@ agic reply(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
@@ -1307,7 +1307,7 @@ agic reply(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
@@ -1351,7 +1351,7 @@ agic reply(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
@@ -1390,7 +1390,7 @@ agic text_only(_: Text) -> Text:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
             with pytest.raises(ToolangError, match="non-text parts"):
-                harness.executor.start(
+                harness.executor.run(
                     harness.run_spec(
                         thread=thread,
                         runnable="text_only",
@@ -1424,7 +1424,7 @@ agic fail(_: Part[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="fail",

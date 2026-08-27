@@ -42,14 +42,14 @@ from toolang.state.state import AgentState
 from toolang.up import AgentCore
 
 router = APIRouter(prefix="/runs", tags=["runs"])
-_StartedRunStream = tuple[LocalRunHandle, EventSubscription]
+_AcceptedRunStream = tuple[LocalRunHandle, EventSubscription]
 
 
-async def _start_run_stream(
+async def _run_stream(
     core: AgentCoreDep,
     live: LiveEventRelayDep,
     payload: RunCreateRequest,
-) -> AsyncIterator[_StartedRunStream]:
+) -> AsyncIterator[_AcceptedRunStream]:
     thread_id = _run_thread(core, payload.thread)
     setup = core.setup.current()
     limits = (
@@ -66,7 +66,7 @@ async def _start_run_stream(
             kind=runnable_kind,
         )
         runnable = resolved.executable
-        handle = core.executor.start(
+        handle = core.executor.run(
             RunSpec(
                 setup=setup,
                 state=state,
@@ -101,12 +101,12 @@ async def _start_run_stream(
         subscription.close()
 
 
-async def _start_authored_run_stream(
+async def _run_authored_stream(
     core: AgentCoreDep,
     live: LiveEventRelayDep,
     response: Response,
     payload: AuthoredRunRequest,
-) -> AsyncIterator[_StartedRunStream]:
+) -> AsyncIterator[_AcceptedRunStream]:
     thread_id = _run_thread(core, payload.thread)
     run_request = parse_authored_run(payload)
     setup = core.setup.current()
@@ -126,7 +126,7 @@ async def _start_authored_run_stream(
                 base=include_base,
             ),
         )
-        handle = core.executor.start(
+        handle = core.executor.run(
             spec,
             request_id=run_request.request_id,
             tracer=live.trace(thread_id=thread_id),
@@ -184,9 +184,9 @@ def runs(
 async def execute_run_stream(
     core: AgentCoreDep,
     request: Request,
-    started: Annotated[_StartedRunStream, Depends(_start_run_stream)],
+    accepted: Annotated[_AcceptedRunStream, Depends(_run_stream)],
 ) -> AsyncIterator[ServerSentEvent]:
-    handle, subscription = started
+    handle, subscription = accepted
     async for event in sse_stream(
         request,
         subscription,
@@ -204,9 +204,9 @@ async def execute_run_stream(
 async def execute_authored_run_stream(
     core: AgentCoreDep,
     request: Request,
-    started: Annotated[_StartedRunStream, Depends(_start_authored_run_stream)],
+    accepted: Annotated[_AcceptedRunStream, Depends(_run_authored_stream)],
 ) -> AsyncIterator[ServerSentEvent]:
-    handle, subscription = started
+    handle, subscription = accepted
     async for event in sse_stream(
         request,
         subscription,
@@ -280,7 +280,7 @@ def cancel_run(
 ) -> RunCommandResult:
     run = _active_run_or_409(core, run_id)
     try:
-        control = core.executor.stop(
+        control = core.executor.cancel(
             run_id=run.id,
             timing=payload.mode if payload else "immediate",
             request_id=payload.request_id if payload else None,

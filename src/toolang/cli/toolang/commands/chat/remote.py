@@ -141,7 +141,7 @@ class RemoteChatSession:
             self._submit(self._get_result(run_id, thread_id=thread_id)).result(),
         )
 
-    def start_run(
+    def run(
         self,
         thread_id: str,
         message: str,
@@ -163,21 +163,21 @@ class RemoteChatSession:
         except Exception as exc:
             on_error(_error_message(exc))
 
-    def stop_run(
+    def cancel(
         self,
         run_id: str,
         on_error: Callable[[str], None],
     ) -> None:
         run_client = self._run_client()
         self._submit_control(
-            run_client.stop(
+            run_client.cancel(
                 run_id,
                 request_id=f"term_{uuid4().hex}",
             ),
             on_error,
         )
 
-    def steer_run(
+    def steer(
         self,
         run_id: str,
         message: str,
@@ -405,7 +405,7 @@ class RemoteChatSession:
         )
         run_client = self._run_client()
         try:
-            handle = await run_client.start(
+            handle = await run_client.run(
                 request,
                 tracer=_CallbackTracer(on_event),
             )
@@ -569,7 +569,7 @@ class RemoteChatSession:
         if self._close_signal is not None:
             self._close_signal.set()
         if self.run_client is not None:
-            await self.run_client.close()
+            await self.run_client.disconnect()
         if self._http is not None:
             await self._http.aclose()
 

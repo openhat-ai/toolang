@@ -30,7 +30,7 @@ from toolang.execution.types import (
 from toolang.lang.input import resolve_input_parts
 
 
-def test_stop_cancels_an_active_model_step_and_finishes_its_control(
+def test_cancel_cancels_an_active_model_step_and_finishes_its_control(
     tmp_path: Path,
 ) -> None:
     gate = AsyncGate()
@@ -55,7 +55,7 @@ agic wait(_: Part[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            handle = harness.executor.start(
+            handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="wait",
@@ -64,7 +64,7 @@ agic wait(_: Part[]) -> Part[]:
                 tracer=tracer,
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
-            control = handle.stop(reason="user canceled")
+            control = handle.cancel(reason="user canceled")
             record = await asyncio.wait_for(handle, timeout=2)
 
             assert record.status == "canceled"
@@ -116,7 +116,7 @@ agic revise(_: Part[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            handle = harness.executor.start(
+            handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="revise",
@@ -188,7 +188,7 @@ agic calculate(_: Part[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            handle = harness.executor.start(
+            handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
@@ -227,7 +227,7 @@ agic calculate(_: Part[]) -> Part[]:
     asyncio.run(scenario())
 
 
-def test_stop_cancels_an_active_tool_step(tmp_path: Path) -> None:
+def test_cancel_cancels_an_active_tool_step(tmp_path: Path) -> None:
     gate = AsyncGate()
     tool = RecordingTool(
         "math__slow",
@@ -264,7 +264,7 @@ agic calculate(_: Part[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            handle = harness.executor.start(
+            handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
@@ -273,7 +273,7 @@ agic calculate(_: Part[]) -> Part[]:
                 tracer=tracer,
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
-            control = handle.stop(reason="stop tool")
+            control = handle.cancel(reason="cancel tool")
             record = await asyncio.wait_for(handle, timeout=2)
 
             assert record.status == "canceled"
@@ -316,7 +316,7 @@ agic calculate(_: Part[]) -> Part[]:
         ),
     ],
 )
-def test_stop_timing_selects_the_next_matching_flow_boundary(
+def test_cancel_timing_selects_the_next_matching_flow_boundary(
     tmp_path: Path,
     timing: ControlTiming,
     expected_steps: list[tuple[str, str]],
@@ -350,7 +350,7 @@ flow sequence(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            handle = harness.executor.start(
+            handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="sequence",
@@ -359,16 +359,16 @@ flow sequence(_: Text) -> Text:
                 tracer=tracer,
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
-            control = handle.stop(
+            control = handle.cancel(
                 timing=timing,
-                reason=f"stop at {timing}",
+                reason=f"cancel at {timing}",
             )
             if timing != "immediate":
                 gate.release()
             record = await asyncio.wait_for(handle, timeout=2)
 
             assert record.status == "canceled"
-            assert record.error == f"stop at {timing}"
+            assert record.error == f"cancel at {timing}"
             stored = harness.store.get_run_control(
                 run_id=record.id,
                 index=control.index,
@@ -420,7 +420,7 @@ flow sequence(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            handle = harness.executor.start(
+            handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="sequence",
@@ -464,7 +464,7 @@ agic revise(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            handle = harness.executor.start(
+            handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="revise",

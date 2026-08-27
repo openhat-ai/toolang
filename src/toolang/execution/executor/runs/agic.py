@@ -106,7 +106,7 @@ async def execute(
         pending_inputs=lambda: execution.steer_controls_for_call(binding.run_id),
         steer_before_next_step=lambda: execution.steer_before_next_step(binding.run_id),
         immediate_steer=lambda: execution.immediate_steer(binding.run_id),
-        before_call=lambda: execution.raise_if_stopping(binding.run_id, call=True),
+        before_call=lambda: execution.raise_if_canceling(binding.run_id, call=True),
         account_usage=lambda usage: execution.model_accounting(prepared.model, usage),
         record_accounting=lambda accounting: execution.record_model_accounting(
             prepared.model, accounting

@@ -10,7 +10,7 @@ from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
 from toolang.cli.toolang.commands import script
 from toolang.execution.store import RunStore
-from toolang.execution.records import StartControlPayload
+from toolang.execution.records import RunControlPayload
 from toolang.up import process as agents
 from tests.support.execution_harness import (
     AsyncGate,
@@ -124,7 +124,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
         durable_output = store.run_output(run_id=runs[0].id)
     finally:
         store.close()
-        asyncio.run(harness.executor.shutdown())
+        asyncio.run(harness.executor.stop())
         harness.store.close()
     assert len(threads) == 1
     assert threads[0].thread_id.startswith("script_")
@@ -133,7 +133,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
     assert runs[0].status == "succeeded"
     assert durable_output == (TextPart("done"),)
     assert control is not None
-    assert isinstance(control.payload, StartControlPayload)
+    assert isinstance(control.payload, RunControlPayload)
     assert control.payload.runnable == "agic:echo"
 
 
@@ -194,11 +194,11 @@ def test_local_script_renders_composite_flow_progress(
         assert "~~~" not in output.err
         assert "\x1b[" not in output.err
     finally:
-        asyncio.run(harness.executor.shutdown())
+        asyncio.run(harness.executor.stop())
         harness.store.close()
 
 
-def test_script_cancellation_stops_its_owned_run(tmp_path: Path) -> None:
+def test_script_cancellation_cancels_its_owned_run(tmp_path: Path) -> None:
     gate = AsyncGate()
     harness = ExecutionHarness.create(
         tmp_path,
@@ -214,7 +214,7 @@ def test_script_cancellation_stops_its_owned_run(tmp_path: Path) -> None:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.SCRIPT)
-            handle = harness.executor.start(
+            handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="echo",
@@ -234,8 +234,8 @@ def test_script_cancellation_stops_its_owned_run(tmp_path: Path) -> None:
             assert record.error == "script interrupted"
             controls = harness.store.list_run_controls(run_id=handle.run_id)
             assert [(item.kind, item.status) for item in controls] == [
-                ("start", "applied"),
-                ("stop", "applied"),
+                ("run", "applied"),
+                ("cancel", "applied"),
             ]
 
     asyncio.run(scenario())

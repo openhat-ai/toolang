@@ -200,14 +200,14 @@ def cancel_command(
         ..., help="Run id to cancel. Thread id means its active run."
     ),
 ) -> None:
-    """Persist one immediate stop control."""
+    """Persist one immediate cancel control."""
 
     with open_execution(ctx, required=True, writable=True) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         run_id = _active_run_id(RunHistory(resources.store), run)
         user_call(
-            RunExecutor(resources.store, resources.ids).stop,
+            RunExecutor(resources.store, resources.ids).cancel,
             run_id=run_id,
         )
     typer.echo(f"canceled {run_id}")
@@ -251,7 +251,7 @@ def retry_command(
         show_progress = sys.stderr.isatty()
         result = user_call(
             asyncio.run,
-            _restart_run(
+            _execute_retry_or_rerun(
                 resources,
                 layout=context_layout(ctx),
                 kind="retry",
@@ -302,7 +302,7 @@ def rerun_command(
         show_progress = sys.stderr.isatty()
         result = user_call(
             asyncio.run,
-            _restart_run(
+            _execute_retry_or_rerun(
                 resources,
                 layout=context_layout(ctx),
                 kind="rerun",
@@ -714,7 +714,7 @@ def _open_chat(ctx: typer.Context, thread_id: str) -> None:
     chat_command(ctx, thread=thread_id)
 
 
-async def _restart_run(
+async def _execute_retry_or_rerun(
     resources: ExecutionResources,
     *,
     layout: AgentLayout,
@@ -783,7 +783,7 @@ async def _restart_run(
         return await handle
     finally:
         try:
-            await executor.shutdown()
+            await executor.stop()
         finally:
             if tracer is not None:
                 tracer.close()

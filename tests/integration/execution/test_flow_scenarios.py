@@ -29,7 +29,7 @@ from toolang.execution.records import (
     RerunControlPayload,
     RetryControlPayload,
     RunControlRef,
-    StartControlPayload,
+    RunControlPayload,
 )
 from toolang.execution.types import (
     CollectionStepNoted,
@@ -83,7 +83,7 @@ flow relay(_: Part[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="relay",
@@ -100,15 +100,15 @@ flow relay(_: Part[]) -> Part[]:
             assert child.status == "succeeded"
             assert child.parent == StepPath.parse(f"{root.id}.0")
             assert harness.store.root_run_id(run_id=child.id) == root.id
-            child_start = harness.store.get_run_control(run_id=child.id, index=0)
-            root_start = harness.store.get_run_control(run_id=root.id, index=0)
-            assert child_start is not None
-            assert root_start is not None
-            assert isinstance(child_start.payload, StartControlPayload)
-            assert isinstance(root_start.payload, StartControlPayload)
-            assert child_start.payload.runnable == "agic:echo"
-            assert child_start.payload.sandbox is None
-            assert root_start.payload.sandbox == "host"
+            child_run_control = harness.store.get_run_control(run_id=child.id, index=0)
+            root_run_control = harness.store.get_run_control(run_id=root.id, index=0)
+            assert child_run_control is not None
+            assert root_run_control is not None
+            assert isinstance(child_run_control.payload, RunControlPayload)
+            assert isinstance(root_run_control.payload, RunControlPayload)
+            assert child_run_control.payload.runnable == "agic:echo"
+            assert child_run_control.payload.sandbox is None
+            assert root_run_control.payload.sandbox == "host"
             assert harness.store.run_output(run_id=root.id) == (TextPart("relayed"),)
             assert _root_step_kinds(harness, root.id) == ["run"]
             assert [
@@ -146,7 +146,7 @@ flow retained(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="retained",
@@ -190,7 +190,7 @@ flow staged(_: Part[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            failed = await harness.executor.start(
+            failed = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="staged",
@@ -255,7 +255,7 @@ flow staged(_: Part[]) -> Part[]:
             assert start is not None
             assert retry.kind == "retry"
             assert isinstance(retry.payload, RetryControlPayload)
-            assert isinstance(start.payload, StartControlPayload)
+            assert isinstance(start.payload, RunControlPayload)
             assert retry.payload.retry_from == historical[1].path
             assert retry.payload.runnable == start.payload.runnable
             assert retry.payload.model == start.payload.model
@@ -306,7 +306,7 @@ flow staged(_: Part[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            run = await harness.executor.start(
+            run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="staged",
@@ -368,7 +368,7 @@ agic reply(_: Part[], tone: Text, tags: Text[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            source = await harness.executor.start(
+            source = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
@@ -410,7 +410,7 @@ agic reply(_: Part[], tone: Text, tags: Text[]) -> Part[]:
             assert rerun_control is not None
             assert rerun_control.kind == "rerun"
             assert isinstance(rerun_control.payload, RerunControlPayload)
-            assert isinstance(source_control.payload, StartControlPayload)
+            assert isinstance(source_control.payload, RunControlPayload)
             assert source_control.payload.sandbox == "host"
             assert rerun_control.payload.sandbox == "docker:python:3.13-slim"
             assert rerun_control.payload.rerun_from == source.id
@@ -460,7 +460,7 @@ flow staged(_: Part[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            run = await harness.executor.start(
+            run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="staged",
@@ -528,7 +528,7 @@ flow twice(_: Part[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            run = await harness.executor.start(
+            run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="twice",
@@ -582,7 +582,7 @@ flow parallel(_: Part[]):
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            handle = harness.executor.start(
+            handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="parallel",
@@ -654,7 +654,7 @@ flow fail(_: Part[]) -> Number:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            record = await harness.executor.start(
+            record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="fail",
@@ -715,7 +715,7 @@ flow research(brief: Brief) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="flow:research",
@@ -727,17 +727,17 @@ flow research(brief: Brief) -> Text:
             assert harness.store.run_output_text(run_id=root.id) == "completed"
             accepted = harness.store.get_run_control(run_id=root.id, index=0)
             assert accepted is not None
-            assert isinstance(accepted.payload, StartControlPayload)
+            assert isinstance(accepted.payload, RunControlPayload)
             assert accepted.payload.runnable == "flow:research"
             child = next(
                 run
                 for run in harness.store.list_runs(thread_id=thread, limit=None)
                 if run.parent is not None
             )
-            child_start = harness.store.get_run_control(run_id=child.id, index=0)
-            assert child_start is not None
-            assert isinstance(child_start.payload, StartControlPayload)
-            assert child_start.payload.runnable == "agic:echo"
+            child_run_control = harness.store.get_run_control(run_id=child.id, index=0)
+            assert child_run_control is not None
+            assert isinstance(child_run_control.payload, RunControlPayload)
+            assert child_run_control.payload.runnable == "agic:echo"
             assert "Module-Local Input" in message_text(
                 harness.adapter.invocations[0].call.messages[0].parts
             )
@@ -764,7 +764,7 @@ flow parent(_: Part[]) -> Number:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="parent",
@@ -819,7 +819,7 @@ flow mapped(_: Text) -> Text[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="mapped",
@@ -893,7 +893,7 @@ def test_deep_search_example_uses_explicit_flow_reshaping(
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="research",
@@ -975,14 +975,14 @@ flow select(_: Text) -> Text[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            remembered = await harness.executor.start(
+            remembered = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="remember",
                     primary=resolve_input_parts("remember this"),
                 )
             )
-            selected = await harness.executor.start(
+            selected = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="select",
@@ -1032,7 +1032,7 @@ flow fanout(_: Text) -> Text[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            handle = harness.executor.start(
+            handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="fanout",
@@ -1096,7 +1096,7 @@ flow summary(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="summary",
@@ -1147,7 +1147,7 @@ flow folded(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="folded",
@@ -1198,7 +1198,7 @@ flow folded(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="folded",
@@ -1287,7 +1287,7 @@ flow selected(_: Text) -> Text[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="selected",
@@ -1350,7 +1350,7 @@ flow selected(_: Text) -> Text[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="selected",
@@ -1414,7 +1414,7 @@ flow ranked(_: Text) -> Text[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="ranked",
@@ -1459,7 +1459,7 @@ flow repeated(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="repeated",
@@ -1519,7 +1519,7 @@ flow repeated(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            run = await harness.executor.start(
+            run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="repeated",
@@ -1578,7 +1578,7 @@ flow repeated(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="repeated",
@@ -1596,17 +1596,17 @@ flow repeated(_: Text) -> Text:
             assert root.error == Pointer.step(StepPath(root.id, (0,)))
             assert len(harness.adapter.invocations) == 2
             assert sorted(run.status for run in children) == ["failed", "succeeded"]
-            root_start = harness.store.get_run_control(run_id=root.id, index=0)
-            assert root_start is not None
-            assert isinstance(root_start.payload, StartControlPayload)
-            assert root_start.payload.limits == limits
+            root_run_control = harness.store.get_run_control(run_id=root.id, index=0)
+            assert root_run_control is not None
+            assert isinstance(root_run_control.payload, RunControlPayload)
+            assert root_run_control.payload.limits == limits
             for child in children:
-                child_start = harness.store.get_run_control(
+                child_run_control = harness.store.get_run_control(
                     run_id=child.id,
                     index=0,
                 )
-                assert child_start is not None
-                assert isinstance(child_start.payload, StartControlPayload)
+                assert child_run_control is not None
+                assert isinstance(child_run_control.payload, RunControlPayload)
 
     asyncio.run(scenario())
 
@@ -1638,7 +1638,7 @@ flow repeated(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="repeated",
@@ -1710,7 +1710,7 @@ flow invalid(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="invalid",
@@ -1765,7 +1765,7 @@ flow scattered(_: Text) -> Text[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="scattered",
@@ -1820,7 +1820,7 @@ flow relay(_: Text, suffix: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="relay",
@@ -1843,7 +1843,7 @@ flow relay(_: Text, suffix: Text) -> Text:
             )
             start = harness.store.get_run_control(run_id=child.id, index=0)
             assert start is not None
-            assert isinstance(start.payload, StartControlPayload)
+            assert isinstance(start.payload, RunControlPayload)
             suffix = next(
                 local for local in start.payload.locals if local.name == "suffix"
             )
@@ -1881,7 +1881,7 @@ flow relay(_: Text) -> Number:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="relay",
@@ -1896,7 +1896,7 @@ flow relay(_: Text) -> Number:
             )
             start = harness.store.get_run_control(run_id=child.id, index=0)
             assert start is not None
-            assert isinstance(start.payload, StartControlPayload)
+            assert isinstance(start.payload, RunControlPayload)
             assert start.payload.locals == (Local.typed("Number", 42, "_", 0),)
             assert harness.store.resolve_local(start.payload.locals[0]).value == 42
             assert harness.store.run_output_text(run_id=root.id) == "7"
@@ -1925,7 +1925,7 @@ flow number(_: Text) -> Number:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            root = await harness.executor.start(
+            root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="number",
