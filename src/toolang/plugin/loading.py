@@ -91,12 +91,19 @@ def load_plugins_with_sources(
     *,
     group: str,
     config: Mapping[str, Mapping[str, Any]] | None = None,
+    built_ins_first: bool = False,
 ) -> tuple[LoadedPlugin, ...]:
     """Load installed plugins while retaining entry-point authority sources."""
 
     plugins: list[LoadedPlugin] = []
     plugin_config = dict(config or {})
-    for entry_point in entry_points(group=group):
+    installed = [
+        (entry_point, _entry_point_plugin_source(entry_point))
+        for entry_point in entry_points(group=group)
+    ]
+    if built_ins_first:
+        installed.sort(key=lambda item: item[1] != "built-in")
+    for entry_point, source in installed:
         try:
             factory = cast(Callable[[Mapping[str, Any]], object], entry_point.load())
         except ModuleNotFoundError:
@@ -108,7 +115,7 @@ def load_plugins_with_sources(
                 entry_point_name=entry_point.name,
                 name=plugin_name,
                 plugin=plugin,
-                source=_entry_point_plugin_source(entry_point),
+                source=source,
             )
         )
     return tuple(plugins)

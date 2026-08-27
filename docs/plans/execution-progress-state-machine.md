@@ -230,8 +230,8 @@ lane's single physical row.
 A Tool keeps its terminal action and complete output on following lines:
 
 ```text
-• executing web_search.search
-• executed web_search.search
+• executing web.search
+• executed web.search
   {"results":[{"url":"https://example.com"}]}
 ```
 
@@ -242,7 +242,7 @@ not alter the result content.
 A model Tool request is visible without creating a synthetic Tool result:
 
 ```text
-• requested web_search.search
+• requested web.search
 ```
 
 Model and Tool Steps do not display StepPath, duration, model name, exit code,
@@ -281,7 +281,7 @@ semantic content.
 ```text
 • running · 4/18 succeeded · 3 active
   0 | #4 | • Thinking...
-  1 | #5 | • executing web_search.search
+  1 | #5 | • executing web.search
   2 | #6 | • Source summary prepared
 ```
 

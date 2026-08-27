@@ -87,7 +87,7 @@ def test_agent_state_tool_uses_only_the_context_agent_home(tmp_path: Path) -> No
 
 def test_agent_state_tool_schemas_do_not_expose_target_location() -> None:
     tools = create_agent_state_tool({}).tools()
-    forbidden = {"agent", "agent_name", "home", "root", "path"}
+    forbidden = {"agent", "agent_name", "home", "root", "path", "scope"}
 
     for item in tools.values():
         properties = item.definition().parameters["properties"]
@@ -168,7 +168,7 @@ def test_agent_state_tool_creates_updates_gets_and_deletes_skill(
     assert not (toolang_root / "agents" / "alice" / "skills" / "reviewer").exists()
 
 
-def test_agent_state_cap_tools_expose_scope_instead_of_visibility() -> None:
+def test_agent_state_cap_tools_do_not_expose_layer_selection() -> None:
     tools = create_agent_state_tool({}).tools()
 
     for name in (
@@ -194,8 +194,37 @@ def test_agent_state_cap_tools_expose_scope_instead_of_visibility() -> None:
         "delete_prompt",
     ):
         properties = tools[name].definition().parameters["properties"]
-        assert "scope" in properties
+        assert "scope" not in properties
         assert "visibility" not in properties
+
+
+def test_agent_state_cap_tools_use_only_the_context_home_layer(
+    tmp_path: Path,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    context = _tool_context(toolang_root)
+    tools = create_agent_state_tool({}).tools()
+    root_caps = caps.AuthoredCaps(toolang_root)
+    root_caps.create(
+        caps.CapFile.parse("Root definition.\n", kind="psyche", name="shared")
+    )
+
+    assert _invoke(tools["list_psyches"], {}, context)["psyches"] == []
+    with pytest.raises(Exception, match="psyche not found: shared"):
+        _invoke(tools["get_psyche"], {"name": "shared"}, context)
+
+    created = _invoke(
+        tools["create_psyche"],
+        {"name": "shared", "body": "Home definition."},
+        context,
+    )
+    loaded = _invoke(tools["get_psyche"], {"name": "shared"}, context)
+    deleted = _invoke(tools["delete_psyche"], {"name": "shared"}, context)
+
+    assert created["psyche"]["scope"] == "home"
+    assert loaded["psyche"]["content"] == "Home definition.\n"
+    assert deleted["scope"] == "home"
+    assert root_caps.get("psyche", "shared") is not None
 
 
 def test_agent_state_tool_creates_updates_and_deletes_service(tmp_path: Path) -> None:

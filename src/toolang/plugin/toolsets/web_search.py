@@ -90,7 +90,7 @@ class WebSearchToolset:
 
 
 def create_toolset(config: Mapping[str, Any]) -> Toolset:
-    """Create the web_search toolset plugin."""
+    """Create the web toolset plugin."""
 
     return WebSearchToolset(config=dict(config))
 
@@ -119,7 +119,7 @@ def _search_text(
         from ddgs import DDGS
     except ImportError as exc:  # pragma: no cover
         raise ToolangError(
-            "The 'ddgs' package is not installed. Install Toolang dependencies to enable web_search."
+            "The 'ddgs' package is not installed. Install Toolang dependencies to enable web."
         ) from exc
     with DDGS(timeout=timeout) as searcher:
         return list(searcher.text(query, max_results=max_results))
@@ -135,9 +135,9 @@ def _int_value(value: object, *, default: int) -> int:
             else int(str(value))
         )
     except (TypeError, ValueError) as exc:
-        raise ToolangError("web_search integer argument is invalid") from exc
+        raise ToolangError("web integer argument is invalid") from exc
     if parsed <= 0:
-        raise ToolangError("web_search integer argument must be positive")
+        raise ToolangError("web integer argument must be positive")
     return parsed
 
 
@@ -145,7 +145,7 @@ def _domains(value: object) -> list[str]:
     if value is None:
         return []
     if not isinstance(value, list):
-        raise ToolangError("web_search domains must be a list of hostnames")
+        raise ToolangError("web domains must be a list of hostnames")
     result: list[str] = []
     for item in value:
         domain = _normalized_text(item)

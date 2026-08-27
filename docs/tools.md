@@ -76,8 +76,9 @@ still follows normal resource selection and can be denied by policy.
 
 The executor injects the current agent layout through `ToolContext`. `_me`
 tools do not accept an agent name, home directory, root directory, or arbitrary
-path for choosing another target. A cap `scope` selects a layer within that
-already-bound layout; it is not a filesystem or agent locator.
+path for choosing another target. They expose no layer selector and operate
+only on the current agent's home layer; `_me` does not read or modify root-layer
+caps.
 
 It provides model-facing tools to:
 

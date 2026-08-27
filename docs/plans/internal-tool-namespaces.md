@@ -86,8 +86,8 @@ does not redefine formal Agent State: independent `tasks/*.md` and
 `chores/*.md` remain Work and do not enter a State revision.
 The executor binds the current agent layout through `ToolContext`; `_me` tools
 do not accept an agent name, home directory, root directory, or arbitrary path
-for choosing their target. A cap `scope` selects a layer inside that already
-bound layout and is not an agent or filesystem locator.
+for choosing their target. They expose no layer selector and operate only on
+the current agent's home layer; `_me` never reads or mutates the root layer.
 `_too` is reserved for future Toolang executor/runtime actions. `_hat` is
 reserved for future Human-Agent Teaming communication. A leading underscore is
 an authority boundary, not merely a display convention.
@@ -145,7 +145,9 @@ distribution metadata is treated as external.
 
 The loader rejects an invalid registration before constructing the effective
 tool map. It must not silently skip, normalize, or truncate invalid names.
-Duplicate encoded names remain errors.
+Built-in toolsets are processed before external toolsets. Duplicate effective
+toolset names and duplicate encoded names remain explicit errors, including
+when an external toolset collides with a built-in public name.
 
 Internal tools continue through the normal tool resource ceiling and authored
 selector pipeline. A user can therefore deny `_me/*`; the underscore does not
@@ -214,8 +216,10 @@ The `_me` leaves become:
 | service | `list_services`, `get_service`, `create_service`, `update_service`, `delete_service` |
 | prompt | `list_prompts`, `get_prompt`, `create_prompt`, `update_prompt`, `delete_prompt` |
 
-Inputs, outputs, defaults, validation, and filesystem effects do not change.
-Flow leaves are added only by the later flow-authoring feature.
+Other than removing cap `scope` inputs and restricting `_me` cap operations to
+the current agent's home layer, inputs, outputs, defaults, validation, and
+filesystem effects do not change. Flow leaves are added only by the later
+flow-authoring feature.
 
 ## Compatibility And Persistence
 
@@ -270,13 +274,17 @@ no schema changes.
    namespaced key; a `toolang.*` target path grants no exception.
 6. An external plugin may still expose multiple valid public namespaces through
    namespaced keys.
-7. Every renamed built-in tool retains its existing inputs, outputs, validation,
-   side effects, and tool-call recording.
-8. Tool resource snapshots persist the new plugin, namespace, leaf, and encoded
+7. Built-ins are processed before external toolsets, and any duplicate effective
+   toolset name is rejected explicitly rather than silently shadowing a built-in.
+8. `_me` schemas expose no agent, path, or layer selector; cap reads and writes
+   use only the current agent's home layer and never observe root-layer caps.
+9. Every renamed built-in tool otherwise retains its existing inputs, outputs,
+   validation, side effects, and tool-call recording.
+10. Tool resource snapshots persist the new plugin, namespace, leaf, and encoded
    model names and resolve them exactly within new runs.
-9. Tool configuration, CLI inspection, authored selectors, repository examples,
+11. Tool configuration, CLI inspection, authored selectors, repository examples,
    and documentation use only canonical names.
-10. The default offline verification suite passes.
+12. The default offline verification suite passes.
 
 ## Risks
 

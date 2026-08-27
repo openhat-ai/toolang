@@ -334,6 +334,47 @@ def test_toolang_distribution_can_register_an_internal_namespace(monkeypatch) ->
     )
 
 
+def test_builtin_toolset_precedes_and_rejects_an_external_name_collision(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    def recording_factory(label: str, key: str):
+        factory = _test_toolset_factory("fs", key, key)
+
+        def create_toolset(config: Mapping[str, Any]) -> Toolset:
+            calls.append(label)
+            return factory(config)
+
+        return create_toolset
+
+    entries = [
+        _FakeEntryPoint(
+            "tracker",
+            recording_factory("external", "capture"),
+        ),
+        _FakeEntryPoint(
+            "fs",
+            recording_factory("built-in", "read"),
+            distribution="toolang",
+        ),
+    ]
+    monkeypatch.setattr(
+        "toolang.plugin.loading.entry_points",
+        lambda *, group: entries if group == "toolang.toolset" else [],
+    )
+
+    with pytest.raises(
+        ToolangError,
+        match=(
+            "duplicate toolset plugin name 'fs': built-in entry point 'fs' "
+            "conflicts with external entry point 'tracker'"
+        ),
+    ):
+        load_tools()
+    assert calls == ["built-in", "external"]
+
+
 @pytest.mark.parametrize("namespace", ["_me", "_too", "_hat", "_private"])
 def test_external_toolset_cannot_register_internal_namespace(
     monkeypatch,

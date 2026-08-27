@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any
 
 import frontmatter
 
@@ -20,15 +20,13 @@ from toolang.common.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool, Toolset
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
-from toolang.state.state import StateCap, CapScope
+from toolang.state.state import StateCap
 from toolang.work.authoring import (
     allocate_authored_job_id,
     assign_missing_authored_job_ids,
     new_job_file,
 )
 from toolang.work.state import job_thread_id
-
-ScopeFilter = Literal["all", "home", "root"]
 
 
 @dataclass(slots=True)
@@ -215,28 +213,22 @@ class AgentStateToolset:
 
         @tool(
             name="list_psyches",
-            description="List psyche definitions visible to the current agent.",
+            description="List psyche definitions in the current agent home.",
         )
-        def psyche_list(
-            scope: str = "all", context: ToolContext | None = None
-        ) -> dict[str, Any]:
-            return {"psyches": _list_caps("psyche", cap_scope=scope, context=context)}
+        def psyche_list(context: ToolContext | None = None) -> dict[str, Any]:
+            return {"psyches": _list_caps("psyche", context=context)}
 
         @tool(name="get_psyche", description="Get one psyche definition by name.")
         def psyche_get(
             name: str,
-            scope: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            return {
-                "psyche": _get_cap("psyche", name, cap_scope=scope, context=context)
-            }
+            return {"psyche": _get_cap("psyche", name, context=context)}
 
         @tool(name="create_psyche", description="Create one local psyche definition.")
         def psyche_create(
             name: str,
             body: str,
-            scope: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             return {
@@ -244,7 +236,6 @@ class AgentStateToolset:
                     "psyche",
                     name,
                     _plain_text(body),
-                    cap_scope=scope,
                     context=context,
                 )
             }
@@ -253,7 +244,6 @@ class AgentStateToolset:
         def psyche_update(
             name: str,
             body: str,
-            scope: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             return {
@@ -261,7 +251,6 @@ class AgentStateToolset:
                     "psyche",
                     name,
                     _plain_text(body),
-                    cap_scope=scope,
                     context=context,
                 )
             }
@@ -269,89 +258,69 @@ class AgentStateToolset:
         @tool(name="delete_psyche", description="Delete one local psyche definition.")
         def psyche_delete(
             name: str,
-            scope: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            return _delete_cap("psyche", name, cap_scope=scope, context=context)
+            return _delete_cap("psyche", name, context=context)
 
         @tool(
             name="list_skills",
-            description="List skill definitions visible to the current agent.",
+            description="List skill definitions in the current agent home.",
         )
-        def skill_list(
-            scope: str = "all", context: ToolContext | None = None
-        ) -> dict[str, Any]:
-            return {"skills": _list_caps("skill", cap_scope=scope, context=context)}
+        def skill_list(context: ToolContext | None = None) -> dict[str, Any]:
+            return {"skills": _list_caps("skill", context=context)}
 
         @tool(name="get_skill", description="Get one skill definition by name.")
         def skill_get(
             name: str,
-            scope: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            return {"skill": _get_cap("skill", name, cap_scope=scope, context=context)}
+            return {"skill": _get_cap("skill", name, context=context)}
 
         @tool(name="create_skill", description="Create one local skill definition.")
         def skill_create(
             name: str,
             description: str,
             body: str,
-            scope: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             text = _markdown_text(body, {"description": description})
-            return {
-                "skill": _create_cap(
-                    "skill", name, text, cap_scope=scope, context=context
-                )
-            }
+            return {"skill": _create_cap("skill", name, text, context=context)}
 
         @tool(name="update_skill", description="Update one local skill definition.")
         def skill_update(
             name: str,
             description: str | None = None,
             body: str | None = None,
-            scope: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             agent = _scope(context)
-            parsed = _load_local_cap_parts(agent, "skill", name, cap_scope=scope)
+            parsed = _load_local_cap_parts(agent, "skill", name)
             meta = dict(parsed.metadata)
             if description is not None:
                 meta["description"] = description
             text = _markdown_text(parsed.content if body is None else body, meta)
-            return {
-                "skill": _update_cap(
-                    "skill", name, text, cap_scope=scope, context=context
-                )
-            }
+            return {"skill": _update_cap("skill", name, text, context=context)}
 
         @tool(name="delete_skill", description="Delete one local skill definition.")
         def skill_delete(
             name: str,
-            scope: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            return _delete_cap("skill", name, cap_scope=scope, context=context)
+            return _delete_cap("skill", name, context=context)
 
         @tool(
             name="list_services",
-            description="List service definitions visible to the current agent.",
+            description="List service definitions in the current agent home.",
         )
-        def service_list(
-            scope: str = "all", context: ToolContext | None = None
-        ) -> dict[str, Any]:
-            return {"services": _list_caps("service", cap_scope=scope, context=context)}
+        def service_list(context: ToolContext | None = None) -> dict[str, Any]:
+            return {"services": _list_caps("service", context=context)}
 
         @tool(name="get_service", description="Get one service definition by name.")
         def service_get(
             name: str,
-            scope: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            return {
-                "service": _get_cap("service", name, cap_scope=scope, context=context)
-            }
+            return {"service": _get_cap("service", name, context=context)}
 
         @tool(name="create_service", description="Create one local service definition.")
         def service_create(
@@ -362,7 +331,6 @@ class AgentStateToolset:
             body: str = "",
             headers: dict[str, str] | None = None,
             env: list[str] | None = None,
-            scope: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             text = _service_text(
@@ -373,11 +341,7 @@ class AgentStateToolset:
                 headers=headers,
                 env=env,
             )
-            return {
-                "service": _create_cap(
-                    "service", name, text, cap_scope=scope, context=context
-                )
-            }
+            return {"service": _create_cap("service", name, text, context=context)}
 
         @tool(name="update_service", description="Update one local service definition.")
         def service_update(
@@ -388,11 +352,10 @@ class AgentStateToolset:
             body: str | None = None,
             headers: dict[str, str] | None = None,
             env: list[str] | None = None,
-            scope: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             agent = _scope(context)
-            parsed = _load_local_cap_parts(agent, "service", name, cap_scope=scope)
+            parsed = _load_local_cap_parts(agent, "service", name)
             meta = dict(parsed.metadata)
             if description is not None:
                 meta["description"] = description
@@ -405,44 +368,33 @@ class AgentStateToolset:
             if env is not None:
                 meta["env"] = env
             text = _markdown_text(parsed.content if body is None else body, meta)
-            return {
-                "service": _update_cap(
-                    "service", name, text, cap_scope=scope, context=context
-                )
-            }
+            return {"service": _update_cap("service", name, text, context=context)}
 
         @tool(name="delete_service", description="Delete one local service definition.")
         def service_delete(
             name: str,
-            scope: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            return _delete_cap("service", name, cap_scope=scope, context=context)
+            return _delete_cap("service", name, context=context)
 
         @tool(
             name="list_prompts",
-            description="List prompt definitions visible to the current agent.",
+            description="List prompt definitions in the current agent home.",
         )
-        def prompt_list(
-            scope: str = "all", context: ToolContext | None = None
-        ) -> dict[str, Any]:
-            return {"prompts": _list_caps("prompt", cap_scope=scope, context=context)}
+        def prompt_list(context: ToolContext | None = None) -> dict[str, Any]:
+            return {"prompts": _list_caps("prompt", context=context)}
 
         @tool(name="get_prompt", description="Get one prompt definition by name.")
         def prompt_get(
             name: str,
-            scope: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            return {
-                "prompt": _get_cap("prompt", name, cap_scope=scope, context=context)
-            }
+            return {"prompt": _get_cap("prompt", name, context=context)}
 
         @tool(name="create_prompt", description="Create one local prompt definition.")
         def prompt_create(
             name: str,
             body: str,
-            scope: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             return {
@@ -450,7 +402,6 @@ class AgentStateToolset:
                     "prompt",
                     name,
                     _plain_text(body),
-                    cap_scope=scope,
                     context=context,
                 )
             }
@@ -459,7 +410,6 @@ class AgentStateToolset:
         def prompt_update(
             name: str,
             body: str,
-            scope: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             return {
@@ -467,7 +417,6 @@ class AgentStateToolset:
                     "prompt",
                     name,
                     _plain_text(body),
-                    cap_scope=scope,
                     context=context,
                 )
             }
@@ -475,10 +424,9 @@ class AgentStateToolset:
         @tool(name="delete_prompt", description="Delete one local prompt definition.")
         def prompt_delete(
             name: str,
-            scope: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            return _delete_cap("prompt", name, cap_scope=scope, context=context)
+            return _delete_cap("prompt", name, context=context)
 
         return {
             "list_tasks": create_function_tool(task_list),
@@ -596,15 +544,12 @@ def _job_path(job: JobFile) -> Path:
     return job.path
 
 
-def _list_caps(
-    kind: CapKind, *, cap_scope: str, context: ToolContext | None
-) -> list[dict[str, Any]]:
+def _list_caps(kind: CapKind, *, context: ToolContext | None) -> list[dict[str, Any]]:
     agent = _scope(context)
-    selected_scope = _scope_filter(cap_scope)
     entries = cap_state.list_entries(
         agent.layout.root,
         agent.layout.name,
-        scope=None if selected_scope == "all" else selected_scope,
+        scope="home",
         kinds={kind},
     )
     return [_cap_payload(agent, entry) for entry in entries]
@@ -614,11 +559,10 @@ def _get_cap(
     kind: CapKind,
     name: str,
     *,
-    cap_scope: str,
     context: ToolContext | None,
 ) -> dict[str, Any]:
     agent = _scope(context)
-    entry = _find_cap_entry(agent, kind, name, cap_scope=_scope_filter(cap_scope))
+    entry = _find_cap_entry(agent, kind, name)
     return _cap_payload(agent, entry, include_content=True)
 
 
@@ -627,18 +571,14 @@ def _create_cap(
     name: str,
     text: str,
     *,
-    cap_scope: str,
     context: ToolContext | None,
 ) -> dict[str, Any]:
     agent = _scope(context)
-    selected_scope = _cap_scope(cap_scope)
-    catalog = _authored_caps(agent, selected_scope)
+    catalog = _authored_caps(agent)
     if catalog.get(kind, name) is not None:
         raise ToolangError(f"local {kind} already exists: {name}")
     catalog.create(caps.CapFile.parse(text, kind=kind, name=name))
-    entry = _find_cap_entry(
-        agent, kind, name, cap_scope=selected_scope, source_form="authored"
-    )
+    entry = _find_cap_entry(agent, kind, name, source_form="authored")
     return _cap_payload(agent, entry, include_content=True)
 
 
@@ -647,18 +587,12 @@ def _update_cap(
     name: str,
     text: str,
     *,
-    cap_scope: str,
     context: ToolContext | None,
 ) -> dict[str, Any]:
     agent = _scope(context)
-    selected_scope = _cap_scope(cap_scope)
-    _find_cap_entry(agent, kind, name, cap_scope=selected_scope, source_form="authored")
-    _authored_caps(agent, selected_scope).update(
-        caps.CapFile.parse(text, kind=kind, name=name)
-    )
-    entry = _find_cap_entry(
-        agent, kind, name, cap_scope=selected_scope, source_form="authored"
-    )
+    _find_cap_entry(agent, kind, name, source_form="authored")
+    _authored_caps(agent).update(caps.CapFile.parse(text, kind=kind, name=name))
+    entry = _find_cap_entry(agent, kind, name, source_form="authored")
     return _cap_payload(agent, entry, include_content=True)
 
 
@@ -666,22 +600,18 @@ def _delete_cap(
     kind: CapKind,
     name: str,
     *,
-    cap_scope: str,
     context: ToolContext | None,
 ) -> dict[str, Any]:
     agent = _scope(context)
-    selected_scope = _cap_scope(cap_scope)
-    entry = _find_cap_entry(
-        agent, kind, name, cap_scope=selected_scope, source_form="authored"
-    )
+    entry = _find_cap_entry(agent, kind, name, source_form="authored")
     deleted_path = agent.layout.root / entry.path
     if entry.shape == "dir":
         deleted_path = deleted_path.parent
-    _authored_caps(agent, selected_scope).remove(kind, name)
+    _authored_caps(agent).remove(kind, name)
     return {
         "kind": kind,
         "name": name,
-        "scope": selected_scope,
+        "scope": "home",
         "path": str(deleted_path),
         "deleted": True,
     }
@@ -692,15 +622,13 @@ def _find_cap_entry(
     kind: CapKind,
     name: str,
     *,
-    cap_scope: ScopeFilter | CapScope,
     source_origin: str | None = None,
     source_form: str | None = None,
 ) -> StateCap:
-    entry_scope = None if cap_scope == "all" else cap_scope
     entries = cap_state.list_entries(
         agent.layout.root,
         agent.layout.name,
-        scope=entry_scope,
+        scope="home",
         kinds={kind},
     )
     matches = [
@@ -743,7 +671,7 @@ def _cap_payload(
     if line is not None:
         item["line"] = line
     if include_content and entry.source.form == "authored":
-        cap = _authored_caps(agent, selected_scope).get(entry.kind, entry.name)
+        cap = _authored_caps(agent).get(entry.kind, entry.name)
         if cap is None:
             raise ToolangError(f"local {entry.kind} not found: {entry.name}")
         item["content"] = cap.content
@@ -754,36 +682,15 @@ def _load_local_cap_parts(
     agent: _AgentStateScope,
     kind: CapKind,
     name: str,
-    *,
-    cap_scope: str,
 ) -> frontmatter.Post:
-    selected_scope = _cap_scope(cap_scope)
-    cap = _authored_caps(agent, selected_scope).get(kind, name)
+    cap = _authored_caps(agent).get(kind, name)
     if cap is None:
         raise ToolangError(f"local {kind} not found: {name}")
     return frontmatter.loads(cap.content)
 
 
-def _authored_caps(
-    agent: _AgentStateScope,
-    cap_scope: CapScope,
-) -> caps.AuthoredCaps:
-    directory = agent.layout.root if cap_scope == "root" else agent.layout.home
-    return caps.AuthoredCaps(directory)
-
-
-def _cap_scope(value: str) -> CapScope:
-    text = value.strip().lower()
-    if text not in {"home", "root"}:
-        raise ToolangError(f"scope must be home or root: {value}")
-    return cast(CapScope, text)
-
-
-def _scope_filter(value: str) -> ScopeFilter:
-    text = value.strip().lower()
-    if text not in {"all", "home", "root"}:
-        raise ToolangError(f"scope must be all, home, or root: {value}")
-    return cast(ScopeFilter, text)
+def _authored_caps(agent: _AgentStateScope) -> caps.AuthoredCaps:
+    return caps.AuthoredCaps(agent.layout.home)
 
 
 def _service_text(

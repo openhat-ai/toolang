@@ -112,6 +112,7 @@ def _load_toolsets_with_sources(
     loaded_plugins = load_plugins_with_sources(
         group="toolang.toolset",
         config=config,
+        built_ins_first=True,
     )
     for loaded in loaded_plugins:
         require_toolset_name(loaded.entry_point_name, source=loaded.source)
@@ -121,7 +122,15 @@ def _load_toolsets_with_sources(
         require_toolset_name(raw_name, source=loaded.source)
         if raw_name != loaded.name:
             raise ToolangError("toolset plugin name must not be normalized")
-        toolsets.setdefault(loaded.name, loaded)
+        existing = toolsets.get(loaded.name)
+        if existing is not None:
+            raise ToolangError(
+                f"duplicate toolset plugin name {loaded.name!r}: "
+                f"{existing.source} entry point {existing.entry_point_name!r} "
+                f"conflicts with {loaded.source} entry point "
+                f"{loaded.entry_point_name!r}"
+            )
+        toolsets[loaded.name] = loaded
     return toolsets
 
 
