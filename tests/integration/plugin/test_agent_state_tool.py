@@ -69,6 +69,31 @@ def test_agent_state_tool_creates_lists_gets_and_updates_tasks(tmp_path: Path) -
     assert task.stage == "ready"
 
 
+def test_agent_state_tool_uses_only_the_context_agent_home(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    alice = _tool_context(toolang_root, "alice")
+    bob = _tool_context(toolang_root, "bob")
+    tools = create_agent_state_tool({}).tools()
+
+    _invoke(
+        tools["create_task"],
+        {"title": "Alice task", "body": "Owned by Alice."},
+        alice,
+    )
+
+    assert len(_invoke(tools["list_tasks"], {}, alice)["tasks"]) == 1
+    assert _invoke(tools["list_tasks"], {}, bob)["tasks"] == []
+
+
+def test_agent_state_tool_schemas_do_not_expose_target_location() -> None:
+    tools = create_agent_state_tool({}).tools()
+    forbidden = {"agent", "agent_name", "home", "root", "path"}
+
+    for item in tools.values():
+        properties = item.definition().parameters["properties"]
+        assert forbidden.isdisjoint(properties)
+
+
 def test_agent_state_tool_creates_and_updates_chores(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     context = _tool_context(toolang_root)

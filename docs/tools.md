@@ -74,6 +74,11 @@ Its leaf tools are `start_bridge`, `stop_bridge`, `init`, `start_auth`,
 leading underscore marks it as a Toolang-owned internal action namespace; it
 still follows normal resource selection and can be denied by policy.
 
+The executor injects the current agent layout through `ToolContext`. `_me`
+tools do not accept an agent name, home directory, root directory, or arbitrary
+path for choosing another target. A cap `scope` selects a layer within that
+already-bound layout; it is not a filesystem or agent locator.
+
 It provides model-facing tools to:
 
 - list and read tasks

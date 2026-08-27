@@ -84,6 +84,10 @@ This change does not include:
 `_me` means mutation or inspection of data authored for the current agent. It
 does not redefine formal Agent State: independent `tasks/*.md` and
 `chores/*.md` remain Work and do not enter a State revision.
+The executor binds the current agent layout through `ToolContext`; `_me` tools
+do not accept an agent name, home directory, root directory, or arbitrary path
+for choosing their target. A cap `scope` selects a layer inside that already
+bound layout and is not an agent or filesystem locator.
 `_too` is reserved for future Toolang executor/runtime actions. `_hat` is
 reserved for future Human-Agent Teaming communication. A leading underscore is
 an authority boundary, not merely a display convention.
