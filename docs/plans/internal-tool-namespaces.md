@@ -76,9 +76,9 @@ This change does not include:
 | --- | --- | --- |
 | Public namespace | `fs`, `web`, `shell`, `service` | User-facing built-in or external toolset namespace |
 | Internal namespace | `_me`, `_too`, `_hat` | Toolang-owned model action family |
-| Leaf name | `read_text`, `create_task` | Verb or verb phrase within one namespace |
-| Selector identity | `fs/read_text` | Authored and CLI tool selection form |
-| Model name | `fs__read_text` | Provider-facing encoded name |
+| Leaf name | `read`, `create_task` | Verb or verb phrase within one namespace |
+| Selector identity | `fs/read` | Authored and CLI tool selection form |
+| Model name | `fs__read` | Provider-facing encoded name |
 | Plugin | entry-point implementation | Owner that may expose one or more public namespaces |
 
 `_me` means mutation or inspection of data authored for the current agent. It
@@ -165,10 +165,19 @@ the new names.
 
 ## Leaf Tool Renames
 
-The `fs`, `web`, and `shell` leaves are already verb-first and remain:
+The `fs` text-operation leaves become shorter:
+
+| Old leaf | New leaf |
+| --- | --- |
+| `read_text` | `read` |
+| `write_text` | `write` |
+| `append_text` | `append` |
+
+Its other leaves and the `web` and `shell` leaves remain, producing this final
+catalog:
 
 ```text
-fs:      list, read_text, write_text, append_text, glob, stat, mkdir, remove
+fs:      list, read, write, append, glob, stat, mkdir, remove
 web:     search
 shell:   execute
 ```
@@ -243,7 +252,7 @@ no schema changes.
 
 ## Acceptance Tests
 
-1. Built-in loading exposes `fs__read_text`, `web__search`, `shell__execute`,
+1. Built-in loading exposes `fs__read`, `web__search`, `shell__execute`,
    `service__call_tool`, and `_me__create_task`, and exposes none of the old
    model names.
 2. Selector resolution accepts `fs/*`, `service/call_tool`, and `_me/*` and
