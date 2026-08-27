@@ -128,6 +128,57 @@ def test_current_publication_does_not_retrigger_candidate_preparation(
     asyncio.run(run())
 
 
+def test_rejected_candidate_does_not_retry_partially_published_layers(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def run() -> None:
+        toolang_root = tmp_path / "toolang"
+        root_prompt = toolang_root / "prompts" / "review.md"
+        root_prompt.parent.mkdir(parents=True)
+        root_prompt.write_text("Review once.\n", encoding="utf-8")
+        home = toolang_root / "agents" / "alice"
+        flows = home / "flows"
+        flows.mkdir(parents=True)
+        (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+        flow = flows / "research.too"
+        flow.write_text("flow research:\n  pass\n", encoding="utf-8")
+        layout = AgentLayout.resident(toolang_root, "alice")
+        watcher = state_watcher.StateWatcher(layout)
+        initial = await watcher.refresh()
+
+        root_prompt.write_text("Review twice.\n", encoding="utf-8")
+        flow.write_text("flow other:\n  pass\n", encoding="utf-8")
+        calls = 0
+        prepare = state_watcher.prepare_agent_state
+
+        def counted_prepare(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return prepare(*args, **kwargs)
+
+        async def rejected_then_timeout(*_args, **_kwargs):
+            yield {
+                (state_watcher.Change.modified, str(root_prompt)),
+                (state_watcher.Change.modified, str(flow)),
+            }
+            yield set()
+
+        monkeypatch.setattr(state_watcher, "prepare_agent_state", counted_prepare)
+        monkeypatch.setattr(state_watcher, "awatch", rejected_then_timeout)
+
+        observed = [
+            state async for state in watcher.updates(stop_signal=asyncio.Event())
+        ]
+
+        assert observed == []
+        assert watcher.current() is initial
+        assert calls == 1
+        assert watcher.diagnostics()[0].code == "invalid-flow-export"
+
+    asyncio.run(run())
+
+
 def test_concurrent_refresh_requests_each_run_one_serialized_check(
     tmp_path: Path,
     monkeypatch,

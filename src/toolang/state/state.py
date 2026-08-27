@@ -272,6 +272,10 @@ class StateCap:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "meta", freeze_mapping(self.meta))
+        if self.kind not in CAP_KINDS:
+            raise ValueError(f"invalid State cap kind: {self.kind!r}")
+        if self.shape not in {"file", "dir"}:
+            raise ValueError(f"invalid State cap shape: {self.shape!r}")
         if self.source.form in {"authored", "configured"} and self.scope == "here":
             raise ValueError(f"{self.source.form} cap cannot have here scope")
         if self.source.form in {"inline", "referenced"} and self.scope != "here":

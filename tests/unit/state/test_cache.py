@@ -3,6 +3,7 @@ from __future__ import annotations
 from hashlib import sha256
 import json
 from pathlib import Path
+import shutil
 
 import pytest
 
@@ -113,6 +114,27 @@ def test_agent_state_revision_round_trips_exact_layers(tmp_path: Path) -> None:
     validate_agent_revision(layout, revision)
 
 
+def test_exact_revision_loaders_reject_an_empty_revision(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    root_revision = _write_root(layout)
+    home_revision = _write_home(layout)
+    publish_layer_current(layout, "root", root_revision)
+    publish_layer_current(layout, "home", home_revision)
+    with _agent_check_lock(layout):
+        _persist_agent_revision(
+            layout,
+            root_revision=root_revision,
+            home_revision=home_revision,
+        )
+
+    with pytest.raises(ValueError, match="revision"):
+        load_root_layer(layout, "")
+    with pytest.raises(ValueError, match="revision"):
+        load_home_layer(layout, "")
+    with pytest.raises(ValueError, match="revision"):
+        load_agent_revisions(layout, "")
+
+
 def test_layer_publish_and_load_use_revision_strings(tmp_path: Path) -> None:
     layout = _layout(tmp_path)
     root_revision = _write_root(layout)
@@ -185,6 +207,50 @@ def test_layer_loader_trusts_noncanonical_json_until_explicit_validation(
     assert load_root_layer(layout, revision).revision == revision
     with pytest.raises(ValueError, match="not canonical JSON"):
         validate_layer_revision(layout, "root", revision)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("kind", "memory", "cap kind"),
+        ("shape", "archive", "cap shape"),
+    ],
+)
+def test_explicit_layer_validation_rejects_invalid_cap_domains(
+    tmp_path: Path,
+    field: str,
+    value: str,
+    message: str,
+) -> None:
+    layout = _layout(tmp_path)
+    original = _write_home(layout)
+    original_dir = layer_revision_dir(layout, "home", original)
+    document = json.loads((original_dir / "layer.json").read_text(encoding="utf-8"))
+    cap = {
+        "kind": "prompt",
+        "meta": {},
+        "name": "review",
+        "path": "files/agent.too",
+        "ref": "local://prompts/review",
+        "shape": "file",
+        "source": {
+            "fingerprint": "0" * 64,
+            "form": "authored",
+            "origin": "local",
+            "path": "agents/alice/prompts/review.md",
+            "updated_at": "2026-01-01T00:00:00Z",
+        },
+    }
+    cap[field] = value
+    document["caps"] = [cap]
+    encoded = canonical_json(document)
+    revision = sha256(encoded).hexdigest()
+    revision_dir = layer_revision_dir(layout, "home", revision)
+    shutil.copytree(original_dir, revision_dir)
+    (revision_dir / "layer.json").write_bytes(encoded)
+
+    with pytest.raises(ValueError, match=message):
+        validate_layer_revision(layout, "home", revision)
 
 
 def test_republishing_current_revision_does_not_rewrite_pointer(

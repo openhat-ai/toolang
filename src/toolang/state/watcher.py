@@ -15,6 +15,7 @@ from toolang.common.layout import AgentLayout
 from .state import AgentState
 from .errors import StateDiagnostic, StatePreparationError
 from .cache import (
+    LayerScope,
     agent_current_path,
     layer_current_path,
     load_current_agent_revision,
@@ -46,6 +47,7 @@ class StateWatcher:
         self._state: AgentState | None = None
         self._checked_root_source: SourceTree | None = None
         self._checked_home_source: SourceTree | None = None
+        self._checked_layer_revisions: tuple[str | None, str | None] | None = None
         try:
             state = load_agent_state(layout)
             root_source = load_layer_source(
@@ -64,6 +66,10 @@ class StateWatcher:
             self._state = state
             self._checked_root_source = root_source
             self._checked_home_source = home_source
+            self._checked_layer_revisions = (
+                state.root_revision,
+                state.home_revision,
+            )
         self._diagnostics: tuple[StateDiagnostic, ...] = ()
         self._check_requests: deque[_CheckRequest] = deque()
         self._check_task: asyncio.Task[None] | None = None
@@ -177,8 +183,7 @@ class StateWatcher:
                 force=force,
             )
         except StatePreparationError as exc:
-            self._checked_root_source = root_source
-            self._checked_home_source = home_source
+            self._record_checked_candidate(root_source, home_source)
             self._diagnostics = exc.diagnostics
             if self._state is None:
                 raise
@@ -189,8 +194,7 @@ class StateWatcher:
             )
             return self._state
         except Exception as exc:
-            self._checked_root_source = root_source
-            self._checked_home_source = home_source
+            self._record_checked_candidate(root_source, home_source)
             if self._state is None:
                 raise
             self._diagnostics = (_candidate_diagnostic(exc),)
@@ -208,6 +212,10 @@ class StateWatcher:
         self._checked_home_source = load_layer_source(
             self.layout,
             "home",
+            candidate.home_revision,
+        )
+        self._checked_layer_revisions = (
+            candidate.root_revision,
             candidate.home_revision,
         )
         self._diagnostics = ()
@@ -288,13 +296,22 @@ class StateWatcher:
         try:
             return (
                 load_current_agent_revision(self.layout) != state.revision
-                or load_current_revision(self.layout, "root") != state.root_revision
-                or load_current_revision(self.layout, "home") != state.home_revision
+                or _current_layer_revisions(self.layout)
+                != self._checked_layer_revisions
                 or root_source != self._checked_root_source
                 or home_source != self._checked_home_source
             )
         except (FileNotFoundError, TypeError, ValueError):
             return True
+
+    def _record_checked_candidate(
+        self,
+        root_source: SourceTree,
+        home_source: SourceTree,
+    ) -> None:
+        self._checked_root_source = root_source
+        self._checked_home_source = home_source
+        self._checked_layer_revisions = _current_layer_revisions(self.layout)
 
 
 def _is_state_current_path(layout: AgentLayout, path: Path) -> bool:
@@ -304,6 +321,18 @@ def _is_state_current_path(layout: AgentLayout, path: Path) -> bool:
         layer_current_path(layout, "home").resolve(strict=False),
         agent_current_path(layout).resolve(strict=False),
     }
+
+
+def _current_layer_revisions(
+    layout: AgentLayout,
+) -> tuple[str | None, str | None]:
+    def load(scope: LayerScope) -> str | None:
+        try:
+            return load_current_revision(layout, scope)
+        except (FileNotFoundError, TypeError, ValueError):
+            return None
+
+    return load("root"), load("home")
 
 
 def _candidate_diagnostic(exc: Exception) -> StateDiagnostic:

@@ -138,7 +138,7 @@ def load_root_layer(
 ) -> RootLayer:
     """Load one trusted root State layer without integrity validation."""
 
-    effective = revision or load_current_revision(layout, "root")
+    effective = load_current_revision(layout, "root") if revision is None else revision
     document, revision_dir = _load_layer(layout, "root", effective)
     return RootLayer(
         revision=effective,
@@ -156,7 +156,7 @@ def load_home_layer(
 ) -> HomeLayer:
     """Load one trusted home State layer without integrity validation."""
 
-    effective = revision or load_current_revision(layout, "home")
+    effective = load_current_revision(layout, "home") if revision is None else revision
     document, revision_dir = _load_layer(layout, "home", effective)
     modules = _modules(document, revision_dir=revision_dir)
     agent_module = next(module for module in modules if module.kind == "agent")
@@ -267,7 +267,7 @@ def load_agent_revisions(
 ) -> tuple[str, str, str]:
     """Load one trusted Agent State composition without integrity validation."""
 
-    effective = revision or load_current_agent_revision(layout)
+    effective = load_current_agent_revision(layout) if revision is None else revision
     revision_dir = agent_revision_dir(layout, effective)
     document = _load_object(revision_dir / _LAYERS_FILE, label="layers.json")
     root_revision = _revision_field(document, "root_revision")
