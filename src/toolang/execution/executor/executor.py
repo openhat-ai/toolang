@@ -335,7 +335,7 @@ class RunExecutor:
             agent_resources=agent_resources,
             resources=resources,
         )
-        _reopened, control, _ejected = self.store.accept_retry(
+        _reopened, control, _trimmed = self.store.accept_retry(
             run_id=run_id,
             anchor=StepPath.parse(anchor) if anchor is not None else None,
             resources=resources,

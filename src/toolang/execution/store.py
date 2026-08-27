@@ -274,23 +274,8 @@ class RunStore:
                         raise ValueError(
                             "rerun source must belong to the target thread"
                         )
-                    if source_record.ejected_by is not None:
-                        raise ValueError(f"rerun source is not visible: {source}")
                     if source_record.status not in {"succeeded", "failed", "canceled"}:
                         raise ValueError(f"rerun source is not terminal: {source}")
-                    latest = self._conn.execute(
-                        """
-                        SELECT id FROM runs
-                        WHERE thread = ? AND parent IS NULL
-                          AND ejected_by_target IS NULL
-                        ORDER BY rowid DESC LIMIT 1
-                        """,
-                        (thread,),
-                    ).fetchone()
-                    if latest is None or str(latest["id"]) != source:
-                        raise ValueError(
-                            "rerun source must be the latest visible root run"
-                        )
                 self._conn.execute(
                     """
                     INSERT INTO runs(
@@ -351,16 +336,6 @@ class RunStore:
                     finished_at=None,
                     claimed=False,
                 )
-                if kind == "rerun":
-                    source_tree = self._root_tree_runs(cast(str, source))
-                    self._conn.executemany(
-                        """
-                        UPDATE runs
-                        SET ejected_by_target = ?, ejected_by_index = 0
-                        WHERE id = ?
-                        """,
-                        ((run_id, source_run) for source_run in source_tree),
-                    )
                 run_row = self._conn.execute(
                     "SELECT * FROM runs WHERE id = ?", (run_id,)
                 ).fetchone()
@@ -544,8 +519,6 @@ class RunStore:
                 if run_row is None:
                     raise ValueError(f"root run not found: {run_id}")
                 run = _run_from_row(run_row)
-                if run.ejected_by is not None:
-                    raise ValueError(f"run is not visible: {run_id}")
                 if run.status not in {"succeeded", "failed", "canceled"}:
                     raise ValueError(f"run is not terminal: {run_id}")
                 preparation_row = self._conn.execute(
@@ -591,13 +564,17 @@ class RunStore:
                     (run_id,),
                 ).fetchone()
                 index = int(index_row["next_index"]) if index_row is not None else 1
-                ejected = (
+                trimmed = (
                     self._retry_step_suffix(
                         tree_runs=tree_runs,
                         anchor=resolved_anchor,
                     )
                     if resolved_anchor is not None
                     else ()
+                )
+                self._delete_retry_suffix(
+                    tree_runs=tree_runs,
+                    steps=trimmed,
                 )
                 self._insert_control(
                     scope="run",
@@ -621,14 +598,6 @@ class RunStore:
                     created_at=created_at,
                     finished_at=created_at,
                     claimed=True,
-                )
-                self._conn.executemany(
-                    """
-                    UPDATE steps
-                    SET ejected_by_target = ?, ejected_by_index = ?
-                    WHERE run = ? AND path = ? AND ejected_by_target IS NULL
-                    """,
-                    ((run_id, index, path.run, path.local) for path in ejected),
                 )
                 self._conn.execute(
                     """
@@ -675,7 +644,7 @@ class RunStore:
         return (
             _run_from_row(updated_run_row),
             _run_control_from_row(control_row),
-            ejected,
+            trimmed,
         )
 
     def begin_run(
@@ -1757,7 +1726,7 @@ class RunStore:
         rows = self._conn.execute(
             f"""
             SELECT rowid, * FROM steps
-            WHERE run IN ({placeholders}) AND ejected_by_target IS NULL
+            WHERE run IN ({placeholders})
             ORDER BY rowid ASC
             """,
             tuple(tree_runs),
@@ -1773,9 +1742,7 @@ class RunStore:
                 None,
             )
             if match is None:
-                raise ValueError(
-                    f"retry anchor is not visible in run {run_id}: {anchor}"
-                )
+                raise ValueError(f"retry anchor not found in run {run_id}: {anchor}")
             candidate = match
         else:
             incomplete = tuple(
@@ -1799,11 +1766,9 @@ class RunStore:
             tree_runs=tree_runs,
             selected=selected,
         )
-        visible = {
-            StepPath.from_local(str(row["run"]), str(row["path"])) for row in rows
-        }
-        if resolved not in visible:
-            raise ValueError(f"retry resume step is not visible: {resolved}")
+        paths = {StepPath.from_local(str(row["run"]), str(row["path"])) for row in rows}
+        if resolved not in paths:
+            raise ValueError(f"retry resume step not found: {resolved}")
         return resolved
 
     def _root_retry_step(
@@ -1851,7 +1816,7 @@ class RunStore:
         rows = self._conn.execute(
             f"""
             SELECT rowid, * FROM steps
-            WHERE run IN ({placeholders}) AND ejected_by_target IS NULL
+            WHERE run IN ({placeholders})
             ORDER BY rowid ASC
             """,
             tuple(tree_runs),
@@ -1903,6 +1868,55 @@ class RunStore:
             StepPath.from_local(str(row["run"]), str(row["path"]))
             for row in rows
             if int(row["rowid"]) >= cutoff
+        )
+
+    def _delete_retry_suffix(
+        self,
+        *,
+        tree_runs: Sequence[str],
+        steps: Sequence[StepPath],
+    ) -> None:
+        """Delete a retry suffix and every child run it owns."""
+
+        if not steps:
+            return
+        step_keys = {str(step) for step in steps}
+        placeholders = ", ".join("?" for _ in tree_runs)
+        run_rows = self._conn.execute(
+            f"SELECT * FROM runs WHERE id IN ({placeholders}) ORDER BY rowid ASC",
+            tuple(tree_runs),
+        ).fetchall()
+        runs = tuple(_run_from_row(row) for row in run_rows)
+        removed_runs = {
+            run.id
+            for run in runs
+            if run.parent is not None and str(run.parent) in step_keys
+        }
+        changed = True
+        while changed:
+            changed = False
+            for run in runs:
+                if (
+                    run.id not in removed_runs
+                    and run.parent is not None
+                    and run.parent.run in removed_runs
+                ):
+                    removed_runs.add(run.id)
+                    changed = True
+        if removed_runs:
+            removed_placeholders = ", ".join("?" for _ in removed_runs)
+            removed_params = tuple(removed_runs)
+            self._conn.execute(
+                f"DELETE FROM steps WHERE run IN ({removed_placeholders})",
+                removed_params,
+            )
+            self._conn.execute(
+                f"DELETE FROM runs WHERE id IN ({removed_placeholders})",
+                removed_params,
+            )
+        self._conn.executemany(
+            "DELETE FROM steps WHERE run = ? AND path = ?",
+            ((step.run, step.local) for step in steps),
         )
 
     def begin_step(

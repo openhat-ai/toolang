@@ -41,7 +41,7 @@ from toolang.base.types.run import (
 from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd
 from toolang.execution.executor import RunLimits
-from toolang.execution.records import RunControlRef, RunControlPayload
+from toolang.execution.records import RunControlPayload
 from toolang.execution.types import (
     ModelStepNoted,
     ModelTokenCount,
@@ -199,16 +199,15 @@ agic reply(_: Part[]) -> Part[]:
             assert run.status == "succeeded"
             active = harness.store.list_steps(run_id=run.id)
             assert [(step.path.index, step.status) for step in active] == [
-                (1, "succeeded")
+                (0, "succeeded")
             ]
-            historical = harness.store.list_steps(
+            current = harness.store.list_steps(
                 run_id=run.id,
                 include_ejected=True,
             )
-            assert [step.path.index for step in historical] == [0, 1]
-            assert historical[0].ejected_by == RunControlRef(run.id, 1)
-            assert historical[1].ejected_by is None
-            assert historical[1].input == (Pointer.control(run.id, 1, "_"),)
+            assert current == active
+            assert current[0].ejected_by is None
+            assert current[0].input == (Pointer.control(run.id, 1, "_"),)
             assert [call.call.messages for call in harness.adapter.invocations] == [
                 [Message.user("hello")],
                 [Message.user("hello")],

@@ -11,6 +11,7 @@ from tests.support.execution_fixtures import (
     accept_run,
     project_run_end,
     project_run_start,
+    project_step,
 )
 from tests.support.execution_harness import (
     AsyncGate,
@@ -21,7 +22,11 @@ from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult
 from toolang.common.ids import IdIssuer
 from toolang.execution.executor import RunExecutor
-from toolang.execution.records import SteerControlPayload, ThreadControlRef
+from toolang.execution.records import (
+    RunControlPayload,
+    SteerControlPayload,
+    ThreadControlRef,
+)
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import Local, ThreadPrefix
@@ -205,6 +210,41 @@ def _race_claim_control(
         start.wait()
         claimed = store.claim_run_controls(run_id=run_id, indexes=(index,))
         results.put(("claimed" if index in claimed else "skipped",))
+    finally:
+        store.close()
+
+
+def _race_retry(
+    db_path: str,
+    request_id: str,
+    ready: Any,
+    start: Any,
+    results: Any,
+) -> None:
+    store = RunStore(Path(db_path))
+    try:
+        control = store.get_run_control(run_id="run_retry_race", index=0)
+        if control is None or not isinstance(control.payload, RunControlPayload):
+            raise RuntimeError("run preparation is missing")
+        payload = control.payload
+        ready.put(request_id)
+        start.wait()
+        store.accept_retry(
+            run_id="run_retry_race",
+            anchor=None,
+            resources=payload.resources,
+            limits=payload.limits,
+            state=payload.state,
+            runnable=payload.runnable,
+            model=payload.model,
+            locals=payload.locals,
+            sandbox="host",
+            request_id=request_id,
+            created_at="2026-01-01T00:00:03Z",
+        )
+        results.put(("accepted", request_id))
+    except ValueError as exc:
+        results.put(("rejected", request_id, str(exc)))
     finally:
         store.close()
 
@@ -398,6 +438,61 @@ def test_duplicate_run_control_request_has_one_process_winner(
         ]
         assert len(controls) == 1
         assert controls[0].index == 1
+    finally:
+        reopened.close()
+
+
+def test_concurrent_retry_has_one_process_winner(tmp_path: Path) -> None:
+    db_path = tmp_path / "runs.db"
+    store = RunStore(db_path)
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_retry_race",
+            thread_id="term_retry_race",
+            origin="chat",
+            input=Message.user("hello"),
+            executable_kind="flow",
+        )
+        project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="value",
+            status="failed",
+            input=(),
+            output=(),
+            error="temporary failure",
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        project_run_end(
+            store,
+            run_id=run.id,
+            status="failed",
+            error="temporary failure",
+        )
+    finally:
+        store.close()
+
+    outcomes = _race_processes(
+        (_race_retry, (str(db_path), "retry-race-a")),
+        (_race_retry, (str(db_path), "retry-race-b")),
+    )
+
+    assert [outcome[0] for outcome in outcomes].count("accepted") == 1
+    assert [outcome[0] for outcome in outcomes].count("rejected") == 1
+    reopened = RunStore(db_path)
+    try:
+        retried = reopened.get_run(run_id=run.id)
+        assert retried is not None and retried.status == "pending"
+        assert reopened.list_steps(run_id=run.id) == []
+        assert [
+            control.kind for control in reopened.list_run_controls(run_id=run.id)
+        ] == [
+            "run",
+            "retry",
+        ]
     finally:
         reopened.close()
 
