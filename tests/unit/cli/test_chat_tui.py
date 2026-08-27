@@ -437,7 +437,7 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
 @pytest.mark.parametrize(
     "rows",
     [
-        (ProgressRow("• executed web_search.search"), ProgressRow("  5 results")),
+        (ProgressRow("• executed web.search"), ProgressRow("  5 results")),
         (ProgressRow("[0] Run summarize"), ProgressRow("")),
         (
             ProgressRow(

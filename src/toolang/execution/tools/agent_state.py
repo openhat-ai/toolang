@@ -1,4 +1,4 @@
-"""Agent-owned task, chore, and cap state toolset plugin."""
+"""Current-agent authored-data toolset plugin."""
 
 from __future__ import annotations
 
@@ -33,10 +33,10 @@ ScopeFilter = Literal["all", "home", "root"]
 
 @dataclass(slots=True)
 class AgentStateToolset:
-    """Tools for managing the current agent's authored state."""
+    """Tools for managing the current agent's authored data."""
 
     config: dict[str, Any]
-    name: str = "agent_state"
+    name: str = "_me"
     description: str | None = (
         "Inspect, create, and update this agent's tasks, chores, psyches, skills, "
         "services, and prompts."
@@ -51,7 +51,7 @@ class AgentStateToolset:
 
     def _build_tools(self) -> dict[str, AgentTool]:
         @tool(
-            name="task_list", description="List task documents for the current agent."
+            name="list_tasks", description="List task documents for the current agent."
         )
         def task_list(
             include_archived: bool = False,
@@ -69,7 +69,7 @@ class AgentStateToolset:
                 ]
             }
 
-        @tool(name="task_get", description="Get one task document by id.")
+        @tool(name="get_task", description="Get one task document by id.")
         def task_get(
             task_id: str,
             include_archived: bool = False,
@@ -86,7 +86,7 @@ class AgentStateToolset:
             return {"task": _task_payload(entry)}
 
         @tool(
-            name="task_create",
+            name="create_task",
             description="Create one task document for the current agent.",
         )
         def task_create(
@@ -104,7 +104,7 @@ class AgentStateToolset:
             return {"task": _task_payload(_jobs(scope).create(document))}
 
         @tool(
-            name="task_update", description="Update fields on one task document by id."
+            name="update_task", description="Update fields on one task document by id."
         )
         def task_update(
             task_id: str,
@@ -129,7 +129,8 @@ class AgentStateToolset:
             return {"task": _task_payload(catalog.update(entry.patch(changes)))}
 
         @tool(
-            name="chore_list", description="List chore documents for the current agent."
+            name="list_chores",
+            description="List chore documents for the current agent.",
         )
         def chore_list(
             include_archived: bool = False,
@@ -147,7 +148,7 @@ class AgentStateToolset:
                 ]
             }
 
-        @tool(name="chore_get", description="Get one chore document by id.")
+        @tool(name="get_chore", description="Get one chore document by id.")
         def chore_get(
             chore_id: str,
             include_archived: bool = False,
@@ -164,7 +165,7 @@ class AgentStateToolset:
             return {"chore": _chore_payload(entry)}
 
         @tool(
-            name="chore_create",
+            name="create_chore",
             description="Create one chore document for the current agent.",
         )
         def chore_create(
@@ -184,7 +185,7 @@ class AgentStateToolset:
             return {"chore": _chore_payload(_jobs(scope).create(document))}
 
         @tool(
-            name="chore_update",
+            name="update_chore",
             description="Update fields on one chore document by id.",
         )
         def chore_update(
@@ -213,7 +214,7 @@ class AgentStateToolset:
             return {"chore": _chore_payload(catalog.update(entry.patch(changes)))}
 
         @tool(
-            name="psyche_list",
+            name="list_psyches",
             description="List psyche definitions visible to the current agent.",
         )
         def psyche_list(
@@ -221,7 +222,7 @@ class AgentStateToolset:
         ) -> dict[str, Any]:
             return {"psyches": _list_caps("psyche", cap_scope=scope, context=context)}
 
-        @tool(name="psyche_get", description="Get one psyche definition by name.")
+        @tool(name="get_psyche", description="Get one psyche definition by name.")
         def psyche_get(
             name: str,
             scope: str = "home",
@@ -231,7 +232,7 @@ class AgentStateToolset:
                 "psyche": _get_cap("psyche", name, cap_scope=scope, context=context)
             }
 
-        @tool(name="psyche_create", description="Create one local psyche definition.")
+        @tool(name="create_psyche", description="Create one local psyche definition.")
         def psyche_create(
             name: str,
             body: str,
@@ -248,7 +249,7 @@ class AgentStateToolset:
                 )
             }
 
-        @tool(name="psyche_update", description="Update one local psyche definition.")
+        @tool(name="update_psyche", description="Update one local psyche definition.")
         def psyche_update(
             name: str,
             body: str,
@@ -265,7 +266,7 @@ class AgentStateToolset:
                 )
             }
 
-        @tool(name="psyche_delete", description="Delete one local psyche definition.")
+        @tool(name="delete_psyche", description="Delete one local psyche definition.")
         def psyche_delete(
             name: str,
             scope: str = "home",
@@ -274,7 +275,7 @@ class AgentStateToolset:
             return _delete_cap("psyche", name, cap_scope=scope, context=context)
 
         @tool(
-            name="skill_list",
+            name="list_skills",
             description="List skill definitions visible to the current agent.",
         )
         def skill_list(
@@ -282,7 +283,7 @@ class AgentStateToolset:
         ) -> dict[str, Any]:
             return {"skills": _list_caps("skill", cap_scope=scope, context=context)}
 
-        @tool(name="skill_get", description="Get one skill definition by name.")
+        @tool(name="get_skill", description="Get one skill definition by name.")
         def skill_get(
             name: str,
             scope: str = "home",
@@ -290,7 +291,7 @@ class AgentStateToolset:
         ) -> dict[str, Any]:
             return {"skill": _get_cap("skill", name, cap_scope=scope, context=context)}
 
-        @tool(name="skill_create", description="Create one local skill definition.")
+        @tool(name="create_skill", description="Create one local skill definition.")
         def skill_create(
             name: str,
             description: str,
@@ -305,7 +306,7 @@ class AgentStateToolset:
                 )
             }
 
-        @tool(name="skill_update", description="Update one local skill definition.")
+        @tool(name="update_skill", description="Update one local skill definition.")
         def skill_update(
             name: str,
             description: str | None = None,
@@ -325,7 +326,7 @@ class AgentStateToolset:
                 )
             }
 
-        @tool(name="skill_delete", description="Delete one local skill definition.")
+        @tool(name="delete_skill", description="Delete one local skill definition.")
         def skill_delete(
             name: str,
             scope: str = "home",
@@ -334,7 +335,7 @@ class AgentStateToolset:
             return _delete_cap("skill", name, cap_scope=scope, context=context)
 
         @tool(
-            name="service_list",
+            name="list_services",
             description="List service definitions visible to the current agent.",
         )
         def service_list(
@@ -342,7 +343,7 @@ class AgentStateToolset:
         ) -> dict[str, Any]:
             return {"services": _list_caps("service", cap_scope=scope, context=context)}
 
-        @tool(name="service_get", description="Get one service definition by name.")
+        @tool(name="get_service", description="Get one service definition by name.")
         def service_get(
             name: str,
             scope: str = "home",
@@ -352,7 +353,7 @@ class AgentStateToolset:
                 "service": _get_cap("service", name, cap_scope=scope, context=context)
             }
 
-        @tool(name="service_create", description="Create one local service definition.")
+        @tool(name="create_service", description="Create one local service definition.")
         def service_create(
             name: str,
             description: str,
@@ -378,7 +379,7 @@ class AgentStateToolset:
                 )
             }
 
-        @tool(name="service_update", description="Update one local service definition.")
+        @tool(name="update_service", description="Update one local service definition.")
         def service_update(
             name: str,
             description: str | None = None,
@@ -410,7 +411,7 @@ class AgentStateToolset:
                 )
             }
 
-        @tool(name="service_delete", description="Delete one local service definition.")
+        @tool(name="delete_service", description="Delete one local service definition.")
         def service_delete(
             name: str,
             scope: str = "home",
@@ -419,7 +420,7 @@ class AgentStateToolset:
             return _delete_cap("service", name, cap_scope=scope, context=context)
 
         @tool(
-            name="prompt_list",
+            name="list_prompts",
             description="List prompt definitions visible to the current agent.",
         )
         def prompt_list(
@@ -427,7 +428,7 @@ class AgentStateToolset:
         ) -> dict[str, Any]:
             return {"prompts": _list_caps("prompt", cap_scope=scope, context=context)}
 
-        @tool(name="prompt_get", description="Get one prompt definition by name.")
+        @tool(name="get_prompt", description="Get one prompt definition by name.")
         def prompt_get(
             name: str,
             scope: str = "home",
@@ -437,7 +438,7 @@ class AgentStateToolset:
                 "prompt": _get_cap("prompt", name, cap_scope=scope, context=context)
             }
 
-        @tool(name="prompt_create", description="Create one local prompt definition.")
+        @tool(name="create_prompt", description="Create one local prompt definition.")
         def prompt_create(
             name: str,
             body: str,
@@ -454,7 +455,7 @@ class AgentStateToolset:
                 )
             }
 
-        @tool(name="prompt_update", description="Update one local prompt definition.")
+        @tool(name="update_prompt", description="Update one local prompt definition.")
         def prompt_update(
             name: str,
             body: str,
@@ -471,7 +472,7 @@ class AgentStateToolset:
                 )
             }
 
-        @tool(name="prompt_delete", description="Delete one local prompt definition.")
+        @tool(name="delete_prompt", description="Delete one local prompt definition.")
         def prompt_delete(
             name: str,
             scope: str = "home",
@@ -480,34 +481,34 @@ class AgentStateToolset:
             return _delete_cap("prompt", name, cap_scope=scope, context=context)
 
         return {
-            "task_list": create_function_tool(task_list),
-            "task_get": create_function_tool(task_get),
-            "task_create": create_function_tool(task_create),
-            "task_update": create_function_tool(task_update),
-            "chore_list": create_function_tool(chore_list),
-            "chore_get": create_function_tool(chore_get),
-            "chore_create": create_function_tool(chore_create),
-            "chore_update": create_function_tool(chore_update),
-            "psyche_list": create_function_tool(psyche_list),
-            "psyche_get": create_function_tool(psyche_get),
-            "psyche_create": create_function_tool(psyche_create),
-            "psyche_update": create_function_tool(psyche_update),
-            "psyche_delete": create_function_tool(psyche_delete),
-            "skill_list": create_function_tool(skill_list),
-            "skill_get": create_function_tool(skill_get),
-            "skill_create": create_function_tool(skill_create),
-            "skill_update": create_function_tool(skill_update),
-            "skill_delete": create_function_tool(skill_delete),
-            "service_list": create_function_tool(service_list),
-            "service_get": create_function_tool(service_get),
-            "service_create": create_function_tool(service_create),
-            "service_update": create_function_tool(service_update),
-            "service_delete": create_function_tool(service_delete),
-            "prompt_list": create_function_tool(prompt_list),
-            "prompt_get": create_function_tool(prompt_get),
-            "prompt_create": create_function_tool(prompt_create),
-            "prompt_update": create_function_tool(prompt_update),
-            "prompt_delete": create_function_tool(prompt_delete),
+            "list_tasks": create_function_tool(task_list),
+            "get_task": create_function_tool(task_get),
+            "create_task": create_function_tool(task_create),
+            "update_task": create_function_tool(task_update),
+            "list_chores": create_function_tool(chore_list),
+            "get_chore": create_function_tool(chore_get),
+            "create_chore": create_function_tool(chore_create),
+            "update_chore": create_function_tool(chore_update),
+            "list_psyches": create_function_tool(psyche_list),
+            "get_psyche": create_function_tool(psyche_get),
+            "create_psyche": create_function_tool(psyche_create),
+            "update_psyche": create_function_tool(psyche_update),
+            "delete_psyche": create_function_tool(psyche_delete),
+            "list_skills": create_function_tool(skill_list),
+            "get_skill": create_function_tool(skill_get),
+            "create_skill": create_function_tool(skill_create),
+            "update_skill": create_function_tool(skill_update),
+            "delete_skill": create_function_tool(skill_delete),
+            "list_services": create_function_tool(service_list),
+            "get_service": create_function_tool(service_get),
+            "create_service": create_function_tool(service_create),
+            "update_service": create_function_tool(service_update),
+            "delete_service": create_function_tool(service_delete),
+            "list_prompts": create_function_tool(prompt_list),
+            "get_prompt": create_function_tool(prompt_get),
+            "create_prompt": create_function_tool(prompt_create),
+            "update_prompt": create_function_tool(prompt_update),
+            "delete_prompt": create_function_tool(prompt_delete),
         }
 
 
@@ -517,19 +518,17 @@ class _AgentStateScope:
 
 
 def create_toolset(config: Mapping[str, Any]) -> Toolset:
-    """Create the agent_state toolset plugin."""
+    """Create the _me toolset plugin."""
 
     return AgentStateToolset(config=dict(config))
 
 
 def _scope(context: ToolContext | None) -> _AgentStateScope:
     if context is None:
-        raise ToolangError("agent_state tool context is required")
+        raise ToolangError("_me tool context is required")
     home = context.home.resolve()
     if home.parent.name != "agents":
-        raise ToolangError(
-            f"agent_state tool requires an agent home under agents/: {home}"
-        )
+        raise ToolangError(f"_me tool requires an agent home under agents/: {home}")
     return _AgentStateScope(
         AgentLayout(
             root=home.parent.parent,

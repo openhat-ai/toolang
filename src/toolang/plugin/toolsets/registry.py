@@ -7,7 +7,12 @@ from dataclasses import dataclass
 
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool
-from toolang.base.utils.tools import encode_tool_name
+from toolang.base.utils.tools import (
+    encode_tool_name,
+    is_internal_tool_namespace,
+    require_public_tool_name,
+    require_tool_namespace,
+)
 from toolang.common.selectors import (
     Selector,
     filter_value_matches,
@@ -15,6 +20,7 @@ from toolang.common.selectors import (
     split_selector_list,
     selector_identity_matches,
 )
+from toolang.plugin.loading import PluginSource
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,19 +50,27 @@ def parse_tool_registration_key(
     toolset_name: str,
     key: str,
     leaf_tool_name: str,
+    *,
+    source: PluginSource,
 ) -> ToolRef:
     """Resolve one plugin tool key into a public tool ref."""
 
-    text = str(key).strip()
+    require_toolset_name(toolset_name, source=source)
+    if not isinstance(key, str):
+        raise ToolangError(
+            f"toolset plugin {toolset_name!r} returned a non-text tool key"
+        )
+    text = key
     if not text:
         raise ToolangError(
             f"toolset plugin {toolset_name!r} returned an empty tool key"
         )
+    if text.count("/") > 1:
+        raise ToolangError(
+            f"toolset plugin {toolset_name!r} returned an invalid tool key: {text!r}"
+        )
     namespace, separator, name = text.partition("/")
-    if separator:
-        namespace = namespace.strip()
-        name = name.strip()
-    else:
+    if not separator:
         namespace = toolset_name
         name = text
     if name != leaf_tool_name:
@@ -64,7 +78,23 @@ def parse_tool_registration_key(
             f"toolset plugin {toolset_name!r} returned mismatched leaf tool name: "
             f"{text!r} != {leaf_tool_name!r}"
         )
+    require_tool_namespace(namespace)
+    if source == "external" and is_internal_tool_namespace(namespace):
+        raise ToolangError(
+            f"external toolset plugin {toolset_name!r} cannot register internal "
+            f"namespace {namespace!r}"
+        )
+    require_public_tool_name(name, kind="tool")
     return ToolRef(plugin=toolset_name, namespace=namespace, name=name)
+
+
+def require_toolset_name(toolset_name: str, *, source: PluginSource) -> None:
+    """Require one effective toolset plugin identity allowed by its source."""
+
+    if source == "built-in":
+        require_tool_namespace(toolset_name)
+        return
+    require_public_tool_name(toolset_name, kind="toolset plugin")
 
 
 def tool_ref_for_model_tool(model_name: str, tool: AgentTool) -> ToolRef:

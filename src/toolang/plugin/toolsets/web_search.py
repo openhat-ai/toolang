@@ -23,7 +23,7 @@ class WebSearchToolset:
     """Public-web search tools."""
 
     config: dict[str, Any]
-    name: str = "web_search"
+    name: str = "web"
     description: str | None = (
         "Search the public web and return concise result snippets."
     )

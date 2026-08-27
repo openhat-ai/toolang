@@ -21,7 +21,7 @@ def _tool_context(toolang_root: Path, agent_name: str = "alice") -> ToolContext:
     return ToolContext(
         run_id="run-1",
         home=home,
-        room=home / ".runtime" / "tools" / "agent_state",
+        room=home / ".runtime" / "tools" / "_me",
         wd=home,
     )
 
@@ -40,7 +40,7 @@ def test_agent_state_tool_creates_lists_gets_and_updates_tasks(tmp_path: Path) -
     tools = create_agent_state_tool({}).tools()
 
     created = _invoke(
-        tools["task_create"],
+        tools["create_task"],
         {
             "title": "Review plan",
             "body": "Review the implementation plan.",
@@ -49,10 +49,10 @@ def test_agent_state_tool_creates_lists_gets_and_updates_tasks(tmp_path: Path) -
     )
     task_id = created["task"]["id"]
 
-    listed = _invoke(tools["task_list"], {}, context)
-    loaded = _invoke(tools["task_get"], {"task_id": task_id}, context)
+    listed = _invoke(tools["list_tasks"], {}, context)
+    loaded = _invoke(tools["get_task"], {"task_id": task_id}, context)
     updated = _invoke(
-        tools["task_update"],
+        tools["update_task"],
         {
             "task_id": task_id,
             "body": "Review the merged implementation.",
@@ -75,7 +75,7 @@ def test_agent_state_tool_creates_and_updates_chores(tmp_path: Path) -> None:
     tools = create_agent_state_tool({}).tools()
 
     created = _invoke(
-        tools["chore_create"],
+        tools["create_chore"],
         {
             "title": "Check stale PRs",
             "body": "Report stale pull requests.",
@@ -86,7 +86,7 @@ def test_agent_state_tool_creates_and_updates_chores(tmp_path: Path) -> None:
     chore_id = created["chore"]["id"]
 
     updated = _invoke(
-        tools["chore_update"],
+        tools["update_chore"],
         {
             "chore_id": chore_id,
             "schedule": "FREQ=DAILY;INTERVAL=1",
@@ -94,7 +94,7 @@ def test_agent_state_tool_creates_and_updates_chores(tmp_path: Path) -> None:
         },
         context,
     )
-    listed = _invoke(tools["chore_list"], {}, context)
+    listed = _invoke(tools["list_chores"], {}, context)
 
     assert listed["chores"][0]["id"] == chore_id
     assert updated["chore"]["schedule"] == "FREQ=DAILY;INTERVAL=1"
@@ -112,7 +112,7 @@ def test_agent_state_tool_creates_updates_gets_and_deletes_skill(
     tools = create_agent_state_tool({}).tools()
 
     created = _invoke(
-        tools["skill_create"],
+        tools["create_skill"],
         {
             "name": "reviewer",
             "description": "Review code changes.",
@@ -121,7 +121,7 @@ def test_agent_state_tool_creates_updates_gets_and_deletes_skill(
         context,
     )
     updated = _invoke(
-        tools["skill_update"],
+        tools["update_skill"],
         {
             "name": "reviewer",
             "description": "Review implementation changes.",
@@ -129,9 +129,9 @@ def test_agent_state_tool_creates_updates_gets_and_deletes_skill(
         },
         context,
     )
-    listed = _invoke(tools["skill_list"], {}, context)
-    loaded = _invoke(tools["skill_get"], {"name": "reviewer"}, context)
-    deleted = _invoke(tools["skill_delete"], {"name": "reviewer"}, context)
+    listed = _invoke(tools["list_skills"], {}, context)
+    loaded = _invoke(tools["get_skill"], {"name": "reviewer"}, context)
+    deleted = _invoke(tools["delete_skill"], {"name": "reviewer"}, context)
 
     assert created["skill"]["scope"] == "home"
     assert created["skill"]["form"] == "authored"
@@ -147,26 +147,26 @@ def test_agent_state_cap_tools_expose_scope_instead_of_visibility() -> None:
     tools = create_agent_state_tool({}).tools()
 
     for name in (
-        "psyche_list",
-        "psyche_get",
-        "psyche_create",
-        "psyche_update",
-        "psyche_delete",
-        "skill_list",
-        "skill_get",
-        "skill_create",
-        "skill_update",
-        "skill_delete",
-        "service_list",
-        "service_get",
-        "service_create",
-        "service_update",
-        "service_delete",
-        "prompt_list",
-        "prompt_get",
-        "prompt_create",
-        "prompt_update",
-        "prompt_delete",
+        "list_psyches",
+        "get_psyche",
+        "create_psyche",
+        "update_psyche",
+        "delete_psyche",
+        "list_skills",
+        "get_skill",
+        "create_skill",
+        "update_skill",
+        "delete_skill",
+        "list_services",
+        "get_service",
+        "create_service",
+        "update_service",
+        "delete_service",
+        "list_prompts",
+        "get_prompt",
+        "create_prompt",
+        "update_prompt",
+        "delete_prompt",
     ):
         properties = tools[name].definition().parameters["properties"]
         assert "scope" in properties
@@ -179,7 +179,7 @@ def test_agent_state_tool_creates_updates_and_deletes_service(tmp_path: Path) ->
     tools = create_agent_state_tool({}).tools()
 
     created = _invoke(
-        tools["service_create"],
+        tools["create_service"],
         {
             "name": "search",
             "description": "Search service.",
@@ -191,7 +191,7 @@ def test_agent_state_tool_creates_updates_and_deletes_service(tmp_path: Path) ->
         context,
     )
     updated = _invoke(
-        tools["service_update"],
+        tools["update_service"],
         {
             "name": "search",
             "target": "https://example.com/v2/mcp",
@@ -199,7 +199,7 @@ def test_agent_state_tool_creates_updates_and_deletes_service(tmp_path: Path) ->
         },
         context,
     )
-    deleted = _invoke(tools["service_delete"], {"name": "search"}, context)
+    deleted = _invoke(tools["delete_service"], {"name": "search"}, context)
 
     assert created["service"]["meta"]["headers"] == {"Authorization": "Bearer $TOKEN"}
     assert updated["service"]["meta"]["target"] == "https://example.com/v2/mcp"
@@ -213,12 +213,12 @@ def test_agent_state_tool_creates_psyche_and_prompt(tmp_path: Path) -> None:
     tools = create_agent_state_tool({}).tools()
 
     psyche = _invoke(
-        tools["psyche_create"],
+        tools["create_psyche"],
         {"name": "direct", "body": "Prefer direct answers."},
         context,
     )
     prompt = _invoke(
-        tools["prompt_create"],
+        tools["create_prompt"],
         {"name": "summarize", "body": "Summarize: {{input}}"},
         context,
     )
@@ -236,10 +236,10 @@ def test_agent_state_tool_rejects_non_agent_home(tmp_path: Path) -> None:
     context = ToolContext(
         run_id="run-1",
         home=tmp_path / "alice",
-        room=tmp_path / "alice" / ".runtime" / "tools" / "agent_state",
+        room=tmp_path / "alice" / ".runtime" / "tools" / "_me",
         wd=tmp_path / "alice",
     )
-    tool = create_agent_state_tool({}).tools()["task_list"]
+    tool = create_agent_state_tool({}).tools()["list_tasks"]
 
     with pytest.raises(Exception, match="requires an agent home"):
         _invoke(tool, {}, context)

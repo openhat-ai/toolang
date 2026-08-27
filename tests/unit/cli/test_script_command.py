@@ -59,7 +59,7 @@ def test_script_binds_options_arguments_and_primary_input(
             "--allow",
             "models=openai/*",
             "--allow",
-            "tools=filesystem/*,shell/*",
+            "tools=fs/*,shell/*",
             "--allow",
             "caps=skill/reviewer,service/github",
             "--limit",
@@ -90,7 +90,7 @@ def test_script_binds_options_arguments_and_primary_input(
     assert captured["allow_options"] == (
         "models=openai/*,deepseek/*",
         "models=openai/*",
-        "tools=filesystem/*,shell/*",
+        "tools=fs/*,shell/*",
         "caps=skill/reviewer,service/github",
     )
     assert "verbosity" not in captured

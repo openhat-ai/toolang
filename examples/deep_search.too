@@ -11,7 +11,7 @@ agic expand_queries(_: Part[]) -> Text[]:
 ## Search the web for one query and return a compact evidence bundle.
 agic search_web(_: Part[]):
   recall = none
-  tools = web_search/*
+  tools = web/*
 
   Query:
   {{ _ }}

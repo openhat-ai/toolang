@@ -195,21 +195,21 @@ def test_tool_step_summary_round_trips_and_accepts_legacy_given() -> None:
         step=StepPath.parse("run_root.1"),
         kind="tool",
         given=ToolStepGiven(
-            plugin="filesystem",
+            plugin="fs",
             call=ToolCall(
                 "tool-1",
                 "call-1",
-                "filesystem__read_text",
+                "fs__read",
                 {"path": "README.md"},
             ),
-            summary="calling filesystem__read_text README.md",
+            summary="calling fs__read README.md",
         ),
     )
     end = StepEnd(
         step=begin.step,
         kind="tool",
         status="succeeded",
-        noted=ToolStepNoted(summary="called filesystem__read_text README.md"),
+        noted=ToolStepNoted(summary="called fs__read README.md"),
     )
 
     assert run_event_from_data(run_event_to_data(begin)) == begin

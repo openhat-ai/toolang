@@ -4,10 +4,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+import pytest
+
+from toolang.base.errors import ToolangError
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import AgentTool, Toolset
 from toolang.base.types.model import ModelCatalogSnapshot, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult
+from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.plugin.models.loading import load_model_adapters, load_model_catalogs
 from toolang.plugin.toolsets.registry import ToolRef
@@ -17,17 +21,73 @@ from toolang.plugin.loading import (
     list_plugin_names,
     load_plugin_factory,
 )
-from toolang.plugin.toolsets.loading import load_tools, load_toolsets
+from toolang.plugin.toolsets.loading import (
+    load_tools,
+    load_toolsets,
+    validate_tool_selectors,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeDistribution:
+    metadata: Mapping[str, str]
 
 
 class _FakeEntryPoint:
-    def __init__(self, name: str, target, *, value: str | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        target,
+        *,
+        value: str | None = None,
+        distribution: str | None = None,
+    ) -> None:
         self.name = name
         self._target = target
         self.value = value
+        self.dist = (
+            _FakeDistribution({"Name": distribution})
+            if distribution is not None
+            else None
+        )
 
     def load(self):
         return self._target
+
+
+@dataclass(frozen=True, slots=True)
+class _TestTool(AgentTool):
+    name: str
+
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(name=self.name, description="Test tool.")
+
+    async def invoke(
+        self,
+        arguments: Mapping[str, Any],
+        context: ToolContext,
+    ) -> dict[str, Any]:
+        del arguments, context
+        return {}
+
+
+@dataclass(frozen=True, slots=True)
+class _TestToolset(Toolset):
+    name: str
+    key: str
+    leaf_name: str
+    description: str | None = None
+
+    def tools(self) -> Mapping[str, AgentTool]:
+        return {self.key: _TestTool(self.leaf_name)}
+
+
+def _test_toolset_factory(toolset_name: str, key: str, leaf_name: str):
+    def create_toolset(config: Mapping[str, Any]) -> Toolset:
+        del config
+        return _TestToolset(toolset_name, key, leaf_name)
+
+    return create_toolset
 
 
 def _patch_tool_entry_points(monkeypatch) -> None:
@@ -49,13 +109,13 @@ def _patch_tool_entry_points(monkeypatch) -> None:
     from toolang.base.examples.tools import create_working_tree_toolset
 
     entries = [
-        _FakeEntryPoint("agent_state", create_agent_state_tool),
+        _FakeEntryPoint("_me", create_agent_state_tool, distribution="toolang"),
         _FakeEntryPoint("echo", create_echo_toolset),
-        _FakeEntryPoint("filesystem", create_filesystem_tool),
+        _FakeEntryPoint("fs", create_filesystem_tool, distribution="toolang"),
         _FakeEntryPoint("math_add", create_math_add_toolset),
-        _FakeEntryPoint("service_use", create_service_use_tool),
-        _FakeEntryPoint("shell", create_shell_tool),
-        _FakeEntryPoint("web_search", create_web_search_tool),
+        _FakeEntryPoint("service", create_service_use_tool, distribution="toolang"),
+        _FakeEntryPoint("shell", create_shell_tool, distribution="toolang"),
+        _FakeEntryPoint("web", create_web_search_tool, distribution="toolang"),
         _FakeEntryPoint("working_tree", create_working_tree_toolset),
     ]
     monkeypatch.setattr(
@@ -68,13 +128,13 @@ def test_toolsets_load_from_entry_points(monkeypatch) -> None:
     _patch_tool_entry_points(monkeypatch)
 
     assert list_plugin_names(group="toolang.toolset") == [
-        "agent_state",
+        "_me",
         "echo",
-        "filesystem",
+        "fs",
         "math_add",
-        "service_use",
+        "service",
         "shell",
-        "web_search",
+        "web",
         "working_tree",
     ]
 
@@ -90,9 +150,15 @@ def test_plugin_infos_include_source(monkeypatch) -> None:
             "echo", create_echo_toolset, value="demo.tools:create_echo_toolset"
         ),
         _FakeEntryPoint(
-            "filesystem",
+            "fs",
             create_filesystem_tool,
             value="toolang.plugin.toolsets.filesystem:create_toolset",
+            distribution="toolang",
+        ),
+        _FakeEntryPoint(
+            "spoof",
+            create_echo_toolset,
+            value="toolang.external:create_toolset",
         ),
     ]
     monkeypatch.setattr(
@@ -102,7 +168,8 @@ def test_plugin_infos_include_source(monkeypatch) -> None:
 
     assert list_plugin_infos(group="toolang.toolset") == [
         PluginInfo(name="echo", source="external"),
-        PluginInfo(name="filesystem", source="built-in"),
+        PluginInfo(name="fs", source="built-in"),
+        PluginInfo(name="spoof", source="external"),
     ]
 
 
@@ -119,25 +186,92 @@ def test_load_tools_uses_encoded_model_names(monkeypatch) -> None:
 
     tools = load_tools()
 
-    assert "shell__execute" in tools
-    assert "web_search__search" in tools
-    assert "agent_state__task_create" in tools
-    assert "agent_state__chore_create" in tools
-    assert "agent_state__skill_create" in tools
-    assert "agent_state__service_create" in tools
-    assert "service_use__bridge_start" in tools
-    assert "service_use__init" in tools
-    assert "service_use__auth_start" in tools
-    assert "service_use__tool_call" in tools
+    expected = {
+        "fs__list",
+        "fs__read",
+        "fs__write",
+        "fs__append",
+        "fs__glob",
+        "fs__stat",
+        "fs__mkdir",
+        "fs__remove",
+        "web__search",
+        "shell__execute",
+        "service__start_bridge",
+        "service__stop_bridge",
+        "service__init",
+        "service__start_auth",
+        "service__complete_auth",
+        "service__list_tools",
+        "service__call_tool",
+        "service__list_resources",
+        "service__list_resource_templates",
+        "service__read_resource",
+        "service__list_prompts",
+        "service__get_prompt",
+        "_me__list_tasks",
+        "_me__get_task",
+        "_me__create_task",
+        "_me__update_task",
+        "_me__list_chores",
+        "_me__get_chore",
+        "_me__create_chore",
+        "_me__update_chore",
+        "_me__list_psyches",
+        "_me__get_psyche",
+        "_me__create_psyche",
+        "_me__update_psyche",
+        "_me__delete_psyche",
+        "_me__list_skills",
+        "_me__get_skill",
+        "_me__create_skill",
+        "_me__update_skill",
+        "_me__delete_skill",
+        "_me__list_services",
+        "_me__get_service",
+        "_me__create_service",
+        "_me__update_service",
+        "_me__delete_service",
+        "_me__list_prompts",
+        "_me__get_prompt",
+        "_me__create_prompt",
+        "_me__update_prompt",
+        "_me__delete_prompt",
+    }
+
+    assert expected <= tools.keys()
+    assert tools["service__start_bridge"].definition().name == "service__start_bridge"
+    assert tools["service__init"].definition().name == "service__init"
+    assert tools["service__start_auth"].definition().name == "service__start_auth"
+    assert tools["service__call_tool"].definition().name == "service__call_tool"
     assert (
-        tools["service_use__bridge_start"].definition().name
-        == "service_use__bridge_start"
+        not {
+            "fs__read_text",
+            "fs__write_text",
+            "fs__append_text",
+        }
+        & tools.keys()
     )
-    assert tools["service_use__init"].definition().name == "service_use__init"
-    assert (
-        tools["service_use__auth_start"].definition().name == "service_use__auth_start"
+    assert not any(
+        name.startswith(
+            ("filesystem__", "web_search__", "service_use__", "agent_state__")
+        )
+        for name in tools
     )
-    assert tools["service_use__tool_call"].definition().name == "service_use__tool_call"
+
+
+def test_canonical_tool_selectors_include_internal_namespace(monkeypatch) -> None:
+    _patch_tool_entry_points(monkeypatch)
+    tools = load_tools()
+
+    selected = load_tools(selectors=("fs/read", "service/call_tool", "_me/*"))
+
+    assert "fs__read" in selected
+    assert "service__call_tool" in selected
+    assert "_me__create_task" in selected
+    validate_tool_selectors(tools, ("fs/*", "service/call_tool", "_me/*"))
+    with pytest.raises(ValueError, match="tool selector matched no tools"):
+        validate_tool_selectors(tools, ("filesystem/*",))
 
 
 def test_load_tools_accepts_namespaced_toolset_keys(monkeypatch) -> None:
@@ -179,6 +313,169 @@ def test_load_tools_accepts_namespaced_toolset_keys(monkeypatch) -> None:
     assert getattr(tools["issues__search"], "ref") == ToolRef(
         plugin="tracker", namespace="issues", name="search"
     )
+
+
+def test_toolang_distribution_can_register_an_internal_namespace(monkeypatch) -> None:
+    entry = _FakeEntryPoint(
+        "_me",
+        _test_toolset_factory("_me", "create_task", "create_task"),
+        distribution="toolang",
+    )
+    monkeypatch.setattr(
+        "toolang.plugin.loading.entry_points",
+        lambda *, group: [entry] if group == "toolang.toolset" else [],
+    )
+
+    tools = load_tools()
+
+    assert tuple(tools) == ("_me__create_task",)
+    assert getattr(tools["_me__create_task"], "ref") == ToolRef(
+        plugin="_me", namespace="_me", name="create_task"
+    )
+
+
+@pytest.mark.parametrize("namespace", ["_me", "_too", "_hat", "_private"])
+def test_external_toolset_cannot_register_internal_namespace(
+    monkeypatch,
+    namespace: str,
+) -> None:
+    entry = _FakeEntryPoint(
+        "tracker",
+        _test_toolset_factory("tracker", f"{namespace}/run", "run"),
+    )
+    monkeypatch.setattr(
+        "toolang.plugin.loading.entry_points",
+        lambda *, group: [entry] if group == "toolang.toolset" else [],
+    )
+
+    with pytest.raises(ToolangError, match="cannot register internal namespace"):
+        load_tools()
+
+
+def test_toolang_module_target_does_not_grant_internal_authority(monkeypatch) -> None:
+    entry = _FakeEntryPoint(
+        "_me",
+        _test_toolset_factory("_me", "create_task", "create_task"),
+        value="toolang.external:create_toolset",
+    )
+    monkeypatch.setattr(
+        "toolang.plugin.loading.entry_points",
+        lambda *, group: [entry] if group == "toolang.toolset" else [],
+    )
+
+    with pytest.raises(ToolangError, match="toolset plugin name"):
+        load_tools()
+
+
+def test_external_internal_entry_point_cannot_hide_behind_public_name(
+    monkeypatch,
+) -> None:
+    entry = _FakeEntryPoint(
+        "_me",
+        _test_toolset_factory("tracker", "run", "run"),
+    )
+    monkeypatch.setattr(
+        "toolang.plugin.loading.entry_points",
+        lambda *, group: [entry] if group == "toolang.toolset" else [],
+    )
+
+    with pytest.raises(ToolangError, match="toolset plugin name"):
+        load_tools()
+
+
+@pytest.mark.parametrize(
+    "plugin_name",
+    [
+        "",
+        "_private",
+        "tool1",
+        "tool-name",
+        "tool.name",
+        "tool__name",
+        "tool/name",
+        " tool",
+        "tool ",
+        "tool name",
+        "工具",
+    ],
+)
+def test_external_toolset_rejects_invalid_effective_plugin_name(
+    monkeypatch,
+    plugin_name: str,
+) -> None:
+    entry = _FakeEntryPoint(
+        plugin_name,
+        _test_toolset_factory(plugin_name, "run", "run"),
+    )
+    monkeypatch.setattr(
+        "toolang.plugin.loading.entry_points",
+        lambda *, group: [entry] if group == "toolang.toolset" else [],
+    )
+
+    with pytest.raises(ToolangError, match="toolset plugin name"):
+        load_tools()
+
+
+@pytest.mark.parametrize(
+    "namespace",
+    [
+        "",
+        "tools1",
+        "tool-name",
+        "tool.name",
+        "tool__name",
+        "tool/name",
+        " tools",
+        "tools ",
+        "tool name",
+        "工具",
+    ],
+)
+def test_external_toolset_rejects_invalid_public_namespace(
+    monkeypatch,
+    namespace: str,
+) -> None:
+    entry = _FakeEntryPoint(
+        "tracker",
+        _test_toolset_factory("tracker", f"{namespace}/run", "run"),
+    )
+    monkeypatch.setattr(
+        "toolang.plugin.loading.entry_points",
+        lambda *, group: [entry] if group == "toolang.toolset" else [],
+    )
+
+    with pytest.raises(ToolangError):
+        load_tools()
+
+
+@pytest.mark.parametrize(
+    "leaf_name",
+    [
+        "",
+        "_run",
+        "run1",
+        "run-now",
+        "run.now",
+        "run__now",
+        "run/now",
+        " run",
+        "run ",
+        "run now",
+        "运行",
+    ],
+)
+def test_toolset_rejects_invalid_leaf_name(monkeypatch, leaf_name: str) -> None:
+    entry = _FakeEntryPoint(
+        "tracker",
+        _test_toolset_factory("tracker", leaf_name, leaf_name),
+    )
+    monkeypatch.setattr(
+        "toolang.plugin.loading.entry_points",
+        lambda *, group: [entry] if group == "toolang.toolset" else [],
+    )
+
+    with pytest.raises(ToolangError):
+        load_tools()
 
 
 def test_one_python_package_can_define_multiple_toolang_plugins(monkeypatch) -> None:

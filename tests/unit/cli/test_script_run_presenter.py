@@ -65,11 +65,11 @@ def _model() -> ModelStepGiven:
 
 def _tool() -> ToolStepGiven:
     return ToolStepGiven(
-        plugin="web_search",
+        plugin="web",
         call=ToolCall(
             tool_call_id="call_1",
             call_id="call_1",
-            name="web_search.search",
+            name="web.search",
             input={},
         ),
     )
@@ -221,8 +221,8 @@ def test_script_tool_call_only_model_step_clears_live_without_scrollback(
                     (
                         ToolCallPart(
                             tool_call_id="call_1",
-                            tool_name="web_search.search",
-                            tool_family="web_search",
+                            tool_name="web.search",
+                            tool_family="web",
                             input={"query": "agent runtimes"},
                         ),
                     ),
@@ -239,7 +239,7 @@ def test_script_tool_call_only_model_step_clears_live_without_scrollback(
     output = stream.getvalue()
 
     assert "requested" not in output
-    assert "web_search.search" not in output
+    assert "web.search" not in output
     if tty:
         assert "\r\x1b[2K" in output
     else:
@@ -288,8 +288,8 @@ def test_tool_output_uses_one_unmarked_continuation() -> None:
                     (
                         ToolResultPart(
                             tool_call_id="call_1",
-                            tool_name="web_search.search",
-                            tool_family="web_search",
+                            tool_name="web.search",
+                            tool_family="web",
                             output={"results": [{}, {}, {}]},
                         ),
                     ),
@@ -302,7 +302,7 @@ def test_tool_output_uses_one_unmarked_continuation() -> None:
     )
 
     assert [line.strip() for line in output.splitlines()][1:6] == [
-        "• executed web_search.search",
+        "• executed web.search",
         "",
         "",
         '{"results":[{},{},{}]}',
@@ -395,7 +395,7 @@ def test_step_error_and_ownerless_run_error_use_bullet_rows() -> None:
     )
 
     assert [line.strip() for line in step_error.splitlines()][1:6] == [
-        "• failed web_search.search",
+        "• failed web.search",
         "",
         "",
         "provider returned status 429",

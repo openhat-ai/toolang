@@ -18,14 +18,14 @@ filter        := key ":" value | shorthand
 Repeated CLI flags append to the same selector list. For example:
 
 ```bash
-too run alice --allow "tools=shell/*,filesystem/read" \
-  --allow "tools=service_use/*"
+too run alice --allow "tools=shell/*,fs/read" \
+  --allow "tools=service/*"
 ```
 
 is equivalent to one selector list:
 
 ```text
-shell/*,filesystem/read,service_use/*
+shell/*,fs/read,service/*
 ```
 
 The top-level selector list is a union. Inside one selector, the pattern and
@@ -184,9 +184,14 @@ Examples:
 
 ```text
 shell/*
-filesystem/read,filesystem/write
+fs/read,fs/write
+service/call_tool,_me/*
 *[plugin:core]
 ```
+
+Internal namespaces use the same selector path and resource policy as public
+toolsets. For example, `_me/*` selects every current-agent authoring tool; an
+allow list that omits it does not grant those tools implicitly.
 
 
 ### Caps
@@ -386,7 +391,7 @@ Examples:
 ```toolang
 agic review(input):
   models = openai/gpt-5[provider:openrouter]
-  tools = shell/*, filesystem/read
+  tools = shell/*, fs/read
   skills = reviewer[here], patch[authored]
   services -= github[configured]
 

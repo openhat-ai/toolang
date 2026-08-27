@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed.
+Approved for implementation on 2026-08-27.
 
 ## Goal
 
@@ -109,9 +109,9 @@ Additional rules apply:
 - `__` is introduced only by the model adapter boundary through the shared
   encoder.
 
-An external toolset's effective plugin name also uses `public-name`. A
-Toolang-owned internal toolset may use `internal-namespace` as both its plugin
-name and default namespace.
+An external toolset's entry-point name and effective plugin name also use
+`public-name`. A Toolang-owned internal toolset may use `internal-namespace` as
+its entry-point name, plugin name, and default namespace.
 
 The provider-facing encoding remains unchanged:
 

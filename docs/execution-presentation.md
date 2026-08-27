@@ -215,7 +215,7 @@ lane. Lane rows are truncated rather than wrapped:
 ```text
 • running · 4/18 succeeded · 3 active
   0 | #4 | • Thinking...
-  1 | #5 | • executing web_search.search
+  1 | #5 | • executing web.search
   2 | #6 | • Source summary prepared
 ```
 

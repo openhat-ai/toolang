@@ -49,13 +49,13 @@ def test_render_text_template_supports_sequence_indexes() -> None:
     rendered = render_text_template(
         "{{family}} {{name}} {{args.0}} {{args.1}}",
         {
-            "family": "filesystem",
-            "name": "read_text",
+            "family": "fs",
+            "name": "read",
             "args": ("README.md", "utf-8"),
         },
     )
 
-    assert rendered == "filesystem read_text README.md utf-8"
+    assert rendered == "fs read README.md utf-8"
 
 
 @pytest.mark.parametrize(

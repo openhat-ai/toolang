@@ -64,11 +64,11 @@ too = "toolang.cli.toolang.main:main"
 caps = "toolang.cli.caps.main:main"
 
 [project.entry-points."toolang.toolset"]
-filesystem = "toolang.plugin.toolsets.filesystem:create_toolset"
-service_use = "toolang.plugin.toolsets.service_use:create_toolset"
+fs = "toolang.plugin.toolsets.filesystem:create_toolset"
+service = "toolang.plugin.toolsets.service_use:create_toolset"
 shell = "toolang.plugin.toolsets.shell:create_toolset"
-web_search = "toolang.plugin.toolsets.web_search:create_toolset"
-agent_state = "toolang.execution.tools.agent_state:create_toolset"
+web = "toolang.plugin.toolsets.web_search:create_toolset"
+_me = "toolang.execution.tools.agent_state:create_toolset"
 
 [project.entry-points."toolang.model_adapter"]
 chat_completions = "toolang.plugin.models.adapters.chat_completions:create_model_adapter"

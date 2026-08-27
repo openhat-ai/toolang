@@ -12,25 +12,27 @@ so blocking tool implementations do not stall the run event loop.
 
 Current built-in tools are:
 
-- `filesystem`
+- `fs`
 - `shell`
-- `web_search`
-- `service_use`
-- `agent_state`
+- `web`
+- `service`
+- `_me`
 
 
 ## Filesystem
 
-`filesystem` is scoped to the current agent home.
+`fs` is scoped to the current agent home.
 
 It provides structured file operations such as:
 
-- read
-- write
-- append
-- list
-- stat
-- mkdir
+- `read`
+- `write`
+- `append`
+- `list`
+- `glob`
+- `stat`
+- `mkdir`
+- `remove`
 
 
 ## Shell
@@ -46,12 +48,12 @@ It returns structured:
 
 ## Web Search
 
-`web_search` returns structured search results for model use.
+`web` returns structured search results for model use.
 
 
-## Service Use
+## Service
 
-`service_use` exposes visible service caps as callable tools.
+`service` exposes visible service caps as callable tools.
 
 It is the bridge between:
 
@@ -61,11 +63,16 @@ It is the bridge between:
 Service calls return structured input and output and are recorded as normal
 tool-call steps.
 
+Its leaf tools are `start_bridge`, `stop_bridge`, `init`, `start_auth`,
+`complete_auth`, `list_tools`, `call_tool`, `list_resources`,
+`list_resource_templates`, `read_resource`, `list_prompts`, and `get_prompt`.
 
-## Agent State
 
-`agent_state` exposes structured operations for the current agent's authored
-state.
+## Current Agent
+
+`_me` exposes structured operations for the current agent's authored data. The
+leading underscore marks it as a Toolang-owned internal action namespace; it
+still follows normal resource selection and can be denied by policy.
 
 It provides model-facing tools to:
 
@@ -77,6 +84,9 @@ It provides model-facing tools to:
 - list, read, create, update, and delete skills
 - list, read, create, update, and delete services
 - list, read, create, update, and delete prompts
+
+Leaf names use verb-first forms such as `list_tasks`, `get_task`,
+`create_skill`, and `delete_prompt`.
 
 Task and chore writes reuse the same Markdown document models, id allocation,
 RRULE validation, and archive placement rules as the CLI and jobs API.

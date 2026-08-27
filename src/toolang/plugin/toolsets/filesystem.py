@@ -22,7 +22,7 @@ class FilesystemToolset:
     """Filesystem tools scoped to one agent home."""
 
     config: dict[str, Any]
-    name: str = "filesystem"
+    name: str = "fs"
     description: str | None = "Inspect and edit files inside the current agent home."
     _max_chars: int = field(init=False, repr=False)
     _tools: dict[str, AgentTool] = field(init=False, repr=False)
@@ -65,7 +65,7 @@ class FilesystemToolset:
             }
 
         @tool(
-            name="read_text",
+            name="read",
             description="Read one text file inside the current agent home.",
         )
         def read_text(
@@ -83,7 +83,7 @@ class FilesystemToolset:
             }
 
         @tool(
-            name="write_text",
+            name="write",
             description="Write one text file inside the current agent home.",
         )
         def write_text(
@@ -96,7 +96,7 @@ class FilesystemToolset:
             return {"path": str(resolved), "bytes_written": len(text.encode("utf-8"))}
 
         @tool(
-            name="append_text",
+            name="append",
             description="Append text to one file inside the current agent home.",
         )
         def append_text(
@@ -164,9 +164,9 @@ class FilesystemToolset:
 
         return {
             "list": create_function_tool(list_dir),
-            "read_text": create_function_tool(read_text),
-            "write_text": create_function_tool(write_text),
-            "append_text": create_function_tool(append_text),
+            "read": create_function_tool(read_text),
+            "write": create_function_tool(write_text),
+            "append": create_function_tool(append_text),
             "glob": create_function_tool(glob),
             "stat": create_function_tool(stat),
             "mkdir": create_function_tool(mkdir),

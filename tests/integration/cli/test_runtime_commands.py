@@ -232,7 +232,7 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
             "--allow",
             "models=openai/gpt-5[openai],o3",
             "--allow",
-            "tools=filesystem,shell",
+            "tools=fs,shell",
             "--allow",
             "caps=skill/reviewer",
             "--default",
@@ -258,7 +258,7 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
     assert resolved["dev"] == dev
     assert resolved["ceiling_overrides"] == {
         "models": ("openai/gpt-5[openai]", "o3"),
-        "tools": ("filesystem", "shell"),
+        "tools": ("fs", "shell"),
         "caps": ("skill/reviewer",),
     }
     assert resolved["binding_overrides"] == {"model": "openai/gpt-5"}

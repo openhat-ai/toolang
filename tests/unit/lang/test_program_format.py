@@ -589,7 +589,7 @@ agic review( _,focus ? : Text)->Result:
         Review {{ _ }}.
 
 flow pipeline( _:Part[])->Result:
-    tools+= shell,filesystem
+    tools+= shell,fs
     let drafts= scatter   2 review
     repeat 2:
         run review
@@ -634,7 +634,7 @@ agic review(_: Part[], focus?: Text) -> Result:
     Review {{ _ }}.
 
 flow pipeline(_: Part[]) -> Result:
-  tools += shell, filesystem
+  tools += shell, fs
   let drafts = scatter 2 review
   repeat 2:
     run review

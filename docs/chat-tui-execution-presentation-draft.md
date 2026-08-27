@@ -307,13 +307,13 @@ responses from accumulating in the conversation.
 A directly visible tool call uses one mutable activity line:
 
 ```text
-· executing web_search.search…
+· executing web.search…
 ```
 
 Its `StepEnd` replaces the live activity with one stable result:
 
 ```text
-· web_search.search: 5 results
+· web.search: 5 results
 ```
 
 When an exit code or duration materially helps explain the result, it appears
@@ -323,7 +323,7 @@ default.
 A failed tool uses the same shape with a diagnostic marker:
 
 ```text
-! web_search.search: provider returned status 429
+! web.search: provider returned status 429
   run_abc.1 · 820ms · exit 429
 ```
 
@@ -403,7 +403,7 @@ per active lane, not one row per item:
   Run agic summarize in parallel (12 items, 3 lanes)
   · 3 active
   0 │ item 8 | thinking…
-  1 │ item 5 | executing web_search.search…
+  1 │ item 5 | executing web.search…
   2 │ item 7 | starting…
 ```
 
