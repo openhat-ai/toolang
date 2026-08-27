@@ -2,286 +2,175 @@
 
 ## Work Type
 
-Feature definition. This plan supersedes the retry and rerun semantics in
-earlier execution plans. It does not implement the feature.
-
-## Verified Current Behavior
-
-- `retry` appends a control to an existing root run, ejects a step suffix,
-  clears the run result, and changes the terminal run back to pending.
-- `rerun` creates a new root run and ejects the complete source run tree.
-- A retried Flow resumes from the remaining visible steps. An agic retry ejects
-  its complete step history and starts the agic again.
-- Limit restoration scans previously executed model steps.
-- `RunClient` exposes `run`, `cancel`, and `steer`; CLI and HTTP retry/rerun
-  paths call `RunExecutor` directly.
+Feature definition. This plan replaces the current retry and rerun semantics.
 
 ## Goal
 
-Make retry and rerun immutable run derivations. Each operation starts a new
-root run, leaves the source records unchanged and visible, and uses explicit
-lineage to reuse retry history without copying Step records.
+Make retry and rerun start new root runs. Retry destructively trims its source
+to reuse a committed prefix; rerun starts from the source invocation without
+changing it.
 
 ## Success Criteria
 
-- `run`, `retry`, and `rerun` each accept one new root run with a new run ID and
-  an index-zero preparation control of the matching kind.
-- Retry and rerun never mutate or eject their source run, steps, or controls.
-- Retry reconstructs a valid source prefix and executes the selected boundary
-  and suffix under the new run ID without copying prefix Step records.
-- Durable Step records always represent work actually executed by their owning
-  run, so usage and cost need no clone exclusion rule.
-- Repeated retries follow explicit lineage without rewriting existing Step
-  paths or creating clone provenance.
-- `RunClient` and `RunExecutor` expose the same run-control vocabulary without
-  a retry/rerun-specific client.
-- Existing `eject` and `ejected_by` vocabulary remains unchanged for thread
-  operations and future cleanup.
-- Default verification and the acceptance tests in this plan pass.
+- `run`, `retry`, and `rerun` each create a new root run with a new ID and an
+  index-zero control of the matching kind.
+- Retry deletes the invalid source Step suffix without backup or clone records.
+- Rerun leaves its source unchanged.
+- Existing `eject` and `ejected_by` vocabulary remains unchanged.
+- `RunExecutor` and the single `RunClient` expose `run`, `retry`, `rerun`,
+  `cancel`, and `steer`.
+- Default verification passes.
 
 ## Scope
 
 In scope:
 
-- new run identity for retry and rerun;
-- source and retry-anchor lineage in preparation controls;
-- source-prefix reconstruction for Flow and agic retries;
-- attempt, retry-lineage, and thread usage/cost semantics;
-- local executor, transport-neutral client, HTTP, CLI, projections, and tests;
-- one intentional execution-store schema break without migration.
+- destructive retry trimming and prefix reconstruction;
+- rerun lineage;
+- local executor, client, HTTP, CLI, history, and tests;
+- an execution-store schema break without migration.
 
 Out of scope:
 
-- changing thread `create`, `fork`, or `rewind` behavior;
-- renaming or removing `eject`, `ejected_by`, or their schema columns;
-- copying run or Step records, adding a clone field, or rewriting source paths;
-- exposing public `create`, `clone`, or `trim` storage commands;
-- changing run, cancel, steer, client connection, or executor lifecycle
-  semantics established by the run-control vocabulary change;
-- custom model-catalog configuration or sandbox-selection policy.
+- thread `create`, `fork`, and `rewind` changes;
+- ejection renaming or cleanup;
+- Step backups, clones, tombstones, or accounting snapshots;
+- public storage primitives;
+- sandbox-selection policy changes.
 
-## Durable Model
+## Run And Control Identity
 
-### New Run Identity
+Every operation accepts a new root run. Its preparation control is permanently
+`ControlRef(run.id, 0)` with kind `run`, `retry`, or `rerun`.
 
-`RunExecutor.run`, `retry`, and `rerun` all return a handle for a newly accepted
-root run. Unless a caller supplies an ID for deterministic testing, the
-executor allocates one for every operation.
-
-Every root run permanently points to `ControlRef(run.id, 0)`. Its preparation
-control kind is `run`, `retry`, or `rerun`; later steer and cancel controls do
-not replace that reference.
-
-The derivation payloads use the same lineage names:
+Derivation payloads use:
 
 ```text
 RerunControlPayload(..., source: RunId)
 RetryControlPayload(..., source: RunId, anchor: StepPath | None)
 ```
 
-`source` identifies the terminal root run from which the invocation is
-derived. A retry `anchor` identifies the first source-lineage Step that will be
-executed again after boundary normalization. It remains a source Step path and
-is `None` when there is no reusable Step boundary.
+The source must be a visible terminal root run physically owned by the target
+thread. Fork-inherited projected runs are deferred to the thread design.
 
-The source may be any visible terminal root run physically owned by the target
-thread. Multiple retry or rerun targets may derive from the same source; their
-controls preserve the relationship without mutating the source. Deriving from
-a fork-inherited projected run is deferred to the thread design. State,
-sandbox, runnable, and request identity validation complete before acceptance.
+## Retry
 
-### Source Records Remain Unchanged
+Retry performs one atomic store operation:
 
-Retry and rerun do not write `ejected_by` on the source root or any source child
-run or Step. They do not change source control, status, output, error, or
-timestamps. Both source and derived roots remain visible in chronological
-thread history and directly inspectable by ID.
+1. Validate the source, recorded state, runnable, sandbox, request ID, and
+   optional anchor.
+2. Normalize the anchor to a safe root-run boundary.
+3. Delete the normalized anchor and following Steps physically owned by the
+   source root run. No backup, clone, or tombstone is written.
+4. Recompute the source output from its last retained primary Step, or clear it
+   when no retained output exists. Other source Run fields and controls remain.
+5. Insert the target root and its retry control.
 
-The existing ejection fields and projections remain intact. Thread rewind and
-other current owners continue to use them. Renaming ejection to archival or
-removing Step ejection storage is a later cleanup, not part of this change.
+The transaction rolls back completely on failure. The source remains visible
+and is not ejected, but its Step history is permanently shortened.
 
-Acceptance inserts only the new root and its index-zero control in one
-`BEGIN IMMEDIATE` transaction. Concurrent derivations with distinct target and
-request IDs may all succeed. Validation or uniqueness failure leaves the store
-unchanged. A later execution failure leaves the source and failed derived run
-visible.
+The target links to the retained source prefix instead of copying it. Retained
+Steps keep source paths; newly executed Steps use the target run ID and start at
+the normalized logical index. Inputs may point directly to retained source
+values. The target event stream contains only target execution events.
 
-### Linked Retry Prefix
+Child runs whose owning source Step was deleted remain directly inspectable,
+but are excluded from the retained prefix. Retry deletes only Steps physically
+owned by the source root; it does not delete Run or control records.
 
-Retry does not copy source Steps into the target run. The retry control links
-the target to the source and normalized anchor. The executor builds a trimmed
-source-prefix view in memory:
+A source may produce only one retry target. This prevents a later trim from
+deleting values already referenced by an accepted target. Repeated retry follows
+the chain by retrying the newest target.
 
-```text
-source effective history before anchor + target Steps from anchor onward
-```
+Boundary normalization is:
 
-Trimming is logical. No source row is changed or deleted. The target owns only
-Steps that it actually executes. Source-prefix paths keep their source run IDs;
-new suffix paths use the target run ID and the corresponding logical indices.
-For example, a retry may read `old.0` and `old.1`, then execute `new.2`.
+- Flow: the owning top-level statement;
+- agic: the beginning of the selected model/tool turn.
 
-New Step inputs point directly to the source values they consume. Pointer
-resolution already crosses run boundaries, so the store does not need a clone
-field, copied output, or rewritten prefix path. Run inspection lists only the
-Steps physically owned by that run; its preparation control provides the
-lineage needed to inspect reused history.
+Only successful work before the boundary is reusable. The executor reconstructs
+Flow locals or provider-valid agic messages from the retained prefix.
 
-Repeated retry follows retry controls recursively. If run `b` reused a prefix
-from `a`, retrying `b` may reuse the effective prefix from `a` plus committed
-Steps physically owned by `b`. Lineage traversal rejects cycles, missing
-sources, invalid anchors, and state or runnable mismatches.
+## Rerun
 
-No Step event is emitted for a reused source Step. The target stream contains
-only its own `RunBegin`, newly executed Step events, and `RunEnd`.
+Rerun creates a new root from the source invocation and requested fresh state,
+model, limits, resources, and sandbox. It records the source relationship,
+executes from index zero, and does not modify or reuse source Steps. A source
+may produce multiple reruns.
 
-## Retry Boundaries
+## Accounting
 
-Retry inherits the source invocation and recorded state. It may apply the
-existing supported model, resource-ceiling, and limit overrides, but must use
-the source state revision, runnable identity, and canonical sandbox. A mismatch
-is rejected before the target run is accepted.
+Accounting sums the Step records that still exist. Deleted retry suffixes no
+longer contribute usage or cost to run, lineage, or thread totals. Retry limits
+are restored from the retained prefix only.
 
-The existing explicit/default anchor selection rules remain. The selected Step
-is normalized to a safe executable boundary:
+This inaccuracy is intentional and accepted. The implementation must not add
+accounting snapshots, tombstones, or compensating records for deleted Steps.
 
-- For a Flow, normalize a nested or child-run Step to its owning top-level Flow
-  statement. Reuse every complete preceding statement and its successful
-  descendants through their original records. Execute the selected statement
-  and suffix under the target run.
-- For an agic, normalize to the beginning of the model/tool turn containing the
-  selected Step. A reusable turn starts with a succeeded model Step and has a
-  provider-valid, completely paired set of succeeded tool results before the
-  next model Step. Reuse only complete preceding turns, then execute the
-  selected turn and suffix under the target run.
+## Executor And Client
 
-The executor reconstructs Flow locals or agic messages from the linked prefix
-and starts target path allocation at the normalized logical index. A source
-with no reusable prefix starts the target from its original input. Running,
-failed, and canceled source Steps are never part of the reused prefix.
+`RunExecutor` keeps lifecycle `start`/`stop` and operations `run`, `retry`,
+`rerun`, `cancel`, and `steer`. Retry and rerun return a `LocalRunHandle` for the
+new target ID.
 
-## Rerun Semantics
+Add async `retry` and `rerun` to the single `RunClient`. Local and HTTP clients
+return the existing `RunHandle`; no operation-specific client is added.
+`disconnect()` does not cancel a run, and executor `stop()` remains separate.
 
-Rerun inherits the source invocation but prepares it against the requested
-fresh state, model, limits, resources, and sandbox. It records `source` for
-lineage and presentation but reuses no Step history and executes from index
-zero. The source remains visible and unchanged.
+CLI and API responses show source and target IDs. Progress binds to the target.
+AgentServer-backed commands use the remote client; embedded execution uses the
+local client.
 
-## Usage And Cost
+## Schema
 
-Every stored Step was actually executed once. Accounting therefore has no
-clone marker or clone-exclusion branch:
+Advance the execution schema from version 30 to 31 and reject older stores
+without mutation or migration. Change retry/rerun payload lineage only; retain
+existing run and Step ejection fields.
 
-- **attempt usage** sums Steps physically owned by one root run tree;
-- **retry-lineage usage** follows retry sources and sums each physical Step
-  once, including work later trimmed from the effective prefix;
-- **thread usage** sums physical Steps owned by the thread once, including all
-  visible retry and rerun attempts.
-
-Retry enforces token, model-call, tool-call, and cost limits against
-retry-lineage consumption, so repeated retries cannot reset a consumptive
-budget. Wall-time limits apply independently to each attempt. Rerun records a
-source relationship but starts a fresh limit lineage.
-
-Run summaries use attempt usage by default. Thread totals reflect actual spend
-across all attempts. A lineage projection may expose cumulative retry usage,
-but effective-prefix reconstruction must never be used as a cost aggregate.
-
-## Executor And Client Boundary
-
-`RunExecutor` retains lifecycle `start`/`stop` and run-control operations
-`run`, `retry`, `rerun`, `cancel`, and `steer`. Retry and rerun return a
-`LocalRunHandle` for the new run ID.
-
-Extend the single `RunClient` contract with async `retry` and `rerun` methods
-that accept transport-neutral request values and return the existing
-`RunHandle`. Local and HTTP implementations use the same acceptance and
-streaming protocol as `run`; no `RunRestartClient` or operation-specific client
-is added.
-
-Canceling an accepted run remains `client.cancel(handle.run_id)`.
-`disconnect()` releases client resources without canceling runs. Executor
-`stop()` closes executor-owned work. These rules do not depend on whether the
-client currently has a run.
-
-CLI and API responses identify both source and target. Progress tracers bind to
-the target run ID. Retry/rerun commands use `RunClient` when an AgentServer owns
-execution and the local adapter otherwise. Sandbox matching remains the
-previously defined runtime-selection concern.
-
-## Schema And Compatibility
-
-Advance the execution schema from version 30 to 31 and reject every older
-version without mutation. No compatibility aliases or migration are provided.
-
-The schema break changes only retry/rerun preparation payload lineage and the
-semantics that retry targets a new run. Existing run and Step ejection columns
-remain unchanged. Store validation rejects missing or cyclic sources, anchors
-outside the effective source lineage, incompatible retry snapshots, and a
-source outside the target thread's physical history.
+Validation rejects missing sources, invalid anchors, retrying a source that
+already has a retry target, incompatible retry snapshots, and sources outside
+the target thread's physical history.
 
 ## Implementation Phases
 
-1. Implement payloads, atomic derived-run acceptance, linked-prefix
-   reconstruction, accounting, and local executor behavior. Update local CLI,
-   existing API operations, projections, and tests atomically.
-2. Add retry/rerun requests to `RunClient`, implement local and remote streaming
-   operations, and route AgentServer-backed commands through the client.
-3. Define thread fork/rewind composition separately. Revisit ejection naming
-   and storage only after its thread semantics are approved.
-
-Each implementation phase is an independently reviewable stacked pull request.
+1. Implement schema, atomic retry trimming, prefix reconstruction, rerun, local
+   executor behavior, local CLI/API behavior, and tests.
+2. Add retry/rerun to local and remote `RunClient` implementations and route
+   AgentServer-backed commands through them.
+3. Define thread fork/rewind separately, including any later ejection cleanup.
 
 ## Implementation Touchpoints
 
-- `src/toolang/execution/records.py`, `schemas.py`, `store.py`, `history.py`,
-  `client.py`, and `remote.py`;
-- `src/toolang/execution/executor/`, especially Flow resume, agic preparation,
-  logical path allocation, and limit restoration;
-- `src/toolang/api/schemas.py` and `routers/runs.py`;
-- retry/rerun CLI orchestration and progress presentation;
-- execution store, executor, API, remote-client, CLI, history, and accounting
-  tests;
-- execution architecture, record, API, and CLI documentation.
+- `src/toolang/execution/records.py`, `schemas.py`, `store.py`, and `history.py`;
+- `src/toolang/execution/executor/`, `client.py`, and `remote.py`;
+- `src/toolang/api/routers/runs.py` and API schemas;
+- retry/rerun CLI orchestration, progress, and execution tests.
 
 ## Acceptance Tests
 
-1. Retry and rerun allocate a new target ID while source records remain visible
-   and byte-for-byte unchanged.
-2. Concurrent derivations with distinct identities can share one source;
-   duplicate target or request identities reject without partial records.
-3. Flow retry reconstructs the linked prefix and executes the anchor and suffix
-   with target paths, without copying or ejecting source Steps.
-4. Agic retry reconstructs provider-valid complete turns and re-executes the
-   selected turn without duplicating prior calls.
-5. Repeated retry follows mixed source/target paths without rewriting them and
-   rejects missing, cyclic, or incompatible lineage.
-6. Retry rejects changed state, runnable, or sandbox before acceptance; rerun
-   can use fresh values and reuses no source Steps.
-7. Direct run inspection reports only physically owned Steps, while lineage
-   inspection and pointer resolution can follow reused source records.
-8. Attempt, retry-lineage, and thread accounting count every physical Step once;
-   retry cannot reset consumptive limits and rerun starts fresh limits.
-9. Existing thread ejection behavior and `ejected_by` projections remain
-   unchanged, and schema 30 is rejected without mutation.
-10. Local and remote `RunClient.retry`/`rerun` return handles for the target,
-    stream only target events, and preserve disconnect/cancel behavior.
-11. CLI and HTTP output distinguish source and target IDs and attach progress
-    to the target.
-12. `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`,
-    and `uv run pytest` pass.
+1. Retry creates a new target, deletes the source suffix atomically, recomputes
+   source output, and does not write ejection or clone records.
+2. The target reconstructs Flow and agic prefixes and executes from the
+   normalized target path.
+3. A second retry from the same source is rejected; retrying the first target
+   succeeds.
+4. Deleted Steps disappear from accounting and limit restoration without a
+   replacement record.
+5. Rerun creates an independent target and leaves the source unchanged.
+6. Existing thread ejection behavior remains unchanged, and schema 30 is
+   rejected without mutation.
+7. Local and remote clients return target handles, stream target events, and
+   preserve cancel/disconnect behavior.
+8. CLI and HTTP output distinguish source and target IDs.
+9. `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`,
+   and `uv run pytest` pass.
 
 ## Risks
 
-- Agic reconstruction must reject a partial tool turn before sending malformed
-  provider history.
-- Recursive retry lineage can cycle or reference a missing Step unless control
-  decoding and prefix construction validate every hop.
-- Target Step indices may begin above zero. All path allocation and presentation
-  code must treat sparse, cross-run effective history as intentional.
-- Concurrent derivations require atomic target/control insertion and global
-  request-ID uniqueness.
+- Retry permanently loses deleted Step details and accounting.
+- Source Run metadata may describe an earlier terminal attempt whose detailed
+  suffix no longer exists.
+- Sparse target paths and detached child runs must not enter the retained
+  prefix accidentally.
 
 ## Open Questions
 
