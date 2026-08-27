@@ -106,13 +106,14 @@ State revision = sha256(layers.json bytes)
 Revision values are lowercase 64-character SHA-256 hex strings. State does not
 persist a Toolang version or observation timestamp as identity metadata.
 
-Loading requires the document bytes to be canonical and the revision directory
-name to equal their digest. The file manifest must exactly match the recursive
-contents of `files/`; missing, additional, size-mismatched, hash-mismatched, or
-symbolic-link content invalidates the layer. Capability, module, and resolution
-paths must reference manifest entries. Loading a revision never reads current
-authored source, falls back to `current`, reparses a program source file, or
-contacts a remote provider.
+Normal loading trusts a revision to be complete and reads its persisted
+documents directly. It does not hash document or materialized file content.
+Explicit validation separately requires canonical document bytes, matching
+revision digests, an exact recursive `files/` manifest, and valid capability,
+module, and resolution references. No normal runtime path implicitly requests
+that validation. Loading a revision never reads current authored source, falls
+back to `current`, reparses a program source file, or contacts a remote
+provider.
 
 ## Program Modules
 
@@ -147,32 +148,35 @@ When rebuilding a layer, a writer:
 2. captures authored files and parses config and modules;
 3. resolves and materializes configured and referenced capabilities;
 4. verifies source metadata did not change during preparation;
-5. writes and validates a complete temporary revision directory;
+5. writes a complete temporary revision directory;
 6. atomically installs the immutable revision; and
 7. atomically publishes the layer `current` pointer.
 
-After both layers are valid, preparation persists and validates `layers.json`
-before atomically publishing `agent/current`. Root, home, and agent revisions
-remain on disk so execution records can be resolved later. Invalid existing
-revision directories are quarantined rather than overwritten in place.
+After both layers are prepared, preparation persists `layers.json` before
+atomically publishing `agent/current`. Re-publishing the same revision is a
+no-op. Root, home, and agent revisions remain on disk so execution records can
+be resolved later. Readers assume these immutable revision directories are
+complete; integrity checks happen only through explicit validation.
 
 ## Watching and Access
 
 `StateWatcher` owns the process-local current State. It exposes operations to
-read the current State, load an exact revision, refresh authored candidates,
-and inspect diagnostics for the latest rejected candidate.
+read the current State, load an exact revision, request another candidate
+check, and inspect diagnostics for the latest rejected candidate.
 
 At startup it first attempts to load `agent/current` as the last-known-good
 State. A valid changed candidate is fully persisted before it replaces that
 State. An invalid candidate records structured diagnostics and keeps the prior
 revision available; startup fails only when neither a valid candidate nor a
-valid new-format published State exists.
+loadable new-format published State exists.
 
-The watcher observes relevant authored source and the root, home, and agent
-`current` pointers. Its periodic metadata check closes the race between initial
-preparation and filesystem watch registration without performing remote
-polling. This process-owned boundary is also the State access boundary for
-future internal `_me` tools.
+The watcher permits one filesystem monitor and one serialized check/publication
+path. Filesystem events and periodic metadata checks submit work to that path.
+`refresh()` submits one additional check and waits for that specific check to
+finish; concurrent calls do not run checks in parallel or merely join an older
+check. An internal `current` publication whose revision is already current does
+not produce another candidate check. This process-owned boundary is also the
+State access boundary for future internal `_me` tools.
 
 ## Execution Records
 

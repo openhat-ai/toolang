@@ -18,6 +18,8 @@ from toolang.state.cache import (
     load_root_layer,
     persist_agent_revision,
     publish_layer_current,
+    validate_agent_revision,
+    validate_layer_revision,
     write_layer,
 )
 from toolang.state.source import scan_source
@@ -106,6 +108,7 @@ def test_agent_state_revision_round_trips_exact_layers(tmp_path: Path) -> None:
     )
     layers = layout.agent_state / "revs" / revision / "layers.json"
     assert sha256(layers.read_bytes()).hexdigest() == revision
+    validate_agent_revision(layout, revision)
 
 
 def test_layer_publish_and_load_use_revision_strings(tmp_path: Path) -> None:
@@ -146,7 +149,7 @@ def test_home_layer_loads_program_without_reparsing_source(
 
 
 @pytest.mark.parametrize("damage", ["missing", "extra", "modified"])
-def test_layer_manifest_rejects_file_set_and_content_damage(
+def test_explicit_layer_validation_rejects_file_set_and_content_damage(
     tmp_path: Path,
     damage: str,
 ) -> None:
@@ -161,19 +164,39 @@ def test_layer_manifest_rejects_file_set_and_content_damage(
     else:
         program.write_text("changed", encoding="utf-8")
 
+    loaded = load_home_layer(layout, revision)
+
+    assert loaded.revision == revision
     with pytest.raises(ValueError):
-        load_home_layer(layout, revision)
+        validate_layer_revision(layout, "home", revision)
 
 
-def test_layer_loader_rejects_noncanonical_json(tmp_path: Path) -> None:
+def test_layer_loader_trusts_noncanonical_json_until_explicit_validation(
+    tmp_path: Path,
+) -> None:
     layout = _layout(tmp_path)
     revision = _write_root(layout)
     layer = layer_revision_dir(layout, "root", revision) / "layer.json"
     document = json.loads(layer.read_text(encoding="utf-8"))
     layer.write_text(json.dumps(document, indent=2), encoding="utf-8")
 
+    assert load_root_layer(layout, revision).revision == revision
     with pytest.raises(ValueError, match="not canonical JSON"):
-        load_root_layer(layout, revision)
+        validate_layer_revision(layout, "root", revision)
+
+
+def test_republishing_current_revision_does_not_rewrite_pointer(
+    tmp_path: Path,
+) -> None:
+    layout = _layout(tmp_path)
+    revision = _write_root(layout)
+    publish_layer_current(layout, "root", revision)
+    current = layout.root_state / "current"
+    inode = current.stat().st_ino
+
+    publish_layer_current(layout, "root", revision)
+
+    assert current.stat().st_ino == inode
 
 
 def test_layer_rejects_nonportable_file_path(tmp_path: Path) -> None:

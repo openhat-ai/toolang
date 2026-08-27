@@ -505,58 +505,6 @@ def test_declared_ref_change_refreshes_remote_materialization(
     assert second.resolutions[0].declared_ref == "acme/rewrite-v2"
 
 
-def test_prepare_repairs_invalid_current_generation_document(tmp_path: Path) -> None:
-    toolang_root = tmp_path / "toolang"
-    home = toolang_root / "agents" / "alice"
-    home.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
-    first = prepare_agent_state(
-        _layout(toolang_root),
-    )
-    revision_dir = layer_revision_dir(
-        _layout(toolang_root),
-        "home",
-        first.home_revision,
-    )
-    layer_path = revision_dir / "layer.json"
-    layer_path.write_text("{invalid", encoding="utf-8")
-
-    repaired = prepare_agent_state(
-        _layout(toolang_root),
-    )
-
-    assert repaired.home_revision == first.home_revision
-    assert json.loads(layer_path.read_text(encoding="utf-8"))["scope"] == "home"
-    quarantined = revision_dir.parent.glob(f".{first.home_revision}.invalid-*")
-    assert len(tuple(quarantined)) == 1
-
-
-def test_prepare_repairs_missing_state_cap_file(tmp_path: Path) -> None:
-    toolang_root = tmp_path / "toolang"
-    home = toolang_root / "agents" / "alice"
-    prompt = home / "prompts" / "review.md"
-    prompt.parent.mkdir(parents=True)
-    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
-    prompt.write_text(
-        "---\ndescription: Review\n---\nReview carefully.\n",
-        encoding="utf-8",
-    )
-    first = prepare_agent_state(
-        _layout(toolang_root),
-    )
-    state_cap = Path(first.caps[0].path)
-    state_cap.unlink()
-
-    repaired = prepare_agent_state(
-        _layout(toolang_root),
-    )
-
-    assert repaired.home_revision == first.home_revision
-    assert Path(repaired.caps[0].path).read_text(encoding="utf-8") == (
-        "---\ndescription: Review\n---\nReview carefully.\n"
-    )
-
-
 def test_prepare_discovers_independent_flow_module_exports(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"

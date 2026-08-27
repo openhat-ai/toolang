@@ -43,7 +43,6 @@ from .cache import (
     load_agent_revisions,
     load_current_revision,
     load_home_layer,
-    load_layer_source,
     load_root_layer,
     layer_lock,
     persist_agent_revision,
@@ -249,9 +248,10 @@ def _matching_root(
         return None
     try:
         revision = load_current_revision(layout, "root")
-        if load_layer_source(layout, "root", revision) != source:
+        layer = load_root_layer(layout, revision)
+        if layer.source != source:
             return None
-        return load_root_layer(layout, revision)
+        return layer
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
 
@@ -266,9 +266,10 @@ def _matching_home(
         return None
     try:
         revision = load_current_revision(layout, "home")
-        if load_layer_source(layout, "home", revision) != source:
+        layer = load_home_layer(layout, revision)
+        if layer.source != source:
             return None
-        return load_home_layer(layout, revision)
+        return layer
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
 

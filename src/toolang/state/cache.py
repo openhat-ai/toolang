@@ -33,7 +33,6 @@ _LAYER_FILE = "layer.json"
 _LAYERS_FILE = "layers.json"
 _FILES_DIR = "files"
 _REVS_DIR = "revs"
-_INVALID_REVISION_ERRORS = (OSError, KeyError, TypeError, ValueError)
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,9 +126,9 @@ def load_layer_source(
     scope: LayerScope,
     revision: str,
 ) -> SourceTree:
-    """Load the source tree from a validated State layer."""
+    """Load the source tree recorded by one trusted State layer."""
 
-    document, _ = _load_validated_layer(layout, scope, revision)
+    document, _ = _load_layer(layout, scope, revision)
     return _source_tree(document)
 
 
@@ -137,10 +136,10 @@ def load_root_layer(
     layout: AgentLayout,
     revision: str | None = None,
 ) -> RootLayer:
-    """Load and validate one root State layer."""
+    """Load one trusted root State layer without integrity validation."""
 
     effective = revision or load_current_revision(layout, "root")
-    document, revision_dir = _load_validated_layer(layout, "root", effective)
+    document, revision_dir = _load_layer(layout, "root", effective)
     return RootLayer(
         revision=effective,
         revision_dir=revision_dir,
@@ -155,10 +154,10 @@ def load_home_layer(
     layout: AgentLayout,
     revision: str | None = None,
 ) -> HomeLayer:
-    """Load and validate one home State layer."""
+    """Load one trusted home State layer without integrity validation."""
 
     effective = revision or load_current_revision(layout, "home")
-    document, revision_dir = _load_validated_layer(layout, "home", effective)
+    document, revision_dir = _load_layer(layout, "home", effective)
     modules = _modules(document, revision_dir=revision_dir)
     agent_module = next(module for module in modules if module.kind == "agent")
     return HomeLayer(
@@ -202,12 +201,7 @@ def write_layer(
     revs = target.parent
     revs.mkdir(parents=True, exist_ok=True)
     if target.exists() or target.is_symlink():
-        try:
-            _load_validated_layer(layout, scope, revision)
-        except _INVALID_REVISION_ERRORS:
-            _quarantine_revision(target)
-        else:
-            return revision
+        return revision
     staging = revs / f".{revision}.tmp-{uuid4().hex}"
     try:
         staging.mkdir()
@@ -218,7 +212,6 @@ def write_layer(
             destination = files_dir / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(content)
-        _validate_layer_dir(staging, scope=scope, revision=revision)
         os.replace(staging, target)
     finally:
         if staging.exists():
@@ -233,7 +226,6 @@ def publish_layer_current(
 ) -> None:
     """Atomically publish one already persisted State layer."""
 
-    _load_validated_layer(layout, scope, revision)
     _write_revision(layer_current_path(layout, scope), revision)
 
 
@@ -246,8 +238,6 @@ def persist_agent_revision(
     """Persist and publish one exact root/home Agent State composition."""
 
     with _file_lock(agent_lock_path(layout)):
-        load_root_layer(layout, root_revision)
-        load_home_layer(layout, home_revision)
         document = agent_layers_document(
             root_revision=root_revision,
             home_revision=home_revision,
@@ -258,18 +248,12 @@ def persist_agent_revision(
         revs = target.parent
         revs.mkdir(parents=True, exist_ok=True)
         if target.exists() or target.is_symlink():
-            try:
-                load_agent_revisions(layout, revision)
-            except _INVALID_REVISION_ERRORS:
-                _quarantine_revision(target)
-            else:
-                _write_revision(agent_current_path(layout), revision)
-                return revision
+            _write_revision(agent_current_path(layout), revision)
+            return revision
         staging = revs / f".{revision}.tmp-{uuid4().hex}"
         try:
             staging.mkdir()
             (staging / _LAYERS_FILE).write_bytes(encoded)
-            _validate_agent_dir(staging, revision=revision)
             os.replace(staging, target)
         finally:
             if staging.exists():
@@ -282,16 +266,47 @@ def load_agent_revisions(
     layout: AgentLayout,
     revision: str | None = None,
 ) -> tuple[str, str, str]:
-    """Load a validated Agent State revision and its layer revisions."""
+    """Load one trusted Agent State composition without integrity validation."""
 
     effective = revision or load_current_agent_revision(layout)
     revision_dir = agent_revision_dir(layout, effective)
-    document = _validate_agent_dir(revision_dir, revision=effective)
+    document = _load_object(revision_dir / _LAYERS_FILE, label="layers.json")
     root_revision = _revision_field(document, "root_revision")
     home_revision = _revision_field(document, "home_revision")
-    load_root_layer(layout, root_revision)
-    load_home_layer(layout, home_revision)
     return effective, root_revision, home_revision
+
+
+def validate_layer_revision(
+    layout: AgentLayout,
+    scope: LayerScope,
+    revision: str,
+) -> None:
+    """Explicitly validate one layer document and its complete file manifest."""
+
+    _validate_layer_dir(
+        layer_revision_dir(layout, scope, revision),
+        scope=scope,
+        revision=revision,
+    )
+
+
+def validate_agent_revision(layout: AgentLayout, revision: str) -> None:
+    """Explicitly validate one Agent State revision and both referenced layers."""
+
+    document = _validate_agent_dir(
+        agent_revision_dir(layout, revision),
+        revision=revision,
+    )
+    validate_layer_revision(
+        layout,
+        "root",
+        _revision_field(document, "root_revision"),
+    )
+    validate_layer_revision(
+        layout,
+        "home",
+        _revision_field(document, "home_revision"),
+    )
 
 
 @contextmanager
@@ -374,15 +389,13 @@ def _layer_document(
     }
 
 
-def _load_validated_layer(
+def _load_layer(
     layout: AgentLayout,
     scope: LayerScope,
     revision: str,
 ) -> tuple[dict[str, object], Path]:
     revision_dir = layer_revision_dir(layout, scope, revision)
-    return _validate_layer_dir(
-        revision_dir, scope=scope, revision=revision
-    ), revision_dir
+    return _load_object(revision_dir / _LAYER_FILE, label="layer.json"), revision_dir
 
 
 def _validate_layer_dir(
@@ -637,8 +650,6 @@ def _state_cap(raw: object, *, revision_dir: Path) -> StateCap:
 def _materialize_cap(cap: StateCap, *, revision_dir: Path) -> StateCap:
     relative = _layer_file_path(cap.path)
     path = revision_dir / relative
-    if not path.is_file():
-        raise FileNotFoundError(f"State cap file not found: {path}")
     return replace(cap, path=str(path))
 
 
@@ -684,6 +695,13 @@ def _canonical_object(encoded: bytes, *, label: str) -> dict[str, object]:
     if canonical_json(document) != encoded:
         raise ValueError(f"{label} is not canonical JSON")
     return document
+
+
+def _load_object(path: Path, *, label: str) -> dict[str, object]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise TypeError(f"{label} must contain an object")
+    return {str(key): item for key, item in value.items()}
 
 
 def _normalized_files(files: Mapping[str, bytes]) -> dict[str, bytes]:
@@ -742,6 +760,11 @@ def _read_revision(path: Path) -> str:
 
 def _write_revision(path: Path, revision: str) -> None:
     _require_revision(revision)
+    try:
+        if _read_revision(path) == revision:
+            return
+    except (FileNotFoundError, TypeError, ValueError):
+        pass
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp-{uuid4().hex}")
     temporary.write_text(f"{revision}\n", encoding="utf-8")
@@ -773,8 +796,3 @@ def _resolution_key(item: CapResolution) -> tuple[str, str, str, str, str]:
         item.definition,
         item.materialized,
     )
-
-
-def _quarantine_revision(path: Path) -> None:
-    quarantine = path.with_name(f".{path.name}.invalid-{uuid4().hex}")
-    os.replace(path, quarantine)

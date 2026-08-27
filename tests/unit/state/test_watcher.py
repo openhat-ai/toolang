@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -67,16 +68,178 @@ def test_timeout_check_skips_full_prepare_when_metadata_is_current(
 
         monkeypatch.setattr(state_watcher, "awatch", one_timeout)
 
-        async def fail_refresh(*, force: bool = False):
-            del force
+        def fail_prepare(*_args, **_kwargs):
             raise AssertionError("unchanged timeout must not load full Agent State")
 
-        monkeypatch.setattr(watcher, "refresh", fail_refresh)
+        monkeypatch.setattr(state_watcher, "prepare_agent_state", fail_prepare)
 
         observed = [
             state async for state in watcher.updates(stop_signal=asyncio.Event())
         ]
         assert observed == []
+
+    asyncio.run(run())
+
+
+def test_current_publication_does_not_retrigger_candidate_preparation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def run() -> None:
+        toolang_root = tmp_path / "toolang"
+        home = toolang_root / "agents" / "alice"
+        home.mkdir(parents=True)
+        program = home / "agent.too"
+        program.write_text("agent alice\n", encoding="utf-8")
+        layout = AgentLayout.resident(toolang_root, "alice")
+        watcher = state_watcher.StateWatcher(layout)
+        await watcher.refresh()
+        program.write_text(
+            "agent alice\n\nagic chat:\n  Changed.\n",
+            encoding="utf-8",
+        )
+        calls = 0
+        prepare = state_watcher.prepare_agent_state
+
+        def counted_prepare(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return prepare(*args, **kwargs)
+
+        async def source_then_current(*_args, **_kwargs):
+            yield {(state_watcher.Change.modified, str(program))}
+            yield {
+                (
+                    state_watcher.Change.modified,
+                    str(state_watcher.agent_current_path(layout)),
+                )
+            }
+
+        monkeypatch.setattr(state_watcher, "prepare_agent_state", counted_prepare)
+        monkeypatch.setattr(state_watcher, "awatch", source_then_current)
+
+        observed = [
+            state async for state in watcher.updates(stop_signal=asyncio.Event())
+        ]
+
+        assert len(observed) == 1
+        assert calls == 1
+
+    asyncio.run(run())
+
+
+def test_concurrent_refresh_requests_each_run_one_serialized_check(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def run() -> None:
+        toolang_root = tmp_path / "toolang"
+        home = toolang_root / "agents" / "alice"
+        home.mkdir(parents=True)
+        (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+        layout = AgentLayout.resident(toolang_root, "alice")
+        watcher = state_watcher.StateWatcher(layout)
+        initial = await watcher.refresh()
+        calls = 0
+
+        def counted_prepare(*_args, **_kwargs):
+            nonlocal calls
+            calls += 1
+            return initial
+
+        monkeypatch.setattr(state_watcher, "prepare_agent_state", counted_prepare)
+
+        first, second = await asyncio.gather(watcher.refresh(), watcher.refresh())
+
+        assert calls == 2
+        assert first is initial
+        assert second is initial
+
+    asyncio.run(run())
+
+
+def test_canceling_refresh_does_not_cancel_its_owned_check(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def run() -> None:
+        toolang_root = tmp_path / "toolang"
+        home = toolang_root / "agents" / "alice"
+        home.mkdir(parents=True)
+        program = home / "agent.too"
+        program.write_text("agent alice\n", encoding="utf-8")
+        watcher = state_watcher.StateWatcher(
+            AgentLayout.resident(toolang_root, "alice")
+        )
+        initial = await watcher.refresh()
+        program.write_text(
+            "agent alice\n\nagic chat:\n  Changed.\n",
+            encoding="utf-8",
+        )
+        started = threading.Event()
+        release = threading.Event()
+        prepare = state_watcher.prepare_agent_state
+
+        def delayed_prepare(*args, **kwargs):
+            started.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test did not release State preparation")
+            return prepare(*args, **kwargs)
+
+        monkeypatch.setattr(state_watcher, "prepare_agent_state", delayed_prepare)
+        refresh = asyncio.create_task(watcher.refresh())
+        assert await asyncio.to_thread(started.wait, 5)
+        check = watcher._check_task
+        assert check is not None
+
+        refresh.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await refresh
+        release.set()
+        await check
+
+        assert watcher.current().revision != initial.revision
+
+    asyncio.run(run())
+
+
+def test_only_one_filesystem_monitor_can_run(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def run() -> None:
+        toolang_root = tmp_path / "toolang"
+        home = toolang_root / "agents" / "alice"
+        home.mkdir(parents=True)
+        (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+        watcher = state_watcher.StateWatcher(
+            AgentLayout.resident(toolang_root, "alice")
+        )
+        await watcher.refresh()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def waiting_watch(*_args, **_kwargs):
+            started.set()
+            await release.wait()
+            if False:  # pragma: no cover - keeps this an async generator
+                yield set()
+
+        monkeypatch.setattr(state_watcher, "awatch", waiting_watch)
+
+        async def consume() -> list[object]:
+            return [
+                state async for state in watcher.updates(stop_signal=asyncio.Event())
+            ]
+
+        first = asyncio.create_task(consume())
+        await started.wait()
+        second = watcher.updates(stop_signal=asyncio.Event())
+        with pytest.raises(RuntimeError, match="already monitoring"):
+            await anext(second)
+        release.set()
+
+        assert await first == []
 
     asyncio.run(run())
 

@@ -744,11 +744,10 @@ async def _restart_run(
         limit_overrides=resolve_limit_overrides(environ, limit_options or ()),
     ).refresh()
     state_watcher = StateWatcher(layout)
-    current_state = await state_watcher.refresh()
     state = (
         _recorded_state(state_watcher, resources, source)
         if kind == "retry"
-        else current_state
+        else await state_watcher.refresh()
     )
     executor = RunExecutor(resources.store, resources.ids)
     run_id = source if kind == "retry" else resources.ids.issue_run()

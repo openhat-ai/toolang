@@ -518,11 +518,14 @@ agic reply(_: Part[]) -> Part[]:
         async def refresh(self) -> AgentSetup:
             return self.setup
 
+    state_refreshes: list[None] = []
+
     class _StateSnapshot:
         def __init__(self, _layout: AgentLayout) -> None:
             pass
 
         async def refresh(self):
+            state_refreshes.append(None)
             return harness.state
 
         def load(self, revision: str):
@@ -567,6 +570,7 @@ agic reply(_: Part[]) -> Part[]:
             retried.error if retried is not None else None,
             harness.adapter.pending_responses,
         )
+        assert state_refreshes == []
         rerun = _invoke(
             harness.setup.layout.root,
             "alice",
@@ -578,6 +582,7 @@ agic reply(_: Part[]) -> Part[]:
         )
 
         assert rerun.exit_code == 0, rerun.stderr
+        assert state_refreshes == [None]
         rerun_records = [
             run
             for run in harness.store.list_runs(thread_id=source.thread)

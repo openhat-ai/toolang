@@ -8,8 +8,8 @@ Approved.
 
 Make Agent State a durable, content-addressed runtime value. Every State
 revision recorded by execution must resolve to one exact root/home layer pair,
-and each layer must verify all files required to load it without reading
-current authored source or contacting remote providers.
+and each layer must support explicit verification of all persisted files
+without reading current authored source or contacting remote providers.
 
 The change also removes overloaded State vocabulary and reserves `cont` for
 model-provider continuation data.
@@ -23,8 +23,10 @@ model-provider continuation data.
   State revision stored by execution records.
 - Loading a revision never consults authored source, remote caps, or a
   `current` fallback.
-- A watcher publishes only fully persisted and validated Agent State and keeps
+- A watcher publishes only fully persisted Agent State and keeps
   the last valid revision when a changed candidate is invalid.
+- Normal revision loading trusts persisted content; integrity validation is an
+  explicit operation with no implicit runtime callers.
 - Cap forms, serialized literals, and materialized directory names are exactly
   `authored`, `inline`, `configured`, and `referenced`.
 - Program module names are stable, single-segment, and portable across Windows,
@@ -167,9 +169,11 @@ schema and required document shape define the format.
 - a sorted manifest of every file below `files/`, including relative path,
   byte size, and SHA-256.
 
-The file manifest must exactly equal the recursive file set: missing,
-additional, size-mismatched, or hash-mismatched files invalidate the layer.
-Every cap, module, and resolution path must point to one manifest entry.
+Explicit validation requires the file manifest to exactly equal the recursive
+file set: missing, additional, size-mismatched, or hash-mismatched files
+invalidate the layer. Every cap, module, and resolution path must point to one
+manifest entry. Normal loading assumes those persisted invariants hold and does
+not hash the manifest.
 
 The four cap-form literals are used directly as directory segments. There is
 no mapping to `file`, `wired`, `ref`, `cited`, or `with`. `declared_ref` stores
@@ -206,22 +210,31 @@ the layer document.
 ```
 
 The surrounding revision directory name is the SHA-256 of these exact bytes.
-Loading first validates `layers.json`, then loads and validates the referenced
-root and home layer revisions, and finally composes config, caps, modules, and
-the public runnable catalog.
+Loading reads `layers.json`, loads the referenced root and home layer revisions,
+and composes config, caps, modules, and the public runnable catalog without an
+implicit integrity pass. Explicit validation checks `layers.json` and both
+referenced layers transitively.
 
 The Agent State store atomically writes a complete revision before publishing
-`agent/current`. A record can therefore reference only a State revision whose
-transitive content is already durable.
+`agent/current`, and publishing an already-current revision is a no-op. A
+record can therefore reference only a State revision whose transitive content
+is already durable.
 
 ## State Watcher
 
 On startup, the watcher attempts to load the new-format `agent/current` as its
-last-known-good State, then prepares the current authored candidate. A valid
+last-known-good State, then checks the current authored candidate. A valid
 candidate is persisted and atomically published before replacing the in-memory
 State. An invalid candidate records structured diagnostics and retains the
 previous State. Startup fails when neither the current candidate nor a prior
-new-format Agent State is valid.
+new-format Agent State is loadable.
+
+The watcher owns one filesystem monitor and one serialized check/publication
+path. File events and timeout checks use that path. `refresh()` requests one
+additional check and waits for that request's check to finish; concurrent
+refreshes are serialized and each receives a later completed check. Internal
+`current` publication does not retrigger preparation when the published
+revision and checked source metadata are unchanged.
 
 The watcher exposes process-owned `current`, `load`, `refresh`, and
 `diagnostics` operations. Future `_me` tools will use this boundary, while
@@ -250,16 +263,18 @@ bumped and migrates only model-step `given` and `noted` continuation keys from
 
 ## Acceptance Tests
 
-- Canonical JSON is stable and rejects non-canonical bytes.
+- Canonical JSON is stable and explicit validation rejects non-canonical bytes.
 - Layer and Agent State directory names equal their document hashes.
-- File manifests reject missing, additional, size-mismatched, and modified
-  files.
+- Explicit validation rejects missing, additional, size-mismatched, and
+  modified files; ordinary revision loading does not hash them.
 - Root/home/agent revisions round-trip without authored or network access.
 - Cap form literals equal their materialized directory segments.
 - Module names and case-fold collision checks are portable.
 - Concurrent writers publish one complete immutable revision.
 - Invalid candidates retain the published Agent State and diagnostics clear
   after repair.
+- The watcher has one monitor and one serialized check path; `refresh()` waits
+  for its own check and self-publication does not loop.
 - New root runs see a newly published State while active run trees retain their
   bound revision.
 - Execution rejects malformed State revision strings.
