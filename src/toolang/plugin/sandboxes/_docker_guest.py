@@ -12,7 +12,7 @@ from toolang.common.files import atomic_write_text
 
 
 DOCKER_TOOLANG_COMPATIBILITY_ERROR = (
-    "Installed Toolang does not provide the required `too serve` entrypoint."
+    "The installed Toolang package cannot start the required AgentServer."
 )
 
 

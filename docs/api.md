@@ -224,8 +224,8 @@ Behavior:
 - `-q` or `--quiet` suppresses prepare and execution progress
 - `--sandbox SELECTOR` selects the execution sandbox for this invocation; an
   already-running compatible AgentServer is attached instead
-- `--dev PATH` supplies a Toolang wheel, or a directory containing wheels, when
-  this command starts a temporary non-host AgentServer
+- `--dev PATH` installs Toolang in a newly started guest from one wheel; a
+  directory selects its newest Toolang wheel recursively
 - `--default model=SELECTOR` supplies the invocation's setup model binding
 - `--limit FIELD=VALUE` overrides one run-limit field; it may be repeated
 - `--allow DOMAIN=SELECTORS` sets model, tool, cap, or cap-kind allow fields and
@@ -403,12 +403,13 @@ or restarting the server. `chat --dev PATH` installs a local Toolang wheel in a
 new temporary non-host runtime. It is rejected for embedded host execution or
 when Chat attaches to an existing AgentServer.
 
-`run`, `start`, and roaming file-inbox runtime accept `--dev PATH` for a
-non-host sandbox. `PATH` is either one Toolang `.whl` file or a directory to
-search recursively for Toolang wheels. Directory selection uses the most
-recent file modification time and breaks equal-time ties by absolute path. The
-selected concrete wheel is staged into Docker and supplies its `too serve`
-command. Build a current wheel and select it with:
+Commands that start a new guest accept `--dev PATH`. This includes `run`,
+`start`, `chat`, script runs, `retry`, `rerun`, and roaming file-inbox runtime.
+`PATH` is either one Toolang `.whl` file or a directory to search recursively
+for Toolang wheels. Directory selection uses the most recent file modification
+time and breaks equal-time ties by absolute path. The selected concrete wheel
+is staged into Docker and supplies its `too serve` command. Build a current
+wheel and select it with:
 
 ```sh
 uv build --wheel
@@ -416,11 +417,12 @@ too alice run --sandbox docker --dev dist
 ```
 
 `--dev` does not treat a directory as a source project and does not rebuild
-after launch. Host runtime already uses the current Toolang environment and
-rejects `--dev`. When the controlling CLI runs from development source, a
-non-host launch without `--dev` warns that Docker will install Toolang from the
-package index instead of the local source. The warning does not block launch or
-query the package index.
+after launch. It applies only while starting a new guest: host execution uses
+the current Toolang installation, and an attached AgentServer has already
+selected its package. When the controlling CLI runs from development source, a
+new guest without `--dev` warns that it will install Toolang from the package
+index instead of the local source. The warning includes the wheel build command
+and does not block launch or query the package index.
 
 Sandbox selection and implementation configuration are separate:
 
@@ -517,11 +519,13 @@ For a source-local roaming agent, Docker overlays linked `agent.too` and
 become broken paths in the container.
 Successful installation suppresses ensurepip chatter, pip's container root-user
 warning, package lists, and uv progress bars; installer failure stderr remains
-available. Before execution, the guest validates that the installed CLI
-provides `too serve`. A package-index version without that entrypoint fails in
-the validation stage with an explicit `uv build --wheel` and `--dev dist`
-remedy. Foreground output reports that diagnostic once through the structured
-startup error; background output also retains it in `agent_log`.
+available. Before execution, the guest checks that the installed CLI can start
+the required AgentServer. Structured startup errors identify whether package
+index or wheel installation failed and recommend a source-appropriate fix. A
+compatibility failure from a development CLI recommends `uv build --wheel` and
+`--dev dist`; a selected wheel instead recommends rebuilding or selecting a
+compatible wheel. Foreground output reports that diagnostic once; background
+output also retains the guest diagnostic in `agent_log`.
 
 Guest stage observation uses a unique mode-`0600`, append-only token file under
 the agent runtime directory. Tokens are a closed vocabulary for install,

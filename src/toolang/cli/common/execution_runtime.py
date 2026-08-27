@@ -13,6 +13,7 @@ from typing import Literal
 
 from toolang.base.errors import ToolangError
 from toolang.common.layout import AgentLayout
+from toolang.common.version import development_source
 from toolang.plugin.models.catalog import MODEL_CATALOG_ENV
 from toolang.up import process as agents
 from toolang.up import sandbox as sandbox_runtime
@@ -27,6 +28,10 @@ from .startup_progress import (
 
 
 ExecutionMode = Literal["embedded", "remote"]
+DEVELOPMENT_WHEEL_HELP = (
+    "Install Toolang in a new guest from a wheel; directories select the newest "
+    "Toolang wheel recursively."
+)
 
 
 class ExecutionRuntimeError(RuntimeError):
@@ -81,8 +86,8 @@ def open_execution_runtime(
     if status is not None and status.status == "running":
         if dev is not None:
             raise ExecutionRuntimeError(
-                f"--dev cannot modify running agent {layout.name}; "
-                "stop it before starting a development runtime"
+                f"--dev only applies when starting a new guest; agent {layout.name} "
+                "is already running. Stop it first or omit --dev."
             )
         yield _attached_runtime(layout, status, requested=sandbox)
         return
@@ -101,8 +106,8 @@ def open_execution_runtime(
     if selected == "host":
         if dev is not None:
             raise ExecutionRuntimeError(
-                "--dev does not apply to the host sandbox; "
-                "it already uses the current Toolang environment"
+                "--dev only applies to guest sandboxes; host uses the current "
+                "Toolang installation."
             )
         try:
             asyncio.run(sandbox_runtime.release_stopped(layout))
@@ -125,6 +130,7 @@ def open_execution_runtime(
         model_catalog=model_catalog,
         base_environ=base_environ,
     )
+    warn_development_package_source(launch)
 
     progress = make_runtime_startup_progress(
         layout.name,
@@ -152,7 +158,8 @@ def open_execution_runtime(
                 progress,
                 exc,
                 log_path=layout.runtime_log,
-                development_hint=dev is None,
+                dev_artifact=launch.dev_artifact,
+                development_build=development_source()[0],
             )
         ) from exc
     progress.finish()
@@ -212,6 +219,35 @@ def sandbox_matches(requested: str, running: str) -> bool:
     if requested_name.strip() != running_name.strip():
         return False
     return not separator or requested.strip() == running.strip()
+
+
+def warn_development_package_source(
+    launch: sandbox_runtime.LaunchSpec,
+) -> None:
+    """Warn when a development CLI starts a guest from the package index."""
+
+    if launch.dev_artifact is not None or launch.sandbox.partition(":")[0] == "host":
+        return
+    detected, source = development_source()
+    if not detected:
+        return
+    sandbox_name = launch.sandbox.partition(":")[0]
+    if source is None:
+        warning = (
+            "Warning: the current Toolang process is a development build, but the "
+            f"new {sandbox_name} guest will install Toolang from the package index."
+        )
+    else:
+        warning = (
+            f"Warning: the new {sandbox_name} guest will install Toolang from the "
+            f"package index, not from {source}."
+        )
+    print(warning, file=sys.stderr)
+    print(
+        "Build the current source with `uv build --wheel`, then run this command "
+        "again with `--dev dist`.",
+        file=sys.stderr,
+    )
 
 
 def _attached_runtime(

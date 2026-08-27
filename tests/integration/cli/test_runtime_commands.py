@@ -14,6 +14,7 @@ from toolang.base.errors import ToolangError
 from toolang.base.types.progress import ProgressEvent, ProgressStatus
 from toolang.base.types.sandbox import SandboxOutput, SandboxRef
 import toolang.cli.toolang.main as cli
+from toolang.cli.common import execution_runtime
 from toolang.cli.toolang.commands import runtime as runtime_commands
 from toolang.common.layout import AgentLayout
 from toolang.up import sandbox as sandbox_runtime
@@ -290,14 +291,21 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
 
 
 def test_runtime_dev_help_describes_wheel_selection() -> None:
-    for command in ("run", "start"):
-        result = runner.invoke(cli.app, [command, "--help"])
+    commands = (
+        ["run", "--help"],
+        ["start", "--help"],
+        ["chat", "alice", "--help"],
+        ["retry", "alice", "--help"],
+        ["rerun", "alice", "--help"],
+    )
+    for command in commands:
+        result = runner.invoke(cli.app, command)
 
         assert result.exit_code == 0
         output = " ".join(strip_ansi(result.stdout).split())
-        assert "Use a Toolang wheel" in output
-        assert "newest wheel found" in output
-        assert "recursively in a directory" in output
+        assert "Install Toolang in a new guest from a wheel" in output
+        assert "directories select the newest Toolang wheel" in output
+        assert "recursively." in output
 
 
 @pytest.mark.parametrize(
@@ -318,17 +326,13 @@ def test_runtime_warns_when_development_source_uses_index_package(
     development: tuple[bool, Path | None],
     warns: bool,
 ) -> None:
-    monkeypatch.setattr(
-        runtime_commands,
-        "development_source",
-        lambda: development,
-    )
+    monkeypatch.setattr(execution_runtime, "development_source", lambda: development)
     startup = cast(
         sandbox_runtime.LaunchSpec,
-        SimpleNamespace(sandbox=sandbox),
+        SimpleNamespace(sandbox=sandbox, dev_artifact=dev),
     )
 
-    runtime_commands._warn_development_sandbox_package(startup, dev=dev)
+    execution_runtime.warn_development_package_source(startup)
 
     stderr = capsys.readouterr().err
     assert ("will install Toolang from the package index" in stderr) is warns
@@ -439,12 +443,16 @@ def test_start_reports_guest_failure_stage_reason_hint_and_log(
     ) -> object:
         for event in (
             _startup_event("install", "Installing Toolang", "running", "package index"),
-            _startup_event("validate", "Validating Toolang", "running"),
             _startup_event(
                 "validate",
-                "Validating Toolang",
+                "Checking Toolang compatibility",
+                "running",
+            ),
+            _startup_event(
+                "validate",
+                "Checking Toolang compatibility",
                 "failed",
-                "Installed Toolang does not provide the required `too serve` entrypoint.",
+                "The installed Toolang package cannot start the required AgentServer.",
             ),
             _startup_event(
                 "ready",
@@ -459,6 +467,7 @@ def test_start_reports_guest_failure_stage_reason_hint_and_log(
     monkeypatch.setattr(sandbox_runtime, "resolve_launch", resolve_launch)
     monkeypatch.setattr(sandbox_runtime, "launch", launch)
     monkeypatch.setattr(runtime_commands, "development_source", lambda: (False, None))
+    monkeypatch.setattr(execution_runtime, "development_source", lambda: (False, None))
 
     result = runner.invoke(
         cli.app,
@@ -470,14 +479,14 @@ def test_start_reports_guest_failure_stage_reason_hint_and_log(
     stderr = strip_ansi(result.stderr)
     normalized = " ".join(stderr.replace("│", " ").split())
     assert "Installing Toolang: package index" in stderr
-    assert "Validating Toolang" in stderr
+    assert "Checking Toolang compatibility" in stderr
     assert "Could not start agent alice in docker" in normalized
-    assert "Stage: Validating Toolang" in normalized
+    assert "Stage: Checking Toolang compatibility" in normalized
     assert (
-        "Reason: Installed Toolang does not provide the required `too serve` "
-        "entrypoint." in normalized
+        "Reason: The Toolang package installed in the guest cannot start the "
+        "required AgentServer." in normalized
     )
-    assert "Hint: Build a wheel" in normalized
+    assert "Fix: Build or select a compatible Toolang wheel" in normalized
     compact = "".join(stderr.replace("│", "").split())
     assert "Log:" in compact
     assert "toolang/agents/alice/.runtime/agent.log" in compact
@@ -504,6 +513,7 @@ def test_start_interruption_during_sandbox_launch_exits_130(
     monkeypatch.setattr(sandbox_runtime, "resolve_launch", resolve_launch)
     monkeypatch.setattr(sandbox_runtime, "launch", launch)
     monkeypatch.setattr(runtime_commands, "development_source", lambda: (False, None))
+    monkeypatch.setattr(execution_runtime, "development_source", lambda: (False, None))
 
     result = runner.invoke(
         cli.app,

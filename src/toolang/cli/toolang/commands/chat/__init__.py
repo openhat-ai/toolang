@@ -7,6 +7,8 @@ from typing import Annotated
 
 import typer
 
+from toolang.cli.common.execution_runtime import DEVELOPMENT_WHEEL_HELP
+
 
 def chat_command(
     ctx: typer.Context,
@@ -28,7 +30,7 @@ def chat_command(
         Path | None,
         typer.Option(
             "--dev",
-            help="Use a Toolang wheel, or the newest wheel found recursively in a directory.",
+            help=DEVELOPMENT_WHEEL_HELP,
         ),
     ] = None,
     allows: Annotated[
