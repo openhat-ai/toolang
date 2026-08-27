@@ -274,8 +274,6 @@ class RunStore:
                         raise ValueError(
                             "rerun source must belong to the target thread"
                         )
-                    if source_record.ejected_by is not None:
-                        raise ValueError(f"rerun source is not visible: {source}")
                     if source_record.status not in {"succeeded", "failed", "canceled"}:
                         raise ValueError(f"rerun source is not terminal: {source}")
                 self._conn.execute(
@@ -521,8 +519,6 @@ class RunStore:
                 if run_row is None:
                     raise ValueError(f"root run not found: {run_id}")
                 run = _run_from_row(run_row)
-                if run.ejected_by is not None:
-                    raise ValueError(f"run is not visible: {run_id}")
                 if run.status not in {"succeeded", "failed", "canceled"}:
                     raise ValueError(f"run is not terminal: {run_id}")
                 preparation_row = self._conn.execute(
@@ -1730,7 +1726,7 @@ class RunStore:
         rows = self._conn.execute(
             f"""
             SELECT rowid, * FROM steps
-            WHERE run IN ({placeholders}) AND ejected_by_target IS NULL
+            WHERE run IN ({placeholders})
             ORDER BY rowid ASC
             """,
             tuple(tree_runs),
@@ -1746,9 +1742,7 @@ class RunStore:
                 None,
             )
             if match is None:
-                raise ValueError(
-                    f"retry anchor is not visible in run {run_id}: {anchor}"
-                )
+                raise ValueError(f"retry anchor not found in run {run_id}: {anchor}")
             candidate = match
         else:
             incomplete = tuple(
@@ -1772,11 +1766,9 @@ class RunStore:
             tree_runs=tree_runs,
             selected=selected,
         )
-        visible = {
-            StepPath.from_local(str(row["run"]), str(row["path"])) for row in rows
-        }
-        if resolved not in visible:
-            raise ValueError(f"retry resume step is not visible: {resolved}")
+        paths = {StepPath.from_local(str(row["run"]), str(row["path"])) for row in rows}
+        if resolved not in paths:
+            raise ValueError(f"retry resume step not found: {resolved}")
         return resolved
 
     def _root_retry_step(
@@ -1824,7 +1816,7 @@ class RunStore:
         rows = self._conn.execute(
             f"""
             SELECT rowid, * FROM steps
-            WHERE run IN ({placeholders}) AND ejected_by_target IS NULL
+            WHERE run IN ({placeholders})
             ORDER BY rowid ASC
             """,
             tuple(tree_runs),
@@ -1914,11 +1906,6 @@ class RunStore:
         if removed_runs:
             removed_placeholders = ", ".join("?" for _ in removed_runs)
             removed_params = tuple(removed_runs)
-            self._conn.execute(
-                f"DELETE FROM controls WHERE scope = 'run' "
-                f"AND target IN ({removed_placeholders})",
-                removed_params,
-            )
             self._conn.execute(
                 f"DELETE FROM steps WHERE run IN ({removed_placeholders})",
                 removed_params,

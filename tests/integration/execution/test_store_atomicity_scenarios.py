@@ -453,6 +453,113 @@ def test_retry_rejects_unknown_or_mismatched_sandbox_without_mutation(
         store.close()
 
 
+def test_retry_preserves_child_controls_and_revision_monotonicity(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        root = project_run_start(
+            store,
+            run_id="run_retry_controls",
+            thread_id="term_retry_controls",
+            origin="chat",
+            input=Message.user("root"),
+            executable_kind="flow",
+        )
+        parent = project_step(
+            store,
+            run_id=root.id,
+            step_index=0,
+            kind="run",
+            status="failed",
+            input=(),
+            output=(),
+            error="temporary failure",
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        child = project_run_start(
+            store,
+            run_id="run_retry_child",
+            thread_id=root.thread,
+            origin="chat",
+            input=Message.user("child"),
+            parent=parent.path,
+        )
+        pending = store.accept_run_control(
+            run_id=child.id,
+            kind="steer",
+            timing="next_step",
+            locals=(Local.typed("Part[]", Message.user("guidance").parts, "_", 0),),
+            request_id="child-steer-request",
+            created_at="2026-01-01T00:00:02Z",
+        )
+        project_run_end(
+            store,
+            run_id=child.id,
+            status="failed",
+            error="temporary failure",
+        )
+        project_run_end(
+            store,
+            run_id=root.id,
+            status="failed",
+            error="temporary failure",
+        )
+        control = store.get_run_control(run_id=root.id, index=0)
+        assert control is not None and isinstance(control.payload, RunControlPayload)
+        payload = control.payload
+        revision = store.latest_run_control_revision()
+
+        store.accept_retry(
+            run_id=root.id,
+            anchor=None,
+            resources=payload.resources,
+            limits=payload.limits,
+            state=payload.state,
+            runnable=payload.runnable,
+            model=payload.model,
+            locals=payload.locals,
+            sandbox="host",
+            request_id="retry-control-request",
+            created_at="2026-01-01T00:00:03Z",
+        )
+
+        latest, changed = store.changed_run_controls(after_revision=revision)
+        assert latest > revision
+        assert [(item.run, item.kind, item.status) for item in changed] == [
+            (root.id, "retry", "applied"),
+            (child.id, "steer", "wontapply"),
+        ]
+        assert store.get_run(run_id=child.id) is None
+        assert store.get_run_control(run_id=child.id, index=0) is not None
+        stored_pending = store.get_run_control(run_id=child.id, index=pending.index)
+        assert stored_pending is not None
+        assert stored_pending.status == "wontapply"
+        assert stored_pending.error == "run retried before the control could be applied"
+        with pytest.raises(
+            ValueError,
+            match="run control request already exists: child-steer-request",
+        ):
+            store.accept_run_control(
+                run_id=root.id,
+                kind="steer",
+                timing="next_step",
+                locals=(
+                    Local.typed(
+                        "Part[]",
+                        Message.user("duplicate").parts,
+                        "_",
+                        0,
+                    ),
+                ),
+                request_id="child-steer-request",
+                created_at="2026-01-01T00:00:04Z",
+            )
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize(
     (
         "run_status",
@@ -608,6 +715,155 @@ def test_rerun_acceptance_preserves_the_source_and_allows_repeated_reruns(
             rerun.id,
             source.id,
         ]
+    finally:
+        store.close()
+
+
+def test_rerun_does_not_read_or_write_source_ejection(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        anchor = project_run_start(
+            store,
+            run_id="run_rerun_anchor",
+            thread_id="term_rerun_ejected",
+            origin="chat",
+            input=Message.user("anchor"),
+        )
+        project_run_end(store, run_id=anchor.id)
+        source = project_run_start(
+            store,
+            run_id="run_rerun_ejected",
+            thread_id=anchor.thread,
+            origin="chat",
+            input=Message.user("source"),
+        )
+        project_run_end(store, run_id=source.id)
+        thread = store.get_thread(thread_id=source.thread)
+        assert thread is not None
+        store.rewind_thread(
+            thread_id=source.thread,
+            anchor=anchor.id,
+            request_id=None,
+            expected_head=thread.head,
+            created_at="2026-01-01T00:00:02Z",
+        )
+        ejected_source = store.get_run(run_id=source.id)
+        assert ejected_source is not None and ejected_source.ejected_by is not None
+
+        rerun, control = accept_run(
+            store,
+            run_id="run_from_ejected_source",
+            parent=None,
+            thread=source.thread,
+            input=Message.user("source"),
+            context={},
+            request_id="rerun-ejected-source",
+            created_at="2026-01-01T00:00:03Z",
+            kind="rerun",
+            source=source.id,
+        )
+
+        unchanged_source = store.get_run(run_id=source.id)
+        assert unchanged_source is not None
+        assert unchanged_source.ejected_by == ejected_source.ejected_by
+        assert rerun.ejected_by is None
+        assert isinstance(control.payload, RerunControlPayload)
+        assert control.payload.rerun_from == source.id
+    finally:
+        store.close()
+
+
+def test_retry_does_not_read_or_write_ejection_fields(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        anchor = project_run_start(
+            store,
+            run_id="run_retry_anchor",
+            thread_id="term_retry_ejected",
+            origin="chat",
+            input=Message.user("anchor"),
+        )
+        project_run_end(store, run_id=anchor.id)
+        source = project_run_start(
+            store,
+            run_id="run_retry_ejected",
+            thread_id=anchor.thread,
+            origin="chat",
+            input=Message.user("source"),
+            executable_kind="flow",
+        )
+        retained = project_step(
+            store,
+            run_id=source.id,
+            step_index=0,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        failed = project_step(
+            store,
+            run_id=source.id,
+            step_index=1,
+            kind="value",
+            status="failed",
+            input=(),
+            output=(),
+            error="temporary failure",
+            started_at="2026-01-01T00:00:02Z",
+            finished_at="2026-01-01T00:00:03Z",
+        )
+        project_run_end(
+            store,
+            run_id=source.id,
+            status="failed",
+            error="temporary failure",
+        )
+        thread = store.get_thread(thread_id=source.thread)
+        assert thread is not None
+        _thread, rewind, _ejected = store.rewind_thread(
+            thread_id=source.thread,
+            anchor=anchor.id,
+            request_id=None,
+            expected_head=thread.head,
+            created_at="2026-01-01T00:00:04Z",
+        )
+        _execute_sql(
+            store.db_path,
+            f"""
+            UPDATE steps
+            SET ejected_by_target = '{rewind.thread}',
+                ejected_by_index = {rewind.index}
+            WHERE run = '{source.id}' AND path = '{failed.path.local}';
+            """,
+        )
+        ejected_source = store.get_run(run_id=source.id)
+        assert ejected_source is not None and ejected_source.ejected_by is not None
+        control = store.get_run_control(run_id=source.id, index=0)
+        assert control is not None and isinstance(control.payload, RunControlPayload)
+        payload = control.payload
+
+        reopened, retry, trimmed = store.accept_retry(
+            run_id=source.id,
+            anchor=None,
+            resources=payload.resources,
+            limits=payload.limits,
+            state=payload.state,
+            runnable=payload.runnable,
+            model=payload.model,
+            locals=payload.locals,
+            sandbox="host",
+            request_id="retry-ejected-source",
+            created_at="2026-01-01T00:00:05Z",
+        )
+
+        assert reopened.ejected_by == ejected_source.ejected_by
+        assert isinstance(retry.payload, RetryControlPayload)
+        assert retry.payload.retry_from == failed.path
+        assert trimmed == (failed.path,)
+        assert store.list_steps(run_id=source.id, include_ejected=True) == [retained]
     finally:
         store.close()
 
