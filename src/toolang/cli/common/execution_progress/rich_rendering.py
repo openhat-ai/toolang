@@ -184,10 +184,6 @@ def _terminal_status_color(status: str) -> str | None:
     }.get(status)
 
 
-def _run_footer_title_style(status: str) -> str:
-    return _terminal_status_color(status) or "none"
-
-
 def _wrap_run_footer_facts(
     *,
     facts: tuple[str, ...],
@@ -230,15 +226,16 @@ class _RunFooter:
             if self.operation is not None
             else f"{self.run_id} {self.status}"
         )
-        title_style = _run_footer_title_style(self.status)
+        marker_style = _terminal_status_color(self.status) or "none"
+        title_style = "dim"
         prefix = "∎ "
         prefix_width = display_width(prefix)
         if width <= prefix_width:
-            yield Text(
-                truncate(f"{prefix}{title}", width),
-                style=title_style,
-                no_wrap=True,
-            )
+            line = Text(no_wrap=True)
+            line.append(prefix, style=marker_style)
+            line.append(title, style=title_style)
+            line.truncate(width, overflow="ellipsis")
+            yield line
             return
 
         title_text = f"{prefix}{title}"
@@ -246,7 +243,8 @@ class _RunFooter:
         separating_width = width - display_width(title_text) - display_width(facts_text)
         if facts_text and separating_width >= 2:
             line = Text(no_wrap=True)
-            line.append(title_text, style=title_style)
+            line.append(prefix, style=marker_style)
+            line.append(title, style=title_style)
             line.append(" " * separating_width)
             line.append(facts_text, style="dim")
             yield line
@@ -260,7 +258,10 @@ class _RunFooter:
         ) or [Text()]
         for index, title_line in enumerate(title_lines):
             line = Text(no_wrap=True)
-            line.append(prefix if index == 0 else continuation, style=title_style)
+            line.append(
+                prefix if index == 0 else continuation,
+                style=marker_style if index == 0 else "none",
+            )
             line.append(title_line.plain, style=title_style)
             yield line
 

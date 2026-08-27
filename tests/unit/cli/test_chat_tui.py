@@ -1077,16 +1077,16 @@ def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() ->
 
 
 @pytest.mark.parametrize(
-    ("status", "color"),
+    ("status", "marker_color"),
     [
         ("succeeded", None),
         ("failed", "red"),
         ("canceled", "yellow"),
     ],
 )
-def test_chat_run_footer_styles_caption_separately_from_facts(
+def test_chat_run_footer_colors_marker_and_dims_caption(
     status: Literal["succeeded", "failed", "canceled"],
-    color: str | None,
+    marker_color: str | None,
 ) -> None:
     root_summary = blocks.RunSummaryBlock.create(_run_begin())
     root_summary.update(_run_end(status=status))
@@ -1097,16 +1097,20 @@ def test_chat_run_footer_styles_caption_separately_from_facts(
     ]
 
     assert _render_text(root_summary.render()).strip().startswith("∎ ")
-    caption = next(segment for segment in segments if "∎ " in segment.text)
+    marker = next(segment for segment in segments if "∎" in segment.text)
+    caption = next(segment for segment in segments if f"run_1 {status}" in segment.text)
     facts = next(segment for segment in segments if "3.0s" in segment.text)
-    assert caption.style is not None
-    assert not caption.style.dim
-    assert not caption.style.bold
-    if color is None:
-        assert caption.style.color is None
+    assert marker.style is not None
+    assert not marker.style.dim
+    if marker_color is None:
+        assert marker.style.color is None
     else:
-        assert caption.style.color is not None
-        assert caption.style.color.name == color
+        assert marker.style.color is not None
+        assert marker.style.color.name == marker_color
+    assert caption.style is not None
+    assert caption.style.dim
+    assert not caption.style.bold
+    assert caption.style.color is None
     assert facts.style is not None
     assert facts.style.dim
     assert facts.style.color is None
