@@ -66,7 +66,7 @@ ${TOOLANG_ROOT}/agents/<agent>/.state/home/
 
 ${TOOLANG_ROOT}/agents/<agent>/.state/agent/
   current
-  prepare.lock
+  check.lock
   revs/<state-revision>/
     layers.json
 ```
@@ -175,8 +175,16 @@ path. Filesystem events and periodic metadata checks submit work to that path.
 `refresh()` submits one additional check and waits for that specific check to
 finish; concurrent calls do not run checks in parallel or merely join an older
 check. An internal `current` publication whose revision is already current does
-not produce another candidate check. This process-owned boundary is also the
-State access boundary for future internal `_me` tools.
+not produce another candidate check.
+
+The complete check and publication transaction also holds an agent-scoped file
+lock, so multiple processes cannot interleave checks for the same agent or let
+an older check publish after a newer one. Different agents use different locks
+and may check concurrently. Root and home layer writer locks remain narrower:
+they are acquired only when that shared or agent-local layer actually needs to
+be rebuilt. The lock order is agent check, then root layer writer, then home
+layer writer. This process-owned boundary is also the State access boundary for
+future internal `_me` tools.
 
 ## Execution Records
 

@@ -5,12 +5,14 @@ from hashlib import sha256
 import json
 import multiprocessing
 from pathlib import Path
+import time
 
 import pytest
 
 from toolang.common.layout import AgentLayout
 from toolang.state import state as cap_state
 from toolang.state.cache import (
+    _agent_check_lock,
     load_home_layer,
     load_root_layer,
     layer_revision_dir,
@@ -54,6 +56,22 @@ def _prepare_agent_revisions_in_process(
         state.root_revision,
         state.home_revision,
     )
+
+
+def _prepare_after_signal(
+    request: tuple[str, str, str],
+) -> tuple[str, str, str]:
+    toolang_root, agent_name, signal_path = request
+    Path(signal_path).write_text("started\n", encoding="utf-8")
+    return _prepare_agent_revisions_in_process((toolang_root, agent_name))
+
+
+def _wait_for_path(path: Path, *, timeout: float = 10) -> None:
+    deadline = time.monotonic() + timeout
+    while not path.exists():
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"timed out waiting for {path}")
+        time.sleep(0.01)
 
 
 def test_prepare_root_home_snapshot_root_and_home(tmp_path: Path) -> None:
@@ -292,6 +310,57 @@ def test_concurrent_processes_publish_one_root_and_home_revision(
     )
     agent_revs = home / ".state" / "agent" / "revs"
     assert [path.name for path in agent_revs.iterdir()] == [results[0][0]]
+
+
+def test_agent_check_lock_blocks_same_agent_process(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    started = tmp_path / "same-agent-started"
+    layout = _layout(toolang_root)
+    prepare_agent_state(layout)
+
+    with ProcessPoolExecutor(
+        max_workers=1,
+        mp_context=multiprocessing.get_context("spawn"),
+    ) as executor:
+        with _agent_check_lock(layout):
+            future = executor.submit(
+                _prepare_after_signal,
+                (str(toolang_root), "alice", str(started)),
+            )
+            _wait_for_path(started)
+            with pytest.raises(TimeoutError):
+                future.result(timeout=0.25)
+
+        state_revision, _, _ = future.result(timeout=10)
+
+    assert len(state_revision) == 64
+
+
+def test_agent_check_lock_does_not_block_another_agent(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    for name in ("alice", "bob"):
+        home = toolang_root / "agents" / name
+        home.mkdir(parents=True)
+        (home / "agent.too").write_text(f"agent {name}\n", encoding="utf-8")
+    started = tmp_path / "other-agent-started"
+    prepare_agent_state(_layout(toolang_root, "bob"))
+
+    with ProcessPoolExecutor(
+        max_workers=1,
+        mp_context=multiprocessing.get_context("spawn"),
+    ) as executor:
+        with _agent_check_lock(_layout(toolang_root, "alice")):
+            future = executor.submit(
+                _prepare_after_signal,
+                (str(toolang_root), "bob", str(started)),
+            )
+            _wait_for_path(started)
+            state_revision, _, _ = future.result(timeout=10)
+
+    assert len(state_revision) == 64
 
 
 def test_different_agent_processes_share_one_root_generation(tmp_path: Path) -> None:

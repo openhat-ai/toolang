@@ -9,6 +9,8 @@ import pytest
 from toolang.common.layout import AgentLayout
 from toolang.lang.ast import Program, SettleStmt
 from toolang.state.cache import (
+    _persist_agent_revision,
+    _agent_check_lock,
     canonical_json,
     layer_revision_dir,
     load_agent_revisions,
@@ -16,7 +18,6 @@ from toolang.state.cache import (
     load_current_revision,
     load_home_layer,
     load_root_layer,
-    persist_agent_revision,
     publish_layer_current,
     validate_agent_revision,
     validate_layer_revision,
@@ -93,11 +94,12 @@ def test_agent_state_revision_round_trips_exact_layers(tmp_path: Path) -> None:
     layout = _layout(tmp_path)
     root_revision = _write_root(layout)
     home_revision = _write_home(layout)
-    revision = persist_agent_revision(
-        layout,
-        root_revision=root_revision,
-        home_revision=home_revision,
-    )
+    with _agent_check_lock(layout):
+        revision = _persist_agent_revision(
+            layout,
+            root_revision=root_revision,
+            home_revision=home_revision,
+        )
 
     assert revision == agent_state_revision(root_revision, home_revision)
     assert load_current_agent_revision(layout) == revision

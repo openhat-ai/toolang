@@ -100,8 +100,8 @@ def agent_current_path(layout: AgentLayout) -> Path:
     return layout.agent_state / "current"
 
 
-def agent_lock_path(layout: AgentLayout) -> Path:
-    return layout.agent_state / "prepare.lock"
+def _agent_check_lock_path(layout: AgentLayout) -> Path:
+    return layout.agent_state / "check.lock"
 
 
 def agent_revision_dir(layout: AgentLayout, revision: str) -> Path:
@@ -229,37 +229,36 @@ def publish_layer_current(
     _write_revision(layer_current_path(layout, scope), revision)
 
 
-def persist_agent_revision(
+def _persist_agent_revision(
     layout: AgentLayout,
     *,
     root_revision: str,
     home_revision: str,
 ) -> str:
-    """Persist and publish one exact root/home Agent State composition."""
+    """Persist and publish one composition while the agent check lock is held."""
 
-    with _file_lock(agent_lock_path(layout)):
-        document = agent_layers_document(
-            root_revision=root_revision,
-            home_revision=home_revision,
-        )
-        encoded = canonical_json(document)
-        revision = sha256(encoded).hexdigest()
-        target = agent_revision_dir(layout, revision)
-        revs = target.parent
-        revs.mkdir(parents=True, exist_ok=True)
-        if target.exists() or target.is_symlink():
-            _write_revision(agent_current_path(layout), revision)
-            return revision
-        staging = revs / f".{revision}.tmp-{uuid4().hex}"
-        try:
-            staging.mkdir()
-            (staging / _LAYERS_FILE).write_bytes(encoded)
-            os.replace(staging, target)
-        finally:
-            if staging.exists():
-                shutil.rmtree(staging)
+    document = agent_layers_document(
+        root_revision=root_revision,
+        home_revision=home_revision,
+    )
+    encoded = canonical_json(document)
+    revision = sha256(encoded).hexdigest()
+    target = agent_revision_dir(layout, revision)
+    revs = target.parent
+    revs.mkdir(parents=True, exist_ok=True)
+    if target.exists() or target.is_symlink():
         _write_revision(agent_current_path(layout), revision)
         return revision
+    staging = revs / f".{revision}.tmp-{uuid4().hex}"
+    try:
+        staging.mkdir()
+        (staging / _LAYERS_FILE).write_bytes(encoded)
+        os.replace(staging, target)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+    _write_revision(agent_current_path(layout), revision)
+    return revision
 
 
 def load_agent_revisions(
@@ -314,6 +313,14 @@ def layer_lock(layout: AgentLayout, scope: LayerScope) -> Iterator[None]:
     """Serialize preparation writers for one State layer."""
 
     with _file_lock(layer_lock_path(layout, scope)):
+        yield
+
+
+@contextmanager
+def _agent_check_lock(layout: AgentLayout) -> Iterator[None]:
+    """Serialize one agent's complete check and publication across processes."""
+
+    with _file_lock(_agent_check_lock_path(layout)):
         yield
 
 

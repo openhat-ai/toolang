@@ -39,13 +39,14 @@ from .cache import (
     HomeLayer,
     LayerScope,
     RootLayer,
+    _agent_check_lock,
+    _persist_agent_revision,
     agent_revision_dir,
     load_agent_revisions,
     load_current_revision,
     load_home_layer,
     load_root_layer,
     layer_lock,
-    persist_agent_revision,
     publish_layer_current,
     write_layer,
 )
@@ -70,22 +71,25 @@ def prepare_agent_state(
 ) -> AgentState:
     """Prepare and compose the immutable runtime state for one agent."""
 
-    root, home = prepare_root_home(
-        layout,
-        force=force,
-        progress=progress,
-    )
-    revision = persist_agent_revision(
-        layout,
-        root_revision=root.revision,
-        home_revision=home.revision,
-    )
-    return compose_layer_state(
-        root,
-        home,
-        program_source=layout.program.relative_to(layout.root).as_posix(),
-        revision_dir=agent_revision_dir(layout, revision),
-    )
+    _require_root(layout)
+    _require_agent_home(layout)
+    with _agent_check_lock(layout):
+        root, home = prepare_root_home(
+            layout,
+            force=force,
+            progress=progress,
+        )
+        revision = _persist_agent_revision(
+            layout,
+            root_revision=root.revision,
+            home_revision=home.revision,
+        )
+        return compose_layer_state(
+            root,
+            home,
+            program_source=layout.program.relative_to(layout.root).as_posix(),
+            revision_dir=agent_revision_dir(layout, revision),
+        )
 
 
 def compose_layer_state(

@@ -236,6 +236,12 @@ refreshes are serialized and each receives a later completed check. Internal
 `current` publication does not retrigger preparation when the published
 revision and checked source metadata are unchanged.
 
+The full check/publication transaction holds a per-agent file lock across
+processes. Different agents remain independent and contend only on the root
+layer writer lock when root source actually requires rebuilding. Layer writer
+locks remain scoped to root or one home. Locks are acquired in the fixed order
+agent check, root layer writer, then home layer writer.
+
 The watcher exposes process-owned `current`, `load`, `refresh`, and
 `diagnostics` operations. Future `_me` tools will use this boundary, while
 authored writes remain owned by catalog/source services. The generic external
@@ -275,6 +281,8 @@ bumped and migrates only model-step `given` and `noted` continuation keys from
   after repair.
 - The watcher has one monitor and one serialized check path; `refresh()` waits
   for its own check and self-publication does not loop.
+- Same-agent processes serialize complete checks while different agents retain
+  independent check locks and share only root-layer preparation.
 - New root runs see a newly published State while active run trees retain their
   bound revision.
 - Execution rejects malformed State revision strings.
