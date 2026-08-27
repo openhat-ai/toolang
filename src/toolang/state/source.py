@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import os
@@ -65,7 +64,7 @@ class SourceNode:
 
 
 @dataclass(frozen=True, slots=True)
-class Source:
+class SourceTree:
     """A JSON-persisted metadata snapshot of selected source paths."""
 
     root: SourceNode
@@ -88,7 +87,7 @@ class Source:
         os.replace(temporary, path)
 
     @classmethod
-    def from_data(cls, data: dict[str, object]) -> Source:
+    def from_data(cls, data: dict[str, object]) -> SourceTree:
         """Load a source tree from JSON-compatible data."""
 
         schema = _integer_field(data, "schema")
@@ -100,14 +99,14 @@ class Source:
         )
 
     @classmethod
-    def load(cls, path: Path) -> Source:
+    def load(cls, path: Path) -> SourceTree:
         """Load a source tree from one JSON file."""
 
         data = cast(dict[str, object], json.loads(path.read_text(encoding="utf-8")))
         return cls.from_data(data)
 
 
-def scan_source(base: Path, paths: tuple[str, ...]) -> Source:
+def scan_source(base: Path, paths: tuple[str, ...]) -> SourceTree:
     """Capture selected paths below one base without reading file contents."""
 
     children: list[SourceNode] = []
@@ -119,7 +118,7 @@ def scan_source(base: Path, paths: tuple[str, ...]) -> Source:
         if not path.exists():
             continue
         children.append(_scan_node(path, name=value))
-    return Source(
+    return SourceTree(
         root=SourceNode(
             name=".",
             kind="directory",
@@ -130,7 +129,7 @@ def scan_source(base: Path, paths: tuple[str, ...]) -> Source:
     )
 
 
-def scan_root_source(toolang_root: Path) -> Source:
+def scan_root_source(toolang_root: Path) -> SourceTree:
     """Capture root config and authored cap paths."""
 
     return scan_source(
@@ -139,7 +138,7 @@ def scan_root_source(toolang_root: Path) -> Source:
     )
 
 
-def scan_home_source(toolang_root: Path, agent_name: str) -> Source:
+def scan_home_source(toolang_root: Path, agent_name: str) -> SourceTree:
     """Capture one agent program, config, and authored cap paths."""
 
     home = toolang_root / "agents" / agent_name
@@ -150,7 +149,7 @@ def scan_home_source(toolang_root: Path, agent_name: str) -> Source:
             "config.toml",
             *CAP_DIRECTORY_NAMES,
             *(
-                str(Path("flows") / path.name)
+                (Path("flows") / path.name).as_posix()
                 for path in _direct_flow_files(home / "flows")
             ),
         ),
@@ -214,7 +213,7 @@ class ProgramSource:
 
 
 @dataclass(frozen=True, slots=True)
-class AuthoredFile:
+class SourceFile:
     """One authored file captured with fixed content."""
 
     path: Path
@@ -231,14 +230,12 @@ class AuthoredFile:
 
 
 @dataclass(frozen=True, slots=True)
-class AuthoredSource:
+class SourceSnapshot:
     """Fixed authored files read while preparing one scope."""
 
     toolang_root: Path
     agent_name: str
-    files: tuple[AuthoredFile, ...]
-    fingerprint: str
-    scanned_at: str
+    files: tuple[SourceFile, ...]
 
     @property
     def program_path(self) -> str | None:
@@ -249,7 +246,7 @@ class AuthoredSource:
         return None
 
     @property
-    def program_files(self) -> tuple[AuthoredFile, ...]:
+    def program_files(self) -> tuple[SourceFile, ...]:
         """Return agent and direct flow program files in authored-path order."""
 
         return tuple(item for item in self.files if item.category == "program")
@@ -296,7 +293,7 @@ class AuthoredSource:
             ProgramSource(
                 agent_name=self.agent_name,
                 kind="flow",
-                authored_path=str(Path(item.relative_path).relative_to(prefix)),
+                authored_path=Path(item.relative_path).relative_to(prefix).as_posix(),
                 source_path=item.relative_path,
                 source_text=item.read_text(),
                 digest=item.digest,
@@ -306,7 +303,7 @@ class AuthoredSource:
         )
         return (agent, *flows)
 
-    def program_file(self, source: ProgramSource) -> AuthoredFile | None:
+    def program_file(self, source: ProgramSource) -> SourceFile | None:
         """Return the captured authored file for one program source."""
 
         return next(
@@ -325,7 +322,7 @@ class AuthoredSource:
         )
 
 
-def read_authored_source(toolang_root: Path, agent_name: str) -> AuthoredSource:
+def read_authored_source(toolang_root: Path, agent_name: str) -> SourceSnapshot:
     """Read root and agent-home authored files with fixed contents."""
 
     files = tuple(
@@ -337,7 +334,7 @@ def read_authored_source(toolang_root: Path, agent_name: str) -> AuthoredSource:
     return _authored_source(toolang_root, agent_name, files)
 
 
-def read_root_source(toolang_root: Path) -> AuthoredSource:
+def read_root_source(toolang_root: Path) -> SourceSnapshot:
     """Read only root-authored files with fixed contents."""
 
     files = tuple(
@@ -347,7 +344,7 @@ def read_root_source(toolang_root: Path) -> AuthoredSource:
 
 
 def is_source_path(toolang_root: Path, agent_name: str, path: Path) -> bool:
-    """Return whether one path contributes to root or agent prepared state."""
+    """Return whether one path contributes to a root or home State layer."""
 
     relative_path = _relative_to_root(toolang_root, path)
     if relative_path is None:
@@ -389,18 +386,16 @@ def _parseable_program_source(source_text: str) -> str:
 def _authored_source(
     toolang_root: Path,
     agent_name: str,
-    files: tuple[AuthoredFile, ...],
-) -> AuthoredSource:
-    return AuthoredSource(
+    files: tuple[SourceFile, ...],
+) -> SourceSnapshot:
+    return SourceSnapshot(
         toolang_root=toolang_root,
         agent_name=agent_name,
         files=files,
-        fingerprint=_content_fingerprint(files),
-        scanned_at=datetime.now(timezone.utc).isoformat(),
     )
 
 
-def _authored_files(toolang_root: Path, agent_name: str) -> list[AuthoredFile]:
+def _authored_files(toolang_root: Path, agent_name: str) -> list[SourceFile]:
     agent_dir = toolang_root / "agents" / agent_name
     files = _root_authored_files(toolang_root)
     files.extend(
@@ -434,7 +429,7 @@ def _authored_files(toolang_root: Path, agent_name: str) -> list[AuthoredFile]:
     return files
 
 
-def _root_authored_files(toolang_root: Path) -> list[AuthoredFile]:
+def _root_authored_files(toolang_root: Path) -> list[SourceFile]:
     files = _collect_file(
         toolang_root,
         toolang_root / "config.toml",
@@ -459,15 +454,15 @@ def _collect_file(
     *,
     category: str,
     origin: str,
-) -> list[AuthoredFile]:
+) -> list[SourceFile]:
     if not path.is_file():
         return []
     content = path.read_bytes()
     stat = path.stat()
     return [
-        AuthoredFile(
+        SourceFile(
             path=path,
-            relative_path=str(path.relative_to(toolang_root)),
+            relative_path=path.relative_to(toolang_root).as_posix(),
             category=category,
             origin=origin,
             content=content,
@@ -484,10 +479,10 @@ def _collect_directory(
     *,
     category: str,
     origin: str,
-) -> list[AuthoredFile]:
+) -> list[SourceFile]:
     if not directory.exists():
         return []
-    files: list[AuthoredFile] = []
+    files: list[SourceFile] = []
     for path in sorted(item for item in directory.rglob("*") if item.is_file()):
         files.extend(
             _collect_file(toolang_root, path, category=category, origin=origin)
@@ -503,16 +498,6 @@ def _direct_flow_files(directory: Path) -> tuple[Path, ...]:
         for path in sorted(directory.iterdir(), key=lambda item: item.name)
         if path.is_file() and path.suffix == ".too"
     )
-
-
-def _content_fingerprint(files: tuple[AuthoredFile, ...]) -> str:
-    digest = sha256()
-    for item in files:
-        digest.update(item.relative_path.encode("utf-8"))
-        digest.update(item.digest.encode("utf-8"))
-        digest.update(str(item.mtime_ns).encode("utf-8"))
-        digest.update(str(item.size).encode("utf-8"))
-    return digest.hexdigest()
 
 
 def _relative_to_root(toolang_root: Path, path: Path) -> Path | None:

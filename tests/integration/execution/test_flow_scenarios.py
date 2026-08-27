@@ -710,7 +710,6 @@ flow research(brief: Brief) -> Text:
     )
     harness.state = prepare_agent_state(
         harness.setup.layout,
-        toolang_version="test",
     )
 
     async def scenario() -> None:

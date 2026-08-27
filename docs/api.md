@@ -77,7 +77,7 @@ Kind-specific list commands omit `KIND`.
 the Toolang root. Inline caps use `<path-to-agent.too>:<line>`. External GitHub
 sources are shown as directly accessible `https://github.com/...` URLs.
 
-`FORM` accepts `inline`, `ref`, `wired`, and `file`. `SCOPE` accepts
+`FORM` accepts `authored`, `inline`, `configured`, and `referenced`. `SCOPE` accepts
 `root`, `home`, and `here`. `--filter` accepts kind, form, and scope values for
 all-kind lists. Kind-specific lists accept only form and scope values. Values in
 one group are unioned; different groups are intersected.
@@ -731,34 +731,34 @@ Templates:
 
 Write:
 
-- `PUT /api/v1/psyches/{name}/file`
-- `PUT /api/v1/skills/{name}/file`
-- `PUT /api/v1/services/{name}/file`
-- `PUT /api/v1/prompts/{name}/file`
-- `DELETE /api/v1/psyches/{name}/file`
-- `DELETE /api/v1/skills/{name}/file`
-- `DELETE /api/v1/services/{name}/file`
-- `DELETE /api/v1/prompts/{name}/file`
-- `PUT /api/v1/psyches/{name}/wired`
-- `PUT /api/v1/skills/{name}/wired`
-- `PUT /api/v1/services/{name}/wired`
-- `PUT /api/v1/prompts/{name}/wired`
-- `DELETE /api/v1/psyches/{name}/wired`
-- `DELETE /api/v1/skills/{name}/wired`
-- `DELETE /api/v1/services/{name}/wired`
-- `DELETE /api/v1/prompts/{name}/wired`
+- `PUT /api/v1/psyches/{name}/authored`
+- `PUT /api/v1/skills/{name}/authored`
+- `PUT /api/v1/services/{name}/authored`
+- `PUT /api/v1/prompts/{name}/authored`
+- `DELETE /api/v1/psyches/{name}/authored`
+- `DELETE /api/v1/skills/{name}/authored`
+- `DELETE /api/v1/services/{name}/authored`
+- `DELETE /api/v1/prompts/{name}/authored`
+- `PUT /api/v1/psyches/{name}/configured`
+- `PUT /api/v1/skills/{name}/configured`
+- `PUT /api/v1/services/{name}/configured`
+- `PUT /api/v1/prompts/{name}/configured`
+- `DELETE /api/v1/psyches/{name}/configured`
+- `DELETE /api/v1/skills/{name}/configured`
+- `DELETE /api/v1/services/{name}/configured`
+- `DELETE /api/v1/prompts/{name}/configured`
 
-File write bodies use:
+Authored write bodies use:
 
-- `visibility`: `private` or `shared`; defaults to `private`
+- `scope`: `home` or `root`; defaults to `home`
 - `content`: raw cap content
 
-Wired write bodies use:
+Configured write bodies use:
 
-- `visibility`: `private` or `shared`; defaults to `private`
+- `scope`: `home` or `root`; defaults to `home`
 - `ref`: external cap ref
 
-Delete routes accept `visibility=private|shared` as a query parameter. Cap read
+Delete routes accept `scope=home|root` as a query parameter. Cap read
 items include:
 
 - `name`
@@ -771,11 +771,9 @@ items include:
 - `line` when known
 - `editable`
 
-`visibility` is an HTTP write-placement field, not a CLI list concept:
-`shared` maps to root-authored caps and `private` maps to the current
-agent's authored caps. Read payloads expose runtime `form`, `scope`, and
-`origin`; CLI list commands project those into `SOURCE`, `FORM`, and runtime
-`SCOPE`.
+Read and write payloads use the same `root`, `home`, and `here` scope
+vocabulary. Read payloads expose `form`, `scope`, and `origin`; CLI list
+commands project those into `SOURCE`, `FORM`, and `SCOPE`.
 
 
 ## Chat Client Orchestration
@@ -790,7 +788,7 @@ client creates a thread when needed, converts the interaction to the shared
 
 An existing chat thread can be passed directly to the authored endpoint; the
 client does not create another thread for every turn. The server resolves the
-request against its current setup and prepared state, including fallback
+request against its current setup and Agent State, including fallback
 selection, policy precedence, prompts, named input, and server-relative file
 includes. This keeps the Chat TUI and a future WebUI on the same run protocol
 without adding a chat-specific server vocabulary.

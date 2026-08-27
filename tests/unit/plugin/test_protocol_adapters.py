@@ -175,7 +175,7 @@ def test_generate_content_preserves_thought_signatures_and_thinking_usage() -> N
             Message(role="assistant", parts=(call,)),
             Message(role="tool", parts=(result_part,)),
         ],
-        state={"thought_signatures": {"call-1": "opaque-signature"}},
+        cont={"thought_signatures": {"call-1": "opaque-signature"}},
     )
 
     payload = generate_content_payload(target, request)
@@ -233,7 +233,7 @@ def test_generate_content_preserves_thought_signatures_and_thinking_usage() -> N
     assert payload["generationConfig"] == {"thinkingConfig": {"thinkingLevel": "HIGH"}}
     assert result.message is not None
     assert result.message.parts[0] == TextPart("Done.")
-    assert result.state == {"thought_signatures": {"call-2": "next-signature"}}
+    assert result.cont == {"thought_signatures": {"call-2": "next-signature"}}
     assert result.usage == ModelUsage(
         input_tokens=120,
         output_tokens=40,

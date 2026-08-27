@@ -95,11 +95,15 @@ class AgentLayout:
 
     @property
     def root_state(self) -> Path:
-        return self.root / ".state"
+        return self.root / ".state" / "root"
 
     @property
     def home_state(self) -> Path:
-        return self.home / ".state"
+        return self.home / ".state" / "home"
+
+    @property
+    def agent_state(self) -> Path:
+        return self.home / ".state" / "agent"
 
     @property
     def root_runtime(self) -> Path:

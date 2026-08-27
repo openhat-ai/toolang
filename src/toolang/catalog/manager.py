@@ -5,7 +5,7 @@ from __future__ import annotations
 from toolang.common.layout import AgentLayout
 
 from .cap import AuthoredCaps
-from .config import WiredCaps
+from .config import ConfiguredCaps
 from .job import AuthoredJobs
 
 
@@ -14,16 +14,16 @@ class CapsManager:
 
     __slots__ = (
         "home_authoring",
-        "home_wiring",
+        "home_configured",
         "root_authoring",
-        "root_wiring",
+        "root_configured",
     )
 
     def __init__(self, layout: AgentLayout) -> None:
         self.home_authoring = AuthoredCaps(layout.home)
-        self.home_wiring = WiredCaps(layout.config)
+        self.home_configured = ConfiguredCaps(layout.config)
         self.root_authoring = AuthoredCaps(layout.root)
-        self.root_wiring = WiredCaps(layout.root_config)
+        self.root_configured = ConfiguredCaps(layout.root_config)
 
 
 class JobsManager:

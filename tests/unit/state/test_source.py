@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from toolang.state.source import (
-    Source,
+    SourceTree,
     is_source_path,
     scan_home_source,
     scan_source,
@@ -22,7 +22,7 @@ def test_source_tree_round_trips_nested_metadata(tmp_path: Path) -> None:
     snapshot = tmp_path / "source.json"
     tree.save(snapshot)
 
-    assert Source.load(snapshot) == tree
+    assert SourceTree.load(snapshot) == tree
     assert tree.root.children[0].name == "skills"
     assert tree.root.children[0].children[0].name == "pdf"
 

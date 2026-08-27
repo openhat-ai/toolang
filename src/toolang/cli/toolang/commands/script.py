@@ -22,7 +22,6 @@ from toolang.base.types.policy import RunBindings
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
-from toolang.common.version import toolang_version
 from toolang.cli.common.policy import (
     resolve_binding_overrides,
     resolve_ceiling_overrides,
@@ -467,7 +466,6 @@ def _run(
                 log_path = log_plan.path
                 state = prepare_agent_state(
                     layout,
-                    toolang_version=toolang_version(),
                     progress=as_progress_sink(progress),
                 )
                 if progress is not None:

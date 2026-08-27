@@ -1,4 +1,4 @@
-"""Unit tests for authored and wired cap collections."""
+"""Unit tests for authored and configured cap collections."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import cast
 import pytest
 
 from toolang.catalog.cap import AuthoredCaps, CapFile
-from toolang.catalog.config import CapRef, WiredCaps
+from toolang.catalog.config import CapRef, ConfiguredCaps
 from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
 from toolang.catalog.types import CapKind
 
@@ -203,12 +203,12 @@ def test_authored_caps_rejects_service_env_map(tmp_path: Path) -> None:
         AuthoredCaps(tmp_path).create(_cap("service", "linear", content))
 
 
-def test_wired_caps_crud_preserves_other_config_and_returns_removed_ref(
+def test_configured_caps_crud_preserves_other_config_and_returns_removed_ref(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "config.toml"
     path.write_text('[web]\nhost = "127.0.0.1"\n', encoding="utf-8")
-    caps = WiredCaps(path)
+    caps = ConfiguredCaps(path)
     original = CapRef(
         kind="skill",
         name="reviewer",
@@ -224,8 +224,10 @@ def test_wired_caps_crud_preserves_other_config_and_returns_removed_ref(
     assert "[web]" in path.read_text(encoding="utf-8")
 
 
-def test_wired_caps_reports_conflicting_and_missing_mutations(tmp_path: Path) -> None:
-    caps = WiredCaps(tmp_path / "config.toml")
+def test_configured_caps_reports_conflicting_and_missing_mutations(
+    tmp_path: Path,
+) -> None:
+    caps = ConfiguredCaps(tmp_path / "config.toml")
     cap = CapRef(kind="prompt", name="review", ref="https://example/review")
 
     assert caps.list() == ()
@@ -241,12 +243,12 @@ def test_wired_caps_reports_conflicting_and_missing_mutations(tmp_path: Path) ->
 @pytest.mark.parametrize(
     ("content", "message"),
     [
-        ("skills = 'invalid'\n", "invalid wired cap table"),
-        ("[skills]\nreview = {}\n", "invalid wired cap config entry"),
-        ("skills = 1\n", "invalid wired cap table"),
+        ("skills = 'invalid'\n", "invalid configured cap table"),
+        ("[skills]\nreview = {}\n", "invalid configured cap config entry"),
+        ("skills = 1\n", "invalid configured cap table"),
     ],
 )
-def test_wired_caps_rejects_invalid_config_entries(
+def test_configured_caps_rejects_invalid_config_entries(
     tmp_path: Path,
     content: str,
     message: str,
@@ -255,10 +257,10 @@ def test_wired_caps_rejects_invalid_config_entries(
     path.write_text(content, encoding="utf-8")
 
     with pytest.raises(ValueError, match=message):
-        WiredCaps(path).list()
+        ConfiguredCaps(path).list()
 
 
-def test_wired_caps_preserves_unrelated_config_comments(tmp_path: Path) -> None:
+def test_configured_caps_preserves_unrelated_config_comments(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     original = (
         "# Root comment\n"
@@ -267,7 +269,7 @@ def test_wired_caps_preserves_unrelated_config_comments(tmp_path: Path) -> None:
         'host = "127.0.0.1" # Web comment\n'
     )
     path.write_text(original, encoding="utf-8")
-    caps = WiredCaps(path)
+    caps = ConfiguredCaps(path)
 
     caps.create(CapRef(kind="prompt", name="review", ref="https://example/review"))
     created_text = path.read_text(encoding="utf-8")
@@ -281,14 +283,16 @@ def test_wired_caps_preserves_unrelated_config_comments(tmp_path: Path) -> None:
     assert "# Web comment" in removed_text
 
 
-def test_wired_caps_update_preserves_entry_comment_and_spacing(tmp_path: Path) -> None:
+def test_configured_caps_update_preserves_entry_comment_and_spacing(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "config.toml"
     path.write_text(
         '[skills]\nreviewer = { ref = "old" } # Keep this comment\n',
         encoding="utf-8",
     )
 
-    WiredCaps(path).update(
+    ConfiguredCaps(path).update(
         CapRef(kind="skill", name="reviewer", ref="https://example/reviewer")
     )
 

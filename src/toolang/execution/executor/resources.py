@@ -36,7 +36,7 @@ from toolang.plugin.toolsets.registry import (
 from toolang.setup import AgentSetup
 from toolang.state.state import (
     AgentState,
-    PreparedCap,
+    StateCap,
     select_cap_entries,
     state_module_caps,
 )
@@ -314,14 +314,14 @@ def resource_caps(
     resources: AgentResources,
     *,
     module: str | None = None,
-) -> tuple[PreparedCap, ...]:
+) -> tuple[StateCap, ...]:
     """Resolve stable cap identities against the current immutable state."""
 
-    by_id: dict[tuple[str, str, str], PreparedCap] = {
+    by_id: dict[tuple[str, str, str], StateCap] = {
         (item.kind, item.name, item.ref): item
         for item in state_module_caps(state, module or "agent")
     }
-    result: list[PreparedCap] = []
+    result: list[StateCap] = []
     for item in resources.caps:
         cap = by_id.get((item.kind, item.name, item.ref))
         if cap is None:
@@ -345,7 +345,7 @@ def _agent_resources(
     *,
     models: tuple[str, ...],
     tools: Mapping[str, AgentTool],
-    caps: tuple[PreparedCap, ...],
+    caps: tuple[StateCap, ...],
 ) -> AgentResources:
     return AgentResources(
         models=models,

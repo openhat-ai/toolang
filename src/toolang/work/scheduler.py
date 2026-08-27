@@ -87,7 +87,7 @@ class JobScheduler:
         self._heap: list[tuple[float, int, str, int]] = []
         self._sequence = itertools.count()
         self._active: dict[str, asyncio.Task[None]] = {}
-        self._state_fingerprint = ""
+        self._state_revision = ""
         self._paused = False
         self._stopping = False
 
@@ -266,7 +266,7 @@ class JobScheduler:
                     if now >= next_state:
                         next_state = now + self.state_poll_seconds
                         state = self.get_agent_state()
-                        if state.fingerprint != self._state_fingerprint:
+                        if state.revision != self._state_revision:
                             self._reconcile(self._watcher.current())
                     if now >= next_safety:
                         next_safety = now + self.safety_refresh_seconds
@@ -368,7 +368,7 @@ class JobScheduler:
         jobs = merge_jobs(authored, program_jobs(state.program))
         records = self._store.reconcile(jobs=jobs)
         self._jobs = jobs
-        self._state_fingerprint = state.fingerprint
+        self._state_revision = state.revision
         self._set_records(records)
 
     def _set_records(self, records: tuple[JobRecord, ...]) -> None:

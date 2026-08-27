@@ -272,11 +272,11 @@ agic calculate(_: Text) -> Text:
             ModelCallResult(
                 message=Message(role="assistant", parts=(call_part,)),
                 tool_calls=(call,),
-                state={"cursor": "turn-1"},
+                cont={"cursor": "turn-1"},
             ),
             ModelCallResult(
                 message=Message.assistant("six"),
-                state={"cursor": "turn-2"},
+                cont={"cursor": "turn-2"},
             ),
         ],
         tools={tool.name: tool},
@@ -294,7 +294,7 @@ agic calculate(_: Text) -> Text:
             )
 
             assert record.status == "succeeded"
-            assert harness.adapter.invocations[1].call.state == {"cursor": "turn-1"}
+            assert harness.adapter.invocations[1].call.cont == {"cursor": "turn-1"}
             assert harness.adapter.invocations[1].call.messages[-1].parts == (
                 ToolResultPart(
                     tool_call_id=call.tool_call_id,
@@ -323,8 +323,8 @@ agic calculate(_: Text) -> Text:
         )
         assert isinstance(model_steps[0].noted, ModelStepNoted)
         assert isinstance(model_steps[1].noted, ModelStepNoted)
-        assert model_steps[0].noted.state == {"cursor": "turn-1"}
-        assert model_steps[1].noted.state == {"cursor": "turn-2"}
+        assert model_steps[0].noted.cont == {"cursor": "turn-1"}
+        assert model_steps[1].noted.cont == {"cursor": "turn-2"}
 
         connection = sqlite3.connect(reopened.db_path)
         try:

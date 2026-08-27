@@ -116,9 +116,9 @@ Cap shorthand:
 | `home` | `scope:home` |
 | `here` | `scope:here` |
 | `inline` | `form:inline` |
-| `ref` | `form:ref` |
-| `wired` | `form:wired` |
-| `file` | `form:file` |
+| `authored` | `form:authored` |
+| `configured` | `form:configured` |
+| `referenced` | `form:referenced` |
 
 Tool shorthand should remain minimal. Open-ended properties such as plugin names
 should use explicit `key:value` filters unless the runtime can prove the
@@ -217,10 +217,10 @@ Cap forms:
 
 | Form | Meaning |
 | --- | --- |
-| `inline` | Defined inline in the current `.too` source |
-| `ref` | Referenced by `use ...` in the current `.too` source |
-| `wired` | Connected through config |
-| `file` | File-backed cap from root or home cap directories |
+| `authored` | File-backed capability from root or home directories |
+| `inline` | Defined inline in the current `.too` module |
+| `configured` | Connected through config |
+| `referenced` | Attached by a module `with` declaration |
 
 Cap origins:
 
@@ -239,9 +239,9 @@ Examples:
 
 ```text
 skill/reviewer[here]
-service/*[wired,home]
-skill/*[scope:root,form:file]
-*[scope:here,form:ref]
+service/*[configured,home]
+skill/*[scope:root,form:authored]
+*[scope:here,form:referenced]
 ```
 
 
@@ -269,7 +269,7 @@ Valid examples:
 
 ```text
 reviewer[here]
-*[file]
+*[authored]
 [scope:home]
 ```
 
@@ -387,8 +387,8 @@ Examples:
 agic review(input):
   models = openai/gpt-5[provider:openrouter]
   tools = shell/*, filesystem/read
-  skills = reviewer[here], patch[file]
-  services -= github[wired]
+  skills = reviewer[here], patch[authored]
+  services -= github[configured]
 
   Review the input.
 ```

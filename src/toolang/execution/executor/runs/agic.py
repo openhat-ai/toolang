@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.policy import RunLimits
-from toolang.base.types.run import ModelUsage, ToolCall
+from toolang.base.types.run import ModelContinuation, ModelUsage, ToolCall
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.lang.ast import AgicDecl
@@ -52,7 +52,7 @@ class _AgicState:
     limits: RunLimits = RunLimits()
     record_output: Callable[[Pointer], None] = lambda _ref: None
     output: Pointer | None = None
-    model_state: dict[str, Any] | None = None
+    cont: ModelContinuation | None = None
     next_step: int = 0
     last_step: int | None = None
     next_model_inputs: tuple[Pointer, ...] | None = None

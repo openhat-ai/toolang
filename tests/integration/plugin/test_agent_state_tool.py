@@ -134,13 +134,43 @@ def test_agent_state_tool_creates_updates_gets_and_deletes_skill(
     deleted = _invoke(tools["skill_delete"], {"name": "reviewer"}, context)
 
     assert created["skill"]["scope"] == "home"
-    assert created["skill"]["form"] == "file"
+    assert created["skill"]["form"] == "authored"
     assert created["skill"]["meta"]["description"] == "Review code changes."
     assert updated["skill"]["meta"]["description"] == "Review implementation changes."
     assert "Check correctness, tests, and docs." in loaded["skill"]["content"]
     assert listed["skills"][0]["name"] == "reviewer"
     assert deleted["deleted"] is True
     assert not (toolang_root / "agents" / "alice" / "skills" / "reviewer").exists()
+
+
+def test_agent_state_cap_tools_expose_scope_instead_of_visibility() -> None:
+    tools = create_agent_state_tool({}).tools()
+
+    for name in (
+        "psyche_list",
+        "psyche_get",
+        "psyche_create",
+        "psyche_update",
+        "psyche_delete",
+        "skill_list",
+        "skill_get",
+        "skill_create",
+        "skill_update",
+        "skill_delete",
+        "service_list",
+        "service_get",
+        "service_create",
+        "service_update",
+        "service_delete",
+        "prompt_list",
+        "prompt_get",
+        "prompt_create",
+        "prompt_update",
+        "prompt_delete",
+    ):
+        properties = tools[name].definition().parameters["properties"]
+        assert "scope" in properties
+        assert "visibility" not in properties
 
 
 def test_agent_state_tool_creates_updates_and_deletes_service(tmp_path: Path) -> None:

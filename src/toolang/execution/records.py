@@ -19,7 +19,7 @@ from toolang.base.types.message import (
     part_from_data,
 )
 from toolang.base.types.policy import RunLimits
-from toolang.base.types.run import ModelCall, ToolCall
+from toolang.base.types.run import ModelCall, ModelContinuation, ToolCall
 from toolang.lang.ast import FlowStmt, flow_stmt_from_data, to_data as ast_to_data
 from toolang.lang.types import Array, Struct, Value, validate_type, value_type
 from .types import (
@@ -293,7 +293,7 @@ class ModelCallRefs:
     instructions: str
     messages: tuple[str, ...]
     tools: str | None
-    state: dict[str, Any] | None
+    cont: ModelContinuation | None
 
     def __post_init__(self) -> None:
         if not isinstance(self.instructions, str) or not self.instructions:
@@ -304,8 +304,8 @@ class ModelCallRefs:
             not isinstance(self.tools, str) or not self.tools
         ):
             raise ValueError("stored model tools require a reference or None")
-        if self.state is not None and not isinstance(self.state, dict):
-            raise TypeError("stored model state requires an object or None")
+        if self.cont is not None and not isinstance(self.cont, dict):
+            raise TypeError("stored model cont requires an object or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -918,13 +918,13 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
         raise ValueError("stored model identity must be text")
     call = _canonical_object(
         payload["call"],
-        fields={"instructions", "messages", "tools", "state"},
+        fields={"cont", "instructions", "messages", "tools"},
         label="stored model call",
     )
     instructions = call["instructions"]
     raw_messages = call["messages"]
     raw_tools = call["tools"]
-    raw_state = call["state"]
+    raw_cont = call["cont"]
     if not isinstance(instructions, str) or not instructions:
         raise ValueError("stored model instructions require a reference")
     if (
@@ -935,17 +935,17 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
         raise ValueError("stored model messages require references")
     if raw_tools is not None and not isinstance(raw_tools, str):
         raise ValueError("stored model tools must be a reference or null")
-    if raw_state is not None and not isinstance(raw_state, Mapping):
-        raise ValueError("stored model state must be an object or null")
+    if raw_cont is not None and not isinstance(raw_cont, Mapping):
+        raise ValueError("stored model cont must be an object or null")
     return StoredModelStepGiven(
         model=model,
         call=ModelCallRefs(
             instructions=instructions,
             messages=tuple(cast(Sequence[str], raw_messages)),
             tools=raw_tools,
-            state=(
-                dict(cast(Mapping[str, Any], raw_state))
-                if isinstance(raw_state, Mapping)
+            cont=(
+                dict(cast(Mapping[str, Any], raw_cont))
+                if isinstance(raw_cont, Mapping)
                 else None
             ),
         ),
@@ -967,8 +967,8 @@ def stored_step_given_to_data(
                 "instructions": given.call.instructions,
                 "messages": list(given.call.messages),
                 "tools": given.call.tools,
-                "state": (
-                    dict(given.call.state) if given.call.state is not None else None
+                "cont": (
+                    dict(given.call.cont) if given.call.cont is not None else None
                 ),
             },
         }
@@ -1025,11 +1025,11 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
     if kind != "model":
         raise ValueError(f"{kind} Step noted must be null")
     if not isinstance(data, Mapping) or set(data) not in {
-        frozenset({"tokens", "price", "cost", "state"}),
-        frozenset({"tokens", "price", "cost", "accounting", "state"}),
+        frozenset({"tokens", "price", "cost", "cont"}),
+        frozenset({"tokens", "price", "cost", "accounting", "cont"}),
     }:
         raise ValueError(
-            "model noted requires exactly: accounting, cost, price, state, tokens"
+            "model noted requires exactly: accounting, cont, cost, price, tokens"
         )
     legacy = "accounting" not in data
     payload = dict(cast(Mapping[str, object], data))
@@ -1058,9 +1058,9 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
             input=_optional_text(price_data["input"], label="input price"),
             output=_optional_text(price_data["output"], label="output price"),
         )
-    raw_state = payload["state"]
-    if raw_state is not None and not isinstance(raw_state, Mapping):
-        raise ValueError("model noted state must be an object or null")
+    raw_cont = payload["cont"]
+    if raw_cont is not None and not isinstance(raw_cont, Mapping):
+        raise ValueError("model noted cont must be an object or null")
     cost = _optional_text(payload["cost"], label="model cost")
     accounting = _model_accounting_from_data(payload["accounting"])
     if legacy:
@@ -1070,9 +1070,9 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
         price=price,
         cost=cost,
         accounting=accounting,
-        state=(
-            dict(cast(Mapping[str, Any], raw_state))
-            if isinstance(raw_state, Mapping)
+        cont=(
+            dict(cast(Mapping[str, Any], raw_cont))
+            if isinstance(raw_cont, Mapping)
             else None
         ),
     )
@@ -1131,7 +1131,7 @@ def step_noted_to_data(kind: StepKind, noted: StepNoted) -> dict[str, object] | 
         ),
         "cost": noted.cost,
         "accounting": _model_accounting_to_data(noted.accounting),
-        "state": dict(noted.state) if noted.state is not None else None,
+        "cont": dict(noted.cont) if noted.cont is not None else None,
     }
 
 
@@ -1378,7 +1378,7 @@ def model_call_to_data(call: ModelCall) -> dict[str, Any]:
         "instructions": call.instructions,
         "messages": [message.to_data() for message in call.messages],
         "tools": [tool.to_data() for tool in call.tools],
-        "state": dict(call.state) if call.state is not None else None,
+        "cont": dict(call.cont) if call.cont is not None else None,
     }
 
 
@@ -1492,8 +1492,14 @@ def _validate_preparation_payload(
     locals: tuple[Local, ...] | None,
     sandbox: str | None,
 ) -> None:
-    if not isinstance(state, str) or not state:
-        raise ValueError("preparation payload requires a state fingerprint")
+    if (
+        not isinstance(state, str)
+        or len(state) != 64
+        or any(char not in "0123456789abcdef" for char in state)
+    ):
+        raise ValueError(
+            "preparation payload State must be a lowercase SHA-256 revision"
+        )
     if not runnable:
         raise ValueError("preparation payload requires runnable")
     if not model:

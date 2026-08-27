@@ -58,7 +58,7 @@ class MessagesModelAdapter(ModelAdapter):
             )
             response.raise_for_status()
             result = parse_message_response(_json_object(response.json()))
-            return replace(result, state=_merge_state(request.state, result.state))
+            return replace(result, cont=_merge_cont(request.cont, result.cont))
 
     async def stream(
         self,
@@ -157,9 +157,9 @@ class MessagesModelAdapter(ModelAdapter):
             message=message,
             tool_calls=calls,
             usage=messages_usage(usage),
-            state=_merge_state(
-                request.state,
-                _thinking_state(
+            cont=_merge_cont(
+                request.cont,
+                _thinking_cont(
                     thinking_blocks=thinking_blocks,
                     tool_blocks=tool_blocks,
                 ),
@@ -207,7 +207,7 @@ def messages_payload(
         "messages": [
             _encode_message(
                 message,
-                thinking_blocks=_state_thinking_blocks(request.state),
+                thinking_blocks=_cont_thinking_blocks(request.cont),
             )
             for message in request.messages
         ],
@@ -257,7 +257,7 @@ def parse_message_response(payload: Mapping[str, object]) -> ModelCallResult:
         message=Message(role="assistant", parts=tuple(parts)),
         tool_calls=tuple(calls),
         usage=messages_usage(_json_object(payload.get("usage"))),
-        state=({_THINKING_BLOCKS: call_thinking} if call_thinking else None),
+        cont=({_THINKING_BLOCKS: call_thinking} if call_thinking else None),
     )
 
 
@@ -320,12 +320,12 @@ def messages_usage(value: Mapping[str, object]) -> ModelUsage | None:
 _THINKING_BLOCKS = "anthropic_thinking_blocks"
 
 
-def _state_thinking_blocks(
-    state: Mapping[str, Any] | None,
+def _cont_thinking_blocks(
+    cont: Mapping[str, Any] | None,
 ) -> dict[str, tuple[dict[str, object], ...]]:
-    if not isinstance(state, Mapping):
+    if not isinstance(cont, Mapping):
         return {}
-    raw = state.get(_THINKING_BLOCKS)
+    raw = cont.get(_THINKING_BLOCKS)
     if not isinstance(raw, Mapping):
         return {}
     values: dict[str, tuple[dict[str, object], ...]] = {}
@@ -343,7 +343,7 @@ def _state_thinking_blocks(
     return values
 
 
-def _thinking_state(
+def _thinking_cont(
     *,
     thinking_blocks: Mapping[int, Mapping[str, object]],
     tool_blocks: Mapping[int, Mapping[str, object]],
@@ -361,14 +361,14 @@ def _thinking_state(
     return {_THINKING_BLOCKS: by_call} if by_call else None
 
 
-def _merge_state(
+def _merge_cont(
     previous: Mapping[str, Any] | None,
     current: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
     merged = dict(previous or {})
     merged.update(dict(current or {}))
-    blocks = _state_thinking_blocks(previous)
-    blocks.update(_state_thinking_blocks(current))
+    blocks = _cont_thinking_blocks(previous)
+    blocks.update(_cont_thinking_blocks(current))
     if blocks:
         merged[_THINKING_BLOCKS] = {
             call_id: [dict(block) for block in values]

@@ -287,9 +287,9 @@ def response_payload(
 ) -> dict[str, Any]:
     """Build one Responses API payload."""
 
-    state = dict(request.state or {})
-    previous_response_id = state.get("previous_response_id") if stateful else None
-    baseline_count = state.get("baseline_count") if stateful else None
+    cont = dict(request.cont or {})
+    previous_response_id = cont.get("previous_response_id") if stateful else None
+    baseline_count = cont.get("baseline_count") if stateful else None
     message_offset = (
         baseline_count if isinstance(baseline_count, int) and baseline_count >= 0 else 0
     )
@@ -359,7 +359,7 @@ def parse_response(
         message=message,
         tool_calls=tool_calls,
         usage=response_usage(response),
-        state=response_state(
+        cont=response_cont(
             response,
             request=request,
             emitted_message=message,
@@ -580,14 +580,14 @@ def _value_text(value: object, name: str) -> str:
     return raw if isinstance(raw, str) else ""
 
 
-def response_state(
+def response_cont(
     response: Any,
     *,
     request: ModelCall,
     emitted_message: Message | None,
     stateful: bool,
 ) -> dict[str, Any] | None:
-    """Return one opaque state payload for the next model turn."""
+    """Return one opaque continuation payload for the next model turn."""
 
     if not stateful:
         return None

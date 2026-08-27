@@ -15,7 +15,7 @@ Current cap kinds are:
 
 ## Runtime Scope
 
-Prepared cap entries use runtime scope:
+State capabilities use runtime scope:
 
 - `root`: provided by the current Toolang root
 - `home`: available to one agent home
@@ -32,10 +32,9 @@ definitions.
 
 CLI and HTTP read APIs expose these runtime `scope` values directly.
 
-HTTP write payloads and internal storage still use `shared` and `private` to
-choose authored placement. CLI write commands expose that placement as command
-shape instead: without `AGENT`, they write root caps; with `AGENT`, they write
-that agent's home caps.
+HTTP write payloads use `root` and `home` directly. CLI write commands expose
+placement as command shape: without `AGENT`, they write root capabilities;
+with `AGENT`, they write that agent's home capabilities.
 
 
 ## Form, Scope, And Origin
@@ -47,10 +46,10 @@ Form tells how a cap is attached:
 
 | Form | Meaning |
 | --- | --- |
-| `inline` | Defined directly in `agent.too` |
-| `ref` | Referenced by `use ...` in `agent.too` |
-| `wired` | Wired in by `config.toml` |
-| `file` | Backed by files or folders in cap directories |
+| `authored` | Backed by files or folders in capability directories |
+| `inline` | Defined directly in a program module |
+| `configured` | Configured by a ref in `config.toml` |
+| `referenced` | Attached by a program module `with` declaration |
 
 Scope tells where a cap is available:
 
@@ -70,11 +69,10 @@ Scope tells where a cap is available:
 Runtime APIs expose effective caps. They do not expose every authored source
 variant as a separate history object.
 
-HTTP write payloads default to `private` placement. CLI write commands default
-to root caps when `AGENT` is omitted. Only `file` and `wired` forms can
-be authored at shared placement and surface as `root`, because they can be
-authored at the Toolang root. `ref` and `inline` forms are tied to one
-source program and surface as `here`.
+HTTP write payloads default to `home` scope. CLI write commands default to root
+capabilities when `AGENT` is omitted. Only `authored` and `configured` forms
+can have root or home scope. `referenced` and `inline` forms belong to one
+program module and have `here` scope.
 
 Authored placement, such as `config.toml`, `agent.too`, or a cap file path, is
 exposed separately as `definition_file`. When known, APIs may also include
@@ -89,7 +87,7 @@ view:
 | Column | Meaning |
 | --- | --- |
 | `SOURCE` | Authored file path, `agent.too` line reference, or directly accessible remote URL |
-| `FORM` | Source form: `inline`, `ref`, `wired`, or `file` |
+| `FORM` | Source form: `authored`, `inline`, `configured`, or `referenced` |
 | `SCOPE` | Runtime scope: `root`, `home`, or `here` |
 
 `FORM` uses the same values as the runtime source form. It is not remapped for
@@ -106,8 +104,8 @@ Public cap refs identify the selected cap itself:
 | Ref | Meaning |
 | --- | --- |
 | `inline://prompts/reviewer` | Embedded inline cap definition |
-| `home://services/github` | Private local cap in the agent home |
-| `root://skills/reviewer` | Shared local cap under the Toolang root |
+| `home://services/github` | Local capability in the agent home |
+| `root://skills/reviewer` | Local capability under the Toolang root |
 | `github://user/repo/path/name.md@rev` | Remote cap target |
 
 GitHub cap refs must include `@rev`. Shorthand refs such as `owner/name`
@@ -138,14 +136,14 @@ GitHub URLs are exact refs, not shorthand; a URL ending in
 
 ## Local Cap Paths
 
-Shared local caps:
+Root local capabilities:
 
 - `${TOOLANG_ROOT}/psyches/`
 - `${TOOLANG_ROOT}/skills/`
 - `${TOOLANG_ROOT}/services/`
 - `${TOOLANG_ROOT}/prompts/`
 
-Private local caps:
+Home local capabilities:
 
 - `${TOOLANG_ROOT}/agents/<agent>/psyches/`
 - `${TOOLANG_ROOT}/agents/<agent>/skills/`
@@ -153,20 +151,19 @@ Private local caps:
 - `${TOOLANG_ROOT}/agents/<agent>/prompts/`
 
 
-## Prepared Cap Paths
+## State Capability Paths
 
-Prepared materialized caps live inside immutable `.state` versions:
+Materialized capabilities live inside immutable State layer revisions:
 
-- `inline` caps are materialized under `files/inline`
-- `ref` caps are materialized under `files/cited`
-- `wired` caps are materialized under `files/wired`
-- authored caps are copied under `files/authored`
+- authored capabilities are copied under `files/caps/authored`
+- configured capabilities are materialized under `files/caps/configured`
+- inline module capabilities use `files/caps/inline/<module>`
+- referenced module capabilities use `files/caps/referenced/<module>`
 
-Root versions live under `${TOOLANG_ROOT}/.state/versions/<version>`.
-Agent-specific versions live under
-`${TOOLANG_ROOT}/agents/<agent>/.state/versions/<version>`. See
-[prepared-state.md](./prepared-state.md) for the complete layout and versioning
-rules.
+Root layers live under `${TOOLANG_ROOT}/.state/root/revs/<revision>`.
+Home layers live under
+`${TOOLANG_ROOT}/agents/<agent>/.state/home/revs/<revision>`. See
+[agent-state.md](./agent-state.md) for the complete layout and revision rules.
 
 
 ## Local Cap Frontmatter
@@ -205,11 +202,11 @@ as `env: API_TOKEN, ANOTHER_ENV_VAR`.
 
 ## Effective Cap Set
 
-`AgentState` captures one complete effective prepared cap set. State
+`AgentState` captures one complete effective capability set. State
 preparation:
 
 1. collects root and home definitions
-2. resolves wired and ref entries
+2. resolves configured and referenced entries
 3. materializes runtime-ready artifacts when needed
 4. selects the winning definition for each `(kind, name)`
 
@@ -243,27 +240,26 @@ Read endpoints:
 
 Write endpoints:
 
-- `PUT /api/v1/psyches/{name}/file`
-- `PUT /api/v1/skills/{name}/file`
-- `PUT /api/v1/services/{name}/file`
-- `PUT /api/v1/prompts/{name}/file`
-- `DELETE /api/v1/psyches/{name}/file`
-- `DELETE /api/v1/skills/{name}/file`
-- `DELETE /api/v1/services/{name}/file`
-- `DELETE /api/v1/prompts/{name}/file`
-- `PUT /api/v1/psyches/{name}/wired`
-- `PUT /api/v1/skills/{name}/wired`
-- `PUT /api/v1/services/{name}/wired`
-- `PUT /api/v1/prompts/{name}/wired`
-- `DELETE /api/v1/psyches/{name}/wired`
-- `DELETE /api/v1/skills/{name}/wired`
-- `DELETE /api/v1/services/{name}/wired`
-- `DELETE /api/v1/prompts/{name}/wired`
+- `PUT /api/v1/psyches/{name}/authored`
+- `PUT /api/v1/skills/{name}/authored`
+- `PUT /api/v1/services/{name}/authored`
+- `PUT /api/v1/prompts/{name}/authored`
+- `DELETE /api/v1/psyches/{name}/authored`
+- `DELETE /api/v1/skills/{name}/authored`
+- `DELETE /api/v1/services/{name}/authored`
+- `DELETE /api/v1/prompts/{name}/authored`
+- `PUT /api/v1/psyches/{name}/configured`
+- `PUT /api/v1/skills/{name}/configured`
+- `PUT /api/v1/services/{name}/configured`
+- `PUT /api/v1/prompts/{name}/configured`
+- `DELETE /api/v1/psyches/{name}/configured`
+- `DELETE /api/v1/skills/{name}/configured`
+- `DELETE /api/v1/services/{name}/configured`
+- `DELETE /api/v1/prompts/{name}/configured`
 
-File write requests carry `visibility` and `content`. Wired write requests
-carry `visibility` and `ref`. Deletes use a `visibility` query parameter.
-`visibility` is the HTTP write-placement field: `shared` maps to root
-authored caps and `private` maps to the current agent's authored caps.
+Authored write requests carry `scope` and `content`. Configured write requests
+carry `scope` and `ref`. Deletes use a `scope` query parameter. Scope is
+`root` or `home` and defaults to `home`.
 
 Template detail responses include template metadata and raw content. Cap read
 requests return the effective runtime view with `scope`, `origin`, `form`,

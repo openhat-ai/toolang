@@ -60,7 +60,7 @@ class GenerateContentModelAdapter(ModelAdapter):
             )
             response.raise_for_status()
             result = parse_generate_content(_json_object(response.json()))
-            return replace(result, state=_merge_state(request.state, result.state))
+            return replace(result, cont=_merge_cont(request.cont, result.cont))
 
     async def stream(
         self,
@@ -116,8 +116,8 @@ class GenerateContentModelAdapter(ModelAdapter):
             message=Message(role="assistant", parts=tuple(parts)),
             tool_calls=tuple(calls),
             usage=generate_content_usage(usage),
-            state=_merge_state(
-                request.state,
+            cont=_merge_cont(
+                request.cont,
                 {_THOUGHT_SIGNATURES: signatures} if signatures else None,
             ),
         )
@@ -141,7 +141,7 @@ def generate_content_payload(
         "contents": [
             _encode_message(
                 message,
-                signatures=_state_signatures(request.state),
+                signatures=_cont_signatures(request.cont),
             )
             for message in request.messages
         ],
@@ -192,7 +192,7 @@ def parse_generate_content(payload: Mapping[str, object]) -> ModelCallResult:
         message=Message(role="assistant", parts=tuple(parts)),
         tool_calls=tuple(calls),
         usage=generate_content_usage(_json_object(payload.get("usageMetadata"))),
-        state={_THOUGHT_SIGNATURES: signatures} if signatures else None,
+        cont={_THOUGHT_SIGNATURES: signatures} if signatures else None,
     )
 
 
@@ -443,10 +443,10 @@ def _int(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _state_signatures(state: Mapping[str, Any] | None) -> dict[str, str]:
-    if not isinstance(state, Mapping):
+def _cont_signatures(cont: Mapping[str, Any] | None) -> dict[str, str]:
+    if not isinstance(cont, Mapping):
         return {}
-    value = state.get(_THOUGHT_SIGNATURES)
+    value = cont.get(_THOUGHT_SIGNATURES)
     if not isinstance(value, Mapping):
         return {}
     return {
@@ -456,14 +456,14 @@ def _state_signatures(state: Mapping[str, Any] | None) -> dict[str, str]:
     }
 
 
-def _merge_state(
+def _merge_cont(
     previous: Mapping[str, Any] | None,
     current: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
     merged = dict(previous or {})
     current_values = dict(current or {})
-    signatures = _state_signatures(previous)
-    signatures.update(_state_signatures(current))
+    signatures = _cont_signatures(previous)
+    signatures.update(_cont_signatures(current))
     merged.update(current_values)
     if signatures:
         merged[_THOUGHT_SIGNATURES] = signatures

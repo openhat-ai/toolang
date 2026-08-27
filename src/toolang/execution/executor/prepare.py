@@ -31,7 +31,7 @@ from toolang.lang.ast import (
 from toolang.lang.input import resolve_input_parts
 from toolang.plugin.models.resolution import resolve_model
 from toolang.state import state as cap_store
-from toolang.state.state import PreparedCap, state_program_module
+from toolang.state.state import StateCap, state_program_module
 
 from . import prompts
 from .common import BoundRun, value_parts, value_text
@@ -375,7 +375,7 @@ def _model_context(model: ModelTarget) -> dict[str, object]:
     }
 
 
-def _cap_context(context: _Execution, entry: PreparedCap) -> dict[str, object]:
+def _cap_context(context: _Execution, entry: StateCap) -> dict[str, object]:
     description = entry.meta.get("description")
     return {
         "name": entry.name,
@@ -453,7 +453,7 @@ def _append_part(parts: list[Part], part: Part) -> None:
 
 
 def _tool_services(
-    entries: tuple[PreparedCap, ...], environ: Mapping[str, str]
+    entries: tuple[StateCap, ...], environ: Mapping[str, str]
 ) -> tuple[ToolService, ...]:
     result: list[ToolService] = []
     for entry in entries:

@@ -5,10 +5,12 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any
+from typing import Any, TypeAlias
 
 from .message import Delta, Message, Part, PartType
 from .tool import ToolDefinition
+
+ModelContinuation: TypeAlias = dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,7 +145,7 @@ class ModelCall:
     instructions: str
     messages: list[Message]
     tools: tuple[ToolDefinition, ...] = field(default_factory=tuple)
-    state: dict[str, Any] | None = None
+    cont: ModelContinuation | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,7 +155,7 @@ class ModelCallResult:
     message: Message | None = None
     tool_calls: tuple[ToolCall, ...] = field(default_factory=tuple)
     usage: ModelUsage | None = None
-    state: dict[str, Any] | None = None
+    cont: ModelContinuation | None = None
 
 
 @dataclass(frozen=True, slots=True)

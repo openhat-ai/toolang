@@ -381,12 +381,12 @@ def _step_noted(
         if isinstance(raw_price, Mapping)
         else None
     )
-    raw_state = facts.get("state")
+    raw_cont = facts.get("cont")
     return ModelStepNoted(
         tokens=tokens,
         price=price,
         cost=_optional_text(facts.get("cost")),
-        state=dict(raw_state) if isinstance(raw_state, Mapping) else None,
+        cont=dict(raw_cont) if isinstance(raw_cont, Mapping) else None,
     )
 
 

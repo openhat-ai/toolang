@@ -52,6 +52,11 @@ class _Snapshot:
     def current(self) -> Any:
         return self.value
 
+    def load(self, revision: str) -> Any:
+        if getattr(self.value, "revision", None) != revision:
+            raise ValueError(f"snapshot revision not found: {revision}")
+        return self.value
+
 
 def test_flow_module_is_listed_from_the_public_state_catalog(tmp_path: Path) -> None:
     harness = ExecutionHarness.create(tmp_path, source="", responses=[])
@@ -63,7 +68,7 @@ def test_flow_module_is_listed_from_the_public_state_catalog(tmp_path: Path) -> 
         "agic helper:\n  Private.\n\nflow:\n  run helper\n",
         encoding="utf-8",
     )
-    state = prepare_agent_state(harness.setup.layout, toolang_version="test")
+    state = prepare_agent_state(harness.setup.layout)
     harness.store.close()
     core = AgentCore(harness.setup.layout)
     core.setup = _Snapshot(harness.setup)

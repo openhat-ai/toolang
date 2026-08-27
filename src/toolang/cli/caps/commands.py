@@ -29,18 +29,22 @@ from ..common.routing import (
     OptionalPrefixAgentListCommand,
     OptionalPrefixAgentTemplateCommand,
 )
-from toolang.common.version import toolang_version
 
 if TYPE_CHECKING:
     from toolang.state.state import AgentState
-    from toolang.state.state import PreparedCap
+    from toolang.state.state import StateCap
     from ..common.progress import CliProgress
 
 EntryKind = CapKind
-PreparedVisibility = Literal["shared", "private"]
-CapForm = Literal["inline", "ref", "wired", "file"]
+MutableScope = Literal["root", "home"]
+CapForm = Literal["authored", "inline", "configured", "referenced"]
 CapScope = Literal["root", "home", "here"]
-CAP_FORMS: tuple[CapForm, ...] = ("inline", "ref", "wired", "file")
+CAP_FORMS: tuple[CapForm, ...] = (
+    "authored",
+    "inline",
+    "configured",
+    "referenced",
+)
 CAP_SCOPES: tuple[CapScope, ...] = ("root", "home", "here")
 
 
@@ -210,11 +214,11 @@ def list_caps(
 ) -> None:
     selected_agent = context_agent(ctx)
     agent_name = selected_agent or "default"
-    effective_visibility = "all" if selected_agent else "shared"
+    effective_scope = "all" if selected_agent else "root"
     entries = _all_cap_entries(
         context_root(ctx),
         agent_name,
-        visibility=effective_visibility,
+        scope=effective_scope,
         prepare=selected_agent is not None,
         kinds=set(CAP_KINDS),
     )
@@ -263,11 +267,11 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
     ) -> None:
         selected_agent = context_agent(ctx)
         agent_name = selected_agent or "default"
-        effective_visibility = "all" if selected_agent else "shared"
+        effective_scope = "all" if selected_agent else "root"
         entries = _all_cap_entries(
             context_root(ctx),
             agent_name,
-            visibility=effective_visibility,
+            scope=effective_scope,
             prepare=selected_agent is not None,
             kinds={kind},
         )
@@ -310,12 +314,12 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             typer.Option("--template", "-t", help="Template name."),
         ] = "default",
     ) -> None:
-        visibility, agent_name = _target_visibility(ctx)
+        scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
         if _local_entry_exists(
             context_root(ctx),
             agent_name,
-            visibility=visibility,
+            scope=scope,
             kind=kind,
             name=name,
         ):
@@ -330,7 +334,7 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             raise typer.Exit()
         cap = user_call(cap_store.CapFile.parse, text, kind=kind, name=name)
         saved = user_call(
-            _authored_caps(context_root(ctx), agent_name, visibility).create,
+            _authored_caps(context_root(ctx), agent_name, scope).create,
             cap,
         )
         if selected_agent:
@@ -349,10 +353,10 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         name: str = typer.Argument(..., help=f"{title} name"),
     ) -> None:
-        visibility, agent_name = _target_visibility(ctx)
+        scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
         try:
-            existing = _authored_caps(context_root(ctx), agent_name, visibility).get(
+            existing = _authored_caps(context_root(ctx), agent_name, scope).get(
                 kind, name
             )
             if existing is None:
@@ -370,7 +374,7 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             raise typer.Exit()
         cap = user_call(cap_store.CapFile.parse, updated_text, kind=kind, name=name)
         saved = user_call(
-            _authored_caps(context_root(ctx), agent_name, visibility).update,
+            _authored_caps(context_root(ctx), agent_name, scope).update,
             cap,
         )
         if selected_agent:
@@ -391,7 +395,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     ) -> None:
         from ..common.progress import as_progress_sink
 
-        visibility, agent_name = _target_visibility(ctx)
+        scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
         progress = _make_cap_write_progress()
         try:
@@ -399,7 +403,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 kind, ref, progress=as_progress_sink(progress)
             )
             name = cap_state.remote_entry_name(kind, canonical_ref)
-            _wired_caps(context_root(ctx), agent_name, visibility).create(
+            _configured_caps(context_root(ctx), agent_name, scope).create(
                 cap_config.CapRef(kind=kind, name=name, ref=canonical_ref)
             )
         except CatalogConflictError as exc:
@@ -414,15 +418,15 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 raise click.ClickException(
                     f"{title} {cap_state.remote_entry_name(kind, ref)} already exists"
                 ) from exc
-            raise click.ClickException(f"Wired {kind} {ref} not found") from exc
+            raise click.ClickException(f"Configured {kind} {ref} not found") from exc
         entry = _named_entry(
             context_root(ctx),
             agent_name,
-            visibility=visibility,
+            scope=scope,
             kind=kind,
             name=name,
             source_origin="remote",
-            source_form="wired",
+            source_form="configured",
         )
         if selected_agent:
             try:
@@ -446,19 +450,19 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         name: str = typer.Argument(..., help=f"{title} name"),
     ) -> None:
-        visibility, agent_name = _target_visibility(ctx)
+        scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
         entry = _named_entry(
             context_root(ctx),
             agent_name,
-            visibility=visibility,
+            scope=scope,
             kind=kind,
             name=name,
             source_origin="remote",
-            source_form="wired",
+            source_form="configured",
         )
         user_call(
-            _wired_caps(context_root(ctx), agent_name, visibility).remove,
+            _configured_caps(context_root(ctx), agent_name, scope).remove,
             kind,
             name,
         )
@@ -478,12 +482,12 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         name: str = typer.Argument(..., help=f"{title} name"),
     ) -> None:
-        visibility, agent_name = _target_visibility(ctx)
+        scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
         entry = _named_entry(
             context_root(ctx),
             agent_name,
-            visibility=visibility,
+            scope=scope,
             kind=kind,
             name=name,
             source_origin="local",
@@ -492,7 +496,7 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         if entry.shape == "dir":
             deleted_path = deleted_path.parent
         user_call(
-            _authored_caps(context_root(ctx), agent_name, visibility).remove,
+            _authored_caps(context_root(ctx), agent_name, scope).remove,
             kind,
             name,
         )
@@ -529,16 +533,16 @@ def _make_template_command(kind: CapKind, title: str) -> Callable[..., None]:
     return template
 
 
-def _target_visibility(ctx: typer.Context) -> tuple[PreparedVisibility, str]:
+def _target_scope(ctx: typer.Context) -> tuple[MutableScope, str]:
     agent_name = context_agent(ctx)
     if agent_name:
-        return "private", agent_name
-    return "shared", "default"
+        return "home", agent_name
+    return "root", "default"
 
 
-def _entry_source(entry: PreparedCap, *, agent_name: str) -> str:
+def _entry_source(entry: StateCap, *, agent_name: str) -> str:
     form = _entry_form(entry)
-    if form in {"ref", "wired"}:
+    if form in {"referenced", "configured"}:
         return _external_source_url(
             cap_state.entry_ref(entry, agent_name=agent_name), entry=entry
         )
@@ -549,7 +553,7 @@ def _entry_source(entry: PreparedCap, *, agent_name: str) -> str:
     return source
 
 
-def _external_source_url(ref: str, *, entry: PreparedCap) -> str:
+def _external_source_url(ref: str, *, entry: StateCap) -> str:
     if not ref.startswith("github://"):
         return ref
     try:
@@ -563,11 +567,11 @@ def _external_source_url(ref: str, *, entry: PreparedCap) -> str:
     )
 
 
-def _entry_form(entry: PreparedCap) -> CapForm:
+def _entry_form(entry: StateCap) -> CapForm:
     return cap_state.entry_form(entry)
 
 
-def _entry_scope_label(entry: PreparedCap, *, agent_name: str) -> CapScope:
+def _entry_scope_label(entry: StateCap, *, agent_name: str) -> CapScope:
     return cap_state.entry_scope(entry, agent_name=agent_name)
 
 
@@ -599,10 +603,10 @@ def _all_cap_entries(
     toolang_root: Path,
     agent_name: str,
     *,
-    visibility: PreparedVisibility | Literal["all"],
+    scope: CapScope | Literal["all"],
     prepare: bool,
     kinds: set[EntryKind],
-) -> tuple[PreparedCap, ...]:
+) -> tuple[StateCap, ...]:
     if prepare and (toolang_root / "agents" / agent_name / "agent.too").is_file():
         from ..common.progress import as_progress_sink, make_cli_progress
 
@@ -614,10 +618,9 @@ def _all_cap_entries(
             state = user_call(
                 prepare_agent_state,
                 AgentLayout.resident(toolang_root, agent_name),
-                toolang_version=toolang_version(),
                 progress=as_progress_sink(progress),
             )
-            entries = _prepared_cap_entries(state, visibility=visibility, kinds=kinds)
+            entries = _state_cap_entries(state, scope=scope, kinds=kinds)
             progress.set_prepare_total(len(entries))
             return entries
         finally:
@@ -625,21 +628,21 @@ def _all_cap_entries(
     return cap_state.list_entries(
         toolang_root,
         agent_name,
-        visibility=None if visibility == "all" else visibility,
+        scope=None if scope == "all" else scope,
         kinds=kinds,
     )
 
 
-def _prepared_cap_entries(
+def _state_cap_entries(
     state: AgentState,
     *,
-    visibility: PreparedVisibility | Literal["all"],
+    scope: CapScope | Literal["all"],
     kinds: set[EntryKind],
-) -> tuple[PreparedCap, ...]:
+) -> tuple[StateCap, ...]:
     return tuple(
         cap
         for cap in state.caps
-        if cap.kind in kinds and (visibility == "all" or cap.visibility == visibility)
+        if cap.kind in kinds and (scope == "all" or cap.scope == scope)
     )
 
 
@@ -647,16 +650,16 @@ def _named_entry(
     toolang_root: Path,
     agent_name: str,
     *,
-    visibility: PreparedVisibility,
+    scope: MutableScope,
     kind: EntryKind,
     name: str,
     source_origin: Literal["local", "remote"] | None = None,
-    source_form: cap_state.EntryForm | None = None,
-) -> PreparedCap:
+    source_form: cap_state.CapForm | None = None,
+) -> StateCap:
     entries = cap_state.list_entries(
         toolang_root,
         agent_name,
-        visibility=visibility,
+        scope=scope,
         kinds={kind},
     )
     for entry in entries:
@@ -674,40 +677,36 @@ def _local_entry_exists(
     toolang_root: Path,
     agent_name: str,
     *,
-    visibility: PreparedVisibility,
+    scope: MutableScope,
     kind: EntryKind,
     name: str,
 ) -> bool:
-    return (
-        _authored_caps(toolang_root, agent_name, visibility).get(kind, name) is not None
-    )
+    return _authored_caps(toolang_root, agent_name, scope).get(kind, name) is not None
 
 
 def _cap_directory(
     toolang_root: Path,
     agent_name: str,
-    visibility: PreparedVisibility,
+    scope: MutableScope,
 ) -> Path:
-    return (
-        toolang_root if visibility == "shared" else toolang_root / "agents" / agent_name
-    )
+    return toolang_root if scope == "root" else toolang_root / "agents" / agent_name
 
 
 def _authored_caps(
     toolang_root: Path,
     agent_name: str,
-    visibility: PreparedVisibility,
+    scope: MutableScope,
 ) -> cap_store.AuthoredCaps:
-    return cap_store.AuthoredCaps(_cap_directory(toolang_root, agent_name, visibility))
+    return cap_store.AuthoredCaps(_cap_directory(toolang_root, agent_name, scope))
 
 
-def _wired_caps(
+def _configured_caps(
     toolang_root: Path,
     agent_name: str,
-    visibility: PreparedVisibility,
-) -> cap_config.WiredCaps:
-    return cap_config.WiredCaps(
-        _cap_directory(toolang_root, agent_name, visibility) / "config.toml"
+    scope: MutableScope,
+) -> cap_config.ConfiguredCaps:
+    return cap_config.ConfiguredCaps(
+        _cap_directory(toolang_root, agent_name, scope) / "config.toml"
     )
 
 
@@ -732,7 +731,6 @@ def _refresh_agent_state(
     user_call(
         prepare_agent_state,
         AgentLayout.resident(toolang_root, agent_name),
-        toolang_version=toolang_version(),
         progress=as_progress_sink(progress),
     )
     if progress is not None:
