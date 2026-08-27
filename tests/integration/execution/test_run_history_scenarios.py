@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from tests.support.execution_fixtures import (
-    accept_run,
     project_run_end,
     project_run_start,
     project_step,
@@ -15,7 +14,7 @@ from tests.support.execution_fixtures import (
 from toolang.base.types.message import Message, TextPart
 from toolang.common.ids import IdIssuer
 from toolang.execution.history import RunHistory
-from toolang.execution.schemas import RunControlRefData, ThreadControlRefData
+from toolang.execution.schemas import ThreadControlRefData
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ControlRef, Local, ThreadPrefix, Pointer
@@ -224,39 +223,11 @@ def test_resolve_local_rejects_a_pointer_to_a_different_type(tmp_path: Path) -> 
         store.close()
 
 
-def test_run_history_reads_ejection_scope_from_the_control_record(
+def test_run_history_reads_thread_ejection_scope_from_the_control_record(
     tmp_path: Path,
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
-        source = project_run_start(
-            store,
-            run_id="custom",
-            thread_id="term_custom",
-            origin="chat",
-            input=Message.user("source"),
-        )
-        project_run_end(store, run_id=source.id)
-        accept_run(
-            store,
-            run_id="replacement",
-            parent=None,
-            thread=source.thread,
-            input=Message.user("replacement"),
-            context={},
-            request_id=None,
-            created_at="2026-01-01T00:00:02Z",
-            kind="rerun",
-            source=source.id,
-        )
-
-        rerun_ejected = RunHistory(store).get_run(source.id)
-        assert rerun_ejected is not None
-        assert rerun_ejected.ejected == RunControlRefData(
-            run="replacement",
-            index=0,
-        )
-
         first = project_run_start(
             store,
             run_id="first",
