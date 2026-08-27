@@ -50,7 +50,7 @@ def list_tools(
         return
     echo_table(("SET", "TOOL", "DESCRIPTION"), rows)
     typer.echo()
-    toolset_count = len({namespace for namespace, _tool, _description in rows})
+    toolset_count = len({toolset for toolset, _tool, _description in rows})
     typer.echo(
         f" {len(rows)} {'tool' if len(rows) == 1 else 'tools'}, "
         f"{toolset_count} {'toolset' if toolset_count == 1 else 'toolsets'}"

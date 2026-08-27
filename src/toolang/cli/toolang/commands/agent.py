@@ -296,7 +296,7 @@ def _models_summary(
 
 def _tools_summary(setup: AgentSetup) -> str:
     rows = plugin.tool_rows(setup)
-    set_count = len({namespace for namespace, _tool, _description in rows})
+    set_count = len({toolset for toolset, _tool, _description in rows})
     return (
         f"{len(rows)} {'tool' if len(rows) == 1 else 'tools'}, "
         f"{set_count} {'set' if set_count == 1 else 'sets'}"

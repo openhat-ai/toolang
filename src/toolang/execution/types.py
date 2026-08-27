@@ -115,13 +115,13 @@ class AgentToolResource:
 
     model_name: str
     plugin: str
-    namespace: str
+    toolset: str
     name: str
 
     def __post_init__(self) -> None:
         if not all(
             isinstance(value, str) and value
-            for value in (self.model_name, self.plugin, self.namespace, self.name)
+            for value in (self.model_name, self.plugin, self.toolset, self.name)
         ):
             raise ValueError("agent tool resource fields must be non-empty text")
 
@@ -196,7 +196,7 @@ class AgentResources:
                 {
                     "model_name": item.model_name,
                     "plugin": item.plugin,
-                    "namespace": item.namespace,
+                    "toolset": item.toolset,
                     "name": item.name,
                 }
                 for item in self.tools
@@ -220,15 +220,20 @@ def _resource_object(
     kind: Literal["tool", "cap"],
 ) -> dict[str, str]:
     fields = (
-        {"model_name", "plugin", "namespace", "name"}
+        {"model_name", "plugin", "toolset", "name"}
         if kind == "tool"
         else {"kind", "name", "ref"}
     )
-    if not isinstance(value, Mapping) or set(value) != fields:
+    legacy_tool_fields = {"model_name", "plugin", "namespace", "name"}
+    if not isinstance(value, Mapping):
         raise ValueError(f"agent resources {kind} must contain canonical fields")
     if not all(isinstance(item, str) for item in value.values()):
         raise ValueError(f"agent resources {kind} fields must be text")
-    data = cast(Mapping[str, object], value)
+    data = dict(cast(Mapping[str, object], value))
+    if kind == "tool" and set(data) == legacy_tool_fields:
+        data["toolset"] = data.pop("namespace")
+    if set(data) != fields:
+        raise ValueError(f"agent resources {kind} must contain canonical fields")
     return {name: cast(str, data[name]) for name in fields}
 
 

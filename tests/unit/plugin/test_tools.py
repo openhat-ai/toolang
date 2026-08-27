@@ -47,7 +47,7 @@ def _service_context(
 ) -> ToolContext:
     return _tool_context(
         home,
-        "service_use",
+        "service",
         run_id=run_id,
         services=(
             ToolService(
@@ -78,14 +78,14 @@ def test_filesystem_tool_reads_and_writes_within_agent_home(tmp_path: Path) -> N
     tools = plugin.tools()
 
     written = _invoke(
-        tools["write_text"],
+        tools["write"],
         {"path": "notes/todo.txt", "text": "hello"},
-        _tool_context(home, "filesystem"),
+        _tool_context(home, "fs"),
     )
     loaded = _invoke(
-        tools["read_text"],
+        tools["read"],
         {"path": "notes/todo.txt"},
-        _tool_context(home, "filesystem"),
+        _tool_context(home, "fs"),
     )
 
     assert written["path"].endswith("notes/todo.txt")
@@ -99,14 +99,14 @@ def test_filesystem_tool_appends_to_missing_file(tmp_path: Path) -> None:
     tools = plugin.tools()
 
     appended = _invoke(
-        tools["append_text"],
+        tools["append"],
         {"path": "outbox/index.md", "text": "- hello\n"},
-        _tool_context(home, "filesystem"),
+        _tool_context(home, "fs"),
     )
     loaded = _invoke(
-        tools["read_text"],
+        tools["read"],
         {"path": "outbox/index.md"},
-        _tool_context(home, "filesystem"),
+        _tool_context(home, "fs"),
     )
 
     assert appended["bytes_appended"] == len("- hello\n")
@@ -116,13 +116,13 @@ def test_filesystem_tool_appends_to_missing_file(tmp_path: Path) -> None:
 def test_filesystem_tool_rejects_paths_outside_agent_home(tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
-    tool = create_filesystem_tool({}).tools()["read_text"]
+    tool = create_filesystem_tool({}).tools()["read"]
 
     with pytest.raises(Exception, match="escapes agent home"):
         _invoke(
             tool,
             {"path": "../secret.txt"},
-            _tool_context(home, "filesystem"),
+            _tool_context(home, "fs"),
         )
 
 
@@ -173,7 +173,7 @@ def test_web_search_tool_filters_domains(monkeypatch, tmp_path: Path) -> None:
     result = _invoke(
         tool,
         {"query": "toolang", "domains": ["example.com"]},
-        _tool_context(tmp_path, "web_search"),
+        _tool_context(tmp_path, "web"),
     )
 
     assert result["domains"] == ["example.com"]
@@ -240,16 +240,21 @@ def test_web_search_enforces_an_outer_timeout(
         _invoke(
             tool,
             {"query": "toolang"},
-            _tool_context(tmp_path, "web_search"),
+            _tool_context(tmp_path, "web"),
         )
+
+
+def test_web_search_validation_uses_the_canonical_toolset() -> None:
+    with pytest.raises(ToolangError, match="^web integer argument is invalid$"):
+        create_web_search_tool({"top_k": "invalid"})
 
 
 def test_service_use_tool_definition_uses_object_input_schema() -> None:
     plugin = create_service_use_tool({})
 
-    definition = plugin.tools()["tool_call"].definition()
+    definition = plugin.tools()["call_tool"].definition()
 
-    assert definition.name == "tool_call"
+    assert definition.name == "call_tool"
     assert definition.parameters["properties"]["input"]["type"] == "object"
     assert "input" in definition.parameters["required"]
     assert "tool_name" in definition.parameters["properties"]
@@ -259,18 +264,18 @@ def test_service_use_tool_definition_uses_object_input_schema() -> None:
 def test_service_use_tool_exposes_leaf_commands_only() -> None:
     plugin = create_service_use_tool({})
 
-    assert "auth_start" in plugin.tools()
-    assert "auth_complete" in plugin.tools()
-    assert "bridge_start" in plugin.tools()
-    assert "bridge_stop" in plugin.tools()
+    assert "start_auth" in plugin.tools()
+    assert "complete_auth" in plugin.tools()
+    assert "start_bridge" in plugin.tools()
+    assert "stop_bridge" in plugin.tools()
     assert "init" in plugin.tools()
-    assert "tool_list" in plugin.tools()
-    assert "tool_call" in plugin.tools()
-    assert "resource_list" in plugin.tools()
-    assert "resource_template_list" in plugin.tools()
-    assert "resource_read" in plugin.tools()
-    assert "prompt_list" in plugin.tools()
-    assert "prompt_get" in plugin.tools()
+    assert "list_tools" in plugin.tools()
+    assert "call_tool" in plugin.tools()
+    assert "list_resources" in plugin.tools()
+    assert "list_resource_templates" in plugin.tools()
+    assert "read_resource" in plugin.tools()
+    assert "list_prompts" in plugin.tools()
+    assert "get_prompt" in plugin.tools()
     assert "bridge_status" not in plugin.tools()
     assert "callback_target" not in plugin.tools()
 
@@ -312,7 +317,7 @@ def test_service_use_tool_calls_http_service_via_mcat(
         context,
     )
     result = _invoke(
-        plugin.tools()["tool_list"],
+        plugin.tools()["list_tools"],
         {"service": "github"},
         context,
     )
@@ -375,7 +380,7 @@ def test_service_use_tool_serializes_dict_input_for_tool_call(
         context,
     )
     result = _invoke(
-        plugin.tools()["tool_call"],
+        plugin.tools()["call_tool"],
         {
             "service": "github",
             "tool_name": "search_issues",
@@ -393,19 +398,19 @@ def test_service_use_tool_definitions_explain_auth_and_input_contract(
 ) -> None:
     del tmp_path
     plugin = create_service_use_tool({})
-    bridge_start_description = plugin.tools()["bridge_start"].definition().description
+    bridge_start_description = plugin.tools()["start_bridge"].definition().description
     init_description = plugin.tools()["init"].definition().description
-    auth_start_description = plugin.tools()["auth_start"].definition().description
-    auth_complete_description = plugin.tools()["auth_complete"].definition().description
-    tool_list_description = plugin.tools()["tool_list"].definition().description
-    tool_call = plugin.tools()["tool_call"].definition()
+    auth_start_description = plugin.tools()["start_auth"].definition().description
+    auth_complete_description = plugin.tools()["complete_auth"].definition().description
+    tool_list_description = plugin.tools()["list_tools"].definition().description
+    tool_call = plugin.tools()["call_tool"].definition()
 
     assert "stdio service bridge" in bridge_start_description
-    assert "HTTP services do not need bridge_start" in bridge_start_description
-    assert "HTTP services do not need bridge_start" in init_description
-    assert "call auth_start" in init_description
+    assert "HTTP services do not need start_bridge" in bridge_start_description
+    assert "HTTP services do not need start_bridge" in init_description
+    assert "call start_auth" in init_description
     assert (
-        "call auth_complete so the callback endpoint is listening" in init_description
+        "call complete_auth so the callback endpoint is listening" in init_description
     )
     assert "reuse it and do not call init again" in init_description
     assert "expired or invalid session" in init_description
@@ -419,7 +424,7 @@ def test_service_use_tool_definitions_explain_auth_and_input_contract(
     )
     assert "After this succeeds, call init" in auth_complete_description
     assert "inputSchema" in tool_list_description
-    assert "prior successful tool_list result" in tool_list_description
+    assert "prior successful list_tools result" in tool_list_description
     assert "reuse that tool list and schemas" in tool_list_description
     assert "inside input" in tool_call.description
     assert "required inputSchema fields" in tool_call.description
@@ -439,7 +444,7 @@ def test_service_use_bridge_start_is_not_required_for_http_service(
     plugin = create_service_use_tool({})
 
     result = _invoke(
-        plugin.tools()["bridge_start"],
+        plugin.tools()["start_bridge"],
         {"service": "github"},
         _service_context(home),
     )
@@ -447,7 +452,7 @@ def test_service_use_bridge_start_is_not_required_for_http_service(
     assert result["ok"] is True
     assert result["result"]["result"]["status"] == "not_required"
     assert not (
-        home / ".runtime" / "tools" / "service_use" / "github" / "connection.json"
+        home / ".runtime" / "tools" / "service" / "github" / "connection.json"
     ).exists()
 
 
@@ -466,7 +471,7 @@ def test_service_use_bridge_start_parses_effective_stdio_target(
     monkeypatch.setattr("mcat_cli.bridge.bridge_start", fake_bridge_start)
 
     result = _invoke(
-        plugin.tools()["bridge_start"],
+        plugin.tools()["start_bridge"],
         {"service": "local"},
         _service_context(
             home,
@@ -492,7 +497,7 @@ def test_service_use_rejects_service_outside_effective_run(tmp_path: Path) -> No
         _invoke(
             plugin.tools()["init"],
             {"service": "github"},
-            _tool_context(home, "service_use"),
+            _tool_context(home, "service"),
         )
 
 
@@ -515,7 +520,7 @@ def test_service_use_auth_start_prepares_http_connection(
     monkeypatch.setattr("mcat_cli.auth.run_auth", fake_run_auth)
 
     result = _invoke(
-        plugin.tools()["auth_start"],
+        plugin.tools()["start_auth"],
         {"service": "linear"},
         _service_context(
             home,
@@ -548,14 +553,14 @@ def test_service_use_tool_call_fails_without_init(tmp_path: Path) -> None:
     context = _service_context(home)
 
     _invoke(
-        plugin.tools()["bridge_start"],
+        plugin.tools()["start_bridge"],
         {"service": "github"},
         context,
     )
 
     with pytest.raises(Exception):
         _invoke(
-            plugin.tools()["tool_list"],
+            plugin.tools()["list_tools"],
             {"service": "github"},
             context,
         )

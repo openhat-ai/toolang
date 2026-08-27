@@ -14,20 +14,20 @@ from toolang.plugin.models.config import parse_provider_configs
 def test_merge_plugin_configs_deeply_merges_root_and_agent_layers() -> None:
     root_config = tomllib.loads(
         """
-[plugin.toolset.filesystem]
+[plugin.toolset.fs]
 root = "/global"
 
-[plugin.toolset.filesystem.options]
+[plugin.toolset.fs.options]
 hidden = false
 limit = 10
 """.strip()
     )
     agent_config = tomllib.loads(
         """
-[plugin.toolset.filesystem]
+[plugin.toolset.fs]
 root = "/agent"
 
-[plugin.toolset.filesystem.options]
+[plugin.toolset.fs.options]
 limit = 20
 """.strip()
     )
@@ -38,7 +38,7 @@ limit = 20
     )
 
     assert toolsets == {
-        "filesystem": {
+        "fs": {
             "root": "/agent",
             "options": {"hidden": False, "limit": 20},
         }
@@ -61,14 +61,14 @@ credential_env = "COMPANY_CATALOG_TOKEN"
 @pytest.mark.parametrize(
     ("source", "message"),
     [
-        ("[tools.filesystem]", "unsupported plugin config section: tools"),
+        ("[tools.fs]", "unsupported plugin config section: tools"),
         ("[channels.telegram]", "unsupported plugin config section: channels"),
         (
             "[sandbox]\ndriver = 'docker'\n[sandbox.config]",
             "unknown sandbox config field: config",
         ),
         (
-            "[plugin.toolsets.filesystem]",
+            "[plugin.toolsets.fs]",
             "unknown plugin config field: toolsets",
         ),
     ],

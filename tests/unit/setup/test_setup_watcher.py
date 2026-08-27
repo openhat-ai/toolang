@@ -227,14 +227,14 @@ def test_setup_watcher_routes_only_each_plugins_canonical_config(
     _write_catalog(tmp_path / "models.json", ("one",))
     root_config = {
         "plugin": {
-            "toolset": {"filesystem": {"max_chars": 1000}},
+            "toolset": {"fs": {"max_chars": 1000}},
             "model_adapter": {"responses": {"credential_env": "ADAPTER_TOKEN"}},
             "model_catalog": {"ollama": {"timeout": 3}},
         }
     }
     agent_config = {
         "plugin": {
-            "toolset": {"filesystem": {"max_chars": 2000}},
+            "toolset": {"fs": {"max_chars": 2000}},
             "model_adapter": {"responses": {"profile": "agent"}},
         }
     }
@@ -293,7 +293,7 @@ def test_setup_watcher_routes_only_each_plugins_canonical_config(
             }
         }
     ]
-    assert toolset_calls == [{"filesystem": {"max_chars": 2000}}]
+    assert toolset_calls == [{"fs": {"max_chars": 2000}}]
     assert catalog_calls[0]["ollama"]["timeout"] == 3
     assert "root" not in catalog_calls[0]["ollama"]
     assert "mode" not in catalog_calls[0]["ollama"]

@@ -60,7 +60,8 @@ def load_config_layers(root: Path, agent_name: str) -> tuple[dict[str, object], 
 
 class _FakeTool(AgentTool):
     name = "shell__execute"
-    toolset_name = "shell"
+    plugin_name = "shell"
+    toolset = "shell"
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
@@ -1027,7 +1028,7 @@ def test_messages_adapter_replays_signed_thinking_before_tool_use() -> None:
                 {
                     "type": "tool_use",
                     "id": "call_1",
-                    "name": "filesystem__list",
+                    "name": "fs__list",
                     "input": {"path": "."},
                 },
             ],
@@ -1054,8 +1055,8 @@ def test_messages_adapter_replays_signed_thinking_before_tool_use() -> None:
                         ToolResultPart(
                             tool_call_id="call_1",
                             call_id="call_1",
-                            tool_name="filesystem__list",
-                            tool_family="filesystem__list",
+                            tool_name="fs__list",
+                            tool_family="fs__list",
                             output={"entries": []},
                         ),
                     ),
@@ -1219,7 +1220,7 @@ def test_chat_completions_adapter_replays_deepseek_reasoning_content() -> None:
                         SimpleNamespace(
                             id="call_1",
                             function=SimpleNamespace(
-                                name="filesystem__list",
+                                name="fs__list",
                                 arguments='{"path":"."}',
                             ),
                         ),
@@ -1258,8 +1259,8 @@ def test_chat_completions_adapter_replays_deepseek_reasoning_content() -> None:
                         ToolResultPart(
                             tool_call_id="call_1",
                             call_id="call_1",
-                            tool_name="filesystem__list",
-                            tool_family="filesystem__list",
+                            tool_name="fs__list",
+                            tool_family="fs__list",
                             output={"entries": []},
                         ),
                     ),
@@ -1272,10 +1273,7 @@ def test_chat_completions_adapter_replays_deepseek_reasoning_content() -> None:
     assert payload["messages"][0]["reasoning_content"] == (
         "The user asked for the directory, so list the current folder."
     )
-    assert (
-        payload["messages"][0]["tool_calls"][0]["function"]["name"]
-        == "filesystem__list"
-    )
+    assert payload["messages"][0]["tool_calls"][0]["function"]["name"] == "fs__list"
 
 
 def test_chat_completions_adapter_rejects_tool_calls_without_names() -> None:

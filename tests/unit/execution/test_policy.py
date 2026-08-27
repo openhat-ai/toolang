@@ -128,7 +128,7 @@ def test_merge_commands_compacts_session_state_and_preserves_disabled_limit() ->
     merged = merge_commands(
         (
             RunOverride("default", "model", "old/model"),
-            RunOverride("allow", "tools", ("filesystem/*",)),
+            RunOverride("allow", "tools", ("fs/*",)),
             RunOverride("limit", "time", 30),
         ),
         (

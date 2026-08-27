@@ -20,6 +20,16 @@ class PluginInfo:
     source: PluginSource
 
 
+@dataclass(frozen=True, slots=True)
+class LoadedPlugin:
+    """One loaded plugin instance with its authority source."""
+
+    entry_point_name: str
+    name: str
+    plugin: object
+    source: PluginSource
+
+
 def list_plugin_names(*, group: str) -> list[str]:
     """Return installed plugin entry point names for one family."""
 
@@ -72,18 +82,43 @@ def load_plugins(
     """Load all installed plugin instances for one family."""
 
     plugins: dict[str, object] = {}
+    for loaded in load_plugins_with_sources(group=group, config=config):
+        plugins.setdefault(loaded.name, loaded.plugin)
+    return plugins
+
+
+def load_plugins_with_sources(
+    *,
+    group: str,
+    config: Mapping[str, Mapping[str, Any]] | None = None,
+    built_ins_first: bool = False,
+) -> tuple[LoadedPlugin, ...]:
+    """Load installed plugins while retaining entry-point authority sources."""
+
+    plugins: list[LoadedPlugin] = []
     plugin_config = dict(config or {})
-    for entry_point in entry_points(group=group):
+    installed = [
+        (entry_point, _entry_point_plugin_source(entry_point))
+        for entry_point in entry_points(group=group)
+    ]
+    if built_ins_first:
+        installed.sort(key=lambda item: item[1] != "built-in")
+    for entry_point, source in installed:
         try:
             factory = cast(Callable[[Mapping[str, Any]], object], entry_point.load())
         except ModuleNotFoundError:
             continue
         plugin = factory(_fresh_config(plugin_config.get(entry_point.name)))
         plugin_name = _plugin_name(plugin, fallback=entry_point.name)
-        if plugin_name in plugins:
-            continue
-        plugins[plugin_name] = plugin
-    return plugins
+        plugins.append(
+            LoadedPlugin(
+                entry_point_name=entry_point.name,
+                name=plugin_name,
+                plugin=plugin,
+                source=source,
+            )
+        )
+    return tuple(plugins)
 
 
 def _plugin_name(plugin: object, *, fallback: str) -> str:
@@ -107,9 +142,6 @@ def _entry_point_plugin_source(entry_point: object) -> PluginSource:
         name = metadata.get("Name")
         if isinstance(name, str) and _normalize_distribution_name(name) == "toolang":
             return "built-in"
-    value = getattr(entry_point, "value", None)
-    if isinstance(value, str) and value.startswith("toolang."):
-        return "built-in"
     return "external"
 
 

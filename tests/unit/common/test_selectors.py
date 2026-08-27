@@ -84,9 +84,19 @@ def test_parse_selector_rejects_unknown_or_incomplete_filters(
         parse_selector(raw, domain=domain)
 
 
-def test_parse_selector_rejects_identity_filters() -> None:
+@pytest.mark.parametrize(
+    ("raw", "domain"),
+    [
+        ("[kind:skill]", "cap"),
+        ("[toolset:fs]", "tool"),
+    ],
+)
+def test_parse_selector_rejects_identity_filters(
+    raw: str,
+    domain: SelectorDomain,
+) -> None:
     with pytest.raises(ToolangError, match="identity belongs in the pattern"):
-        parse_selector("[kind:skill]", domain="cap")
+        parse_selector(raw, domain=domain)
 
 
 def test_parse_selector_rejects_empty_filter_list() -> None:

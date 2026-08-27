@@ -69,7 +69,7 @@ def _model(model: str = "deepseek/deepseek-chat") -> ModelStepGiven:
     return ModelStepGiven(model=model, call=ModelCall(instructions="", messages=[]))
 
 
-def _tool(name: str = "web_search.search", *, summary: str = "") -> ToolStepGiven:
+def _tool(name: str = "web.search", *, summary: str = "") -> ToolStepGiven:
     return ToolStepGiven(
         plugin=name.split(".", 1)[0],
         call=ToolCall(
@@ -93,8 +93,8 @@ def _part_output(*parts: Part) -> Local:
 def _tool_call_part() -> ToolCallPart:
     return ToolCallPart(
         tool_call_id="call_1",
-        tool_name="web_search.search",
-        tool_family="web_search",
+        tool_name="web.search",
+        tool_family="web",
         input={"query": "agent runtimes"},
     )
 
@@ -658,7 +658,7 @@ def test_model_mixed_output_hides_tool_calls_and_keeps_visible_parts() -> None:
     )
 
     assert _rows(update.committed) == [["• I will search for current evidence."]]
-    assert "web_search" not in update.committed[0].rows[0].text
+    assert "web" not in update.committed[0].rows[0].text
 
 
 def test_model_committed_text_is_not_replaced_by_later_tool_call_part() -> None:
@@ -798,7 +798,7 @@ def test_parallel_lane_tool_call_only_model_hands_activity_to_tool_step() -> Non
 
     assert hidden.committed == ()
     assert "requested" not in " ".join(row.text for row in hidden.live[0].rows)
-    assert "web_search.search" not in " ".join(row.text for row in hidden.live[0].rows)
+    assert "web.search" not in " ".join(row.text for row in hidden.live[0].rows)
 
     tool = projector.handle(
         StepBegin(
@@ -811,7 +811,7 @@ def test_parallel_lane_tool_call_only_model_hands_activity_to_tool_step() -> Non
     assert _rows(tool.live) == [
         [
             "• running · 0/1 succeeded · 1 active",
-            "  0 | #0 | • executing web_search.search",
+            "  0 | #0 | • executing web.search",
         ]
     ]
 
@@ -927,8 +927,8 @@ def test_tool_output_uses_compact_json_and_preserves_text_lines(
                 (
                     ToolResultPart(
                         tool_call_id="call_1",
-                        tool_name="web_search.search",
-                        tool_family="web_search",
+                        tool_name="web.search",
+                        tool_family="web",
                         output=output,
                     ),
                 ),
@@ -937,9 +937,7 @@ def test_tool_output_uses_compact_json_and_preserves_text_lines(
             ),
         )
     )
-    assert _rows(update.committed) == [
-        ["• executed web_search.search", *expected_output]
-    ]
+    assert _rows(update.committed) == [["• executed web.search", *expected_output]]
     assert all(row.tone == "progress" for row in update.committed[0].rows)
     assert update.committed[0].rows[0].surface == "tool_summary"
     assert all(row.surface == "tool_detail" for row in update.committed[0].rows[1:])
@@ -1792,7 +1790,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
                     ToolResultPart(
                         tool_call_id="call_1",
                         tool_name="fetch_page",
-                        tool_family="web_search",
+                        tool_family="web",
                         output={"results": [{}, {}]},
                     ),
                 ),

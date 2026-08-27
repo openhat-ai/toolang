@@ -28,10 +28,10 @@ from tests.support.execution_harness import FakeModels
 
 
 class _Tool:
-    def __init__(self, namespace: str, name: str) -> None:
-        self.namespace = namespace
-        self.name = f"{namespace}__{name}"
-        self.toolset_name = namespace
+    def __init__(self, toolset: str, name: str) -> None:
+        self.toolset = toolset
+        self.name = f"{toolset}__{name}"
+        self.plugin_name = toolset
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
@@ -127,16 +127,43 @@ def test_agent_resources_durable_data_round_trips_every_resource_kind() -> None:
         models=("test/model",),
         tools=(
             AgentToolResource(
-                model_name="search",
-                plugin="test",
-                namespace="test",
-                name="search",
+                model_name="_me__create_task",
+                plugin="_me",
+                toolset="_me",
+                name="create_task",
             ),
         ),
         caps=(AgentCapResource(kind="skill", name="review", ref="skill:review"),),
     )
 
     assert AgentResources.from_data(resources.to_data()) == resources
+
+
+def test_agent_resources_reads_legacy_tool_namespace_field() -> None:
+    resources = AgentResources.from_data(
+        {
+            "models": [],
+            "tools": [
+                {
+                    "model_name": "fs__read",
+                    "plugin": "fs",
+                    "namespace": "fs",
+                    "name": "read",
+                }
+            ],
+            "caps": [],
+        }
+    )
+
+    assert resources.tools[0].toolset == "fs"
+    assert resources.to_data()["tools"] == [
+        {
+            "model_name": "fs__read",
+            "plugin": "fs",
+            "toolset": "fs",
+            "name": "read",
+        }
+    ]
 
 
 @pytest.mark.parametrize(

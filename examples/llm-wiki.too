@@ -11,7 +11,7 @@
 #
 # examples/.toolang/agents/llm-wiki/wiki/
 agic file(_: Part[]):
-  tools = filesystem/*
+  tools = fs/*
 
   user:
     Process the current file request immediately. Do not ask for confirmation.
@@ -25,7 +25,7 @@ agic file(_: Part[]):
   After writing, reply with only: Wikified `<file name or path>`.
 
 agic chat(_: Part[]):
-  tools = filesystem/*
+  tools = fs/*
 
   user:
     Answer from the wiki in the agent home. Read `wiki/index.md` first, then

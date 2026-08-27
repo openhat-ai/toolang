@@ -1,4 +1,4 @@
-"""Service-use toolset plugin backed by mcat_cli."""
+"""Service toolset plugin backed by mcat_cli."""
 
 from __future__ import annotations
 
@@ -61,18 +61,17 @@ class _LeafTool(AgentTool):
 
 @dataclass(frozen=True, slots=True)
 class _ServiceUseAdapter:
-    toolset_name: str
     connection_version: int | None
     write_connection_file: ConnectionFileWriter
 
     def build_tools(self) -> dict[str, AgentTool]:
         service_schema = self._service_schema()
         tools = {
-            "bridge_start": self._tool(
-                "bridge_start",
+            "start_bridge": self._tool(
+                "start_bridge",
                 (
                     "Start one visible stdio service bridge by wrapping it as an HTTP MCP endpoint. "
-                    "HTTP services do not need bridge_start; call auth_start or init directly for HTTP."
+                    "HTTP services do not need start_bridge; call start_auth or init directly for HTTP."
                 ),
                 _schema(
                     properties={"service": service_schema},
@@ -80,8 +79,8 @@ class _ServiceUseAdapter:
                 ),
                 self._invoke_bridge_start,
             ),
-            "bridge_stop": self._tool(
-                "bridge_stop",
+            "stop_bridge": self._tool(
+                "stop_bridge",
                 "Stop one visible stdio service bridge or clear HTTP service auth/session state.",
                 _schema(
                     properties={"service": service_schema},
@@ -93,11 +92,11 @@ class _ServiceUseAdapter:
                 "init",
                 (
                     "Initialize one visible service session after any required transport setup and auth. "
-                    "For stdio services, call bridge_start first. HTTP services do not need bridge_start. "
+                    "For stdio services, call start_bridge first. HTTP services do not need start_bridge. "
                     "For HTTP OAuth services, if the user has not authorized the service yet or init "
-                    "reports a missing token, call auth_start, show the returned action URL to the "
-                    "user, then call auth_complete so the callback endpoint is listening while the "
-                    "user authorizes. After auth_complete succeeds, call init again. If a prior "
+                    "reports a missing token, call start_auth, show the returned action URL to the "
+                    "user, then call complete_auth so the callback endpoint is listening while the "
+                    "user authorizes. After complete_auth succeeds, call init again. If a prior "
                     "successful init session for this service is available, reuse it and do not call "
                     "init again; call init again only when there is no usable session or a later "
                     "service call reports an expired or invalid session."
@@ -108,11 +107,11 @@ class _ServiceUseAdapter:
                 ),
                 self._invoke_init,
             ),
-            "auth_start": self._tool(
-                "auth_start",
+            "start_auth": self._tool(
+                "start_auth",
                 (
                     "Start OAuth for one visible HTTP service. When the result includes an action URL, "
-                    "show that URL to the user before completing auth. Then call auth_complete to open "
+                    "show that URL to the user before completing auth. Then call complete_auth to open "
                     "the callback listener that receives the token while the user approves the URL."
                 ),
                 _schema(
@@ -121,12 +120,12 @@ class _ServiceUseAdapter:
                 ),
                 self._invoke_auth_start,
             ),
-            "auth_complete": self._tool(
-                "auth_complete",
+            "complete_auth": self._tool(
+                "complete_auth",
                 (
                     "Complete OAuth for one visible HTTP service by opening the callback endpoint and "
-                    "waiting for the token from the auth_start URL redirect. Call this after showing "
-                    "the auth_start URL to the user, while the user can still click and approve it. "
+                    "waiting for the token from the start_auth URL redirect. Call this after showing "
+                    "the start_auth URL to the user, while the user can still click and approve it. "
                     "After this succeeds, call init before listing or calling service tools."
                 ),
                 _schema(
@@ -135,13 +134,13 @@ class _ServiceUseAdapter:
                 ),
                 self._invoke_auth_complete,
             ),
-            "tool_list": self._tool(
-                "tool_list",
+            "list_tools": self._tool(
+                "list_tools",
                 (
-                    "List tools exposed by one initialized service. Use this before tool_call and read "
+                    "List tools exposed by one initialized service. Use this before call_tool and read "
                     "the returned inputSchema for the selected service tool. If a prior successful "
-                    "tool_list result for this service is available, reuse that tool list and schemas; "
-                    "do not call tool_list again unless the service reports that the tool is missing "
+                    "list_tools result for this service is available, reuse that tool list and schemas; "
+                    "do not call list_tools again unless the service reports that the tool is missing "
                     "or the schema is stale."
                 ),
                 _schema(
@@ -150,15 +149,15 @@ class _ServiceUseAdapter:
                 ),
                 self._invoke_tool_list,
             ),
-            "tool_call": self._tool(
-                "tool_call",
+            "call_tool": self._tool(
+                "call_tool",
                 (
                     "Call one tool exposed by one initialized service. Always put the selected service "
-                    "tool's arguments inside input as a JSON object shaped by tool_list inputSchema. "
+                    "tool's arguments inside input as a JSON object shaped by list_tools inputSchema. "
                     "For service tools with required inputSchema fields, fill those required fields "
                     "inside input before calling. For service tools with no arguments, pass input={}. "
                     "Do not place service tool arguments at the top level or under parameters/tool_input. "
-                    "If init and tool_list already succeeded for this service, call tool_call directly "
+                    "If init and list_tools already succeeded for this service, call call_tool directly "
                     "using the previously returned schema."
                 ),
                 _schema(
@@ -178,8 +177,8 @@ class _ServiceUseAdapter:
                 ),
                 self._invoke_tool_call,
             ),
-            "resource_list": self._tool(
-                "resource_list",
+            "list_resources": self._tool(
+                "list_resources",
                 "List resources exposed by one visible service.",
                 _schema(
                     properties={
@@ -190,8 +189,8 @@ class _ServiceUseAdapter:
                 ),
                 self._invoke_resource_list,
             ),
-            "resource_template_list": self._tool(
-                "resource_template_list",
+            "list_resource_templates": self._tool(
+                "list_resource_templates",
                 "List resource templates exposed by one visible service.",
                 _schema(
                     properties={
@@ -202,8 +201,8 @@ class _ServiceUseAdapter:
                 ),
                 self._invoke_resource_template_list,
             ),
-            "resource_read": self._tool(
-                "resource_read",
+            "read_resource": self._tool(
+                "read_resource",
                 "Read one resource exposed by one visible service.",
                 _schema(
                     properties={
@@ -214,8 +213,8 @@ class _ServiceUseAdapter:
                 ),
                 self._invoke_resource_read,
             ),
-            "prompt_list": self._tool(
-                "prompt_list",
+            "list_prompts": self._tool(
+                "list_prompts",
                 "List prompts exposed by one visible service.",
                 _schema(
                     properties={
@@ -226,8 +225,8 @@ class _ServiceUseAdapter:
                 ),
                 self._invoke_prompt_list,
             ),
-            "prompt_get": self._tool(
-                "prompt_get",
+            "get_prompt": self._tool(
+                "get_prompt",
                 "Get one prompt exposed by one visible service.",
                 _schema(
                     properties={
@@ -303,7 +302,7 @@ class _ServiceUseAdapter:
         if runtime.service.transport == "http":
             return {
                 "status": "not_required",
-                "message": "HTTP services do not need bridge_start; use auth_start or init directly.",
+                "message": "HTTP services do not need start_bridge; use start_auth or init directly.",
                 "service": runtime.service.name,
                 "transport": runtime.service.transport,
             }
@@ -546,7 +545,6 @@ class ServiceUseToolset:
 
     def __post_init__(self) -> None:
         adapter = _ServiceUseAdapter(
-            toolset_name=self.name,
             connection_version=self.connection_version,
             write_connection_file=self.write_connection_file,
         )
@@ -563,7 +561,7 @@ def create_toolset(config: Mapping[str, Any]) -> Toolset:
     return ServiceUseToolset(
         connection_version=None,
         write_connection_file=_write_connection_file,
-        name="service_use",
+        name="service",
         description="Access visible MCP services through mcat.",
     )
 

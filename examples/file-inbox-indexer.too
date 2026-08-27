@@ -12,7 +12,7 @@
 # examples/.toolang/agents/file-inbox-indexer/outbox/index.md
 
 agic file(_: Part[]):
-  tools = filesystem/*
+  tools = fs/*
 
   user:
     Process the current file request immediately. Do not ask for confirmation.
