@@ -81,6 +81,7 @@ class RunRecord:
     parent: StepPath | None
     thread: str
     control: ControlRef
+    state: ControlRef
     output: Local | None
     occurrence: Occurrence | None = None
     status: RunStatus = "pending"
@@ -134,7 +135,7 @@ class RunControlPayload:
 
     resources: AgentResources
     limits: RunLimits
-    state: str
+    state: str | None
     runnable: str
     model: str
     locals: tuple[Local, ...]
@@ -173,7 +174,7 @@ class RetryControlPayload:
 
     resources: AgentResources
     limits: RunLimits
-    state: str
+    state: str | None
     runnable: str
     model: str
     locals: tuple[Local, ...] | None
@@ -184,6 +185,16 @@ class RetryControlPayload:
         _validate_preparation_payload(
             self.state, self.runnable, self.model, self.locals, self.sandbox
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ReloadControlPayload:
+    """One durable Agent State revision adopted by an active root run."""
+
+    state: str
+
+    def __post_init__(self) -> None:
+        _validate_state_revision(self.state, label="reload payload State")
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,7 +242,10 @@ PreparationControlPayload = (
     RunControlPayload | RerunControlPayload | RetryControlPayload
 )
 RunScopedControlPayload = (
-    PreparationControlPayload | SteerControlPayload | CancelControlPayload
+    PreparationControlPayload
+    | ReloadControlPayload
+    | SteerControlPayload
+    | CancelControlPayload
 )
 ThreadControlPayload = CreateControlPayload | ForkControlPayload | RewindControlPayload
 ControlPayload = RunScopedControlPayload | ThreadControlPayload
@@ -239,6 +253,7 @@ _CONTROL_PAYLOAD_TYPES = {
     "run": RunControlPayload,
     "rerun": RerunControlPayload,
     "retry": RetryControlPayload,
+    "reload": ReloadControlPayload,
     "steer": SteerControlPayload,
     "cancel": CancelControlPayload,
     "create": CreateControlPayload,
@@ -335,6 +350,7 @@ class StepRecord:
     kind: StepKind
     input: tuple[Pointer, ...]
     given: StoredStepGiven
+    state: ControlRef
     output: Local | None
     occurrence: Occurrence | None = None
     noted: StepNoted = None
@@ -398,7 +414,7 @@ class ControlRecordBase:
 class RunControlRecord(ControlRecordBase):
     """One durable control sent to a run."""
 
-    kind: Literal["run", "rerun", "retry", "steer", "cancel"]
+    kind: Literal["run", "rerun", "retry", "reload", "steer", "cancel"]
     payload: RunScopedControlPayloadField
 
     @property
@@ -628,7 +644,7 @@ def _control_payload_from_data(
             raise ValueError(f"{kind} payload requires resources and limits")
         resources = AgentResources.from_data(cast(Mapping[str, object], resources_raw))
         limits = run_limits_from_data(limits_raw)
-        state = _required_payload_text(payload, "state")
+        state = _optional_payload_text(payload, "state")
         runnable = _required_payload_text(payload, "runnable")
         model = _required_payload_text(payload, "model")
         sandbox = _optional_payload_text(payload, "sandbox")
@@ -658,6 +674,8 @@ def _control_payload_from_data(
                 sandbox=sandbox,
             )
         if kind == "rerun":
+            if state is None:
+                raise ValueError("rerun payload requires state")
             return RerunControlPayload(
                 resources=resources,
                 limits=limits,
@@ -682,6 +700,10 @@ def _control_payload_from_data(
                 else None
             ),
             sandbox=sandbox,
+        )
+    if kind == "reload":
+        return ReloadControlPayload(
+            state=_required_payload_text(payload, "state"),
         )
     if kind in {"steer", "cancel"}:
         raw_locals = payload.get("locals", ())
@@ -740,6 +762,8 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
                 str(payload.retry_from) if payload.retry_from is not None else None
             ),
         }
+    if isinstance(payload, ReloadControlPayload):
+        return {"state": payload.state}
     if isinstance(payload, SteerControlPayload | CancelControlPayload):
         return {"locals": [local_to_data(local) for local in payload.locals]}
     if isinstance(payload, CreateControlPayload):
@@ -1473,7 +1497,6 @@ def _preparation_payload_data(
     data: dict[str, object] = {
         "resources": payload.resources.to_data(),
         "limits": run_limits_to_data(payload.limits),
-        "state": payload.state,
         "runnable": payload.runnable,
         "model": payload.model,
         "locals": (
@@ -1482,26 +1505,22 @@ def _preparation_payload_data(
             else None
         ),
     }
+    if payload.state is not None:
+        data["state"] = payload.state
     if payload.sandbox is not None:
         data["sandbox"] = payload.sandbox
     return data
 
 
 def _validate_preparation_payload(
-    state: str,
+    state: str | None,
     runnable: str,
     model: str,
     locals: tuple[Local, ...] | None,
     sandbox: str | None,
 ) -> None:
-    if (
-        not isinstance(state, str)
-        or len(state) != 64
-        or any(char not in "0123456789abcdef" for char in state)
-    ):
-        raise ValueError(
-            "preparation payload State must be a lowercase SHA-256 revision"
-        )
+    if state is not None:
+        _validate_state_revision(state, label="preparation payload State")
     if not runnable:
         raise ValueError("preparation payload requires runnable")
     if not model:
@@ -1512,6 +1531,16 @@ def _validate_preparation_payload(
         raise ValueError("preparation payload requires a canonical sandbox")
     if locals is not None:
         _validate_control_locals(locals)
+
+
+def _validate_state_revision(state: object, *, label: str) -> str:
+    if (
+        not isinstance(state, str)
+        or len(state) != 64
+        or any(char not in "0123456789abcdef" for char in state)
+    ):
+        raise ValueError(f"{label} must be a lowercase SHA-256 revision")
+    return state
 
 
 def _validate_control_locals(locals: tuple[Local, ...]) -> None:

@@ -18,6 +18,7 @@ from toolang.base.types.message import (
 from toolang.base.types.policy import RunLimits
 from toolang.execution.records import (
     RunControlRecord,
+    ReloadControlPayload,
     RetryControlPayload,
     RunControlPayload,
     SteerControlPayload,
@@ -426,6 +427,34 @@ def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:
         == inherited
     )
     assert control_payload_from_data("retry", control_payload_to_data(empty)) == empty
+
+
+def test_reload_and_inherited_preparation_payloads_round_trip_without_revision_duplication() -> (
+    None
+):
+    reload_payload = ReloadControlPayload(state="a" * 64)
+    child_payload = RunControlPayload(
+        resources=AgentResources(),
+        limits=RunLimits(),
+        state=None,
+        runnable="agic:child",
+        model="test/model",
+        locals=(),
+    )
+
+    assert (
+        control_payload_from_data("reload", control_payload_to_data(reload_payload))
+        == reload_payload
+    )
+    child_data = control_payload_to_data(child_payload)
+    assert "state" not in child_data
+    assert control_payload_from_data("run", child_data) == child_payload
+
+
+@pytest.mark.parametrize("revision", ("", "A" * 64, "a" * 63, "g" * 64))
+def test_reload_payload_rejects_noncanonical_revisions(revision: str) -> None:
+    with pytest.raises(ValueError, match="lowercase SHA-256"):
+        ReloadControlPayload(state=revision)
 
 
 @pytest.mark.parametrize(

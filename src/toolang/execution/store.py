@@ -29,6 +29,7 @@ from .records import (
     ControlPayload,
     ForkControlPayload,
     PreparationControlPayload,
+    ReloadControlPayload,
     RerunControlPayload,
     RunScopedControlPayload,
     RetryControlPayload,
@@ -84,8 +85,8 @@ from .types import (
 )
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 30
-_MIGRATABLE_SCHEMA_VERSIONS = (28, 29, _SCHEMA_VERSION)
+_SCHEMA_VERSION = 31
+_MIGRATABLE_SCHEMA_VERSIONS = (28, 29, 30, _SCHEMA_VERSION)
 
 
 class RunStore:
@@ -193,7 +194,7 @@ class RunStore:
         thread: str,
         resources: AgentResources,
         limits: RunLimits,
-        state: str,
+        state: str | None,
         runnable: str,
         model: str,
         locals: tuple[Local, ...],
@@ -203,6 +204,7 @@ class RunStore:
         created_at: str,
         kind: Literal["run", "rerun"] = "run",
         source: str | None = None,
+        state_ref: ControlRef | None = None,
     ) -> tuple[RunRecord, RunControlRecord]:
         """Atomically insert one new run and its entry control."""
 
@@ -210,6 +212,18 @@ class RunStore:
         validate_execution_id(thread, label="thread id")
         if parent is None:
             _validate_canonical_sandbox(sandbox)
+            if state is None:
+                raise ValueError("root run requires an Agent State revision")
+            if state_ref is not None:
+                raise ValueError("root run State reference is its entry control")
+            state_ref = ControlRef(run_id, 0)
+        else:
+            if kind != "run":
+                raise ValueError("child runs require a run entry control")
+            if state is not None:
+                raise ValueError("child run must not repeat its Agent State revision")
+            if state_ref is None:
+                raise ValueError("child run requires an Agent State control reference")
         if kind == "run" and source is not None:
             raise ValueError("run control cannot have a source run")
         if kind == "rerun" and source is None:
@@ -248,7 +262,7 @@ class RunStore:
                 if parent is not None:
                     parent_row = self._conn.execute(
                         """
-                        SELECT runs.thread
+                        SELECT runs.thread, steps.state_target, steps.state_index
                         FROM steps
                         JOIN runs ON runs.id = steps.run
                         WHERE steps.run = ? AND steps.path = ?
@@ -259,6 +273,13 @@ class RunStore:
                         raise ValueError(f"parent step not found: {parent}")
                     if str(parent_row["thread"]) != thread:
                         raise ValueError("child run must share its parent's thread")
+                    parent_state = ControlRef(
+                        str(parent_row["state_target"]),
+                        int(parent_row["state_index"]),
+                    )
+                    if state_ref != parent_state:
+                        raise ValueError("child run State must match its calling step")
+                    self._state_revision_for_ref_locked(state_ref)
                 if kind == "rerun":
                     source_row = self._conn.execute(
                         """
@@ -280,11 +301,13 @@ class RunStore:
                     """
                     INSERT INTO runs(
                         id, parent, thread, control_target, control_index,
+                        state_target, state_index,
                         output, occurrence, status, error,
                         ejected_by_target, ejected_by_index,
                         created_at, started_at, finished_at
                     ) VALUES (
                         ?, ?, ?, ?, 0,
+                        ?, ?,
                         NULL, ?, 'pending', NULL,
                         NULL, NULL, ?, NULL, NULL
                     )
@@ -294,6 +317,8 @@ class RunStore:
                         str(parent) if parent is not None else None,
                         thread,
                         run_id,
+                        state_ref.target,
+                        state_ref.index,
                         _dump_json(occurrence_to_data(occurrence))
                         if occurrence is not None
                         else None,
@@ -314,7 +339,7 @@ class RunStore:
                     else RerunControlPayload(
                         resources=resources,
                         limits=limits,
-                        state=state,
+                        state=cast(str, state),
                         runnable=runnable,
                         model=model,
                         locals=locals,
@@ -354,6 +379,78 @@ class RunStore:
         if run_row is None or control_row is None:
             raise RuntimeError(f"run acceptance failed: {run_id}")
         return _run_from_row(run_row), _run_control_from_row(control_row)
+
+    def accept_reload_control(
+        self,
+        *,
+        run_id: str,
+        state: str,
+        timing: ControlTiming = "immediate",
+        request_id: str | None,
+        created_at: str,
+    ) -> RunControlRecord:
+        """Atomically accept an immediate State reload for an active root run."""
+
+        validate_execution_id(run_id, label="run id")
+        if timing != "immediate":
+            raise ValueError("reload controls require immediate timing")
+        payload = ReloadControlPayload(state)
+        _validate_request_id(request_id)
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                if (
+                    request_id is not None
+                    and self._conn.execute(
+                        "SELECT 1 FROM controls WHERE request = ?", (request_id,)
+                    ).fetchone()
+                    is not None
+                ):
+                    raise ValueError(
+                        f"run control request already exists: {request_id}"
+                    )
+                run = self._conn.execute(
+                    "SELECT status, parent FROM runs WHERE id = ?", (run_id,)
+                ).fetchone()
+                if run is None or run["parent"] is not None:
+                    raise ValueError(f"active root run not found: {run_id}")
+                if str(run["status"]) not in {"pending", "running"}:
+                    raise ValueError(f"run is not active: {run_id}")
+                row = self._conn.execute(
+                    'SELECT COALESCE(MAX("index"), -1) + 1 AS next_index '
+                    "FROM controls WHERE target = ?",
+                    (run_id,),
+                ).fetchone()
+                index = int(row["next_index"]) if row is not None else 1
+                self._insert_control(
+                    scope="run",
+                    target=run_id,
+                    index=index,
+                    kind="reload",
+                    timing="immediate",
+                    payload=payload,
+                    request=request_id,
+                    status="pending",
+                    error=None,
+                    created_at=created_at,
+                    finished_at=None,
+                    claimed=False,
+                )
+                inserted = self._conn.execute(
+                    'SELECT * FROM controls WHERE target = ? AND "index" = ?',
+                    (run_id, index),
+                ).fetchone()
+                self._conn.commit()
+            except sqlite3.IntegrityError as exc:
+                self._conn.rollback()
+                identity = request_id or f"{run_id}:{index}"
+                raise ValueError(f"run control already exists: {identity}") from exc
+            except Exception:
+                self._conn.rollback()
+                raise
+        if inserted is None:
+            raise RuntimeError(f"reload control acceptance failed: {run_id}")
+        return _run_control_from_row(inserted)
 
     def accept_run_control(
         self,
@@ -486,7 +583,7 @@ class RunStore:
         anchor: StepPath | None,
         resources: AgentResources,
         limits: RunLimits,
-        state: str,
+        state: str | None,
         runnable: str,
         model: str,
         locals: tuple[Local, ...] | None,
@@ -497,6 +594,8 @@ class RunStore:
         """Atomically cut one root run at a step and reopen it for execution."""
 
         validate_execution_id(run_id, label="run id")
+        if state is None:
+            raise ValueError("retry requires an Agent State revision")
         _validate_canonical_sandbox(sandbox)
         _validate_request_id(request_id)
         with self._lock:
@@ -521,6 +620,19 @@ class RunStore:
                 run = _run_from_row(run_row)
                 if run.status not in {"succeeded", "failed", "canceled"}:
                     raise ValueError(f"run is not terminal: {run_id}")
+                applied_reload = self._conn.execute(
+                    """
+                    SELECT 1 FROM controls
+                    WHERE scope = 'run' AND target = ? AND kind = 'reload'
+                      AND status = 'applied'
+                    LIMIT 1
+                    """,
+                    (run_id,),
+                ).fetchone()
+                if applied_reload is not None:
+                    raise ValueError(
+                        f"run has applied Agent State reloads: {run_id}; use rerun"
+                    )
                 preparation_row = self._conn.execute(
                     'SELECT * FROM controls WHERE target = ? AND "index" = ?',
                     (run.control.target, run.control.index),
@@ -538,7 +650,8 @@ class RunStore:
                     RunControlPayload | RerunControlPayload | RetryControlPayload,
                 ):
                     raise ValueError(f"run preparation not found: {run_id}")
-                if preparation_payload.state != state:
+                recorded_state = self._state_revision_for_ref_locked(run.state)
+                if recorded_state != state:
                     raise ValueError(
                         f"retry state no longer matches original run: {run_id}; use rerun"
                     )
@@ -585,7 +698,7 @@ class RunStore:
                     payload=RetryControlPayload(
                         resources=resources,
                         limits=limits,
-                        state=state,
+                        state=None,
                         runnable=runnable,
                         model=model,
                         locals=locals,
@@ -759,7 +872,7 @@ class RunStore:
         index: int,
         canceled_at: str,
     ) -> RunControlRecord:
-        """Revoke one pending steer or cancel control."""
+        """Revoke one pending reload, steer, or cancel control."""
 
         with self.write_transaction():
             row = self._conn.execute(
@@ -1927,11 +2040,23 @@ class RunStore:
         input: Sequence[Pointer],
         occurrence: Occurrence | None = None,
         given: StepGiven,
+        state: ControlRef | None = None,
         started_at: str,
     ) -> StepRecord:
         """Project one step_begin event."""
 
         with self.write_transaction():
+            if state is None:
+                run_row = self._conn.execute(
+                    "SELECT state_target, state_index FROM runs WHERE id = ?",
+                    (path.run,),
+                ).fetchone()
+                if run_row is None:
+                    raise ValueError(f"run not found: {path.run}")
+                state = ControlRef(
+                    str(run_row["state_target"]),
+                    int(run_row["state_index"]),
+                )
             stored_given: StoredStepGiven = (
                 self.capture_model_call(model=given.model, call=given.call)
                 if isinstance(given, ModelStepGiven)
@@ -1941,9 +2066,10 @@ class RunStore:
             self._conn.execute(
                 """
                 INSERT INTO steps(
-                    run, path, kind, input, output, occurrence, given, noted,
+                    run, path, kind, input, state_target, state_index,
+                    output, occurrence, given, noted,
                     status, error, created_at, started_at, finished_at
-                ) VALUES (?, ?, ?, ?, NULL, ?, ?, 'null', 'running', NULL, ?, ?, NULL)
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 'null', 'running', NULL, ?, ?, NULL)
                 ON CONFLICT(run, path) DO NOTHING
                 """,
                 (
@@ -1951,6 +2077,8 @@ class RunStore:
                     path.local,
                     kind,
                     _dump_json(pointers_to_data(tuple(input))),
+                    state.target,
+                    state.index,
                     _dump_json(occurrence_to_data(occurrence))
                     if occurrence is not None
                     else None,
@@ -1969,6 +2097,7 @@ class RunStore:
         if (
             step.kind != kind
             or step.input != tuple(input)
+            or step.state != state
             or step.occurrence != occurrence
             or step.given != stored_given
             or step.started_at != started_at
@@ -2313,6 +2442,32 @@ class RunStore:
             ).fetchone()
         return _run_control_from_row(row) if row is not None else None
 
+    def resolve_state_revision(self, ref: ControlRef) -> str:
+        """Resolve one durable State control reference to its revision."""
+
+        with self._lock:
+            return self._state_revision_for_ref_locked(ref)
+
+    def _state_revision_for_ref_locked(self, ref: ControlRef) -> str:
+        row = self._conn.execute(
+            "SELECT * FROM controls WHERE scope = 'run' AND target = ? AND \"index\" = ?",
+            (ref.target, ref.index),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"State control not found: {ref.target}:{ref.index}")
+        control = _run_control_from_row(row)
+        payload = control.payload
+        revision = (
+            payload.state
+            if isinstance(payload, PreparationControlPayload | ReloadControlPayload)
+            else None
+        )
+        if revision is None:
+            raise ValueError(
+                f"control does not introduce Agent State: {ref.target}:{ref.index}"
+            )
+        return revision
+
     def list_run_controls(
         self,
         *,
@@ -2483,6 +2638,8 @@ class RunStore:
                     thread TEXT NOT NULL,
                     control_target TEXT NOT NULL,
                     control_index INTEGER NOT NULL,
+                    state_target TEXT NOT NULL,
+                    state_index INTEGER NOT NULL,
                     output TEXT,
                     occurrence TEXT,
                     status TEXT NOT NULL,
@@ -2529,6 +2686,27 @@ class RunStore:
                 """
             )
             _create_steps_table(self._conn)
+            if version in {28, 29, 30}:
+                if not _table_has_column(self._conn, "runs", "state_target"):
+                    self._conn.execute(
+                        "ALTER TABLE runs ADD COLUMN state_target TEXT NOT NULL DEFAULT ''"
+                    )
+                if not _table_has_column(self._conn, "runs", "state_index"):
+                    self._conn.execute(
+                        "ALTER TABLE runs ADD COLUMN state_index INTEGER NOT NULL DEFAULT 0"
+                    )
+                self._conn.execute("UPDATE runs SET state_target = id, state_index = 0")
+                if not _table_has_column(self._conn, "steps", "state_target"):
+                    self._conn.execute(
+                        "ALTER TABLE steps ADD COLUMN state_target TEXT NOT NULL DEFAULT ''"
+                    )
+                if not _table_has_column(self._conn, "steps", "state_index"):
+                    self._conn.execute(
+                        "ALTER TABLE steps ADD COLUMN state_index INTEGER NOT NULL DEFAULT 0"
+                    )
+                self._conn.execute(
+                    "UPDATE steps SET state_target = run, state_index = 0"
+                )
             if version == 28:
                 _migrate_model_cont(self._conn)
             if version in {28, 29}:
@@ -2598,6 +2776,8 @@ def _create_steps_table(connection: sqlite3.Connection) -> None:
             path TEXT NOT NULL,
             kind TEXT NOT NULL,
             input TEXT NOT NULL,
+            state_target TEXT NOT NULL,
+            state_index INTEGER NOT NULL,
             output TEXT,
             occurrence TEXT,
             given TEXT NOT NULL,
@@ -2612,6 +2792,17 @@ def _create_steps_table(connection: sqlite3.Connection) -> None:
             PRIMARY KEY(run, path)
         )
         """
+    )
+
+
+def _table_has_column(
+    connection: sqlite3.Connection,
+    table: str,
+    column: str,
+) -> bool:
+    return any(
+        str(row["name"]) == column
+        for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
     )
 
 
@@ -2811,6 +3002,10 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
             target=str(row["control_target"]),
             index=int(row["control_index"]),
         ),
+        state=ControlRef(
+            target=str(row["state_target"]),
+            index=int(row["state_index"]),
+        ),
         output=(local_from_data(output_data) if output_data is not None else None),
         occurrence=occurrence_from_data(occurrence_data),
         status=cast(RunStatus, row["status"]),
@@ -2870,6 +3065,10 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
         path=StepPath.from_local(str(raw["run"]), str(raw["path"])),
         kind=kind,
         input=pointers_from_data(input_data),
+        state=ControlRef(
+            target=str(raw["state_target"]),
+            index=int(cast(int | str, raw["state_index"])),
+        ),
         output=(local_from_data(output_data) if output_data is not None else None),
         occurrence=occurrence_from_data(occurrence_data),
         given=stored_step_given_from_data(kind, given_data),

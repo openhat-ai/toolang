@@ -22,7 +22,7 @@ from toolang.execution.events import (
     run_event_to_data,
 )
 from toolang.execution.records import StepRecord
-from toolang.execution.schemas import StepData
+from toolang.execution.schemas import RunControlRefData, StepData
 from toolang.execution.types import (
     CollectionStepNoted,
     ControlRef,
@@ -55,6 +55,7 @@ _EVENTS: tuple[RunEvent, ...] = (
     StepBegin(
         step=StepPath.parse("run_root.0"),
         kind="model",
+        state=ControlRef("run_root", 0),
         given=ModelStepGiven(model="test/model", call=ModelCall("", [])),
         input=(
             Pointer.control("run_root", 0, "_"),
@@ -109,18 +110,28 @@ def test_run_event_codec_round_trips_every_event_variant() -> None:
         assert run_event_from_data(run_event_to_data(event)) == event
 
 
+def test_step_begin_codec_rejects_malformed_state_control_reference() -> None:
+    payload = run_event_to_data(_EVENTS[1])
+    payload["state"] = {"target": "run.invalid", "index": 0}
+
+    with pytest.raises(ValueError, match="invalid control target"):
+        run_event_from_data(payload)
+
+
 def test_step_schema_preserves_the_flow_statement_discriminator() -> None:
     step = StepData(
         path=StepPath.parse("run_root.1"),
         kind="run",
         input=[],
         given=ScatterStmt(span=Span(line=4), count=2, runnable="agic:child"),
+        state=RunControlRefData(run="run_root", index=0),
         output=None,
     )
 
     payload = TypeAdapter(StepData).dump_python(step, mode="json")
 
     assert payload["path"] == "run_root.1"
+    assert payload["state"] == {"run": "run_root", "index": 0}
     assert payload["given"]["kind"] == "scatter"
     assert TypeAdapter(StepData).validate_python(payload) == step
 
@@ -178,6 +189,7 @@ def test_loop_step_noted_round_trips_with_its_terminal_cause() -> None:
         step=StepPath.parse("run_root.1"),
         kind="loop",
         given=RepeatStmt(span=Span(line=4), count=3),
+        state=ControlRef("run_root", 0),
     )
     end = StepEnd(
         step=begin.step,
@@ -229,6 +241,7 @@ def test_loop_step_noted_round_trips_through_the_step_schema() -> None:
         kind="loop",
         input=[],
         given=RepeatStmt(span=Span(line=4), count=3),
+        state=RunControlRefData(run="run_root", index=0),
         output=None,
         noted=LoopStepNoted(iterations=3, termination="exhausted"),
         status="succeeded",
@@ -270,6 +283,7 @@ def test_step_schema_and_record_reject_mismatched_typed_facts() -> None:
             kind="tool",
             input=[],
             given=statement,
+            state=RunControlRefData(run="run_root", index=0),
             output=None,
         )
     with pytest.raises(TypeError, match="tool Step requires ToolStepGiven"):
@@ -278,6 +292,7 @@ def test_step_schema_and_record_reject_mismatched_typed_facts() -> None:
             kind="tool",
             input=(),
             given=statement,
+            state=ControlRef("run_root", 0),
             output=None,
         )
 
@@ -286,6 +301,7 @@ def test_step_schema_and_record_reject_mismatched_typed_facts() -> None:
         kind="run",
         input=[],
         given=statement,
+        state=RunControlRefData(run="run_root", index=0),
         output=None,
     )
     payload = TypeAdapter(StepData).dump_python(canonical, mode="json")

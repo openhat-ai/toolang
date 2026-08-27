@@ -67,6 +67,14 @@ class RunExecutor:
         request_id: str | None = None,
     ) -> RunControlRecord: ...
 
+    def reload(
+        self,
+        *,
+        run_id: str,
+        state: AgentState,
+        request_id: str | None = None,
+    ) -> RunControlRecord: ...
+
     def cancel_control(
         self,
         *,
@@ -128,7 +136,8 @@ omitted retry anchor uses the latest visible failed, canceled, or running Step.
 For a failed or canceled Run with no incomplete Step, it uses the latest visible
 Step. For a succeeded Run, it prefers the latest non-value Step and falls back
 to the latest value Step. The handle exposes its run ID, executor, and task, and
-delegates same-process `cancel()`, `steer()`, and `cancel_control()` operations.
+delegates same-process `cancel()`, `steer()`, `reload()`, and
+`cancel_control()` operations.
 Its await path shields the owner task so
 canceling a waiting HTTP request or TUI action does not cancel the durable run.
 
@@ -169,10 +178,11 @@ Retry acceptance atomically appends an applied `retry` control to the existing
 root, resolves and records its anchor, ejects the invalid structural step
 suffix, fails stale pending controls, and reopens the root as pending. New
 steps use fresh physical indexes; ejected steps are never overwritten. Before
-mutation, retry requires the source preparation to have sandbox provenance and
-requires it to equal the current canonical sandbox. Accepted retry controls
-repeat that value. A flow retry restores typed locals from the succeeded
-top-level prefix and begins at the first invalid statement. When a nested failed
+mutation, retry rejects applied reload history because it cannot replay a prior
+State timeline. It also requires the source preparation to have sandbox
+provenance and requires it to equal the current canonical sandbox. Accepted
+retry controls repeat that value. A flow retry restores typed locals from the
+succeeded top-level prefix and begins at the first invalid statement. When a nested failed
 step is selected, its unfinished containing step is also invalidated because
 only a succeeded container is a reusable commit. Agic retry invalidates the
 agic step sequence and starts a fresh model-tool cycle under the same root.
@@ -186,13 +196,15 @@ source of admission truth.
 
 Child runs receive their own process-safe IDs, run records, and index-zero
 run controls before `RunBegin`. They execute in the top-level owner task and
-inherit its setup, state, and tracer.
+inherit its setup and tracer. Each child binds the immutable State object and
+control reference captured by its calling step.
 
 
 ## Execution Structure
 
 `RunExecutor` is the process-level singleton. Each owned root run creates one
-private `_Execution` that carries the state shared by its recursive run tree.
+private `_Execution` that carries the current `(AgentState, ControlRef)` pair
+for its recursive run tree.
 The implementation is divided by semantic level:
 
 - `executor.py` binds `RunSpec` to immutable execution state and durable IDs;
@@ -303,6 +315,11 @@ operations only mutate shared SQLite truth. `run(spec)` is also process-safe,
 but the process that calls it owns and executes that run; run is not a
 cross-process dispatch queue.
 
+`reload()` is intentionally different: only the owning executor accepts it.
+It requires a concrete durable State from the same `AgentLayout`, normalizes a
+child ID to the active root, retains the object, and writes a root-targeted
+`reload` control with `immediate` timing.
+
 Every inserted or changed control receives a global monotonic revision inside
 the same SQLite write transaction. The owner process polls only revisions
 newer than its cursor. An unchanged control table returns no rows. Changed
@@ -321,6 +338,14 @@ Runtime atomically claims a pending steer or cancel immediately before applying
 it. A cancellation updates only an unclaimed pending control, making
 application and cancellation linearizable without exposing an intermediate
 public status.
+
+Reload application and every physical `StepBegin` use the same root
+`asyncio.Lock`. Applying a reload claims and marks its control `applied`, then
+swaps the in-memory State/ref pair without awaiting. Beginning a step persists
+the current ref and captures the matching immutable object before releasing
+the lock. Parallel Flow branches serialize only this short boundary; their work
+remains concurrent. A started step never changes State, and a child accepted by
+that step uses the captured object and ref.
 
 
 ## Event Ordering

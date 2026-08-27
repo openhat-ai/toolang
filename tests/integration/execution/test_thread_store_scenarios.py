@@ -25,6 +25,7 @@ from toolang.execution.history import RunHistory
 from toolang.execution.records import StepRecord
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
+    ControlRef,
     ModelStepGiven,
     ModelStepNoted,
     StepPath,
@@ -53,6 +54,7 @@ def _capture_replayable_model_step(store: RunStore) -> StepRecord:
         kind="model",
         input=(),
         given=given,
+        state=ControlRef("run_replayable_model", 0),
         started_at="2026-01-01T00:00:00Z",
     )
 

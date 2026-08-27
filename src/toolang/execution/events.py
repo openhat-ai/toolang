@@ -62,6 +62,7 @@ class StepBegin:
     step: StepPath
     kind: StepKind
     given: StepGiven
+    state: ControlRef | None = None
     input: tuple[Pointer, ...] = ()
     occurrence: Occurrence | None = None
     started_at: str = ""

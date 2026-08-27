@@ -33,7 +33,6 @@ from toolang.common.errors import ToolangError
 from toolang.execution.calls import validate_session_commands
 from toolang.execution.executor import LocalRunHandle, RunSpec
 from toolang.execution.records import (
-    PreparationControlPayload,
     RunControlRecord,
     RunRecord,
 )
@@ -488,16 +487,7 @@ async def _fresh_state(core: AgentCore) -> AgentState:
 
 
 def _recorded_state(core: AgentCore, run: RunRecord) -> AgentState:
-    control = core.store.get_run_control(
-        run_id=run.control.target,
-        index=run.control.index,
-    )
-    if control is None or not isinstance(
-        control.payload,
-        PreparationControlPayload,
-    ):
-        raise ValueError(f"run preparation not found: {run.id}")
-    return core.state.load(control.payload.state)
+    return core.state.load(core.store.resolve_state_revision(run.state))
 
 
 def _active_run_or_409(core: AgentCore, run_id: str) -> RunRecord:

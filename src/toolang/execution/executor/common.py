@@ -48,6 +48,7 @@ from ..runnables import resolve_runnable
 from ..types import (
     AgentResources,
     CollectionStepNoted,
+    ControlRef,
     Local as RecordLocal,
     Occurrence,
     StepKind,
@@ -61,6 +62,10 @@ from ..types import (
 Shape = Literal["none", "item", "list"]
 FlowTransform = Literal["item", "list", "filter", "sort", "none"]
 EventEmitter = Callable[[RunEvent], Awaitable[None]]
+StepBoundary = Callable[
+    [Callable[[AgentState, ControlRef], StepBegin]],
+    Awaitable[tuple[AgentState, ControlRef]],
+]
 _TEMPLATE_LOCAL_RE = re.compile(
     r"{{\s*(?:[#^/]\s*)?([A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z_][\w-]*)*\s*}}"
 )
@@ -92,6 +97,7 @@ class BoundRun:
     input: RunnableInput
     control_locals: tuple[RecordLocal, ...]
     state: AgentState
+    state_ref: ControlRef
     setup: AgentSetup
     created_at: str
     module: str = "agent"
@@ -120,6 +126,7 @@ class Local:
 async def execute_step(
     emit: EventEmitter,
     *,
+    begin_step: StepBoundary | None = None,
     kind: StepKind,
     path: StepPath,
     binding: BoundRun,
@@ -133,22 +140,33 @@ async def execute_step(
     """Evaluate, transform, and commit one Flow statement Step."""
 
     started_at = utc_now()
-    inputs = _unique_step_inputs(
-        (
-            *(Pointer.control(item.run, item.index, "_") for item in controls),
-            *statement_input_refs(binding, statement, locals),
+
+    def build(agent_state: AgentState, state_ref: ControlRef) -> StepBegin:
+        effective_binding = replace(
+            binding,
+            state=agent_state,
+            state_ref=state_ref,
         )
-    )
-    await emit(
-        StepBegin(
+        inputs = _unique_step_inputs(
+            (
+                *(Pointer.control(item.run, item.index, "_") for item in controls),
+                *statement_input_refs(effective_binding, statement, locals),
+            )
+        )
+        return StepBegin(
             step=path,
             kind=kind,
+            state=state_ref,
             input=inputs,
             occurrence=occurrence,
             given=statement,
             started_at=started_at,
         )
-    )
+
+    if begin_step is None:
+        await emit(build(binding.state, binding.state_ref))
+    else:
+        await begin_step(build)
     try:
         evaluated = await evaluate()
         result = transform_flow_result(statement, locals, evaluated)

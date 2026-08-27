@@ -38,11 +38,12 @@ from toolang.plugin.models.config import (
     parse_model_aliases,
 )
 from toolang.state.state import AgentState, state_program_module
+from toolang.state.cache import agent_revision_dir
 from toolang.setup import AgentSetup
 
 from ..accounting import selected_usd_cost
 from ..calls import IncludeResolver, resolve_restart_request, resolve_run_request
-from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin
+from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin, StepEnd
 from ..records import (
     PreparationControlPayload,
     RunControlRecord,
@@ -111,6 +112,8 @@ class _RunCanceled(asyncio.CancelledError):
 class _ActiveRun:
     task: asyncio.Task[RunRecord]
     tracer: RunTracer | None
+    root_run_id: str
+    root_setup: AgentSetup
     loop: asyncio.AbstractEventLoop = field(repr=False)
     controls: dict[str, dict[int, RunControlRecord]] = field(
         default_factory=dict,
@@ -118,6 +121,9 @@ class _ActiveRun:
     )
     event_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     ended: set[str] = field(default_factory=set, repr=False)
+    execution: _Execution | None = field(default=None, repr=False)
+    reload_states: dict[int, AgentState] = field(default_factory=dict, repr=False)
+    reload_scheduled: bool = field(default=False, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,8 +179,22 @@ class LocalRunHandle(Awaitable[RunRecord]):
             request_id=request_id,
         )
 
+    def reload(
+        self,
+        state: AgentState,
+        *,
+        request_id: str | None = None,
+    ) -> RunControlRecord:
+        """Persist an immediate Agent State reload for this run tree."""
+
+        return self.executor.reload(
+            run_id=self.run_id,
+            state=state,
+            request_id=request_id,
+        )
+
     def cancel_control(self, index: int) -> RunControlRecord:
-        """Revoke one pending steer or cancel control for this run."""
+        """Revoke one pending reload, steer, or cancel control for this run."""
 
         return self.executor.cancel_control(run_id=self.run_id, index=index)
 
@@ -462,16 +482,7 @@ class RunExecutor:
         run = self.store.get_run(run_id=run_id)
         if run is None or run.parent is not None:
             raise ValueError(f"root run not found: {run_id}")
-        control = self.store.get_run_control(
-            run_id=run.control.target,
-            index=run.control.index,
-        )
-        if control is None or not isinstance(
-            control.payload,
-            PreparationControlPayload,
-        ):
-            raise ValueError(f"run preparation not found: {run_id}")
-        revision = control.payload.state
+        revision = self.store.resolve_state_revision(run.state)
         try:
             state = load(revision)
         except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -496,8 +507,7 @@ class RunExecutor:
         if run is None or run.parent is not None:
             raise ValueError(f"root run not found: {run_id}")
         control = self.store.get_run_control(
-            run_id=run.control.target,
-            index=run.control.index,
+            run_id=run.control.target, index=run.control.index
         )
         if control is None or not isinstance(
             control.payload, PreparationControlPayload
@@ -554,7 +564,7 @@ class RunExecutor:
             control.payload, PreparationControlPayload
         ):
             raise ValueError(f"run preparation not found: {run_id}")
-        if control.payload.state != state.revision:
+        if self.store.resolve_state_revision(run.state) != state.revision:
             raise ValueError(
                 f"retry state no longer matches original run: {run_id}; use rerun"
             )
@@ -579,7 +589,13 @@ class RunExecutor:
             self._execute_owned(bound, executable, tracer=tracer, retry=retry),
             name=f"toolang-run-{bound.run_id}",
         )
-        active = _ActiveRun(task=task, tracer=tracer, loop=loop)
+        active = _ActiveRun(
+            task=task,
+            tracer=tracer,
+            root_run_id=bound.root_run_id,
+            root_setup=bound.setup,
+            loop=loop,
+        )
         with self._active_lock:
             self._active[bound.run_id] = active
         self._tasks[task] = (bound.run_id, active)
@@ -612,9 +628,12 @@ class RunExecutor:
         execution = _Execution(
             self,
             root=bound,
-            emit=emit,
+            active=active,
             retry=retry,
         )
+        with self._active_lock:
+            active.execution = execution
+        self._schedule_reload_application(active)
         timeout = execution.schedule_time_limit(task)
         try:
             await execution.execute(
@@ -698,8 +717,49 @@ class RunExecutor:
         self._observe_control(control)
         return control
 
+    def reload(
+        self,
+        *,
+        run_id: str,
+        state: AgentState,
+        request_id: str | None = None,
+    ) -> RunControlRecord:
+        """Persist an immediate State reload for a locally owned run tree."""
+
+        self._require_available()
+        if not isinstance(state, AgentState):
+            raise TypeError("reload requires an AgentState")
+        with self._active_lock:
+            active = self._active.get(run_id)
+            if active is None:
+                raise ValueError(f"run is not owned by this executor: {run_id}")
+            root_run_id = active.root_run_id
+            expected_dir = agent_revision_dir(
+                active.root_setup.layout,
+                state.revision,
+            ).resolve()
+            revision_dir = (
+                state.revision_dir.resolve() if state.revision_dir is not None else None
+            )
+            if revision_dir is None or not revision_dir.is_dir():
+                raise ValueError("reload requires a durable Agent State")
+            if revision_dir != expected_dir:
+                raise ValueError("reload Agent State belongs to another layout")
+        control = self.store.accept_reload_control(
+            run_id=root_run_id,
+            state=state.revision,
+            request_id=request_id,
+            created_at=utc_now(),
+        )
+        with self._active_lock:
+            current = self._active.get(root_run_id)
+            if current is active:
+                active.reload_states[control.index] = state
+        self._observe_control(control)
+        return control
+
     def cancel_control(self, *, run_id: str, index: int) -> RunControlRecord:
-        """Revoke one pending steer or cancel control from any local process."""
+        """Revoke one pending reload, steer, or cancel control."""
 
         self._require_available()
         control = self.store.cancel_run_control(
@@ -764,24 +824,34 @@ class RunExecutor:
 
     def _handler(self, active: _ActiveRun) -> EventEmitter:
         async def emit(event: RunEvent) -> None:
-            async with active.event_lock:
-                event_run = _run_event_id(event)
-                if event_run in active.ended:
-                    return
-                with self.store.write_transaction():
-                    self._persist.on_event(event)
-                    self._update_control_state(event)
-                self._update_cached_control_state(event)
-                self._track_active_run(event, active)
-                if isinstance(event, RunEnd):
-                    active.ended.add(event.run)
-                if active.tracer is not None:
-                    try:
-                        await active.tracer.on_event(event)
-                    except Exception:
-                        _LOGGER.exception("run tracer event handling failed")
+            await self._emit_event(active, event)
 
         return emit
+
+    async def _emit_event(self, active: _ActiveRun, event: RunEvent) -> None:
+        async with active.event_lock:
+            await self._emit_event_locked(active, event)
+
+    async def _emit_event_locked(
+        self,
+        active: _ActiveRun,
+        event: RunEvent,
+    ) -> None:
+        event_run = _run_event_id(event)
+        if event_run in active.ended:
+            return
+        with self.store.write_transaction():
+            self._persist.on_event(event)
+            self._update_control_state(event)
+        self._update_cached_control_state(event)
+        self._track_active_run(event, active)
+        if isinstance(event, RunEnd):
+            active.ended.add(event.run)
+        if active.tracer is not None:
+            try:
+                await active.tracer.on_event(event)
+            except Exception:
+                _LOGGER.exception("run tracer event handling failed")
 
     def _update_control_state(self, event: RunEvent) -> None:
         if isinstance(event, RunBegin):
@@ -833,6 +903,7 @@ class RunExecutor:
             return
         cancel: asyncio.Task[RunRecord] | None = None
         loop: asyncio.AbstractEventLoop | None = None
+        apply_reload: _ActiveRun | None = None
         with self._active_lock:
             active = self._active.get(control.run)
             if active is None:
@@ -848,6 +919,8 @@ class RunExecutor:
                 ):
                     cancel = active.task
                     loop = active.loop
+                if control.kind == "reload":
+                    apply_reload = active
             else:
                 controls.pop(control.index, None)
                 if not controls:
@@ -861,6 +934,82 @@ class RunExecutor:
                 if control.index not in claimed:
                     return
             loop.call_soon_threadsafe(cancel.cancel)
+        if apply_reload is not None:
+            self._schedule_reload_application(apply_reload)
+
+    def _schedule_reload_application(self, active: _ActiveRun) -> None:
+        with self._active_lock:
+            if (
+                active.reload_scheduled
+                or active.task.done()
+                or active.execution is None
+            ):
+                return
+            controls = active.controls.get(active.root_run_id, {})
+            if not any(
+                control.kind == "reload"
+                and control.status == "pending"
+                and control.index in active.reload_states
+                for control in controls.values()
+            ):
+                return
+            active.reload_scheduled = True
+
+        def start() -> None:
+            asyncio.create_task(
+                self._apply_reload_controls(active),
+                name=f"toolang-reload-{active.root_run_id}",
+            )
+
+        active.loop.call_soon_threadsafe(start)
+
+    async def _apply_reload_controls(self, active: _ActiveRun) -> None:
+        try:
+            while True:
+                async with active.event_lock:
+                    with self._active_lock:
+                        execution = active.execution
+                        controls = active.controls.get(active.root_run_id, {})
+                        candidate = next(
+                            (
+                                control
+                                for _index, control in sorted(controls.items())
+                                if control.kind == "reload"
+                                and control.status == "pending"
+                                and control.index in active.reload_states
+                            ),
+                            None,
+                        )
+                        state = (
+                            active.reload_states.get(candidate.index)
+                            if candidate is not None
+                            else None
+                        )
+                    if execution is None or candidate is None or state is None:
+                        return
+                    claimed = self.store.claim_run_controls(
+                        run_id=active.root_run_id,
+                        indexes=(candidate.index,),
+                    )
+                    if candidate.index not in claimed:
+                        with self._active_lock:
+                            controls.pop(candidate.index, None)
+                        continue
+                    self.store.finish_run_controls(
+                        run_id=active.root_run_id,
+                        indexes=(candidate.index,),
+                        finished_at=utc_now(),
+                    )
+                    execution._current_state = (
+                        state,
+                        ControlRef(active.root_run_id, candidate.index),
+                    )
+                    with self._active_lock:
+                        controls.pop(candidate.index, None)
+        finally:
+            with self._active_lock:
+                active.reload_scheduled = False
+            self._schedule_reload_application(active)
 
     def _pending_controls(
         self,
@@ -980,9 +1129,14 @@ class _Execution:
         executor: RunExecutor,
         *,
         root: BoundRun,
-        emit: EventEmitter,
+        active: _ActiveRun | None = None,
+        emit: EventEmitter | None = None,
         retry: RunControlRecord | None = None,
     ) -> None:
+        if (active is None) == (emit is None):
+            raise TypeError(
+                "execution requires exactly one active run or event emitter"
+            )
         self.executor = executor
         self.setup = root.setup
         self.layout = root.setup.layout
@@ -994,7 +1148,10 @@ class _Execution:
         self._agent_resources = root.agent_resources
         self.date = root.created_at.partition("T")[0]
         self.timezone = "UTC"
+        self._active = active
         self._emit_trace = emit
+        self._current_state = (root.state, root.state_ref)
+        self._step_states: dict[StepPath, tuple[AgentState, ControlRef]] = {}
         self._limits = _RunLimitState(root.limits)
         self._retry = retry
         if retry is not None:
@@ -1315,8 +1472,9 @@ class _Execution:
     ) -> Local:
         """Accept and execute one recursive child agic or flow run."""
 
+        state, state_ref = self.state_for_step(step)
         executable = resolve_runnable(
-            state_program_module(parent.state, parent.module).program,
+            state_program_module(state, parent.module).program,
             name,
         )
         binding = _child_binding(
@@ -1326,6 +1484,8 @@ class _Execution:
             locals,
             parent_step=step,
             occurrence=occurrence,
+            state=state,
+            state_ref=state_ref,
         )
         binding = _prepare_child_run(binding, executable)
         resources = binding.resources
@@ -1337,7 +1497,7 @@ class _Execution:
             thread=binding.thread,
             resources=resources,
             limits=binding.limits,
-            state=binding.state.revision,
+            state=None,
             runnable=_bound_runnable(binding),
             model=_bound_model(binding),
             locals=binding.control_locals,
@@ -1345,6 +1505,7 @@ class _Execution:
             occurrence=binding.occurrence,
             request_id=None,
             created_at=binding.created_at,
+            state_ref=binding.state_ref,
         )
         self.executor._register_child_run(
             run_id=binding.run_id,
@@ -1381,8 +1542,9 @@ class _Execution:
     ) -> Local:
         """Execute child runs concurrently and preserve their output type."""
 
+        state, _state_ref = self.state_for_step(parent)
         executable = resolve_runnable(
-            state_program_module(binding.state, binding.module).program,
+            state_program_module(state, binding.module).program,
             runnable,
         )
         lanes = limit or max(len(inputs), 1)
@@ -1551,7 +1713,54 @@ class _Execution:
         return self._run_outputs.get(run_id)
 
     async def emit(self, event: RunEvent) -> None:
-        await self._emit_trace(event)
+        if isinstance(event, StepBegin):
+            await self.begin_step(
+                lambda _state, state_ref: replace(event, state=state_ref)
+            )
+            return
+        if self._active is None:
+            emit = self._emit_trace
+            if emit is None:  # pragma: no cover - constructor invariant
+                raise RuntimeError("execution event emitter is missing")
+            await emit(event)
+            if isinstance(event, StepEnd):
+                self._step_states.pop(event.step, None)
+            return
+        await self.executor._emit_event(self._active, event)
+        if isinstance(event, StepEnd):
+            self._step_states.pop(event.step, None)
+
+    async def begin_step(
+        self,
+        build: Callable[[AgentState, ControlRef], StepBegin],
+    ) -> tuple[AgentState, ControlRef]:
+        """Prepare and persist one step against one serialized State snapshot."""
+
+        if self._active is None:
+            emit = self._emit_trace
+            if emit is None:  # pragma: no cover - constructor invariant
+                raise RuntimeError("execution event emitter is missing")
+            state, state_ref = self._current_state
+            event = build(state, state_ref)
+            await emit(event)
+            self._step_states[event.step] = (state, state_ref)
+            return state, state_ref
+        async with self._active.event_lock:
+            state, state_ref = self._current_state
+            event = build(state, state_ref)
+            await self.executor._emit_event_locked(self._active, event)
+            self._step_states[event.step] = (state, state_ref)
+            return state, state_ref
+
+    def state_for_step(self, step: StepPath) -> tuple[AgentState, ControlRef]:
+        """Return the immutable State snapshot captured by one started step."""
+
+        try:
+            return self._step_states[step]
+        except KeyError as exc:
+            if self._active is None:
+                return self._current_state
+            raise RuntimeError(f"step State boundary is missing: {step}") from exc
 
 
 def _parallel_output_type(
@@ -1574,10 +1783,12 @@ def _child_binding(
     *,
     parent_step: StepPath,
     occurrence: Occurrence | None,
+    state: AgentState,
+    state_ref: ControlRef,
 ) -> BoundRun:
     structs = {
         item.name: item
-        for item in state_program_module(parent.state, parent.module).program.structs
+        for item in state_program_module(state, parent.module).program.structs
     }
     source_locals: dict[str, Local] = {}
     primary_value: object | None = None
@@ -1634,7 +1845,8 @@ def _child_binding(
         ),
         input=input,
         control_locals=tuple(control_locals),
-        state=parent.state,
+        state=state,
+        state_ref=state_ref,
         setup=parent.setup,
         module=parent.module,
         limits=parent.limits,
@@ -1692,6 +1904,7 @@ def _bind_run(
         input=_runnable_input_from_values(control_locals),
         control_locals=control_locals,
         state=spec.state,
+        state_ref=ControlRef(run_id, 0),
         setup=spec.setup,
         module=resolved.module.name,
         limits=spec.limits,

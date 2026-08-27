@@ -23,6 +23,8 @@ run_abc123.0.1
 `StepOutputRef(step, part?)` references step output. `ValueRef` is their union.
 `RunControlRef(run, index)` globally references a durable run mutation.
 `ThreadControlRef(thread, index)` references a durable thread mutation.
+Run and step `state` fields use the same `ControlRef`; no separate `StateRef`,
+`ErrorRef`, or `Pointer` behavior is introduced.
 
 
 ## Statuses
@@ -43,9 +45,9 @@ reserved for future use and is not currently emitted.
 id
 parent
 thread
-input
+control
+state
 output
-context
 status
 error
 ejected
@@ -54,9 +56,11 @@ started_at
 finished_at
 ```
 
-`parent` is the calling `StepPath` for a child run. `input` normally references
-the index-zero run control and remains persisted rather than inferred from
-the first step. `output` is a `ValueRef`, so a pass-through run may point
+`parent` is the calling `StepPath` for a child run. `control` identifies the
+control that accepted the current attempt. `state` identifies the root entry,
+reload, or historical preparation control that supplied the immutable State
+used to resolve this run. A root points to its index-zero entry; a child copies
+its calling step's State reference. `output` is a `ValueRef`, so a pass-through run may point
 directly to a control input while computed output points to a step.
 `ejected` identifies the thread or run control that removed this run from the
 effective projection.
@@ -97,7 +101,7 @@ finished_at
 ```
 
 `(run, index)` is the durable identity. Kinds are `run`, `rerun`, `retry`,
-`steer`, and `cancel`.
+`reload`, `steer`, and `cancel`.
 Timing is `immediate`, `next_step`, or `next_call`. A non-null request is
 unique across the `run_controls` table. Duplicate requests are rejected;
 they do not replay a previous result.
@@ -108,6 +112,12 @@ transaction. A rerun control references its source root through `source`.
 `anchor`.
 Later control indexes are computed and inserted in one transaction; no API
 reserves an index independently.
+
+Root `run` and `rerun` controls store a lowercase SHA-256 State revision. A
+`reload` control stores the replacement revision and always uses `immediate`
+timing. New child `run` and `retry` controls omit the repeated revision;
+readers still accept it in historical records. Resolving `RunRecord.state` or
+`StepRecord.state` loads the referenced control and reads that revision.
 
 For a root run, its entry control and each retry control store the effective
 `RunLimits`:
@@ -138,6 +148,7 @@ cross-process cancellation; it is not another `ControlStatus`.
 path
 kind
 input
+state
 output
 given
 noted
@@ -149,7 +160,9 @@ started_at
 finished_at
 ```
 
-`path` is the complete `StepPath`. SQLite stores its owning `run` and local
+`path` is the complete `StepPath`. `state` is captured atomically with
+`StepBegin` and identifies the immutable State used for the step's full
+lifetime. SQLite stores the owning `run` and local
 index path separately and uses `(run, path)` as the durable identity. Step
 input may contain run-control references, step-output references, and inline
 messages. Step output is ordered `MessagePart[]`: ordinary content uses
@@ -256,7 +269,7 @@ must keep requests globally unique across both control tables or pass
 Control acceptance is not event projection:
 
 ```text
-RunExecutor.run/rerun/retry/steer/cancel/cancel_control
+RunExecutor.run/rerun/retry/reload/steer/cancel/cancel_control
     -> RunStore -> RunControlRecord
 ThreadManager operations     -> RunStore -> ThreadControlRecord
 ```

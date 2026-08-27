@@ -19,9 +19,17 @@ from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.common.template import render_text_template
 from toolang.common.time import elapsed_ms, utc_now
+from toolang.state.state import AgentState
 
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
-from ...types import Local, Pointer, StepPath, ToolStepGiven, ToolStepNoted
+from ...types import (
+    ControlRef,
+    Local,
+    Pointer,
+    StepPath,
+    ToolStepGiven,
+    ToolStepNoted,
+)
 from ..common import _StepFailed
 from ..diagnostics import log_tool_call_input, log_tool_call_output
 
@@ -58,16 +66,12 @@ class _ToolSummaryContext:
 async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     """Perform one tool call and emit its complete step event stream."""
 
-    prepared = state.prepared
-    run = prepared.run
+    run = state.prepared.run
     state.before_tool_call()
     step_index = state.next_step
     state.next_step += 1
     step_started = time.perf_counter()
     started_at = utc_now()
-    tool = prepared.tools.get(call.name)
-    plugin_name = _plugin_name(tool)
-    summary_context = _tool_summary_context(call, tool)
     source = state.tool_call_sources.get(call.tool_call_id)
     step_input: tuple[Pointer, ...]
     if source is not None:
@@ -83,17 +87,20 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         step_index,
         call.name,
     )
-    log_tool_call_input(
-        call,
-        thread_id=run.thread,
-        run_id=run.run_id,
-        step_index=step_index,
-        plugin_name=plugin_name,
-    )
-    await state.emit(
-        StepBegin(
+    prepared = state.prepared
+    plugin_name = "-"
+    summary_context = _tool_summary_context(call, None)
+
+    def begin_step(agent_state: AgentState, state_ref: ControlRef) -> StepBegin:
+        nonlocal prepared, plugin_name, summary_context
+        prepared = state.frame_for_step(agent_state, state_ref)
+        tool = prepared.tools.get(call.name)
+        plugin_name = _plugin_name(tool)
+        summary_context = _tool_summary_context(call, tool)
+        return StepBegin(
             step=StepPath(run.run_id, (step_index,)),
             kind="tool",
+            state=state_ref,
             input=step_input,
             given=ToolStepGiven(
                 plugin=plugin_name,
@@ -102,6 +109,15 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             ),
             started_at=started_at,
         )
+
+    await state.start_step(begin_step)
+    state.prepared = prepared
+    log_tool_call_input(
+        call,
+        thread_id=run.thread,
+        run_id=run.run_id,
+        step_index=step_index,
+        plugin_name=plugin_name,
     )
     try:
         record = await invoke_tool_call(

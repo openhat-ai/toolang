@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from toolang.base.types.message import Message, ToolResultPart
@@ -15,9 +15,11 @@ from toolang.common.layout import AgentLayout
 from toolang.lang.ast import AgicDecl
 from toolang.lang.errors import ToolangOutputError
 from toolang.lang.input import coerce_output
+from toolang.state.state import AgentState
 
+from ...events import StepBegin
 from ...records import RunControlRecord
-from ...types import StepPath, Pointer
+from ...types import ControlRef, StepPath, Pointer
 from ..common import (
     BoundRun,
     EventEmitter,
@@ -62,6 +64,14 @@ class _AgicState:
     initial_inputs: tuple[Pointer, ...] = ()
     claimed_inputs: tuple[RunControlRecord, ...] = ()
     repairing_output: bool = False
+    begin_step: (
+        Callable[
+            [Callable[[AgentState, ControlRef], StepBegin]],
+            Awaitable[tuple[AgentState, ControlRef]],
+        ]
+        | None
+    ) = None
+    refresh_frame: Callable[[AgentState, ControlRef], _AgicFrame] | None = None
 
     def before_model_call(self) -> None:
         """Apply one model-call checkpoint and reserve its agic-local count."""
@@ -81,6 +91,26 @@ class _AgicState:
             raise ToolangError(f"Agic tool call limit exceeded: {limit}")
         self.tool_calls += 1
 
+    async def start_step(
+        self,
+        build: Callable[[AgentState, ControlRef], StepBegin],
+    ) -> tuple[AgentState, ControlRef]:
+        """Commit one physical-step boundary and return its State snapshot."""
+
+        if self.begin_step is not None:
+            return await self.begin_step(build)
+        run = self.prepared.run
+        event = build(run.state, run.state_ref)
+        await self.emit(event)
+        return run.state, run.state_ref
+
+    def frame_for_step(self, state: AgentState, ref: ControlRef) -> _AgicFrame:
+        """Prepare one step from the State captured at its boundary."""
+
+        if self.refresh_frame is None:
+            return self.prepared
+        return self.refresh_frame(state, ref)
+
 
 async def execute(
     execution: _Execution,
@@ -90,15 +120,25 @@ async def execute(
 ) -> Local:
     """Execute one complete agic model-tool cycle."""
 
-    prepared = prepare_agic(
-        execution,
-        binding,
-        agic,
-        variables={
-            name: local.value for name, local in locals.items() if local.shape != "none"
-        },
-    )
-    execution.require_model_pricing(prepared.model)
+    variables = {
+        name: local.value for name, local in locals.items() if local.shape != "none"
+    }
+    frames: dict[ControlRef, _AgicFrame] = {}
+
+    def refresh_frame(state: AgentState, ref: ControlRef) -> _AgicFrame:
+        if ref in frames:
+            return frames[ref]
+        prepared = prepare_agic(
+            execution,
+            replace(binding, state=state, state_ref=ref),
+            agic,
+            variables=variables,
+        )
+        execution.require_model_pricing(prepared.model)
+        frames[ref] = prepared
+        return prepared
+
+    prepared = refresh_frame(binding.state, binding.state_ref)
     state = _AgicState(
         prepared,
         layout=execution.layout,
@@ -107,9 +147,11 @@ async def execute(
         steer_before_next_step=lambda: execution.steer_before_next_step(binding.run_id),
         immediate_steer=lambda: execution.immediate_steer(binding.run_id),
         before_call=lambda: execution.raise_if_canceling(binding.run_id, call=True),
-        account_usage=lambda usage: execution.model_accounting(prepared.model, usage),
+        account_usage=lambda usage: execution.model_accounting(
+            state.prepared.model, usage
+        ),
         record_accounting=lambda accounting: execution.record_model_accounting(
-            prepared.model, accounting
+            state.prepared.model, accounting
         ),
         limits=binding.limits,
         record_output=lambda ref: execution.record_output(binding.run_id, ref),
@@ -120,6 +162,8 @@ async def execute(
             for _name, local in sorted(locals.items())
             if local.shape != "none" and local.ref is not None
         ),
+        begin_step=execution.begin_step,
+        refresh_frame=refresh_frame,
     )
     structs = program_structs(binding)
     message = await _execute(state)

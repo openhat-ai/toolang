@@ -9,7 +9,7 @@ from toolang.lang.ast import FlowStmt
 
 from ...records import RunControlRecord, StepPath
 from ...types import LoopStepNoted, LoopTermination, Occurrence, StepStatus
-from ..common import BoundRun, EventEmitter, Local, execute_step
+from ..common import BoundRun, EventEmitter, Local, StepBoundary, execute_step
 
 
 @dataclass(slots=True)
@@ -34,6 +34,7 @@ class LoopProgress:
 async def execute(
     emit: EventEmitter,
     *,
+    begin_step: StepBoundary | None = None,
     binding: BoundRun,
     path: StepPath,
     statement: FlowStmt,
@@ -47,6 +48,7 @@ async def execute(
 
     return await execute_step(
         emit,
+        begin_step=begin_step,
         kind="loop",
         path=path,
         binding=binding,

@@ -2,8 +2,9 @@
 
 Agent State is the immutable runtime input derived from an agent's authored
 program, program modules, configuration, and capabilities. It combines one
-root layer with one home layer. A top-level run binds one Agent State revision,
-and descendants keep that revision for the lifetime of the run tree.
+root layer with one home layer. A top-level run starts with one Agent State
+revision. An explicit executor reload can change the State used by later step
+boundaries in that run tree without changing already-started work.
 
 Tasks and chores stored as independent Markdown files are work data, not Agent
 State. Task and chore declarations inside `agent.too` are part of State because
@@ -188,10 +189,17 @@ future internal `_me` tools.
 
 ## Execution Records
 
-Execution preparation records store the Agent State revision in a field named
-`state`. Root runs and all descendants continue using the bound revision.
-Switching an active run tree to a newer State requires a future explicit
-runtime operation and is not part of normal watcher publication.
+Root `run` and `rerun` controls store the initial Agent State revision. A
+process-local `reload` control stores a replacement revision. Every run and
+physical step stores a `ControlRef` named `state` that identifies the control
+which introduced the exact State it used. New child-run and retry controls do
+not duplicate the revision; their run record is authoritative.
+
+The executor holds the corresponding immutable `AgentState` object with that
+reference. Reload application and `StepBegin` share one root-tree lock, so a
+started step keeps its captured State and the next boundary uses the reload.
+A child run inherits the State captured by its calling step. Watcher
+publication alone never reloads an active run.
 
 Model/provider continuation is a different value and is named `cont` in model
 calls, model results, model step records, and runtime agic state. The runs

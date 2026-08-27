@@ -6,6 +6,8 @@ import sqlite3
 
 import pytest
 
+from tests.support.execution_fixtures import project_run_start, project_step
+from toolang.base.types.message import Message
 from toolang.base.types.policy import RunLimits
 from toolang.execution.errors import RunStoreSchemaError
 from toolang.execution.records import CancelControlPayload, RunControlPayload
@@ -20,18 +22,18 @@ def test_run_store_rejects_a_newer_schema_without_modifying_it(
     connection = sqlite3.connect(path)
     connection.execute("CREATE TABLE future_state (value TEXT NOT NULL)")
     connection.execute("INSERT INTO future_state VALUES ('preserved')")
-    connection.execute("PRAGMA user_version=31")
+    connection.execute("PRAGMA user_version=32")
     connection.commit()
     connection.close()
 
     with pytest.raises(RunStoreSchemaError) as raised:
         RunStore(path)
 
-    assert raised.value.version == 31
-    assert raised.value.current == 30
+    assert raised.value.version == 32
+    assert raised.value.current == 31
     connection = sqlite3.connect(path)
     try:
-        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 31
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 32
         assert connection.execute("SELECT value FROM future_state").fetchone() == (
             "preserved",
         )
@@ -62,9 +64,11 @@ def test_run_store_migrates_model_continuation_state(tmp_path: Path) -> None:
     connection.execute(
         """
         INSERT INTO steps(
-            run, path, kind, input, output, occurrence, given, noted, status,
+            run, path, kind, input, state_target, state_index,
+            output, occurrence, given, noted, status,
             error, created_at, started_at, finished_at
-        ) VALUES ('run-1', '0', 'model', '[]', NULL, NULL, ?, ?, 'succeeded',
+        ) VALUES ('run-1', '0', 'model', '[]', 'run-1', 0,
+                  NULL, NULL, ?, ?, 'succeeded',
                   NULL, 'now', 'now', 'now')
         """,
         (json.dumps(given), json.dumps(noted)),
@@ -96,7 +100,7 @@ def test_run_store_migrates_model_continuation_state(tmp_path: Path) -> None:
         assert "state" not in migrated_noted
         payload = connection.execute("SELECT payload FROM controls").fetchone()
         assert payload == ('{"state":"agent-revision"}',)
-        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 30
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 31
     finally:
         connection.close()
 
@@ -156,6 +160,101 @@ def test_run_store_migrates_run_and_cancel_control_kinds(
 
     connection = sqlite3.connect(path)
     try:
-        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 30
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 31
+    finally:
+        connection.close()
+
+
+def test_run_store_migrates_historical_run_and_step_state_references(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "runs.db"
+    store = RunStore(path)
+    root = project_run_start(
+        store,
+        run_id="run_state_root",
+        thread_id="term_state_migration",
+        origin="test",
+        input=Message.user("root"),
+        executable_kind="flow",
+    )
+    parent = project_step(
+        store,
+        run_id=root.id,
+        step_index=0,
+        kind="run",
+        status="running",
+        input=(),
+        output=(),
+        started_at="2026-08-27T00:00:01Z",
+        finished_at=None,
+    )
+    child = project_run_start(
+        store,
+        run_id="run_state_child",
+        thread_id=root.thread,
+        origin="test",
+        input=Message.user("child"),
+        parent=parent.path,
+    )
+    project_step(
+        store,
+        run_id=child.id,
+        step_index=0,
+        kind="value",
+        status="succeeded",
+        input=(),
+        output=(),
+        started_at="2026-08-27T00:00:02Z",
+        finished_at="2026-08-27T00:00:03Z",
+    )
+    store.close()
+
+    connection = sqlite3.connect(path)
+    raw_payload = connection.execute(
+        'SELECT payload FROM controls WHERE target = ? AND "index" = 0',
+        (child.id,),
+    ).fetchone()
+    assert raw_payload is not None
+    payload = json.loads(str(raw_payload[0]))
+    payload["state"] = "0" * 64
+    legacy_payload = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    connection.execute(
+        'UPDATE controls SET payload = ? WHERE target = ? AND "index" = 0',
+        (legacy_payload, child.id),
+    )
+    for table in ("runs", "steps"):
+        connection.execute(f"ALTER TABLE {table} DROP COLUMN state_index")
+        connection.execute(f"ALTER TABLE {table} DROP COLUMN state_target")
+    connection.execute("PRAGMA user_version=30")
+    connection.commit()
+    connection.close()
+
+    migrated = RunStore(path)
+    try:
+        migrated_root = migrated.get_run(run_id=root.id)
+        migrated_child = migrated.get_run(run_id=child.id)
+        assert migrated_root is not None and migrated_child is not None
+        assert migrated_root.state.target == root.id
+        assert migrated_root.state.index == 0
+        assert migrated_child.state.target == child.id
+        assert migrated_child.state.index == 0
+        assert migrated.resolve_state_revision(migrated_root.state) == "0" * 64
+        assert migrated.resolve_state_revision(migrated_child.state) == "0" * 64
+        assert {step.state for step in migrated.list_steps(run_id=root.id)} == {
+            migrated_root.state
+        }
+        assert {step.state for step in migrated.list_steps(run_id=child.id)} == {
+            migrated_child.state
+        }
+    finally:
+        migrated.close()
+    connection = sqlite3.connect(path)
+    try:
+        stored_payload = connection.execute(
+            'SELECT payload FROM controls WHERE target = ? AND "index" = 0',
+            (child.id,),
+        ).fetchone()
+        assert stored_payload == (legacy_payload,)
     finally:
         connection.close()

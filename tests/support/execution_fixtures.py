@@ -115,6 +115,19 @@ def accept_run(
         for name, value in resolved_input.named.items()
     )
 
+    state_ref = None
+    if parent is not None:
+        parent_record = next(
+            (
+                step
+                for step in store.list_steps(run_id=parent.run)
+                if step.path == parent
+            ),
+            None,
+        )
+        if parent_record is None:
+            raise ValueError(f"parent step not found: {parent}")
+        state_ref = parent_record.state
     return store.accept_run(
         run_id=run_id,
         parent=parent,
@@ -128,11 +141,12 @@ def accept_run(
         if sandbox is not None
         else ("host" if parent is None else None),
         occurrence=_occurrence_from_context(context),
-        state=_TEST_STATE,
+        state=_TEST_STATE if parent is None else None,
         request_id=request_id,
         created_at=created_at,
         kind=kind,
         source=source,
+        state_ref=state_ref,
     )
 
 
@@ -168,6 +182,19 @@ def project_run_start(
             created_at=created,
         )
     parent_path = StepPath.parse(parent) if parent is not None else None
+    state_ref = None
+    if parent_path is not None:
+        parent_record = next(
+            (
+                step
+                for step in store.list_steps(run_id=parent_path.run)
+                if step.path == parent_path
+            ),
+            None,
+        )
+        if parent_record is None:
+            raise ValueError(f"parent step not found: {parent_path}")
+        state_ref = parent_record.state
     store.accept_run(
         run_id=run_id,
         parent=parent_path,
@@ -183,9 +210,10 @@ def project_run_start(
         locals=(Local.typed("Part[]", tuple(input.parts), "_", 0),),
         sandbox="host" if parent_path is None else None,
         occurrence=_occurrence_from_context(run_context),
-        state=_TEST_STATE,
+        state=_TEST_STATE if parent_path is None else None,
         request_id=request_id,
         created_at=created,
+        state_ref=state_ref,
     )
     persist_event(
         store,
