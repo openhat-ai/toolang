@@ -149,7 +149,7 @@ class GuestFailureSandbox(FakeSandbox):
             ProgressEvent(
                 id="startup:guest:validate",
                 phase="startup.validate",
-                label="Validating Toolang",
+                label="Checking Toolang compatibility",
                 status="failed",
                 detail="incompatible CLI",
             )
@@ -935,22 +935,22 @@ def test_resolve_dev_artifact_rejects_invalid_paths(tmp_path: Path) -> None:
     unrelated.mkdir()
     (unrelated / unrelated_wheel.name).write_bytes(b"wheel")
 
-    with pytest.raises(FileNotFoundError, match="development path not found"):
+    with pytest.raises(FileNotFoundError, match="--dev path not found"):
         sandbox._resolve_dev_artifact(tmp_path / "missing", sandbox="docker")
-    with pytest.raises(ValueError, match="not a wheel file"):
+    with pytest.raises(ValueError, match="--dev file is not a Toolang wheel"):
         sandbox._resolve_dev_artifact(text_file, sandbox="docker")
-    with pytest.raises(ValueError, match="not a Toolang wheel"):
+    with pytest.raises(ValueError, match="--dev file is not a Toolang wheel"):
         sandbox._resolve_dev_artifact(unrelated_wheel, sandbox="docker")
-    with pytest.raises(FileNotFoundError, match="no Toolang wheel files"):
+    with pytest.raises(FileNotFoundError, match="No Toolang wheels found"):
         sandbox._resolve_dev_artifact(empty, sandbox="docker")
-    with pytest.raises(FileNotFoundError, match="no Toolang wheel files"):
+    with pytest.raises(FileNotFoundError, match="No Toolang wheels found"):
         sandbox._resolve_dev_artifact(unrelated, sandbox="docker")
 
 
 def test_resolve_dev_artifact_rejects_host_before_path_validation(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(ValueError, match="does not apply to the host sandbox"):
+    with pytest.raises(ValueError, match="only applies to guest sandboxes"):
         sandbox._resolve_dev_artifact(tmp_path / "missing", sandbox="host")
 
 

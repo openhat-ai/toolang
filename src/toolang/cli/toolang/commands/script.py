@@ -45,7 +45,7 @@ from toolang.up import process as agents
 from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 
 from ...common.context import load_runtime_environ
-from ...common.execution_runtime import open_execution_runtime
+from ...common.execution_runtime import DEVELOPMENT_WHEEL_HELP, open_execution_runtime
 from ...common.progress import as_progress_sink, make_cli_progress
 from ...common.remote_runtime import inspect_remote_runtime
 from ...common.result_saving import save_result
@@ -240,10 +240,7 @@ def _runnable_command(
             type=click.Path(path_type=Path),
             default=None,
             metavar="PATH",
-            help=(
-                "Use a Toolang wheel, or the newest wheel found recursively "
-                "in a directory."
-            ),
+            help=DEVELOPMENT_WHEEL_HELP,
         ),
         TyperOption(
             param_decls=["--save"],

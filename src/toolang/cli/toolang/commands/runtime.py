@@ -33,6 +33,10 @@ from ...common.context import (
     ui_base_url,
     user_call,
 )
+from ...common.execution_runtime import (
+    DEVELOPMENT_WHEEL_HELP,
+    warn_development_package_source,
+)
 from ...common.output import active_agent_error, echo_error
 from toolang.common.version import development_source
 
@@ -76,6 +80,7 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
     from ...common.startup_progress import make_runtime_startup_progress
 
     startup_progress: RuntimeStartupProgress | None = None
+    startup: LaunchSpec | None = None
     try:
         options = _parse_roaming_file_options(args)
         layout = agents.materialize_roaming_program(source)
@@ -129,7 +134,7 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
                 environ=log_plan.environ,
             ),
         )
-        _warn_development_sandbox_package(startup, dev=options.dev)
+        warn_development_package_source(startup)
         startup_progress = make_runtime_startup_progress(layout.name, startup.sandbox)
         return user_call(
             asyncio.run,
@@ -163,6 +168,8 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
                 startup_progress.sandbox,
                 startup_progress,
                 exc,
+                dev_artifact=startup.dev_artifact if startup is not None else None,
+                development_build=development_source()[0],
             )
         else:
             message = exc.message if isinstance(exc, click.ClickException) else str(exc)
@@ -294,7 +301,7 @@ def run(
         Path | None,
         typer.Option(
             "--dev",
-            help="Use a Toolang wheel, or the newest wheel found recursively in a directory.",
+            help=DEVELOPMENT_WHEEL_HELP,
         ),
     ] = None,
     endpoint_host: Annotated[
@@ -337,7 +344,7 @@ def run(
         )
         progress.finish(details=False)
         source_finished = True
-        _warn_development_sandbox_package(launch.startup, dev=dev)
+        warn_development_package_source(launch.startup)
         startup_progress = make_runtime_startup_progress(
             launch.target.name,
             launch.startup.sandbox,
@@ -381,6 +388,8 @@ def run(
                     startup_progress.sandbox,
                     startup_progress,
                     exc,
+                    dev_artifact=launch.startup.dev_artifact,
+                    development_build=development_source()[0],
                 )
             ) from exc
         raise click.ClickException(str(exc)) from exc
@@ -395,26 +404,6 @@ def _report_foreground_ready(
     progress.finish()
     typer.echo(
         f"Running agent {name}: {state.ref.endpoint} (Ctrl+C to stop)",
-        err=True,
-    )
-
-
-def _warn_development_sandbox_package(
-    startup: LaunchSpec,
-    *,
-    dev: Path | None,
-) -> None:
-    if dev is not None or startup.sandbox.partition(":")[0] == "host":
-        return
-    detected, source = development_source()
-    if not detected:
-        return
-    sandbox_name = startup.sandbox.partition(":")[0]
-    target = "Docker" if sandbox_name == "docker" else f"Sandbox {startup.sandbox}"
-    source_label = str(source) if source is not None else "the current source tree"
-    typer.echo(
-        f"Warning: {target} will install Toolang from the package index, not local "
-        f"source {source_label}. Use `--dev dist` to run this build.",
         err=True,
     )
 
@@ -460,7 +449,7 @@ def start(
         Path | None,
         typer.Option(
             "--dev",
-            help="Use a Toolang wheel, or the newest wheel found recursively in a directory.",
+            help=DEVELOPMENT_WHEEL_HELP,
         ),
     ] = None,
     endpoint_host: Annotated[
@@ -506,7 +495,7 @@ def start(
         raise
 
     progress.finish(details=False)
-    _warn_development_sandbox_package(launch.startup, dev=dev)
+    warn_development_package_source(launch.startup)
     startup_progress = make_runtime_startup_progress(
         launch.target.name,
         launch.startup.sandbox,
@@ -537,6 +526,8 @@ def start(
                 startup_progress,
                 exc,
                 log_path=launch.target.runtime_log,
+                dev_artifact=launch.startup.dev_artifact,
+                development_build=development_source()[0],
             )
         ) from exc
     startup_progress.finish()

@@ -82,9 +82,9 @@ _STARTUP_EVENT_MAP: dict[str, tuple[str, str, ProgressStatus]] = {
     "install.running": ("install", "Installing Toolang", "running"),
     "install.ok": ("install", "Installing Toolang", "ok"),
     "install.failed": ("install", "Installing Toolang", "failed"),
-    "validate.running": ("validate", "Validating Toolang", "running"),
-    "validate.ok": ("validate", "Validating Toolang", "ok"),
-    "validate.failed": ("validate", "Validating Toolang", "failed"),
+    "validate.running": ("validate", "Checking Toolang compatibility", "running"),
+    "validate.ok": ("validate", "Checking Toolang compatibility", "ok"),
+    "validate.failed": ("validate", "Checking Toolang compatibility", "failed"),
     "server.running": ("server", "Starting agent server", "running"),
 }
 _STARTUP_EVENT_TRANSITIONS = {

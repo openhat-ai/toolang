@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import StringIO
+from pathlib import Path
 
 from toolang.base.types.progress import ProgressEvent, ProgressStatus
 from toolang.cli.common.startup_progress import (
@@ -94,13 +95,14 @@ def test_startup_failure_retains_full_reason_while_bounding_display() -> None:
     progress(
         _event(
             "validate",
-            "Validating Toolang",
+            "Checking Toolang compatibility",
             status="failed",
             detail="x" * 200,
         )
     )
 
-    assert progress.current_stage == "Validating Toolang"
+    assert progress.current_stage == "Checking Toolang compatibility"
+    assert progress.failure_phase == "startup.validate"
     assert progress.failure_reason == "x" * 200
     displayed_detail = progress._text().plain.split(" · ")[-2]
     assert len(displayed_detail) == 80
@@ -130,29 +132,98 @@ def test_controller_failure_replaces_a_completed_guest_stage() -> None:
     assert progress.failure_reason == "container exited"
 
 
-def test_startup_failure_uses_an_action_supported_by_the_calling_command() -> None:
+def test_startup_failure_without_detail_keeps_its_structured_phase() -> None:
     progress = RuntimeStartupProgress(
         "alice",
         "docker",
         stream=StringIO(),
         live=False,
     )
-    error = RuntimeError("installed package lacks required `too serve`")
 
-    development = runtime_startup_failure_message(
+    progress(
+        _event(
+            "install",
+            "Installing Toolang",
+            status="failed",
+        )
+    )
+    progress(
+        _event(
+            "ready",
+            "Waiting for agent API",
+            status="failed",
+            detail="workload exited",
+        )
+    )
+
+    assert progress.current_stage == "Installing Toolang"
+    assert progress.failure_phase == "startup.install"
+    assert progress.failure_reason is None
+
+
+def test_startup_install_failure_uses_the_resolved_package_source() -> None:
+    progress = RuntimeStartupProgress(
+        "alice",
+        "docker",
+        stream=StringIO(),
+        live=False,
+    )
+    progress(
+        _event(
+            "install",
+            "Installing Toolang",
+            status="failed",
+            detail="installer exited",
+        )
+    )
+
+    package_index = runtime_startup_failure_message(
         "alice",
         "docker",
         progress,
-        error,
+        RuntimeError("startup failed"),
     )
-    packaged = runtime_startup_failure_message(
+    wheel = runtime_startup_failure_message(
         "alice",
         "docker",
         progress,
-        error,
-        development_hint=False,
+        RuntimeError("startup failed"),
+        dev_artifact=Path("dist/toolang-0.3.0-py3-none-any.whl"),
     )
 
-    assert "pass `--dev dist`" in development
-    assert "Upgrade the Toolang package" in packaged
-    assert "--dev" not in packaged
+    assert "Reason: Could not install Toolang from the package index." in package_index
+    assert "Fix: Check the log and network access" in package_index
+    assert (
+        "Reason: Could not install Toolang from toolang-0.3.0-py3-none-any.whl."
+        in wheel
+    )
+    assert "Fix: Rebuild the wheel and check the installation log." in wheel
+
+
+def test_startup_compatibility_failure_uses_development_source_guidance() -> None:
+    progress = RuntimeStartupProgress(
+        "alice",
+        "docker",
+        stream=StringIO(),
+        live=False,
+    )
+    progress(
+        _event(
+            "validate",
+            "Checking Toolang compatibility",
+            status="failed",
+            detail="compatibility check failed",
+        )
+    )
+
+    message = runtime_startup_failure_message(
+        "alice",
+        "docker",
+        progress,
+        RuntimeError("startup failed"),
+        development_build=True,
+    )
+
+    assert "Reason: The Toolang package installed in the guest cannot start" in message
+    assert "Fix: Build the current source with `uv build --wheel`" in message
+    assert "again with `--dev dist`." in message

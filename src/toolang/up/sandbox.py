@@ -559,21 +559,21 @@ def _resolve_dev_artifact(raw: Path | None, *, sandbox: str) -> Path | None:
     sandbox_name, _ = _split_sandbox(sandbox)
     if sandbox_name == "host":
         raise ValueError(
-            "--dev does not apply to the host sandbox; "
-            "it already uses the current Toolang environment"
+            "--dev only applies to guest sandboxes; host uses the current Toolang "
+            "installation."
         )
 
     candidate = raw.expanduser().resolve()
     if not candidate.exists():
-        raise FileNotFoundError(f"development path not found: {candidate}")
+        raise FileNotFoundError(f"--dev path not found: {candidate}")
     if candidate.is_file():
         if candidate.suffix.casefold() != ".whl":
-            raise ValueError(f"development path is not a wheel file: {candidate}")
+            raise ValueError(f"--dev file is not a Toolang wheel: {candidate}")
         if not _is_toolang_wheel(candidate):
-            raise ValueError(f"development wheel is not a Toolang wheel: {candidate}")
+            raise ValueError(f"--dev file is not a Toolang wheel: {candidate}")
         return candidate
     if not candidate.is_dir():
-        raise ValueError(f"development path is not a file or directory: {candidate}")
+        raise ValueError(f"--dev path is not a file or directory: {candidate}")
 
     wheels = [
         path
@@ -581,7 +581,9 @@ def _resolve_dev_artifact(raw: Path | None, *, sandbox: str) -> Path | None:
         if path.is_file() and _is_toolang_wheel(path)
     ]
     if not wheels:
-        raise FileNotFoundError(f"no Toolang wheel files found in: {candidate}")
+        raise FileNotFoundError(
+            f"No Toolang wheels found under --dev directory: {candidate}"
+        )
     return min(wheels, key=lambda path: (-path.stat().st_mtime_ns, str(path)))
 
 

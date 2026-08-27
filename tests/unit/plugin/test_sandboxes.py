@@ -829,6 +829,12 @@ def test_docker_startup_observer_preserves_order_and_curated_failure(
             docker_guest.DOCKER_TOOLANG_COMPATIBILITY_ERROR,
         ),
     ]
+    assert [event.label for event in events] == [
+        "Installing Toolang",
+        "Installing Toolang",
+        "Checking Toolang compatibility",
+        "Checking Toolang compatibility",
+    ]
 
 
 def test_docker_startup_observer_reads_final_token_after_container_exit(

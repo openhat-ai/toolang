@@ -50,6 +50,7 @@ from ...common.context import (
 )
 from ...common.execution import ExecutionResources, open_execution
 from ...common.execution_runtime import (
+    DEVELOPMENT_WHEEL_HELP,
     ExecutionRuntime,
     ExecutionRuntimeError,
     open_execution_runtime,
@@ -247,7 +248,7 @@ def retry_command(
         Path | None,
         typer.Option(
             "--dev",
-            help="Use a Toolang wheel, or the newest wheel found recursively in a directory.",
+            help=DEVELOPMENT_WHEEL_HELP,
         ),
     ] = None,
     allows: Annotated[
@@ -313,7 +314,7 @@ def rerun_command(
         Path | None,
         typer.Option(
             "--dev",
-            help="Use a Toolang wheel, or the newest wheel found recursively in a directory.",
+            help=DEVELOPMENT_WHEEL_HELP,
         ),
     ] = None,
     allows: Annotated[

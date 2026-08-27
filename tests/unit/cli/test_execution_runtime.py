@@ -19,6 +19,7 @@ from toolang.base.types.sandbox import SandboxRef
 class _Progress:
     current_stage = "Starting workload"
     failure_reason: str | None = None
+    failure_phase: str | None = None
 
     def __init__(self) -> None:
         self.finished = 0
@@ -115,7 +116,10 @@ def test_execution_runtime_rejects_dev_for_an_attached_agent(
         ),
     )
 
-    with pytest.raises(runtime.ExecutionRuntimeError, match="cannot modify running"):
+    with pytest.raises(
+        runtime.ExecutionRuntimeError,
+        match="only applies when starting a new guest",
+    ):
         with runtime.open_execution_runtime(
             layout,
             sandbox="docker",
@@ -226,7 +230,10 @@ def test_execution_runtime_rejects_dev_for_embedded_host(
         lambda _layout, *, explicit: "host",
     )
 
-    with pytest.raises(runtime.ExecutionRuntimeError, match="does not apply"):
+    with pytest.raises(
+        runtime.ExecutionRuntimeError,
+        match="only applies to guest sandboxes",
+    ):
         with runtime.open_execution_runtime(
             layout,
             sandbox="host",
@@ -247,8 +254,8 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
         "resolve_selection",
         lambda _layout, *, explicit: explicit or "docker",
     )
-    launch = SimpleNamespace(sandbox="docker")
     development = tmp_path / "dist"
+    launch = SimpleNamespace(sandbox="docker", dev_artifact=development)
 
     def resolve_launch(*_args: object, **kwargs: object) -> object:
         assert kwargs["dev"] == development
@@ -315,16 +322,92 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
     assert shutdown_progress.finished == 1
 
 
+def test_execution_runtime_warns_when_a_development_cli_uses_the_package_index(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    _set_status(monkeypatch, layout, _status(value="stopped"))
+    monkeypatch.setattr(
+        runtime.sandbox_runtime,
+        "resolve_selection",
+        lambda _layout, *, explicit: explicit or "docker",
+    )
+    launch = SimpleNamespace(sandbox="docker", dev_artifact=None)
+    monkeypatch.setattr(
+        runtime,
+        "_resolve_inactive_launch",
+        lambda *_args, **_kwargs: launch,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "development_source",
+        lambda: (True, tmp_path),
+    )
+    progress = _Progress()
+    shutdown_progress = _Progress()
+    monkeypatch.setattr(
+        runtime,
+        "make_runtime_startup_progress",
+        lambda *_args, **_kwargs: progress,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "make_runtime_shutdown_progress",
+        lambda *_args, **_kwargs: shutdown_progress,
+    )
+    handle = runtime.sandbox_runtime.SandboxHandle(
+        cast(Any, SimpleNamespace()),
+        SandboxState(
+            sandbox="docker:python:3.13-slim",
+            ref=SandboxRef("container-1", "http://127.0.0.1:8123"),
+        ),
+    )
+
+    async def launch_runtime(_spec: object, *, progress: object) -> object:
+        return handle
+
+    async def stop_handle(*_args: object, **_kwargs: object) -> bool:
+        return True
+
+    monkeypatch.setattr(runtime.sandbox_runtime, "launch", launch_runtime)
+    monkeypatch.setattr(runtime.sandbox_runtime, "stop_handle", stop_handle)
+
+    with runtime.open_execution_runtime(
+        layout,
+        sandbox="docker",
+        ui_base_url="https://ui.test",
+    ):
+        pass
+
+    assert capsys.readouterr().err.splitlines() == [
+        "Warning: the new docker guest will install Toolang from the package index, "
+        f"not from {tmp_path}.",
+        "Build the current source with `uv build --wheel`, then run this command "
+        "again with `--dev dist`.",
+    ]
+
+
 @pytest.mark.parametrize(
-    ("development", "hint"),
+    ("development", "reason", "fix"),
     (
-        (None, "pass `--dev dist`"),
-        (Path("dist"), "Upgrade the Toolang package"),
+        (
+            None,
+            "Toolang package installed in the guest cannot start",
+            "again with `--dev dist`",
+        ),
+        (
+            Path("dist/toolang-0.3.0-py3-none-any.whl"),
+            "selected Toolang wheel cannot start",
+            "again with `--dev PATH`",
+        ),
     ),
 )
-def test_execution_runtime_startup_failure_uses_the_available_dev_hint(
+def test_execution_runtime_startup_failure_uses_structured_package_guidance(
     development: Path | None,
-    hint: str,
+    reason: str,
+    fix: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -338,17 +421,20 @@ def test_execution_runtime_startup_failure_uses_the_available_dev_hint(
     monkeypatch.setattr(
         runtime,
         "_resolve_inactive_launch",
-        lambda *_args, **_kwargs: SimpleNamespace(sandbox="docker"),
+        lambda *_args, **_kwargs: SimpleNamespace(
+            sandbox="docker",
+            dev_artifact=development,
+        ),
     )
     progress = _Progress()
-    progress.failure_reason = (
-        "Installed Toolang does not provide the required `too serve` entrypoint."
-    )
+    progress.failure_phase = "startup.validate"
+    progress.failure_reason = "guest compatibility check failed"
     monkeypatch.setattr(
         runtime,
         "make_runtime_startup_progress",
         lambda *_args, **_kwargs: progress,
     )
+    monkeypatch.setattr(runtime, "development_source", lambda: (True, tmp_path))
 
     async def fail_launch(*_args: object, **_kwargs: object) -> object:
         raise RuntimeError("startup failed")
@@ -364,7 +450,10 @@ def test_execution_runtime_startup_failure_uses_the_available_dev_hint(
         ):
             raise AssertionError("a failed runtime must not open")
 
-    assert hint in str(captured.value)
+    message = str(captured.value)
+    assert f"Reason: The {reason}" in message
+    assert "Fix: " in message
+    assert fix in message
 
 
 def test_execution_runtime_cleanup_does_not_hide_a_body_failure(
@@ -382,7 +471,10 @@ def test_execution_runtime_cleanup_does_not_hide_a_body_failure(
     monkeypatch.setattr(
         runtime,
         "_resolve_inactive_launch",
-        lambda *_args, **_kwargs: SimpleNamespace(sandbox="docker"),
+        lambda *_args, **_kwargs: SimpleNamespace(
+            sandbox="docker",
+            dev_artifact=None,
+        ),
     )
     monkeypatch.setattr(
         runtime,
@@ -429,7 +521,10 @@ def test_execution_runtime_cleans_up_a_launched_guest_with_invalid_identity(
     monkeypatch.setattr(
         runtime,
         "_resolve_inactive_launch",
-        lambda *_args, **_kwargs: SimpleNamespace(sandbox="docker"),
+        lambda *_args, **_kwargs: SimpleNamespace(
+            sandbox="docker",
+            dev_artifact=None,
+        ),
     )
     monkeypatch.setattr(
         runtime,
