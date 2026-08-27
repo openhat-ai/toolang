@@ -24,6 +24,8 @@ from toolang.execution.records import SteerControlPayload, CancelControlPayload
 from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.schemas import (
     ControlInfo,
+    RerunRequest,
+    RetryRequest,
     RunControlRefData,
     RunDetail,
     RunRequest,
@@ -242,6 +244,128 @@ def test_remote_client_runs_traces_and_waits_for_detail() -> None:
         await client.disconnect()
         await client.disconnect()
         assert not http.is_closed
+        await http.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ("retry", "rerun"))
+def test_remote_client_reuses_the_run_stream_protocol_for_restarts(
+    operation: str,
+) -> None:
+    accepted_id = "run_source" if operation == "retry" else "run_rerun"
+    detail_reads = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal detail_reads
+        if request.method == "POST":
+            return _stream_response(
+                _begin(accepted_id),
+                _end(accepted_id),
+                run_id=accepted_id,
+            )
+        detail_reads += 1
+        return httpx.Response(
+            200,
+            json=_DETAIL_ADAPTER.dump_python(_detail(accepted_id), mode="json"),
+        )
+
+    async def scenario() -> None:
+        transport = _Transport(handler)
+        http = httpx.AsyncClient(transport=httpx.MockTransport(transport))
+        client = RemoteRunClient("http://runtime.test", client=http)
+        tracer = _Tracer()
+        request = (
+            RetryRequest(
+                source="run_source",
+                commands=(RunOverride("limit", "cost", Decimal("2.50")),),
+                request_id="retry_request",
+                anchor=StepPath("run_source", (1, 2)),
+            )
+            if operation == "retry"
+            else RerunRequest(
+                source="run_source",
+                commands=(RunOverride("limit", "time", 30),),
+                request_id="rerun_request",
+            )
+        )
+
+        await client.connect()
+        handle = (
+            await client.retry(request, tracer=tracer)
+            if isinstance(request, RetryRequest)
+            else await client.rerun(request, tracer=tracer)
+        )
+        assert tracer.events == []
+        detail = await handle.wait()
+        assert await handle.wait() == detail
+
+        expected_payload = {
+            "request_id": f"{operation}_request",
+            "commands": [
+                {
+                    "group": "limit",
+                    "field": "cost" if operation == "retry" else "time",
+                    "value": "2.50" if operation == "retry" else 30,
+                }
+            ],
+        }
+        if operation == "retry":
+            expected_payload["anchor"] = "run_source.1.2"
+        assert handle.run_id == detail.id == accepted_id
+        assert [event.type for event in tracer.events] == ["run_begin", "run_end"]
+        assert detail_reads == 2
+        assert transport.requests[0] == (
+            "POST",
+            f"http://runtime.test/api/v1/runs/run_source/{operation}/stream",
+            expected_payload,
+        )
+
+        await client.disconnect()
+        await http.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("operation", "accepted_id", "error"),
+    [
+        ("retry", "run_other", "did not accept the source run ID"),
+        ("rerun", "run_source", "did not accept a new run ID"),
+    ],
+)
+def test_remote_client_rejects_invalid_restart_identity(
+    operation: str,
+    accepted_id: str,
+    error: str,
+) -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return _stream_response(run_id=accepted_id)
+
+    async def scenario() -> None:
+        http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        client = RemoteRunClient("http://runtime.test", client=http)
+        await client.connect()
+
+        with pytest.raises(RemoteRunClientError, match=error):
+            if operation == "retry":
+                await client.retry(
+                    RetryRequest(
+                        source="run_source",
+                        commands=(),
+                        request_id="retry_request",
+                    )
+                )
+            else:
+                await client.rerun(
+                    RerunRequest(
+                        source="run_source",
+                        commands=(),
+                        request_id="rerun_request",
+                    )
+                )
+
+        await client.disconnect()
         await http.aclose()
 
     asyncio.run(scenario())

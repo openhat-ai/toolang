@@ -10,10 +10,12 @@ import os
 from pathlib import Path
 import sys
 from typing import Annotated, Any, Literal, cast
+from uuid import uuid4
 
 import click
 import typer
 
+from toolang.base.errors import ToolangError
 from toolang.base.types.message import Message
 from toolang.cli.common.policy import (
     resolve_binding_overrides,
@@ -21,15 +23,24 @@ from toolang.cli.common.policy import (
     resolve_limit_overrides,
 )
 from toolang.common.layout import AgentLayout
+from toolang.execution.client import RunClient, RunHandle
 from toolang.execution.executor import RunExecutor
 from toolang.execution.history import RunHistory
-from toolang.execution.records import PreparationControlPayload, RunRecord
-from toolang.execution.schemas import RunDetail, StepData
+from toolang.execution.records import PreparationControlPayload
+from toolang.execution.schemas import (
+    RerunRequest,
+    RetryRequest,
+    RunDetail,
+    StepData,
+)
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import Local, RunStatus, StepPath, local_to_protocol_data
-from toolang.setup import SetupWatcher
-from toolang.state.state import AgentState
-from toolang.state.watcher import StateWatcher
+from toolang.execution.types import (
+    Local,
+    RunOverride,
+    RunStatus,
+    StepPath,
+    local_to_protocol_data,
+)
 
 from ...common.context import (
     context_layout,
@@ -38,8 +49,14 @@ from ...common.context import (
     user_call,
 )
 from ...common.execution import ExecutionResources, open_execution
+from ...common.execution_runtime import (
+    ExecutionRuntime,
+    ExecutionRuntimeError,
+    open_execution_runtime,
+)
 from ...common.execution_progress.config import resolve_progress_max_width
 from ...common.output import echo_table, executable_label, parse_utc_timestamp
+from ...common.run_client import open_run_client
 from ...common.script_progress import ScriptRunPresenter
 
 
@@ -226,6 +243,13 @@ def retry_command(
             help="Retry from this canonical or run-local step path.",
         ),
     ] = None,
+    dev: Annotated[
+        Path | None,
+        typer.Option(
+            "--dev",
+            help="Use a Toolang wheel, or the newest wheel found recursively in a directory.",
+        ),
+    ] = None,
     allows: Annotated[
         list[str] | None,
         typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
@@ -244,26 +268,30 @@ def retry_command(
 ) -> None:
     """Retry one terminal root run from a durable step boundary."""
 
-    with open_execution(ctx, required=True, writable=True) as resources:
+    layout = context_layout(ctx)
+    with open_execution(ctx, required=True) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         _thread_id, run_id = _anchor(RunHistory(resources.store), run)
-        show_progress = sys.stderr.isatty()
-        result = user_call(
-            asyncio.run,
-            _execute_retry_or_rerun(
-                resources,
-                layout=context_layout(ctx),
-                kind="retry",
-                source=run_id,
-                anchor=user_call(_retry_anchor, run_id, anchor),
-                allow_options=allows,
-                default_options=defaults,
-                limit_options=limit,
-                show_progress=show_progress,
-                model_catalog=context_model_catalog(ctx),
-            ),
-        )
+        sandbox = user_call(_retry_sandbox, resources, run_id)
+    show_progress = sys.stderr.isatty()
+    result = _run_retry_or_rerun(
+        layout=layout,
+        kind="retry",
+        source=run_id,
+        anchor=user_call(_retry_anchor, run_id, anchor),
+        sandbox=sandbox,
+        dev=dev,
+        commands=user_call(
+            _restart_commands,
+            layout,
+            allow_options=allows,
+            default_options=defaults,
+            limit_options=limit,
+        ),
+        show_progress=show_progress,
+        model_catalog=context_model_catalog(ctx),
+    )
     status = _display_status(result.status)
     if not show_progress:
         typer.echo(f"retried {result.id}: {status}")
@@ -277,6 +305,17 @@ def rerun_command(
         ...,
         help="Run id to rerun. Thread id means its latest visible run.",
     ),
+    sandbox: Annotated[
+        str | None,
+        typer.Option("--sandbox", help="Execute the new run in this sandbox."),
+    ] = None,
+    dev: Annotated[
+        Path | None,
+        typer.Option(
+            "--dev",
+            help="Use a Toolang wheel, or the newest wheel found recursively in a directory.",
+        ),
+    ] = None,
     allows: Annotated[
         list[str] | None,
         typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
@@ -295,26 +334,29 @@ def rerun_command(
 ) -> None:
     """Start a new root run from one terminal source invocation."""
 
-    with open_execution(ctx, required=True, writable=True) as resources:
+    layout = context_layout(ctx)
+    with open_execution(ctx, required=True) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         _thread_id, source = _anchor(RunHistory(resources.store), run)
-        show_progress = sys.stderr.isatty()
-        result = user_call(
-            asyncio.run,
-            _execute_retry_or_rerun(
-                resources,
-                layout=context_layout(ctx),
-                kind="rerun",
-                source=source,
-                anchor=None,
-                allow_options=allows,
-                default_options=defaults,
-                limit_options=limit,
-                show_progress=show_progress,
-                model_catalog=context_model_catalog(ctx),
-            ),
-        )
+    show_progress = sys.stderr.isatty()
+    result = _run_retry_or_rerun(
+        layout=layout,
+        kind="rerun",
+        source=source,
+        anchor=None,
+        sandbox=sandbox,
+        dev=dev,
+        commands=user_call(
+            _restart_commands,
+            layout,
+            allow_options=allows,
+            default_options=defaults,
+            limit_options=limit,
+        ),
+        show_progress=show_progress,
+        model_catalog=context_model_catalog(ctx),
+    )
     status = _display_status(result.status)
     if not show_progress:
         typer.echo(f"reran {source} as {result.id}: {status}")
@@ -714,19 +756,51 @@ def _open_chat(ctx: typer.Context, thread_id: str) -> None:
     chat_command(ctx, thread=thread_id)
 
 
-async def _execute_retry_or_rerun(
-    resources: ExecutionResources,
+def _run_retry_or_rerun(
     *,
     layout: AgentLayout,
     kind: Literal["retry", "rerun"],
     source: str,
     anchor: StepPath | None,
+    sandbox: str | None,
+    dev: Path | None,
+    commands: tuple[RunOverride, ...],
+    show_progress: bool,
+    model_catalog: Path | None = None,
+) -> RunDetail:
+    try:
+        with open_execution_runtime(
+            layout,
+            sandbox=sandbox,
+            dev=dev,
+            model_catalog=model_catalog,
+            show_progress=show_progress,
+        ) as runtime:
+            return asyncio.run(
+                _execute_retry_or_rerun(
+                    layout=layout,
+                    runtime=runtime,
+                    kind=kind,
+                    source=source,
+                    anchor=anchor,
+                    commands=commands,
+                    show_progress=show_progress,
+                    model_catalog=model_catalog,
+                )
+            )
+    except ExecutionRuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except (OSError, ToolangError, ValueError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+def _restart_commands(
+    layout: AgentLayout,
+    *,
     allow_options: list[str] | None,
     default_options: list[str] | None,
     limit_options: list[str] | None,
-    show_progress: bool,
-    model_catalog: Path | None = None,
-) -> RunRecord:
+) -> tuple[RunOverride, ...]:
     environ = load_runtime_environ(layout, base_environ=os.environ)
     cli_bindings = resolve_binding_overrides({}, default_options)
     if "runnable" in cli_bindings:
@@ -735,22 +809,32 @@ async def _execute_retry_or_rerun(
         **resolve_binding_overrides(environ),
         **cli_bindings,
     }
-    setup = await SetupWatcher(
-        layout,
-        sandbox="host",
-        model_catalog=model_catalog,
-        ceiling_overrides=resolve_ceiling_overrides(environ, allow_options or ()),
-        binding_overrides=binding_overrides,
-        limit_overrides=resolve_limit_overrides(environ, limit_options or ()),
-    ).refresh()
-    state_watcher = StateWatcher(layout)
-    state = (
-        _recorded_state(state_watcher, resources, source)
-        if kind == "retry"
-        else await state_watcher.refresh()
+    binding_overrides.pop("runnable", None)
+    ceilings = resolve_ceiling_overrides(environ, allow_options or ())
+    limits = resolve_limit_overrides(environ, limit_options or ())
+    return (
+        *(RunOverride("allow", field, value) for field, value in ceilings.items()),
+        *(
+            RunOverride("default", field, value)
+            for field, value in binding_overrides.items()
+        ),
+        *(RunOverride("limit", field, value) for field, value in limits.items()),
     )
-    executor = RunExecutor(resources.store, resources.ids)
-    run_id = source if kind == "retry" else resources.ids.issue_run()
+
+
+async def _execute_retry_or_rerun(
+    *,
+    layout: AgentLayout,
+    runtime: ExecutionRuntime,
+    kind: Literal["retry", "rerun"],
+    source: str,
+    anchor: StepPath | None,
+    commands: tuple[RunOverride, ...],
+    show_progress: bool,
+    model_catalog: Path | None,
+) -> RunDetail:
+    environ = load_runtime_environ(layout, base_environ=os.environ)
+    run_id = source if kind == "retry" else None
     tracer = (
         ScriptRunPresenter(
             run_id=run_id,
@@ -760,41 +844,47 @@ async def _execute_retry_or_rerun(
         if show_progress
         else None
     )
-    executor.start()
     try:
-        handle = (
-            executor.retry(
-                source,
-                setup=setup,
-                state=state,
-                anchor=anchor,
-                model=setup.bindings.model,
-                tracer=tracer,
+        async with open_run_client(
+            layout,
+            runtime,
+            model_catalog=model_catalog,
+        ) as client:
+            request_id = f"term_{uuid4().hex}"
+            handle = (
+                await client.retry(
+                    RetryRequest(
+                        source=source,
+                        commands=commands,
+                        request_id=request_id,
+                        anchor=anchor,
+                    ),
+                    tracer=tracer,
+                )
+                if kind == "retry"
+                else await client.rerun(
+                    RerunRequest(
+                        source=source,
+                        commands=commands,
+                        request_id=request_id,
+                    ),
+                    tracer=tracer,
+                )
             )
-            if kind == "retry"
-            else executor.rerun(
-                source,
-                setup=setup,
-                state=state,
-                model=setup.bindings.model,
-                run_id=run_id,
-                tracer=tracer,
-            )
-        )
-        return await handle
+            try:
+                return await handle.wait()
+            except BaseException:
+                await _cancel_restart(client, handle, operation=kind)
+                raise
     finally:
-        try:
-            await executor.stop()
-        finally:
-            if tracer is not None:
-                tracer.close()
+        if tracer is not None:
+            tracer.close()
 
 
-def _recorded_state(
-    watcher: StateWatcher,
+def _retry_sandbox(
     resources: ExecutionResources,
     run_id: str,
-) -> AgentState:
+) -> str:
     run = resources.store.get_run(run_id=run_id)
     if run is None or run.parent is not None:
         raise ValueError(f"root run not found: {run_id}")
@@ -804,7 +894,29 @@ def _recorded_state(
     )
     if control is None or not isinstance(control.payload, PreparationControlPayload):
         raise ValueError(f"run preparation not found: {run_id}")
-    return watcher.load(control.payload.state)
+    if control.payload.sandbox is None:
+        raise ValueError(f"retry sandbox is unknown for run {run_id}; use rerun")
+    return control.payload.sandbox
+
+
+async def _cancel_restart(
+    client: RunClient,
+    handle: RunHandle,
+    *,
+    operation: str,
+) -> None:
+    try:
+        await client.cancel(
+            handle.run_id,
+            request_id=f"term_{uuid4().hex}",
+            reason=f"{operation} interrupted",
+        )
+    except (OSError, ValueError, RuntimeError):
+        return
+    try:
+        await asyncio.wait_for(asyncio.shield(handle.wait()), timeout=5)
+    except (TimeoutError, OSError, ValueError, RuntimeError):
+        pass
 
 
 def _retry_anchor(run_id: str, value: str | None) -> StepPath | None:

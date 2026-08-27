@@ -6,10 +6,18 @@ from fastapi import HTTPException
 import pytest
 from pydantic import ValidationError
 
-from toolang.api.conversion import parse_authored_run
-from toolang.api.schemas import AuthoredRunRequest
-from toolang.execution.schemas import RunRequest
-from toolang.execution.types import RunOverride
+from toolang.api.conversion import (
+    parse_authored_rerun,
+    parse_authored_retry,
+    parse_authored_run,
+)
+from toolang.api.schemas import (
+    AuthoredRerunRequest,
+    AuthoredRetryRequest,
+    AuthoredRunRequest,
+)
+from toolang.execution.schemas import RerunRequest, RetryRequest, RunRequest
+from toolang.execution.types import RunOverride, StepPath
 from toolang.lang.input import RunnableInputRaw
 
 
@@ -60,6 +68,57 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
         ),
         runnable_fallbacks=("agic:chat", "default"),
     )
+
+
+def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
+    retry_payload = AuthoredRetryRequest.model_validate(
+        {
+            "request_id": "retry_request",
+            "commands": [{"group": "limit", "field": "cost", "value": "2.50"}],
+            "anchor": "run_source.1.2",
+        }
+    )
+    rerun_payload = AuthoredRerunRequest.model_validate(
+        {
+            "request_id": "rerun_request",
+            "commands": [
+                {"group": "default", "field": "model", "value": "openai/test"}
+            ],
+        }
+    )
+
+    assert parse_authored_retry("run_source", retry_payload) == RetryRequest(
+        source="run_source",
+        commands=(RunOverride("limit", "cost", Decimal("2.50")),),
+        request_id="retry_request",
+        anchor=StepPath("run_source", (1, 2)),
+    )
+    assert parse_authored_rerun("run_source", rerun_payload) == RerunRequest(
+        source="run_source",
+        commands=(RunOverride("default", "model", "openai/test"),),
+        request_id="rerun_request",
+    )
+
+    with pytest.raises(ValidationError):
+        AuthoredRetryRequest.model_validate(
+            {"request_id": "retry_request", "unexpected": True}
+        )
+    with pytest.raises(HTTPException, match="cannot replace the persisted runnable"):
+        parse_authored_rerun(
+            "run_source",
+            AuthoredRerunRequest.model_validate(
+                {
+                    "request_id": "rerun_request",
+                    "commands": [
+                        {
+                            "group": "default",
+                            "field": "runnable",
+                            "value": "agic:other",
+                        }
+                    ],
+                }
+            ),
+        )
 
 
 @pytest.mark.parametrize(

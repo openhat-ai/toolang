@@ -64,6 +64,16 @@ def test_policy_options_follow_cli_display_order(
     assert positions == tuple(sorted(positions))
 
 
+def test_restart_commands_expose_only_valid_runtime_options() -> None:
+    retry = strip_ansi(runner.invoke(cli.app, ["retry", "alice", "--help"]).stdout)
+    rerun = strip_ansi(runner.invoke(cli.app, ["rerun", "alice", "--help"]).stdout)
+
+    assert "--dev" in retry
+    assert "--sandbox" not in retry
+    assert "--dev" in rerun
+    assert "--sandbox" in rerun
+
+
 def _create_agent(root: Path, name: str = "alice") -> AgentLayout:
     layout = AgentLayout.resident(root, name)
     layout.home.mkdir(parents=True)

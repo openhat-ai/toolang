@@ -21,10 +21,14 @@ from toolang.api.schemas import (
     RunSteerRequest,
 )
 from toolang.base.types.message import Message
-from toolang.base.types.run import ModelCallResult
+from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.catalog import CapsManager, JobsManager
 from toolang.execution.calls import resolve_run_request
-from toolang.execution.records import RunControlPayload
+from toolang.execution.records import (
+    RerunControlPayload,
+    RetryControlPayload,
+    RunControlPayload,
+)
 from toolang.execution.schemas import RunDetail, RunRequest
 from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import RunnableInputRaw
@@ -39,6 +43,11 @@ class _Snapshot:
 
     def current(self) -> Any:
         self.reads += 1
+        return self.value
+
+    def load(self, revision: str) -> Any:
+        if getattr(self.value, "revision", None) != revision:
+            raise ValueError(f"snapshot revision not found: {revision}")
         return self.value
 
 
@@ -271,6 +280,112 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         assert missing_thread.status_code == 404
         assert missing_thread.json()["detail"] == "thread not found: term_missing"
         assert len(core.store.list_runs(thread_id=thread_id, limit=None)) == 2
+    finally:
+        asyncio.run(core.close())
+
+
+def test_authored_retry_and_rerun_streams_subscribe_at_acceptance(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic chat(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[
+            RuntimeError("temporary failure"),
+            ModelCallResult(
+                message=Message.assistant("recovered"),
+                usage=ModelUsage(input_tokens=1, output_tokens=1),
+            ),
+            ModelCallResult(message=Message.assistant("reran")),
+        ],
+    )
+    harness.store.close()
+    core = AgentCore(harness.setup.layout)
+    core.setup = _Snapshot(harness.setup)
+    core.state = _Snapshot(harness.state)
+    app = create_app(
+        core,
+        CapsManager(core.layout),
+        JobsManager(core.layout),
+        cors_allowed_origins=(),
+    )
+
+    try:
+        with TestClient(app) as client:
+            thread_id = client.post(
+                "/api/v1/threads",
+                json={"client": "tui"},
+            ).json()["thread"]["id"]
+            source = client.post(
+                "/api/v1/runs/authored/stream",
+                json={
+                    "thread": thread_id,
+                    "request_id": "source_request",
+                    "input": {"primary": "hello"},
+                    "runnable_fallbacks": ["agic:chat", "default"],
+                },
+            )
+            source_id = source.headers["X-Toolang-Run-ID"]
+
+            retry = client.post(
+                f"/api/v1/runs/{source_id}/retry/stream",
+                json={
+                    "request_id": "retry_request",
+                    "commands": [{"group": "limit", "field": "tokens", "value": 10}],
+                },
+            )
+            duplicate = client.post(
+                f"/api/v1/runs/{source_id}/retry/stream",
+                json={"request_id": "retry_request"},
+            )
+            invalid_anchor = client.post(
+                f"/api/v1/runs/{source_id}/retry/stream",
+                json={
+                    "request_id": "invalid_anchor_request",
+                    "anchor": "run_other.0",
+                },
+            )
+            rerun = client.post(
+                f"/api/v1/runs/{source_id}/rerun/stream",
+                json={
+                    "request_id": "rerun_request",
+                    "commands": [{"group": "limit", "field": "time", "value": 30}],
+                },
+            )
+
+        source_events = _sse_events(source.text)
+        retry_events = _sse_events(retry.text)
+        rerun_events = _sse_events(rerun.text)
+        rerun_id = rerun.headers["X-Toolang-Run-ID"]
+        retry_detail = core.history.get_run(source_id)
+        rerun_detail = core.history.get_run(rerun_id)
+
+        assert source_events[0][0] == retry_events[0][0] == "run_begin"
+        assert retry_events[-1][0] == rerun_events[-1][0] == "run_end"
+        assert retry.headers["X-Toolang-Run-ID"] == source_id
+        assert rerun_id != source_id
+        assert retry_detail is not None and retry_detail.status == "succeeded"
+        assert rerun_detail is not None and rerun_detail.status == "succeeded"
+        assert retry_detail.controls[-1].request_id == "retry_request"
+        assert isinstance(retry_detail.controls[-1].payload, RetryControlPayload)
+        assert retry_detail.controls[-1].payload.limits.tokens == 10
+        assert rerun_detail.controls[0].request_id == "rerun_request"
+        assert isinstance(rerun_detail.controls[0].payload, RerunControlPayload)
+        assert rerun_detail.controls[0].payload.limits.time == 30
+        assert duplicate.status_code == 409
+        assert duplicate.json()["detail"] == (
+            "run control request already exists: retry_request"
+        )
+        assert invalid_anchor.status_code == 422
+        assert invalid_anchor.json()["detail"] == (
+            "retry request anchor must belong to its source run"
+        )
     finally:
         asyncio.run(core.close())
 
