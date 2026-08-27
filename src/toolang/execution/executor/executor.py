@@ -38,7 +38,8 @@ from toolang.plugin.models.config import (
     parse_model_aliases,
 )
 from toolang.state.state import AgentState, state_program_module
-from toolang.state.cache import agent_revision_dir
+from toolang.state.cache import agent_revision_dir, validate_agent_revision
+from toolang.state.prepare import load_agent_state
 from toolang.setup import AgentSetup
 
 from ..accounting import selected_usd_cost
@@ -123,6 +124,7 @@ class _ActiveRun:
     ended: set[str] = field(default_factory=set, repr=False)
     execution: _Execution | None = field(default=None, repr=False)
     reload_states: dict[int, AgentState] = field(default_factory=dict, repr=False)
+    reload_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     reload_scheduled: bool = field(default=False, repr=False)
 
 
@@ -734,8 +736,9 @@ class RunExecutor:
             if active is None:
                 raise ValueError(f"run is not owned by this executor: {run_id}")
             root_run_id = active.root_run_id
+            layout = active.root_setup.layout
             expected_dir = agent_revision_dir(
-                active.root_setup.layout,
+                layout,
                 state.revision,
             ).resolve()
             revision_dir = (
@@ -745,17 +748,26 @@ class RunExecutor:
                 raise ValueError("reload requires a durable Agent State")
             if revision_dir != expected_dir:
                 raise ValueError("reload Agent State belongs to another layout")
-        control = self.store.accept_reload_control(
-            run_id=root_run_id,
-            state=state.revision,
-            request_id=request_id,
-            created_at=utc_now(),
-        )
-        with self._active_lock:
-            current = self._active.get(root_run_id)
-            if current is active:
+        try:
+            validate_agent_revision(layout, state.revision)
+            durable_state = load_agent_state(layout, state.revision)
+        except (OSError, KeyError, TypeError, ValueError) as exc:
+            raise ValueError("reload requires a durable Agent State") from exc
+        if durable_state != state:
+            raise ValueError("reload Agent State does not match its durable revision")
+        with active.reload_lock:
+            with self._active_lock:
+                if self._active.get(root_run_id) is not active:
+                    raise ValueError(f"run is not owned by this executor: {run_id}")
+            control = self.store.accept_reload_control(
+                run_id=root_run_id,
+                state=state.revision,
+                request_id=request_id,
+                created_at=utc_now(),
+            )
+            with self._active_lock:
                 active.reload_states[control.index] = state
-        self._observe_control(control)
+            self._observe_control(control)
         return control
 
     def cancel_control(self, *, run_id: str, index: int) -> RunControlRecord:
@@ -925,6 +937,9 @@ class RunExecutor:
                 controls.pop(control.index, None)
                 if not controls:
                     active.controls.pop(control.run, None)
+                if control.kind == "reload":
+                    active.reload_states.pop(control.index, None)
+                    apply_reload = active
         if cancel is not None and loop is not None and not cancel.done():
             if control.kind == "cancel":
                 claimed = self.store.claim_run_controls(
@@ -946,12 +961,15 @@ class RunExecutor:
             ):
                 return
             controls = active.controls.get(active.root_run_id, {})
-            if not any(
-                control.kind == "reload"
-                and control.status == "pending"
-                and control.index in active.reload_states
-                for control in controls.values()
-            ):
+            candidate = next(
+                (
+                    control
+                    for _index, control in sorted(controls.items())
+                    if control.kind == "reload" and control.status == "pending"
+                ),
+                None,
+            )
+            if candidate is None or candidate.index not in active.reload_states:
                 return
             active.reload_scheduled = True
 
@@ -976,7 +994,6 @@ class RunExecutor:
                                 for _index, control in sorted(controls.items())
                                 if control.kind == "reload"
                                 and control.status == "pending"
-                                and control.index in active.reload_states
                             ),
                             None,
                         )
@@ -994,6 +1011,7 @@ class RunExecutor:
                     if candidate.index not in claimed:
                         with self._active_lock:
                             controls.pop(candidate.index, None)
+                            active.reload_states.pop(candidate.index, None)
                         continue
                     self.store.finish_run_controls(
                         run_id=active.root_run_id,
@@ -1006,6 +1024,7 @@ class RunExecutor:
                     )
                     with self._active_lock:
                         controls.pop(candidate.index, None)
+                        active.reload_states.pop(candidate.index, None)
         finally:
             with self._active_lock:
                 active.reload_scheduled = False

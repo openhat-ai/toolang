@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from hashlib import sha256
+from dataclasses import replace
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -20,16 +21,17 @@ from toolang.common.ids import IdIssuer
 from toolang.execution.executor import RunExecutor
 from toolang.execution.executor.common import BoundRun, Local
 from toolang.execution.executor.executor import _Execution
-from toolang.execution.records import RunControlPayload
+from toolang.execution.records import RunControlPayload, RunControlRecord
 from toolang.execution.types import (
     ControlRef,
+    ControlTiming,
     Occurrence,
     StepPath,
     ThreadPrefix,
 )
-from toolang.lang import Program
 from toolang.state.cache import agent_revision_dir
-from toolang.state.state import AgentState, agent_state_revision
+from toolang.state.prepare import prepare_agent_state
+from toolang.state.state import AgentState
 
 
 _ROOT_SOURCE = """
@@ -45,6 +47,7 @@ flow parent:
 """.lstrip()
 
 _RELOADED_SOURCE = _ROOT_SOURCE.replace("old state", "new state")
+_RELOADED_TWICE_SOURCE = _ROOT_SOURCE.replace("old state", "newest state")
 
 _ACTIVE_AGIC_SOURCE = """
 instruct:
@@ -78,23 +81,10 @@ _RELOADED_PARALLEL_SOURCE = _PARALLEL_SOURCE.replace("old state", "new state")
 
 
 def _durable_state(harness: ExecutionHarness, source: str) -> AgentState:
-    root_revision = harness.state.root_revision
-    home_revision = sha256(source.encode("utf-8")).hexdigest()
-    revision = agent_state_revision(root_revision, home_revision)
-    revision_dir = agent_revision_dir(harness.setup.layout, revision)
-    revision_dir.mkdir(parents=True)
-    return AgentState(
-        revision=revision,
-        root_revision=root_revision,
-        home_revision=home_revision,
-        root_config=harness.state.root_config,
-        home_config=harness.state.home_config,
-        config=harness.state.config,
-        program_source=harness.state.program_source,
-        program=Program.from_source(source),
-        caps=(),
-        revision_dir=revision_dir,
-    )
+    layout = harness.setup.layout
+    layout.home.mkdir(parents=True, exist_ok=True)
+    layout.program.write_text(source, encoding="utf-8")
+    return prepare_agent_state(layout)
 
 
 async def _wait_until_applied(
@@ -150,8 +140,10 @@ def test_reload_orders_step_state_and_child_acceptance_at_one_boundary(
                 state=reloaded,
                 request_id="reload-state",
             )
+            active = harness.executor._active[handle.run_id]
             assert control.run == handle.run_id
             await _wait_until_applied(harness, handle.run_id, control.index)
+            assert control.index not in active.reload_states
             first_call.release()
             root = await handle
 
@@ -191,6 +183,113 @@ def test_reload_orders_step_state_and_child_acceptance_at_one_boundary(
                 assert entry.payload.state is None
             assert "old state" in harness.adapter.invocations[0].call.instructions
             assert "new state" in harness.adapter.invocations[1].call.instructions
+
+    asyncio.run(scenario())
+
+
+def test_concurrent_reloads_apply_in_control_index_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_call = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=_ROOT_SOURCE,
+        responses=(
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message.assistant("first")),
+                gate=first_call,
+            ),
+            ModelCallResult(message=Message.assistant("second")),
+        ),
+    )
+    first_state = _durable_state(harness, _RELOADED_SOURCE)
+    second_state = _durable_state(harness, _RELOADED_TWICE_SOURCE)
+    original_accept = harness.store.accept_reload_control
+    first_accepted = threading.Event()
+    release_first = threading.Event()
+    second_accepted = threading.Event()
+
+    def delayed_accept(
+        *,
+        run_id: str,
+        state: str,
+        timing: ControlTiming = "immediate",
+        request_id: str | None,
+        created_at: str,
+    ) -> RunControlRecord:
+        control = original_accept(
+            run_id=run_id,
+            state=state,
+            timing=timing,
+            request_id=request_id,
+            created_at=created_at,
+        )
+        if request_id == "reload-first":
+            first_accepted.set()
+            if not release_first.wait(timeout=2):
+                raise AssertionError("timed out waiting to release the first reload")
+        elif request_id == "reload-second":
+            second_accepted.set()
+        return control
+
+    monkeypatch.setattr(harness.store, "accept_reload_control", delayed_accept)
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="flow:parent",
+                    primary=Message.user("start").parts,
+                )
+            )
+            await first_call.wait_until_entered()
+            first_reload = asyncio.create_task(
+                asyncio.to_thread(
+                    handle.reload,
+                    first_state,
+                    request_id="reload-first",
+                )
+            )
+            assert await asyncio.to_thread(first_accepted.wait, 1)
+            second_reload = asyncio.create_task(
+                asyncio.to_thread(
+                    handle.reload,
+                    second_state,
+                    request_id="reload-second",
+                )
+            )
+            accepted_out_of_order = await asyncio.to_thread(
+                second_accepted.wait,
+                0.1,
+            )
+            release_first.set()
+            first_control, second_control = await asyncio.gather(
+                first_reload,
+                second_reload,
+            )
+
+            assert not accepted_out_of_order
+            assert [first_control.index, second_control.index] == [1, 2]
+            await _wait_until_applied(
+                harness,
+                handle.run_id,
+                first_control.index,
+            )
+            await _wait_until_applied(
+                harness,
+                handle.run_id,
+                second_control.index,
+            )
+            active = harness.executor._active[handle.run_id]
+            assert active.reload_states == {}
+            first_call.release()
+            root = await handle
+
+            assert root.status == "succeeded", root.error
+            assert "newest state" in harness.adapter.invocations[1].call.instructions
 
     asyncio.run(scenario())
 
@@ -376,7 +475,23 @@ def test_reload_rejects_non_durable_and_cross_layout_state(tmp_path: Path) -> No
             with pytest.raises(ValueError, match="durable"):
                 harness.executor.reload(run_id=handle.run_id, state=harness.state)
 
+            empty_revision_dir = agent_revision_dir(
+                harness.setup.layout,
+                harness.state.revision,
+            )
+            empty_revision_dir.mkdir(parents=True)
+            empty_state = replace(
+                harness.state,
+                revision_dir=empty_revision_dir,
+            )
+            with pytest.raises(ValueError, match="durable"):
+                harness.executor.reload(run_id=handle.run_id, state=empty_state)
+
             cross_layout = _durable_state(harness, _RELOADED_SOURCE)
+            forged = replace(cross_layout, config={"forged": True})
+            with pytest.raises(ValueError, match="does not match"):
+                harness.executor.reload(run_id=handle.run_id, state=forged)
+
             assert cross_layout.revision_dir is not None
             foreign_dir = tmp_path / "foreign" / cross_layout.revision
             foreign_dir.mkdir(parents=True)
@@ -405,5 +520,50 @@ def test_reload_rejects_non_durable_and_cross_layout_state(tmp_path: Path) -> No
             await handle
             with pytest.raises(ValueError, match="not owned"):
                 harness.executor.reload(run_id=handle.run_id, state=cross_layout)
+
+    asyncio.run(scenario())
+
+
+def test_revoked_reload_releases_its_retained_state(tmp_path: Path) -> None:
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=_ROOT_SOURCE,
+        responses=(
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message.assistant("first")),
+                gate=gate,
+            ),
+            ModelCallResult(message=Message.assistant("second")),
+        ),
+    )
+    reloaded = _durable_state(harness, _RELOADED_SOURCE)
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="flow:parent",
+                    primary=Message.user("start").parts,
+                )
+            )
+            await gate.wait_until_entered()
+            active = harness.executor._active[handle.run_id]
+            control = handle.reload(reloaded, request_id="reload-revoked")
+            assert active.reload_states[control.index] is reloaded
+
+            revoked = handle.cancel_control(control.index)
+
+            assert revoked.status == "revoked"
+            assert control.index not in active.reload_states
+            gate.release()
+            root = await handle
+            assert root.status == "succeeded", root.error
+            assert all(
+                "old state" in invocation.call.instructions
+                for invocation in harness.adapter.invocations
+            )
 
     asyncio.run(scenario())
