@@ -8,7 +8,7 @@ import pytest
 from tests import FIXTURES_ROOT, PROJECT_ROOT
 from toolang.common.errors import ToolangError
 from toolang.lang import Program, to_data
-from toolang.lang.ast import LetStmt, RepeatStmt, SettleStmt
+from toolang.lang.ast import LetStmt, RepeatStmt, ScatterStmt, SettleStmt
 from toolang.base.types.message import TextPart
 from toolang.lang.input import resolve_input_parts
 from toolang.state.source import read_authored_source
@@ -212,6 +212,33 @@ flow summarize(_: Text[]) -> Text:
     assert generated.input.type_name == "Part[]"
     assert [(param.name, param.type_name) for param in generated.params] == [
         ("item", "Part[]")
+    ]
+
+
+def test_inline_scatter_declares_referenced_flow_locals_as_inputs() -> None:
+    program = Program.from_source(
+        """
+agic prepare -> Text:
+  pass
+
+flow expand(_: Text, topic: Text) -> Text[]:
+  let source:
+    {{_}}
+  let prepared = run prepare
+
+  scatter 3 -> Text:
+    Return distinct pieces of {{source}} about {{topic}} and {{prepared}}.
+    {{#source}}{{detail}}{{/source}}
+"""
+    )
+
+    statement = program.flows[0].stmts[2]
+    assert isinstance(statement, ScatterStmt)
+    generated = next(agic for agic in program.agics if agic.name == statement.runnable)
+    assert [(param.name, param.type_name) for param in generated.params] == [
+        ("source", "Part[]"),
+        ("topic", "Text"),
+        ("prepared", "Part[]"),
     ]
 
 

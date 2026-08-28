@@ -35,6 +35,7 @@ from .source import (
     read_root_source,
 )
 from .cache import (
+    LAYER_SCHEMA,
     HomeLayer,
     LayerScope,
     RootLayer,
@@ -120,9 +121,15 @@ def load_agent_state(
     """Load one durable Agent State without consulting authored source."""
 
     effective, root_revision, home_revision = load_agent_revisions(layout, revision)
+    root = load_root_layer(layout, root_revision)
+    home = load_home_layer(layout, home_revision)
+    if revision is None and (
+        root.schema != LAYER_SCHEMA or home.schema != LAYER_SCHEMA
+    ):
+        raise ValueError("current Agent State uses an outdated layer schema")
     state = compose_layer_state(
-        load_root_layer(layout, root_revision),
-        load_home_layer(layout, home_revision),
+        root,
+        home,
         revision_dir=agent_revision_dir(layout, effective),
     )
     if state.revision != effective:
@@ -250,6 +257,8 @@ def _matching_root(
     try:
         revision = load_current_revision(layout, "root")
         layer = load_root_layer(layout, revision)
+        if layer.schema != LAYER_SCHEMA:
+            return None
         if layer.source != source:
             return None
         return layer
@@ -268,6 +277,8 @@ def _matching_home(
     try:
         revision = load_current_revision(layout, "home")
         layer = load_home_layer(layout, revision)
+        if layer.schema != LAYER_SCHEMA:
+            return None
         if layer.source != source:
             return None
         return layer

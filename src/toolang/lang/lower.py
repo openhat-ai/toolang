@@ -12,6 +12,9 @@ from . import ast
 
 _PROMPT_PARAM_RE = re.compile(r"^(?P<name>[A-Za-z_][\w-]*)(?P<optional>\?)?$")
 _DECL_REF_RE = re.compile(r"^[A-Za-z_][\w-]*$")
+_TEMPLATE_LOCAL_RE = re.compile(
+    r"{{\s*(?:[#^/]\s*)?([A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z_][\w-]*)*\s*}}"
+)
 _TRIVIA = {
     "blank_line",
     "comment_line",
@@ -122,6 +125,7 @@ class _Lowerer:
         self.instructs: list[ast.InstructDecl] = []
         self.agics: list[ast.AgicDecl] = []
         self.flows: list[ast.FlowDecl] = []
+        self._flow_local_types: dict[str, str] | None = None
 
     def lower(self) -> ast.Program:
         for child in self.cst.tree.root_node.named_children:
@@ -383,23 +387,35 @@ class _Lowerer:
         input_param, params = self._parameters(
             node.child_by_field_name("params"), owner=node
         )
+        previous_local_types = self._flow_local_types
+        self._flow_local_types = {
+            **(
+                {"_": input_param.type_name or "Part[]"}
+                if input_param is not None
+                else {}
+            ),
+            **{param.name: param.type_name or "Part[]" for param in params},
+        }
         directives: list[ast.Directive] = []
         stmts: list[ast.FlowStmt] = []
         body = self._required(node, "body")
-        for child in body.named_children:
-            if child.type in _TRIVIA:
-                continue
-            if child.type == "directive":
-                directives.append(self._lower_directive(child))
-                continue
-            if child.type == "statements":
-                stmts.extend(self._lower_statements(child))
-                continue
-            if child.type in {"pass_keyword", "pass_statement"}:
-                continue
-            raise RuntimeError(
-                f"Unsupported flow CST node {child.type!r} at line {self._line(child)}."
-            )
+        try:
+            for child in body.named_children:
+                if child.type in _TRIVIA:
+                    continue
+                if child.type == "directive":
+                    directives.append(self._lower_directive(child))
+                    continue
+                if child.type == "statements":
+                    stmts.extend(self._lower_statements(child))
+                    continue
+                if child.type in {"pass_keyword", "pass_statement"}:
+                    continue
+                raise RuntimeError(
+                    f"Unsupported flow CST node {child.type!r} at line {self._line(child)}."
+                )
+        finally:
+            self._flow_local_types = previous_local_types
         return ast.FlowDecl(
             name=self._optional_text(name) or "main",
             name_explicit=name is not None,
@@ -425,8 +441,11 @@ class _Lowerer:
     def _lower_stmt(self, node: CstNode, *, doc: str | None) -> ast.FlowStmt:
         if node.type == "let_statement":
             if value := node.child_by_field_name("value"):
+                binding = self._required_text(node, "name").strip()
+                if self._flow_local_types is not None:
+                    self._flow_local_types[binding] = "Part[]"
                 return ast.LetStmt(
-                    binding=self._required_text(node, "name").strip(),
+                    binding=binding,
                     value=self._block_text(value),
                     span=self._span(node),
                     doc=doc,
@@ -434,6 +453,8 @@ class _Lowerer:
             nested = self._required(node, "statement")
             stmt = self._lower_stmt(nested, doc=doc)
             binding = self._optional_text(node.child_by_field_name("name"))
+            if binding is not None and self._flow_local_types is not None:
+                self._flow_local_types[binding] = "Part[]"
             return replace(stmt, binding=binding)
 
         span = self._span(node)
@@ -594,6 +615,7 @@ class _Lowerer:
         evaluator: bool = False,
     ) -> str:
         name = self._generated_name("agic", node)
+        params = self._captured_params(body, params=params, span=self._span(node))
         directives = (
             (
                 ast.Directive(
@@ -626,6 +648,30 @@ class _Lowerer:
             )
         )
         return name
+
+    def _captured_params(
+        self,
+        body: str,
+        *,
+        params: tuple[ast.Parameter, ...],
+        span: ast.Span,
+    ) -> tuple[ast.Parameter, ...]:
+        captured = list(params)
+        names = {param.name for param in params}
+        local_types = self._flow_local_types or {}
+        for match in _TEMPLATE_LOCAL_RE.finditer(body):
+            name = match.group(1)
+            if name == "_" or name in names or name not in local_types:
+                continue
+            captured.append(
+                ast.Parameter(
+                    name=name,
+                    type_name=local_types[name],
+                    span=span,
+                )
+            )
+            names.add(name)
+        return tuple(captured)
 
     def _parameters(
         self,
