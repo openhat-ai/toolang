@@ -1798,8 +1798,12 @@ def test_inline_scatter_requests_and_returns_an_array_result(tmp_path: Path) -> 
         tmp_path,
         source="""
 flow scattered(_: Text) -> Text[]:
+  let source:
+    {{_}}
+
   scatter 3 -> Text:
-    Return distinct pieces of {{_}}.
+    Return distinct pieces of this source:
+    {{source}}
 """,
         responses=[
             ModelCallResult(message=Message.assistant('["a","b"]')),
@@ -1820,6 +1824,9 @@ flow scattered(_: Text) -> Text[]:
             assert root.status == "succeeded"
             assert _output_value(harness, root.id) == ["a", "b"]
             assert "type: Text[]" in harness.adapter.invocations[0].call.instructions
+            assert "Return distinct pieces of this source:\nsplit" in message_text(
+                harness.adapter.invocations[0].call.messages[-1].parts
+            )
 
     asyncio.run(scenario())
 

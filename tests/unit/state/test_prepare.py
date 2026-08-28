@@ -5,6 +5,7 @@ from hashlib import sha256
 import json
 import multiprocessing
 from pathlib import Path
+import shutil
 import time
 
 import pytest
@@ -16,15 +17,20 @@ from toolang.execution.runnables import (
 )
 from toolang.state import state as cap_state
 from toolang.state.cache import (
+    LAYER_SCHEMA,
     _agent_check_lock,
+    _persist_agent_revision,
+    canonical_json,
     load_home_layer,
     load_root_layer,
     layer_revision_dir,
+    publish_layer_current,
 )
 from toolang.state.errors import StatePreparationError
 from toolang.state.prepare import (
     _validate_flow_source_names,
     compose_layer_state,
+    load_agent_state,
     prepare_agent_state,
     prepare_root_home,
     refresh_agent_state,
@@ -239,6 +245,48 @@ def test_prepare_root_home_reuses_unchanged_revisions(tmp_path: Path) -> None:
     assert state.revision_dir == (home / ".state" / "agent" / "revs" / state.revision)
     assert state.revision_dir is not None
     assert state.revision_dir.is_dir()
+
+
+def test_prepare_rebuilds_a_current_layer_from_an_older_schema(
+    tmp_path: Path,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    layout = _layout(toolang_root)
+    current_root, current_home = prepare_root_home(layout)
+    current_dir = layer_revision_dir(layout, "home", current_home.revision)
+    document = json.loads((current_dir / "layer.json").read_text(encoding="utf-8"))
+    document["schema"] = LAYER_SCHEMA - 1
+    encoded = canonical_json(document)
+    stale_revision = sha256(encoded).hexdigest()
+    stale_dir = layer_revision_dir(layout, "home", stale_revision)
+    shutil.copytree(current_dir, stale_dir)
+    (stale_dir / "layer.json").write_bytes(encoded)
+    publish_layer_current(layout, "home", stale_revision)
+    with _agent_check_lock(layout):
+        stale_state_revision = _persist_agent_revision(
+            layout,
+            root_revision=current_root.revision,
+            home_revision=stale_revision,
+        )
+
+    with pytest.raises(ValueError, match="outdated layer schema"):
+        load_agent_state(layout)
+    assert (
+        load_agent_state(layout, stale_state_revision).home_revision == stale_revision
+    )
+
+    prepared_state = prepare_agent_state(layout)
+    prepared_home = load_home_layer(layout, prepared_state.home_revision)
+
+    assert prepared_home.revision != stale_revision
+    prepared_document = json.loads(
+        (prepared_home.revision_dir / "layer.json").read_text(encoding="utf-8")
+    )
+    assert prepared_document["schema"] == LAYER_SCHEMA
+    assert load_agent_state(layout).revision == prepared_state.revision
 
 
 def test_prepare_materializes_inline_caps_as_independent_files(

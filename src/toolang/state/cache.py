@@ -28,7 +28,7 @@ from .state import (
 )
 
 LayerScope = Literal["root", "home"]
-LAYER_SCHEMA = 1
+LAYER_SCHEMA = 2
 AGENT_STATE_SCHEMA = 1
 _LAYER_FILE = "layer.json"
 _LAYERS_FILE = "layers.json"
@@ -42,6 +42,7 @@ class RootLayer:
 
     revision: str
     revision_dir: Path
+    schema: int
     source: SourceTree
     resolutions: tuple[CapResolution, ...]
     config: Mapping[str, object]
@@ -60,6 +61,7 @@ class HomeLayer:
 
     revision: str
     revision_dir: Path
+    schema: int
     source: SourceTree
     resolutions: tuple[CapResolution, ...]
     config: Mapping[str, object]
@@ -150,6 +152,7 @@ def load_root_layer(
     return RootLayer(
         revision=effective,
         revision_dir=revision_dir,
+        schema=_schema(document),
         source=_source_tree(document),
         resolutions=_resolutions(document),
         config=_config(document),
@@ -172,6 +175,7 @@ def load_home_layer(
     return HomeLayer(
         revision=effective,
         revision_dir=revision_dir,
+        schema=_schema(document),
         source=_source_tree(document),
         resolutions=_resolutions(document),
         config=_config(document),
@@ -771,6 +775,13 @@ def _config(document: Mapping[str, object]) -> dict[str, object]:
     if not isinstance(raw, dict):
         raise TypeError("State layer config must be an object")
     return {str(key): value for key, value in raw.items()}
+
+
+def _schema(document: Mapping[str, object]) -> int:
+    value = document.get("schema")
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TypeError("State layer schema must be an integer")
+    return value
 
 
 def _canonical_object(encoded: bytes, *, label: str) -> dict[str, object]:
