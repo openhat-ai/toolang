@@ -11,7 +11,12 @@ from toolang.execution.accounting import (
     selected_usd_cost,
 )
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
-from toolang.execution.types import ModelStepNoted, RunStatus, StepKind, StepPath
+from toolang.execution.types import (
+    ModelStepNoted,
+    RunStatus,
+    StepKind,
+    StepPath,
+)
 from toolang.lang.ast import FlowStmt
 
 from .formatting import count, flow_statement, token_fact
@@ -119,9 +124,11 @@ class StepState:
     ordinal: int
     sequence: int
     detail: StepDetail
+    dynamic_run: bool = False
     boundaries: tuple[str, ...] = ()
     metrics: Metrics = field(default_factory=lambda: Metrics())
     cancellation_reported: bool = False
+    dynamic_child_run_id: str | None = None
 
     @property
     def statement(self) -> FlowStmt | None:
@@ -129,7 +136,11 @@ class StepState:
 
     @property
     def is_flow(self) -> bool:
-        return self.statement is not None
+        return not self.dynamic_run and self.statement is not None
+
+    @property
+    def is_dynamic_run(self) -> bool:
+        return self.dynamic_run
 
     @property
     def model(self) -> ModelDetail:

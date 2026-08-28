@@ -17,4 +17,10 @@ child-Run closure rows, verbosity-specific structures, and the `·`, `↳`, and
 ∎ run_nrqpt0mf succeeded        1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
 ```
 
+Run Steps owned by an Agic Run use a `---  run agic:NAME` or
+`---  run flow:NAME` progress scope and close with aggregate facts plus
+`STATUS CHILD_RUN_ID`. Run Steps owned by a Flow Run keep their numbered
+headers and StepPath footers. This distinction is derived from the owning
+`RunBegin.runnable`; the root `∎` footer is unchanged.
+
 This file remains as a compatibility pointer for existing documentation links.

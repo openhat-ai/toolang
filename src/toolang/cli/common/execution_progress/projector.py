@@ -167,6 +167,12 @@ class ProgressProjector:
             self._root = event.run
         else:
             owner = self._active_step(event.parent)
+            if owner.is_dynamic_run:
+                if owner.dynamic_child_run_id is not None:
+                    raise _PresentationError(
+                        f"dynamic Run Step has multiple child Runs: {event.parent}"
+                    )
+                owner.dynamic_child_run_id = event.run
             if owner.begin.kind == "par" and owner.lane_owner is None:
                 lane_owner = self._direct_lane_owner(
                     event.parent,
@@ -314,6 +320,9 @@ class ProgressProjector:
             ordinal,
             self._sequence,
             step_detail(event.kind),
+            dynamic_run=(
+                event.kind == "run" and run.begin.runnable.startswith("agic:")
+            ),
         )
         self._steps[event.step] = state
         self._note_iteration(event.step, event.occurrence)
@@ -324,11 +333,28 @@ class ProgressProjector:
                 lane_live_text(
                     state.begin,
                     state.model.lane_preview if event.kind == "model" else "",
+                    dynamic_run=state.is_dynamic_run,
                 ),
             )
             return None
         block_key = self._block_key(state)
         state.boundaries = self._claim_boundaries(block_key, state)
+        if state.is_dynamic_run:
+            rows = (
+                *self._rows_for_boundaries(state.boundaries),
+                ProgressRow(
+                    f"---  run {self._dynamic_runnable_label(state)}",
+                    leader="hyphen",
+                ),
+                ProgressRow(""),
+            )
+            self._commit_boundaries(state.boundaries)
+            state.boundaries = ()
+            return ProgressBlock(
+                block_key,
+                rows,
+                gap_before=not self._ends_with_blank,
+            )
         rows = self._rows_for_boundaries(state.boundaries)
         if not rows:
             return None
@@ -379,6 +405,14 @@ class ProgressProjector:
                     f"parallel item total changed for {event.step}"
                 )
             state.par.total_items = event.noted.total_items
+        if (
+            state.is_dynamic_run
+            and event.status == "succeeded"
+            and state.dynamic_child_run_id is None
+        ):
+            raise _PresentationError(
+                f"succeeded dynamic Run Step has no child Run: {event.step}"
+            )
 
         block: ProgressBlock | None = None
         if state.lane_owner is not None:
@@ -399,6 +433,7 @@ class ProgressProjector:
                         state.begin,
                         event,
                         error=self._error_text(event.error),
+                        dynamic_run=state.is_dynamic_run,
                     )
                 if terminal:
                     lane = self._lane_state(state.lane_owner)
@@ -413,6 +448,24 @@ class ProgressProjector:
                             terminal,
                             status=event.status,
                         )
+        elif state.is_dynamic_run:
+            if isinstance(event.error, Pointer):
+                rows = self._dynamic_run_terminal_rows(state, event)
+            else:
+                rows = (
+                    *(
+                        flow_error_rows(self._error_text(event.error))
+                        if event.error is not None
+                        else ()
+                    ),
+                    *((ProgressRow(""),) if event.error is not None else ()),
+                    *self._dynamic_run_terminal_rows(state, event),
+                )
+            block = self._commit_block(
+                state,
+                rows,
+                gap_before=not self._ends_with_blank,
+            )
         elif not state.is_flow:
             if isinstance(event.error, Pointer):
                 self._release_boundaries(state.boundaries)
@@ -731,6 +784,8 @@ class ProgressProjector:
         for state in self._steps.values():
             if state.lane_owner is not None:
                 continue
+            if state.is_dynamic_run:
+                continue
             if not state.is_flow:
                 rows = (
                     *self._rows_for_boundaries(state.boundaries),
@@ -841,6 +896,42 @@ class ProgressProjector:
             include_runs=True,
         )
 
+    def _dynamic_run_terminal_rows(
+        self,
+        state: StepState,
+        event: StepEnd,
+    ) -> tuple[ProgressRow, ...]:
+        facts = (
+            tuple(
+                state.metrics.facts(
+                    duration=elapsed(state.begin.started_at, event.finished_at),
+                    include_runs=True,
+                )
+            )
+            if state.metrics.has_activity
+            else ()
+        )
+        return (
+            ProgressRow(
+                "---  ",
+                leader="hyphen",
+                facts=facts,
+                right_status=event.status,
+                right_identity=state.dynamic_child_run_id or "",
+            ),
+            ProgressRow(""),
+        )
+
+    @staticmethod
+    def _dynamic_runnable_label(state: StepState) -> str:
+        runnable = getattr(state.begin.given, "runnable", "")
+        if not isinstance(runnable, str):
+            return "request"
+        safe = "".join(
+            character if character.isprintable() else " " for character in runnable
+        )
+        return one_line(safe)[:240] or "request"
+
     def _claim_boundaries(
         self,
         block_key: str,
@@ -905,12 +996,13 @@ class ProgressProjector:
 
     def _flow_chain(self, target: StepState) -> list[StepState]:
         chain: list[StepState] = []
-        current: StepState | None = target if target.statement is not None else None
+        current: StepState | None = target if target.is_flow else None
         if current is None:
             parent = self._parent_flow_path(target.begin.step)
             current = self._steps.get(parent) if parent is not None else None
         while current is not None:
-            chain.append(current)
+            if current.is_flow:
+                chain.append(current)
             parent = self._parent_flow_path(current.begin.step)
             current = self._steps.get(parent) if parent is not None else None
         chain.reverse()
