@@ -32,7 +32,12 @@ from .formatting import one_line, output_parts, tool_label
 from .types import ProgressRow, ProgressTone
 
 
-def live_row(begin: StepBegin, preview: str) -> ProgressRow:
+def live_row(
+    begin: StepBegin,
+    preview: str,
+    *,
+    dynamic_run: bool = False,
+) -> ProgressRow:
     """Project one compact Step activity for a parallel lane."""
 
     if begin.kind == "model":
@@ -46,6 +51,9 @@ def live_row(begin: StepBegin, preview: str) -> ProgressRow:
         )
         text = f"• {summary}"
         return ProgressRow(text, "active", surface="tool_summary")
+    elif begin.kind == "run" and dynamic_run:
+        runnable = one_line(getattr(begin.given, "runnable", "")) or "runnable"
+        text = f"• Running {runnable}..."
     else:
         text = f"• running {begin.kind}"
     return ProgressRow(text, "active")
@@ -82,6 +90,7 @@ def trace_terminal_rows(
     *,
     error: str,
     include_model_text: bool = True,
+    dynamic_run: bool = False,
 ) -> tuple[ProgressRow, ...]:
     """Project one Model or Tool Step's complete terminal trace."""
 
@@ -99,6 +108,16 @@ def trace_terminal_rows(
         if event.status == "failed":
             return _error_rows("failed", error, tone)
         return _error_rows("canceled", error, tone)
+
+    if begin.kind == "run" and dynamic_run:
+        runnable = one_line(getattr(begin.given, "runnable", "")) or "runnable"
+        if event.status == "succeeded":
+            return (ProgressRow(f"• Ran {runnable}", tone),)
+        status = "Failed" if event.status == "failed" else "Canceled"
+        rows = [ProgressRow(f"• {status} {runnable}", tone)]
+        if error:
+            rows.extend(ProgressRow(f"  {line}", tone) for line in _split_lines(error))
+        return tuple(rows)
 
     label = tool_label(begin.given)
     summary = event.noted.summary if isinstance(event.noted, ToolStepNoted) else ""
@@ -213,10 +232,15 @@ def collection_terminal_rows(
     return (ProgressRow(f"• {text}", "normal"),) if text else ()
 
 
-def lane_live_text(begin: StepBegin, preview: str) -> str:
+def lane_live_text(
+    begin: StepBegin,
+    preview: str,
+    *,
+    dynamic_run: bool = False,
+) -> str:
     """Project one descendant Step into a compact parallel-lane activity."""
 
-    return live_row(begin, preview).text
+    return live_row(begin, preview, dynamic_run=dynamic_run).text
 
 
 def lane_terminal_lines(
@@ -224,10 +248,16 @@ def lane_terminal_lines(
     event: StepEnd,
     *,
     error: str,
+    dynamic_run: bool = False,
 ) -> tuple[str, ...]:
     """Project one descendant Step into compact or expandable lane content."""
 
-    rows = trace_terminal_rows(begin, event, error=error)
+    rows = trace_terminal_rows(
+        begin,
+        event,
+        error=error,
+        dynamic_run=dynamic_run,
+    )
     if event.status == "failed":
         return tuple(
             row.text[2:] if index else row.text for index, row in enumerate(rows)

@@ -14,7 +14,7 @@ from rich.syntax import Syntax, SyntaxTheme, TokenType
 from rich.text import Text
 from rich.theme import Theme
 
-from .formatting import display_width, split_hanging_prefix, truncate
+from .formatting import display_width, split_hanging_prefix, truncate, wrap_display
 from .types import ProgressBlock, ProgressRow, ProgressTone
 
 _STYLES: dict[ProgressTone, str] = {
@@ -141,6 +141,8 @@ def _row_renderable(
             open_detail=open_tool_detail,
             close_detail=close_tool_detail,
         )
+    elif row.leader == "hyphen":
+        renderable = _HyphenDividerRow(row, max_width=max_width)
     elif row.format == "plain" and row.right_text:
         renderable = _TwoEndedPlainRow(row, live=live, max_width=max_width)
     elif row.format == "markdown":
@@ -392,6 +394,190 @@ class _TwoEndedPlainRow:
                 style=style,
                 no_wrap=True,
             )
+
+
+@dataclass(frozen=True, slots=True)
+class _HyphenDividerRow:
+    """Render one dynamic Run boundary with an elastic ASCII leader."""
+
+    row: ProgressRow
+    max_width: int
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        del console
+        width = max(1, min(options.max_width, self.max_width))
+        if self.row.right_status:
+            yield from self._footer(width)
+        else:
+            yield from self._header(width)
+
+    def _header(self, width: int) -> RenderResult:
+        caption = self.row.text
+        minimum = 3
+        gap = " "
+        available = width - display_width(caption) - display_width(gap)
+        if available >= minimum:
+            line = Text(no_wrap=True)
+            line.append(caption, style="dim")
+            line.append(gap, style="dim")
+            line.append("-" * available, style="dim")
+            yield line
+            return
+
+        prefix = "---  " if caption.startswith("---  ") else ""
+        content = caption[len(prefix) :]
+        prefix_width = display_width(prefix)
+        if prefix and width <= prefix_width:
+            marker = prefix if width == prefix_width else prefix.rstrip()
+            for marker_line in wrap_display(marker, width):
+                if marker_line:
+                    yield Text(marker_line, style="dim", no_wrap=True)
+            for content_line in wrap_display(content, width):
+                yield Text(content_line, style="dim", no_wrap=True)
+            yield Text("-" * width, style="dim", no_wrap=True)
+            return
+        indent = " " * min(display_width(prefix), max(0, width - 1))
+        content_width = max(1, width - display_width(indent))
+        lines = wrap_display(content, content_width)
+        for index, content_line in enumerate(lines):
+            physical_prefix = prefix if index == 0 else indent
+            if index == len(lines) - 1:
+                remaining = (
+                    width
+                    - display_width(physical_prefix)
+                    - display_width(content_line)
+                    - 1
+                )
+                if remaining >= minimum:
+                    yield Text(
+                        f"{physical_prefix}{content_line} {'-' * remaining}",
+                        style="dim",
+                        no_wrap=True,
+                    )
+                    return
+            yield Text(
+                f"{physical_prefix}{content_line}",
+                style="dim",
+                no_wrap=True,
+            )
+        leader_width = max(0, width - display_width(indent))
+        if leader_width:
+            yield Text(f"{indent}{'-' * leader_width}", style="dim", no_wrap=True)
+
+    def _footer(self, width: int) -> RenderResult:
+        prefix = self.row.text
+        facts = " · ".join(self.row.facts)
+        left = f"{prefix}{facts}"
+        right = self.row.right_status
+        if self.row.right_identity:
+            right = f"{right} {self.row.right_identity}"
+        left_gap = " " if facts else ""
+        right_gap = " " if right else ""
+        leader_width = (
+            width
+            - display_width(left)
+            - display_width(left_gap)
+            - display_width(right_gap)
+            - display_width(right)
+        )
+        if leader_width >= 3:
+            line = Text(no_wrap=True)
+            line.append(left, style="dim")
+            line.append(left_gap, style="dim")
+            line.append("-" * leader_width, style="dim")
+            if right:
+                line.append(right_gap, style="dim")
+                self._append_right(line)
+            yield line
+            return
+
+        prefix_width = display_width(prefix)
+        if width <= prefix_width:
+            marker = prefix if width == prefix_width else prefix.rstrip()
+            for marker_line in wrap_display(marker, width):
+                if marker_line:
+                    yield Text(marker_line, style="dim", no_wrap=True)
+            for fact_line in _wrap_divider_facts(self.row.facts, width):
+                yield Text(fact_line, style="dim", no_wrap=True)
+            yield Text("-" * width, style="dim", no_wrap=True)
+            for status_line in wrap_display(self.row.right_status, width):
+                yield Text(
+                    status_line,
+                    style=_terminal_status_color(self.row.right_status) or "none",
+                    no_wrap=True,
+                )
+            for identity_line in wrap_display(self.row.right_identity, width):
+                if identity_line:
+                    yield Text(identity_line, style="dim", no_wrap=True)
+            return
+
+        indent = " " * min(5, max(0, width - 1))
+        content_width = max(1, width - display_width(indent))
+        fact_lines = _wrap_divider_facts(self.row.facts, content_width)
+        if fact_lines:
+            for index, fact_line in enumerate(fact_lines):
+                line = Text(no_wrap=True)
+                line.append(prefix if index == 0 else indent, style="dim")
+                line.append(fact_line, style="dim")
+                yield line
+        right_width = display_width(right)
+        leader_width = width - display_width(indent) - right_width - 1
+        if leader_width >= 3:
+            line = Text(no_wrap=True)
+            line.append(indent, style="dim")
+            line.append("-" * leader_width, style="dim")
+            line.append(" ", style="dim")
+            self._append_right(line)
+            yield line
+            return
+
+        if not fact_lines:
+            yield Text(prefix.rstrip(), style="dim", no_wrap=True)
+        if right_width <= content_width:
+            line = Text(indent, style="dim", no_wrap=True)
+            self._append_right(line)
+            yield line
+            return
+        for status_line in wrap_display(self.row.right_status, content_width):
+            line = Text(indent, style="dim", no_wrap=True)
+            line.append(
+                status_line,
+                style=_terminal_status_color(self.row.right_status) or "none",
+            )
+            yield line
+        if self.row.right_identity:
+            for identity_line in wrap_display(
+                self.row.right_identity,
+                content_width,
+            ):
+                yield Text(
+                    f"{indent}{identity_line}",
+                    style="dim",
+                    no_wrap=True,
+                )
+
+    def _append_right(self, line: Text) -> None:
+        line.append(
+            self.row.right_status,
+            style=_terminal_status_color(self.row.right_status) or "none",
+        )
+        if self.row.right_identity:
+            line.append(f" {self.row.right_identity}", style="dim")
+
+
+def _wrap_divider_facts(facts: tuple[str, ...], width: int) -> list[str]:
+    lines: list[str] = []
+    for fact in facts:
+        if lines and display_width(f"{lines[-1]} · {fact}") <= width:
+            lines[-1] = f"{lines[-1]} · {fact}"
+            continue
+        wrapped = wrap_display(fact, width)
+        lines.extend(wrapped or [""])
+    return lines
 
 
 @dataclass(frozen=True, slots=True)

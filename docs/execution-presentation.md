@@ -24,9 +24,11 @@ Script and Chat use the same projected ownership, content, aggregates, facts,
 and errors. Their presenters own terminal mechanics such as wrapping, lane
 truncation, scrollback, and live-area replacement.
 
-A Run has no progress header. A root Run contains projected Steps followed by
-one footer. Child Runs are represented through the Steps they execute rather
-than separate Run headers or closure rows.
+A Run has no standalone progress header. A root Run contains projected Steps
+followed by one footer. Child Runs are represented through the Steps they
+execute rather than separate Run headers or closure rows. A model-produced
+dynamic Run Step owns its own opening and closing divider around that child
+content.
 
 ## Width and Alignment
 
@@ -49,9 +51,10 @@ Iteration and condition headers create the same kind of stable boundary.
 
 ## Markers and Style
 
-`•` is the only Step execution-row marker. There is no separate marker for
-errors, child closure, control decisions, or parallel work. `∎` marks the root
-Run footer. The centered dot `·` is only an inline facts separator.
+`•` is the only Step execution-row marker. `---  ` opens and closes a dynamic
+Run Step, and `∎` marks the root Run footer. There is no separate marker for
+errors, control decisions, or parallel work. The centered dot `·` is only an
+inline facts separator.
 
 - Model activity and output use `•` and normal text.
 - Tool activity uses `•` and normal text. Its successful terminal marker,
@@ -66,10 +69,58 @@ Successful Model and Flow outputs use the terminal's default foreground;
 successful Tool terminal output uses that foreground dimmed. Failure uses red
 and cancellation uses yellow. Green is not a terminal status color.
 
-Step paths appear only at the right edge of facts-bearing Flow Step footers.
-Child-Run closure, binding effects, result pointers, and control decisions are
-not displayed. Model and Tool Steps also omit duration, model name, exit code,
-usage, cost, and other per-Step facts.
+Step paths appear only at the right edge of facts-bearing Flow Step footers. A
+dynamic Run Step footer instead identifies its direct child Run. Binding
+effects, result pointers, and control decisions are not displayed. Model and
+Tool Steps also omit duration, model name, exit code, usage, cost, and other
+per-Step facts.
+
+## Agic Dynamic Run Steps
+
+A Run Step owned by an Agic Run uses a flat divider scope. Ownership is
+identified by the enclosing `RunBegin.runnable`, while the existing `RunStmt`
+provides the target label. Its header begins in column zero and uses the
+canonical resolved runnable ref:
+
+```text
+---  run agic:summarize -----------------------------------------------
+
+• Summary text from the child.
+
+---  2.0s · 1 run · 1 model call ---------------- succeeded run_abc123
+```
+
+The fixed prefix is three ASCII hyphens followed by two spaces. The caption,
+facts, elastic hyphen leader, and child Run ID are dim. A successful status has
+normal intensity and the terminal's default foreground; failed and canceled
+statuses use normal-intensity red and yellow. The status style does not affect
+the surrounding fields.
+
+The header contains no Run ID. It displays the resolved `agic:NAME` or
+`flow:NAME`; a failure before resolution displays bounded terminal-safe request
+text, or `request` when no text is available. The footer's right field is
+`STATUS CHILD_RUN_ID`, using the complete direct child identity rather than the
+owning StepPath. Its facts aggregate that child's complete Run tree in the
+normal order. A failure before child acceptance has no facts or invented
+identity:
+
+```text
+• Runnable not found: missing
+
+---  -------------------------------------------------------------- failed
+```
+
+Every structural marker remains in column zero; nested dynamic calls do not
+introduce indentation. An agic child retains normal Model and Tool traces. A
+flow child retains its numbered Flow headers and StepPath footers, so the
+caller-owned dynamic boundary and callee-owned grammar stay distinct. Dynamic
+calls inside compact parallel lanes remain one physical lane row.
+
+At narrow widths the renderer shortens the leader first. Facts then wrap at
+fact boundaries under a five-cell hanging indent, followed by a final leader
+and complete status-plus-ID field. Long captions and identities fold by display
+cells without truncation. Exactly one blank row follows the header, precedes the
+footer, and follows the footer; adjacent child-owned gaps coalesce.
 
 ## Flow Headers
 
