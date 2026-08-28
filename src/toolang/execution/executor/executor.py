@@ -85,7 +85,7 @@ from .common import (
     EventEmitter,
     Local,
     _ExecutionFailed,
-    _HandoffCommitted,
+    _ExecuteCommitted,
     _RunRejected,
     _StepFailed,
     control_text,
@@ -150,7 +150,7 @@ class _ActiveRun:
     reload_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     reload_scheduled: bool = field(default=False, repr=False)
     reload_task: asyncio.Task[None] | None = field(default=None, repr=False)
-    runtime_action_lock: asyncio.Lock = field(
+    runtime_tool_lock: asyncio.Lock = field(
         default_factory=asyncio.Lock,
         repr=False,
     )
@@ -826,7 +826,7 @@ class RunExecutor:
         return control
 
     async def model_reload(self, *, run_id: str) -> dict[str, object]:
-        """Refresh and synchronously apply State for one model runtime action."""
+        """Refresh and synchronously apply State for one model runtime tool."""
 
         with self._active_lock:
             active = self._active.get(run_id)
@@ -834,7 +834,7 @@ class RunExecutor:
             raise ValueError(f"run is not owned by this executor: {run_id}")
         if self._refresh_state is None:
             raise ToolangError("Agent State refresh is unavailable in this executor")
-        async with active.runtime_action_lock:
+        async with active.runtime_tool_lock:
             refreshed = await self._refresh_state()
             execution = active.execution
             if execution is None:
@@ -1655,13 +1655,13 @@ class _Execution:
             active = self._active_bindings.get(run_id)
             run_id = active.parent.run if active and active.parent is not None else None
 
-    def prepare_handoff(
+    def prepare_execute(
         self,
         parent: BoundRun,
         target: ResolvedRunnable,
         input: RunnableInput,
         *,
-        step: StepPath,
+        source: Pointer,
         state: AgentState,
         state_ref: ControlRef,
     ) -> tuple[BoundRun, dict[str, Local]]:
@@ -1674,6 +1674,7 @@ class _Execution:
             target.executable,
             state=state,
         )
+        control_locals = _execute_control_locals(input, source=source)
         binding = replace(
             parent,
             bindings=RunBindings(
@@ -1681,7 +1682,7 @@ class _Execution:
                 runnable=target.ref,
             ),
             input=input,
-            control_locals=_input_locals(input, target.executable),
+            control_locals=control_locals,
             state=state,
             state_ref=state_ref,
             module=target.module,
@@ -1691,13 +1692,15 @@ class _Execution:
                 resources if isinstance(target.executable, FlowDecl) else None
             ),
         )
-        return binding, _handoff_locals(input, target.executable, step=step)
+        return binding, _execute_locals(input, target.executable, control_locals)
 
-    def commit_handoff(
+    def commit_execute(
         self,
         binding: BoundRun,
-    ) -> None:
-        """Commit an already durable same-Run runnable transition in memory."""
+        *,
+        source: Pointer,
+    ) -> BoundRun:
+        """Persist and activate one prepared same-Run runnable replacement."""
 
         lineage = self._run_lineages.get(binding.run_id)
         if lineage is None:  # pragma: no cover - active Run invariant
@@ -1705,9 +1708,21 @@ class _Execution:
         ref = binding.bindings.runnable
         if ref is None:  # pragma: no cover - bound run invariant
             raise RuntimeError(f"run runnable binding is missing: {binding.run_id}")
+        control = self.store.accept_execute_control(
+            run_id=binding.run_id,
+            state=binding.state.revision,
+            runnable=ref,
+            module=binding.module,
+            source=source,
+            locals=binding.control_locals,
+            created_at=utc_now(),
+        )
+        binding = replace(binding, control_index=control.index)
         self._run_lineages[binding.run_id] = (*lineage, (binding.module, ref))
         self._active_bindings[binding.run_id] = binding
         self._run_outputs.pop(binding.run_id, None)
+        self.executor._observe_control(control)
+        return binding
 
     def schedule_time_limit(
         self,
@@ -1773,7 +1788,7 @@ class _Execution:
             raise RuntimeError(f"run resources missing: {binding.run_id}")
         entry_binding = binding
         entry_runnable = runnable
-        handed_off = False
+        transferred = False
         current = (
             dict(locals) if locals is not None else initial_locals(binding, runnable)
         )
@@ -1823,15 +1838,15 @@ class _Execution:
                             step_start=step_start,
                         )
                     break
-                except _HandoffCommitted as handoff:
-                    binding = handoff.binding
-                    runnable = handoff.runnable
-                    current = handoff.locals
+                except _ExecuteCommitted as transfer:
+                    binding = transfer.binding
+                    runnable = transfer.runnable
+                    current = transfer.locals
                     statement_start = 0
                     step_start = self.next_step(binding.run_id)
-                    handed_off = True
-            if handed_off:
-                result = _coerce_handoff_output(
+                    transferred = True
+            if transferred:
+                result = _coerce_execute_output(
                     entry_binding,
                     entry_runnable,
                     result,
@@ -2826,37 +2841,47 @@ def _input_locals(
     return tuple(result)
 
 
-def _handoff_locals(
+def _execute_control_locals(
+    input: RunnableInput,
+    *,
+    source: Pointer,
+) -> tuple[RecordLocal, ...]:
+    """Point raw replacement inputs into the originating Model ToolCall."""
+
+    result: list[RecordLocal] = []
+    if input.primary is not None:
+        pointer = source.select("input", "input", "_")
+        result.append(RecordLocal.typed("Json", pointer, "_"))
+    for name in input.named:
+        pointer = source.select("input", "input", name)
+        result.append(RecordLocal.typed("Json", pointer, name))
+    return tuple(result)
+
+
+def _execute_locals(
     input: RunnableInput,
     runnable: AgicDecl | FlowDecl,
-    *,
-    step: StepPath,
+    records: tuple[RecordLocal, ...],
 ) -> dict[str, Local]:
-    """Bind replacement inputs to the durable Handoff Step output."""
+    """Bind concrete replacement values to their durable model-output sources."""
 
-    parameters = {item.name: item for item in runnable.params}
-    result: dict[str, Local] = {}
-    if runnable.input is not None and input.primary is not None:
-        type_name = runnable.input.type_name or "Part[]"
-        pointer = Pointer.step(step).select("_")
-        result["_"] = Local(
-            input.primary,
+    types = {item.name: item.type_name or "Part[]" for item in runnable.params}
+    if runnable.input is not None:
+        types["_"] = runnable.input.type_name or "Part[]"
+    values = {
+        **({"_": input.primary} if input.primary is not None else {}),
+        **input.named,
+    }
+    result: dict[str, Local] = {"_": Local()}
+    for record in records:
+        if record.name is None or not isinstance(record.value, TypedPointer):
+            raise RuntimeError("execute input local is not a named pointer")
+        result[record.name] = Local(
+            values[record.name],
             "item",
-            pointer,
-            type_name,
-            RecordLocal.typed(type_name, pointer, "_"),
-        )
-    else:
-        result["_"] = Local()
-    for name, value in input.named.items():
-        type_name = parameters[name].type_name or "Part[]"
-        pointer = Pointer.step(step).select(name)
-        result[name] = Local(
-            value,
-            "item",
-            pointer,
-            type_name,
-            RecordLocal.typed(type_name, pointer, name),
+            record.value.pointer,
+            types[record.name],
+            record,
         )
     return result
 
@@ -2946,7 +2971,7 @@ def _bound_model(binding: BoundRun) -> str:
     return model
 
 
-def _coerce_handoff_output(
+def _coerce_execute_output(
     entry: BoundRun,
     runnable: AgicDecl | FlowDecl,
     result: Local,

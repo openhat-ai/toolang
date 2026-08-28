@@ -18,10 +18,8 @@ from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor.steps.tool import invoke_tool_call
-from toolang.execution.records import RunControlPayload
+from toolang.execution.records import ExecuteControlPayload, RunControlPayload
 from toolang.execution.types import (
-    HandoffStepGiven,
-    HandoffStepNoted,
     Pointer,
     ThreadPrefix,
     TypedPointer,
@@ -115,10 +113,16 @@ agic child(_: Text) -> Text:
             assert "<available-runnable-routes>" in (
                 harness.adapter.invocations[0].call.instructions
             )
-            assert "<available-runnable-routes>" not in (
+            assert "<available-runnable-routes>" in (
                 harness.adapter.invocations[1].call.instructions
             )
-            assert harness.adapter.invocations[1].call.tools == ()
+            assert {
+                tool.name for tool in harness.adapter.invocations[1].call.tools
+            } == {
+                "_too__execute",
+                "_too__reload",
+                "_too__run",
+            }
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
@@ -579,7 +583,7 @@ def test_generic_tool_dispatch_rejects_executor_action_names(tmp_path: Path) -> 
 
     assert result.output == {}
     assert result.error == (
-        "executor runtime action cannot be invoked as a tool: _too__execute"
+        "inner runtime tool cannot use generic tool dispatch: _too__execute"
     )
 
 
@@ -1366,7 +1370,7 @@ flow research(brief: Brief, prefix?: Text) -> Text:
     asyncio.run(scenario())
 
 
-def test_execute_handoff_replaces_the_runnable_within_the_same_run(
+def test_execute_replaces_the_runnable_without_a_transition_step(
     tmp_path: Path,
 ) -> None:
     harness = ExecutionHarness.create(
@@ -1417,20 +1421,33 @@ agic target(_: Text) -> Text:
             assert harness.store.resolve_value(root.output.value) == "completed"
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
             steps = harness.store.list_steps(run_id=root.id)
-            assert [step.kind for step in steps] == ["model", "handoff", "model"]
-            transition = steps[1]
-            assert isinstance(transition.given, HandoffStepGiven)
-            assert transition.given.requested == "target"
-            assert transition.noted == HandoffStepNoted(
-                runnable="agic:target",
-                module="agent",
-            )
-            assert steps[2].input == (Pointer.step(transition.path).select("_"),)
+            assert [step.kind for step in steps] == ["model", "model"]
+            controls = harness.store.list_run_controls(run_id=root.id, kind="execute")
+            assert len(controls) == 1
+            execute = controls[0]
+            assert execute.status == "applied"
+            assert isinstance(execute.payload, ExecuteControlPayload)
+            source = Pointer.step(steps[0].path, 0)
+            assert execute.payload.state == harness.state.revision
+            assert execute.payload.runnable == "agic:target"
+            assert execute.payload.module == "agent"
+            assert execute.payload.source == source
+            assert len(execute.payload.locals) == 1
+            control_local = execute.payload.locals[0]
+            assert control_local.type == "Json"
+            assert isinstance(control_local.value, TypedPointer)
+            assert control_local.value.pointer == source.select("input", "input", "_")
+            assert harness.store.resolve_local(control_local).value == "work"
+            assert steps[1].input == (source.select("input", "input", "_"),)
             target_call = harness.adapter.invocations[1].call
             assert {
                 tool.name for tool in harness.adapter.invocations[0].call.tools
-            } == {"_too__execute"}
-            assert target_call.tools == ()
+            } == {"_too__execute", "_too__reload", "_too__run"}
+            assert {tool.name for tool in target_call.tools} == {
+                "_too__execute",
+                "_too__reload",
+                "_too__run",
+            }
             assert target_call.cont is None
             assert [message.role for message in target_call.messages] == ["user"]
             assert "Target work" in str(target_call.messages[0].parts[0])
@@ -1438,7 +1455,9 @@ agic target(_: Text) -> Text:
     asyncio.run(scenario())
 
 
-def test_execute_handoff_failure_returns_to_the_calling_agic(tmp_path: Path) -> None:
+def test_execute_failure_returns_to_the_calling_agic_without_a_control(
+    tmp_path: Path,
+) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -1485,9 +1504,9 @@ agic blocked -> Text:
             steps = harness.store.list_steps(run_id=root.id)
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "succeeded"),
-                ("handoff", "failed"),
                 ("model", "succeeded"),
             ]
+            assert not harness.store.list_run_controls(run_id=root.id, kind="execute")
             result = harness.adapter.invocations[1].call.messages[-1].parts[0]
             assert isinstance(result, ToolResultPart)
             assert result.tool_call_id == "blocked-handoff"
@@ -1498,7 +1517,7 @@ agic blocked -> Text:
     asyncio.run(scenario())
 
 
-def test_unavailable_runtime_action_is_rejected_without_a_tool_step(
+def test_runtime_tools_are_available_without_routes_or_refresh(
     tmp_path: Path,
 ) -> None:
     harness = ExecutionHarness.create(
@@ -1537,16 +1556,70 @@ agic caller() -> Text:
                 "model",
                 "model",
             ]
+            first_call = harness.adapter.invocations[0].call
+            assert {tool.name for tool in first_call.tools} == {
+                "_too__execute",
+                "_too__reload",
+                "_too__run",
+            }
+            assert '"hands":{"omitted":0,"refs":[]}' in first_call.instructions
+            assert '"handoffs":{"omitted":0,"refs":[]}' in first_call.instructions
             result = harness.adapter.invocations[1].call.messages[-1].parts[0]
             assert isinstance(result, ToolResultPart)
-            assert result.error == (
-                "runtime action is unavailable in this Model Step: _too__execute"
-            )
+            assert result.error == "Runnable not found: target"
 
     asyncio.run(scenario())
 
 
-def test_execute_handoff_must_be_the_only_model_action(tmp_path: Path) -> None:
+def test_reload_without_refresh_returns_a_correlated_runtime_error(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic caller() -> Text:
+  recall = none
+  context: none
+  instruct: none
+  Call.
+""",
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "reload",
+                        "provider-reload",
+                        "_too__reload",
+                        {},
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("recovered")),
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="agic:caller")
+            )
+
+            assert root.status == "succeeded", root.error
+            assert [step.kind for step in harness.store.list_steps(run_id=root.id)] == [
+                "model",
+                "model",
+            ]
+            assert not harness.store.list_run_controls(run_id=root.id, kind="reload")
+            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            assert isinstance(result, ToolResultPart)
+            assert result.tool_call_id == "reload"
+            assert result.error == "Agent State refresh is unavailable in this executor"
+
+    asyncio.run(scenario())
+
+
+def test_execute_must_be_the_only_model_tool_call(tmp_path: Path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -1592,10 +1665,9 @@ agic target() -> Text:
             steps = harness.store.list_steps(run_id=root.id)
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "succeeded"),
-                ("handoff", "failed"),
-                ("handoff", "failed"),
                 ("model", "succeeded"),
             ]
+            assert not harness.store.list_run_controls(run_id=root.id, kind="execute")
             results = tuple(
                 part
                 for message in harness.adapter.invocations[1].call.messages[-2:]
@@ -1605,14 +1677,14 @@ agic target() -> Text:
             assert all(
                 isinstance(item, ToolResultPart)
                 and item.error
-                == "_too/execute must be the only action in its Model Call"
+                == "_too/execute must be the only tool call in its Model Call"
                 for item in results
             )
 
     asyncio.run(scenario())
 
 
-def test_chained_handoff_rejects_a_runnable_already_in_the_lineage(
+def test_chained_execute_rejects_a_runnable_already_in_the_lineage(
     tmp_path: Path,
 ) -> None:
     harness = ExecutionHarness.create(
@@ -1668,11 +1740,13 @@ agic target() -> Text:
             steps = harness.store.list_steps(run_id=root.id)
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "succeeded"),
-                ("handoff", "succeeded"),
                 ("model", "succeeded"),
-                ("handoff", "failed"),
                 ("model", "succeeded"),
             ]
+            controls = harness.store.list_run_controls(run_id=root.id, kind="execute")
+            assert len(controls) == 1
+            assert isinstance(controls[0].payload, ExecuteControlPayload)
+            assert controls[0].payload.runnable == "agic:target"
             result = harness.adapter.invocations[2].call.messages[-1].parts[0]
             assert isinstance(result, ToolResultPart)
             assert result.error == (
@@ -1683,7 +1757,7 @@ agic target() -> Text:
     asyncio.run(scenario())
 
 
-def test_chained_handoffs_keep_one_run_and_reach_the_final_target(
+def test_chained_execute_controls_keep_one_run_and_reach_the_final_target(
     tmp_path: Path,
 ) -> None:
     harness = ExecutionHarness.create(
@@ -1743,15 +1817,17 @@ flow deliver(_: Text) -> Text:
             steps = harness.store.list_steps(run_id=root.id)
             assert [step.kind for step in steps] == [
                 "model",
-                "handoff",
                 "model",
-                "handoff",
                 "value",
             ]
-            transitions = [step for step in steps if step.kind == "handoff"]
-            assert [step.noted for step in transitions] == [
-                HandoffStepNoted(runnable="agic:middle", module="agent"),
-                HandoffStepNoted(runnable="flow:deliver", module="agent"),
+            controls = harness.store.list_run_controls(run_id=root.id, kind="execute")
+            assert [
+                control.payload.runnable
+                for control in controls
+                if isinstance(control.payload, ExecuteControlPayload)
+            ] == [
+                "agic:middle",
+                "flow:deliver",
             ]
 
     asyncio.run(scenario())
@@ -1812,7 +1888,7 @@ agic inner() -> Text:
     asyncio.run(scenario())
 
 
-def test_handoff_target_failure_does_not_restore_the_caller(tmp_path: Path) -> None:
+def test_execute_target_failure_does_not_restore_the_caller(tmp_path: Path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -1852,14 +1928,15 @@ agic target() -> Text:
             assert len(harness.adapter.invocations) == 2
             assert [step.kind for step in harness.store.list_steps(run_id=root.id)] == [
                 "model",
-                "handoff",
                 "model",
             ]
+            controls = harness.store.list_run_controls(run_id=root.id, kind="execute")
+            assert len(controls) == 1 and controls[0].status == "applied"
 
     asyncio.run(scenario())
 
 
-def test_handoff_preserves_the_entry_output_contract(tmp_path: Path) -> None:
+def test_execute_preserves_the_entry_output_contract(tmp_path: Path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -1897,7 +1974,6 @@ agic target() -> Text:
             steps = harness.store.list_steps(run_id=root.id)
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "succeeded"),
-                ("handoff", "succeeded"),
                 ("model", "succeeded"),
             ]
 
@@ -1987,11 +2063,15 @@ agic target(_: Text) -> Text:
             before_reload = harness.adapter.invocations[1].call
             after_reload = harness.adapter.invocations[2].call
             assert {tool.name for tool in before_reload.tools} == {
+                "_too__execute",
                 "_too__reload",
+                "_too__run",
                 "beta__use",
             }
             assert {tool.name for tool in after_reload.tools} == {
+                "_too__execute",
                 "_too__reload",
+                "_too__run",
                 "beta__use",
             }
             assert "old target state" in before_reload.instructions

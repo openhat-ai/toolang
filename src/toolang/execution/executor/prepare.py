@@ -43,7 +43,7 @@ from .common import BoundRun, value_parts, value_text
 from .resources import resource_caps, resource_tools
 from .resources import snapshot_model_selection
 from ..runnables import AgicRoutes, render_runnable_catalog, resolve_agic_routes
-from ..tools.runtime import RuntimeAction, runtime_actions
+from ..tools.runtime import RuntimeTool, runtime_tools
 
 if TYPE_CHECKING:
     from .executor import _Execution
@@ -67,7 +67,7 @@ class _AgicFrame:
     prompt_context: str
     messages: tuple[Message, ...]
     tools: dict[str, AgentTool]
-    actions: dict[str, RuntimeAction]
+    runtime_tools: dict[str, RuntimeTool]
     routes: AgicRoutes
     services: tuple[ToolService, ...]
     runtime_instructions: str = ""
@@ -101,15 +101,11 @@ def prepare_agic(
     )
     tools = dict(resource_tools(run.setup, resources))
     routes = resolve_agic_routes(run.state, agic)
-    actions = runtime_actions(
-        run=bool(routes.hands),
-        execute=bool(routes.handoffs),
-        reload=context.has_state_refresh,
-    )
-    collisions = sorted(set(tools) & set(actions))
+    inner_tools = {} if agic.name.startswith("<agic:") else runtime_tools()
+    collisions = sorted(set(tools) & set(inner_tools))
     if collisions:
         raise ToolangError(
-            "public tools conflict with executor actions: " + ", ".join(collisions)
+            "public tools conflict with inner runtime tools: " + ", ".join(collisions)
         )
     caps = resource_caps(run.state, resources, module=run.module)
     program = state_program(run.state, run.module)
@@ -164,9 +160,9 @@ def prepare_agic(
         ),
     )
     instructions = _render_instructions(program, agic, system_runtime)
-    runtime_instructions = ""
-    if routes.hands or routes.handoffs:
-        runtime_instructions = render_runnable_catalog(run.state, routes)
+    runtime_instructions = (
+        render_runnable_catalog(run.state, routes) if inner_tools else ""
+    )
     adapter = run.setup.adapters.get(model.adapter)
     if adapter is None:
         raise ToolangError(f"unknown model adapter: {model.adapter}")
@@ -180,7 +176,7 @@ def prepare_agic(
         prompt_context=prompt_context,
         messages=messages,
         tools=tools,
-        actions=actions,
+        runtime_tools=inner_tools,
         routes=routes,
         services=_tool_services(services, context.setup.envs),
     )

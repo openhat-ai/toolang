@@ -136,7 +136,7 @@ class Local:
     record: RecordLocal | None = None
 
 
-class _HandoffCommitted(Exception):
+class _ExecuteCommitted(Exception):
     """Transfer execution to a prepared replacement within the same Run."""
 
     def __init__(

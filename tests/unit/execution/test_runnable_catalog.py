@@ -114,9 +114,11 @@ def test_catalog_requires_explicit_delegation_intent() -> None:
     )
 
     instruction = document["instruction"]
-    assert "user explicitly asks" in instruction
-    assert "authored instructions explicitly require delegation" in instruction
-    assert "merely because it resembles the current request" in instruction
+    assert "merely because it is available" in instruction
+    assert "future root Run naturally uses the latest valid State" in instruction
+    assert "its result is required before the caller can continue" in instruction
+    assert "the caller never resumes" in instruction
+    assert "Prefer run when either behavior works" in instruction
     assert "current or an ancestor runnable" in instruction
     assert "read its input signature" in instruction
     assert "Do not invent missing required input" in instruction
@@ -125,6 +127,22 @@ def test_catalog_requires_explicit_delegation_intent() -> None:
     assert "After an input validation error, retry only" in instruction
     assert "a JSON string represents one text part" in instruction
     assert '"type":"text","text":"..."' in instruction
+
+
+def test_catalog_explicitly_renders_empty_route_authorization() -> None:
+    state = _state("agic caller:\n  Call.")
+    caller = state.modules["agent"].find_agic("caller")
+    assert caller is not None
+
+    document = _document(
+        render_runnable_catalog(state, resolve_agic_routes(state, caller))
+    )
+
+    assert document["authorized"] == {
+        "hands": {"refs": [], "omitted": 0},
+        "handoffs": {"refs": [], "omitted": 0},
+    }
+    assert document["runnables"] == []
 
 
 def test_catalog_byte_limit_stops_before_a_complete_multibyte_entry() -> None:

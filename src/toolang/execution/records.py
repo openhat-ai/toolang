@@ -31,8 +31,6 @@ from .types import (
     AgentResources,
     Local,
     ExecutionError,
-    HandoffStepGiven,
-    HandoffStepNoted,
     LoopStepNoted,
     ModelAccounting,
     ModelCost,
@@ -200,6 +198,37 @@ class ReloadControlPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class ExecuteControlPayload:
+    """One durable same-Run runnable replacement."""
+
+    state: str
+    runnable: str
+    module: str
+    source: Pointer
+    locals: tuple[Local, ...]
+
+    def __post_init__(self) -> None:
+        _validate_state_revision(self.state, label="execute payload State")
+        if not self.runnable or self.runnable != self.runnable.strip():
+            raise ValueError("execute payload requires a canonical runnable")
+        if not self.module or self.module != self.module.strip():
+            raise ValueError("execute payload requires a canonical module")
+        if not isinstance(self.source, Pointer):
+            raise TypeError("execute payload source requires a Pointer")
+        _validate_control_locals(self.locals)
+        for local in self.locals:
+            if local.type != "Json":
+                raise TypeError("execute payload locals must use raw Json values")
+            if not isinstance(local.value, TypedPointer):
+                raise TypeError("execute payload locals must point to model input")
+            expected = self.source.select("input", "input", local.name or "")
+            if local.value.pointer != expected:
+                raise ValueError(
+                    f"execute payload local {local.name} must point to {expected}"
+                )
+
+
+@dataclass(frozen=True, slots=True)
 class SteerControlPayload:
     """Values injected at one agic model boundary."""
 
@@ -246,6 +275,7 @@ PreparationControlPayload = (
 RunScopedControlPayload = (
     PreparationControlPayload
     | ReloadControlPayload
+    | ExecuteControlPayload
     | SteerControlPayload
     | CancelControlPayload
 )
@@ -256,6 +286,7 @@ _CONTROL_PAYLOAD_TYPES = {
     "rerun": RerunControlPayload,
     "retry": RetryControlPayload,
     "reload": ReloadControlPayload,
+    "execute": ExecuteControlPayload,
     "steer": SteerControlPayload,
     "cancel": CancelControlPayload,
     "create": CreateControlPayload,
@@ -341,9 +372,7 @@ class StoredModelStepGiven:
             raise TypeError("stored model given requires ModelCallRefs")
 
 
-StoredStepGiven: TypeAlias = (
-    FlowStmt | StoredModelStepGiven | ToolStepGiven | HandoffStepGiven
-)
+StoredStepGiven: TypeAlias = FlowStmt | StoredModelStepGiven | ToolStepGiven
 
 
 @dataclass(frozen=True, slots=True)
@@ -418,7 +447,7 @@ class ControlRecordBase:
 class RunControlRecord(ControlRecordBase):
     """One durable control sent to a run."""
 
-    kind: Literal["run", "rerun", "retry", "reload", "steer", "cancel"]
+    kind: Literal["run", "rerun", "retry", "reload", "execute", "steer", "cancel"]
     payload: RunScopedControlPayloadField
 
     @property
@@ -709,6 +738,23 @@ def _control_payload_from_data(
         return ReloadControlPayload(
             state=_required_payload_text(payload, "state"),
         )
+    if kind == "execute":
+        raw_locals = payload.get("locals")
+        if not isinstance(raw_locals, Sequence) or isinstance(
+            raw_locals, (str, bytes, bytearray)
+        ):
+            raise ValueError("execute payload locals must be an array")
+        if not all(isinstance(item, Mapping) for item in raw_locals):
+            raise ValueError("execute payload contains an invalid local")
+        return ExecuteControlPayload(
+            state=_required_payload_text(payload, "state"),
+            runnable=_required_payload_text(payload, "runnable"),
+            module=_required_payload_text(payload, "module"),
+            source=Pointer(_required_payload_text(payload, "source")),
+            locals=tuple(
+                local_decoder(cast(Mapping[str, object], item)) for item in raw_locals
+            ),
+        )
     if kind in {"steer", "cancel"}:
         raw_locals = payload.get("locals", ())
         if not isinstance(raw_locals, Sequence) or isinstance(
@@ -768,6 +814,14 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
         }
     if isinstance(payload, ReloadControlPayload):
         return {"state": payload.state}
+    if isinstance(payload, ExecuteControlPayload):
+        return {
+            "state": payload.state,
+            "runnable": payload.runnable,
+            "module": payload.module,
+            "source": str(payload.source),
+            "locals": [local_to_data(local) for local in payload.locals],
+        }
     if isinstance(payload, SteerControlPayload | CancelControlPayload):
         return {"locals": [local_to_data(local) for local in payload.locals]}
     if isinstance(payload, CreateControlPayload):
@@ -909,16 +963,6 @@ def step_given_from_data(kind: StepKind, data: object) -> StepGiven:
             call=_TOOL_CALL_ADAPTER.validate_python(payload["call"]),
             summary=raw_summary,
         )
-    if kind == "handoff":
-        payload = _canonical_object(
-            data,
-            fields={"requested"},
-            label="handoff given",
-        )
-        requested = payload["requested"]
-        if requested is not None and not isinstance(requested, str):
-            raise ValueError("handoff given requested ref must be text or null")
-        return HandoffStepGiven(requested=requested)
     statement = flow_stmt_from_data(data)
     from .types import validate_step_given
 
@@ -944,8 +988,6 @@ def step_given_to_data(kind: StepKind, given: StepGiven) -> dict[str, object]:
         if given.summary:
             data["summary"] = given.summary
         return data
-    if isinstance(given, HandoffStepGiven):
-        return {"requested": given.requested}
     return cast(dict[str, object], ast_to_data(given))
 
 
@@ -1028,17 +1070,6 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
         if not isinstance(summary, str):
             raise ValueError("tool noted summary must be text")
         return ToolStepNoted(summary=summary)
-    if kind == "handoff":
-        payload = _canonical_object(
-            data,
-            fields={"runnable", "module"},
-            label="handoff noted",
-        )
-        runnable = payload["runnable"]
-        module = payload["module"]
-        if not isinstance(runnable, str) or not isinstance(module, str):
-            raise ValueError("handoff noted runnable and module must be text")
-        return HandoffStepNoted(runnable=runnable, module=module)
     if kind in {"value", "par"}:
         payload = _canonical_object(
             data,
@@ -1160,8 +1191,6 @@ def step_noted_to_data(kind: StepKind, noted: StepNoted) -> dict[str, object] | 
         return None
     if isinstance(noted, ToolStepNoted):
         return {"summary": noted.summary}
-    if isinstance(noted, HandoffStepNoted):
-        return {"runnable": noted.runnable, "module": noted.module}
     if isinstance(noted, CollectionStepNoted):
         return {
             "total_items": noted.total_items,

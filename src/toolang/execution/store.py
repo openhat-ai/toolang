@@ -27,6 +27,7 @@ from .errors import RunStoreSchemaError
 from .records import (
     CreateControlPayload,
     ControlPayload,
+    ExecuteControlPayload,
     ForkControlPayload,
     PreparationControlPayload,
     ReloadControlPayload,
@@ -452,6 +453,76 @@ class RunStore:
             raise RuntimeError(f"reload control acceptance failed: {run_id}")
         return _run_control_from_row(inserted)
 
+    def accept_execute_control(
+        self,
+        *,
+        run_id: str,
+        state: str,
+        runnable: str,
+        module: str,
+        source: Pointer,
+        locals: tuple[Local, ...],
+        created_at: str,
+    ) -> RunControlRecord:
+        """Atomically record one applied same-Run runnable replacement."""
+
+        validate_execution_id(run_id, label="run id")
+        payload = ExecuteControlPayload(
+            state=state,
+            runnable=runnable,
+            module=module,
+            source=source,
+            locals=locals,
+        )
+        source_step = StepPath.parse(source.anchor)
+        if source_step.run != run_id or source.pointer is None or "/" in source.pointer:
+            raise ValueError("execute source must point to one Model Step output part")
+        with self.write_transaction():
+            run = self._conn.execute(
+                "SELECT status FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if run is None:
+                raise ValueError(f"run not found: {run_id}")
+            if str(run["status"]) not in {"pending", "running"}:
+                raise ValueError(f"run is not active: {run_id}")
+            step = self._conn.execute(
+                "SELECT kind, status FROM steps WHERE run = ? AND path = ?",
+                (run_id, source_step.local),
+            ).fetchone()
+            if (
+                step is None
+                or str(step["kind"]) != "model"
+                or str(step["status"]) != "succeeded"
+            ):
+                raise ValueError("execute source Model Step is not succeeded")
+            row = self._conn.execute(
+                'SELECT COALESCE(MAX("index"), -1) + 1 AS next_index '
+                "FROM controls WHERE target = ?",
+                (run_id,),
+            ).fetchone()
+            index = int(row["next_index"]) if row is not None else 0
+            self._insert_control(
+                scope="run",
+                target=run_id,
+                index=index,
+                kind="execute",
+                timing="immediate",
+                payload=payload,
+                request=None,
+                status="applied",
+                error=None,
+                created_at=created_at,
+                finished_at=created_at,
+                claimed=True,
+            )
+            inserted = self._conn.execute(
+                'SELECT * FROM controls WHERE target = ? AND "index" = ?',
+                (run_id, index),
+            ).fetchone()
+        if inserted is None:  # pragma: no cover - transactional insert invariant
+            raise RuntimeError(f"execute control acceptance failed: {run_id}")
+        return _run_control_from_row(inserted)
+
     def accept_run_control(
         self,
         *,
@@ -635,17 +706,19 @@ class RunStore:
                     )
                 tree_runs = self._root_tree_runs(run_id)
                 placeholders = ", ".join("?" for _ in tree_runs)
-                succeeded_handoff = self._conn.execute(
+                applied_execute = self._conn.execute(
                     f"""
-                    SELECT 1 FROM steps
-                    WHERE run IN ({placeholders}) AND kind = 'handoff'
-                      AND status = 'succeeded'
+                    SELECT 1 FROM controls
+                    WHERE scope = 'run' AND target IN ({placeholders})
+                      AND kind = 'execute' AND status = 'applied'
                     LIMIT 1
                     """,
                     tree_runs,
                 ).fetchone()
-                if succeeded_handoff is not None:
-                    raise ValueError(f"run has succeeded handoffs: {run_id}; use rerun")
+                if applied_execute is not None:
+                    raise ValueError(
+                        f"run has applied execute controls: {run_id}; use rerun"
+                    )
                 preparation_row = self._conn.execute(
                     'SELECT * FROM controls WHERE target = ? AND "index" = ?',
                     (run.control.target, run.control.index),
@@ -3148,7 +3221,6 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
 def _step_kind_from_data(value: object) -> StepKind:
     if not isinstance(value, str) or value not in {
         "run",
-        "handoff",
         "agent",
         "human",
         "model",
@@ -3163,7 +3235,7 @@ def _step_kind_from_data(value: object) -> StepKind:
 
 def _run_control_from_row(row: sqlite3.Row) -> RunControlRecord:
     kind = cast(
-        Literal["run", "rerun", "retry", "steer", "cancel"],
+        Literal["run", "rerun", "retry", "reload", "execute", "steer", "cancel"],
         row["kind"],
     )
     payload = cast(
@@ -3226,6 +3298,8 @@ def _select_json_value(
 ) -> object:
     current = value
     for segment in segments:
+        if isinstance(current, ToolCallPart):
+            current = current.to_data()
         if isinstance(current, Mapping):
             if segment not in current:
                 raise ValueError(f"value pointer key is missing: {source}")
