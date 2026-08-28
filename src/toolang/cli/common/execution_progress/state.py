@@ -85,6 +85,16 @@ class LoopDetail:
 
 
 @dataclass(frozen=True, slots=True)
+class PendingExecute:
+    """One model-requested execute awaiting failure or target StepBegin."""
+
+    tool_call_id: str
+    runnable: str
+    sequence: int
+    can_start: bool
+
+
+@dataclass(frozen=True, slots=True)
 class PlainDetail:
     """A Step with no specialized active projection state."""
 
@@ -110,9 +120,11 @@ class RunState:
 
     begin: RunBegin
     lane_owner: LaneOwner | None
+    agic: bool = False
     metrics: Metrics = field(default_factory=lambda: Metrics(runs=1))
     end: RunEnd | None = None
     cancellation_reported: bool = False
+    pending_executes: list[PendingExecute] = field(default_factory=list)
 
 
 @dataclass(slots=True)

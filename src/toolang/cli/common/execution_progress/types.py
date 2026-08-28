@@ -8,7 +8,7 @@ from typing import Literal
 ProgressTone = Literal["progress", "normal", "active", "error", "warning"]
 ProgressFormat = Literal["plain", "markdown"]
 ProgressSurface = Literal["none", "tool_summary", "tool_detail"]
-ProgressLeader = Literal["none", "hyphen"]
+ProgressLeader = Literal["none", "hyphen", "handoff"]
 
 
 @dataclass(frozen=True, slots=True)

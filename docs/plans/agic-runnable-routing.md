@@ -28,6 +28,9 @@ keeping executor-owned runtime tools separate from user-facing tools.
   returns a correlated result to the caller.
 - `_too__execute` creates no Step and no child Run. One applied execute control
   durably records the same-Run replacement before target execution begins.
+- Progress shows an execute marker while the target has not started, a failed
+  marker when preparation is rejected, and a handoff divider on the target's
+  first natural Step without synthesizing a transition Step.
 - `_too__reload` creates no Step and retains its existing reload-control
   behavior, including an applied no-op control for an unchanged State.
 - Flow Run Statements remain source-authorized and unchanged.
@@ -287,7 +290,8 @@ to reopen.
 - `src/toolang/execution/{types,records,store}.py`: execute control vocabulary,
   payload serialization, atomic persistence, and retry rejection.
 - `src/toolang/execution/{types,records,events}.py` and CLI progress: delete the
-  Handoff Step vocabulary and presentation.
+  Handoff Step vocabulary and derive execute presentation from ordinary Model
+  and Step events.
 - execution unit and integration tests: cover definitions, instructions,
   controls, no-Step transfer, failures, chaining, and retry/rerun.
 
@@ -316,7 +320,9 @@ to reopen.
     ancestor identities.
 11. The entry output contract survives transfer.
 12. Retry rejects applied execute history; rerun remains valid.
-13. Handoff Step types, codecs, progress paths, and tests are absent.
+13. Handoff Step types and codecs are absent. Progress projects an active
+    execute marker, correlated prestart failure, and first-target-Step handoff
+    divider from ordinary events.
 14. Default offline verification passes.
 
 ## Risks

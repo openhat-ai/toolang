@@ -141,7 +141,7 @@ def _row_renderable(
             open_detail=open_tool_detail,
             close_detail=close_tool_detail,
         )
-    elif row.leader == "hyphen":
+    elif row.leader in {"hyphen", "handoff"}:
         renderable = _HyphenDividerRow(row, max_width=max_width)
     elif row.format == "plain" and row.right_text:
         renderable = _TwoEndedPlainRow(row, live=live, max_width=max_width)
@@ -419,7 +419,7 @@ class _HyphenDividerRow:
         caption = self.row.text.removeprefix("---  ")
         yield from self._left_boundary(
             width,
-            marker="╓",
+            marker="╟" if self.row.leader == "handoff" else "╓",
             content=caption,
             border_style="dim",
         )

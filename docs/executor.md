@@ -337,6 +337,13 @@ call counters; the target begins with its natural next Step in the same Run.
 The entry runnable's output type remains the final Run contract. Repeated
 identities in the current or an active ancestor lineage are rejected.
 
+Progress does not require an execute Step or control event. It observes the
+`_too__execute` ToolCall in the caller Model Step, keeps an active execute
+marker until the next boundary, recognizes a correlated failure from the next
+`ModelStepGiven`, and otherwise attaches a handoff divider to the target's
+first natural Step. The divider is presentation only; execution records remain
+the Model Step, applied execute control, and target Steps.
+
 
 ## Control Observation
 

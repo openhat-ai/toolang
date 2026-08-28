@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from toolang.base.types.message import TextDelta, TextPart
+from toolang.base.types.message import (
+    TextDelta,
+    TextPart,
+    ToolCallPart,
+    ToolResultPart,
+)
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
@@ -16,6 +21,7 @@ from toolang.execution.events import (
 from toolang.execution.types import (
     CollectionStepNoted,
     ExecutionError,
+    ModelStepGiven,
     Occurrence,
     Pointer,
     RunStatus,
@@ -37,6 +43,7 @@ from .state import (
     LaneOwner,
     LaneState,
     Metrics,
+    PendingExecute,
     RunState,
     StepState,
     step_detail,
@@ -203,7 +210,11 @@ class ProgressProjector:
                 )
             else:
                 lane_owner = owner.lane_owner
-        self._runs[event.run] = RunState(event, lane_owner)
+        self._runs[event.run] = RunState(
+            event,
+            lane_owner,
+            agic=event.runnable.startswith("agic:"),
+        )
         if event.parent is not None:
             self._note_iteration(event.parent, event.occurrence)
             if lane_owner is not None:
@@ -226,6 +237,7 @@ class ProgressProjector:
         run.end = event
         if event.error is not None:
             self._errors[Pointer.run(event.run)] = event.error
+        execute_rows = self._finish_execute(run, event)
 
         owner = (
             self._steps.get(run.begin.parent) if run.begin.parent is not None else None
@@ -291,6 +303,19 @@ class ProgressProjector:
                     f"could not resolve execution error {event.error}"
                 )
 
+        if execute_rows:
+            rows = list(execute_rows)
+            if block is not None:
+                rows.append(ProgressRow(""))
+                rows.extend(block.rows)
+            block = ProgressBlock(
+                block.key if block is not None else f"execute:{event.run}:end",
+                tuple(rows),
+                gap_before=(
+                    block.gap_before if block is not None else not self._ends_with_blank
+                ),
+            )
+
         if run.begin.parent is not None:
             self._runs.pop(event.run, None)
         return block
@@ -302,6 +327,7 @@ class ProgressProjector:
         run = self._runs.get(event.step.run)
         if run is None or run.end is not None:
             raise _PresentationError(f"StepBegin without active Run {event.step.run}")
+        execute_rows, handoff = self._advance_execute(run, event)
         ordinal = event.step.index
         parent = self._steps.get(event.step.parent) if event.step.parent else None
         if (
@@ -326,21 +352,22 @@ class ProgressProjector:
             ordinal,
             self._sequence,
             step_detail(event.kind),
-            dynamic_run=(
-                event.kind == "run" and run.begin.runnable.startswith("agic:")
-            ),
+            dynamic_run=(event.kind == "run" and run.agic),
         )
         self._steps[event.step] = state
         self._note_iteration(event.step, event.occurrence)
 
         if state.lane_owner is not None:
+            activity = lane_live_text(
+                state.begin,
+                state.model.lane_preview if event.kind == "model" else "",
+                dynamic_run=state.is_dynamic_run,
+            )
+            if execute_rows:
+                activity = f"{execute_rows[0].text} · {activity.removeprefix('• ')}"
             self._set_lane_activity(
                 state.lane_owner,
-                lane_live_text(
-                    state.begin,
-                    state.model.lane_preview if event.kind == "model" else "",
-                    dynamic_run=state.is_dynamic_run,
-                ),
+                activity,
             )
             return None
         block_key = self._block_key(state)
@@ -349,14 +376,15 @@ class ProgressProjector:
             return None
         rows = self._rows_for_boundaries(state.boundaries)
         if not rows:
-            return None
+            return self._execute_prelude(state, None, execute_rows, handoff)
         self._commit_boundaries(state.boundaries)
         state.boundaries = ()
-        return ProgressBlock(
+        block = ProgressBlock(
             block_key,
             rows,
             gap_before=not self._ends_with_blank,
         )
+        return self._execute_prelude(state, block, execute_rows, handoff)
 
     def _end_step(self, event: StepEnd) -> ProgressBlock | None:
         state = self._steps.get(event.step)
@@ -391,6 +419,7 @@ class ProgressProjector:
                 )
         run = self._runs[event.step.run]
         run.metrics.record_step(event)
+        self._capture_execute(run, state, event)
         if isinstance(event.noted, CollectionStepNoted) and event.kind == "par":
             if state.par.total_items not in {None, event.noted.total_items}:
                 raise _PresentationError(
@@ -853,6 +882,25 @@ class ProgressProjector:
                         ),
                     )
                 )
+        for run in self._runs.values():
+            if run.end is not None or run.lane_owner is not None:
+                continue
+            for pending in run.pending_executes:
+                blocks.append(
+                    (
+                        pending.sequence,
+                        ProgressBlock(
+                            self._execute_block_key(run.begin.run, pending),
+                            (
+                                ProgressRow(
+                                    f"• Executing {pending.runnable}...",
+                                    "active",
+                                ),
+                            ),
+                            gap_before=not self._ends_with_blank,
+                        ),
+                    )
+                )
         return tuple(
             block for _sequence, block in sorted(blocks, key=lambda item: item[0])
         )
@@ -919,6 +967,150 @@ class ProgressProjector:
             include_runs=True,
         )
 
+    def _capture_execute(
+        self,
+        run: RunState,
+        state: StepState,
+        event: StepEnd,
+    ) -> None:
+        """Start presentation for execute requests in one Model Step output."""
+
+        if event.kind != "model" or event.status != "succeeded":
+            return
+        parts = output_parts(event)
+        tool_calls = tuple(part for part in parts if isinstance(part, ToolCallPart))
+        execute_calls = tuple(
+            part for part in tool_calls if part.tool_name == "_too__execute"
+        )
+        for call in execute_calls:
+            pending = PendingExecute(
+                tool_call_id=call.tool_call_id,
+                runnable=self._safe_runnable_label(call.input.get("runnable")),
+                sequence=state.sequence,
+                can_start=len(tool_calls) == 1,
+            )
+            run.pending_executes.append(pending)
+            if run.lane_owner is not None:
+                self._set_lane_activity(
+                    run.lane_owner,
+                    f"• Executing {pending.runnable}...",
+                )
+
+    def _advance_execute(
+        self,
+        run: RunState,
+        event: StepBegin,
+    ) -> tuple[tuple[ProgressRow, ...], PendingExecute | None]:
+        """Resolve pending execute attempts at the next natural Step boundary."""
+
+        if not run.pending_executes:
+            return (), None
+        results: dict[str, ToolResultPart] = {}
+        if isinstance(event.given, ModelStepGiven):
+            for message in event.given.call.messages:
+                for part in message.parts:
+                    if (
+                        isinstance(part, ToolResultPart)
+                        and part.tool_name == "_too__execute"
+                    ):
+                        results[part.tool_call_id] = part
+
+        rows: list[ProgressRow] = []
+        remaining: list[PendingExecute] = []
+        for pending in run.pending_executes:
+            result = results.get(pending.tool_call_id)
+            if result is None:
+                remaining.append(pending)
+                continue
+            rows.extend(
+                self._execute_failure_rows(
+                    pending,
+                    result.error or "execute did not start",
+                )
+            )
+
+        handoff = next((item for item in remaining if item.can_start), None)
+        if handoff is not None:
+            remaining.remove(handoff)
+            run.agic = isinstance(event.given, ModelStepGiven)
+        run.pending_executes = remaining
+        return tuple(rows), handoff
+
+    def _execute_prelude(
+        self,
+        state: StepState,
+        block: ProgressBlock | None,
+        failure_rows: tuple[ProgressRow, ...],
+        handoff: PendingExecute | None,
+    ) -> ProgressBlock | None:
+        """Attach execute failure or handoff presentation to one natural Step."""
+
+        rows: list[ProgressRow] = list(failure_rows)
+        if rows and (handoff is not None or block is not None):
+            rows.append(ProgressRow(""))
+        if handoff is not None and state.lane_owner is None:
+            rows.extend(
+                (
+                    ProgressRow(
+                        f"---  handoff to {handoff.runnable}",
+                        leader="handoff",
+                    ),
+                    ProgressRow(""),
+                )
+            )
+        if block is not None:
+            rows.extend(block.rows)
+        if not rows:
+            return block
+        return ProgressBlock(
+            block.key if block is not None else self._block_key(state),
+            tuple(rows),
+            gap_before=(
+                block.gap_before if block is not None else not self._ends_with_blank
+            ),
+        )
+
+    @staticmethod
+    def _execute_failure_rows(
+        pending: PendingExecute,
+        error: str,
+    ) -> tuple[ProgressRow, ...]:
+        rows = [ProgressRow(f"• Failed to execute {pending.runnable}", "error")]
+        rows.extend(
+            ProgressRow(f"  {line}", "error")
+            for line in error.strip().splitlines()
+            if line
+        )
+        return tuple(rows)
+
+    def _finish_execute(
+        self,
+        run: RunState,
+        event: RunEnd,
+    ) -> tuple[ProgressRow, ...]:
+        """Close execute presentation when no target Step boundary arrived."""
+
+        rows: list[ProgressRow] = []
+        for pending in run.pending_executes:
+            if event.status == "succeeded" and pending.can_start:
+                rows.extend(
+                    (
+                        ProgressRow(
+                            f"---  handoff to {pending.runnable}",
+                            leader="handoff",
+                        ),
+                        ProgressRow(""),
+                    )
+                )
+            else:
+                rows.extend(self._execute_failure_rows(pending, ""))
+        run.pending_executes.clear()
+        return tuple(rows)
+
+    @staticmethod
+    def _execute_block_key(run_id: str, pending: PendingExecute) -> str:
+        return f"execute:{run_id}:{pending.tool_call_id or pending.sequence}"
+
     def _dynamic_run_header(self, state: StepState) -> ProgressBlock:
         rows = (
             *self._rows_for_boundaries(state.boundaries),
@@ -964,13 +1156,23 @@ class ProgressProjector:
 
     @staticmethod
     def _dynamic_runnable_label(state: StepState) -> str:
-        runnable = getattr(state.begin.given, "runnable", "")
-        if not isinstance(runnable, str):
-            return "request"
-        safe = "".join(
-            character if character.isprintable() else " " for character in runnable
+        return ProgressProjector._safe_runnable_label(
+            getattr(state.begin.given, "runnable", ""),
+            fallback="request",
         )
-        return one_line(safe)[:240] or "request"
+
+    @staticmethod
+    def _safe_runnable_label(
+        value: object,
+        *,
+        fallback: str = "runnable",
+    ) -> str:
+        if not isinstance(value, str):
+            return fallback
+        safe = "".join(
+            character if character.isprintable() else " " for character in value
+        )
+        return one_line(safe)[:240] or fallback
 
     def _claim_boundaries(
         self,
