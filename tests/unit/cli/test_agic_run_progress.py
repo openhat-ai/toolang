@@ -187,6 +187,10 @@ def test_dynamic_run_preaccept_failure_has_no_child_identity_or_facts() -> None:
     assert footer.facts == ()
     assert footer.right_status == "failed"
     assert footer.right_identity == ""
+    rendered = _render_progress(terminal.committed[0], width=72)
+    footer_line = rendered.splitlines()[-2]
+    assert footer_line.startswith("└ failed ───")
+    assert display_width(footer_line) == 72
 
 
 def test_dynamic_run_dividers_align_and_preserve_complete_identity_when_narrow() -> (
