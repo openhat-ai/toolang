@@ -6,7 +6,8 @@ from dataclasses import replace
 import pytest
 
 from toolang.base.errors import ToolangError
-from toolang.base.types.message import TextPart
+from toolang.base.types.message import Message, TextPart
+from toolang.base.types.run import ModelCallResult
 from toolang.base.types.policy import RunBindings
 from toolang.execution.calls import parse_call, resolve_spec
 from toolang.execution.types import RunOverride, ThreadPrefix
@@ -24,6 +25,44 @@ agic review(_: Part[], count: Number):
 agic bound(_: Part[]):
   {{_}}
 """
+
+
+def test_root_runnable_selector_is_not_forwarded_to_the_model(tmp_path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic worker(_: Text) -> Text:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow hello_flow(_: Text) -> Text:
+  run worker
+""",
+        responses=(ModelCallResult(message=Message.assistant("done")),),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            commands, input = parse_call(":flow hello_flow\n\nhello world")
+            root = await harness.executor.run(
+                resolve_spec(
+                    commands,
+                    input,
+                    setup=harness.setup,
+                    state=harness.state,
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    default_runnable="default",
+                )
+            )
+
+            assert root.status == "succeeded", root.error
+            assert harness.adapter.invocations[0].call.messages[-1] == Message.user(
+                "hello world"
+            )
+
+    asyncio.run(scenario())
 
 
 def test_resolve_spec_binds_policy_primary_and_typed_named_inputs(
