@@ -54,6 +54,7 @@ from ..diagnostics import log_model_request, log_model_result, log_model_target
 from ..limits import _ModelAccounting
 
 if TYPE_CHECKING:
+    from ..prepare import _AgicFrame
     from ..runs.agic import _AgicState
 
 _LOGGER = logging.getLogger(__name__)
@@ -105,7 +106,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             consumed_inputs,
         )
         request = ModelCall(
-            instructions=prepared.instructions,
+            instructions=_model_instructions(state, prepared),
             messages=list(next_messages),
             tools=(
                 tuple(
@@ -197,6 +198,19 @@ async def execute(state: _AgicState) -> ModelCallResult:
         step_index=step_index,
         duration_ms=elapsed_ms(step_started),
     )
+
+
+def _model_instructions(state: _AgicState, prepared: _AgicFrame) -> str:
+    """Combine authored and runtime protocol only for an effective tool call."""
+
+    runtime = (
+        prepared.runtime_instructions
+        if prepared.model.tools and not state.repairing_output
+        else ""
+    )
+    if prepared.instructions and runtime:
+        return f"{prepared.instructions}\n\n{runtime}"
+    return prepared.instructions or runtime
 
 
 async def _apply_response(

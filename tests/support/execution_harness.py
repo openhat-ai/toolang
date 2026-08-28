@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -32,6 +32,7 @@ from toolang.execution.threads import ThreadManager
 from toolang.lang import Program
 from toolang.lang.input import resolve_runnable_input
 from toolang.state.state import AgentState, agent_state_revision
+from toolang.state.watcher import StateRefresh
 from toolang.setup import AgentEnvironment, AgentSetup
 
 TEST_MODEL_REF = "test/scripted"
@@ -293,6 +294,8 @@ class ExecutionHarness:
         responses: Sequence[ScriptedResponse],
         tools: Mapping[str, AgentTool] | None = None,
         streaming: bool = False,
+        state: AgentState | None = None,
+        refresh_state: Callable[[], Awaitable[StateRefresh]] | None = None,
     ) -> ExecutionHarness:
         """Build one isolated execution runtime from authored source."""
 
@@ -301,7 +304,7 @@ class ExecutionHarness:
         program = Program.from_source(source)
         root_revision = sha256(b"execution-test-root").hexdigest()
         home_revision = sha256(source.encode("utf-8")).hexdigest()
-        state = AgentState(
+        state = state or AgentState(
             revision=agent_state_revision(root_revision, home_revision),
             root_revision=root_revision,
             home_revision=home_revision,
@@ -350,6 +353,7 @@ class ExecutionHarness:
                     if revision == state.revision
                     else _missing_state_revision(revision)
                 ),
+                refresh_state=refresh_state,
                 include=lambda _setup: lambda reference: TextPart(reference),
             ),
             threads=ThreadManager(store, ids),

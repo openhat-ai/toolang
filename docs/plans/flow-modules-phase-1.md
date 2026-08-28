@@ -2,7 +2,7 @@
 
 ## Status
 
-Approved.
+Approved. Naming and runnable identity clarified on 2026-08-28.
 
 ## Goal
 
@@ -22,8 +22,11 @@ captured at root acceptance.
   declarations from `agent.too`.
 - A flow module exports one flow whose authored name is either absent or
   exactly equal to the filename stem.
-- An unnamed exported flow derives its public name from the filename, so
-  renaming the file alone renames the public flow.
+- The main module is named `agent`; a flow extension module is named
+  `_flow_<stem>`.
+- The selected entry has the same effective `flow:<stem>` identity whether its
+  authored name is absent or explicitly matches the filename. Renaming the
+  file alone therefore renames the module and its exported flow.
 - Other declarations remain private to the flow module.
 - Flow modules are captured in the immutable home prepared version and
   contribute to the `AgentState` fingerprint.
@@ -87,19 +90,26 @@ kinds.
 | Concept | Values | Meaning |
 | --- | --- | --- |
 | Program module kind | `agent`, `flow` | The role of `agent.too` or `flows/<name>.too` |
+| Program module role | main, extension | `agent.too` is the main module; every additional module is an extension |
+| Program module name | `agent`, `_flow_<stem>` | Stable State-local identity generated from authored placement |
 | Authored placement | `home` | Both Phase 1 module kinds live in one agent home |
 | Cap runtime scope | `root`, `home`, `here` | Existing cap availability and precedence |
 | `here` | current program module | Inline and referenced caps from whichever module is executing |
 | Run root | root run | The root of an execution tree, unrelated to Toolang root placement |
 
 The design uses `authored_path` for the home-relative authored file and
-`prepared_path` for its immutable cached copy. It does not use a generic
+`materialized_path` for its immutable cached copy. It does not use a generic
 `source_path` field for program-module identity.
 
-The two module kinds are:
+The two module roles in this phase are:
 
-- **agent module**: the special `agent.too` program;
-- **flow module**: one complete program under `flows/<name>.too`.
+- **main module**: the special `agent.too` program, named `agent`;
+- **flow extension module**: one complete program under `flows/<name>.too`,
+  named `_flow_<name>`.
+
+The `_flow_` prefix is reserved for generated internal module names. Module
+names contain no revision, digest, absolute path, or remote source identity.
+Future extension kinds receive their own reserved `_<kind>_` prefix.
 
 ## Authored Layout And Discovery
 
@@ -123,8 +133,8 @@ The public exports are:
 
 | Module | Public runnables |
 | --- | --- |
-| agent module | all authored agics and flows, plus the existing implicit default agic when applicable |
-| flow module | its single filename-bound entry flow |
+| main module `agent` | all authored agics and flows, plus the existing implicit default agic when applicable |
+| flow extension `_flow_<stem>` | its single filename-bound entry flow |
 
 The home source scanner includes the direct flow candidates in source metadata.
 Addition, modification, deletion, and rename therefore change the home
@@ -132,24 +142,32 @@ prepared version. Root source scanning is unchanged.
 
 ## Flow Entry Binding
 
-Toolang already accepts an unnamed declaration such as `flow:` and currently
-gives it the module-local fallback name `main`. Phase 1 preserves whether a
-Flow name was explicitly authored while retaining existing local Program
-semantics.
+Toolang accepts an unnamed declaration such as `flow:`. A flow extension binds
+either accepted source form directly to the filename stem and uses
+`flow:<stem>` as its effective runnable identity both inside the module binding
+and in the public catalog. Any lowering-specific declaration locator remains
+opaque prepared data.
 
 For `flows/research.too`, the extension contract selects exactly one entry:
 
 | Authored declarations | Result |
 | --- | --- |
-| one unnamed `flow:` | valid; public name `research`, module-local name `main` |
-| `flow research:` | valid; public and module-local name `research` |
+| one unnamed `flow:` | valid; effective and public identity `flow:research` |
+| `flow research:` | valid; effective and public identity `flow:research` |
 | only `flow other:` | invalid; no entry matches the file |
 | both unnamed `flow:` and `flow research:` | invalid; entry is ambiguous |
 
-An unnamed entry keeps its module-local fallback name so existing static
-validation remains unchanged. The public catalog stores `research` separately
-from the declaration's local name. Renaming `research.too` to `report.too`
-therefore changes only the public name.
+The prepared export retains an opaque locator for the selected authored
+declaration. Both accepted forms resolve to:
+
+```text
+module       _flow_research
+runnable     flow:research
+qualified    _flow_research$flow:research
+```
+
+Renaming `research.too` to `report.too` changes the module name and effective
+entry identity to `_flow_report` and `flow:report` without editing source.
 
 Other valid agics and flows are private helpers. They may be referenced by
 static statements within the same module but never appear in public listings.
@@ -165,13 +183,13 @@ authored source:
 
 ```text
 PreparedProgramModule
-  identity          stable agent or flow module identity
+  name              `agent` or generated `_flow_<stem>` identity
   kind              agent | flow
   authored_path     path relative to the agent home
-  prepared_path     path below the immutable prepared version
+  materialized_path path below the immutable prepared version
   digest            SHA-256 of authored bytes
   program           independently parsed Program
-  export            public name and local declaration identity, if a flow module
+  export            effective runnable identity and authored declaration locator
   here_caps         inline and referenced caps owned by this module
 ```
 
@@ -180,9 +198,11 @@ catalog. Existing `program` and `program_source` compatibility accessors keep
 referring to the agent module while runtime call sites migrate to module-aware
 resolution.
 
-A public catalog entry identifies its public name, declaration kind, owner
-module, and module-local declaration. Resolution returns that complete value,
-not a bare `AgicDecl` or `FlowDecl`.
+A public catalog entry identifies its public runnable, owner module, and
+authored declaration locator. Resolution returns that complete value, not a
+bare `AgicDecl` or `FlowDecl`. The canonical qualified form is
+`<module>$<kind>:<runnable>`, for example
+`_flow_research$flow:research` or `agent$agic:default`.
 
 ## Layered Validation
 
@@ -347,7 +367,8 @@ deterministic because catalog composition prohibits collisions.
 
 For a selected flow module:
 
-- durable and public identity uses the filename-bound public name;
+- durable module identity is `_flow_<stem>` and the selected entry's canonical
+  identity is `flow:<stem>` regardless of whether its name was authored;
 - input structs, directives, contexts, and instructs use the owner module;
 - resource preparation applies that module's effective `here` caps;
 - static Flow statements resolve only within the owner module; and
@@ -413,10 +434,11 @@ prepared module, public catalog, and `here` semantics defined here.
 
 ## Acceptance Tests
 
-1. A valid home `flows/research.too` with `flow research:` is prepared, listed,
-   and executable as `flow:research` in the next root run.
-2. An unnamed `flow:` in `flows/research.too` is exported as
-   `flow:research`; renaming only the file changes the public name.
+1. A valid home `flows/research.too` is prepared as module `_flow_research`,
+   listed, and executable as `flow:research` in the next root run.
+2. Named `flow research:` and unnamed `flow:` entries both resolve canonically
+   as `_flow_research$flow:research`; renaming only the file changes the module
+   and exported runnable names.
 3. The agent module and every flow module pass through the same language
    validator and receive the same local defaults.
 4. A Program syntax or semantic error is reported at the program layer and
@@ -454,9 +476,9 @@ prepared module, public catalog, and `here` semantics defined here.
 
 ## Risks
 
-- `FlowDecl.name` currently normalizes an unnamed Flow to `main`; explicitness
-  must survive AST serialization without changing existing agent-module
-  semantics.
+- The authored declaration locator and name explicitness must survive
+  serialization while the flow-module binding exposes only the
+  filename-derived effective identity.
 - Home prepared schema currently assumes one Program; loaders must reject
   partial module snapshots and rebuild old versions atomically.
 - Many execution call sites accept a bare `Program`; incomplete migration could

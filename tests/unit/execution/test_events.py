@@ -80,6 +80,16 @@ _EVENTS: tuple[RunEvent, ...] = (
             call=ToolCall("tool-1", "call-1", "shell__execute", {"command": "pwd"}),
         ),
     ),
+    StepBegin(
+        step=StepPath.parse("run_root.3"),
+        kind="run",
+        input=(Pointer.step(StepPath.parse("run_root.0"), 1),),
+        given=RunStmt(
+            binding="_",
+            runnable="flow:research",
+            span=Span(line=1),
+        ),
+    ),
     PartBegin(step=StepPath.parse("run_root.0"), part=0, part_type="text"),
     PartDelta(step=StepPath.parse("run_root.0"), part=0, delta=TextDelta("hello")),
     PartEnd(step=StepPath.parse("run_root.0"), part=0, data=TextPart("hello")),

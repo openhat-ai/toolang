@@ -277,8 +277,8 @@ class RunStore:
                         str(parent_row["state_target"]),
                         int(parent_row["state_index"]),
                     )
-                    if state_ref != parent_state:
-                        raise ValueError("child run State must match its calling step")
+                    if state_ref.target != parent_state.target:
+                        raise ValueError("child run State must belong to its root tree")
                     self._state_revision_for_ref_locked(state_ref)
                 if kind == "rerun":
                     source_row = self._conn.execute(
@@ -862,6 +862,48 @@ class RunStore:
                     finished_at,
                     self._next_run_control_revision(),
                     run_id,
+                ),
+            )
+
+    def fail_run_controls(
+        self,
+        *,
+        run_id: str,
+        indexes: Sequence[int],
+        finished_at: str,
+        error: str,
+    ) -> None:
+        """Mark selected pending controls as unable to apply."""
+
+        control_indexes = tuple(dict.fromkeys(int(index) for index in indexes))
+        if not control_indexes:
+            return
+        placeholders = ", ".join("?" for _ in control_indexes)
+        with self.write_transaction():
+            pending = self._conn.execute(
+                f"""
+                SELECT 1 FROM controls
+                WHERE scope = 'run' AND target = ? AND "index" IN ({placeholders})
+                  AND status = 'pending'
+                LIMIT 1
+                """,
+                (run_id, *control_indexes),
+            ).fetchone()
+            if pending is None:
+                return
+            self._conn.execute(
+                f"""
+                UPDATE controls
+                SET status = 'wontapply', error = ?, finished_at = ?, _revision = ?
+                WHERE scope = 'run' AND target = ?
+                  AND "index" IN ({placeholders}) AND status = 'pending'
+                """,
+                (
+                    error,
+                    finished_at,
+                    self._next_run_control_revision(),
+                    run_id,
+                    *control_indexes,
                 ),
             )
 

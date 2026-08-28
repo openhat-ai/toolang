@@ -84,6 +84,7 @@ class LocalChatSession:
             setup=self.setup_watcher.current,
             state=self.state_watcher.current,
             load_state=lambda revision: self.state_watcher.load(revision),
+            refresh_state=self.state_watcher.refresh_result,
         )
         self.run_client: RunClient = LocalRunClient(self.executor)
         self._loop = asyncio.new_event_loop()

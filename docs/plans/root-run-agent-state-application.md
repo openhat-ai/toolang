@@ -2,7 +2,8 @@
 
 ## Status
 
-Approved.
+Approved. Amended on 2026-08-28 so every future Run and Step boundary reads the
+root tree's latest State independently of its parent.
 
 ## Goal
 
@@ -22,7 +23,8 @@ It does not change State preparation or authored-language behavior.
 - The executor starts from the root run State and adopts a reload at the next
   serialized execution boundary after observing it.
 - A started step keeps its captured State; later steps use the reloaded State.
-- A child run uses the State captured by its calling step.
+- Every later child `RunBegin` uses the root tree's current State even when its
+  calling step began under an older State.
 - Parallel Flow steps remain concurrent and record their State deterministically.
 - Behavior is unchanged when no reload is submitted.
 
@@ -45,9 +47,10 @@ referenced control must be:
 Its payload contains the State revision. No `StateRef`, `ErrorRef`, or new
 `Pointer` behavior is introduced.
 
-`RunRecord.state` is immutable. It identifies the State used to resolve and
-prepare that run. A top-level run points to its entry control. A child run
-copies the calling `StepRecord.state` reference.
+`RunRecord.state` is immutable after `RunBegin`. It identifies the State used
+to resolve and prepare that run. A top-level run points to its entry control. A
+child run independently captures the root tree's current State when it begins;
+it does not copy the calling `StepRecord.state` reference.
 
 `StepRecord.state` is captured when `StepBegin` commits. The step uses the
 resolved immutable `AgentState` object for its full lifetime and never rereads
@@ -63,6 +66,10 @@ root control 0: run(state = revision A)
 root control 1: reload(state = revision B)
   step 1.state    = ControlRef(root, 1)
   child run.state = ControlRef(root, 1)
+
+root control 2: reload(state = revision C)
+  step 2.state    = ControlRef(root, 1)
+  child run.state = ControlRef(root, 2)
 ```
 
 New child `run` and `retry` controls omit their duplicated `state` revision.
@@ -121,17 +128,19 @@ the root `_ActiveRun.event_lock`:
 There is no await between the durable application and the in-memory swap. A
 failed claim leaves the current pair unchanged.
 
-Every physical step begins through the same lock. Its boundary persists
-`StepBegin(state=current_ref)` and returns the matching immutable
-`AgentState` object. Model, tool, human, agent, and child-run work starts only
-after the boundary commits and the lock is released.
+Every physical step and child run begins through the same lock. Their boundaries
+persist `StepBegin(state=current_ref)` or `RunBegin` plus the matching run State
+reference and return the matching immutable `AgentState` object. Model, tool,
+human, agent, and child-run work starts only after its own boundary commits and
+the lock is released.
 
-Reload application and `StepBegin` are therefore totally ordered within one
-root tree:
+Reload application, `RunBegin`, and `StepBegin` are therefore totally ordered
+within one root tree:
 
 - a step whose begin commits first keeps the old State;
-- a reload that applies first is used by the next step begin; and
-- an already-started step is never changed.
+- a reload that applies first is used by the next Run or Step begin;
+- an already-started Step or Run is never changed; and
+- a later child boundary does not inherit an older parent boundary.
 
 Agic steps normally reach the boundary sequentially. Parallel Flow branches
 compete only for the short boundary lock; their work remains concurrent. The
@@ -139,10 +148,11 @@ first branch through the lock records whichever reference is current at that
 boundary. State is never inferred from `StepPath`, timestamps, completion
 order, or the mutable executor State.
 
-State-aware preparation for a step uses the returned snapshot. If that step
-accepts a child run, the child uses the same object and reference. Reload does
-not reinterpret a run that was already accepted, but it is available to the
-next step and to a child run accepted by that step.
+State-aware preparation for a Step or Run uses the snapshot returned by that
+boundary. A Step may plan or request a child, but the child resolves its
+runnable and resources from the current State when its own `RunBegin` commits.
+The calling Step keeps its earlier snapshot. The same rule applies recursively
+at every depth.
 
 A new top-level run remains independent: its caller supplies the current
 `AgentState`, which is recorded on the new root entry control.
@@ -161,8 +171,8 @@ Included:
 - State control references on run and step records;
 - revision de-duplication for new child and retry controls;
 - State-reference resolution and database migration;
-- root executor State and serialized reload/step boundaries;
-- child-run inheritance from the calling step State; and
+- root executor State and serialized reload, Run, and Step boundaries;
+- independent latest-State capture for child Runs; and
 - focused record, store, executor, migration, retry, and concurrency tests.
 
 Excluded:
@@ -183,7 +193,7 @@ Excluded:
 - `src/toolang/execution/events.py` and `schemas.py`: step State projection and
   run/step inspection;
 - `src/toolang/execution/executor/common.py` and `executor.py`: current State,
-  retained reload objects, shared boundary, and child inheritance;
+  retained reload objects, and shared Run/Step boundaries;
 - executor run/step modules: capture and pass the boundary State snapshot; and
 - execution record, store, executor, and integration tests.
 
@@ -205,8 +215,8 @@ Implementation also updates `docs/agent-state.md`, `docs/execution.md`,
    the reload reference and receives the matching `AgentState` object.
 7. Parallel Flow steps beginning on opposite sides of reload application record
    the old and new references while their execution remains concurrent.
-8. A child run accepted after reload records the calling step's State reference
-   and resolves its runnable against that State.
+8. A child Run beginning after reload records the reload reference and resolves
+   its runnable against that State even when its calling Step began earlier.
 9. A second top-level root can use a newer State without changing another root.
 10. Reload claim and revocation have exactly one winner; a root ending first
     marks the reload `wontapply`.
@@ -220,10 +230,10 @@ Implementation also updates `docs/agent-state.md`, `docs/execution.md`,
 
 ## Risks
 
-- All step creation paths must use the shared boundary or their State record can
-  diverge from the object used for preparation.
-- Reload application and step begin must share one root lock so parallel Flow
-  branches have an explicit order.
+- All Run and Step creation paths must use the shared boundary or their State
+  record can diverge from the object used for preparation.
+- Reload application, Run begin, and Step begin must share one root lock so
+  parallel Flow branches have an explicit order.
 - Child resolution against a newer State can fail when the referenced runnable
   was removed or changed; the calling step reports that normal execution error.
 - Required State columns need complete migration and fixture coverage.

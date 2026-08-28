@@ -16,6 +16,7 @@ from toolang.base.types.run import ModelCallResult
 from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.base import ChatExecutorMetadata
 from toolang.execution.events import RunEvent
+from toolang.state.watcher import StateRefresh
 
 
 def test_local_chat_owned_loop_drains_detached_tasks_before_close() -> None:
@@ -203,6 +204,10 @@ agic chat(_: Part[]) -> Part[]:
             del force
             return self.state
 
+        async def refresh_result(self, *, force: bool = False):
+            del force
+            return StateRefresh(self.state)
+
         async def run(self, *, stop_signal: asyncio.Event) -> None:
             await stop_signal.wait()
 
@@ -300,6 +305,10 @@ def test_chat_session_does_not_create_a_thread_on_open(
         async def refresh(self, *, force: bool = False):
             del force
             return self.state
+
+        async def refresh_result(self, *, force: bool = False):
+            del force
+            return StateRefresh(self.state)
 
         async def run(self, *, stop_signal: asyncio.Event) -> None:
             await stop_signal.wait()
