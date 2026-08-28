@@ -31,11 +31,13 @@ from toolang.lang.ast import (
 from toolang.lang.input import resolve_input_parts
 from toolang.plugin.models.resolution import resolve_model
 from toolang.state import state as cap_store
-from toolang.state.state import StateCap, state_program_module
+from toolang.state.state import AgentState, StateCap, state_program_module
 
 from . import prompts
 from .common import BoundRun, value_parts, value_text
 from .resources import resource_caps, resource_tools
+from .resources import snapshot_model_selection
+from ..tools.runtime import RUN_ACTION, runtime_action
 
 if TYPE_CHECKING:
     from .executor import _Execution
@@ -60,6 +62,7 @@ class _AgicFrame:
     messages: tuple[Message, ...]
     tools: dict[str, AgentTool]
     services: tuple[ToolService, ...]
+    runtime_instructions: str = ""
 
 
 def prepare_agic(
@@ -77,8 +80,13 @@ def prepare_agic(
     model_selectors = resources.models
     if not model_selectors:
         raise ToolangError(f"run resources include no models: {agic.name}")
+    selection = (
+        snapshot_model_selection(run.setup, run.state)
+        if isinstance(run.state, AgentState)
+        else context
+    )
     model = resolve_model(
-        context,
+        selection,
         selector=run.bindings.model
         or (model_selectors[0] if model_selectors else None),
         allowed_selectors=model_selectors,
@@ -138,6 +146,9 @@ def prepare_agic(
         ),
     )
     instructions = _render_instructions(program, agic, system_runtime)
+    runtime_instructions = ""
+    if any(runtime_action(tool) == RUN_ACTION for tool in tools.values()):
+        runtime_instructions = context.runnable_catalog(run.state)
     adapter = run.setup.adapters.get(model.adapter)
     if adapter is None:
         raise ToolangError(f"unknown model adapter: {model.adapter}")
@@ -147,6 +158,7 @@ def prepare_agic(
         model=model,
         adapter=adapter,
         instructions=instructions,
+        runtime_instructions=runtime_instructions,
         prompt_context=prompt_context,
         messages=messages,
         tools=tools,

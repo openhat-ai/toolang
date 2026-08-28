@@ -86,6 +86,10 @@ class _StepFailed(_ExecutionFailed):
         super().__init__(Pointer.step(step), cause)
 
 
+class _RunRejected(Exception):
+    """Carry one expected child-run request rejection into its Run Step."""
+
+
 @dataclass(frozen=True, slots=True)
 class BoundRun:
     """One accepted run bound to immutable execution inputs."""
@@ -136,6 +140,7 @@ async def execute_step(
     occurrence: Occurrence | None,
     evaluate: Callable[[], Awaitable[Local]],
     note: Callable[[StepStatus], StepNoted] | None = None,
+    inputs: Sequence[Pointer] | None = None,
 ) -> Local:
     """Evaluate, transform, and commit one Flow statement Step."""
 
@@ -147,17 +152,21 @@ async def execute_step(
             state=agent_state,
             state_ref=state_ref,
         )
-        inputs = _unique_step_inputs(
+        step_inputs = _unique_step_inputs(
             (
                 *(Pointer.control(item.run, item.index, "_") for item in controls),
-                *statement_input_refs(effective_binding, statement, locals),
+                *(
+                    inputs
+                    if inputs is not None
+                    else statement_input_refs(effective_binding, statement, locals)
+                ),
             )
         )
         return StepBegin(
             step=path,
             kind=kind,
             state=state_ref,
-            input=inputs,
+            input=step_inputs,
             occurrence=occurrence,
             given=statement,
             started_at=started_at,

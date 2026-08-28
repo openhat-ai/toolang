@@ -727,7 +727,7 @@ def flow_module_name(authored_path: str) -> str:
         raise ValueError(f"Flow module filename is not portable: {stem!r}")
     if stem.casefold() in _WINDOWS_RESERVED_FILENAMES:
         raise ValueError(f"Flow module filename is reserved on Windows: {stem!r}")
-    return f"flow_{stem}"
+    return f"_flow_{stem}"
 
 
 def effective_caps(

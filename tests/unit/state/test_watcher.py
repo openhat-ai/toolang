@@ -312,10 +312,12 @@ def test_invalid_flow_candidate_retains_last_valid_state_until_repaired(
         initial = await watcher.refresh()
 
         flow.write_text("flow other:\n  pass\n", encoding="utf-8")
-        rejected = await watcher.refresh()
+        refresh = await watcher.refresh_result()
+        rejected = refresh.state
 
         assert rejected is initial
         assert rejected.revision == initial.revision
+        assert refresh.diagnostics == watcher.diagnostics()
         assert watcher.diagnostics()[0].layer == "flow-extension"
         assert watcher.diagnostics()[0].authored_path == "flows/research.too"
 

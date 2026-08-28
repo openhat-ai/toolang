@@ -11,6 +11,7 @@ from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.tui import ChatTuiApp
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
+from toolang.state.watcher import StateRefresh
 
 
 def run_chat_tui(
@@ -49,6 +50,10 @@ def run_chat_tui(
         async def refresh(self, *, force: bool = False) -> AgentState:
             del force
             return state
+
+        async def refresh_result(self, *, force: bool = False) -> StateRefresh:
+            del force
+            return StateRefresh(state)
 
         async def run(self, *, stop_signal: asyncio.Event) -> None:
             await stop_signal.wait()

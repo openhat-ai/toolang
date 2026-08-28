@@ -41,6 +41,7 @@ from toolang.lang.input import NamedInputSources, RunnableInputRaw
 from toolang.setup import SetupWatcher
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import AgentState
+from toolang.state.watcher import StateWatcher
 from toolang.up import process as agents
 from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 
@@ -801,7 +802,13 @@ async def _execute(
         },
         limit_overrides=resolve_limit_overrides(environ, limit_options),
     ).refresh()
-    executor = RunExecutor(store, ids)
+    state_watcher = StateWatcher(layout)
+    await state_watcher.refresh()
+    executor = RunExecutor(
+        store,
+        ids,
+        refresh_state=state_watcher.refresh_result,
+    )
     spec = resolve_spec(
         commands,
         input,

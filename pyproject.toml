@@ -69,6 +69,7 @@ service = "toolang.plugin.toolsets.service_use:create_toolset"
 shell = "toolang.plugin.toolsets.shell:create_toolset"
 web = "toolang.plugin.toolsets.web_search:create_toolset"
 _me = "toolang.execution.tools.agent_state:create_toolset"
+_too = "toolang.execution.tools.runtime:create_toolset"
 
 [project.entry-points."toolang.model_adapter"]
 chat_completions = "toolang.plugin.models.adapters.chat_completions:create_model_adapter"

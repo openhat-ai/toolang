@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 import logging
 from decimal import Decimal, InvalidOperation
 import threading
@@ -15,6 +15,7 @@ from toolang.base.types.model import ModelInfo, ModelTarget, Provider
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
 from toolang.base.types.message import Message, TextPart
+from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
 from toolang.lang.ast import (
@@ -37,7 +38,8 @@ from toolang.plugin.models.config import (
     parse_default_models,
     parse_model_aliases,
 )
-from toolang.state.state import AgentState, state_program_module
+from toolang.state.state import AgentState
+from toolang.state.watcher import StateRefresh
 from toolang.state.cache import agent_revision_dir, validate_agent_revision
 from toolang.state.prepare import load_agent_state
 from toolang.setup import AgentSetup
@@ -67,12 +69,20 @@ from ..types import (
     OccurrencePosition,
     TypedPointer,
 )
-from ..runnables import parse_runnable_ref, resolve_runnable, resolve_state_runnable
+from ..runnables import (
+    ResolvedRunnable,
+    parse_runnable_ref,
+    render_runnable_catalog,
+    resolve_bound_runnable,
+    resolve_module_runnable,
+    resolve_state_runnable,
+)
 from .common import (
     BoundRun,
     EventEmitter,
     Local,
     _ExecutionFailed,
+    _RunRejected,
     _StepFailed,
     control_text,
     initial_locals,
@@ -100,7 +110,16 @@ _CONTROL_POLL_INTERVAL = 0.05
 SetupSource = Callable[[], AgentSetup]
 StateSource = Callable[[], AgentState]
 StateLoad = Callable[[str], AgentState]
+StateRefreshSource = Callable[[], Awaitable[StateRefresh]]
 IncludeSource = Callable[[AgentSetup], IncludeResolver]
+
+
+def _finish_control_waiter(
+    waiter: asyncio.Future[RunControlRecord],
+    control: RunControlRecord,
+) -> None:
+    if not waiter.done():
+        waiter.set_result(control)
 
 
 class _RunCanceled(asyncio.CancelledError):
@@ -126,6 +145,15 @@ class _ActiveRun:
     reload_states: dict[int, AgentState] = field(default_factory=dict, repr=False)
     reload_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     reload_scheduled: bool = field(default=False, repr=False)
+    reload_task: asyncio.Task[None] | None = field(default=None, repr=False)
+    runtime_action_lock: asyncio.Lock = field(
+        default_factory=asyncio.Lock,
+        repr=False,
+    )
+    control_waiters: dict[
+        tuple[str, int],
+        set[asyncio.Future[RunControlRecord]],
+    ] = field(default_factory=dict, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +253,7 @@ class RunExecutor:
         setup: SetupSource | None = None,
         state: StateSource | None = None,
         load_state: StateLoad | None = None,
+        refresh_state: StateRefreshSource | None = None,
         include: IncludeSource | None = None,
     ) -> None:
         if (setup is None) != (state is None) or (setup is None) != (
@@ -238,6 +267,7 @@ class RunExecutor:
         self._setup = setup
         self._state = state
         self._load_state = load_state
+        self._refresh_state = refresh_state
         self._include = include
         self._persist = _PersistSink(self.store)
         self._control_poll_interval = _CONTROL_POLL_INTERVAL
@@ -728,6 +758,21 @@ class RunExecutor:
     ) -> RunControlRecord:
         """Persist an immediate State reload for a locally owned run tree."""
 
+        return self._accept_reload(
+            run_id=run_id,
+            state=state,
+            request_id=request_id,
+        )
+
+    def _accept_reload(
+        self,
+        *,
+        run_id: str,
+        state: AgentState,
+        request_id: str | None,
+    ) -> RunControlRecord:
+        """Persist a reload and retain its process-local State snapshot."""
+
         self._require_available()
         if not isinstance(state, AgentState):
             raise TypeError("reload requires an AgentState")
@@ -770,6 +815,54 @@ class RunExecutor:
             self._observe_control(control)
         return control
 
+    async def model_reload(self, *, run_id: str) -> dict[str, object]:
+        """Refresh and synchronously apply State for one model runtime action."""
+
+        with self._active_lock:
+            active = self._active.get(run_id)
+        if active is None:
+            raise ValueError(f"run is not owned by this executor: {run_id}")
+        if self._refresh_state is None:
+            raise ToolangError("Agent State refresh is unavailable in this executor")
+        async with active.runtime_action_lock:
+            refreshed = await self._refresh_state()
+            execution = active.execution
+            if execution is None:
+                raise RuntimeError(f"run execution is unavailable: {run_id}")
+            current, _current_ref = execution._current_state
+            diagnostics = [asdict(item) for item in refreshed.diagnostics]
+            if diagnostics:
+                return {
+                    "applied": False,
+                    "from_state": current.revision,
+                    "state": current.revision,
+                    "control": None,
+                    "diagnostics": diagnostics,
+                }
+            changed = refreshed.state.revision != current.revision
+            control = self._accept_reload(
+                run_id=run_id,
+                state=refreshed.state,
+                request_id=None,
+            )
+            terminal = await self._wait_for_control(active, control)
+            if terminal.status != "applied":
+                raise ToolangError(
+                    terminal.error
+                    or f"State reload control {terminal.status}: "
+                    f"{terminal.run}^{terminal.index}"
+                )
+            return {
+                "applied": changed,
+                "from_state": current.revision,
+                "state": refreshed.state.revision,
+                "control": {
+                    "target": terminal.run,
+                    "index": terminal.index,
+                },
+                "diagnostics": [],
+            }
+
     def cancel_control(self, *, run_id: str, index: int) -> RunControlRecord:
         """Revoke one pending reload, steer, or cancel control."""
 
@@ -797,6 +890,17 @@ class RunExecutor:
                 *(task for task, _run in owned),
                 return_exceptions=True,
             )
+        await asyncio.sleep(0)
+        reload_tasks = {
+            active.reload_task
+            for _task, (_run_id, active) in owned
+            if active.reload_task is not None
+        }
+        for task in reload_tasks:
+            if not task.done():
+                task.cancel()
+        if reload_tasks:
+            await asyncio.gather(*reload_tasks, return_exceptions=True)
         for _task, (run_id, active) in owned:
             await self._ensure_terminal(
                 run_id,
@@ -859,6 +963,8 @@ class RunExecutor:
         self._track_active_run(event, active)
         if isinstance(event, RunEnd):
             active.ended.add(event.run)
+            if active.execution is not None:
+                active.execution._active_bindings.pop(event.run, None)
         if active.tracer is not None:
             try:
                 await active.tracer.on_event(event)
@@ -951,6 +1057,74 @@ class RunExecutor:
             loop.call_soon_threadsafe(cancel.cancel)
         if apply_reload is not None:
             self._schedule_reload_application(apply_reload)
+        self._notify_control_waiters(control)
+
+    def _notify_control_waiters(self, control: RunControlRecord) -> None:
+        if control.status == "pending":
+            return
+        with self._active_lock:
+            active = self._active.get(control.run)
+            if active is None:
+                return
+            waiters = tuple(
+                active.control_waiters.pop((control.run, control.index), ())
+            )
+        for waiter in waiters:
+            if not waiter.done():
+                active.loop.call_soon_threadsafe(
+                    _finish_control_waiter,
+                    waiter,
+                    control,
+                )
+
+    async def _wait_for_control(
+        self,
+        active: _ActiveRun,
+        control: RunControlRecord,
+    ) -> RunControlRecord:
+        if control.status != "pending":
+            return control
+        loop = asyncio.get_running_loop()
+        waiter: asyncio.Future[RunControlRecord] = loop.create_future()
+        key = (control.run, control.index)
+        with self._active_lock:
+            active.control_waiters.setdefault(key, set()).add(waiter)
+        terminal = self.store.get_run_control(
+            run_id=control.run,
+            index=control.index,
+        )
+        if terminal is None:
+            with self._active_lock:
+                active.control_waiters.get(key, set()).discard(waiter)
+            raise RuntimeError(
+                f"run control disappeared: {control.run}^{control.index}"
+            )
+        if terminal.status != "pending":
+            self._notify_control_waiters(terminal)
+        try:
+            return await asyncio.shield(waiter)
+        except asyncio.CancelledError:
+            try:
+                self.cancel_control(
+                    run_id=control.run,
+                    index=control.index,
+                )
+            except ValueError:
+                terminal = self.store.get_run_control(
+                    run_id=control.run,
+                    index=control.index,
+                )
+                if terminal is not None and terminal.status != "pending":
+                    self._notify_control_waiters(terminal)
+            await asyncio.shield(waiter)
+            raise
+        finally:
+            with self._active_lock:
+                waiters = active.control_waiters.get(key)
+                if waiters is not None:
+                    waiters.discard(waiter)
+                    if not waiters:
+                        active.control_waiters.pop(key, None)
 
     def _schedule_reload_application(self, active: _ActiveRun) -> None:
         with self._active_lock:
@@ -974,10 +1148,12 @@ class RunExecutor:
             active.reload_scheduled = True
 
         def start() -> None:
-            asyncio.create_task(
+            task = asyncio.create_task(
                 self._apply_reload_controls(active),
                 name=f"toolang-reload-{active.root_run_id}",
             )
+            with self._active_lock:
+                active.reload_task = task
 
         active.loop.call_soon_threadsafe(start)
 
@@ -1025,9 +1201,42 @@ class RunExecutor:
                     with self._active_lock:
                         controls.pop(candidate.index, None)
                         active.reload_states.pop(candidate.index, None)
+                    terminal = self.store.get_run_control(
+                        run_id=active.root_run_id,
+                        index=candidate.index,
+                    )
+                    if terminal is not None:
+                        self._observe_control(terminal)
+        except Exception as exc:
+            error = str(exc) or type(exc).__name__
+            with self._active_lock:
+                controls = active.controls.get(active.root_run_id, {})
+                indexes = tuple(
+                    index
+                    for index, control in controls.items()
+                    if control.kind == "reload" and control.status == "pending"
+                )
+            self.store.fail_run_controls(
+                run_id=active.root_run_id,
+                indexes=indexes,
+                finished_at=utc_now(),
+                error=error,
+            )
+            for index in indexes:
+                terminal = self.store.get_run_control(
+                    run_id=active.root_run_id,
+                    index=index,
+                )
+                if terminal is not None:
+                    self._observe_control(terminal)
+            _LOGGER.exception(
+                "State reload application failed run=%s",
+                active.root_run_id,
+            )
         finally:
             with self._active_lock:
                 active.reload_scheduled = False
+                active.reload_task = None
             self._schedule_reload_application(active)
 
     def _pending_controls(
@@ -1176,6 +1385,18 @@ class _Execution:
         if retry is not None:
             self._restore_model_limits(root.run_id)
         self._run_outputs: dict[str, RecordLocal] = {}
+        root_ref = root.bindings.runnable
+        if root_ref is None:  # pragma: no cover - bound run invariant
+            raise RuntimeError(f"run runnable binding is missing: {root.run_id}")
+        self._active_bindings: dict[
+            str,
+            tuple[BoundRun, AgicDecl | FlowDecl],
+        ] = {
+            root.run_id: (
+                root,
+                resolve_bound_runnable(root.state, root.module, root_ref).executable,
+            )
+        }
 
     def next_step(self, run_id: str) -> int:
         """Return the next unused top-level physical step index."""
@@ -1249,6 +1470,124 @@ class _Execution:
     def provider_configs(self) -> Mapping[str, ProviderConfig]:
         return cast(Mapping[str, ProviderConfig], self.setup.provider_configs)
 
+    def runnable_catalog(self, state: AgentState) -> str:
+        """Render the bounded public runnable catalog for one State."""
+
+        return render_runnable_catalog(state)
+
+    def refresh_run_binding(
+        self,
+        binding: BoundRun,
+        state: AgentState,
+        state_ref: ControlRef,
+        executable: AgicDecl | FlowDecl,
+        *,
+        module: str,
+    ) -> BoundRun:
+        """Rebind one active run to the resources of a captured State."""
+
+        agent_resources = resolve_agent_resources(
+            binding.setup,
+            state,
+            binding.setup.ceiling,
+            module=module,
+        )
+        for ceiling in binding.ceilings:
+            agent_resources = apply_agent_ceiling(
+                binding.setup,
+                state,
+                agent_resources,
+                ceiling,
+                module=module,
+            )
+        flow_resources: AgentResources | None = None
+        if (
+            not isinstance(executable, FlowDecl)
+            and binding.parent is not None
+            and binding.flow_resources is not None
+        ):
+            parent = self._active_bindings.get(binding.parent.run)
+            if parent is not None:
+                parent_binding, _previous_parent = parent
+                parent_ref = parent_binding.bindings.runnable
+                if parent_ref is None:  # pragma: no cover - bound run invariant
+                    raise RuntimeError(
+                        f"run runnable binding is missing: {parent_binding.run_id}"
+                    )
+                current_parent = resolve_bound_runnable(
+                    state,
+                    parent_binding.module,
+                    parent_ref,
+                )
+                refreshed_parent = self.refresh_run_binding(
+                    parent_binding,
+                    state,
+                    state_ref,
+                    current_parent.executable,
+                    module=current_parent.module.name,
+                )
+                flow_resources = (
+                    refreshed_parent.resources
+                    if isinstance(current_parent.executable, FlowDecl)
+                    else refreshed_parent.flow_resources
+                )
+        selection = snapshot_model_selection(binding.setup, state)
+        resources = resolve_runnable_resources(
+            selection,
+            executable=executable,
+            base=(
+                agent_resources
+                if isinstance(executable, FlowDecl)
+                else flow_resources or agent_resources
+            ),
+            setup=binding.setup,
+            state=state,
+            module=module,
+        )
+        validate_model_binding(
+            selection,
+            executable=executable,
+            resources=resources,
+            model=binding.bindings.model,
+        )
+        return replace(
+            binding,
+            state=state,
+            state_ref=state_ref,
+            module=module,
+            agent_resources=agent_resources,
+            resources=resources,
+            flow_resources=(
+                resources if isinstance(executable, FlowDecl) else flow_resources
+            ),
+        )
+
+    def resolve_public_input(
+        self,
+        resolved: ResolvedRunnable,
+        raw_input: object,
+    ) -> RunnableInput:
+        """Coerce one JSON object through the target module's input contracts."""
+
+        if not isinstance(raw_input, Mapping):
+            raise ValueError("_too/run input must be an object")
+        if not all(isinstance(name, str) for name in raw_input):
+            raise ValueError("_too/run input field names must be text")
+        input_values = cast(Mapping[str, object], raw_input)
+        structs = {item.name: item for item in resolved.module.program.structs}
+        input = resolve_runnable_input(
+            resolved.executable,
+            primary=input_values.get("_") if "_" in input_values else None,
+            named={name: value for name, value in input_values.items() if name != "_"},
+            structs=structs,
+        )
+        _validate_inputs(
+            program=resolved.module.program,
+            executable=resolved.executable,
+            input=input,
+        )
+        return input
+
     def schedule_time_limit(
         self,
         task: asyncio.Task[RunRecord],
@@ -1302,6 +1641,7 @@ class _Execution:
         *,
         locals: Mapping[str, Local] | None = None,
         output_name: str | None = "_",
+        begun: bool = False,
     ) -> Local:
         """Execute one accepted agic or flow run and emit its lifecycle."""
 
@@ -1315,16 +1655,17 @@ class _Execution:
         )
         statement_start = 0
         step_start = self.next_step(binding.run_id)
-        await self.emit(
-            RunBegin(
-                run=binding.run_id,
-                control=ControlRef(binding.run_id, binding.control_index),
-                runnable=_bound_runnable(binding),
-                parent=binding.parent,
-                occurrence=binding.occurrence,
-                started_at=utc_now(),
+        if not begun:
+            await self.emit(
+                RunBegin(
+                    run=binding.run_id,
+                    control=ControlRef(binding.run_id, binding.control_index),
+                    runnable=_bound_runnable(binding),
+                    parent=binding.parent,
+                    occurrence=binding.occurrence,
+                    started_at=utc_now(),
+                )
             )
-        )
         try:
             if (
                 self._retry is not None
@@ -1488,53 +1829,268 @@ class _Execution:
         occurrence: Occurrence | None,
         *,
         output_name: str | None = "_",
+        resolution: Literal["module", "state"] = "module",
+        raw_input: object | None = None,
     ) -> Local:
         """Accept and execute one recursive child agic or flow run."""
 
-        state, state_ref = self.state_for_step(step)
-        executable = resolve_runnable(
-            state_program_module(state, parent.module).program,
-            name,
-        )
-        binding = _child_binding(
-            self,
-            parent,
+        def prepare(
+            state: AgentState,
+            state_ref: ControlRef,
+        ) -> tuple[BoundRun, AgicDecl | FlowDecl]:
+            if resolution == "state":
+                runnable_name, runnable_kind = parse_runnable_ref(name)
+                resolved = resolve_state_runnable(
+                    state,
+                    runnable_name,
+                    kind=runnable_kind,
+                )
+                input = self.resolve_public_input(
+                    resolved,
+                    {} if raw_input is None else raw_input,
+                )
+                binding = self._prepare_public_child(
+                    parent,
+                    resolved,
+                    input,
+                    parent_step=step,
+                    state=state,
+                    state_ref=state_ref,
+                )
+                return binding, resolved.executable
+            if resolution != "module":  # pragma: no cover - typed caller invariant
+                raise ValueError(f"unknown run resolution: {resolution}")
+            parent_ref = parent.bindings.runnable
+            if parent_ref is None:  # pragma: no cover - bound run invariant
+                raise RuntimeError(f"run runnable binding is missing: {parent.run_id}")
+            current_parent = resolve_bound_runnable(
+                state,
+                parent.module,
+                parent_ref,
+            )
+            current_parent_binding = (
+                parent
+                if state.revision == parent.state.revision
+                and state_ref == parent.state_ref
+                else self.refresh_run_binding(
+                    parent,
+                    state,
+                    state_ref,
+                    current_parent.executable,
+                    module=current_parent.module.name,
+                )
+            )
+            runnable_name, runnable_kind = (
+                parse_runnable_ref(name)
+                if name.startswith(("agic:", "flow:"))
+                else (name, None)
+            )
+            resolved = resolve_module_runnable(
+                state,
+                parent.module,
+                runnable_name,
+                kind=runnable_kind,
+            )
+            binding = _child_binding(
+                self,
+                current_parent_binding,
+                resolved,
+                locals,
+                parent_step=step,
+                occurrence=occurrence,
+                state=state,
+                state_ref=state_ref,
+            )
+            return _prepare_child_run(binding, resolved.executable), resolved.executable
+
+        binding, executable = await self._begin_child(prepare)
+        return await self._execute_child_binding(
+            binding,
             executable,
-            locals,
-            parent_step=step,
-            occurrence=occurrence,
+            output_name=output_name,
+        )
+
+    def _prepare_public_child(
+        self,
+        parent: BoundRun,
+        resolved: ResolvedRunnable,
+        input: RunnableInput,
+        *,
+        parent_step: StepPath,
+        state: AgentState,
+        state_ref: ControlRef,
+        validate_input: bool = True,
+    ) -> BoundRun:
+        executable = resolved.executable
+        module = resolved.module.name
+        if validate_input:
+            _validate_inputs(
+                program=resolved.module.program,
+                executable=executable,
+                input=input,
+            )
+        agent_resources, resources = self._public_runnable_resources(
+            parent,
+            resolved,
+            state=state,
+        )
+        return BoundRun(
+            run_id=self.executor.ids.issue_run(),
+            root_run_id=parent.root_run_id,
+            thread=parent.thread,
+            bindings=RunBindings(
+                model=parent.bindings.model,
+                runnable=f"{resolved.public.kind}:{resolved.public.name}",
+            ),
+            input=input,
+            control_locals=_input_locals(input, executable),
             state=state,
             state_ref=state_ref,
+            setup=parent.setup,
+            module=module,
+            limits=parent.limits,
+            ceilings=parent.ceilings,
+            agent_resources=agent_resources,
+            resources=resources,
+            flow_resources=resources if isinstance(executable, FlowDecl) else None,
+            created_at=utc_now(),
+            call="run",
+            parent=parent_step,
         )
-        binding = _prepare_child_run(binding, executable)
+
+    def _public_runnable_resources(
+        self,
+        parent: BoundRun,
+        resolved: ResolvedRunnable,
+        *,
+        state: AgentState,
+    ) -> tuple[AgentResources, AgentResources]:
+        module = resolved.module.name
+        agent_resources = resolve_agent_resources(
+            parent.setup,
+            state,
+            parent.setup.ceiling,
+            module=module,
+        )
+        for ceiling in parent.ceilings:
+            agent_resources = apply_agent_ceiling(
+                parent.setup,
+                state,
+                agent_resources,
+                ceiling,
+                module=module,
+            )
+        selection = snapshot_model_selection(parent.setup, state)
+        resources = resolve_runnable_resources(
+            selection,
+            executable=resolved.executable,
+            base=agent_resources,
+            setup=parent.setup,
+            state=state,
+            module=module,
+        )
+        validate_model_binding(
+            selection,
+            executable=resolved.executable,
+            resources=resources,
+            model=parent.bindings.model,
+        )
+        return agent_resources, resources
+
+    async def _begin_child(
+        self,
+        prepare: Callable[
+            [AgentState, ControlRef],
+            tuple[BoundRun, AgicDecl | FlowDecl],
+        ],
+    ) -> tuple[BoundRun, AgicDecl | FlowDecl]:
+        """Resolve, accept, and begin one child at the latest State boundary."""
+
+        async def accept(
+            state: AgentState, state_ref: ControlRef
+        ) -> tuple[
+            BoundRun,
+            AgicDecl | FlowDecl,
+        ]:
+            try:
+                binding, executable = prepare(state, state_ref)
+            except (ToolangError, TypeError, ValueError) as exc:
+                raise _RunRejected(str(exc) or type(exc).__name__) from exc
+            resources = binding.resources
+            if resources is None:
+                raise RuntimeError(f"run resources missing: {binding.run_id}")
+            try:
+                self._active_bindings[binding.run_id] = (binding, executable)
+                self.store.accept_run(
+                    run_id=binding.run_id,
+                    parent=binding.parent,
+                    thread=binding.thread,
+                    resources=resources,
+                    limits=binding.limits,
+                    state=None,
+                    runnable=_bound_runnable(binding),
+                    model=_bound_model(binding),
+                    locals=binding.control_locals,
+                    sandbox=None,
+                    occurrence=binding.occurrence,
+                    request_id=None,
+                    created_at=binding.created_at,
+                    state_ref=binding.state_ref,
+                )
+                self.executor._register_child_run(
+                    run_id=binding.run_id,
+                    root_run_id=binding.root_run_id,
+                )
+                event = RunBegin(
+                    run=binding.run_id,
+                    control=ControlRef(binding.run_id, binding.control_index),
+                    runnable=_bound_runnable(binding),
+                    parent=binding.parent,
+                    occurrence=binding.occurrence,
+                    started_at=utc_now(),
+                )
+                if self._active is None:
+                    emit = self._emit_trace
+                    if emit is None:  # pragma: no cover - constructor invariant
+                        raise RuntimeError("execution event emitter is missing")
+                    await emit(event)
+                else:
+                    await self.executor._emit_event_locked(self._active, event)
+            except BaseException:
+                self._active_bindings.pop(binding.run_id, None)
+                raise
+            return binding, executable
+
+        if self._active is None:
+            state, state_ref = self._current_state
+            return await accept(state, state_ref)
+        async with self._active.event_lock:
+            state, state_ref = self._current_state
+            return await accept(state, state_ref)
+
+    async def _execute_child_binding(
+        self,
+        binding: BoundRun,
+        executable: AgicDecl | FlowDecl,
+        *,
+        output_name: str | None = "_",
+    ) -> Local:
         resources = binding.resources
         if resources is None:
             raise RuntimeError(f"run resources missing: {binding.run_id}")
-        self.store.accept_run(
-            run_id=binding.run_id,
-            parent=step,
-            thread=binding.thread,
-            resources=resources,
-            limits=binding.limits,
-            state=None,
-            runnable=_bound_runnable(binding),
-            model=_bound_model(binding),
-            locals=binding.control_locals,
-            sandbox=None,
-            occurrence=binding.occurrence,
-            request_id=None,
-            created_at=binding.created_at,
-            state_ref=binding.state_ref,
-        )
-        self.executor._register_child_run(
-            run_id=binding.run_id,
-            root_run_id=step.run,
-        )
         try:
-            result = await self.execute(binding, executable, output_name=output_name)
+            result = await self.execute(
+                binding,
+                executable,
+                output_name=output_name,
+                begun=True,
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            child = self.store.get_run(run_id=binding.run_id)
+            if child is None or child.status in {"pending", "running"}:
+                raise
             raise _ExecutionFailed(Pointer.run(binding.run_id), exc) from exc
         pointer = Pointer.run(binding.run_id)
         item_type = result.type_name or "Json"
@@ -1561,11 +2117,6 @@ class _Execution:
     ) -> Local:
         """Execute child runs concurrently and preserve their output type."""
 
-        state, _state_ref = self.state_for_step(parent)
-        executable = resolve_runnable(
-            state_program_module(state, binding.module).program,
-            runnable,
-        )
         lanes = limit or max(len(inputs), 1)
         available_lanes: asyncio.Queue[int] = asyncio.Queue()
         for lane in range(lanes):
@@ -1620,7 +2171,7 @@ class _Execution:
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
-        output_type = _parallel_output_type(results, executable) or "Json"
+        output_type = _parallel_output_type(results) or "Json"
         result_refs = tuple(result.ref for result in results if result.ref is not None)
         return Local(
             [result.value for result in results],
@@ -1784,20 +2335,17 @@ class _Execution:
 
 def _parallel_output_type(
     results: Sequence[Local],
-    executable: AgicDecl | FlowDecl,
 ) -> str | None:
     actual = {result.type_name for result in results if result.type_name is not None}
     if len(actual) == 1:
         return next(iter(actual))
-    if isinstance(executable, AgicDecl):
-        return executable.output or "Part[]"
-    return executable.output
+    return None
 
 
 def _child_binding(
     context: _Execution,
     parent: BoundRun,
-    executable: AgicDecl | FlowDecl,
+    resolved: ResolvedRunnable,
     locals: Mapping[str, Local],
     *,
     parent_step: StepPath,
@@ -1805,10 +2353,8 @@ def _child_binding(
     state: AgentState,
     state_ref: ControlRef,
 ) -> BoundRun:
-    structs = {
-        item.name: item
-        for item in state_program_module(state, parent.module).program.structs
-    }
+    executable = resolved.executable
+    structs = {item.name: item for item in resolved.module.program.structs}
     source_locals: dict[str, Local] = {}
     primary_value: object | None = None
     if executable.input is not None:
@@ -1860,14 +2406,14 @@ def _child_binding(
         thread=parent.thread,
         bindings=RunBindings(
             model=parent.bindings.model,
-            runnable=f"{executable.kind}:{executable.name}",
+            runnable=resolved.ref,
         ),
         input=input,
         control_locals=tuple(control_locals),
         state=state,
         state_ref=state_ref,
         setup=parent.setup,
-        module=parent.module,
+        module=resolved.module.name,
         limits=parent.limits,
         ceilings=parent.ceilings,
         agent_resources=parent.agent_resources,

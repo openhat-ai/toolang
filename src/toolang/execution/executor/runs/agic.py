@@ -12,24 +12,38 @@ from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelContinuation, ModelUsage, ToolCall
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
-from toolang.lang.ast import AgicDecl
+from toolang.lang.ast import AgicDecl, RunStmt, Span
 from toolang.lang.errors import ToolangOutputError
 from toolang.lang.input import coerce_output
 from toolang.state.state import AgentState
+from toolang.state.state import state_program_module
 
 from ...events import StepBegin
-from ...records import RunControlRecord
-from ...types import ControlRef, StepPath, Pointer
+from ...records import RunControlPayload, RunControlRecord
+from ...types import (
+    ControlRef,
+    Local as RecordLocal,
+    StepPath,
+    Pointer,
+    TypedPointer,
+    local_to_protocol_data,
+)
 from ..common import (
     BoundRun,
     EventEmitter,
     Local,
+    _ExecutionFailed,
+    _RunRejected,
+    _StepFailed,
     program_structs,
 )
 from ..limits import _ModelAccounting
 from ..prepare import _AgicFrame, prepare_agic
 from ..steps import model as model_step
+from ..steps import run as run_step
 from ..steps import tool as tool_step
+from ...runnables import resolve_runnable
+from ...tools.runtime import RELOAD_ACTION, RUN_ACTION, runtime_action
 
 if TYPE_CHECKING:
     from ..executor import _Execution
@@ -47,6 +61,7 @@ class _AgicState:
     immediate_steer: Callable[[], bool]
     before_call: Callable[[], None]
     messages: list[Message]
+    execution: _Execution | None = None
     account_usage: Callable[[ModelUsage | None], _ModelAccounting] = lambda usage: (
         _ModelAccounting(usage=usage)
     )
@@ -123,19 +138,41 @@ async def execute(
     variables = {
         name: local.value for name, local in locals.items() if local.shape != "none"
     }
-    frames: dict[ControlRef, _AgicFrame] = {}
+    frames: dict[str, _AgicFrame] = {}
 
     def refresh_frame(state: AgentState, ref: ControlRef) -> _AgicFrame:
-        if ref in frames:
-            return frames[ref]
+        cached = frames.get(state.revision)
+        if cached is not None:
+            return replace(
+                cached,
+                run=replace(cached.run, state=state, state_ref=ref),
+            )
+        candidate = resolve_runnable(
+            state_program_module(state, binding.module).program,
+            agic.name,
+            kind="agic",
+        )
+        if not isinstance(candidate, AgicDecl):  # pragma: no cover - kind invariant
+            raise TypeError(f"active agic changed kind: {agic.name}")
+        current_binding = (
+            binding
+            if state.revision == binding.state.revision and ref == binding.state_ref
+            else execution.refresh_run_binding(
+                binding,
+                state,
+                ref,
+                candidate,
+                module=binding.module,
+            )
+        )
         prepared = prepare_agic(
             execution,
-            replace(binding, state=state, state_ref=ref),
-            agic,
+            current_binding,
+            candidate,
             variables=variables,
         )
         execution.require_model_pricing(prepared.model)
-        frames[ref] = prepared
+        frames[state.revision] = prepared
         return prepared
 
     prepared = refresh_frame(binding.state, binding.state_ref)
@@ -156,6 +193,7 @@ async def execute(
         limits=binding.limits,
         record_output=lambda ref: execution.record_output(binding.run_id, ref),
         messages=list(prepared.messages),
+        execution=execution,
         next_step=execution.next_step(binding.run_id),
         initial_inputs=tuple(
             local.ref
@@ -165,20 +203,21 @@ async def execute(
         begin_step=execution.begin_step,
         refresh_frame=refresh_frame,
     )
-    structs = program_structs(binding)
     message = await _execute(state)
     if state.output is None:
         raise RuntimeError("agic completed without a model output")
+    effective_agic = state.prepared.agic
+    structs = program_structs(state.prepared.run)
     try:
         output = coerce_output(
             message or Message(role="assistant"),
-            agic.output,
+            effective_agic.output,
             structs=structs,
         )
     except ToolangOutputError:
-        if not _can_repair_output(state, agic.output):
+        if not _can_repair_output(state, effective_agic.output):
             raise
-        state.messages.append(_output_repair_message(agic.output))
+        state.messages.append(_output_repair_message(effective_agic.output))
         state.repairing_output = True
         try:
             message = await _execute(state)
@@ -186,14 +225,14 @@ async def execute(
             state.repairing_output = False
         output = coerce_output(
             message or Message(role="assistant"),
-            agic.output,
+            effective_agic.output,
             structs=structs,
         )
     return Local(
         output,
         "item",
         state.output,
-        type_name=agic.output or "Part[]",
+        type_name=effective_agic.output or "Part[]",
     )
 
 
@@ -233,7 +272,17 @@ async def _execute(state: _AgicState) -> Message | None:
                 continue
             for index, call in enumerate(result.tool_calls):
                 try:
-                    await tool_step.execute(state, call)
+                    action = runtime_action(state.prepared.tools.get(call.name))
+                    if action == RELOAD_ACTION:
+                        if state.execution is None:
+                            raise RuntimeError("Agic runtime execution is unavailable")
+                        await _reload(state.execution, state, call)
+                    elif action == RUN_ACTION:
+                        if state.execution is None:
+                            raise RuntimeError("Agic runtime execution is unavailable")
+                        await _run(state.execution, state, call)
+                    else:
+                        await tool_step.execute(state, call)
                 except asyncio.CancelledError:
                     if not state.immediate_steer():
                         raise
@@ -244,6 +293,168 @@ async def _execute(state: _AgicState) -> Message | None:
             state.claimed_inputs = inputs
             continue
         return result.message
+
+
+async def _reload(
+    execution: _Execution,
+    state: _AgicState,
+    call: ToolCall,
+) -> None:
+    """Consume one runtime reload without creating a Step."""
+
+    state.before_tool_call()
+    try:
+        if call.input:
+            raise ToolangError("_too/reload does not accept input")
+        output = await execution.executor.model_reload(
+            run_id=state.prepared.run.run_id,
+        )
+        part = ToolResultPart(
+            tool_call_id=call.tool_call_id,
+            call_id=call.call_id,
+            tool_name=call.name,
+            tool_family=call.name,
+            output=output,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        part = ToolResultPart(
+            tool_call_id=call.tool_call_id,
+            call_id=call.call_id,
+            tool_name=call.name,
+            tool_family=call.name,
+            error=str(exc) or type(exc).__name__,
+        )
+    state.messages.append(Message(role="tool", parts=(part,)))
+
+
+async def _run(
+    execution: _Execution,
+    state: _AgicState,
+    call: ToolCall,
+) -> None:
+    """Adapt one model runtime call to the ordinary Run Step executor."""
+
+    state.before_tool_call()
+    step_index = state.next_step
+    state.next_step += 1
+    run = state.prepared.run
+    path = StepPath(run.run_id, (step_index,))
+    requested = call.input.get("runnable")
+    statement = RunStmt(
+        binding="_",
+        runnable=requested if isinstance(requested, str) else "",
+        span=Span(line=1),
+    )
+
+    def validate() -> None:
+        unknown = sorted(set(call.input) - {"runnable", "input"})
+        if unknown:
+            raise ValueError(f"unknown _too/run input fields: {', '.join(unknown)}")
+        if not isinstance(requested, str) or not requested.strip():
+            raise ValueError("_too/run requires a non-empty runnable ref")
+
+    try:
+        result = await run_step.execute(
+            execution,
+            binding=run,
+            path=path,
+            statement=statement,
+            locals={},
+            controls=(),
+            occurrence=None,
+            runnable=statement.runnable,
+            validate=validate,
+            resolution="state",
+            raw_input=call.input.get("input", {}),
+            inputs=_run_call_inputs(state, call),
+            begin_step=state.start_step,
+        )
+        part = _run_success_part(execution, call, result)
+        state.output = Pointer.step(path)
+        state.record_output(state.output)
+    except asyncio.CancelledError:
+        raise
+    except _StepFailed as exc:
+        if not isinstance(exc.__cause__, _RunRejected | _ExecutionFailed):
+            raise
+        part = ToolResultPart(
+            tool_call_id=call.tool_call_id,
+            call_id=call.call_id,
+            tool_name=call.name,
+            tool_family=call.name,
+            error=str(exc) or type(exc).__name__,
+        )
+    state.messages.append(Message(role="tool", parts=(part,)))
+    state.last_step = step_index
+
+
+def _run_success_part(
+    execution: _Execution,
+    call: ToolCall,
+    result: Local,
+) -> ToolResultPart:
+    record = result.record
+    target = record.value if record is not None else None
+    if (
+        not isinstance(target, TypedPointer)
+        or target.pointer.value != target.pointer.anchor
+    ):
+        raise RuntimeError("Run Step result is missing its child run reference")
+    child = execution.store.get_run(run_id=target.pointer.anchor)
+    if child is None:
+        raise RuntimeError(f"child run not found: {target.pointer.anchor}")
+    control = execution.store.get_run_control(
+        run_id=child.control.target,
+        index=child.control.index,
+    )
+    if control is None or not isinstance(control.payload, RunControlPayload):
+        raise RuntimeError(f"child run control not found: {child.id}")
+    output_type = (
+        record.type
+        if record is not None
+        else f"{result.type_name or 'Json'}[]"
+        if result.shape == "list"
+        else result.type_name or "Json"
+    )
+    encoded = local_to_protocol_data(
+        RecordLocal.typed(
+            output_type,
+            result.value,
+            dim=1 if result.shape == "list" else 0,
+        )
+    )["value"]
+    return ToolResultPart(
+        tool_call_id=call.tool_call_id,
+        call_id=call.call_id,
+        tool_name=call.name,
+        tool_family=call.name,
+        output={
+            "run_id": child.id,
+            "runnable": control.payload.runnable,
+            "output_type": output_type,
+            "output": encoded,
+        },
+    )
+
+
+def _run_call_inputs(state: _AgicState, call: ToolCall) -> tuple[Pointer, ...]:
+    source = state.tool_call_sources.get(call.tool_call_id)
+    if source is not None:
+        return (
+            Pointer.step(
+                StepPath(state.prepared.run.run_id, (source[0],)),
+                source[1],
+            ),
+        )
+    if state.last_step is not None:
+        return (
+            Pointer.step(
+                StepPath(state.prepared.run.run_id, (state.last_step,)),
+            ),
+        )
+    return state.initial_inputs
 
 
 def _append_canceled_tool_results(

@@ -36,7 +36,15 @@ _RELEVANT_CHANGES = {Change.added, Change.modified, Change.deleted}
 class _CheckRequest:
     requested: bool
     force: bool
-    future: asyncio.Future[AgentState]
+    future: asyncio.Future[StateRefresh]
+
+
+@dataclass(frozen=True, slots=True)
+class StateRefresh:
+    """One completed watcher check and its exact last-valid result."""
+
+    state: AgentState
+    diagnostics: tuple[StateDiagnostic, ...] = ()
 
 
 class StateWatcher:
@@ -95,6 +103,11 @@ class StateWatcher:
     async def refresh(self, *, force: bool = False) -> AgentState:
         """Request one serialized check and wait until that check completes."""
 
+        return (await self._request_check(requested=True, force=force)).state
+
+    async def refresh_result(self, *, force: bool = False) -> StateRefresh:
+        """Return one serialized check with diagnostics from that exact check."""
+
         return await self._request_check(requested=True, force=force)
 
     async def _request_check(
@@ -102,7 +115,7 @@ class StateWatcher:
         *,
         requested: bool,
         force: bool = False,
-    ) -> AgentState:
+    ) -> StateRefresh:
         loop = asyncio.get_running_loop()
         task = self._check_task
         if task is not None and not task.done() and task.get_loop() is not loop:
@@ -156,7 +169,7 @@ class StateWatcher:
         *,
         requested: bool,
         force: bool = False,
-    ) -> AgentState:
+    ) -> StateRefresh:
         """Run the sole candidate check and publication path."""
 
         try:
@@ -170,12 +183,12 @@ class StateWatcher:
                 "watch.rejected agent=%s diagnostics=1",
                 self.layout.name,
             )
-            return self._state
+            return StateRefresh(self._state, self._diagnostics)
         if not requested and not self._needs_check(
             root_source=root_source,
             home_source=home_source,
         ):
-            return self.current()
+            return StateRefresh(self.current(), self._diagnostics)
         try:
             candidate = await asyncio.to_thread(
                 prepare_agent_state,
@@ -192,7 +205,7 @@ class StateWatcher:
                 self.layout.name,
                 len(exc.diagnostics),
             )
-            return self._state
+            return StateRefresh(self._state, self._diagnostics)
         except Exception as exc:
             self._record_checked_candidate(root_source, home_source)
             if self._state is None:
@@ -202,7 +215,7 @@ class StateWatcher:
                 "watch.rejected agent=%s diagnostics=1",
                 self.layout.name,
             )
-            return self._state
+            return StateRefresh(self._state, self._diagnostics)
         self._state = candidate
         self._checked_root_source = load_layer_source(
             self.layout,
@@ -219,7 +232,7 @@ class StateWatcher:
             candidate.home_revision,
         )
         self._diagnostics = ()
-        return self._state
+        return StateRefresh(self._state)
 
     async def updates(
         self,
@@ -262,7 +275,7 @@ class StateWatcher:
                 if changes and not paths:
                     continue
                 previous = self.current().revision
-                state = await self._request_check(requested=False)
+                state = (await self._request_check(requested=False)).state
                 if state.revision != previous:
                     yield state
         finally:
@@ -346,6 +359,6 @@ def _candidate_diagnostic(exc: Exception) -> StateDiagnostic:
     )
 
 
-def _consume_future_exception(future: asyncio.Future[AgentState]) -> None:
+def _consume_future_exception(future: asyncio.Future[StateRefresh]) -> None:
     if not future.cancelled():
         future.exception()

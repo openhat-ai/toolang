@@ -10,6 +10,10 @@ import time
 import pytest
 
 from toolang.common.layout import AgentLayout
+from toolang.execution.runnables import (
+    resolve_bound_runnable,
+    resolve_state_runnable,
+)
 from toolang.state import state as cap_state
 from toolang.state.cache import (
     _agent_check_lock,
@@ -182,7 +186,7 @@ def test_flow_module_keeps_inline_caps_without_agent_program(tmp_path: Path) -> 
 
     state = prepare_agent_state(_layout(toolang_root))
 
-    cap = state.module("flow_report").here_caps[0]
+    cap = state.module("_flow_report").here_caps[0]
     assert cap.name == "style"
     assert cap.read_content() == "Flow style."
     assert not (home / "agent.too").exists()
@@ -591,7 +595,7 @@ def test_prepare_discovers_independent_flow_module_exports(tmp_path: Path) -> No
         ("agic", "default"),
         ("flow", "research"),
     ]
-    module = state.module("flow_research")
+    module = state.module("_flow_research")
     assert module.authored_path == "flows/research.too"
     assert module.export is not None
     assert module.export.local_name == "main"
@@ -609,6 +613,12 @@ def test_unnamed_flow_export_renames_with_its_file(tmp_path: Path) -> None:
     source = flows / "research.too"
     source.write_text("flow:\n  pass\n", encoding="utf-8")
     first = prepare_agent_state(_layout(toolang_root))
+
+    public = resolve_state_runnable(first, "research", kind="flow")
+    local = resolve_bound_runnable(first, "_flow_research", "flow:research")
+    assert public.ref == local.ref == "flow:research"
+    assert public.qualified == local.qualified == "_flow_research$flow:research"
+    assert public.executable.name == local.executable.name == "main"
 
     source.rename(flows / "report.too")
     second = prepare_agent_state(_layout(toolang_root))
@@ -727,16 +737,16 @@ def test_module_here_caps_are_isolated_and_reload_from_cache(tmp_path: Path) -> 
 
     agent_cap = next(item for item in state.caps_for("agent") if item.name == "style")
     flow_cap = next(
-        item for item in state.caps_for("flow_research") if item.name == "style"
+        item for item in state.caps_for("_flow_research") if item.name == "style"
     )
     assert agent_cap.read_content() == "Agent style."
     assert flow_cap.read_content() == "Flow style."
     assert agent_cap.path != flow_cap.path
-    assert all(item.name != "only_agent" for item in state.caps_for("flow_research"))
+    assert all(item.name != "only_agent" for item in state.caps_for("_flow_research"))
 
     flow_path.write_text("invalid", encoding="utf-8")
     loaded = load_home_layer(_layout(toolang_root), state.home_revision)
-    loaded_flow = next(item for item in loaded.modules if item.name == "flow_research")
+    loaded_flow = next(item for item in loaded.modules if item.name == "_flow_research")
     assert loaded_flow.program.find_flow("main") is not None
 
 
@@ -767,8 +777,8 @@ def test_flow_modules_can_reference_the_same_cap(
 
     state = prepare_agent_state(_layout(toolang_root))
 
-    one = state.module("flow_one").here_caps[0]
-    two = state.module("flow_two").here_caps[0]
+    one = state.module("_flow_one").here_caps[0]
+    two = state.module("_flow_two").here_caps[0]
     assert one.ref == two.ref
     assert one.path != two.path
     assert one.read_content() == "Review carefully."

@@ -414,6 +414,9 @@ def test_parallel_steps_record_the_state_on_their_boundary_side(
 
             async def wait_for_second_call() -> None:
                 while len(harness.adapter.invocations) < 2:
+                    if handle.task.done():
+                        root = await handle
+                        raise AssertionError(root.error)
                     await asyncio.sleep(0)
 
             await asyncio.wait_for(wait_for_second_call(), timeout=1)
@@ -428,7 +431,10 @@ def test_parallel_steps_record_the_state_on_their_boundary_side(
                 if run.parent is not None
             ]
             assert len(children) == 2
-            assert {child.state for child in children} == {ControlRef(root.id, 0)}
+            assert {child.state for child in children} == {
+                ControlRef(root.id, 0),
+                ControlRef(root.id, control.index),
+            }
             child_steps = [
                 step
                 for child in children
