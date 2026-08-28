@@ -64,6 +64,8 @@ applies, raise the ambiguity and ask the human before proceeding.
   touchpoints needed to execute the work.
 - Use semantic commit messages and PR titles; open ready PRs by default.
 - Use the GitHub CLI (`gh`) for GitHub operations; never use the GitHub App.
+- Always create or reuse a dedicated Git worktree for repository changes; never
+  create a work branch directly in the primary or local checkout.
 - Before final handoff, fetch and rebase PR branches onto the latest
   `origin/main`, rerun verification, and push rebased history with
   `--force-with-lease`.
