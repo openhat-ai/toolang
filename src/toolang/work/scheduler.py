@@ -365,7 +365,7 @@ class JobScheduler:
     def _reconcile(self, authored: tuple[Job, ...]) -> None:
         assert self._store is not None
         state = self.get_agent_state()
-        jobs = merge_jobs(authored, program_jobs(state.program))
+        jobs = merge_jobs(authored, program_jobs(state.modules["agent"]))
         records = self._store.reconcile(jobs=jobs)
         self._jobs = jobs
         self._state_revision = state.revision
@@ -474,8 +474,8 @@ class JobScheduler:
         state = self.get_agent_state()
         runnable = (
             job.kind
-            if state.program.find_agic(job.kind) is not None
-            or state.program.find_flow(job.kind) is not None
+            if state.modules["agent"].find_agic(job.kind) is not None
+            or state.modules["agent"].find_flow(job.kind) is not None
             else "default"
         )
         commands, input = parse_call(job.body)

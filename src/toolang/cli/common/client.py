@@ -104,7 +104,7 @@ class RuntimeClient:
     def list_models(self) -> Mapping[str, Any]:
         return self.get("/api/v1/models")
 
-    def list_executables(self, kind: str) -> Mapping[str, Any]:
+    def list_runnables(self, kind: str) -> Mapping[str, Any]:
         return self.get(f"/api/v1/{kind}s")
 
     def _request(self, path: str, payload: Mapping[str, object]) -> Request:

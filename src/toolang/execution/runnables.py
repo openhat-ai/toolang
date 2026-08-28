@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 from typing import TypeAlias, cast
 
@@ -10,16 +9,14 @@ from toolang.base.errors import ToolangError
 from toolang.lang.ast import (
     AgicDecl,
     FlowDecl,
-    Parameter,
     Program,
-    Span,
     StructDecl,
 )
 from toolang.state.state import (
     AgentState,
-    Module,
     PublicRunnable,
-    state_program_module,
+    effective_agics,
+    state_program,
 )
 from toolang.state.types import RunnableKind
 
@@ -44,42 +41,6 @@ _BUILTIN_TYPES = frozenset(
         "ToolResultPart",
     }
 )
-
-
-@dataclass(frozen=True, slots=True)
-class ResolvedRunnable:
-    """One runnable resolved with its owning program module and effective name."""
-
-    public: PublicRunnable
-    module: Module
-    runnable: Runnable
-
-    @property
-    def ref(self) -> str:
-        """Return the kind-qualified effective runnable reference."""
-
-        return f"{self.public.kind}:{self.public.name}"
-
-    @property
-    def qualified(self) -> str:
-        """Return the fully qualified module and runnable identity."""
-
-        return f"{self.module.name}${self.ref}"
-
-
-_RUNTIME_DEFAULT_AGIC = AgicDecl(
-    name="default",
-    input=Parameter(name="_", type_name="Part[]", span=Span(line=1)),
-    span=Span(line=1),
-)
-
-
-def effective_agics(program: Program) -> tuple[AgicDecl, ...]:
-    """Return authored agics plus the implicit runtime default when needed."""
-
-    if program.find_agic("default") is not None:
-        return program.agics
-    return (*program.agics, _RUNTIME_DEFAULT_AGIC)
 
 
 def resolve_runnable(
@@ -110,36 +71,24 @@ def resolve_state_runnable(
     name: str,
     *,
     kind: str | None = None,
-) -> ResolvedRunnable:
+) -> PublicRunnable:
     """Resolve one public runnable from immutable module-bearing state."""
 
     if not name or name != name.strip():
         raise ValueError("run spec requires a canonical runnable name")
-    catalog = getattr(state, "catalog", None)
-    if catalog is None:
-        module = state_program_module(state)
-        runnable = resolve_runnable(module.program, name, kind=kind)
-        public = PublicRunnable(
-            name,
-            cast(RunnableKind, runnable.kind),
-            module.name,
-            runnable.name,
+    index = getattr(state, "runnables", None)
+    if index is None:
+        runnable = resolve_runnable(state_program(state), name, kind=kind)
+        return PublicRunnable(
+            name=name,
+            kind=cast(RunnableKind, runnable.kind),
+            module="agent",
+            local_name=runnable.name,
         )
-        return ResolvedRunnable(
-            public=public,
-            module=module,
-            runnable=runnable,
-        )
-    public = catalog.get(name)
-    if public is None or (kind is not None and public.kind != kind):
+    entry = index.get(name)
+    if entry is None or (kind is not None and entry.kind != kind):
         raise ToolangError(f"Runnable not found: {name}")
-    module = state.module(public.module)
-    runnable = resolve_runnable(
-        module.program,
-        public.local_name,
-        kind=public.kind,
-    )
-    return ResolvedRunnable(public=public, module=module, runnable=runnable)
+    return cast(PublicRunnable, entry)
 
 
 def resolve_module_runnable(
@@ -148,52 +97,86 @@ def resolve_module_runnable(
     name: str,
     *,
     kind: str | None = None,
-) -> ResolvedRunnable:
+) -> PublicRunnable:
     """Resolve a module-local runnable and assign its effective identity."""
 
-    module = state_program_module(state, module_name)
-    runnable = resolve_runnable(module.program, name, kind=kind)
-    list_public = getattr(state, "public_runnables", None)
-    public_runnables = tuple(list_public()) if callable(list_public) else ()
-    public = next(
-        (
-            item
-            for item in public_runnables
-            if item.module == module.name
-            and item.local_name == runnable.name
-            and item.kind == runnable.kind
-        ),
-        PublicRunnable(
-            runnable.name,
-            cast(RunnableKind, runnable.kind),
-            module.name,
-            runnable.name,
-        ),
+    program = state_program(state, module_name)
+    resolve_indexed = getattr(state, "module_runnable", None)
+    if callable(resolve_indexed):
+        entry = resolve_indexed(
+            module_name,
+            name,
+            kind=kind,
+        )
+        if entry is not None:
+            public = next(
+                (
+                    candidate
+                    for candidate in state.runnables.values()
+                    if candidate.module == module_name
+                    and candidate.kind == entry.kind
+                    and candidate.local_name == entry.name
+                ),
+                None,
+            )
+            return public or PublicRunnable(
+                entry.name,
+                cast(RunnableKind, entry.kind),
+                module_name,
+                entry.name,
+            )
+        raise ToolangError(f"Runnable not found: {name}")
+    runnable = resolve_runnable(program, name, kind=kind)
+    return PublicRunnable(
+        name=runnable.name,
+        kind=cast(RunnableKind, runnable.kind),
+        module=module_name,
+        local_name=runnable.name,
     )
-    return ResolvedRunnable(public=public, module=module, runnable=runnable)
 
 
 def resolve_bound_runnable(
     state: AgentState,
     module_name: str,
     ref: str,
-) -> ResolvedRunnable:
+) -> PublicRunnable:
     """Resolve a stored effective ref back inside its bound module."""
 
     name, kind = parse_runnable_ref(ref)
-    module = state_program_module(state, module_name)
-    local_name = (
-        module.export.local_name
-        if module.export is not None
-        and module.export.public_name == name
-        and kind in {None, "flow"}
-        else name
-    )
+    public = getattr(state, "runnables", {}).get(name)
+    if (
+        public is not None
+        and public.module == module_name
+        and (kind is None or public.kind == kind)
+    ):
+        return cast(PublicRunnable, public)
     return resolve_module_runnable(
         state,
         module_name,
-        local_name,
+        name,
         kind=kind,
+    )
+
+
+def runnable_declaration(
+    state: AgentState,
+    entry: PublicRunnable,
+) -> Runnable:
+    """Return the Program declaration addressed by one runnable binding."""
+
+    if isinstance(state, AgentState):
+        declaration = state.module_runnable(
+            entry.module,
+            entry.local_name,
+            kind=entry.kind,
+        )
+        if declaration is None:  # pragma: no cover - State invariant
+            raise ValueError(f"Runnable declaration not found: {entry.qualified}")
+        return declaration
+    return resolve_runnable(
+        state_program(state, entry.module),
+        entry.local_name,
+        kind=entry.kind,
     )
 
 
@@ -218,7 +201,7 @@ def runnable_binding_defaults(
 
     if binding is None:
         if isinstance(program, AgentState):
-            fallback = program.catalog.get(fallback_agic)
+            fallback = program.runnables.get(fallback_agic)
             agic = (
                 fallback_agic
                 if fallback is not None and fallback.kind == "agic"
@@ -233,7 +216,10 @@ def runnable_binding_defaults(
         return agic, None
     name, kind = parse_runnable_ref(binding)
     runnable = (
-        resolve_state_runnable(program, name, kind=kind).runnable
+        runnable_declaration(
+            program,
+            resolve_state_runnable(program, name, kind=kind),
+        )
         if isinstance(program, AgentState)
         else resolve_runnable(program, name, kind=kind)
     )
@@ -246,12 +232,11 @@ def render_runnable_catalog(
     """Render a bounded deterministic catalog of public runnable hints."""
 
     entries = [
-        _runnable_catalog_entry(resolved)
-        for public in sorted(
-            state.public_runnables(),
+        _runnable_catalog_entry(state, entry)
+        for entry in sorted(
+            state.runnables.values(),
             key=lambda item: f"{item.kind}:{item.name}",
         )
-        for resolved in (resolve_state_runnable(state, public.name, kind=public.kind),)
     ]
     accepted: list[dict[str, object]] = []
     for entry in entries[:RUNNABLE_CATALOG_MAX_ENTRIES]:
@@ -307,11 +292,14 @@ def _catalog_document(
     }
 
 
-def runnable_input_contract(resolved: ResolvedRunnable) -> dict[str, object]:
+def runnable_input_contract(
+    state: AgentState,
+    resolved: PublicRunnable,
+) -> dict[str, object]:
     """Return the model-facing input contract for one resolved runnable."""
 
-    runnable = resolved.runnable
-    structs = {item.name: item for item in resolved.module.program.structs}
+    runnable = runnable_declaration(state, resolved)
+    structs = {item.name: item for item in state.modules[resolved.module].structs}
     signature_types = (
         *((runnable.input.type_name or "Part[]",) if runnable.input else ()),
         *(parameter.type_name or "Part[]" for parameter in runnable.params),
@@ -337,9 +325,12 @@ def runnable_input_contract(resolved: ResolvedRunnable) -> dict[str, object]:
     }
 
 
-def _runnable_catalog_entry(resolved: ResolvedRunnable) -> dict[str, object]:
-    runnable = resolved.runnable
-    structs = {item.name: item for item in resolved.module.program.structs}
+def _runnable_catalog_entry(
+    state: AgentState,
+    resolved: PublicRunnable,
+) -> dict[str, object]:
+    runnable = runnable_declaration(state, resolved)
+    structs = {item.name: item for item in state.modules[resolved.module].structs}
     signature_types = (
         *((runnable.input.type_name or "Part[]",) if runnable.input else ()),
         *(parameter.type_name or "Part[]" for parameter in runnable.params),
@@ -365,7 +356,7 @@ def _runnable_catalog_entry(resolved: ResolvedRunnable) -> dict[str, object]:
             }
             for parameter in runnable.params
         ],
-        "ref": f"{resolved.public.kind}:{resolved.public.name}",
+        "ref": f"{resolved.kind}:{resolved.name}",
         "structs": _reachable_structs(signature_types, structs=structs),
     }
 

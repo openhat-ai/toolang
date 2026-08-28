@@ -158,8 +158,8 @@ def project_run_start(
     origin: str,
     input: Message,
     root_run_id: str | None = None,
-    executable_kind: str = "agic",
-    executable_name: str | None = None,
+    runnable_kind: str = "agic",
+    runnable_name: str | None = None,
     call_kind: str = "top",
     metadata: Mapping[str, Any] | None = None,
     request_id: str | None = None,
@@ -202,9 +202,9 @@ def project_run_start(
         resources=AgentResources(),
         limits=RunLimits(),
         runnable=(
-            f"{executable_kind}:{executable_name}"
-            if executable_name is not None
-            else f"{executable_kind}:test"
+            f"{runnable_kind}:{runnable_name}"
+            if runnable_name is not None
+            else f"{runnable_kind}:test"
         ),
         model="test",
         locals=(Local.typed("Part[]", tuple(input.parts), "_", 0),),
@@ -222,9 +222,9 @@ def project_run_start(
             parent=parent_path,
             control=ControlRef(run_id, 0),
             runnable=(
-                f"{executable_kind}:{executable_name}"
-                if executable_name is not None
-                else f"{executable_kind}:test"
+                f"{runnable_kind}:{runnable_name}"
+                if runnable_name is not None
+                else f"{runnable_kind}:test"
             ),
             occurrence=_occurrence_from_context(run_context),
             started_at=started,

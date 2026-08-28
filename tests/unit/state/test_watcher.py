@@ -45,7 +45,9 @@ def test_timeout_check_recovers_change_before_watch_registration(
         changed = await anext(updates)
 
         assert changed.revision != initial.revision
-        assert changed.program.agics[0].messages[0].content == "Registered late."
+        assert (
+            changed.modules["agent"].agics[0].messages[0].content == "Registered late."
+        )
 
     asyncio.run(run())
 
@@ -325,7 +327,7 @@ def test_invalid_flow_candidate_retains_last_valid_state_until_repaired(
         repaired = await watcher.refresh()
 
         assert repaired.revision != initial.revision
-        assert "research" in repaired.catalog
+        assert "research" in repaired.runnables
         assert watcher.diagnostics() == ()
 
     asyncio.run(run())
@@ -370,4 +372,4 @@ def test_watcher_loads_an_older_persisted_state_after_publishing_a_new_one(
 
     assert watcher.current().revision == second.revision
     assert loaded.revision == first.revision
-    assert loaded.program.agics[0].messages[0].content == "First."
+    assert loaded.modules["agent"].agics[0].messages[0].content == "First."

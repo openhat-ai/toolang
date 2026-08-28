@@ -70,7 +70,7 @@ agic chat(_: Part[]) -> Part[]:
 
     try:
         assert session.list_models()["default"] == "test/scripted[test]"
-        assert session.list_executables("runnable")["default"] == "agic:chat"
+        assert session.list_runnables("runnable")["default"] == "agic:chat"
         thread_id = session.create_thread()
         session.run(
             thread_id,

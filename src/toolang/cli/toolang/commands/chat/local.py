@@ -123,7 +123,7 @@ class LocalChatSession:
             ],
         }
 
-    def list_executables(self, kind: str) -> Mapping[str, Any]:
+    def list_runnables(self, kind: str) -> Mapping[str, Any]:
         setup = self.setup_watcher.current()
         state = self._submit(self.state_watcher.refresh()).result()
         default_agic, default_flow = runnable_binding_defaults(
@@ -132,7 +132,7 @@ class LocalChatSession:
             fallback_agic="chat",
         )
         if kind == "agic":
-            names = [item.name for item in state.public_runnables("agic")]
+            names = [item.name for item in state.agics.values()]
             default = default_agic
             return {
                 "default": default,
@@ -141,16 +141,14 @@ class LocalChatSession:
         if kind == "flow":
             return {
                 "default": default_flow,
-                "items": [
-                    {"name": item.name} for item in state.public_runnables("flow")
-                ],
+                "items": [{"name": item.name} for item in state.flows.values()],
             }
         if kind == "runnable":
             return {
                 "default": setup.bindings.runnable or f"agic:{default_agic}",
                 "items": [
                     {"kind": item.kind, "name": item.name}
-                    for item in state.public_runnables()
+                    for item in state.runnables.values()
                 ],
             }
         raise ValueError(f"unknown runnable kind: {kind}")

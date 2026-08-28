@@ -20,7 +20,11 @@ from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
 
 from .policy import parse_policy_prefix, resolve_commands
-from .runnables import parse_runnable_ref, resolve_state_runnable
+from .runnables import (
+    parse_runnable_ref,
+    resolve_state_runnable,
+    runnable_declaration,
+)
 from .schemas import RerunRequest, RetryRequest, RunRequest
 from .types import RunOverride
 
@@ -124,8 +128,8 @@ def resolve_spec(
         runnable_name,
         kind=runnable_kind,
     )
-    runnable = resolved.runnable
-    program = resolved.module.program
+    runnable = runnable_declaration(state, resolved)
+    program = state.modules[resolved.module]
     if surface_named and surface_named_sources:
         raise ValueError("surface named inputs cannot be both bound and sourced")
     if input.named and (surface_named or surface_named_sources):
@@ -155,7 +159,7 @@ def resolve_spec(
         thread=thread,
         bindings=RunBindings(
             model=bindings.model,
-            runnable=f"{resolved.public.kind}:{resolved.public.name}",
+            runnable=f"{resolved.kind}:{resolved.name}",
         ),
         limits=limits,
         ceilings=ceilings,
@@ -199,12 +203,12 @@ def validate_commands(
         runnable_name,
         kind=runnable_kind,
     )
-    runnable = resolved.runnable
+    runnable = runnable_declaration(state, resolved)
     resources = resolve_agent_resources(
         setup,
         state,
         setup.ceiling,
-        module=resolved.module.name,
+        module=resolved.module,
     )
     for ceiling in ceilings:
         resources = apply_agent_ceiling(
@@ -212,7 +216,7 @@ def validate_commands(
             state,
             resources,
             ceiling,
-            module=resolved.module.name,
+            module=resolved.module,
         )
     resources = resolve_runnable_resources(
         snapshot_model_selection(setup, state),
@@ -220,7 +224,7 @@ def validate_commands(
         base=resources,
         setup=setup,
         state=state,
-        module=resolved.module.name,
+        module=resolved.module,
     )
     validate_model_binding(
         snapshot_model_selection(setup, state),
@@ -269,7 +273,7 @@ def _select_runnable_fallback(
 ) -> str:
     for candidate in candidates:
         name, kind = parse_runnable_ref(candidate)
-        entry = state.catalog.get(name)
+        entry = state.runnables.get(name)
         if entry is not None and (kind is None or entry.kind == kind):
             return candidate
     joined = ", ".join(candidates)

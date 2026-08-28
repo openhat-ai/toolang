@@ -40,7 +40,7 @@ class _Client:
     def list_models(self) -> Mapping[str, Any]:
         return {"default": None, "items": []}
 
-    def list_executables(self, kind: str) -> Mapping[str, Any]:
+    def list_runnables(self, kind: str) -> Mapping[str, Any]:
         del kind
         return {"default": None, "items": []}
 

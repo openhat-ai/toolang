@@ -35,7 +35,15 @@ from toolang.state.source import (
 )
 from ..common.immutable import freeze_mapping, mutable_data
 from ..common.progress import ProgressSink, emit_progress
-from ..lang.ast import CapDecl, Program, program_from_data, to_data
+from ..lang.ast import (
+    AgicDecl,
+    CapDecl,
+    FlowDecl,
+    Parameter,
+    Program,
+    Span,
+    to_data,
+)
 from toolang.common.selectors import (
     Selector,
     filter_value_matches,
@@ -54,7 +62,6 @@ from .types import (
     EntryKind,
     EntryShape,
     CapScope,
-    ProgramModuleKind,
     RunnableKind,
     CapForm,
     SourceOrigin,
@@ -325,154 +332,43 @@ class StateCap:
 
 
 @dataclass(frozen=True, slots=True)
-class ProgramModuleExport:
-    """The filename-bound public entry exported by one flow module."""
-
-    public_name: str
-    local_name: str
-
-    def to_data(self) -> dict[str, str]:
-        return {"public_name": self.public_name, "local_name": self.local_name}
-
-    @classmethod
-    def from_data(cls, data: Mapping[str, object]) -> ProgramModuleExport:
-        export = cls(
-            public_name=str(data["public_name"]),
-            local_name=str(data["local_name"]),
-        )
-        if not export.public_name or not export.local_name:
-            raise ValueError("program module export names must not be empty")
-        return export
-
-
-@dataclass(frozen=True, slots=True)
-class Module:
-    """One independently validated program fixed in a home State layer."""
-
-    name: str
-    kind: ProgramModuleKind
-    authored_path: str
-    materialized_path: str
-    digest: str
-    program: Program
-    export: ProgramModuleExport | None = None
-    here_caps: tuple[StateCap, ...] = ()
-
-    def __post_init__(self) -> None:
-        authored = Path(self.authored_path)
-        if self.kind == "agent":
-            if self.name != "agent" or authored.as_posix() != "agent.too":
-                raise ValueError("agent State module must be named agent.too")
-            if self.export is not None:
-                raise ValueError("agent State module cannot declare a module export")
-        else:
-            if self.name != flow_module_name(self.authored_path):
-                raise ValueError("flow State module name must match its source path")
-            if self.export is None:
-                raise ValueError("flow State module requires one export")
-            candidates = tuple(
-                flow
-                for flow in self.program.flows
-                if not flow.name_explicit or flow.name == authored.stem
-            )
-            if (
-                len(candidates) != 1
-                or self.export.public_name != authored.stem
-                or self.export.local_name != candidates[0].name
-            ):
-                raise ValueError("flow State module export does not match its program")
-        if self.materialized_path != f"files/{self.authored_path}":
-            raise ValueError(
-                "State module materialized path must match its source path"
-            )
-        _require_revision(self.digest, name="State module digest")
-        if any(cap.scope != "here" for cap in self.here_caps):
-            raise ValueError("State module caps must have here scope")
-        if tuple(sorted(self.here_caps, key=_entry_sort_key)) != self.here_caps:
-            raise ValueError("State module capabilities must be sorted")
-        if len({_entry_sort_key(cap) for cap in self.here_caps}) != len(self.here_caps):
-            raise ValueError("State module capabilities must be unique")
-        for cap in self.here_caps:
-            path = Path(cap.path)
-            if path.is_absolute():
-                continue
-            parts = path.parts[1:] if path.parts[:1] == ("files",) else path.parts
-            expected = (
-                "caps",
-                cap.source.form,
-                self.name,
-                cap.kind,
-            )
-            if parts[:4] != expected:
-                raise ValueError("State module cap path must include its module name")
-
-    def to_data(self) -> dict[str, object]:
-        return {
-            "name": self.name,
-            "kind": self.kind,
-            "authored_path": self.authored_path,
-            "materialized_path": self.materialized_path,
-            "digest": self.digest,
-            "program": to_data(self.program),
-            "export": self.export.to_data() if self.export is not None else None,
-            "here_caps": [
-                cap.to_data() for cap in sorted(self.here_caps, key=_entry_sort_key)
-            ],
-        }
-
-    @classmethod
-    def from_data(cls, data: Mapping[str, object]) -> Module:
-        raw_export = data.get("export")
-        if raw_export is not None and not isinstance(raw_export, Mapping):
-            raise TypeError("program module export must be an object")
-        raw_caps = data.get("here_caps", [])
-        if not isinstance(raw_caps, list):
-            raise TypeError("program module here_caps must be a list")
-        if any(not isinstance(raw, dict) for raw in raw_caps):
-            raise TypeError("program module here cap must be an object")
-        kind = str(data["kind"])
-        if kind not in {"agent", "flow"}:
-            raise ValueError(f"invalid program module kind: {kind!r}")
-        return cls(
-            name=str(data["name"]),
-            kind=cast(ProgramModuleKind, kind),
-            authored_path=str(data["authored_path"]),
-            materialized_path=str(data["materialized_path"]),
-            digest=str(data["digest"]),
-            program=program_from_data(data["program"]),
-            export=(
-                ProgramModuleExport.from_data(
-                    {str(key): value for key, value in raw_export.items()}
-                )
-                if raw_export is not None
-                else None
-            ),
-            here_caps=tuple(
-                StateCap.from_data(
-                    {
-                        str(key): value
-                        for key, value in cast(dict[object, object], raw).items()
-                    }
-                )
-                for raw in raw_caps
-            ),
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class PublicRunnable:
-    """One public runnable name bound to its owner module declaration."""
+    """One public runnable name bound to its Program declaration."""
 
     name: str
     kind: RunnableKind
     module: str
     local_name: str
 
+    @property
+    def ref(self) -> str:
+        return f"{self.kind}:{self.name}"
 
-def public_runnable_catalog(
-    modules: tuple[Module, ...],
+    @property
+    def qualified(self) -> str:
+        return f"{self.module}${self.ref}"
+
+
+_RUNTIME_DEFAULT_AGIC = AgicDecl(
+    name="default",
+    input=Parameter(name="_", type_name="Part[]", span=Span(line=1)),
+    span=Span(line=1),
+)
+
+
+def effective_agics(program: Program) -> tuple[AgicDecl, ...]:
+    """Return authored agics plus the implicit runtime default when needed."""
+
+    if program.find_agic("default") is not None:
+        return program.agics
+    return (*program.agics, _RUNTIME_DEFAULT_AGIC)
+
+
+def public_runnable_index(
+    modules: Mapping[str, Program],
+    module_sources: Mapping[str, str],
 ) -> dict[str, PublicRunnable]:
-    """Compose unique public runnable bindings from State modules."""
+    """Index unique public runnable bindings across State Programs."""
 
     result: dict[str, PublicRunnable] = {}
 
@@ -481,55 +377,112 @@ def public_runnable_catalog(
             raise ValueError(f"Public runnable name is not unique: {entry.name}")
         result[entry.name] = entry
 
-    agent = next((module for module in modules if module.kind == "agent"), None)
+    agent = modules.get("agent")
     if agent is None:
         raise ValueError("home State layer is missing the agent module")
-    for agic in agent.program.agics:
-        add(PublicRunnable(agic.name, "agic", agent.name, agic.name))
-    for flow in agent.program.flows:
-        add(PublicRunnable(flow.name, "flow", agent.name, flow.name))
-    if agent.program.find_agic("default") is None:
-        add(PublicRunnable("default", "agic", agent.name, "default"))
-    for module in modules:
-        if module.kind != "flow":
+    for agic in effective_agics(agent):
+        add(PublicRunnable(agic.name, "agic", "agent", agic.name))
+    for flow in agent.flows:
+        add(PublicRunnable(flow.name, "flow", "agent", flow.name))
+    for module, program in modules.items():
+        if module == "agent":
             continue
-        if module.export is None:
-            raise ValueError(
-                f"flow module has no public export: {module.authored_path}"
-            )
-        add(
-            PublicRunnable(
-                module.export.public_name,
-                "flow",
-                module.name,
-                module.export.local_name,
-            )
-        )
+        public_name, local_name = flow_export(module_sources[module], program)
+        add(PublicRunnable(public_name, "flow", module, local_name))
     return result
 
 
-def state_program_module(
+def module_runnable_index(
+    modules: Mapping[str, Program],
+) -> dict[str, AgicDecl | FlowDecl]:
+    """Index every runnable declaration by Program and local identity."""
+
+    result: dict[str, AgicDecl | FlowDecl] = {}
+    for module, program in modules.items():
+        for declaration in (*effective_agics(program), *program.flows):
+            result[_module_runnable_key(module, declaration.kind, declaration.name)] = (
+                declaration
+            )
+    return result
+
+
+def flow_export(source: str, program: Program) -> tuple[str, str]:
+    public_name = Path(source).stem
+    candidates = tuple(
+        flow
+        for flow in program.flows
+        if not flow.name_explicit or flow.name == public_name
+    )
+    if len(candidates) != 1:
+        raise ValueError(f"flow module export does not match its program: {source}")
+    return public_name, candidates[0].name
+
+
+def program_term_data(
+    *,
+    name: str,
+    source: str,
+    digest: str,
+    program: Program,
+    here_caps: tuple[StateCap, ...],
+) -> dict[str, object]:
+    """Serialize one source-bound Program term for the State layer document."""
+
+    public_name, local_name = (
+        (None, None) if name == "agent" else flow_export(source, program)
+    )
+    return {
+        "name": name,
+        "kind": "agent" if name == "agent" else "flow",
+        "authored_path": source,
+        "materialized_path": f"files/{source}",
+        "digest": digest,
+        "program": to_data(program),
+        "export": (
+            {"public_name": public_name, "local_name": local_name}
+            if public_name is not None
+            else None
+        ),
+        "here_caps": [cap.to_data() for cap in sorted(here_caps, key=_entry_sort_key)],
+    }
+
+
+def _module_runnable_key(module: str, kind: str, local_name: str) -> str:
+    return f"{module}${kind}:{local_name}"
+
+
+def state_program(
     state: object,
     name: str = "agent",
-) -> Module:
-    """Return a module while preserving legacy single-Program state fixtures."""
+) -> Program:
+    """Return one Program while preserving legacy single-Program fixtures."""
 
-    resolver = getattr(state, "module", None)
-    if callable(resolver):
-        return cast(Module, resolver(name))
+    modules = getattr(state, "modules", None)
+    if isinstance(modules, Mapping):
+        program = modules.get(name)
+        if isinstance(program, Program):
+            return program
+        raise ValueError(f"Program not found: {name}")
     if name != "agent":
-        raise ValueError(f"Program module not found: {name}")
+        raise ValueError(f"Program not found: {name}")
     program = getattr(state, "program", None)
     if not isinstance(program, Program):
         raise TypeError("agent state is missing its program")
-    return Module(
-        name="agent",
-        kind="agent",
-        authored_path="agent.too",
-        materialized_path="files/agent.too",
-        digest="0" * 64,
-        program=program,
-    )
+    return program
+
+
+def state_program_source(state: object, name: str = "agent") -> str:
+    """Return one Program source with legacy fixture compatibility."""
+
+    sources = getattr(state, "module_sources", None)
+    if isinstance(sources, Mapping):
+        source = sources.get(name)
+        if isinstance(source, str):
+            return source
+        raise ValueError(f"Program not found: {name}")
+    if name != "agent":
+        raise ValueError(f"Program not found: {name}")
+    return str(getattr(state, "program_source", "agent.too"))
 
 
 def state_module_caps(
@@ -546,7 +499,7 @@ def state_module_caps(
 
 @dataclass(frozen=True, slots=True)
 class AgentState:
-    """Program, modules, config, and capabilities fixed for one top-level run."""
+    """Effective State terms and aggregate indexes fixed for one top-level run."""
 
     revision: str
     root_revision: str
@@ -554,13 +507,21 @@ class AgentState:
     root_config: Mapping[str, object]
     home_config: Mapping[str, object]
     config: Mapping[str, object]
-    program_source: str
-    program: Program
-    caps: tuple[StateCap, ...]
-    modules: tuple[Module, ...] = ()
-    catalog: Mapping[str, PublicRunnable] = field(default_factory=dict)
+    caps: Mapping[str, StateCap]
+    modules: Mapping[str, Program]
+    module_sources: Mapping[str, str]
+    module_digests: Mapping[str, str]
+    module_caps: Mapping[str, tuple[StateCap, ...]]
     base_caps: tuple[StateCap, ...] | None = None
     revision_dir: Path | None = None
+    skills: Mapping[str, StateCap] = field(init=False, repr=False)
+    psyches: Mapping[str, StateCap] = field(init=False, repr=False)
+    services: Mapping[str, StateCap] = field(init=False, repr=False)
+    prompts: Mapping[str, StateCap] = field(init=False, repr=False)
+    agics: Mapping[str, PublicRunnable] = field(init=False, repr=False)
+    flows: Mapping[str, PublicRunnable] = field(init=False, repr=False)
+    runnables: Mapping[str, PublicRunnable] = field(init=False, repr=False)
+    module_runnables: Mapping[str, AgicDecl | FlowDecl] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         _require_revision(self.revision, name="Agent State revision")
@@ -576,67 +537,113 @@ class AgentState:
         object.__setattr__(self, "root_config", freeze_mapping(self.root_config))
         object.__setattr__(self, "home_config", freeze_mapping(self.home_config))
         object.__setattr__(self, "config", freeze_mapping(self.config))
-        modules = self.modules or (
-            Module(
-                name="agent",
-                kind="agent",
-                authored_path="agent.too",
-                materialized_path="files/agent.too",
-                digest="0" * 64,
-                program=self.program,
-            ),
-        )
-        if tuple(sorted(modules, key=lambda item: item.name)) != modules:
+        caps_index = dict(self.caps)
+        if tuple(sorted(caps_index)) != tuple(caps_index):
+            raise ValueError("Agent State caps must be sorted by identity")
+        for ref, cap in caps_index.items():
+            if ref != _cap_index_key(cap):
+                raise ValueError("Agent State cap index key does not match its value")
+        object.__setattr__(self, "caps", freeze_mapping(caps_index))
+        modules = dict(self.modules)
+        if not modules:
+            raise ValueError("Agent State requires program modules")
+        if tuple(sorted(modules)) != tuple(modules):
             raise ValueError("Agent State modules must be sorted by name")
-        if sum(module.kind == "agent" for module in modules) != 1:
+        if "agent" not in modules:
             raise ValueError("Agent State requires exactly one agent module")
-        agent_module = next(module for module in modules if module.kind == "agent")
-        if agent_module.program != self.program:
-            raise ValueError("Agent State program must match its agent module")
-        object.__setattr__(self, "modules", modules)
+        sources = dict(self.module_sources)
+        digests = dict(self.module_digests)
+        caps = dict(self.module_caps)
+        expected = set(modules)
+        if (
+            set(sources) != expected
+            or set(digests) != expected
+            or set(caps) != expected
+        ):
+            raise ValueError("Agent State Program indexes must have matching names")
+        for name, program in modules.items():
+            validate_program_term(
+                name=name,
+                source=sources[name],
+                digest=digests[name],
+                program=program,
+                here_caps=caps[name],
+            )
+        object.__setattr__(self, "modules", freeze_mapping(modules))
+        object.__setattr__(self, "module_sources", freeze_mapping(sources))
+        object.__setattr__(self, "module_digests", freeze_mapping(digests))
+        object.__setattr__(self, "module_caps", freeze_mapping(caps))
+        for kind in ("skill", "psyche", "service", "prompt"):
+            object.__setattr__(
+                self,
+                f"{kind}s" if kind != "psyche" else "psyches",
+                freeze_mapping(
+                    {cap.name: cap for cap in caps_index.values() if cap.kind == kind}
+                ),
+            )
+        public_runnables = public_runnable_index(modules, sources)
         object.__setattr__(
             self,
-            "catalog",
-            freeze_mapping(self.catalog or public_runnable_catalog(modules)),
+            "runnables",
+            freeze_mapping(public_runnables),
+        )
+        object.__setattr__(
+            self, "agics", _runnable_kind_index(public_runnables, "agic")
+        )
+        object.__setattr__(
+            self, "flows", _runnable_kind_index(public_runnables, "flow")
+        )
+        object.__setattr__(
+            self, "module_runnables", freeze_mapping(module_runnable_index(modules))
         )
 
-    def module(self, name: str) -> Module:
-        """Return one State module by stable name."""
+    def module_runnable(
+        self,
+        module: str,
+        local_name: str,
+        *,
+        kind: str | None = None,
+    ) -> AgicDecl | FlowDecl | None:
+        """Return one Program-local runnable declaration."""
 
-        module = next((item for item in self.modules if item.name == name), None)
-        if module is None:
-            raise ValueError(f"Program module not found: {name}")
-        return module
-
-    @property
-    def agent_module(self) -> Module:
-        return next(item for item in self.modules if item.kind == "agent")
+        matches = tuple(
+            entry
+            for candidate_kind in ((kind,) if kind is not None else ("agic", "flow"))
+            if (
+                entry := self.module_runnables.get(
+                    _module_runnable_key(module, candidate_kind, local_name)
+                )
+            )
+        )
+        if len(matches) > 1:  # pragma: no cover - Program namespace invariant
+            raise ValueError(f"Runnable name is not unique: {local_name}")
+        return matches[0] if matches else None
 
     def caps_for(self, module: str) -> tuple[StateCap, ...]:
         """Return effective root/home/here caps for one executing module."""
 
-        base = self.caps if self.base_caps is None else self.base_caps
-        return effective_caps(base, self.module(module).here_caps)
-
-    def public_runnables(
-        self,
-        kind: RunnableKind | None = None,
-    ) -> tuple[PublicRunnable, ...]:
-        return tuple(
-            entry
-            for entry in self.catalog.values()
-            if kind is None or entry.kind == kind
-        )
+        base = tuple(self.caps.values()) if self.base_caps is None else self.base_caps
+        here = self.module_caps.get(module)
+        if here is None:
+            raise ValueError(f"Program not found: {module}")
+        return effective_caps(base, here)
 
     def to_snapshot(self) -> dict[str, object]:
         return {
             "revision": self.revision,
             "root_revision": self.root_revision,
             "home_revision": self.home_revision,
-            "program_source": self.program_source,
-            "program": to_data(self.program),
-            "caps": [cap.path for cap in self.caps],
-            "modules": [module.to_data() for module in self.modules],
+            "caps": [cap.path for cap in self.caps.values()],
+            "modules": [
+                program_term_data(
+                    name=name,
+                    source=self.module_sources[name],
+                    digest=self.module_digests[name],
+                    program=program,
+                    here_caps=self.module_caps[name],
+                )
+                for name, program in self.modules.items()
+            ],
         }
 
 
@@ -646,24 +653,18 @@ def compose_agent_state(
     home_revision: str,
     root_config: Mapping[str, object],
     home_config: Mapping[str, object],
-    program_source: str,
-    program: Program,
     root_caps: tuple[StateCap, ...],
     home_caps: tuple[StateCap, ...],
-    modules: tuple[Module, ...] = (),
+    modules: Mapping[str, Program],
+    module_sources: Mapping[str, str],
+    module_digests: Mapping[str, str],
+    module_caps: Mapping[str, tuple[StateCap, ...]],
     revision_dir: Path | None = None,
 ) -> AgentState:
     """Compose runtime State from one exact root/home layer pair."""
 
     effective_base = effective_caps(root_caps, home_caps)
-    agent_here = (
-        next(
-            (module.here_caps for module in modules if module.kind == "agent"),
-            (),
-        )
-        if modules
-        else ()
-    )
+    agent_here = module_caps.get("agent", ())
     return AgentState(
         revision=agent_state_revision(root_revision, home_revision),
         root_revision=root_revision,
@@ -671,14 +672,67 @@ def compose_agent_state(
         root_config=root_config,
         home_config=home_config,
         config=_merge_config(root_config, home_config),
-        program_source=program_source,
-        program=program,
-        caps=effective_caps(effective_base, agent_here),
+        caps=cap_index(effective_caps(effective_base, agent_here)),
         modules=modules,
-        catalog=public_runnable_catalog(modules) if modules else {},
+        module_sources=module_sources,
+        module_digests=module_digests,
+        module_caps=module_caps,
         base_caps=effective_base,
         revision_dir=revision_dir,
     )
+
+
+def _runnable_kind_index(
+    runnables: Mapping[str, PublicRunnable],
+    kind: RunnableKind,
+) -> Mapping[str, PublicRunnable]:
+    return freeze_mapping(
+        {name: entry for name, entry in runnables.items() if entry.kind == kind}
+    )
+
+
+def cap_index(caps: tuple[StateCap, ...]) -> Mapping[str, StateCap]:
+    """Index effective capabilities by their kind-qualified public identity."""
+
+    result = {_cap_index_key(cap): cap for cap in caps}
+    if len(result) != len(caps):
+        raise ValueError("Agent State capabilities must have unique identities")
+    return freeze_mapping(result)
+
+
+def _cap_index_key(cap: StateCap) -> str:
+    return f"{cap.kind}:{cap.name}"
+
+
+def validate_program_term(
+    *,
+    name: str,
+    source: str,
+    digest: str,
+    program: Program,
+    here_caps: tuple[StateCap, ...],
+) -> None:
+    if name == "agent":
+        if source != "agent.too":
+            raise ValueError("agent Program must use agent.too")
+    elif name != flow_module_name(source):
+        raise ValueError("flow Program name must match its source path")
+    _require_revision(digest, name="State Program digest")
+    if any(cap.scope != "here" for cap in here_caps):
+        raise ValueError("State Program caps must have here scope")
+    if tuple(sorted(here_caps, key=_entry_sort_key)) != here_caps:
+        raise ValueError("State Program capabilities must be sorted")
+    if len({_entry_sort_key(cap) for cap in here_caps}) != len(here_caps):
+        raise ValueError("State Program capabilities must be unique")
+    if name != "agent":
+        flow_export(source, program)
+    for cap in here_caps:
+        path = Path(cap.path)
+        if path.is_absolute():
+            continue
+        parts = path.parts[1:] if path.parts[:1] == ("files",) else path.parts
+        if parts[:4] != ("caps", cap.source.form, name, cap.kind):
+            raise ValueError("State Program cap path must include its module name")
 
 
 def _merge_config(

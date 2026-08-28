@@ -26,9 +26,11 @@ def _state(source: str) -> AgentState:
         root_config={},
         home_config={},
         config={},
-        program_source="agents/alice/agent.too",
-        program=Program.from_source(source),
-        caps=(),
+        caps={},
+        modules={"agent": Program.from_source(source)},
+        module_sources={"agent": "agent.too"},
+        module_digests={"agent": home},
+        module_caps={"agent": ()},
     )
 
 

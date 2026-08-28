@@ -48,7 +48,7 @@ class _Client:
             raise self.error
         return self.models
 
-    def list_executables(self, kind: str) -> Mapping[str, Any]:
+    def list_runnables(self, kind: str) -> Mapping[str, Any]:
         if self.error is not None:
             raise self.error
         return self.runnables[kind]
@@ -161,7 +161,7 @@ def test_quick_model_lists_models_without_changing_settings() -> None:
     assert app.status_refreshes == 0
 
 
-def test_quick_executable_lists_without_changing_settings() -> None:
+def test_quick_runnable_lists_without_changing_settings() -> None:
     app = _App()
     app.selects["flow"] = "review"
 

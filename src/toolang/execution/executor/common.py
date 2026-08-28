@@ -39,7 +39,7 @@ from toolang.lang.ast import (
 )
 from toolang.lang.input import RunnableInput
 from toolang.lang.types import Array
-from toolang.state.state import AgentState, state_program_module
+from toolang.state.state import AgentState, state_program
 from toolang.setup import AgentSetup
 
 from ..events import RunEvent, StepBegin, StepEnd
@@ -432,7 +432,7 @@ def statement_input_refs(
         if child_name is not None:
             try:
                 child = resolve_runnable(
-                    state_program_module(binding.state, binding.module).program,
+                    state_program(binding.state, binding.module),
                     child_name,
                 )
             except (ToolangError, ValueError):
@@ -586,8 +586,7 @@ def number(value: Any, *, operation: str) -> float:
 
 def program_structs(binding: BoundRun) -> dict[str, StructDecl]:
     return {
-        item.name: item
-        for item in state_program_module(binding.state, binding.module).program.structs
+        item.name: item for item in state_program(binding.state, binding.module).structs
     }
 
 

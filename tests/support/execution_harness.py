@@ -26,7 +26,11 @@ from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.executor import RunExecutor, RunSpec
-from toolang.execution.runnables import parse_runnable_ref, resolve_state_runnable
+from toolang.execution.runnables import (
+    parse_runnable_ref,
+    resolve_state_runnable,
+    runnable_declaration,
+)
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.lang import Program
@@ -311,9 +315,11 @@ class ExecutionHarness:
             root_config={},
             home_config={},
             config={},
-            program_source="agents/alice/agent.too",
-            program=program,
-            caps=(),
+            caps={},
+            modules={"agent": program},
+            module_sources={"agent": "agent.too"},
+            module_digests={"agent": home_revision},
+            module_caps={"agent": ()},
         )
         provider = FakeModels(streaming=streaming)
         adapter = ScriptedModelAdapter(responses)
@@ -379,7 +385,7 @@ class ExecutionHarness:
             runnable_name,
             kind=runnable_kind,
         )
-        declaration = resolved.runnable
+        declaration = runnable_declaration(self.state, resolved)
         return RunSpec(
             setup=self.setup,
             state=self.state,
@@ -391,7 +397,10 @@ class ExecutionHarness:
                 declaration,
                 primary=primary,
                 named=named,
-                structs={item.name: item for item in resolved.module.program.structs},
+                structs={
+                    item.name: item
+                    for item in self.state.modules[resolved.module].structs
+                },
             ),
         )
 

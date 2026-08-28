@@ -641,7 +641,7 @@ def _state_cap_entries(
 ) -> tuple[StateCap, ...]:
     return tuple(
         cap
-        for cap in state.caps
+        for cap in state.caps.values()
         if cap.kind in kinds and (scope == "all" or cap.scope == scope)
     )
 

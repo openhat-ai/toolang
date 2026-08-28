@@ -31,7 +31,12 @@ from toolang.lang.ast import (
 from toolang.lang.input import resolve_input_parts
 from toolang.plugin.models.resolution import resolve_model
 from toolang.state import state as cap_store
-from toolang.state.state import AgentState, StateCap, state_program_module
+from toolang.state.state import (
+    AgentState,
+    StateCap,
+    state_program,
+    state_program_source,
+)
 
 from . import prompts
 from .common import BoundRun, value_parts, value_text
@@ -93,8 +98,7 @@ def prepare_agic(
     )
     tools = dict(resource_tools(run.setup, resources))
     caps = resource_caps(run.state, resources, module=run.module)
-    module = state_program_module(run.state, run.module)
-    program = module.program
+    program = state_program(run.state, run.module)
     psyches = tuple(item for item in caps if item.kind == "psyche")
     skills = tuple(item for item in caps if item.kind == "skill")
     services = tuple(item for item in caps if item.kind == "service")
@@ -342,10 +346,10 @@ def _runtime_context(
         "run": {
             "id": run.run_id,
             "thread_id": run.thread,
-            "program_source": state_program_module(
+            "program_source": state_program_source(
                 run.state,
                 run.module,
-            ).authored_path,
+            ),
         },
         "agent": {
             "name": run.setup.layout.name,

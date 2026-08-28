@@ -231,8 +231,8 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
         assert session.run_client is not None
         assert session.run_client.endpoint == "http://runtime.test:7001"
         assert session.list_models()["default"] == "test/model"
-        assert session.list_executables("agic")["default"] == "chat"
-        assert session.list_executables("runnable") == {
+        assert session.list_runnables("agic")["default"] == "chat"
+        assert session.list_runnables("runnable") == {
             "default": "agic:chat",
             "items": [{"kind": "agic", "name": "chat"}],
         }

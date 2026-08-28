@@ -16,7 +16,7 @@ from toolang.lang.ast import AgicDecl, RunStmt, Span
 from toolang.lang.errors import ToolangOutputError
 from toolang.lang.input import coerce_output
 from toolang.state.state import AgentState
-from toolang.state.state import state_program_module
+from toolang.state.state import state_program
 
 from ...events import StepBegin
 from ...records import RunControlPayload, RunControlRecord
@@ -148,7 +148,7 @@ async def execute(
                 run=replace(cached.run, state=state, state_ref=ref),
             )
         candidate = resolve_runnable(
-            state_program_module(state, binding.module).program,
+            state_program(state, binding.module),
             agic.name,
             kind="agic",
         )

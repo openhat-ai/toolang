@@ -692,7 +692,7 @@ def test_format_source_preserves_header_comments() -> None:
     source = """struct Result: # result
   value:Text
 
-agic review(_:Part[]):   # executable
+agic review(_:Part[]):   # runnable
   pass
 """
 
@@ -700,7 +700,7 @@ agic review(_:Part[]):   # executable
         "struct Result:  # result\n"
         "  value: Text\n"
         "\n"
-        "agic review(_: Part[]):  # executable\n"
+        "agic review(_: Part[]):  # runnable\n"
         "  pass\n"
     )
 

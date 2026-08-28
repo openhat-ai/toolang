@@ -9,9 +9,9 @@ intentional breaking changes from 0.2.7.
 
 ## Highlights
 
-- Define model/tool executables as `agic` declarations and deterministic
+- Define model/tool runnables as `agic` declarations and deterministic
   orchestration as `flow` declarations.
-- Run a public executable directly with `toolang SCRIPT RUNNABLE`.
+- Run a public runnable directly with `toolang SCRIPT RUNNABLE`.
 - Use one durable execution model across scripts, chats, tasks, and chores.
 - Inspect threads, recursive run trees, steps, controls, outputs, and failures
   without requiring a running HTTP server.
@@ -35,11 +35,11 @@ agic review(_: Part[], focus?: Text):
   Review {{_}} with emphasis on {{focus}}.
 ```
 
-Executable parameters are named `params` in declarations and supplied as
+Runnable parameters are named `params` in declarations and supplied as
 `args` at runtime. `Part` and `Part[]` are the language-level percept types;
 `Message` is reserved for model-call and chat protocol values.
 
-Flows share the executable namespace with agics:
+Flows share the runnable namespace with agics:
 
 ```too
 flow review_twice(_: Part[]):

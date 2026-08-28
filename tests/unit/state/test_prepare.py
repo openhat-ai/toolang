@@ -13,6 +13,7 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.runnables import (
     resolve_bound_runnable,
     resolve_state_runnable,
+    runnable_declaration,
 )
 from toolang.state import state as cap_state
 from toolang.state.cache import (
@@ -127,7 +128,7 @@ def test_prepare_root_home_snapshot_root_and_home(tmp_path: Path) -> None:
         / "pdf"
         / "notes.txt"
     ).read_text(encoding="utf-8") == "asset\n"
-    assert home_layer.program.span.line == 1
+    assert home_layer.modules["agent"].span.line == 1
     assert root.config == {"models": {"default": "root"}}
     assert home_layer.config == {"models": {"default": "home"}}
     assert (
@@ -137,15 +138,19 @@ def test_prepare_root_home_snapshot_root_and_home(tmp_path: Path) -> None:
     state = compose_layer_state(
         root,
         home_layer,
-        program_source="agents/alice/agent.too",
     )
     assert state.root_revision == root.revision
     assert state.home_revision == home_layer.revision
     assert len(state.revision) == 64
-    assert [(entry.kind, entry.name) for entry in state.caps] == [
+    assert [(entry.kind, entry.name) for entry in state.caps.values()] == [
         ("prompt", "review"),
         ("skill", "pdf"),
     ]
+    assert tuple(state.caps) == ("prompt:review", "skill:pdf")
+    assert tuple(state.prompts) == ("review",)
+    assert tuple(state.skills) == ("pdf",)
+    assert not state.psyches
+    assert not state.services
 
 
 def test_prepare_does_not_create_missing_agent_source(tmp_path: Path) -> None:
@@ -170,7 +175,7 @@ def test_prepare_does_not_create_missing_agent_program(tmp_path: Path) -> None:
         _layout(toolang_root),
     )
 
-    assert state.program.span.line == 1
+    assert state.modules["agent"].span.line == 1
     assert not (home / "agent.too").exists()
 
 
@@ -186,7 +191,7 @@ def test_flow_module_keeps_inline_caps_without_agent_program(tmp_path: Path) -> 
 
     state = prepare_agent_state(_layout(toolang_root))
 
-    cap = state.module("_flow_report").here_caps[0]
+    cap = state.module_caps["_flow_report"][0]
     assert cap.name == "style"
     assert cap.read_content() == "Flow style."
     assert not (home / "agent.too").exists()
@@ -253,7 +258,7 @@ def test_prepare_materializes_inline_caps_as_independent_files(
     )
 
     assert len(state.caps) == 1
-    entry = state.caps[0]
+    entry = state.caps["prompt:summarize"]
     home_revision_dir = layer_revision_dir(
         _layout(toolang_root),
         "home",
@@ -591,17 +596,27 @@ def test_prepare_discovers_independent_flow_module_exports(tmp_path: Path) -> No
 
     state = prepare_agent_state(_layout(toolang_root))
 
-    assert [(item.kind, item.name) for item in state.public_runnables()] == [
+    assert [(item.kind, item.name) for item in state.runnables.values()] == [
         ("agic", "default"),
         ("flow", "research"),
     ]
-    module = state.module("_flow_research")
-    assert module.authored_path == "flows/research.too"
-    assert module.export is not None
-    assert module.export.local_name == "main"
-    assert module.program.find_agic("helper") is not None
-    assert "helper" not in state.catalog
-    assert Path(module.materialized_path).as_posix() == "files/flows/research.too"
+    assert tuple(state.agics) == ("default",)
+    assert tuple(state.flows) == ("research",)
+    program = state.modules["_flow_research"]
+    assert not hasattr(state, "program")
+    assert tuple(state.modules) == ("_flow_research", "agent")
+    assert state.module_sources["_flow_research"] == "flows/research.too"
+    assert program.find_agic("helper") is not None
+    assert "helper" not in state.runnables
+    helper = state.module_runnable("_flow_research", "helper", kind="agic")
+    assert helper is not None
+    assert helper is program.find_agic("helper")
+    exported = state.runnables["research"]
+    assert exported.module == "_flow_research"
+    assert runnable_declaration(state, exported) is program.find_flow("main")
+    default = state.runnables["default"]
+    assert default.module == "agent"
+    assert default.local_name == "default"
 
 
 def test_unnamed_flow_export_renames_with_its_file(tmp_path: Path) -> None:
@@ -618,14 +633,18 @@ def test_unnamed_flow_export_renames_with_its_file(tmp_path: Path) -> None:
     local = resolve_bound_runnable(first, "_flow_research", "flow:research")
     assert public.ref == local.ref == "flow:research"
     assert public.qualified == local.qualified == "_flow_research$flow:research"
-    assert public.runnable.name == local.runnable.name == "main"
+    assert (
+        runnable_declaration(first, public).name
+        == runnable_declaration(first, local).name
+        == "main"
+    )
 
     source.rename(flows / "report.too")
     second = prepare_agent_state(_layout(toolang_root))
 
-    assert "research" in first.catalog
-    assert "research" not in second.catalog
-    assert second.catalog["report"].local_name == "main"
+    assert "research" in first.runnables
+    assert "research" not in second.runnables
+    assert second.runnables["report"].local_name == "main"
     assert first.revision != second.revision
 
 
@@ -746,8 +765,7 @@ def test_module_here_caps_are_isolated_and_reload_from_cache(tmp_path: Path) -> 
 
     flow_path.write_text("invalid", encoding="utf-8")
     loaded = load_home_layer(_layout(toolang_root), state.home_revision)
-    loaded_flow = next(item for item in loaded.modules if item.name == "_flow_research")
-    assert loaded_flow.program.find_flow("main") is not None
+    assert loaded.modules["_flow_research"].find_flow("main") is not None
 
 
 def test_flow_modules_can_reference_the_same_cap(
@@ -777,8 +795,8 @@ def test_flow_modules_can_reference_the_same_cap(
 
     state = prepare_agent_state(_layout(toolang_root))
 
-    one = state.module("_flow_one").here_caps[0]
-    two = state.module("_flow_two").here_caps[0]
+    one = state.module_caps["_flow_one"][0]
+    two = state.module_caps["_flow_two"][0]
     assert one.ref == two.ref
     assert one.path != two.path
     assert one.read_content() == "Review carefully."

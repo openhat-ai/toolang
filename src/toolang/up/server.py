@@ -331,7 +331,7 @@ def _format_value(value: object | None) -> str:
 def _validate_file_agic(state: AgentState, *, enabled: bool) -> None:
     if not enabled:
         return
-    agic = state.program.find_agic("file")
+    agic = state.modules["agent"].find_agic("file")
     if agic is None:
         raise ValueError("file agic not found")
     if agic.input is None:
@@ -392,7 +392,14 @@ def _model_count(
 
 
 def _cap_count(state: AgentState, kind: str) -> int:
-    return sum(1 for entry in state.caps if entry.kind == kind)
+    return len(
+        {
+            "psyche": state.psyches,
+            "skill": state.skills,
+            "service": state.services,
+            "prompt": state.prompts,
+        }.get(kind, {})
+    )
 
 
 class _ToolangServer(uvicorn.Server):

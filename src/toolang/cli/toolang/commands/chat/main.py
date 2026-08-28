@@ -341,7 +341,7 @@ def _chat_handle_scripted_command(
             typer.echo(line)
         return True
     if command in {"agic", "flow", "runnable"}:
-        return _chat_handle_scripted_executable_command(
+        return _chat_handle_scripted_runnable_command(
             command,
             selector_payload,
             client=client,
@@ -361,14 +361,14 @@ def _chat_handle_scripted_command(
     return True
 
 
-def _chat_handle_scripted_executable_command(
+def _chat_handle_scripted_runnable_command(
     command: str,
     selector_payload: dict[str, object],
     *,
     client: ChatClient,
 ) -> bool:
     try:
-        payload = client.list_executables(command)
+        payload = client.list_runnables(command)
     except (click.ClickException, ToolangError, ValueError) as exc:
         message = exc.message if isinstance(exc, click.ClickException) else str(exc)
         typer.echo(chat_friendly_error(message))
@@ -382,7 +382,7 @@ def _chat_handle_scripted_executable_command(
     typer.echo(
         "available runnables" if command == "runnable" else f"available {command}s"
     )
-    for line in chat_slashes._chat_executable_list_lines(
+    for line in chat_slashes._chat_runnable_list_lines(
         payload,
         selected=selected,
         show_kind=command == "runnable",

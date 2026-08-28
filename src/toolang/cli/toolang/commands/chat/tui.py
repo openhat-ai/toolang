@@ -363,7 +363,7 @@ class ChatTuiApp:
         payload: Mapping[str, object] = {}
         if reference is None or ":" not in reference:
             try:
-                payload = self.client.list_executables("runnable")
+                payload = self.client.list_runnables("runnable")
             except (click.ClickException, ToolangError, ValueError):
                 pass
         if reference is None:

@@ -85,7 +85,7 @@ class _LiveExecution:
         thread = self.threads.create(prefix=ThreadPrefix.TERM)
         runnable_name, runnable_kind = parse_runnable_ref(runnable)
         declaration = resolve_runnable(
-            self.state.program,
+            self.state.modules["agent"],
             runnable_name,
             kind=runnable_kind,
         )
@@ -101,7 +101,8 @@ class _LiveExecution:
                         declaration,
                         primary=resolve_input_parts(marker),
                         structs={
-                            item.name: item for item in self.state.program.structs
+                            item.name: item
+                            for item in self.state.modules["agent"].structs
                         },
                     ),
                 )
