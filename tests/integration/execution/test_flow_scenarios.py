@@ -1793,6 +1793,37 @@ flow scattered(_: Text) -> Text[]:
     asyncio.run(scenario())
 
 
+def test_inline_scatter_requests_and_returns_an_array_result(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+flow scattered(_: Text) -> Text[]:
+  scatter 3 -> Text:
+    Return distinct pieces of {{_}}.
+""",
+        responses=[
+            ModelCallResult(message=Message.assistant('["a","b"]')),
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="scattered",
+                    primary=resolve_input_parts("split"),
+                )
+            )
+
+            assert root.status == "succeeded"
+            assert _output_value(harness, root.id) == ["a", "b"]
+            assert "type: Text[]" in harness.adapter.invocations[0].call.instructions
+
+    asyncio.run(scenario())
+
+
 def test_recursive_run_forwards_named_arguments_and_primary_local(
     tmp_path: Path,
 ) -> None:
