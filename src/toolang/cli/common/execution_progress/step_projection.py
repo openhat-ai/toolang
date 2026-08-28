@@ -12,8 +12,6 @@ from toolang.base.types.message import (
 from toolang.execution.events import StepBegin, StepEnd
 from toolang.execution.types import (
     CollectionStepNoted,
-    HandoffStepGiven,
-    HandoffStepNoted,
     LoopStepNoted,
     ToolStepGiven,
     ToolStepNoted,
@@ -56,11 +54,6 @@ def live_row(
     elif begin.kind == "run" and dynamic_run:
         runnable = one_line(getattr(begin.given, "runnable", "")) or "runnable"
         text = f"• Running {runnable}..."
-    elif begin.kind == "handoff":
-        requested = (
-            begin.given.requested if isinstance(begin.given, HandoffStepGiven) else None
-        )
-        text = f"• Handing off to {one_line(requested or 'runnable')}..."
     else:
         text = f"• running {begin.kind}"
     return ProgressRow(text, "active")
@@ -122,23 +115,6 @@ def trace_terminal_rows(
             return (ProgressRow(f"• Ran {runnable}", tone),)
         status = "Failed to run" if event.status == "failed" else "Canceled"
         rows = [ProgressRow(f"• {status} {runnable}", tone)]
-        if error:
-            rows.extend(ProgressRow(f"  {line}", tone) for line in _split_lines(error))
-        return tuple(rows)
-
-    if begin.kind == "handoff":
-        requested = (
-            begin.given.requested if isinstance(begin.given, HandoffStepGiven) else None
-        )
-        target = (
-            event.noted.runnable
-            if isinstance(event.noted, HandoffStepNoted)
-            else requested or "runnable"
-        )
-        if event.status == "succeeded":
-            return (ProgressRow(f"• Handed off to {one_line(target)}", tone),)
-        status = "Failed to hand off to" if event.status == "failed" else "Canceled"
-        rows = [ProgressRow(f"• {status} {one_line(target)}", tone)]
         if error:
             rows.extend(ProgressRow(f"  {line}", tone) for line in _split_lines(error))
         return tuple(rows)

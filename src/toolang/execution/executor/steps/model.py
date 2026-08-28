@@ -210,11 +210,11 @@ def _model_instructions(state: _AgicState, prepared: _AgicFrame) -> str:
 
 
 def _model_tools(prepared: _AgicFrame) -> tuple[ToolDefinition, ...]:
-    """Combine public tools and trusted actions only at the adapter boundary."""
+    """Combine public and inner runtime tools only at the adapter boundary."""
 
     definitions = {name: tool.definition() for name, tool in prepared.tools.items()}
     definitions.update(
-        {name: action.definition for name, action in prepared.actions.items()}
+        {name: tool.definition for name, tool in prepared.runtime_tools.items()}
     )
     return tuple(definitions[name] for name in sorted(definitions))
 

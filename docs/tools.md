@@ -18,8 +18,8 @@ Current built-in tools are:
 - `service`
 - `_me`
 
-`_too` is deliberately absent. Its `run`, `execute`, and `reload` names are
-executor-owned Model Call actions, not toolset plugins or selectable resources.
+`_too` is deliberately absent from plugin loading. It is the executor-owned
+inner runtime toolset, not a selectable tool resource.
 
 
 ## Filesystem
@@ -107,12 +107,17 @@ layout and validation rules as the CLI and cap API.
 
 Tools do not own the model loop.
 
-For tool-capable Agic Model Calls, the executor separately injects `_too__run`
-when `hands` is nonempty, `_too__execute` when `handoffs` is nonempty, and
-`_too__reload` when State refresh is available. These actions never appear in
-`AgentSetup.tools`, tool ceilings, public tool listings, or generic tool
-invocation. Their execution produces ordinary Run Steps, typed Handoff Steps,
-or reload controls rather than generic Tool Steps.
+For every ordinary tool-capable Agic Model Call, the executor separately
+injects `_too__run`, `_too__execute`, and `_too__reload`. `hands` and
+`handoffs` authorize runnable targets but do not select these definitions. An
+executor without State refresh still exposes reload and returns a correlated
+error if it is called. Statement-generated Flow evaluators, output-repair
+calls, and tool-disabled models receive no runtime tools.
+
+The definitions never appear in `AgentSetup.tools`, tool ceilings, public tool
+listings, or generic tool invocation. Run creates an ordinary Run Step, reload
+creates a reload control without a Step, and successful execute creates an
+applied execute control before replacing the active runnable without a Step.
 
 Toolang runtime owns:
 

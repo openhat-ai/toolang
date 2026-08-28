@@ -1,4 +1,4 @@
-"""Executor-owned model action definitions."""
+"""Executor-owned inner runtime tool definitions."""
 
 from __future__ import annotations
 
@@ -9,42 +9,32 @@ from toolang.base.types.tool import ToolDefinition
 from toolang.base.utils.tools import encode_tool_name
 
 TOOLSET_NAME = "_too"
-RELOAD_ACTION = "reload"
-RUN_ACTION = "run"
-EXECUTE_ACTION = "execute"
-RuntimeActionName = Literal["reload", "run", "execute"]
+RELOAD_TOOL = "reload"
+RUN_TOOL = "run"
+EXECUTE_TOOL = "execute"
+RuntimeToolName = Literal["reload", "run", "execute"]
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeAction:
-    """One trusted executor action exposed only at a Model Call boundary."""
+class RuntimeTool:
+    """One trusted executor tool exposed only at a Model Call boundary."""
 
-    name: RuntimeActionName
+    name: RuntimeToolName
     definition: ToolDefinition
 
 
-def runtime_actions(
-    *,
-    run: bool,
-    execute: bool,
-    reload: bool,
-) -> dict[str, RuntimeAction]:
-    """Return effective executor actions keyed by their model names."""
+def runtime_tools() -> dict[str, RuntimeTool]:
+    """Return the always-present inner runtime tools by model name."""
 
-    selected = (
-        *((_ACTIONS[RUN_ACTION],) if run else ()),
-        *((_ACTIONS[EXECUTE_ACTION],) if execute else ()),
-        *((_ACTIONS[RELOAD_ACTION],) if reload else ()),
-    )
-    return {item.definition.name: item for item in selected}
+    return {item.definition.name: item for item in _TOOLS.values()}
 
 
-def _action(
-    name: RuntimeActionName,
+def _tool(
+    name: RuntimeToolName,
     description: str,
     parameters: dict[str, object],
-) -> RuntimeAction:
-    return RuntimeAction(
+) -> RuntimeTool:
+    return RuntimeTool(
         name=name,
         definition=ToolDefinition(
             name=encode_tool_name(TOOLSET_NAME, name),
@@ -74,26 +64,25 @@ _RUN_PARAMETERS: dict[str, object] = {
     "additionalProperties": False,
 }
 
-_ACTIONS: dict[RuntimeActionName, RuntimeAction] = {
-    RUN_ACTION: _action(
-        RUN_ACTION,
+_TOOLS: dict[RuntimeToolName, RuntimeTool] = {
+    RUN_TOOL: _tool(
+        RUN_TOOL,
         "Run an authorized hand as a child Run, wait for its result, then continue. "
-        "Call it only when the user explicitly requests delegation or the current "
-        "runnable's authored instructions explicitly require it. Read the target "
-        "input signature and do not invent missing values.",
+        "Call it only when its result is required now. Read the target input "
+        "signature and do not invent missing values.",
         _RUN_PARAMETERS,
     ),
-    EXECUTE_ACTION: _action(
-        EXECUTE_ACTION,
+    EXECUTE_TOOL: _tool(
+        EXECUTE_TOOL,
         "Transfer the remainder of this Run to an authorized handoff target. "
-        "Call it only when the user explicitly requests delegation or the current "
-        "runnable's authored instructions explicitly require it. Read the target "
-        "input signature and do not invent missing values.",
+        "The caller never resumes, and this must be the only tool call in the "
+        "Model Call. Prefer run when either behavior would satisfy the intent.",
         _RUN_PARAMETERS,
     ),
-    RELOAD_ACTION: _action(
-        RELOAD_ACTION,
-        "Check authored Agent State and apply the newest valid revision.",
+    RELOAD_TOOL: _tool(
+        RELOAD_TOOL,
+        "Apply the newest valid Agent State when this Run must observe authored "
+        "changes now. A future root Run uses the latest valid State without reload.",
         {
             "type": "object",
             "properties": {},
@@ -105,9 +94,9 @@ _ACTIONS: dict[RuntimeActionName, RuntimeAction] = {
 
 
 __all__ = [
-    "EXECUTE_ACTION",
-    "RELOAD_ACTION",
-    "RUN_ACTION",
-    "RuntimeAction",
-    "runtime_actions",
+    "EXECUTE_TOOL",
+    "RELOAD_TOOL",
+    "RUN_TOOL",
+    "RuntimeTool",
+    "runtime_tools",
 ]

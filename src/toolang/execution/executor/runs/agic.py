@@ -12,19 +12,16 @@ from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelContinuation, ModelUsage, ToolCall
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
-from toolang.common.time import utc_now
 from toolang.lang.ast import AgicDecl, RunStmt, Span
 from toolang.lang.errors import ToolangOutputError
 from toolang.lang.input import coerce_output
 from toolang.state.state import AgentState
 from toolang.state.state import state_program
 
-from ...events import StepBegin, StepEnd
+from ...events import StepBegin
 from ...records import RunControlPayload, RunControlRecord
 from ...types import (
     ControlRef,
-    HandoffStepGiven,
-    HandoffStepNoted,
     Local as RecordLocal,
     StepPath,
     Pointer,
@@ -36,7 +33,7 @@ from ..common import (
     EventEmitter,
     Local,
     _ExecutionFailed,
-    _HandoffCommitted,
+    _ExecuteCommitted,
     _RunRejected,
     _StepFailed,
     program_structs,
@@ -52,7 +49,7 @@ from ...runnables import (
     resolve_runnable,
     resolve_public_runnable,
 )
-from ...tools.runtime import EXECUTE_ACTION, RELOAD_ACTION, RUN_ACTION
+from ...tools.runtime import EXECUTE_TOOL, RELOAD_TOOL, RUN_TOOL
 
 if TYPE_CHECKING:
     from ..executor import _Execution
@@ -281,26 +278,26 @@ async def _execute(state: _AgicState) -> Message | None:
                 continue
             for index, call in enumerate(result.tool_calls):
                 try:
-                    action = state.prepared.actions.get(call.name)
-                    if action is not None and action.name == RELOAD_ACTION:
+                    runtime_tool = state.prepared.runtime_tools.get(call.name)
+                    if runtime_tool is not None and runtime_tool.name == RELOAD_TOOL:
                         if state.execution is None:
                             raise RuntimeError("Agic runtime execution is unavailable")
                         await _reload(state.execution, state, call)
-                    elif action is not None and action.name == RUN_ACTION:
+                    elif runtime_tool is not None and runtime_tool.name == RUN_TOOL:
                         if state.execution is None:
                             raise RuntimeError("Agic runtime execution is unavailable")
                         await _run(state.execution, state, call)
-                    elif action is not None and action.name == EXECUTE_ACTION:
+                    elif runtime_tool is not None and runtime_tool.name == EXECUTE_TOOL:
                         if state.execution is None:
                             raise RuntimeError("Agic runtime execution is unavailable")
-                        await _handoff(
+                        await _execute_transfer(
                             state.execution,
                             state,
                             call,
-                            action_count=len(result.tool_calls),
+                            tool_call_count=len(result.tool_calls),
                         )
                     elif call.name.startswith("_too__"):
-                        _reject_runtime_action(state, call)
+                        _reject_runtime_tool(state, call)
                     else:
                         await tool_step.execute(state, call)
                 except asyncio.CancelledError:
@@ -421,44 +418,25 @@ def _authorize_run(state: _AgicState, target: ResolvedRunnable) -> None:
         raise ToolangError(f"runnable is not authorized by hands: {target.ref}")
 
 
-async def _handoff(
+async def _execute_transfer(
     execution: _Execution,
     state: _AgicState,
     call: ToolCall,
     *,
-    action_count: int,
+    tool_call_count: int,
 ) -> None:
-    """Commit one authorized same-Run runnable replacement."""
+    """Commit one authorized same-Run runnable replacement without a Step."""
 
     state.before_tool_call()
-    step_index = state.next_step
-    state.next_step += 1
-    path = StepPath(state.prepared.run.run_id, (step_index,))
     requested = call.input.get("runnable")
-    captured_state: AgentState | None = None
-    captured_ref: ControlRef | None = None
-
-    def begin(agent_state: AgentState, state_ref: ControlRef) -> StepBegin:
-        nonlocal captured_state, captured_ref
-        captured_state = agent_state
-        captured_ref = state_ref
-        return StepBegin(
-            step=path,
-            kind="handoff",
-            state=state_ref,
-            input=_run_call_inputs(state, call),
-            given=HandoffStepGiven(
-                requested=requested if isinstance(requested, str) else None
-            ),
-            started_at=utc_now(),
-        )
-
-    await state.start_step(begin)
-    if captured_state is None or captured_ref is None:  # pragma: no cover
-        raise RuntimeError("handoff boundary did not capture Agent State")
+    captured_state = state.prepared.run.state
+    captured_ref = state.prepared.run.state_ref
+    source = _runtime_call_source(state, call)
     try:
-        if action_count != 1:
-            raise ToolangError("_too/execute must be the only action in its Model Call")
+        if tool_call_count != 1:
+            raise ToolangError(
+                "_too/execute must be the only tool call in its Model Call"
+            )
         unknown = sorted(set(call.input) - {"runnable", "input"})
         if unknown:
             raise ValueError(f"unknown _too/execute input fields: {', '.join(unknown)}")
@@ -476,52 +454,19 @@ async def _handoff(
             target.executable,
             raw_input,
         )
-        binding, locals = execution.prepare_handoff(
+        binding, locals = execution.prepare_execute(
             state.prepared.run,
             target,
             input,
-            step=path,
+            source=source,
             state=captured_state,
             state_ref=captured_ref,
         )
-        await state.emit(
-            StepEnd(
-                step=path,
-                kind="handoff",
-                status="succeeded",
-                output=RecordLocal.typed("Json", raw_input, "_"),
-                noted=HandoffStepNoted(
-                    runnable=target.ref,
-                    module=target.module,
-                ),
-                finished_at=utc_now(),
-            )
-        )
-        execution.commit_handoff(binding)
-        state.last_step = step_index
-        raise _HandoffCommitted(binding, target.executable, locals)
     except asyncio.CancelledError:
-        await state.emit(
-            StepEnd(
-                step=path,
-                kind="handoff",
-                status="canceled",
-                finished_at=utc_now(),
-            )
-        )
         raise
     except (_RunRejected, ToolangError, TypeError, ValueError) as exc:
         message = (str(exc) or type(exc).__name__)[:2048]
         details = exc.details if isinstance(exc, _RunRejected) else {}
-        await state.emit(
-            StepEnd(
-                step=path,
-                kind="handoff",
-                status="failed",
-                error=message,
-                finished_at=utc_now(),
-            )
-        )
         state.messages.append(
             Message(
                 role="tool",
@@ -537,11 +482,13 @@ async def _handoff(
                 ),
             )
         )
-        state.last_step = step_index
+        return
+    committed = execution.commit_execute(binding, source=source)
+    raise _ExecuteCommitted(committed, target.executable, locals)
 
 
-def _reject_runtime_action(state: _AgicState, call: ToolCall) -> None:
-    """Reject an unavailable reserved action without creating a Tool Step."""
+def _reject_runtime_tool(state: _AgicState, call: ToolCall) -> None:
+    """Reject an unknown reserved runtime tool without creating a Tool Step."""
 
     state.before_tool_call()
     state.messages.append(
@@ -553,7 +500,7 @@ def _reject_runtime_action(state: _AgicState, call: ToolCall) -> None:
                     call_id=call.call_id,
                     tool_name=call.name,
                     tool_family=call.name,
-                    error=f"runtime action is unavailable in this Model Step: {call.name}",
+                    error=f"unknown inner runtime tool: {call.name}",
                 ),
             ),
         )
@@ -625,6 +572,18 @@ def _run_call_inputs(state: _AgicState, call: ToolCall) -> tuple[Pointer, ...]:
             ),
         )
     return state.initial_inputs
+
+
+def _runtime_call_source(state: _AgicState, call: ToolCall) -> Pointer:
+    """Return the authoritative Model ToolCall part for one runtime request."""
+
+    source = state.tool_call_sources.get(call.tool_call_id)
+    if source is None:
+        raise RuntimeError(f"runtime ToolCall source is missing: {call.tool_call_id}")
+    return Pointer.step(
+        StepPath(state.prepared.run.run_id, (source[0],)),
+        source[1],
+    )
 
 
 def _append_canceled_tool_results(

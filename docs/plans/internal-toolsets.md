@@ -7,12 +7,12 @@ Approved for implementation on 2026-08-27.
 ## Goal
 
 Give every model-facing tool one short, stable toolset and verb-first leaf name,
-while reserving underscore-prefixed toolsets for Toolang-owned internal actions.
+while reserving underscore-prefixed toolsets for Toolang-owned internal tools.
 
 This change renames the existing built-in toolsets and moves the current
 `agent_state` tools under `_me`. It establishes the naming and registration
-boundary needed by future `_too` runtime actions and `_hat` Human-Agent Teaming
-actions without implementing those actions yet.
+boundary needed by future `_too` runtime tools and `_hat` Human-Agent Teaming
+tools without implementing those tools yet.
 
 ## Success Criteria
 
@@ -74,7 +74,7 @@ This change does not include:
 | Concept | Form | Meaning |
 | --- | --- | --- |
 | Public toolset | `fs`, `web`, `shell`, `service` | User-facing built-in or external tool family |
-| Internal toolset | `_me`, `_too`, `_hat` | Toolang-owned model action family |
+| Internal toolset | `_me`, `_too`, `_hat` | Toolang-owned model-facing tool family |
 | Leaf name | `read`, `create_task` | Verb or verb phrase within one toolset |
 | Selector identity | `fs/read` | Authored and CLI tool selection form |
 | Model name | `fs__read` | Provider-facing encoded name |
@@ -87,7 +87,7 @@ The executor binds the current agent layout through `ToolContext`; `_me` tools
 do not accept an agent name, home directory, root directory, or arbitrary path
 for choosing their target. They expose no layer selector and operate only on
 the current agent's home layer; `_me` never reads or mutates the root layer.
-`_too` is reserved for future Toolang executor/runtime actions. `_hat` is
+`_too` is reserved for Toolang executor/runtime tools. `_hat` is
 reserved for future Human-Agent Teaming communication. A leading underscore is
 an authority boundary, not merely a display convention.
 

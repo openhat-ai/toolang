@@ -148,7 +148,14 @@ agic decide(_: Text) -> Boolean:
                 ("model", "succeeded"),
                 ("model", "succeeded"),
             ]
-            assert len(harness.adapter.invocations[0].call.tools) == 1
+            assert {
+                tool.name for tool in harness.adapter.invocations[0].call.tools
+            } == {
+                "_too__execute",
+                "_too__reload",
+                "_too__run",
+                "lookup__value",
+            }
             repair = harness.adapter.invocations[1].call
             assert repair.tools == ()
             assert repair.messages[-1].role == "user"

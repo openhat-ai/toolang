@@ -7,7 +7,7 @@ import re
 
 import pytest
 
-from toolang.base.types.message import TextPart, ToolCallPart, ToolResultPart
+from toolang.base.types.message import Message, TextPart, ToolCallPart, ToolResultPart
 from toolang.base.types.run import ModelCall
 from toolang.cli.common.execution_progress import (
     ProgressBlock,
@@ -46,6 +46,15 @@ def _model_given() -> ModelStepGiven:
     return ModelStepGiven(
         model="test/scripted",
         call=ModelCall(instructions="", messages=[]),
+    )
+
+
+def _execute_part(runnable: object = "agic:abc") -> ToolCallPart:
+    return ToolCallPart(
+        tool_call_id="execute-1",
+        tool_name="_too__execute",
+        tool_family="_too__execute",
+        input={"runnable": runnable, "input": {}},
     )
 
 
@@ -199,6 +208,149 @@ def test_dynamic_run_preaccept_failure_uses_a_trace_marker_without_boundaries() 
         "• Failed to run flow:missing",
         "  Runnable not found: missing",
     ]
+
+
+def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    caller = StepPath.parse("run_root.0")
+    target = StepPath.parse("run_root.1")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="agic:caller",
+        )
+    )
+    projector.handle(StepBegin(step=caller, kind="model", given=_model_given()))
+
+    starting = projector.handle(
+        StepEnd(
+            step=caller,
+            kind="model",
+            status="succeeded",
+            output=Local.typed("Part[]", (_execute_part(),), "_", 0),
+        )
+    )
+
+    assert starting.committed == ()
+    assert starting.live[0].rows == (ProgressRow("• Executing agic:abc...", "active"),)
+
+    header = projector.handle(
+        StepBegin(step=target, kind="model", given=_model_given())
+    )
+
+    assert header.committed[0].rows == (
+        ProgressRow(
+            "---  handoff to agic:abc",
+            leader="handoff",
+        ),
+        ProgressRow(""),
+    )
+    assert header.live[0].rows == (ProgressRow("• Thinking...", "active"),)
+    assert re.search(
+        r"╟ handoff to agic:abc ─+",
+        _render_progress(header.committed[0], width=72),
+    )
+
+
+def test_execute_prestart_failure_uses_a_correlated_trace_marker() -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    caller = StepPath.parse("run_root.0")
+    recovery = StepPath.parse("run_root.1")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="agic:caller",
+        )
+    )
+    projector.handle(StepBegin(step=caller, kind="model", given=_model_given()))
+    projector.handle(
+        StepEnd(
+            step=caller,
+            kind="model",
+            status="succeeded",
+            output=Local.typed("Part[]", (_execute_part("flow:missing"),), "_", 0),
+        )
+    )
+
+    failed = projector.handle(
+        StepBegin(
+            step=recovery,
+            kind="model",
+            given=ModelStepGiven(
+                model="test/scripted",
+                call=ModelCall(
+                    instructions="",
+                    messages=[
+                        Message(
+                            role="tool",
+                            parts=(
+                                ToolResultPart(
+                                    tool_call_id="execute-1",
+                                    tool_name="_too__execute",
+                                    tool_family="_too__execute",
+                                    error="Runnable not found: missing",
+                                ),
+                            ),
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    assert failed.committed[0].rows == (
+        ProgressRow("• Failed to execute flow:missing", "error"),
+        ProgressRow("  Runnable not found: missing", "error"),
+    )
+    assert failed.live[0].rows == (ProgressRow("• Thinking...", "active"),)
+
+
+def test_handoff_to_flow_keeps_the_first_run_statement_flow_owned() -> None:
+    projector = ProgressProjector()
+    caller = StepPath.parse("run_root.0")
+    target = StepPath.parse("run_root.1")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="agic:caller",
+        )
+    )
+    projector.handle(StepBegin(step=caller, kind="model", given=_model_given()))
+    projector.handle(
+        StepEnd(
+            step=caller,
+            kind="model",
+            status="succeeded",
+            output=Local.typed(
+                "Part[]",
+                (_execute_part("flow:delegate"),),
+                "_",
+                0,
+            ),
+        )
+    )
+
+    header = projector.handle(
+        StepBegin(
+            step=target,
+            kind="run",
+            given=_run_stmt("agic:worker"),
+        )
+    )
+
+    assert header.live == ()
+    assert header.committed[0].rows == (
+        ProgressRow(
+            "---  handoff to flow:delegate",
+            leader="handoff",
+        ),
+        ProgressRow(""),
+        ProgressRow("[1] Run agic:worker"),
+        ProgressRow(""),
+    )
 
 
 def test_dynamic_run_dividers_align_and_preserve_complete_identity_when_narrow() -> (

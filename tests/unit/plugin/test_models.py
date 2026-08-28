@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from decimal import Decimal
 import logging
 from pathlib import Path
@@ -30,6 +31,7 @@ from toolang.execution.events import RunEvent, StepEnd
 from toolang.execution.executor.common import BoundRun
 from toolang.execution.executor.prepare import _AgicFrame
 from toolang.execution.executor.runs.agic import _AgicState, _execute
+from toolang.execution.tools.runtime import runtime_tools
 from toolang.execution.records import RunControlRecord, SteerControlPayload
 from toolang.execution.types import ControlRef, Local
 from toolang.plugin.models.discovery import missing_provider_env_vars
@@ -1801,7 +1803,9 @@ def test_agic_omits_tools_for_model_without_tool_support() -> None:
         streaming=True,
     )
 
-    result = _run_agic(_prepared_agic(provider, model))
+    result = _run_agic(
+        replace(_prepared_agic(provider, model), runtime_tools=runtime_tools())
+    )
 
     assert result == Message.assistant("done")
     assert provider.requests[0].tools == ()
@@ -2760,7 +2764,7 @@ def _prepared_agic(
         prompt_context="",
         messages=(Message.user("hello"),),
         tools={tool.name: tool},
-        actions={},
+        runtime_tools={},
         routes=AgicRoutes(),
         services=(),
     )

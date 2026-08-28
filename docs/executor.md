@@ -178,7 +178,7 @@ Retry acceptance atomically appends an applied `retry` control to the existing
 root, resolves and records its anchor, ejects the invalid structural step
 suffix, fails stale pending controls, and reopens the root as pending. New
 steps use fresh physical indexes; ejected steps are never overwritten. Before
-mutation, retry rejects applied reload history and succeeded handoff history
+mutation, retry rejects applied reload and execute-control history
 because it cannot replay either prior execution timeline. It also requires the
 source preparation to have sandbox
 provenance and requires it to equal the current canonical sandbox. Accepted
@@ -226,12 +226,15 @@ There is no loop plugin or public run-context protocol, and there are no
 separate effective-resource, invocation, model-call assembly, or tool-snapshot
 layers.
 
-The frame keeps public tools, executor actions, and effective Agic routes in
-separate fields. `hands` authorizes `_too__run`; `handoffs` authorizes
-`_too__execute`; refresh capability authorizes `_too__reload`. Model Call
-assembly combines only their definitions at the adapter boundary. A bounded
-route catalog lists the resolved union as a model hint, while authorization
-always checks the captured authored route list.
+The frame keeps public tools, inner runtime tools, and effective Agic routes in
+separate fields. Every ordinary tool-capable Agic call receives `_too__run`,
+`_too__execute`, and `_too__reload`. `hands` and `handoffs` authorize run and
+execute targets; they do not select definitions. Model Call assembly combines
+the definitions only at the adapter boundary. A bounded route catalog lists
+the authored routes and resolved union as model hints only when `hands` or
+`handoffs` is present; with neither directive, instructions state that no
+target is authorized and omit the catalog. Authorization always checks the
+captured authored route list.
 
 `AgentSetup.ceiling` contains stable selector lists, not resolved resources. At
 `run()`, the executor resolves it against the captured `AgentSetup` and
@@ -315,24 +318,33 @@ StepEnd(run)
 This distinction is made at the event source. The sink and tracer observe the
 same canonical event sequence and never filter a synthetic top-level step.
 
-A successful `_too__execute` produces one typed Handoff Step and replaces the
-active runnable binding without a child Run or another `RunBegin`:
+A successful `_too__execute` records one applied execute control and replaces
+the active runnable binding without a transition Step, child Run, or another
+`RunBegin`:
 
 ```text
 RunBegin(entry)
   caller Model Step
-  Handoff Step(target)
   target Steps
 RunEnd(final target result)
 ```
 
-The Handoff Step captures the current State, requested ref, resolved ref, and
-owner module. Before commit, input, resources, authorization, and active
-runnable lineage are validated. Failure returns a correlated result to the
+The execute control records the originating Model ToolCall, that Model Step's
+captured State, the resolved ref and module, and raw `Json` input pointers. The
+captured target signature and State define input coercion. Input, resources,
+authorization, and active runnable lineage are validated before the control is
+persisted. Failure creates no control and returns a correlated result to the
 calling Agic. Success discards that Agic's messages, continuation, and local
-call counters; the target begins at the next Step in the same Run. The entry
-runnable's output type remains the final Run contract. Repeated identities in
-the current or an active ancestor lineage are rejected.
+call counters; the target begins with its natural next Step in the same Run.
+The entry runnable's output type remains the final Run contract. Repeated
+identities in the current or an active ancestor lineage are rejected.
+
+Progress does not require an execute Step or control event. It observes the
+`_too__execute` ToolCall in the caller Model Step, keeps an active execute
+marker until the next boundary, recognizes a correlated failure from the next
+`ModelStepGiven`, and otherwise attaches a handoff divider to the target's
+first natural Step. The divider is presentation only; execution records remain
+the Model Step, applied execute control, and target Steps.
 
 
 ## Control Observation

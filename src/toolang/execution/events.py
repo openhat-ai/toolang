@@ -265,7 +265,6 @@ def _with_canonical_fields(
 def _step_kind(value: object) -> StepKind | None:
     if isinstance(value, str) and value in {
         "run",
-        "handoff",
         "agent",
         "human",
         "model",

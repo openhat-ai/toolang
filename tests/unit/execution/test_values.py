@@ -17,6 +17,7 @@ from toolang.base.types.message import (
 )
 from toolang.base.types.policy import RunLimits
 from toolang.execution.records import (
+    ExecuteControlPayload,
     RunControlRecord,
     ReloadControlPayload,
     RetryControlPayload,
@@ -455,6 +456,29 @@ def test_reload_and_inherited_preparation_payloads_round_trip_without_revision_d
 def test_reload_payload_rejects_noncanonical_revisions(revision: str) -> None:
     with pytest.raises(ValueError, match="lowercase SHA-256"):
         ReloadControlPayload(state=revision)
+
+
+def test_execute_payload_round_trips_source_pointing_locals() -> None:
+    source = Pointer.step(StepPath.parse("run_1.2"), 1)
+    payload = ExecuteControlPayload(
+        state="a" * 64,
+        runnable="flow:deliver",
+        module="_flow_deliver",
+        source=source,
+        locals=(
+            Local.typed("Json", source.select("input", "input", "_"), "_"),
+            Local.typed(
+                "Json",
+                source.select("input", "input", "format"),
+                "format",
+            ),
+        ),
+    )
+
+    assert (
+        control_payload_from_data("execute", control_payload_to_data(payload))
+        == payload
+    )
 
 
 @pytest.mark.parametrize(

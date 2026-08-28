@@ -344,7 +344,7 @@ async def invoke_tool_call(
     try:
         if name.startswith("_too__"):
             raise ToolangError(
-                f"executor runtime action cannot be invoked as a tool: {name}"
+                f"inner runtime tool cannot use generic tool dispatch: {name}"
             )
         tool = tools.get(name)
         if tool is None:
