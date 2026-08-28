@@ -494,14 +494,6 @@ class _HyphenDividerRow:
         prefix = "└ "
         prefix_width = display_width(prefix)
         border_style = _terminal_status_color(self.row.right_status) or "dim"
-        if not self.row.facts and not self.row.right_identity:
-            yield from self._left_boundary(
-                width,
-                marker="└",
-                content=self.row.right_status,
-                border_style=border_style,
-            )
-            return
         facts = " · ".join(self.row.facts)
         left = f"{prefix}{facts}"
         right = self.row.right_status

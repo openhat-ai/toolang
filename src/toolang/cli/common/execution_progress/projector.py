@@ -49,6 +49,7 @@ from .step_projection import (
     lane_live_text,
     lane_run_error_lines,
     lane_terminal_lines,
+    live_row,
     trace_live_rows,
     loop_terminal_rows,
     trace_terminal_rows,
@@ -134,8 +135,8 @@ class ProgressProjector:
 
     def _reduce(self, event: RunEvent) -> list[ProgressBlock]:
         if isinstance(event, RunBegin):
-            self._begin_run(event)
-            return []
+            block = self._begin_run(event)
+            return [block] if block is not None else []
         if isinstance(event, StepBegin):
             block = self._begin_step(event)
             return [block] if block is not None else []
@@ -156,11 +157,12 @@ class ProgressProjector:
             return [block] if block is not None else []
         raise _PresentationError(f"unsupported progress event: {type(event).__name__}")
 
-    def _begin_run(self, event: RunBegin) -> None:
+    def _begin_run(self, event: RunBegin) -> ProgressBlock | None:
         if event.run in self._seen_runs:
             raise _PresentationError(f"duplicate RunBegin for {event.run}")
         self._seen_runs.add(event.run)
         lane_owner: LaneOwner | None = None
+        dynamic_owner: StepState | None = None
         if event.parent is None:
             if self._root is not None:
                 raise _PresentationError("multiple root Runs in one progress stream")
@@ -173,6 +175,7 @@ class ProgressProjector:
                         f"dynamic Run Step has multiple child Runs: {event.parent}"
                     )
                 owner.dynamic_child_run_id = event.run
+                dynamic_owner = owner
             if owner.begin.kind == "par" and owner.lane_owner is None:
                 lane_owner = self._direct_lane_owner(
                     event.parent,
@@ -205,6 +208,9 @@ class ProgressProjector:
             self._note_iteration(event.parent, event.occurrence)
             if lane_owner is not None:
                 self._set_lane_activity(lane_owner, "• starting")
+        if dynamic_owner is not None and dynamic_owner.lane_owner is None:
+            return self._dynamic_run_header(dynamic_owner)
+        return None
 
     def _end_run(self, event: RunEnd) -> ProgressBlock | None:
         run = self._runs.get(event.run)
@@ -340,21 +346,7 @@ class ProgressProjector:
         block_key = self._block_key(state)
         state.boundaries = self._claim_boundaries(block_key, state)
         if state.is_dynamic_run:
-            rows = (
-                *self._rows_for_boundaries(state.boundaries),
-                ProgressRow(
-                    f"---  run {self._dynamic_runnable_label(state)}",
-                    leader="hyphen",
-                ),
-                ProgressRow(""),
-            )
-            self._commit_boundaries(state.boundaries)
-            state.boundaries = ()
-            return ProgressBlock(
-                block_key,
-                rows,
-                gap_before=not self._ends_with_blank,
-            )
+            return None
         rows = self._rows_for_boundaries(state.boundaries)
         if not rows:
             return None
@@ -449,8 +441,24 @@ class ProgressProjector:
                             status=event.status,
                         )
         elif state.is_dynamic_run:
-            if isinstance(event.error, Pointer):
+            if state.dynamic_child_run_id is None:
+                if isinstance(event.error, Pointer):
+                    self._release_boundaries(state.boundaries)
+                else:
+                    rows = trace_terminal_rows(
+                        state.begin,
+                        event,
+                        error=self._error_text(event.error),
+                        dynamic_run=True,
+                    )
+                    block = self._commit_block(state, rows) if rows else None
+            elif isinstance(event.error, Pointer):
                 rows = self._dynamic_run_terminal_rows(state, event)
+                block = self._commit_block(
+                    state,
+                    rows,
+                    gap_before=not self._ends_with_blank,
+                )
             else:
                 rows = (
                     *(
@@ -461,11 +469,11 @@ class ProgressProjector:
                     *((ProgressRow(""),) if event.error is not None else ()),
                     *self._dynamic_run_terminal_rows(state, event),
                 )
-            block = self._commit_block(
-                state,
-                rows,
-                gap_before=not self._ends_with_blank,
-            )
+                block = self._commit_block(
+                    state,
+                    rows,
+                    gap_before=not self._ends_with_blank,
+                )
         elif not state.is_flow:
             if isinstance(event.error, Pointer):
                 self._release_boundaries(state.boundaries)
@@ -785,6 +793,21 @@ class ProgressProjector:
             if state.lane_owner is not None:
                 continue
             if state.is_dynamic_run:
+                if state.dynamic_child_run_id is None:
+                    rows = (
+                        *self._rows_for_boundaries(state.boundaries),
+                        live_row(state.begin, "", dynamic_run=True),
+                    )
+                    blocks.append(
+                        (
+                            state.sequence,
+                            ProgressBlock(
+                                self._block_key(state),
+                                rows,
+                                gap_before=self._step_gap_before(state),
+                            ),
+                        )
+                    )
                 continue
             if not state.is_flow:
                 rows = (
@@ -894,6 +917,23 @@ class ProgressProjector:
         return state.metrics.facts(
             duration=elapsed(state.begin.started_at, event.finished_at),
             include_runs=True,
+        )
+
+    def _dynamic_run_header(self, state: StepState) -> ProgressBlock:
+        rows = (
+            *self._rows_for_boundaries(state.boundaries),
+            ProgressRow(
+                f"---  run {self._dynamic_runnable_label(state)}",
+                leader="hyphen",
+            ),
+            ProgressRow(""),
+        )
+        self._commit_boundaries(state.boundaries)
+        state.boundaries = ()
+        return ProgressBlock(
+            self._block_key(state),
+            rows,
+            gap_before=not self._ends_with_blank,
         )
 
     def _dynamic_run_terminal_rows(

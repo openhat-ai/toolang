@@ -113,7 +113,7 @@ def trace_terminal_rows(
         runnable = one_line(getattr(begin.given, "runnable", "")) or "runnable"
         if event.status == "succeeded":
             return (ProgressRow(f"• Ran {runnable}", tone),)
-        status = "Failed" if event.status == "failed" else "Canceled"
+        status = "Failed to run" if event.status == "failed" else "Canceled"
         rows = [ProgressRow(f"• {status} {runnable}", tone)]
         if error:
             rows.extend(ProgressRow(f"  {line}", tone) for line in _split_lines(error))

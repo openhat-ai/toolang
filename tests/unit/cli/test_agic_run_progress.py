@@ -82,7 +82,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
         )
     )
 
-    header = projector.handle(
+    starting = projector.handle(
         StepBegin(
             step=dynamic,
             kind="run",
@@ -90,14 +90,12 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
             started_at="2026-01-01T00:00:00Z",
         )
     )
-    assert len(header.committed) == 1
-    assert header.live == ()
-    assert header.committed[0].rows == (
-        ProgressRow("---  run agic:summarize", leader="hyphen"),
-        ProgressRow(""),
+    assert starting.committed == ()
+    assert starting.live[0].rows == (
+        ProgressRow("• Running agic:summarize...", "active"),
     )
 
-    projector.handle(
+    header = projector.handle(
         RunBegin(
             run="run_child",
             control=ControlRef("run_child", 0),
@@ -105,6 +103,12 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
             parent=dynamic,
             started_at="2026-01-01T00:00:00.100Z",
         )
+    )
+    assert len(header.committed) == 1
+    assert header.live == ()
+    assert header.committed[0].rows == (
+        ProgressRow("---  run agic:summarize", leader="hyphen"),
+        ProgressRow(""),
     )
     projector.handle(
         StepBegin(
@@ -153,7 +157,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
     assert footer.committed[0].rows[-1] == ProgressRow("")
 
 
-def test_dynamic_run_preaccept_failure_has_no_child_identity_or_facts() -> None:
+def test_dynamic_run_preaccept_failure_uses_a_trace_marker_without_boundaries() -> None:
     projector = ProgressProjector(show_boundaries=False)
     path = StepPath.parse("run_root.0")
     projector.handle(
@@ -163,12 +167,16 @@ def test_dynamic_run_preaccept_failure_has_no_child_identity_or_facts() -> None:
             runnable="agic:parent",
         )
     )
-    projector.handle(
+    starting = projector.handle(
         StepBegin(
             step=path,
             kind="run",
             given=_run_stmt("flow:missing"),
         )
+    )
+    assert starting.committed == ()
+    assert starting.live[0].rows == (
+        ProgressRow("• Running flow:missing...", "active"),
     )
 
     terminal = projector.handle(
@@ -180,17 +188,17 @@ def test_dynamic_run_preaccept_failure_has_no_child_identity_or_facts() -> None:
         )
     )
 
-    rows = terminal.committed[0].rows
-    assert rows[0].text == "• Runnable not found: missing"
-    footer = rows[-2]
-    assert footer.leader == "hyphen"
-    assert footer.facts == ()
-    assert footer.right_status == "failed"
-    assert footer.right_identity == ""
+    assert terminal.live == ()
+    assert terminal.committed[0].rows == (
+        ProgressRow("• Failed to run flow:missing", "error"),
+        ProgressRow("  Runnable not found: missing", "error"),
+    )
     rendered = _render_progress(terminal.committed[0], width=72)
-    footer_line = rendered.splitlines()[-2]
-    assert footer_line.startswith("└ failed ───")
-    assert display_width(footer_line) == 72
+    assert rendered.splitlines() == [
+        "",
+        "• Failed to run flow:missing",
+        "  Runnable not found: missing",
+    ]
 
 
 def test_dynamic_run_dividers_align_and_preserve_complete_identity_when_narrow() -> (
@@ -332,14 +340,14 @@ def test_agic_to_flow_keeps_child_flow_run_steps_numbered() -> None:
             runnable="agic:parent",
         )
     )
-    outer_header = projector.handle(
+    projector.handle(
         StepBegin(
             step=dynamic,
             kind="run",
             given=_run_stmt("flow:publish"),
         )
     )
-    projector.handle(
+    outer_header = projector.handle(
         RunBegin(
             run="run_publish",
             control=ControlRef("run_publish", 0),
@@ -392,10 +400,8 @@ def test_nested_dynamic_run_footers_pair_with_their_direct_children() -> None:
             runnable="agic:parent",
         )
     )
+    projector.handle(StepBegin(step=outer, kind="run", given=_run_stmt("agic:child")))
     outer_header = projector.handle(
-        StepBegin(step=outer, kind="run", given=_run_stmt("agic:child"))
-    )
-    projector.handle(
         RunBegin(
             run="run_child",
             control=ControlRef("run_child", 0),
@@ -403,10 +409,8 @@ def test_nested_dynamic_run_footers_pair_with_their_direct_children() -> None:
             parent=outer,
         )
     )
+    projector.handle(StepBegin(step=inner, kind="run", given=_run_stmt("agic:leaf")))
     inner_header = projector.handle(
-        StepBegin(step=inner, kind="run", given=_run_stmt("agic:leaf"))
-    )
-    projector.handle(
         RunBegin(
             run="run_leaf",
             control=ControlRef("run_leaf", 0),
@@ -574,10 +578,8 @@ def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> No
             ),
         )
     )
+    projector.handle(StepBegin(step=dynamic, kind="run", given=_run_stmt("agic:child")))
     header = projector.handle(
-        StepBegin(step=dynamic, kind="run", given=_run_stmt("agic:child"))
-    )
-    projector.handle(
         RunBegin(
             run="run_child",
             control=ControlRef("run_child", 0),
@@ -630,11 +632,19 @@ def test_dynamic_header_normalizes_untrusted_runnable_text() -> None:
         )
     )
 
-    header = projector.handle(
+    projector.handle(
         StepBegin(
             step=path,
             kind="run",
             given=_run_stmt("flow:\x00missing\nname" + "x" * 300),
+        )
+    )
+    header = projector.handle(
+        RunBegin(
+            run="run_child",
+            control=ControlRef("run_child", 0),
+            runnable="flow:missing",
+            parent=path,
         )
     )
     caption = header.committed[0].rows[0].text
