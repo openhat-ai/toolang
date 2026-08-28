@@ -313,7 +313,7 @@ directives, context/instruct selection, and authored model messages.
 agic review(_, focus?: Text) -> ReviewResult:
   models = gpt-5
   skills += review
-  tools = shell
+  tools = shell/*
   recall = history
   context: default
   instruct: strict
@@ -329,6 +329,8 @@ agic summarize(_):
   Summarize {{_}}.
 ```
 
+Without a `tools` directive, an Agic inherits every user tool in its current
+resource base. Use `<toolset>/*`, such as `web/*`, to narrow it to one toolset.
 
 ### Directives
 
