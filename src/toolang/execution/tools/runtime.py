@@ -70,7 +70,9 @@ class RuntimeToolset:
                 name=RUN_ACTION,
                 description=(
                     "Run one public agic or flow from the active Agent State as a "
-                    "normal child run."
+                    "normal child run only when the user explicitly requests "
+                    "delegation or the current runnable's authored instructions "
+                    "explicitly require it."
                 ),
                 parameters={
                     "type": "object",

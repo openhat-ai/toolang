@@ -1923,6 +1923,7 @@ class _Execution:
     ) -> BoundRun:
         executable = resolved.executable
         module = resolved.module.name
+        self._reject_recursive_public_child(parent, resolved)
         if validate_input:
             _validate_inputs(
                 program=resolved.module.program,
@@ -1957,6 +1958,29 @@ class _Execution:
             call="run",
             parent=parent_step,
         )
+
+    def _reject_recursive_public_child(
+        self,
+        parent: BoundRun,
+        resolved: ResolvedRunnable,
+    ) -> None:
+        target = (
+            resolved.module.name,
+            resolved.executable.kind,
+            resolved.executable.name,
+        )
+        active_run_id: str | None = parent.run_id
+        while active_run_id is not None:
+            active = self._active_bindings.get(active_run_id)
+            if active is None:
+                break
+            binding, executable = active
+            if target == (binding.module, executable.kind, executable.name):
+                raise ValueError(
+                    "_too/run cannot call the current or an ancestor runnable: "
+                    f"{resolved.ref}"
+                )
+            active_run_id = binding.parent.run if binding.parent is not None else None
 
     def _public_runnable_resources(
         self,

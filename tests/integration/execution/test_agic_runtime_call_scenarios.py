@@ -138,6 +138,131 @@ agic child(_: Text) -> Text:
     asyncio.run(scenario())
 
 
+def test_dynamic_run_rejects_the_current_agic_and_model_recovers(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic parent(_: Text) -> Text:
+  recall = none
+  tools = _too/run
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        tools=_runtime_tools(),
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="run-self",
+                        call_id="provider-run-self",
+                        name="_too__run",
+                        input={
+                            "runnable": "agic:parent",
+                            "input": {"_": "again"},
+                        },
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("recovered")),
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="agic:parent",
+                    primary=resolve_input_parts("start"),
+                )
+            )
+
+            assert root.status == "succeeded", root.error
+            steps = harness.store.list_steps(run_id=root.id)
+            assert [(step.kind, step.status) for step in steps] == [
+                ("model", "succeeded"),
+                ("run", "failed"),
+                ("model", "succeeded"),
+            ]
+            assert harness.store.list_run_tree(root_run_id=root.id) == [root]
+            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            assert isinstance(result, ToolResultPart)
+            assert result.error == (
+                "_too/run cannot call the current or an ancestor runnable: agic:parent"
+            )
+
+    asyncio.run(scenario())
+
+
+def test_dynamic_run_rejects_an_ancestor_flow_and_model_recovers(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic caller(_: Text) -> Text:
+  recall = none
+  tools = _too/run
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow outer(_: Text) -> Text:
+  run caller
+""",
+        tools=_runtime_tools(),
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="run-ancestor",
+                        call_id="provider-run-ancestor",
+                        name="_too__run",
+                        input={
+                            "runnable": "flow:outer",
+                            "input": {"_": "again"},
+                        },
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("recovered")),
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="flow:outer",
+                    primary=resolve_input_parts("start"),
+                )
+            )
+
+            assert root.status == "succeeded", root.error
+            runs = harness.store.list_run_tree(root_run_id=root.id)
+            assert len(runs) == 2
+            caller = next(run for run in runs if run.id != root.id)
+            steps = harness.store.list_steps(run_id=caller.id)
+            assert [(step.kind, step.status) for step in steps] == [
+                ("model", "succeeded"),
+                ("run", "failed"),
+                ("model", "succeeded"),
+            ]
+            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            assert isinstance(result, ToolResultPart)
+            assert result.error == (
+                "_too/run cannot call the current or an ancestor runnable: flow:outer"
+            )
+
+    asyncio.run(scenario())
+
+
 def test_runtime_action_rejects_generic_tool_invocation(tmp_path: Path) -> None:
     tools = _runtime_tools()
     reload_tool = tools["_too__reload"]
