@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 import pytest
@@ -304,7 +304,9 @@ def test_chat_runtime_builds_process_local_execution_resources(
         assert isinstance(client, Session)
 
     assert captured["layout"] == layout
-    assert captured["kwargs"] == {
+    kwargs = cast(dict[str, object], captured["kwargs"])
+    assert callable(kwargs.pop("progress"))
+    assert kwargs == {
         "sandbox": "host",
         "ceiling_overrides": {
             "models": ("test/model",),

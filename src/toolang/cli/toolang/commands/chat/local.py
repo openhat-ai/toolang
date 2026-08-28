@@ -13,6 +13,7 @@ from typing import Any
 from uuid import uuid4
 
 from toolang.base.types.message import Message
+from toolang.base.types.progress import ProgressSink
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.calls import parse_call, validate_session_commands
@@ -59,6 +60,7 @@ class LocalChatSession:
         ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
         binding_overrides: Mapping[str, str | None] | None = None,
         limit_overrides: Mapping[str, int | Decimal | None] | None = None,
+        progress: ProgressSink | None = None,
     ) -> None:
         self.layout = layout
         self.executor_metadata = ChatExecutorMetadata(
@@ -78,6 +80,7 @@ class LocalChatSession:
             limit_overrides=limit_overrides,
         )
         self.state_watcher = StateWatcher(layout)
+        self._initial_progress = progress
         self.executor = RunExecutor(
             self.store,
             self.ids,
@@ -255,7 +258,11 @@ class LocalChatSession:
         self.executor.start()
         await self.run_client.connect()
         state = await self.state_watcher.refresh()
-        setup = await self.setup_watcher.refresh()
+        setup = (
+            await self.setup_watcher.refresh(progress=self._initial_progress)
+            if self._initial_progress is not None
+            else await self.setup_watcher.refresh()
+        )
         validate_agent_ceiling(setup, state, setup.ceiling)
         if self._stop_signal is None:
             raise RuntimeError("local chat event loop was not initialized")

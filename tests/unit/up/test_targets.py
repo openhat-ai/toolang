@@ -131,8 +131,10 @@ def test_resolve_visiting_layout_materializes_and_reuses_program(
     source = f"https://agents.example{tmp_path}/researcher.too"
     fetches: list[str] = []
 
-    def fake_fetch(ref: agents.AgentRef, *, progress=None) -> str:
-        del progress
+    def fake_fetch(
+        ref: agents.AgentRef, *, progress=None, progress_id: str | None = None
+    ) -> str:
+        del progress, progress_id
         fetches.append(ref.render())
         return "agent researcher\n"
 

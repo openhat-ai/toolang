@@ -8,6 +8,7 @@ import pytest
 
 from toolang.base.protocols.model import ModelCatalog
 from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
+from toolang.base.types.progress import ProgressEvent
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.adapters.responses import ResponsesModelAdapter
 from toolang.plugin.models.catalog import ModelsDevModelCatalog
@@ -21,6 +22,50 @@ def test_setup_watcher_current_requires_initial_refresh(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="has not been refreshed"):
         watcher.current()
+
+
+def test_setup_watcher_emits_closed_load_and_discover_stages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "models.json", ("one",))
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    events: list[ProgressEvent] = []
+
+    asyncio.run(watcher.refresh(progress=events.append))
+
+    assert {(event.id, event.kind) for event in events} == {("setup:alice", "setup")}
+    assert [(event.stage, event.status) for event in events] == [
+        ("load", "running"),
+        ("load", "ok"),
+        ("discover", "running"),
+        ("discover", "ok"),
+    ]
+
+
+def test_setup_watcher_closes_the_failing_discovery_stage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "models.json", ("one",))
+    watcher = _watcher(monkeypatch, tmp_path, envs={}, patch_local=False)
+    events: list[ProgressEvent] = []
+
+    async def fail_discovery(_self: object) -> ModelCatalogSnapshot:
+        raise RuntimeError("discovery failed")
+
+    monkeypatch.setattr(OllamaModelCatalog, "snapshot", fail_discovery)
+    monkeypatch.setattr(LlamaCppModelCatalog, "snapshot", fail_discovery)
+
+    with pytest.raises(RuntimeError, match="discovery failed"):
+        asyncio.run(watcher.refresh(progress=events.append))
+
+    assert [(event.stage, event.status) for event in events] == [
+        ("load", "running"),
+        ("load", "ok"),
+        ("discover", "running"),
+        ("discover", "failed"),
+    ]
 
 
 def test_setup_watcher_loads_catalog_without_persistent_model_cache(

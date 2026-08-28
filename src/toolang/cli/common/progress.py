@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 import sys
 from threading import RLock
 import time
@@ -16,6 +17,10 @@ from ...common.events import ProgressEvent
 from ...common.progress import ProgressSink
 
 
+_SPINNER = ("⠋", "⠙", "⠹", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+_MAX_DETAIL = 80
+
+
 class CliProgress:
     """Render progress updates to stderr without affecting stdout contracts."""
 
@@ -27,6 +32,9 @@ class CliProgress:
         show_cached_prepare: bool = False,
         show_materialize_summary: bool = False,
         prepare_summary_label: str = "Prepared",
+        agent: str | None = None,
+        sandbox: str | None = None,
+        enabled: bool = True,
     ) -> None:
         self._stream = stream or sys.stderr
         stream_is_tty = bool(getattr(self._stream, "isatty", lambda: False)())
@@ -41,7 +49,6 @@ class CliProgress:
             highlight=False,
         )
         self._items: dict[str, _ProgressItem] = {}
-        self._aliases: dict[str, str] = {}
         self._prepare: dict[str, str] = {}
         self._prepare_details: dict[str, str] = {}
         self._agent_name: str | None = None
@@ -53,6 +60,14 @@ class CliProgress:
         self._show_cached_prepare = show_cached_prepare
         self._show_materialize_summary = show_materialize_summary
         self._prepare_summary_label = prepare_summary_label
+        self.agent = agent
+        self.sandbox = sandbox
+        self._enabled = enabled
+        self._current_event: ProgressEvent | None = None
+        self._failure_event: ProgressEvent | None = None
+        self._printed_activities: set[tuple[str, str, str, str, str, str | None]] = (
+            set()
+        )
         self._prepare_total: int | None = None
         self._materialized_keys: set[str] = set()
         self._post_resolve_started_at: float | None = None
@@ -66,21 +81,50 @@ class CliProgress:
             if self._finished:
                 return
             self._record(event)
+            self._printed = True
+            if not self._enabled:
+                return
             if self._live:
                 self._render_live()
-            self._printed = True
+            else:
+                self._render_plain(event)
+
+    @property
+    def current_stage(self) -> str | None:
+        with self._lock:
+            event = self._current_event
+            return event.label if event is not None else None
+
+    @property
+    def failure_reason(self) -> str | None:
+        with self._lock:
+            event = self._failure_event
+            return event.detail if event is not None else None
+
+    @property
+    def failure_stage(self) -> str | None:
+        with self._lock:
+            event = self._failure_event
+            return f"{event.kind}.{event.stage}" if event is not None else None
+
+    @property
+    def failure_label(self) -> str | None:
+        with self._lock:
+            event = self._failure_event
+            return event.label if event is not None else None
 
     def finish(self, *, details: bool = True) -> None:
         with self._lock:
             if self._finished:
                 return
             self._finished = True
-            if not self._printed:
-                return
             if self._live_display is not None:
                 self._live_display.stop()
                 self._live_display = None
-            if not self._has_output():
+            if not self._printed or not self._enabled:
+                return
+            if not self._has_prepare_output():
+                self._reset_terminal_style()
                 return
             if details:
                 for line in self._lines():
@@ -112,18 +156,55 @@ class CliProgress:
             return
         self._live_display.update(renderable, refresh=True)
 
-    def _record(self, event: ProgressEvent) -> None:
-        if event.phase.startswith("agent."):
-            self._record_agent(event)
+    def _render_plain(self, event: ProgressEvent) -> None:
+        if event.status not in {"running", "failed"}:
             return
-        if event.phase.startswith("cap."):
+        detail = _bounded_detail(_normalized_detail(event.detail))
+        activity = (
+            event.id,
+            event.kind,
+            event.stage,
+            event.status,
+            event.label,
+            detail,
+        )
+        if activity in self._printed_activities:
+            return
+        self._printed_activities.add(activity)
+        suffix = f": {detail}" if detail else ""
+        label = f"{event.label} failed" if event.status == "failed" else event.label
+        print(f"{label}{suffix}", file=self._stream)
+
+    def _record(self, event: ProgressEvent) -> None:
+        if event.kind != "prepare":
+            self._record_operational(event)
+            return
+        if event.id.startswith("cap:"):
             self._record_cap(event)
             return
-        if event.phase.startswith("prepare."):
+        if event.id.startswith("agent:") and event.label.startswith("Prepare "):
             self._record_prepare(event)
+            return
+        if event.id.startswith("agent:"):
+            self._record_agent(event)
+
+    def _record_operational(self, event: ProgressEvent) -> None:
+        if self._failure_event is not None:
+            return
+        if event.status in {"running", "failed"}:
+            self._current_event = event
+        elif (
+            event.status in {"ok", "skipped"}
+            and self._current_event is not None
+            and self._current_event.id == event.id
+            and self._current_event.stage == event.stage
+        ):
+            self._current_event = event
+        if event.status == "failed":
+            self._failure_event = event
 
     def _record_prepare(self, event: ProgressEvent) -> None:
-        key = event.id if event.phase == "prepare.scope" else event.phase
+        key = event.id
         self._prepare[key] = event.status
         if event.detail:
             self._prepare_details[key] = event.detail
@@ -131,7 +212,7 @@ class CliProgress:
             self._agent_name = event.detail
 
     def _record_agent(self, event: ProgressEvent) -> None:
-        step = event.phase.removeprefix("agent.")
+        step = event.stage
         event_ref = event.id.split(":", 1)[1] if ":" in event.id else event.detail
         item = self._items.setdefault(
             "agent",
@@ -153,17 +234,8 @@ class CliProgress:
         if parsed is None:
             return
         kind, ref = parsed
-        step = event.phase.removeprefix("cap.")
-        if step == "config":
-            return
-        key = self._aliases.get(ref, f"cap:{kind}:{ref}")
-        if step == "resolve" and event.status == "ok" and event.detail:
-            canonical_key = f"cap:{kind}:{event.detail}"
-            self._aliases[ref] = canonical_key
-            existing = self._items.pop(key, None)
-            if existing is not None and canonical_key not in self._items:
-                self._items[canonical_key] = existing
-            key = canonical_key
+        step = event.stage
+        key = event.id
         item = self._items.setdefault(
             key,
             _ProgressItem(
@@ -185,10 +257,7 @@ class CliProgress:
             item.step_details[step] = event.detail
             if step == "fetch" and event.status == "ok":
                 item.detail = event.detail
-        if (
-            step in {"fetch", "extract", "materialize"}
-            and self._post_resolve_started_at is None
-        ):
+        if step in {"fetch", "materialize"} and self._post_resolve_started_at is None:
             self._post_resolve_started_at = time.monotonic()
         if step == "materialize":
             if event.status == "running" and self._materialize_started_at is None:
@@ -326,6 +395,9 @@ class CliProgress:
         self._stream.flush()
 
     def _live_text(self) -> Text:
+        current = self._current_event
+        if current is not None and current.kind != "prepare":
+            return self._operational_text(current)
         text = Text()
         agent_items = [item for item in self._items.values() if item.kind == "agent"]
         cap_items = [item for item in self._items.values() if item.kind != "agent"]
@@ -346,25 +418,37 @@ class CliProgress:
                 text.append(f"+ {_format_item(item)}\n", style="dim")
         return text
 
+    def _operational_text(self, event: ProgressEvent) -> Text:
+        elapsed = max(time.monotonic() - self._started_at, 0)
+        spinner = _SPINNER[int(elapsed * 10) % len(_SPINNER)]
+        subject = f"agent {self.agent}" if self.agent else "Toolang"
+        parts = [f"{spinner} {subject}"]
+        if self.sandbox:
+            parts.append(self.sandbox)
+        parts.append(event.label)
+        detail = _bounded_detail(_normalized_detail(event.detail))
+        if detail and detail != self.sandbox:
+            parts.append(detail)
+        parts.append(_format_elapsed(elapsed))
+        return Text(" · ".join(parts), style="dim")
+
     def _agent_stage_uses_summary(self, item: _ProgressItem) -> bool:
         if self._interrupted or _item_status(item) == "failed":
             return True
         return item.steps.get("fetch") == "ok" or item.steps.get("materialize") == "ok"
 
     def _has_visible_items(self) -> bool:
-        return bool(self._items)
+        return bool(self._items) or self._current_event is not None
 
-    def _has_output(self) -> bool:
-        return self._has_visible_items() or self._agent_name is not None
+    def _has_prepare_output(self) -> bool:
+        return bool(self._items) or self._agent_name is not None
 
     def _prepare_is_cached(self) -> bool:
-        scope_phases = tuple(
-            phase for phase in self._prepare if phase.startswith("prepare.scope:")
-        )
-        return bool(scope_phases) and all(
-            self._prepare.get(phase) == "ok"
-            and self._prepare_details.get(phase) == "cached"
-            for phase in scope_phases
+        scopes = tuple(self._prepare)
+        return bool(scopes) and all(
+            self._prepare.get(scope) == "ok"
+            and self._prepare_details.get(scope) == "cached"
+            for scope in scopes
         )
 
     def _item_groups(self) -> tuple[tuple[_ProgressItem, ...], ...]:
@@ -391,6 +475,9 @@ def make_cli_progress(
     show_cached_prepare: bool = False,
     show_materialize_summary: bool = False,
     prepare_summary_label: str = "Prepared",
+    agent: str | None = None,
+    sandbox: str | None = None,
+    enabled: bool = True,
 ) -> CliProgress:
     """Return the default CLI progress sink."""
 
@@ -399,6 +486,9 @@ def make_cli_progress(
         show_cached_prepare=show_cached_prepare,
         show_materialize_summary=show_materialize_summary,
         prepare_summary_label=prepare_summary_label,
+        agent=agent,
+        sandbox=sandbox,
+        enabled=enabled,
     )
 
 
@@ -446,8 +536,6 @@ def _item_state(item: _ProgressItem) -> tuple[str, str]:
             return "resolved", item.step_details.get("resolve", "")
     if item.steps.get("materialize") == "ok":
         return "materialized", ""
-    if item.steps.get("extract") == "ok":
-        return "extracted", ""
     if item.steps.get("fetch") == "ok":
         return "fetched", item.detail or ""
     if item.steps.get("resolve") == "ok":
@@ -458,7 +546,7 @@ def _item_state(item: _ProgressItem) -> tuple[str, str]:
 
 
 def _first_step_with_status(item: _ProgressItem, status: str) -> str | None:
-    for step in ("resolve", "fetch", "extract", "materialize"):
+    for step in ("resolve", "fetch", "materialize"):
         if item.steps.get(step) == status:
             return step
     return None
@@ -468,7 +556,6 @@ def _running_word(step: str) -> str:
     return {
         "resolve": "resolving",
         "fetch": "fetching",
-        "extract": "extracting",
         "materialize": "materializing",
     }.get(step, "running")
 
@@ -479,8 +566,6 @@ def _agent_progress_word(item: _ProgressItem) -> str:
         return "resolving"
     if running_step == "fetch":
         return "fetching"
-    if running_step == "extract":
-        return "extracting"
     if running_step == "materialize":
         return "materializing"
     pending_step = _first_step_with_status(item, "pending")
@@ -527,12 +612,96 @@ def _parse_cap_event(event: ProgressEvent) -> tuple[str, str] | None:
     if len(parts) != 3:
         return None
     prefix, kind, ref = parts
-    if prefix not in {
-        "cap.resolve",
-        "cap.fetch",
-        "cap.extract",
-        "cap.materialize",
-        "cap.config",
-    }:
+    if prefix != "cap":
         return None
     return kind, ref
+
+
+def _bounded_detail(detail: str | None) -> str | None:
+    if detail is None or len(detail) <= _MAX_DETAIL:
+        return detail
+    return detail[: _MAX_DETAIL - 1] + "…"
+
+
+def _normalized_detail(detail: str | None) -> str | None:
+    if detail is None:
+        return None
+    normalized = " ".join(detail.split())
+    return normalized or None
+
+
+def runtime_startup_failure_message(
+    name: str,
+    sandbox: str,
+    progress: CliProgress,
+    error: BaseException,
+    *,
+    log_path: Path | None = None,
+    dev_artifact: Path | None = None,
+    development_build: bool = False,
+) -> str:
+    """Describe one failed AgentServer startup with its active activity."""
+
+    fallback_reason = (
+        progress.failure_reason or str(error).strip() or type(error).__name__
+    )
+    reason, fix = _runtime_failure_guidance(
+        progress.failure_label,
+        fallback_reason=fallback_reason,
+        dev_artifact=dev_artifact,
+        development_build=development_build,
+    )
+    stage = progress.failure_stage or "runtime.start"
+    activity = progress.failure_label or progress.current_stage or "Starting agent"
+    lines = [
+        f"Could not start agent {name} in {sandbox}",
+        f"Stage: {stage}",
+        f"Activity: {activity}",
+        f"Reason: {reason}",
+    ]
+    if fix is not None:
+        lines.append(f"Fix: {fix}")
+    if log_path is not None:
+        lines.append(f"Log: {log_path}")
+    return "\n".join(lines)
+
+
+def _runtime_failure_guidance(
+    activity: str | None,
+    *,
+    fallback_reason: str,
+    dev_artifact: Path | None,
+    development_build: bool,
+) -> tuple[str, str | None]:
+    if activity == "Installing Toolang":
+        if dev_artifact is not None:
+            return (
+                f"Could not install Toolang from {dev_artifact.name}.",
+                "Rebuild the wheel and check the installation log.",
+            )
+        return (
+            "Could not install Toolang from the package index.",
+            "Check the log and network access, or run this command again with a "
+            "local wheel using `--dev PATH`.",
+        )
+    if activity == "Checking Toolang compatibility":
+        if dev_artifact is not None:
+            return (
+                "The selected Toolang wheel cannot start the required AgentServer.",
+                "Rebuild or select a compatible Toolang wheel, then run this command "
+                "again with `--dev PATH`.",
+            )
+        if development_build:
+            return (
+                "The Toolang package installed in the guest cannot start the required "
+                "AgentServer.",
+                "Build the current source with `uv build --wheel`, then run this "
+                "command again with `--dev dist`.",
+            )
+        return (
+            "The Toolang package installed in the guest cannot start the required "
+            "AgentServer.",
+            "Build or select a compatible Toolang wheel, then run this command again "
+            "with `--dev PATH`.",
+        )
+    return fallback_reason, None

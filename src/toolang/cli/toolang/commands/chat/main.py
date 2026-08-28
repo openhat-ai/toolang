@@ -174,30 +174,37 @@ def _chat_runtime(
                 return
 
             environ = load_runtime_environ(layout, base_environ=os.environ)
-            local = LocalChatSession(
-                layout,
-                sandbox=runtime.sandbox,
-                **(
-                    {"model_catalog": model_catalog}
-                    if model_catalog is not None
-                    else {}
-                ),
-                ceiling_overrides=user_call(
-                    resolve_ceiling_overrides,
-                    environ,
-                    allow_options,
-                ),
-                binding_overrides=user_call(
-                    resolve_binding_overrides,
-                    environ,
-                    default_options,
-                ),
-                limit_overrides=user_call(
-                    resolve_limit_overrides,
-                    environ,
-                    limit_options,
-                ),
-            )
+            from toolang.cli.common.progress import as_progress_sink, make_cli_progress
+
+            progress = make_cli_progress(agent=layout.name)
+            try:
+                local = LocalChatSession(
+                    layout,
+                    sandbox=runtime.sandbox,
+                    **(
+                        {"model_catalog": model_catalog}
+                        if model_catalog is not None
+                        else {}
+                    ),
+                    ceiling_overrides=user_call(
+                        resolve_ceiling_overrides,
+                        environ,
+                        allow_options,
+                    ),
+                    binding_overrides=user_call(
+                        resolve_binding_overrides,
+                        environ,
+                        default_options,
+                    ),
+                    limit_overrides=user_call(
+                        resolve_limit_overrides,
+                        environ,
+                        limit_options,
+                    ),
+                    progress=as_progress_sink(progress),
+                )
+            finally:
+                progress.finish(details=False)
             try:
                 yield local
             finally:

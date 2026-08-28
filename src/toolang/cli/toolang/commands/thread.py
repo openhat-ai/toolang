@@ -834,6 +834,8 @@ async def _execute_retry_or_rerun(
     show_progress: bool,
     model_catalog: Path | None,
 ) -> RunDetail:
+    from ...common.progress import as_progress_sink, make_cli_progress
+
     environ = load_runtime_environ(layout, base_environ=os.environ)
     run_id = source if kind == "retry" else None
     tracer = (
@@ -845,12 +847,20 @@ async def _execute_retry_or_rerun(
         if show_progress
         else None
     )
+    operational = (
+        make_cli_progress(agent=layout.name)
+        if runtime.mode == "embedded" and show_progress
+        else None
+    )
     try:
         async with open_run_client(
             layout,
             runtime,
             model_catalog=model_catalog,
+            progress=as_progress_sink(operational),
         ) as client:
+            if operational is not None:
+                operational.finish(details=False)
             request_id = f"term_{uuid4().hex}"
             handle = (
                 await client.retry(
@@ -878,6 +888,8 @@ async def _execute_retry_or_rerun(
                 await _cancel_restart(client, handle, operation=kind)
                 raise
     finally:
+        if operational is not None:
+            operational.finish(details=False)
         if tracer is not None:
             tracer.close()
 

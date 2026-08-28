@@ -39,11 +39,14 @@ Plugins also return a structured `runtime_kind` and optional `runtime_name` for
 human inspection; they do not preformat CLI labels. The built-in host sandbox
 uses `process`, Docker uses `container`, and the default is `workload`.
 
-Core persists the reference before calling
-`attach(plan, ref, progress=...)`. `attach` may start process-local observers
-and emit semantic `startup.*` progress, but progress is presentation-only and
-must not decide readiness or lifecycle state. Callbacks are never stored in a
-plan, request, reference, or persisted state.
+Core persists the reference before calling `attach(plan, ref, progress=...,
+progress_id=...)`. `attach` may start process-local observers and emit typed
+`runtime` or initial `setup` progress, but progress is
+presentation-only and must not decide readiness or lifecycle state. After
+readiness, core may call `follow(plan, ref)` to hand foreground output ownership
+to the sandbox, then calls `unfollow(ref)` before lifecycle progress takes the
+terminal back. Callbacks are never stored in a plan, request, reference, or
+persisted state.
 
 ### Model Catalog
 

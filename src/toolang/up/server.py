@@ -44,6 +44,7 @@ from toolang.up.logging import (
     build_uvicorn_log_config,
     configure_logging,
 )
+from toolang.up.launch_progress import launch_progress_sink
 from toolang.work import inbox as files
 from toolang.work.scheduler import JobScheduler
 
@@ -188,7 +189,7 @@ def serve(
         limit_overrides=spec.limit_overrides,
     )
     asyncio.run(core.state.refresh())
-    asyncio.run(core.setup.refresh())
+    asyncio.run(core.setup.refresh(progress=launch_progress_sink(dict(environ))))
     state = core.state.current()
     ceiling = core.setup.current().ceiling
     _validate_file_agic(state, enabled=bool(spec.file_inboxes))

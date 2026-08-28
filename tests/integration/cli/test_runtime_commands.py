@@ -11,7 +11,7 @@ from click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from toolang.base.errors import ToolangError
-from toolang.base.types.progress import ProgressEvent, ProgressStatus
+from toolang.base.types.progress import ProgressEvent, ProgressStage, ProgressStatus
 from toolang.base.types.sandbox import SandboxOutput, SandboxRef
 import toolang.cli.toolang.main as cli
 from toolang.cli.common import execution_runtime
@@ -31,9 +31,18 @@ def _startup_event(
     status: ProgressStatus,
     detail: str | None = None,
 ) -> ProgressEvent:
+    stages: dict[str, ProgressStage] = {
+        "prepare": "create",
+        "launch": "create",
+        "install": "create",
+        "validate": "create",
+        "server": "start",
+        "ready": "start",
+    }
     return ProgressEvent(
         id="agent-startup",
-        phase=f"startup.{phase}",
+        kind="runtime",
+        stage=stages[phase],
         label=label,
         status=status,
         detail=detail,
@@ -194,14 +203,18 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
 
     async def resolve_launch(**kwargs: Any) -> sandbox_runtime.LaunchSpec:
         captured["resolve"] = kwargs
-        return _launch_spec(**kwargs)
+        resolved_spec = _launch_spec(**kwargs)
+        captured["resolved_spec"] = resolved_spec
+        return resolved_spec
 
     async def run(
         spec: sandbox_runtime.LaunchSpec,
         *,
         on_ready: Any,
         progress: Any,
+        cleanup_progress: Any,
     ) -> int:
+        del cleanup_progress
         captured["run"] = spec
         captured["progress"] = progress
         for event in (
@@ -278,9 +291,9 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
         "tokens": 3000,
         "cost": None,
     }
-    assert resolved["log_path"] is None
-    assert resolved["output"] == "inherit"
-    assert captured["run"] == _launch_spec(**resolved)
+    assert resolved["log_path"] == layout.runtime_log
+    assert resolved["output"] == "file"
+    assert captured["run"] is captured["resolved_spec"]
     assert result.stdout == ""
     assert result.stderr.strip().splitlines() == [
         "Preparing sandbox: docker:registry.example/a:b",
@@ -370,7 +383,9 @@ def test_start_launches_in_background_and_reports_endpoint(
         spec: sandbox_runtime.LaunchSpec,
         *,
         progress: Any,
+        cleanup_progress: Any,
     ) -> object:
+        del cleanup_progress
         captured["progress"] = progress
         for event in (
             _startup_event("prepare", "Preparing sandbox", "running", spec.sandbox),
@@ -440,7 +455,9 @@ def test_start_reports_guest_failure_stage_reason_hint_and_log(
         _spec: sandbox_runtime.LaunchSpec,
         *,
         progress: Any,
+        cleanup_progress: Any,
     ) -> object:
+        del cleanup_progress
         for event in (
             _startup_event("install", "Installing Toolang", "running", "package index"),
             _startup_event(
@@ -481,7 +498,8 @@ def test_start_reports_guest_failure_stage_reason_hint_and_log(
     assert "Installing Toolang: package index" in stderr
     assert "Checking Toolang compatibility" in stderr
     assert "Could not start agent alice in docker" in normalized
-    assert "Stage: Checking Toolang compatibility" in normalized
+    assert "Stage: runtime.create" in normalized
+    assert "Activity: Checking Toolang compatibility" in normalized
     assert (
         "Reason: The Toolang package installed in the guest cannot start the "
         "required AgentServer." in normalized
@@ -506,7 +524,9 @@ def test_start_interruption_during_sandbox_launch_exits_130(
         _spec: sandbox_runtime.LaunchSpec,
         *,
         progress: Any,
+        cleanup_progress: Any,
     ) -> object:
+        del cleanup_progress
         progress(_startup_event("prepare", "Preparing sandbox", "running", "docker"))
         raise KeyboardInterrupt
 
@@ -534,7 +554,10 @@ def test_stop_forwards_force_to_sandbox(
     layout = _create_agent(root)
     captured: dict[str, object] = {}
 
-    async def stop(target: AgentLayout, *, force: bool = False) -> bool:
+    async def stop(
+        target: AgentLayout, *, force: bool = False, progress: Any = None
+    ) -> bool:
+        del progress
         captured.update(target=target, force=force)
         return True
 
@@ -557,8 +580,10 @@ def test_stop_rejects_agent_without_sandbox_state(
     root = tmp_path / "toolang"
     _create_agent(root)
 
-    async def stop(_target: AgentLayout, *, force: bool = False) -> bool:
-        del force
+    async def stop(
+        _target: AgentLayout, *, force: bool = False, progress: Any = None
+    ) -> bool:
+        del force, progress
         return False
 
     monkeypatch.setattr(sandbox_runtime, "stop", stop)

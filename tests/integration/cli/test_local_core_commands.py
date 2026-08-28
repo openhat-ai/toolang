@@ -896,7 +896,7 @@ def test_agent_info_builds_state_and_setup_without_server(
         def __init__(self, layout: AgentLayout) -> None:
             self.layout = layout
 
-        async def refresh(self) -> AgentSetup:
+        async def refresh(self, **_kwargs: object) -> AgentSetup:
             return AgentSetup(
                 layout=self.layout,
                 providers={},
@@ -1035,7 +1035,7 @@ class _EmptySetupWatcher:
     def __init__(self, layout: AgentLayout) -> None:
         self.layout = layout
 
-    async def refresh(self) -> AgentSetup:
+    async def refresh(self, **_kwargs: object) -> AgentSetup:
         return AgentSetup(
             layout=self.layout,
             providers={},

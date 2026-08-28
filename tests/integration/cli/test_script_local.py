@@ -74,7 +74,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
             assert actual_layout == layout
             assert kwargs["sandbox"] == "host"
 
-        async def refresh(self):
+        async def refresh(self, **_kwargs):
             return setup
 
     monkeypatch.setattr(script, "SetupWatcher", _SetupWatcher)
@@ -158,7 +158,7 @@ def test_local_script_renders_composite_flow_progress(
         def __init__(self, actual_layout, **_kwargs) -> None:
             assert actual_layout == layout
 
-        async def refresh(self):
+        async def refresh(self, **_kwargs):
             return setup
 
     monkeypatch.setattr(script, "SetupWatcher", _SetupWatcher)

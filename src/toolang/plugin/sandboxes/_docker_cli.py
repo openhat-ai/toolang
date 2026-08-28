@@ -131,31 +131,39 @@ async def docker_run_detached(
         args.extend(["--env", f"{name}={value}"])
     args.append(image)
     args.extend(command)
-    log_stream = log_path.open("ab") if log_path is not None else None
     try:
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=log_stream,
-            )
-        except FileNotFoundError as exc:
-            raise RuntimeError("docker command not found") from exc
-        try:
-            stdout, _stderr = await process.communicate()
-        except asyncio.CancelledError:
-            await asyncio.shield(_terminate_process(process))
-            raise
-    finally:
-        if log_stream is not None:
-            log_stream.close()
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("docker command not found") from exc
+    try:
+        stdout, stderr = await process.communicate()
+    except asyncio.CancelledError:
+        await asyncio.shield(_terminate_process(process))
+        raise
+    if log_path is not None and stderr:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("ab") as stream:
+            stream.write(stderr)
     if process.returncode != 0:
+        detail = _bounded_diagnostic(stderr)
         suffix = f"; see {log_path}" if log_path is not None else ""
-        raise RuntimeError(f"docker exited with code {process.returncode}{suffix}")
+        reason = f": {detail}" if detail else ""
+        raise RuntimeError(
+            f"docker exited with code {process.returncode}{reason}{suffix}"
+        )
     container_id = stdout.decode().strip()
     if not container_id:
         raise RuntimeError("docker did not return a container id")
     return container_id
+
+
+def _bounded_diagnostic(content: bytes) -> str:
+    text = " ".join(content.decode("utf-8", errors="replace").split())
+    return text if len(text) <= 240 else text[-239:] + "…"
 
 
 async def finish_process(process: asyncio.subprocess.Process) -> None:

@@ -7,17 +7,15 @@ from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 import json
-import os
 from pathlib import Path
 import re
 import shutil
-import stat
 from typing import Any
 from uuid import uuid4
 
 from toolang.base.errors import SandboxLaunchError, ToolangError
 from toolang.base.protocols.sandbox import Sandbox
-from toolang.base.types.progress import ProgressSink, ProgressStatus
+from toolang.base.types.progress import ProgressSink
 from toolang.base.types.sandbox import (
     SandboxLocation,
     SandboxMount,
@@ -26,7 +24,7 @@ from toolang.base.types.sandbox import (
     SandboxRef,
     SandboxRequest,
 )
-from toolang.common.progress import emit_progress
+from toolang.common.progress import LAUNCH_PROGRESS_FILE_ENV
 
 from ._docker_cli import (
     DEFAULT_HOST_GATEWAY,
@@ -40,7 +38,6 @@ from ._docker_cli import (
     finish_process,
 )
 from ._docker_guest import (
-    DOCKER_TOOLANG_COMPATIBILITY_ERROR,
     prepare_background_log,
     prepare_sandbox_instance,
     prepare_stage_directory,
@@ -54,6 +51,11 @@ from ._docker_guest import (
     write_sandbox_instance,
     write_start_script,
 )
+from ._file_follow import start_file_follower, stop_file_follower
+from . import _launch_progress
+
+_STARTUP_EVENT_MAX_BYTES = _launch_progress.MAX_BYTES
+_read_startup_events = _launch_progress.read_launch_progress
 
 DEFAULT_IMAGE = "python:3.13-slim"
 DEFAULT_ENVIRONMENT_ALLOW_PATTERN = (
@@ -74,26 +76,9 @@ _CONTROL_ENV_NAMES = frozenset(
         "TOOLANG_SANDBOX",
         "TOOLANG_SANDBOX_DESCRIPTION",
         "TOOLANG_SANDBOX_INSTANCE",
+        LAUNCH_PROGRESS_FILE_ENV,
     }
 )
-_STARTUP_EVENT_INTERVAL_SEC = 0.05
-_STARTUP_EVENT_MAX_BYTES = 1024
-_STARTUP_EVENT_MAP: dict[str, tuple[str, str, ProgressStatus]] = {
-    "install.running": ("install", "Installing Toolang", "running"),
-    "install.ok": ("install", "Installing Toolang", "ok"),
-    "install.failed": ("install", "Installing Toolang", "failed"),
-    "validate.running": ("validate", "Checking Toolang compatibility", "running"),
-    "validate.ok": ("validate", "Checking Toolang compatibility", "ok"),
-    "validate.failed": ("validate", "Checking Toolang compatibility", "failed"),
-    "server.running": ("server", "Starting agent server", "running"),
-}
-_STARTUP_EVENT_TRANSITIONS = {
-    None: frozenset({"install.running"}),
-    "install.running": frozenset({"install.ok", "install.failed"}),
-    "install.ok": frozenset({"validate.running"}),
-    "validate.running": frozenset({"validate.ok", "validate.failed"}),
-    "validate.ok": frozenset({"server.running"}),
-}
 
 
 def _linked_agent_file_mounts(
@@ -130,6 +115,11 @@ class DockerSandbox:
     _runtime_root: Path = field(init=False, repr=False)
     _environment_allow_pattern: re.Pattern[str] = field(init=False, repr=False)
     _log_followers: dict[str, asyncio.subprocess.Process] = field(
+        init=False,
+        repr=False,
+        default_factory=dict,
+    )
+    _file_followers: dict[str, asyncio.Task[None]] = field(
         init=False,
         repr=False,
         default_factory=dict,
@@ -179,7 +169,7 @@ class DockerSandbox:
             / "launches"
             / uuid4().hex[:8]
         )
-        startup_events_path = (
+        startup_events_path = request.local_progress_path or (
             request.local_home / ".runtime" / f"sandbox-startup-{stage_dir.name}.events"
         )
         try:
@@ -228,9 +218,8 @@ class DockerSandbox:
             command=request.command,
             hosted_dev_artifact=hosted_dev_artifact,
             sandbox_instance_path=runtime_dir / sandbox_instance_path.name,
-            startup_events_path=(
-                request.hosted_home / ".runtime" / startup_events_path.name
-            ),
+            startup_events_path=request.hosted_progress_path
+            or (request.hosted_home / ".runtime" / startup_events_path.name),
             validation_error_to_stderr=request.output == "file",
         )
         write_bootstrap(stage_dir / "bootstrap.py")
@@ -290,6 +279,11 @@ class DockerSandbox:
                 "TOOLANG_HOST_GATEWAY": DEFAULT_HOST_GATEWAY,
                 "TOOLANG_ROOT": str(request.hosted_root),
                 "TOOLANG_SANDBOX": f"{self.name}:{image}",
+                **(
+                    {LAUNCH_PROGRESS_FILE_ENV: str(request.hosted_progress_path)}
+                    if request.hosted_progress_path is not None
+                    else {}
+                ),
             },
             mounts=tuple(mounts),
             ports=(
@@ -310,6 +304,7 @@ class DockerSandbox:
                     if request.local_dev_artifact is not None
                     else "package index"
                 ),
+                "agent_name": request.agent_name,
             },
         )
 
@@ -401,21 +396,41 @@ class DockerSandbox:
         ref: SandboxRef,
         *,
         progress: ProgressSink | None = None,
+        progress_id: str,
     ) -> None:
-        """Follow inherited output after the recovery reference is durable."""
+        """Observe initial guest creation and setup after persistence."""
 
-        if plan.output == "inherit":
-            self._log_followers[ref.runtime_id] = await docker_follow_container_logs(
-                ref.runtime_id
-            )
         if progress is not None:
             await _observe_startup_events_safely(
                 Path(_plan_text(plan, "startup_events_path")),
                 progress=progress,
-                event_prefix=f"startup:{ref.runtime_id}",
+                progress_id=progress_id,
+                setup_progress_id=f"setup:{_plan_text(plan, 'agent_name')}",
                 package_source=_plan_text(plan, "package_source"),
                 runtime_id=ref.runtime_id,
             )
+
+    async def follow(self, plan: SandboxPlan, ref: SandboxRef) -> None:
+        """Relay foreground Docker logs after readiness."""
+
+        if plan.log_path is not None:
+            self._file_followers[ref.runtime_id] = await start_file_follower(
+                plan.log_path
+            )
+            return
+        self._log_followers[ref.runtime_id] = await docker_follow_container_logs(
+            ref.runtime_id
+        )
+
+    async def unfollow(self, ref: SandboxRef) -> None:
+        """Stop relaying foreground Docker logs."""
+
+        file_follower = self._file_followers.pop(ref.runtime_id, None)
+        if file_follower is not None:
+            await stop_file_follower(file_follower)
+        follower = self._log_followers.pop(ref.runtime_id, None)
+        if follower is not None:
+            await finish_process(follower)
 
     async def running(self, ref: SandboxRef) -> bool:
         return await asyncio.to_thread(docker_container_running, ref.runtime_id)
@@ -436,9 +451,7 @@ class DockerSandbox:
         )
 
     async def release(self, ref: SandboxRef) -> None:
-        follower = self._log_followers.pop(ref.runtime_id, None)
-        if follower is not None:
-            await finish_process(follower)
+        await self.unfollow(ref)
         log_path = ref.meta.get("log_path")
         if isinstance(log_path, str) and log_path:
             with suppress(OSError):
@@ -489,60 +502,32 @@ async def _observe_startup_events(
     path: Path,
     *,
     progress: ProgressSink,
-    event_prefix: str,
+    progress_id: str,
     package_source: str,
+    setup_progress_id: str = "setup:agent",
     runtime_id: str | None = None,
 ) -> None:
-    processed_lines = 0
-    previous: str | None = None
-    stopped_observed = False
-    while True:
-        content = await asyncio.to_thread(_read_startup_events, path)
-        lines = content.splitlines()
-        complete_count = (
-            len(lines) if content.endswith("\n") else max(len(lines) - 1, 0)
-        )
-        for token in lines[processed_lines:complete_count]:
-            if token not in _STARTUP_EVENT_TRANSITIONS.get(previous, frozenset()):
-                continue
-            previous = token
-            phase, label, status = _STARTUP_EVENT_MAP[token]
-            detail = _startup_event_detail(
-                token,
-                package_source=package_source,
-            )
-            emit_progress(
-                progress,
-                id=f"{event_prefix}:{phase}",
-                phase=f"startup.{phase}",
-                label=label,
-                status=status,
-                detail=detail,
-            )
-            if token in {
-                "install.failed",
-                "validate.failed",
-                "server.running",
-            }:
-                return
-        processed_lines = complete_count
-        if runtime_id is not None and not await asyncio.to_thread(
-            docker_container_running,
-            runtime_id,
-        ):
-            if stopped_observed:
-                return
-            stopped_observed = True
-        else:
-            stopped_observed = False
-        await asyncio.sleep(_STARTUP_EVENT_INTERVAL_SEC)
+    async def is_running() -> bool:
+        if runtime_id is None:
+            return True
+        return await asyncio.to_thread(docker_container_running, runtime_id)
+
+    await _launch_progress.observe_launch_progress(
+        path,
+        progress=progress,
+        runtime_progress_id=progress_id,
+        setup_progress_id=setup_progress_id,
+        package_source=package_source,
+        running=is_running if runtime_id is not None else None,
+    )
 
 
 async def _observe_startup_events_safely(
     path: Path,
     *,
     progress: ProgressSink,
-    event_prefix: str,
+    progress_id: str,
+    setup_progress_id: str,
     package_source: str,
     runtime_id: str,
 ) -> None:
@@ -550,58 +535,11 @@ async def _observe_startup_events_safely(
         await _observe_startup_events(
             path,
             progress=progress,
-            event_prefix=event_prefix,
+            progress_id=progress_id,
+            setup_progress_id=setup_progress_id,
             package_source=package_source,
             runtime_id=runtime_id,
         )
-
-
-def _read_startup_events(path: Path) -> str:
-    try:
-        expected = os.lstat(path)
-    except OSError:
-        return ""
-    if not stat.S_ISREG(expected.st_mode):
-        return ""
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_NONBLOCK", 0)
-    )
-    try:
-        descriptor = os.open(path, flags)
-    except OSError:
-        return ""
-    try:
-        opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode) or (
-            expected.st_dev,
-            expected.st_ino,
-        ) != (opened.st_dev, opened.st_ino):
-            return ""
-        content = os.read(descriptor, _STARTUP_EVENT_MAX_BYTES + 1)
-    except OSError:
-        return ""
-    finally:
-        with suppress(OSError):
-            os.close(descriptor)
-    if len(content) > _STARTUP_EVENT_MAX_BYTES:
-        return ""
-    try:
-        return content.decode("utf-8")
-    except UnicodeDecodeError:
-        return ""
-
-
-def _startup_event_detail(token: str, *, package_source: str) -> str | None:
-    if token == "install.running":
-        return package_source
-    if token == "install.failed":
-        return "Toolang installation failed."
-    if token == "validate.failed":
-        return DOCKER_TOOLANG_COMPATIBILITY_ERROR
-    return None
 
 
 def _image(spec: str | None, configured: str | None) -> str:

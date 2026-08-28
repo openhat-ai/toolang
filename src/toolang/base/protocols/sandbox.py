@@ -36,8 +36,15 @@ class Sandbox(Protocol):
         ref: SandboxRef,
         *,
         progress: ProgressSink | None = None,
+        progress_id: str,
     ) -> None:
         """Attach process-local observers after the reference is persisted."""
+
+    async def follow(self, plan: SandboxPlan, ref: SandboxRef) -> None:
+        """Relay foreground output after readiness and progress presentation."""
+
+    async def unfollow(self, ref: SandboxRef) -> None:
+        """Release foreground output before lifecycle progress takes ownership."""
 
     async def running(self, ref: SandboxRef) -> bool:
         """Return whether a launched workload is still running."""

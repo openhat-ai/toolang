@@ -42,13 +42,13 @@ from toolang.common.version import development_source
 
 if TYPE_CHECKING:
     from toolang.up.sandbox import SandboxState, LaunchSpec
-    from ...common.startup_progress import RuntimeStartupProgress
+    from ...common.progress import CliProgress
 
-from ...common.startup_progress import runtime_startup_failure_message
+from ...common.progress import runtime_startup_failure_message
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeStartup:
+class RuntimeLaunch:
     target: AgentLayout
     startup: LaunchSpec
     environ: dict[str, str]
@@ -77,9 +77,10 @@ def is_roaming_file_request(args: list[str]) -> bool:
 def run_roaming_file(source: Path, args: list[str]) -> int:
     from toolang.up import sandbox as sandbox_runtime
     from ...common.context import load_runtime_environ
-    from ...common.startup_progress import make_runtime_startup_progress
+    from ...common.progress import make_cli_progress
 
-    startup_progress: RuntimeStartupProgress | None = None
+    startup_progress: CliProgress | None = None
+    cleanup_progress: CliProgress | None = None
     startup: LaunchSpec | None = None
     try:
         options = _parse_roaming_file_options(args)
@@ -128,15 +129,22 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
                 file_inboxes=options.inboxes,
                 dev=options.dev,
                 log_spec=log_plan.spec,
-                output="inherit",
-                log_path=log_plan.path,
+                output="file",
+                log_path=layout.runtime_log,
                 temporary_port=options.port is None,
                 environ=log_plan.environ,
             ),
         )
         warn_development_package_source(startup)
-        startup_progress = make_runtime_startup_progress(layout.name, startup.sandbox)
-        return user_call(
+        startup_progress = make_cli_progress(
+            agent=layout.name,
+            sandbox=startup.sandbox,
+        )
+        cleanup_progress = make_cli_progress(
+            agent=layout.name,
+            sandbox=startup.sandbox,
+        )
+        exit_code = user_call(
             asyncio.run,
             sandbox_runtime.run(
                 startup,
@@ -146,11 +154,16 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
                     startup_progress,
                 ),
                 progress=startup_progress,
+                cleanup_progress=cleanup_progress,
             ),
         )
+        cleanup_progress.finish(details=False)
+        return exit_code
     except KeyboardInterrupt:
         if startup_progress is not None:
             startup_progress.interrupt()
+        if cleanup_progress is not None:
+            cleanup_progress.finish(details=False)
         return 130
     except (
         FileExistsError,
@@ -162,10 +175,12 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
     ) as exc:
         if startup_progress is not None:
             startup_progress.finish()
+        if cleanup_progress is not None:
+            cleanup_progress.finish(details=False)
         if startup_progress is not None:
             message = runtime_startup_failure_message(
-                startup_progress.agent,
-                startup_progress.sandbox,
+                layout.name,
+                startup.sandbox if startup is not None else options.sandbox,
                 startup_progress,
                 exc,
                 dev_artifact=startup.dev_artifact if startup is not None else None,
@@ -311,12 +326,12 @@ def run(
 ) -> None:
     from toolang.up import sandbox as sandbox_runtime
     from ...common.progress import as_progress_sink, make_cli_progress
-    from ...common.startup_progress import make_runtime_startup_progress
 
     selector = require_runtime_agent(ctx, agent)
     progress = make_cli_progress()
     source_finished = False
-    startup_progress: RuntimeStartupProgress | None = None
+    startup_progress: CliProgress | None = None
+    cleanup_progress: CliProgress | None = None
     try:
         selected_layout = cli_context(ctx).layout
         target = (
@@ -345,9 +360,13 @@ def run(
         progress.finish(details=False)
         source_finished = True
         warn_development_package_source(launch.startup)
-        startup_progress = make_runtime_startup_progress(
-            launch.target.name,
-            launch.startup.sandbox,
+        startup_progress = make_cli_progress(
+            agent=launch.target.name,
+            sandbox=launch.startup.sandbox,
+        )
+        cleanup_progress = make_cli_progress(
+            agent=launch.target.name,
+            sandbox=launch.startup.sandbox,
         )
         exit_code = user_call(
             asyncio.run,
@@ -359,6 +378,7 @@ def run(
                     startup_progress,
                 ),
                 progress=startup_progress,
+                cleanup_progress=cleanup_progress,
             ),
         )
     except KeyboardInterrupt:
@@ -366,6 +386,8 @@ def run(
             progress.interrupt()
         if startup_progress is not None:
             startup_progress.interrupt()
+        if cleanup_progress is not None:
+            cleanup_progress.finish(details=False)
         raise typer.Exit(130) from None
     except (
         FileExistsError,
@@ -379,13 +401,15 @@ def run(
             progress.finish(details=False)
         if startup_progress is not None:
             startup_progress.finish()
+        if cleanup_progress is not None:
+            cleanup_progress.finish(details=False)
         if isinstance(exc, click.ClickException) and startup_progress is None:
             raise
         if startup_progress is not None:
             raise click.ClickException(
                 runtime_startup_failure_message(
-                    startup_progress.agent,
-                    startup_progress.sandbox,
+                    launch.target.name,
+                    launch.startup.sandbox,
                     startup_progress,
                     exc,
                     dev_artifact=launch.startup.dev_artifact,
@@ -393,13 +417,15 @@ def run(
                 )
             ) from exc
         raise click.ClickException(str(exc)) from exc
+    if cleanup_progress is not None:
+        cleanup_progress.finish(details=False)
     raise typer.Exit(exit_code)
 
 
 def _report_foreground_ready(
     name: str,
     state: SandboxState,
-    progress: RuntimeStartupProgress,
+    progress: CliProgress,
 ) -> None:
     progress.finish()
     typer.echo(
@@ -459,7 +485,6 @@ def start(
 ) -> None:
     from toolang.up import sandbox as sandbox_runtime
     from ...common.progress import as_progress_sink, make_cli_progress
-    from ...common.startup_progress import make_runtime_startup_progress
 
     selector = require_runtime_agent(ctx, agent)
     if user_call(agents.parse_agent_selector, selector).form != "name":
@@ -496,9 +521,13 @@ def start(
 
     progress.finish(details=False)
     warn_development_package_source(launch.startup)
-    startup_progress = make_runtime_startup_progress(
-        launch.target.name,
-        launch.startup.sandbox,
+    startup_progress = make_cli_progress(
+        agent=launch.target.name,
+        sandbox=launch.startup.sandbox,
+    )
+    cleanup_progress = make_cli_progress(
+        agent=launch.target.name,
+        sandbox=launch.startup.sandbox,
     )
     try:
         handle = user_call(
@@ -506,10 +535,12 @@ def start(
             sandbox_runtime.launch(
                 launch.startup,
                 progress=startup_progress,
+                cleanup_progress=cleanup_progress,
             ),
         )
     except KeyboardInterrupt:
         startup_progress.interrupt()
+        cleanup_progress.finish(details=False)
         raise typer.Exit(130) from None
     except (
         TimeoutError,
@@ -519,6 +550,7 @@ def start(
         click.ClickException,
     ) as exc:
         startup_progress.finish()
+        cleanup_progress.finish(details=False)
         raise click.ClickException(
             runtime_startup_failure_message(
                 launch.target.name,
@@ -531,6 +563,7 @@ def start(
             )
         ) from exc
     startup_progress.finish()
+    cleanup_progress.finish(details=False)
     typer.echo(f"Started agent {launch.target.name}: {handle.state.ref.endpoint}")
 
 
@@ -543,14 +576,26 @@ def stop(
     ] = False,
 ) -> None:
     from toolang.up import sandbox as sandbox_runtime
+    from ...common.progress import make_cli_progress
 
     agent_name = require_runtime_agent(ctx, agent)
     root = context_root(ctx)
     layout = AgentLayout.resident(root, agent_name)
-    stopped = user_call(
-        asyncio.run,
-        sandbox_runtime.stop(layout, force=force),
+    status = agents.AgentProcess(layout).status(ui_base_url=ui_base_url())
+    progress = make_cli_progress(
+        agent=agent_name,
+        sandbox=status.sandbox if status is not None else None,
     )
+    try:
+        stopped = user_call(
+            asyncio.run,
+            sandbox_runtime.stop(layout, force=force, progress=progress),
+        )
+    except KeyboardInterrupt:
+        progress.interrupt()
+        raise typer.Exit(130) from None
+    finally:
+        progress.finish(details=False)
     if not stopped:
         raise click.ClickException(f"Agent {agent_name} not running")
     typer.echo(f"Stopped agent {agent_name}")
@@ -635,7 +680,7 @@ def resolve_startup(
     endpoint_host: str | None,
     dev: Path | None,
     background: bool,
-) -> RuntimeStartup:
+) -> RuntimeLaunch:
     from toolang.up import sandbox as sandbox_runtime
 
     root, agent = target.root, target.name
@@ -684,10 +729,10 @@ def resolve_startup(
             file_inboxes=inboxes,
             dev=dev,
             log_spec=log_plan.spec,
-            output="file" if background else "inherit",
-            log_path=log_plan.path,
+            output="file",
+            log_path=log_plan.path if background else target.runtime_log,
             temporary_port=target.placement == "visiting" and port is None,
             environ=log_plan.environ,
         ),
     )
-    return RuntimeStartup(target, startup, log_plan.environ, log_plan)
+    return RuntimeLaunch(target, startup, log_plan.environ, log_plan)

@@ -19,7 +19,8 @@ from toolang.base.types.sandbox import SandboxRef
 class _Progress:
     current_stage = "Starting workload"
     failure_reason: str | None = None
-    failure_phase: str | None = None
+    failure_stage: str | None = None
+    failure_label: str | None = None
 
     def __init__(self) -> None:
         self.finished = 0
@@ -28,7 +29,8 @@ class _Progress:
     def __call__(self, _event: object) -> None:
         pass
 
-    def finish(self) -> None:
+    def finish(self, *, details: bool = True) -> None:
+        del details
         self.finished += 1
 
     def interrupt(self) -> None:
@@ -203,7 +205,10 @@ def test_execution_runtime_opens_embedded_host_and_releases_stopped_state(
     )
     released: list[AgentLayout] = []
 
-    async def release_stopped(selected: AgentLayout) -> None:
+    async def release_stopped(
+        selected: AgentLayout, *, progress: object | None = None
+    ) -> None:
+        del progress
         released.append(selected)
 
     monkeypatch.setattr(runtime.sandbox_runtime, "release_stopped", release_stopped)
@@ -263,16 +268,11 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
 
     monkeypatch.setattr(runtime, "_resolve_inactive_launch", resolve_launch)
     progress = _Progress()
+    launch_cleanup_progress = _Progress()
     shutdown_progress = _Progress()
+    progresses = iter((progress, launch_cleanup_progress, shutdown_progress))
     monkeypatch.setattr(
-        runtime,
-        "make_runtime_startup_progress",
-        lambda *_args, **_kwargs: progress,
-    )
-    monkeypatch.setattr(
-        runtime,
-        "make_runtime_shutdown_progress",
-        lambda *_args, **_kwargs: shutdown_progress,
+        runtime, "make_cli_progress", lambda **_kwargs: next(progresses)
     )
     implementation = cast(Any, SimpleNamespace())
     state = SandboxState(
@@ -282,8 +282,10 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
     handle = runtime.sandbox_runtime.SandboxHandle(implementation, state)
     calls: list[object] = []
 
-    async def launch_runtime(spec: object, *, progress: object) -> object:
-        calls.append(("launch", spec, progress))
+    async def launch_runtime(
+        spec: object, *, progress: object, cleanup_progress: object
+    ) -> object:
+        calls.append(("launch", spec, progress, cleanup_progress))
         return handle
 
     async def stop_handle(
@@ -314,11 +316,12 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
         )
 
     assert calls == [
-        ("launch", launch, progress),
+        ("launch", launch, progress, launch_cleanup_progress),
         "body",
         ("stop", layout, handle, False, shutdown_progress),
     ]
     assert progress.finished == 1
+    assert launch_cleanup_progress.finished == 1
     assert shutdown_progress.finished == 1
 
 
@@ -346,16 +349,11 @@ def test_execution_runtime_warns_when_a_development_cli_uses_the_package_index(
         lambda: (True, tmp_path),
     )
     progress = _Progress()
+    launch_cleanup_progress = _Progress()
     shutdown_progress = _Progress()
+    progresses = iter((progress, launch_cleanup_progress, shutdown_progress))
     monkeypatch.setattr(
-        runtime,
-        "make_runtime_startup_progress",
-        lambda *_args, **_kwargs: progress,
-    )
-    monkeypatch.setattr(
-        runtime,
-        "make_runtime_shutdown_progress",
-        lambda *_args, **_kwargs: shutdown_progress,
+        runtime, "make_cli_progress", lambda **_kwargs: next(progresses)
     )
     handle = runtime.sandbox_runtime.SandboxHandle(
         cast(Any, SimpleNamespace()),
@@ -365,7 +363,10 @@ def test_execution_runtime_warns_when_a_development_cli_uses_the_package_index(
         ),
     )
 
-    async def launch_runtime(_spec: object, *, progress: object) -> object:
+    async def launch_runtime(
+        _spec: object, *, progress: object, cleanup_progress: object
+    ) -> object:
+        del progress, cleanup_progress
         return handle
 
     async def stop_handle(*_args: object, **_kwargs: object) -> bool:
@@ -427,12 +428,13 @@ def test_execution_runtime_startup_failure_uses_structured_package_guidance(
         ),
     )
     progress = _Progress()
-    progress.failure_phase = "startup.validate"
+    progress.failure_stage = "runtime.create"
+    progress.failure_label = "Checking Toolang compatibility"
     progress.failure_reason = "guest compatibility check failed"
     monkeypatch.setattr(
         runtime,
-        "make_runtime_startup_progress",
-        lambda *_args, **_kwargs: progress,
+        "make_cli_progress",
+        lambda **_kwargs: progress,
     )
     monkeypatch.setattr(runtime, "development_source", lambda: (True, tmp_path))
 
@@ -478,8 +480,8 @@ def test_execution_runtime_cleanup_does_not_hide_a_body_failure(
     )
     monkeypatch.setattr(
         runtime,
-        "make_runtime_startup_progress",
-        lambda *_args, **_kwargs: _Progress(),
+        "make_cli_progress",
+        lambda **_kwargs: _Progress(),
     )
     state = SandboxState(
         sandbox="docker:python:3.13-slim",
@@ -528,8 +530,8 @@ def test_execution_runtime_cleans_up_a_launched_guest_with_invalid_identity(
     )
     monkeypatch.setattr(
         runtime,
-        "make_runtime_startup_progress",
-        lambda *_args, **_kwargs: _Progress(),
+        "make_cli_progress",
+        lambda **_kwargs: _Progress(),
     )
     state = cast(
         Any,

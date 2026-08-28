@@ -15,6 +15,8 @@ import typer
 from toolang.catalog.job import AuthoredJobs
 from toolang.catalog.agent import LocalAgents
 from toolang.common.layout import AgentLayout
+from toolang.common.progress import emit_progress
+from toolang.base.types.progress import ProgressSink, ProgressStage
 from toolang.up import process as agents
 from toolang.catalog import templates
 from toolang.setup import AgentSetup, SetupWatcher
@@ -70,35 +72,122 @@ def clone_agent(
     target: Annotated[str | None, typer.Argument(help="New local agent name.")] = None,
 ) -> None:
     root = context_root(ctx)
+    progress = make_cli_progress()
+    sink = as_progress_sink(progress)
+    progress_id = f"agent:{source}"
+    active_stage: ProgressStage = "resolve"
     try:
         homes = LocalAgents(root / "agents")
         selector = agents.parse_agent_selector(source)
         if selector.form == "name":
+            emit_progress(
+                sink,
+                id=progress_id,
+                kind="prepare",
+                stage="resolve",
+                label="Resolve agent",
+                status="running",
+                detail=source,
+            )
             if target is None:
                 raise ValueError("target name is required when cloning one local agent")
             source_home = homes.get(selector.name or "")
             if source_home is None:
                 raise FileNotFoundError(source)
+            emit_progress(
+                sink,
+                id=progress_id,
+                kind="prepare",
+                stage="resolve",
+                label="Resolve agent",
+                status="ok",
+                detail=source,
+            )
+            active_stage = "materialize"
             home = homes.path(target)
             if home.exists():
                 raise FileExistsError(home)
+            emit_progress(
+                sink,
+                id=progress_id,
+                kind="prepare",
+                stage="materialize",
+                label="Materialize agent",
+                status="running",
+                detail=target,
+            )
             shutil.copytree(
                 source_home,
                 home,
                 ignore=shutil.ignore_patterns(".caps", ".state", ".runtime"),
             )
         else:
-            ref = agents.resolve_agent_selector_ref(selector)
+            ref = agents.resolve_agent_selector_ref(
+                selector,
+                progress=sink,
+                progress_id=progress_id,
+            )
             name = target or selector.default_name()
-            home = homes.create(name, content=agents.fetch_agent_ref(ref))
+            active_stage = "fetch"
+            content = agents.fetch_agent_ref(
+                ref,
+                progress=sink,
+                progress_id=progress_id,
+            )
+            active_stage = "materialize"
+            emit_progress(
+                sink,
+                id=progress_id,
+                kind="prepare",
+                stage="materialize",
+                label="Materialize agent",
+                status="running",
+                detail=name,
+            )
+            home = homes.create(name, content=content)
+        emit_progress(
+            sink,
+            id=progress_id,
+            kind="prepare",
+            stage="materialize",
+            label="Materialize agent",
+            status="ok",
+            detail=home.name,
+        )
     except FileExistsError as exc:
+        _emit_clone_failure(sink, progress_id, active_stage, exc)
         target_name = target or Path(source).stem
         raise click.ClickException(f"Agent {target_name} already exists") from exc
     except FileNotFoundError as exc:
+        _emit_clone_failure(sink, progress_id, active_stage, exc)
         raise click.ClickException(f"Agent {source} not found") from exc
     except ValueError as exc:
+        _emit_clone_failure(sink, progress_id, active_stage, exc)
         raise click.ClickException(str(exc)) from exc
+    finally:
+        progress.finish(details=False)
     typer.echo(f"Cloned agent {home.name}: {home / 'agent.too'}")
+
+
+def _emit_clone_failure(
+    progress: ProgressSink | None,
+    progress_id: str,
+    stage: ProgressStage,
+    error: Exception,
+) -> None:
+    emit_progress(
+        progress,
+        id=progress_id,
+        kind="prepare",
+        stage=stage,
+        label={
+            "resolve": "Resolve agent",
+            "fetch": "Fetch agent",
+            "materialize": "Materialize agent",
+        }[stage],
+        status="failed",
+        detail=str(error),
+    )
 
 
 def remove_agent(
@@ -165,7 +254,11 @@ def info_agent(
         if model_catalog is not None
         else SetupWatcher(layout)
     )
-    setup = asyncio.run(watcher.refresh())
+    progress = make_cli_progress(agent=layout.name)
+    try:
+        setup = asyncio.run(watcher.refresh(progress=as_progress_sink(progress)))
+    finally:
+        progress.finish(details=False)
     created_at = created_time(layout.home)
     started_at = runtime_value(runtime_state.get("started_at"))
     updated_at = runtime_value(runtime_state.get("updated_at"))

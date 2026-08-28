@@ -814,23 +814,24 @@ def test_docker_startup_observer_preserves_order_and_curated_failure(
         docker_sandbox._observe_startup_events(
             path,
             progress=events.append,
-            event_prefix="startup:container",
+            progress_id="runtime:container",
             package_source="toolang.whl",
         )
     )
 
-    assert [(event.phase, event.status, event.detail) for event in events] == [
-        ("startup.install", "running", "toolang.whl"),
-        ("startup.install", "ok", None),
-        ("startup.validate", "running", None),
+    assert [
+        (event.kind, event.stage, event.status, event.detail) for event in events
+    ] == [
+        ("runtime", "create", "running", "toolang.whl"),
+        ("runtime", "create", "running", None),
         (
-            "startup.validate",
+            "runtime",
+            "create",
             "failed",
             docker_guest.DOCKER_TOOLANG_COMPATIBILITY_ERROR,
         ),
     ]
     assert [event.label for event in events] == [
-        "Installing Toolang",
         "Installing Toolang",
         "Checking Toolang compatibility",
         "Checking Toolang compatibility",
@@ -859,7 +860,7 @@ def test_docker_startup_observer_reads_final_token_after_container_exit(
             docker_sandbox._observe_startup_events(
                 path,
                 progress=events.append,
-                event_prefix="startup:container",
+                progress_id="runtime:container",
                 package_source="toolang.whl",
                 runtime_id="container",
             ),
@@ -868,10 +869,48 @@ def test_docker_startup_observer_reads_final_token_after_container_exit(
 
     asyncio.run(observe())
 
-    assert [(event.phase, event.status) for event in events][-1] == (
-        "startup.validate",
+    assert [(event.stage, event.status) for event in events][-1] == (
+        "create",
         "failed",
     )
+
+
+def test_docker_launch_observer_forwards_only_closed_guest_setup_tokens(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "startup.events"
+    path.write_text(
+        "install.running\n"
+        "install.ok\n"
+        "validate.running\n"
+        "validate.ok\n"
+        "server.running\n"
+        "setup.load.running\n"
+        "setup.load.ok\n"
+        "setup.discover.running\n"
+        "setup.discover.ok\n",
+        encoding="utf-8",
+    )
+    events: list[ProgressEvent] = []
+
+    asyncio.run(
+        docker_sandbox._observe_startup_events(
+            path,
+            progress=events.append,
+            progress_id="runtime:container",
+            setup_progress_id="setup:alice",
+            package_source="toolang.whl",
+        )
+    )
+
+    assert [(event.id, event.kind, event.stage, event.status) for event in events] == [
+        ("runtime:container", "runtime", "create", "running"),
+        ("runtime:container", "runtime", "create", "running"),
+        ("setup:alice", "setup", "load", "running"),
+        ("setup:alice", "setup", "load", "ok"),
+        ("setup:alice", "setup", "discover", "running"),
+        ("setup:alice", "setup", "discover", "ok"),
+    ]
 
 
 def test_docker_startup_event_reader_rejects_untrusted_file_shapes(
@@ -1255,7 +1294,9 @@ def test_docker_foreground_sandbox_follows_container_logs(
 
     ref = asyncio.run(sandbox.launch(plan))
     assert calls == []
-    asyncio.run(sandbox.attach(plan, ref))
+    asyncio.run(sandbox.attach(plan, ref, progress_id="runtime:container"))
+    assert calls == []
+    asyncio.run(sandbox.follow(plan, ref))
     assert calls == [("logs", ref.runtime_id)]
     result = asyncio.run(sandbox.wait(ref))
 

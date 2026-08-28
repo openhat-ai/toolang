@@ -187,12 +187,19 @@ def adapters_command(
 
 
 def _setup(ctx: typer.Context) -> AgentSetup:
-    return asyncio.run(
-        SetupWatcher(
-            _layout(ctx),
-            model_catalog=context_model_catalog(ctx),
-        ).refresh()
-    )
+    from ...common.progress import as_progress_sink, make_cli_progress
+
+    layout = _layout(ctx)
+    progress = make_cli_progress(agent=layout.name)
+    try:
+        return asyncio.run(
+            SetupWatcher(
+                layout,
+                model_catalog=context_model_catalog(ctx),
+            ).refresh(progress=as_progress_sink(progress))
+        )
+    finally:
+        progress.finish(details=False)
 
 
 def _layout(ctx: typer.Context) -> AgentLayout:

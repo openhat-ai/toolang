@@ -61,9 +61,13 @@ class SandboxRequest:
     mounts: tuple[SandboxMount, ...] = ()
     local_dev_artifact: Path | None = None
     dotenv_envs: dict[str, str] = field(default_factory=dict)
+    local_progress_path: Path | None = None
+    hosted_progress_path: Path | None = None
 
     def __post_init__(self) -> None:
         _validate_output(self.output, self.log_path)
+        if (self.local_progress_path is None) != (self.hosted_progress_path is None):
+            raise ValueError("sandbox progress paths must be provided together")
 
 
 @dataclass(frozen=True, slots=True)

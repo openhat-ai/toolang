@@ -728,10 +728,15 @@ def _refresh_agent_state(
 ) -> None:
     from ..common.progress import as_progress_sink
 
-    user_call(
-        prepare_agent_state,
-        AgentLayout.resident(toolang_root, agent_name),
-        progress=as_progress_sink(progress),
-    )
-    if progress is not None:
-        progress.set_prepare_total(progress_total)
+    owned_progress = progress is None
+    active = progress or _make_cap_write_progress()
+    try:
+        user_call(
+            prepare_agent_state,
+            AgentLayout.resident(toolang_root, agent_name),
+            progress=as_progress_sink(active),
+        )
+        active.set_prepare_total(progress_total)
+    finally:
+        if owned_progress:
+            active.finish(details=False)

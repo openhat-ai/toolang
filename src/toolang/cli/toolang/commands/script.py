@@ -47,7 +47,7 @@ from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 
 from ...common.context import load_runtime_environ
 from ...common.execution_runtime import DEVELOPMENT_WHEEL_HELP, open_execution_runtime
-from ...common.progress import as_progress_sink, make_cli_progress
+from ...common.progress import CliProgress, as_progress_sink, make_cli_progress
 from ...common.remote_runtime import inspect_remote_runtime
 from ...common.result_saving import save_result
 from ...common.output import echo_error
@@ -466,8 +466,6 @@ def _run(
                     layout,
                     progress=as_progress_sink(progress),
                 )
-                if progress is not None:
-                    progress.finish(details=False)
                 result = asyncio.run(
                     _execute(
                         layout=layout,
@@ -484,6 +482,7 @@ def _run(
                         default_options=default_options,
                         limit_options=limit_options,
                         quiet=quiet,
+                        progress=progress,
                     )
                 )
             else:
@@ -784,6 +783,7 @@ async def _execute(
     allow_options: tuple[str, ...],
     default_options: tuple[str, ...],
     quiet: bool,
+    progress: CliProgress | None = None,
     limit_options: tuple[str, ...] = (),
 ) -> RunRecord:
     environ = load_runtime_environ(layout, base_environ=os.environ)
@@ -792,7 +792,7 @@ async def _execute(
         raise ValueError(
             "--default runnable does not apply when a script runnable is explicit"
         )
-    setup = await SetupWatcher(
+    setup_watcher = SetupWatcher(
         layout,
         sandbox=sandbox,
         ceiling_overrides=resolve_ceiling_overrides(environ, allow_options),
@@ -801,7 +801,14 @@ async def _execute(
             **cli_bindings,
         },
         limit_overrides=resolve_limit_overrides(environ, limit_options),
-    ).refresh()
+    )
+    setup = (
+        await setup_watcher.refresh(progress=as_progress_sink(progress))
+        if progress is not None
+        else await setup_watcher.refresh()
+    )
+    if progress is not None:
+        progress.finish(details=False)
     state_watcher = StateWatcher(layout)
     await state_watcher.refresh()
     executor = RunExecutor(

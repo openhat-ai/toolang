@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 import logging
@@ -12,7 +13,9 @@ from pathlib import Path
 from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.model import ModelCatalogSnapshot
+from toolang.base.types.progress import ProgressStage
 from toolang.common.layout import AgentLayout
+from toolang.common.progress import ProgressSink, emit_progress
 from toolang.plugin.config import merge_plugin_configs
 from toolang.plugin.models.catalog import (
     MergedModelCatalog,
@@ -84,123 +87,141 @@ class SetupWatcher:
             raise RuntimeError("setup watcher has not been refreshed")
         return self._setup
 
-    async def refresh(self, *, force: bool = False) -> AgentSetup:
+    async def refresh(
+        self,
+        *,
+        force: bool = False,
+        progress: ProgressSink | None = None,
+    ) -> AgentSetup:
         """Refresh environment and explicit local provider discovery."""
 
         async with self._refresh_lock:
-            root_config = load_setup_config(self.layout)
-            agent_config = load_agent_config(self.layout)
-            envs = load_setup_envs(self.layout)
-            configs = (root_config, agent_config)
-            config_value = (root_config, agent_config)
-            config_changed = config_value != self._config
-            envs_changed = self._setup is None or envs != self._setup.envs
-            catalog_path = resolve_model_catalog_path(
-                self.layout,
-                explicit=self._model_catalog_override,
-                environ=envs,
-            )
-            identity = _catalog_file_identity(catalog_path)
-            catalog_changed = identity != self._catalog_identity
-            ceiling = resolve_agent_ceiling(
-                configs,
-                overrides=self._ceiling_overrides,
-            )
-            bindings = resolve_run_bindings(
-                configs,
-                overrides=self._binding_overrides,
-            )
-            limits = resolve_run_limits(
-                configs,
-                overrides=self._limit_overrides,
-            )
-            provider_configs = parse_provider_configs(configs)
-            adapter_configs = merge_plugin_configs(
-                configs,
-                family="model_adapter",
-            )
-            toolset_configs = merge_plugin_configs(
-                configs,
-                family="toolset",
-            )
-            catalog_configs = merge_plugin_configs(
-                configs,
-                family="model_catalog",
-            )
-            if config_changed or envs_changed or not self._adapters:
-                self._adapters = load_model_adapters(adapter_configs)
-            if config_changed or envs_changed or not self._tools:
-                self._tools = load_tools(
-                    toolset_config=toolset_configs,
-                )
-            catalog_configs["models_dev"] = {
-                **catalog_configs.get("models_dev", {}),
-                "path": catalog_path,
-            }
-            catalog_configs["ollama"] = {
-                **catalog_configs.get("ollama", {}),
-                "environ": envs,
-            }
-            catalog_configs["llama_cpp"] = {
-                **catalog_configs.get("llama_cpp", {}),
-                "environ": envs,
-            }
-            catalogs = load_model_catalogs(catalog_configs)
-            models_dev = catalogs.pop("models_dev", None)
-            if models_dev is None:
-                raise RuntimeError("models_dev catalog plugin is not installed")
-            if self._static_catalog is None or catalog_changed:
-                self._static_catalog = await models_dev.snapshot()
-
-            static = self._static_catalog
-            assert static is not None
-            ordered_catalogs = tuple(
-                catalogs.pop(name)
-                for name in ("ollama", "llama_cpp")
-                if name in catalogs
-            ) + tuple(catalogs[name] for name in sorted(catalogs))
-            merged = await MergedModelCatalog(
-                (
-                    _SnapshotModelCatalog(static),
-                    *ordered_catalogs,
-                )
-            ).snapshot()
-            providers = configure_catalog_providers(
-                merged.providers,
-                provider_configs,
-            )
-            resolved_catalog = resolve_catalog_providers(
-                ModelCatalogSnapshot(
-                    providers=providers,
-                    models=merged.models,
-                    revision=merged.revision,
-                    source=merged.source,
-                ),
-                adapters=self._adapters,
-                environ=envs,
-                configs=provider_configs,
-            )
-            providers = dict(resolved_catalog.providers)
-            models = tuple(
-                model_info_from_catalog(model) for model in resolved_catalog.models
-            )
-            setup = AgentSetup(
-                layout=self.layout,
-                providers=providers,
-                adapters=self._adapters,
-                models=models,
-                tools=self._tools,
-                envs=envs,
-                catalog=resolved_catalog,
-                provider_configs=provider_configs,
-                environment=AgentEnvironment.capture(
+            progress_id = f"setup:{self.layout.name}"
+            with _setup_stage(
+                progress,
+                progress_id=progress_id,
+                stage="load",
+                label="Loading agent setup",
+            ):
+                root_config = load_setup_config(self.layout)
+                agent_config = load_agent_config(self.layout)
+                envs = load_setup_envs(self.layout)
+                configs = (root_config, agent_config)
+                config_value = (root_config, agent_config)
+                config_changed = config_value != self._config
+                envs_changed = self._setup is None or envs != self._setup.envs
+                catalog_path = resolve_model_catalog_path(
                     self.layout,
-                    sandbox=self._sandbox,
-                ),
-                ceiling=ceiling,
-                bindings=bindings,
-                limits=limits,
-            )
+                    explicit=self._model_catalog_override,
+                    environ=envs,
+                )
+                identity = _catalog_file_identity(catalog_path)
+                catalog_changed = identity != self._catalog_identity
+                ceiling = resolve_agent_ceiling(
+                    configs,
+                    overrides=self._ceiling_overrides,
+                )
+                bindings = resolve_run_bindings(
+                    configs,
+                    overrides=self._binding_overrides,
+                )
+                limits = resolve_run_limits(
+                    configs,
+                    overrides=self._limit_overrides,
+                )
+                provider_configs = parse_provider_configs(configs)
+                adapter_configs = merge_plugin_configs(
+                    configs,
+                    family="model_adapter",
+                )
+                toolset_configs = merge_plugin_configs(
+                    configs,
+                    family="toolset",
+                )
+                catalog_configs = merge_plugin_configs(
+                    configs,
+                    family="model_catalog",
+                )
+                if config_changed or envs_changed or not self._adapters:
+                    self._adapters = load_model_adapters(adapter_configs)
+                if config_changed or envs_changed or not self._tools:
+                    self._tools = load_tools(
+                        toolset_config=toolset_configs,
+                    )
+                catalog_configs["models_dev"] = {
+                    **catalog_configs.get("models_dev", {}),
+                    "path": catalog_path,
+                }
+                catalog_configs["ollama"] = {
+                    **catalog_configs.get("ollama", {}),
+                    "environ": envs,
+                }
+                catalog_configs["llama_cpp"] = {
+                    **catalog_configs.get("llama_cpp", {}),
+                    "environ": envs,
+                }
+                catalogs = load_model_catalogs(catalog_configs)
+                models_dev = catalogs.pop("models_dev", None)
+                if models_dev is None:
+                    raise RuntimeError("models_dev catalog plugin is not installed")
+                if self._static_catalog is None or catalog_changed:
+                    self._static_catalog = await models_dev.snapshot()
+
+                static = self._static_catalog
+                assert static is not None
+                ordered_catalogs = tuple(
+                    catalogs.pop(name)
+                    for name in ("ollama", "llama_cpp")
+                    if name in catalogs
+                ) + tuple(catalogs[name] for name in sorted(catalogs))
+            with _setup_stage(
+                progress,
+                progress_id=progress_id,
+                stage="discover",
+                label="Discovering models",
+            ):
+                merged = await MergedModelCatalog(
+                    (
+                        _SnapshotModelCatalog(static),
+                        *ordered_catalogs,
+                    )
+                ).snapshot()
+                providers = configure_catalog_providers(
+                    merged.providers,
+                    provider_configs,
+                )
+                resolved_catalog = resolve_catalog_providers(
+                    ModelCatalogSnapshot(
+                        providers=providers,
+                        models=merged.models,
+                        revision=merged.revision,
+                        source=merged.source,
+                    ),
+                    adapters=self._adapters,
+                    environ=envs,
+                    configs=provider_configs,
+                )
+                providers = dict(resolved_catalog.providers)
+                models = tuple(
+                    model_info_from_catalog(model) for model in resolved_catalog.models
+                )
+                setup = AgentSetup(
+                    layout=self.layout,
+                    providers=providers,
+                    adapters=self._adapters,
+                    models=models,
+                    tools=self._tools,
+                    envs=envs,
+                    catalog=resolved_catalog,
+                    provider_configs=provider_configs,
+                    environment=AgentEnvironment.capture(
+                        self.layout,
+                        sandbox=self._sandbox,
+                    ),
+                    ceiling=ceiling,
+                    bindings=bindings,
+                    limits=limits,
+                )
             self._config = config_value
             self._catalog_identity = identity
             if self._setup is not None and not force and setup == self._setup:
@@ -254,3 +275,47 @@ def _catalog_file_identity(path: Path) -> tuple[Path, int, int, int, int]:
     resolved = path.resolve(strict=True)
     stat = resolved.stat()
     return (resolved, stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_size)
+
+
+@contextmanager
+def _setup_stage(
+    progress: ProgressSink | None,
+    *,
+    progress_id: str,
+    stage: ProgressStage,
+    label: str,
+) -> Iterator[None]:
+    emit_progress(
+        progress,
+        id=progress_id,
+        kind="setup",
+        stage=stage,
+        label=label,
+        status="running",
+    )
+    try:
+        yield
+    except Exception as exc:
+        emit_progress(
+            progress,
+            id=progress_id,
+            kind="setup",
+            stage=stage,
+            label=label,
+            status="failed",
+            detail=_failure_detail(exc),
+        )
+        raise
+    emit_progress(
+        progress,
+        id=progress_id,
+        kind="setup",
+        stage=stage,
+        label=label,
+        status="ok",
+    )
+
+
+def _failure_detail(exc: Exception) -> str:
+    detail = " ".join(str(exc).split()) or type(exc).__name__
+    return detail if len(detail) <= 160 else detail[:159] + "…"

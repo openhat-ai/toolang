@@ -114,9 +114,18 @@ def _setup(
     force: bool = False,
     model_catalog: Path | None = None,
 ) -> AgentSetup:
-    return asyncio.run(
-        SetupWatcher(layout, model_catalog=model_catalog).refresh(force=force)
-    )
+    from ...common.progress import as_progress_sink, make_cli_progress
+
+    progress = make_cli_progress(agent=layout.name)
+    try:
+        return asyncio.run(
+            SetupWatcher(layout, model_catalog=model_catalog).refresh(
+                force=force,
+                progress=as_progress_sink(progress),
+            )
+        )
+    finally:
+        progress.finish(details=False)
 
 
 def _layout(ctx: typer.Context) -> AgentLayout:

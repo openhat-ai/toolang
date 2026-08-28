@@ -24,6 +24,8 @@ from toolang.base.types.sandbox import (
     SandboxRef,
     SandboxRequest,
 )
+from ._file_follow import start_file_follower, stop_file_follower
+from ._launch_progress import observe_launch_progress
 
 HOST_SANDBOX_DESCRIPTION_ENV = "TOOLANG_SANDBOX_DESCRIPTION"
 
@@ -36,6 +38,9 @@ class HostSandbox:
     name: str = "host"
     location: SandboxLocation = "host"
     _processes: dict[int, subprocess.Popen[bytes]] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _log_followers: dict[int, asyncio.Task[None]] = field(
         default_factory=dict, init=False, repr=False
     )
 
@@ -57,6 +62,14 @@ class HostSandbox:
             log_path=request.log_path,
             endpoint=request.endpoint,
             envs=envs,
+            meta={
+                "agent_name": request.agent_name,
+                **(
+                    {"progress_path": str(request.local_progress_path)}
+                    if request.local_progress_path is not None
+                    else {}
+                ),
+            },
         )
 
     async def launch(self, plan: SandboxPlan) -> SandboxRef:
@@ -65,7 +78,7 @@ class HostSandbox:
             process = await asyncio.shield(worker)
         except asyncio.CancelledError as exc:
             process = await worker
-            ref = _process_ref(process, plan.endpoint)
+            ref = _process_ref(process, plan)
             try:
                 stopped = await asyncio.to_thread(_stop_process, process, force=True)
                 if not stopped:
@@ -79,7 +92,7 @@ class HostSandbox:
                 ) from exc
             raise
         self._processes[process.pid] = process
-        return _process_ref(process, plan.endpoint)
+        return _process_ref(process, plan)
 
     async def attach(
         self,
@@ -87,10 +100,37 @@ class HostSandbox:
         ref: SandboxRef,
         *,
         progress: ProgressSink | None = None,
+        progress_id: str,
     ) -> None:
-        """Keep inherited host streams attached by the launched process itself."""
+        """Observe initial setup from the launched host process."""
 
-        del plan, ref, progress
+        if progress is None:
+            return
+        raw_path = plan.meta.get("progress_path")
+        if not isinstance(raw_path, str) or not raw_path:
+            return
+        await observe_launch_progress(
+            Path(raw_path),
+            progress=progress,
+            runtime_progress_id=progress_id,
+            setup_progress_id=f"setup:{plan.meta.get('agent_name', 'agent')}",
+            package_source="current installation",
+            running=lambda: self.running(ref),
+        )
+
+    async def follow(self, plan: SandboxPlan, ref: SandboxRef) -> None:
+        """Relay the foreground host log after readiness."""
+
+        if plan.log_path is None:
+            return
+        self._log_followers[_pid(ref)] = await start_file_follower(plan.log_path)
+
+    async def unfollow(self, ref: SandboxRef) -> None:
+        """Stop relaying the foreground host log."""
+
+        follower = self._log_followers.pop(_pid(ref), None)
+        if follower is not None:
+            await stop_file_follower(follower)
 
     async def running(self, ref: SandboxRef) -> bool:
         pid = _pid(ref)
@@ -129,7 +169,12 @@ class HostSandbox:
             raise ValueError(f"agent process did not stop: {pid}; retry with --force")
 
     async def release(self, ref: SandboxRef) -> None:
-        self._processes.pop(_pid(ref), None)
+        pid = _pid(ref)
+        await self.unfollow(ref)
+        self._processes.pop(pid, None)
+        path = ref.meta.get("progress_path")
+        if isinstance(path, str) and path:
+            Path(path).unlink(missing_ok=True)
 
 
 def create_sandbox(config: Mapping[str, Any]) -> Sandbox:
@@ -213,14 +258,19 @@ def _local_command(command: tuple[str, ...]) -> tuple[str, ...]:
     return (sys.executable, "-m", "toolang.cli.toolang", *command[1:])
 
 
-def _process_ref(process: subprocess.Popen[bytes], endpoint: str) -> SandboxRef:
+def _process_ref(process: subprocess.Popen[bytes], plan: SandboxPlan) -> SandboxRef:
     identity = _process_identity(process.pid)
     return SandboxRef(
         runtime_id=str(process.pid),
-        endpoint=endpoint,
+        endpoint=plan.endpoint,
         runtime_kind="process",
         meta={
             "pid": process.pid,
+            **(
+                {"progress_path": plan.meta["progress_path"]}
+                if isinstance(plan.meta.get("progress_path"), str)
+                else {}
+            ),
             **({"identity": identity} if identity is not None else {}),
         },
     )

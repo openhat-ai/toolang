@@ -20,11 +20,7 @@ from toolang.up import sandbox as sandbox_runtime
 from toolang.up.logging import resolve_agent_logging
 
 from .context import load_runtime_environ
-from .shutdown_progress import make_runtime_shutdown_progress
-from .startup_progress import (
-    make_runtime_startup_progress,
-    runtime_startup_failure_message,
-)
+from .progress import make_cli_progress, runtime_startup_failure_message
 
 
 ExecutionMode = Literal["embedded", "remote"]
@@ -109,8 +105,9 @@ def open_execution_runtime(
                 "--dev only applies to guest sandboxes; host uses the current "
                 "Toolang installation."
             )
+        progress = make_cli_progress(agent=layout.name, enabled=show_progress)
         try:
-            asyncio.run(sandbox_runtime.release_stopped(layout))
+            asyncio.run(sandbox_runtime.release_stopped(layout, progress=progress))
         except (
             ImportError,
             OSError,
@@ -120,6 +117,8 @@ def open_execution_runtime(
             ValueError,
         ) as exc:
             raise ExecutionRuntimeError(str(exc)) from exc
+        finally:
+            progress.finish(details=False)
         yield ExecutionRuntime(sandbox="host", mode="embedded")
         return
 
@@ -132,15 +131,27 @@ def open_execution_runtime(
     )
     warn_development_package_source(launch)
 
-    progress = make_runtime_startup_progress(
-        layout.name,
-        launch.sandbox,
+    progress = make_cli_progress(
+        agent=layout.name,
+        sandbox=launch.sandbox,
+        enabled=show_progress,
+    )
+    launch_cleanup_progress = make_cli_progress(
+        agent=layout.name,
+        sandbox=launch.sandbox,
         enabled=show_progress,
     )
     try:
-        handle = asyncio.run(sandbox_runtime.launch(launch, progress=progress))
+        handle = asyncio.run(
+            sandbox_runtime.launch(
+                launch,
+                progress=progress,
+                cleanup_progress=launch_cleanup_progress,
+            )
+        )
     except KeyboardInterrupt:
         progress.interrupt()
+        launch_cleanup_progress.finish(details=False)
         raise
     except (
         ImportError,
@@ -151,6 +162,7 @@ def open_execution_runtime(
         ValueError,
     ) as exc:
         progress.finish()
+        launch_cleanup_progress.finish(details=False)
         raise ExecutionRuntimeError(
             runtime_startup_failure_message(
                 layout.name,
@@ -163,6 +175,7 @@ def open_execution_runtime(
             )
         ) from exc
     progress.finish()
+    launch_cleanup_progress.finish(details=False)
 
     runtime: ExecutionRuntime | None = None
     body_error: BaseException | None = None
@@ -180,9 +193,9 @@ def open_execution_runtime(
             raise ExecutionRuntimeError(str(exc)) from exc
         raise
     finally:
-        shutdown_progress = make_runtime_shutdown_progress(
-            layout.name,
-            handle.state.sandbox,
+        shutdown_progress = make_cli_progress(
+            agent=layout.name,
+            sandbox=handle.state.sandbox,
             enabled=show_progress,
         )
         try:

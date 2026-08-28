@@ -63,11 +63,18 @@ class FakeSandbox:
         ref: SandboxRef,
         *,
         progress: ProgressSink | None = None,
+        progress_id: str,
     ) -> None:
-        del progress
+        del progress, progress_id
         self.calls.append(("attach", plan, ref))
         if self.attach_error is not None:
             raise self.attach_error
+
+    async def follow(self, plan: SandboxPlan, ref: SandboxRef) -> None:
+        self.calls.append(("follow", plan, ref))
+
+    async def unfollow(self, ref: SandboxRef) -> None:
+        self.calls.append(("unfollow", ref))
 
     async def running(self, ref: SandboxRef) -> bool:
         self.calls.append(("running", ref))
@@ -132,6 +139,7 @@ class GuestFailureSandbox(FakeSandbox):
         ref: SandboxRef,
         *,
         progress: ProgressSink | None = None,
+        progress_id: str,
     ) -> None:
         self.calls.append(("attach", plan, ref))
         if progress is None:
@@ -139,7 +147,8 @@ class GuestFailureSandbox(FakeSandbox):
         progress(
             ProgressEvent(
                 id="startup:guest:install",
-                phase="startup.install",
+                kind="runtime",
+                stage="create",
                 label="Installing Toolang",
                 status="running",
             )
@@ -148,7 +157,8 @@ class GuestFailureSandbox(FakeSandbox):
         progress(
             ProgressEvent(
                 id="startup:guest:validate",
-                phase="startup.validate",
+                kind="runtime",
+                stage="create",
                 label="Checking Toolang compatibility",
                 status="failed",
                 detail="incompatible CLI",
@@ -343,11 +353,11 @@ def test_stop_handle_stops_only_its_exact_owned_workload(
     assert ("stop", state.ref, False) in implementation.calls
     assert ("release", state.ref) in implementation.calls
     assert sandbox.SandboxState.load(layout.sandbox_state) is None
-    assert [(event.phase, event.status) for event in events] == [
-        ("shutdown.stop", "running"),
-        ("shutdown.stop", "ok"),
-        ("shutdown.release", "running"),
-        ("shutdown.release", "ok"),
+    assert [(event.kind, event.stage, event.status) for event in events] == [
+        ("runtime", "stop", "running"),
+        ("runtime", "stop", "ok"),
+        ("runtime", "destroy", "running"),
+        ("runtime", "destroy", "ok"),
     ]
 
 
@@ -373,9 +383,9 @@ def test_stop_handle_reports_the_failed_cleanup_stage(
             )
         )
 
-    assert [(event.phase, event.status, event.detail) for event in events] == [
-        ("shutdown.stop", "running", "docker:python:3.13-slim"),
-        ("shutdown.stop", "failed", "stop failed"),
+    assert [(event.stage, event.status, event.detail) for event in events] == [
+        ("stop", "running", "docker:python:3.13-slim"),
+        ("stop", "failed", "stop failed"),
     ]
     assert sandbox.SandboxState.load(layout.sandbox_state) == state
 
@@ -487,13 +497,12 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
     assert request.hosted_root == Path("/runtime")
     assert request.hosted_home == Path("/runtime/agents/alice")
     assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) == handle.state
-    assert [(event.phase, event.status) for event in events] == [
-        ("startup.prepare", "running"),
-        ("startup.prepare", "ok"),
-        ("startup.launch", "running"),
-        ("startup.launch", "ok"),
-        ("startup.ready", "running"),
-        ("startup.ready", "ok"),
+    assert [(event.kind, event.stage, event.status) for event in events] == [
+        ("runtime", "create", "running"),
+        ("runtime", "create", "running"),
+        ("runtime", "create", "ok"),
+        ("runtime", "start", "running"),
+        ("runtime", "start", "ok"),
     ]
 
     assert asyncio.run(sandbox.stop(spec.serve.layout, force=True)) is True
@@ -563,8 +572,15 @@ def test_launch_failure_stops_releases_and_clears_state(
     spec = _launch_spec(tmp_path)
 
     events: list[ProgressEvent] = []
+    cleanup_events: list[ProgressEvent] = []
     with pytest.raises(TimeoutError, match="not ready"):
-        asyncio.run(sandbox.launch(spec, progress=events.append))
+        asyncio.run(
+            sandbox.launch(
+                spec,
+                progress=events.append,
+                cleanup_progress=cleanup_events.append,
+            )
+        )
 
     assert (
         "stop",
@@ -576,9 +592,16 @@ def test_launch_failure_stops_releases_and_clears_state(
         SandboxRef("workload-1", spec.serve.endpoint),
     ) in implementation.calls
     assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
-    assert events[-1].phase == "startup.ready"
+    assert events[-1].kind == "runtime"
+    assert events[-1].stage == "start"
     assert events[-1].status == "failed"
     assert events[-1].detail == "not ready"
+    assert [(event.stage, event.status) for event in cleanup_events] == [
+        ("stop", "running"),
+        ("stop", "ok"),
+        ("destroy", "running"),
+        ("destroy", "ok"),
+    ]
 
 
 def test_guest_failure_progress_wins_the_early_exit_diagnostic_race(
@@ -595,11 +618,11 @@ def test_guest_failure_progress_wins_the_early_exit_diagnostic_race(
     with pytest.raises(RuntimeError, match="exited before becoming ready"):
         asyncio.run(sandbox.launch(spec, progress=events.append))
 
-    phases = [(event.phase, event.status) for event in events]
-    assert ("startup.install", "running") in phases
-    assert ("startup.validate", "failed") in phases
-    assert ("startup.ready", "running") not in phases
-    assert phases[-1] == ("startup.launch", "failed")
+    stages = [(event.stage, event.label, event.status) for event in events]
+    assert ("create", "Installing Toolang", "running") in stages
+    assert ("create", "Checking Toolang compatibility", "failed") in stages
+    assert ("start", "Waiting for agent API", "running") not in stages
+    assert stages[-1] == ("create", "Starting workload", "failed")
 
 
 def test_readiness_cleanup_failure_preserves_sandbox_state(
@@ -673,12 +696,27 @@ def test_foreground_run_waits_then_releases_state(
     spec = _launch_spec(tmp_path)
     ready_states: list[sandbox.SandboxState] = []
 
-    result = asyncio.run(sandbox.run(spec, on_ready=ready_states.append))
+    def on_ready(state: sandbox.SandboxState) -> None:
+        ready_states.append(state)
+        implementation.calls.append(("ready", state.ref))
+
+    result = asyncio.run(sandbox.run(spec, on_ready=on_ready))
 
     ref = SandboxRef("workload-1", spec.serve.endpoint)
     assert result == 7
     assert ready_states == [sandbox.SandboxState(sandbox=spec.sandbox, ref=ref)]
     assert ("wait", ref) in implementation.calls
+    follow_call = next(
+        call
+        for call in implementation.calls
+        if isinstance(call, tuple) and call[0] == "follow"
+    )
+    assert implementation.calls.index(("ready", ref)) < implementation.calls.index(
+        follow_call
+    )
+    assert implementation.calls.index(follow_call) < (
+        implementation.calls.index(("wait", ref))
+    )
     assert ("release", ref) in implementation.calls
     assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
 
@@ -850,9 +888,12 @@ def test_canceled_run_stops_releases_and_clears_state(
 
     monkeypatch.setattr(sandbox, "_wait_ready", ready)
     spec = _launch_spec(tmp_path)
+    cleanup_events: list[ProgressEvent] = []
 
     async def cancel_run() -> BaseException | None:
-        task = asyncio.create_task(sandbox.run(spec))
+        task = asyncio.create_task(
+            sandbox.run(spec, cleanup_progress=cleanup_events.append)
+        )
         await implementation.waiting.wait()
         task.cancel()
         try:
@@ -866,8 +907,17 @@ def test_canceled_run_stops_releases_and_clears_state(
     assert isinstance(error, asyncio.CancelledError)
     ref = SandboxRef("workload-1", spec.serve.endpoint)
     assert ("stop", ref, False) in implementation.calls
+    assert implementation.calls.index(("unfollow", ref)) < implementation.calls.index(
+        ("stop", ref, False)
+    )
     assert ("release", ref) in implementation.calls
     assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
+    assert [(event.stage, event.status) for event in cleanup_events] == [
+        ("stop", "running"),
+        ("stop", "ok"),
+        ("destroy", "running"),
+        ("destroy", "ok"),
+    ]
 
 
 def test_readiness_fails_when_workload_exits() -> None:

@@ -16,6 +16,7 @@ from toolang.execution.remote import RemoteRunClient
 from toolang.execution.store import RunStore
 from toolang.setup import SetupWatcher
 from toolang.state.watcher import StateWatcher
+from toolang.base.types.progress import ProgressSink
 
 from .execution_runtime import ExecutionRuntime
 from .remote_runtime import inspect_remote_runtime
@@ -27,6 +28,7 @@ async def open_run_client(
     runtime: ExecutionRuntime,
     *,
     model_catalog: Path | None = None,
+    progress: ProgressSink | None = None,
 ) -> AsyncIterator[RunClient]:
     """Open the RunClient implementation selected by one execution runtime."""
 
@@ -56,7 +58,10 @@ async def open_run_client(
     state = StateWatcher(layout)
     try:
         await state.refresh()
-        await setup.refresh()
+        if progress is None:
+            await setup.refresh()
+        else:
+            await setup.refresh(progress=progress)
         executor = RunExecutor(
             store,
             IdIssuer(layout.id_state),
