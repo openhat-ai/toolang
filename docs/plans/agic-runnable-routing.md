@@ -22,8 +22,8 @@ keeping executor-owned runtime tools separate from user-facing tools.
 - `_too__run`, `_too__execute`, and `_too__reload` are offered on every normal,
   tool-capable Agic Model Call, independently of route lists and refresh
   capability.
-- Runtime instructions make the tools conservative by default and expose a
-  bounded catalog of only the current Agic's authorized routes.
+- Runtime instructions make the tools conservative by default. A bounded
+  catalog is present only when the current Agic declares `hands` or `handoffs`.
 - `_too__run` creates the existing ordinary Run Step and child Run, waits, and
   returns a correlated result to the caller.
 - `_too__execute` creates no Step and no child Run. One applied execute control
@@ -153,10 +153,12 @@ instructions. The instructions state:
   call in that Model Call.
 - Prefer `run` when either `run` or `execute` would satisfy the intent.
 
-The bounded `<available-runnable-routes>` document explicitly includes the
-authored `hands` and `handoffs` lists, including empty lists. Each resolved
-target appears once with its canonical ref, signature, reachable module-local
-structs, bounded untrusted documentation, and an `actions` array.
+When neither directive is authored, the instructions state that no target is
+authorized and omit the runnable catalog entirely. Otherwise, the bounded
+`<available-runnable-routes>` document includes only the authored, nonempty
+route lists. Each resolved target appears once with its canonical ref,
+signature, reachable module-local structs, bounded untrusted documentation,
+and an `actions` array.
 
 The catalog remains deterministic and is limited to 64 complete entries,
 32,768 UTF-8 bytes, and 512 documentation code points per entry. It reports
@@ -302,8 +304,9 @@ to reopen.
 2. Statement-generated Flow evaluators, output-repair calls, and tool-disabled
    calls see none; public selection, ceilings, listing, plugins, and generic
    dispatch cannot control or invoke `_too`.
-3. Runtime instructions are always paired with effective runtime definitions,
-   render empty and nonempty route lists explicitly, and obey catalog bounds.
+3. Runtime instructions are always paired with effective runtime definitions.
+   They omit the catalog when both directives are absent, omit each absent list
+   from a nonempty catalog, and obey catalog bounds.
 4. Unsupported reload returns a correlated error; supported reload retains its
    existing applied-control behavior, including unchanged-State no-op records.
 5. `_too__run` uses captured authorization plus Run Step State, produces one

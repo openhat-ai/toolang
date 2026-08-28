@@ -231,8 +231,10 @@ separate fields. Every ordinary tool-capable Agic call receives `_too__run`,
 `_too__execute`, and `_too__reload`. `hands` and `handoffs` authorize run and
 execute targets; they do not select definitions. Model Call assembly combines
 the definitions only at the adapter boundary. A bounded route catalog lists
-the authored routes and resolved union as model hints, while authorization
-always checks the captured authored route list.
+the authored routes and resolved union as model hints only when `hands` or
+`handoffs` is present; with neither directive, instructions state that no
+target is authorized and omit the catalog. Authorization always checks the
+captured authored route list.
 
 `AgentSetup.ceiling` contains stable selector lists, not resolved resources. At
 `run()`, the executor resolves it against the captured `AgentSetup` and

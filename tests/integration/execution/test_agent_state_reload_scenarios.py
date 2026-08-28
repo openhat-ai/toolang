@@ -444,7 +444,7 @@ def test_parallel_steps_record_the_state_on_their_boundary_side(
             calls = harness.store.rebuild_model_calls(child_steps)
             by_instruction = {
                 calls[step.path].instructions.partition(
-                    "\n\n<available-runnable-routes>"
+                    "\n\nThe inner runtime tools are available"
                 )[0]: step.state
                 for step in child_steps
             }

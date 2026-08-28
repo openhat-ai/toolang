@@ -6,11 +6,14 @@ from hashlib import sha256
 import json
 from typing import Any, cast
 
+import pytest
+
 from toolang.execution.runnables import (
     RUNNABLE_CATALOG_MAX_BYTES,
     RUNNABLE_CATALOG_MAX_ENTRIES,
     RUNNABLE_DOCUMENTATION_MAX_CHARS,
     render_runnable_catalog,
+    render_runtime_instructions,
     resolve_agic_routes,
 )
 from toolang.lang import Program
@@ -114,6 +117,7 @@ def test_catalog_requires_explicit_delegation_intent() -> None:
     )
 
     instruction = document["instruction"]
+    assert document["authorized"] == {"hands": {"refs": ["action"], "omitted": 0}}
     assert "merely because it is available" in instruction
     assert "future root Run naturally uses the latest valid State" in instruction
     assert "its result is required before the caller can continue" in instruction
@@ -129,20 +133,29 @@ def test_catalog_requires_explicit_delegation_intent() -> None:
     assert '"type":"text","text":"..."' in instruction
 
 
-def test_catalog_explicitly_renders_empty_route_authorization() -> None:
+def test_runtime_instructions_omit_catalog_without_authored_routes() -> None:
     state = _state("agic caller:\n  Call.")
     caller = state.modules["agent"].find_agic("caller")
     assert caller is not None
 
-    document = _document(
-        render_runnable_catalog(state, resolve_agic_routes(state, caller))
+    rendered = render_runtime_instructions(
+        state,
+        resolve_agic_routes(state, caller),
     )
 
-    assert document["authorized"] == {
-        "hands": {"refs": [], "omitted": 0},
-        "handoffs": {"refs": [], "omitted": 0},
-    }
-    assert document["runnables"] == []
+    assert "<available-runnable-routes>" not in rendered
+    assert '"runnables"' not in rendered
+    assert "declares no hands or handoffs" in rendered
+    assert "Do not call _too__run or _too__execute" in rendered
+
+
+def test_catalog_rejects_missing_authored_routes() -> None:
+    state = _state("agic caller:\n  Call.")
+    caller = state.modules["agent"].find_agic("caller")
+    assert caller is not None
+
+    with pytest.raises(ValueError, match="requires hands or handoffs"):
+        render_runnable_catalog(state, resolve_agic_routes(state, caller))
 
 
 def test_catalog_byte_limit_stops_before_a_complete_multibyte_entry() -> None:

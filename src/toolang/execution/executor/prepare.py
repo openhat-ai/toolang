@@ -42,7 +42,7 @@ from . import prompts
 from .common import BoundRun, value_parts, value_text
 from .resources import resource_caps, resource_tools
 from .resources import snapshot_model_selection
-from ..runnables import AgicRoutes, render_runnable_catalog, resolve_agic_routes
+from ..runnables import AgicRoutes, render_runtime_instructions, resolve_agic_routes
 from ..tools.runtime import RuntimeTool, runtime_tools
 
 if TYPE_CHECKING:
@@ -161,7 +161,7 @@ def prepare_agic(
     )
     instructions = _render_instructions(program, agic, system_runtime)
     runtime_instructions = (
-        render_runnable_catalog(run.state, routes) if inner_tools else ""
+        render_runtime_instructions(run.state, routes) if inner_tools else ""
     )
     adapter = run.setup.adapters.get(model.adapter)
     if adapter is None:

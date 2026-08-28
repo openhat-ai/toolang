@@ -113,7 +113,10 @@ agic child(_: Text) -> Text:
             assert "<available-runnable-routes>" in (
                 harness.adapter.invocations[0].call.instructions
             )
-            assert "<available-runnable-routes>" in (
+            assert "<available-runnable-routes>" not in (
+                harness.adapter.invocations[1].call.instructions
+            )
+            assert "declares no hands or handoffs" in (
                 harness.adapter.invocations[1].call.instructions
             )
             assert {
@@ -1562,8 +1565,9 @@ agic caller() -> Text:
                 "_too__reload",
                 "_too__run",
             }
-            assert '"hands":{"omitted":0,"refs":[]}' in first_call.instructions
-            assert '"handoffs":{"omitted":0,"refs":[]}' in first_call.instructions
+            assert "<available-runnable-routes>" not in first_call.instructions
+            assert '"runnables"' not in first_call.instructions
+            assert "declares no hands or handoffs" in first_call.instructions
             result = harness.adapter.invocations[1].call.messages[-1].parts[0]
             assert isinstance(result, ToolResultPart)
             assert result.error == "Runnable not found: target"
