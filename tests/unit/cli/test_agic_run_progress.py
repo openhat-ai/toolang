@@ -82,7 +82,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
         )
     )
 
-    header = projector.handle(
+    starting = projector.handle(
         StepBegin(
             step=dynamic,
             kind="run",
@@ -90,14 +90,12 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
             started_at="2026-01-01T00:00:00Z",
         )
     )
-    assert len(header.committed) == 1
-    assert header.live == ()
-    assert header.committed[0].rows == (
-        ProgressRow("---  run agic:summarize", leader="hyphen"),
-        ProgressRow(""),
+    assert starting.committed == ()
+    assert starting.live[0].rows == (
+        ProgressRow("• Running agic:summarize...", "active"),
     )
 
-    projector.handle(
+    header = projector.handle(
         RunBegin(
             run="run_child",
             control=ControlRef("run_child", 0),
@@ -105,6 +103,12 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
             parent=dynamic,
             started_at="2026-01-01T00:00:00.100Z",
         )
+    )
+    assert len(header.committed) == 1
+    assert header.live == ()
+    assert header.committed[0].rows == (
+        ProgressRow("---  run agic:summarize", leader="hyphen"),
+        ProgressRow(""),
     )
     projector.handle(
         StepBegin(
@@ -153,7 +157,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
     assert footer.committed[0].rows[-1] == ProgressRow("")
 
 
-def test_dynamic_run_preaccept_failure_has_no_child_identity_or_facts() -> None:
+def test_dynamic_run_preaccept_failure_uses_a_trace_marker_without_boundaries() -> None:
     projector = ProgressProjector(show_boundaries=False)
     path = StepPath.parse("run_root.0")
     projector.handle(
@@ -163,12 +167,16 @@ def test_dynamic_run_preaccept_failure_has_no_child_identity_or_facts() -> None:
             runnable="agic:parent",
         )
     )
-    projector.handle(
+    starting = projector.handle(
         StepBegin(
             step=path,
             kind="run",
             given=_run_stmt("flow:missing"),
         )
+    )
+    assert starting.committed == ()
+    assert starting.live[0].rows == (
+        ProgressRow("• Running flow:missing...", "active"),
     )
 
     terminal = projector.handle(
@@ -180,13 +188,17 @@ def test_dynamic_run_preaccept_failure_has_no_child_identity_or_facts() -> None:
         )
     )
 
-    rows = terminal.committed[0].rows
-    assert rows[0].text == "• Runnable not found: missing"
-    footer = rows[-2]
-    assert footer.leader == "hyphen"
-    assert footer.facts == ()
-    assert footer.right_status == "failed"
-    assert footer.right_identity == ""
+    assert terminal.live == ()
+    assert terminal.committed[0].rows == (
+        ProgressRow("• Failed to run flow:missing", "error"),
+        ProgressRow("  Runnable not found: missing", "error"),
+    )
+    rendered = _render_progress(terminal.committed[0], width=72)
+    assert rendered.splitlines() == [
+        "",
+        "• Failed to run flow:missing",
+        "  Runnable not found: missing",
+    ]
 
 
 def test_dynamic_run_dividers_align_and_preserve_complete_identity_when_narrow() -> (
@@ -216,8 +228,8 @@ def test_dynamic_run_dividers_align_and_preserve_complete_identity_when_narrow()
         )
     )
     wide_lines = wide.getvalue().splitlines()
-    assert wide_lines[0].startswith("---  run agic:summarize ---")
-    assert wide_lines[1].startswith("---  2.0s · 1 run · 1 model call ---")
+    assert wide_lines[0].startswith("┌ run agic:summarize ───")
+    assert wide_lines[1].startswith("└ 2.0s · 1 run · 1 model call ───")
     assert wide_lines[1].endswith("succeeded run_abc123")
     assert all(display_width(line) == 72 for line in wide_lines)
 
@@ -328,14 +340,14 @@ def test_agic_to_flow_keeps_child_flow_run_steps_numbered() -> None:
             runnable="agic:parent",
         )
     )
-    outer_header = projector.handle(
+    projector.handle(
         StepBegin(
             step=dynamic,
             kind="run",
             given=_run_stmt("flow:publish"),
         )
     )
-    projector.handle(
+    outer_header = projector.handle(
         RunBegin(
             run="run_publish",
             control=ControlRef("run_publish", 0),
@@ -388,10 +400,8 @@ def test_nested_dynamic_run_footers_pair_with_their_direct_children() -> None:
             runnable="agic:parent",
         )
     )
+    projector.handle(StepBegin(step=outer, kind="run", given=_run_stmt("agic:child")))
     outer_header = projector.handle(
-        StepBegin(step=outer, kind="run", given=_run_stmt("agic:child"))
-    )
-    projector.handle(
         RunBegin(
             run="run_child",
             control=ControlRef("run_child", 0),
@@ -399,10 +409,8 @@ def test_nested_dynamic_run_footers_pair_with_their_direct_children() -> None:
             parent=outer,
         )
     )
+    projector.handle(StepBegin(step=inner, kind="run", given=_run_stmt("agic:leaf")))
     inner_header = projector.handle(
-        StepBegin(step=inner, kind="run", given=_run_stmt("agic:leaf"))
-    )
-    projector.handle(
         RunBegin(
             run="run_leaf",
             control=ControlRef("run_leaf", 0),
@@ -487,47 +495,55 @@ def test_dynamic_run_inside_parallel_lane_stays_on_one_lane_row() -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "ansi"),
+    ("status", "border_color"),
     [
         ("succeeded", None),
-        ("failed", "\x1b[31mfailed"),
-        ("canceled", "\x1b[33mcanceled"),
+        ("failed", "red"),
+        ("canceled", "yellow"),
     ],
 )
-def test_dynamic_footer_styles_only_the_terminal_status(
+def test_dynamic_footer_colors_only_the_terminal_border(
     status: str,
-    ansi: str | None,
+    border_color: str | None,
 ) -> None:
-    stream = _TtyStream()
-    ProgressConsole(stream, width=72).apply(
-        ProgressUpdate(
-            committed=(
-                ProgressBlock(
-                    "dynamic",
-                    (
-                        ProgressRow(
-                            "---  ",
-                            leader="hyphen",
-                            facts=("2.0s", "1 run"),
-                            right_status=status,
-                            right_identity="run_child",
-                        ),
-                    ),
-                ),
-            )
-        )
+    block = ProgressBlock(
+        "dynamic",
+        (
+            ProgressRow(
+                "---  ",
+                leader="hyphen",
+                facts=("2.0s", "1 run"),
+                right_status=status,
+                right_identity="run_child",
+            ),
+        ),
     )
-    rendered = stream.getvalue()
+    segments = [
+        segment
+        for segment in rendering.render_segments(
+            blocks.ExecutionProgressBlock(block, max_width=72).render(),
+            width=72,
+        )
+        if segment.text.strip()
+    ]
 
-    assert "\x1b[2m---  2.0s · 1 run" in rendered
-    assert "\x1b[2m run_child" in rendered
-    if ansi is None:
-        assert "\x1b[31m" not in rendered
-        assert "\x1b[33m" not in rendered
-        assert "\x1b[0msucceeded\x1b[2m run_child" in rendered
-    else:
-        assert ansi in rendered
-        assert f"{ansi}\x1b[0m\x1b[2m run_child" in rendered
+    marker = next(segment for segment in segments if "└" in segment.text)
+    border = next(segment for segment in segments if "─" in segment.text)
+    facts = next(segment for segment in segments if "2.0s" in segment.text)
+    terminal = next(segment for segment in segments if status in segment.text)
+    identity = next(segment for segment in segments if "run_child" in segment.text)
+    for segment in (facts, terminal, identity):
+        assert segment.style is not None
+        assert segment.style.dim
+        assert segment.style.color is None
+    for segment in (marker, border):
+        assert segment.style is not None
+        if border_color is None:
+            assert segment.style.dim
+            assert segment.style.color is None
+        else:
+            assert segment.style.color is not None
+            assert segment.style.color.name == border_color
 
 
 def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> None:
@@ -562,10 +578,8 @@ def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> No
             ),
         )
     )
+    projector.handle(StepBegin(step=dynamic, kind="run", given=_run_stmt("agic:child")))
     header = projector.handle(
-        StepBegin(step=dynamic, kind="run", given=_run_stmt("agic:child"))
-    )
-    projector.handle(
         RunBegin(
             run="run_child",
             control=ControlRef("run_child", 0),
@@ -618,11 +632,19 @@ def test_dynamic_header_normalizes_untrusted_runnable_text() -> None:
         )
     )
 
-    header = projector.handle(
+    projector.handle(
         StepBegin(
             step=path,
             kind="run",
             given=_run_stmt("flow:\x00missing\nname" + "x" * 300),
+        )
+    )
+    header = projector.handle(
+        RunBegin(
+            run="run_child",
+            control=ControlRef("run_child", 0),
+            runnable="flow:missing",
+            parent=path,
         )
     )
     caption = header.committed[0].rows[0].text
@@ -686,8 +708,8 @@ def test_dynamic_boundaries_keep_single_blank_row_between_sections() -> None:
     rendered = _render_progress(progress, width=72)
 
     assert "\n\n\n" not in rendered
-    assert re.search(r"run agic:summarize -+\n\n• Summary", rendered)
-    assert re.search(r"• Summary\n\n---  2.0s", rendered)
+    assert re.search(r"┌ run agic:summarize ─+\n\n• Summary", rendered)
+    assert re.search(r"• Summary\n\n└ 2.0s", rendered)
     assert re.search(r"succeeded run_child\n\n• Parent continues", rendered)
 
 
