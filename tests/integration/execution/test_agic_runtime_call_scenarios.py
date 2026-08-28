@@ -11,8 +11,10 @@ import pytest
 from tests.support.execution_assertions import assert_run_event_integrity
 from tests.support.execution_harness import (
     ExecutionHarness,
+    RecordingTool,
     RecordingRunTracer,
 )
+from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
@@ -398,6 +400,96 @@ flow new_flow(_: Text, brief: Brief) -> Text:
     asyncio.run(scenario())
 
 
+def test_reload_then_run_does_not_rebuild_the_calling_agic_frame(
+    tmp_path: Path,
+) -> None:
+    source = """
+agic parent(_: Text) -> Text:
+  recall = none
+  tools = _too/*
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow target(_: Text) -> Text:
+  let result:
+    completed {{_}}
+"""
+    reloaded_source = """
+flow target(_: Text) -> Text:
+  let result:
+    completed {{_}}
+"""
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True, exist_ok=True)
+    layout.program.write_text(source, encoding="utf-8")
+    initial = prepare_agent_state(layout)
+    watcher = StateWatcher(layout)
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        state=initial,
+        refresh_state=watcher.refresh_result,
+        tools=_runtime_tools(),
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="reload-with-run",
+                        call_id="provider-reload-with-run",
+                        name="_too__reload",
+                        input={},
+                    ),
+                    ToolCall(
+                        tool_call_id="run-after-reload",
+                        call_id="provider-run-after-reload",
+                        name="_too__run",
+                        input={
+                            "runnable": "flow:target",
+                            "input": {"_": "topic"},
+                        },
+                    ),
+                )
+            ),
+        ),
+    )
+
+    async def scenario() -> None:
+        await watcher.refresh()
+        layout.program.write_text(reloaded_source, encoding="utf-8")
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="agic:parent",
+                    primary=resolve_input_parts("start"),
+                )
+            )
+
+            assert root.status == "failed"
+            assert "Runnable not found: parent" in str(root.error)
+            steps = harness.store.list_steps(run_id=root.id)
+            assert [(step.kind, step.status) for step in steps] == [
+                ("model", "succeeded"),
+                ("run", "succeeded"),
+            ]
+            assert steps[0].state != steps[1].state
+            child = next(
+                run
+                for run in harness.store.list_run_tree(root_run_id=root.id)
+                if run.parent == steps[1].path
+            )
+            assert child.status == "succeeded"
+            assert all(
+                step.status != "running"
+                for step in harness.store.list_steps(run_id=child.id)
+            )
+            assert len(harness.adapter.invocations) == 1
+
+    asyncio.run(scenario())
+
+
 def test_model_reload_applies_state_and_next_model_step_reports_missing_agic(
     tmp_path: Path,
 ) -> None:
@@ -463,6 +555,76 @@ agic parent(_: Text) -> Text:
             assert reload_control.error is None
             assert "Runnable not found: parent" in str(root.error)
             assert watcher.current().revision != initial.revision
+
+    asyncio.run(scenario())
+
+
+def test_dynamic_run_store_failure_fails_the_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic parent(_: Text) -> Text:
+  recall = none
+  tools = _too/run
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow child(_: Text) -> Text:
+  let result:
+    completed {{_}}
+""",
+        tools=_runtime_tools(),
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="run-with-store-failure",
+                        call_id="provider-run-with-store-failure",
+                        name="_too__run",
+                        input={
+                            "runnable": "flow:child",
+                            "input": {"_": "topic"},
+                        },
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("must not recover")),
+        ),
+    )
+    accept_run = harness.store.accept_run
+
+    def fail_child_acceptance(**kwargs: Any) -> Any:
+        if kwargs["parent"] is not None:
+            raise OSError("child persistence failed")
+        return accept_run(**kwargs)
+
+    monkeypatch.setattr(harness.store, "accept_run", fail_child_acceptance)
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="agic:parent",
+                    primary=resolve_input_parts("start"),
+                )
+            )
+
+            assert root.status == "failed"
+            steps = harness.store.list_steps(run_id=root.id)
+            assert [(step.kind, step.status) for step in steps] == [
+                ("model", "succeeded"),
+                ("run", "failed"),
+            ]
+            assert root.error == Pointer.step(steps[1].path)
+            assert steps[1].error == "child persistence failed"
+            assert harness.store.list_run_tree(root_run_id=root.id) == [root]
+            assert len(harness.adapter.invocations) == 1
 
     asyncio.run(scenario())
 
@@ -796,6 +958,104 @@ flow research(brief: Brief, prefix?: Text) -> Text:
                 "output_type": "Text",
                 "output": "completed",
             }
+
+    asyncio.run(scenario())
+
+
+def test_dynamic_public_agic_keeps_its_resource_scope_after_reload(
+    tmp_path: Path,
+) -> None:
+    source = """
+flow outer(_: Text) -> Text:
+  tools = _too/*
+  run caller
+
+agic caller(_: Text) -> Text:
+  recall = none
+  tools = _too/run
+  context: none
+  instruct: none
+  user: {{_}}
+
+agic target(_: Text) -> Text:
+  recall = none
+  tools = _too/reload, beta/*
+  context: none
+  instruct:
+    old target state
+  user: {{_}}
+"""
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True, exist_ok=True)
+    layout.program.write_text(source, encoding="utf-8")
+    initial = prepare_agent_state(layout)
+    watcher = StateWatcher(layout)
+    tools: dict[str, AgentTool] = dict(_runtime_tools())
+    tools["beta__use"] = RecordingTool("beta__use", output={})
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        state=initial,
+        refresh_state=watcher.refresh_result,
+        tools=tools,
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="run-public-target",
+                        call_id="provider-run-public-target",
+                        name="_too__run",
+                        input={
+                            "runnable": "agic:target",
+                            "input": {"_": "topic"},
+                        },
+                    ),
+                )
+            ),
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="reload-public-target",
+                        call_id="provider-reload-public-target",
+                        name="_too__reload",
+                        input={},
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("target completed")),
+            ModelCallResult(message=Message.assistant("caller completed")),
+        ),
+    )
+
+    async def scenario() -> None:
+        await watcher.refresh()
+        layout.program.write_text(
+            source.replace("old target state", "new target state"),
+            encoding="utf-8",
+        )
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="flow:outer",
+                    primary=resolve_input_parts("start"),
+                )
+            )
+
+            assert root.status == "succeeded", root.error
+            before_reload = harness.adapter.invocations[1].call
+            after_reload = harness.adapter.invocations[2].call
+            assert {tool.name for tool in before_reload.tools} == {
+                "_too__reload",
+                "beta__use",
+            }
+            assert {tool.name for tool in after_reload.tools} == {
+                "_too__reload",
+                "beta__use",
+            }
+            assert "old target state" in before_reload.instructions
+            assert "new target state" in after_reload.instructions
 
     asyncio.run(scenario())
 

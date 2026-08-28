@@ -32,6 +32,8 @@ from ..common import (
     BoundRun,
     EventEmitter,
     Local,
+    _ExecutionFailed,
+    _RunRejected,
     _StepFailed,
     program_structs,
 )
@@ -353,13 +355,6 @@ async def _run(
         if not isinstance(requested, str) or not requested.strip():
             raise ValueError("_too/run requires a non-empty runnable ref")
 
-    async def begin_step(
-        build: Callable[[AgentState, ControlRef], StepBegin],
-    ) -> tuple[AgentState, ControlRef]:
-        captured = await state.start_step(build)
-        state.prepared = state.frame_for_step(*captured)
-        return captured
-
     try:
         result = await run_step.execute(
             execution,
@@ -374,8 +369,7 @@ async def _run(
             resolution="state",
             raw_input=call.input.get("input", {}),
             inputs=_run_call_inputs(state, call),
-            begin_step=begin_step,
-            current_binding=lambda: state.prepared.run,
+            begin_step=state.start_step,
         )
         part = _run_success_part(execution, call, result)
         state.output = Pointer.step(path)
@@ -383,6 +377,8 @@ async def _run(
     except asyncio.CancelledError:
         raise
     except _StepFailed as exc:
+        if not isinstance(exc.__cause__, _RunRejected | _ExecutionFailed):
+            raise
         part = ToolResultPart(
             tool_call_id=call.tool_call_id,
             call_id=call.call_id,

@@ -10,7 +10,7 @@ from toolang.lang.ast import FlowStmt
 from ...records import RunControlRecord, StepPath
 from ...types import Occurrence, Pointer
 from ..common import BoundRun
-from ..common import Local, StepBoundary, execute_step
+from ..common import Local, StepBoundary, _RunRejected, execute_step
 
 if TYPE_CHECKING:
     from ..executor import _Execution
@@ -31,26 +31,25 @@ async def execute(
     raw_input: object | None = None,
     inputs: Sequence[Pointer] | None = None,
     begin_step: StepBoundary | None = None,
-    current_binding: Callable[[], BoundRun] | None = None,
 ) -> Local:
     """Evaluate one child-run Step and emit its event boundary."""
 
     async def evaluate() -> Local:
         if validate is not None:
-            validate()
-        effective_binding = (
-            current_binding() if current_binding is not None else binding
-        )
+            try:
+                validate()
+            except (TypeError, ValueError) as exc:
+                raise _RunRejected(str(exc) or type(exc).__name__) from exc
         if resolution == "module" and raw_input is None:
             return await execution.execute_child(
-                effective_binding,
+                binding,
                 locals,
                 path,
                 runnable,
                 occurrence,
             )
         return await execution.execute_child(
-            effective_binding,
+            binding,
             locals,
             path,
             runnable,

@@ -86,6 +86,10 @@ class _StepFailed(_ExecutionFailed):
         super().__init__(Pointer.step(step), cause)
 
 
+class _RunRejected(Exception):
+    """Carry one expected child-run request rejection into its Run Step."""
+
+
 @dataclass(frozen=True, slots=True)
 class BoundRun:
     """One accepted run bound to immutable execution inputs."""

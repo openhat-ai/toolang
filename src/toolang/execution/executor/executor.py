@@ -82,6 +82,7 @@ from .common import (
     EventEmitter,
     Local,
     _ExecutionFailed,
+    _RunRejected,
     _StepFailed,
     control_text,
     initial_locals,
@@ -1500,7 +1501,11 @@ class _Execution:
                 module=module,
             )
         flow_resources: AgentResources | None = None
-        if not isinstance(executable, FlowDecl) and binding.parent is not None:
+        if (
+            not isinstance(executable, FlowDecl)
+            and binding.parent is not None
+            and binding.flow_resources is not None
+        ):
             parent = self._active_bindings.get(binding.parent.run)
             if parent is not None:
                 parent_binding, _previous_parent = parent
@@ -2007,7 +2012,10 @@ class _Execution:
             BoundRun,
             AgicDecl | FlowDecl,
         ]:
-            binding, executable = prepare(state, state_ref)
+            try:
+                binding, executable = prepare(state, state_ref)
+            except (ToolangError, TypeError, ValueError) as exc:
+                raise _RunRejected(str(exc) or type(exc).__name__) from exc
             resources = binding.resources
             if resources is None:
                 raise RuntimeError(f"run resources missing: {binding.run_id}")
@@ -2080,6 +2088,9 @@ class _Execution:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            child = self.store.get_run(run_id=binding.run_id)
+            if child is None or child.status in {"pending", "running"}:
+                raise
             raise _ExecutionFailed(Pointer.run(binding.run_id), exc) from exc
         pointer = Pointer.run(binding.run_id)
         item_type = result.type_name or "Json"
