@@ -1626,16 +1626,19 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     assert lines.index(executor_line) < lines.index(sandbox_line)
     assert lines.index(sandbox_line) < lines.index(home_line)
     assert next(index for index, line in enumerate(lines) if "████" in line) == next(
-        index for index, line in enumerate(lines) if "Toolang" in line
-    )
-    assert next(index for index, line in enumerate(lines) if "⬤" in line) == next(
         index for index, line in enumerate(lines) if "embedded" in line
     )
-    assert version_line.index("Toolang") == home_line.index("home")
+    assert next(index for index, line in enumerate(lines) if "⬤" in line) == next(
+        index for index, line in enumerate(lines) if _HOST_SANDBOX_VALUE in line
+    )
+    assert next(
+        index for index, line in enumerate(lines) if "████" in line
+    ) + 2 == next(
+        index for index, line in enumerate(lines) if "/tmp/toolang/agents/alice" in line
+    )
     assert home_line.index("home") == executor_line.index("executor")
     assert executor_line.index("executor") == sandbox_line.index("sandbox")
-    value_column = version_line.index("v0.1.0")
-    assert value_column == home_line.index("/tmp/toolang/agents/alice")
+    value_column = home_line.index("/tmp/toolang/agents/alice")
     assert value_column == executor_line.index("embedded")
     assert value_column == sandbox_line.index(_HOST_SANDBOX_VALUE)
     bordered_lines = [line for line in lines if line]
@@ -1648,9 +1651,9 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     assert _HOST_SANDBOX_VALUE in bordered_lines[-4]
     assert "home" in bordered_lines[-3]
     assert not bordered_lines[-2].strip("│ ")
-    logo_line = next(line for line in lines if "Toolang" in line)
-    assert logo_line.startswith("│  ████           ██    Toolang")
-    assert "Toolang v0.1.0" in " ".join(logo_line.split())
+    assert lines[1].startswith("╭─ Toolang v0.1.0 ─")
+    assert rendered.count("Toolang") == 1
+    assert rendered.count("v0.1.0") == 1
 
 
 def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
@@ -1671,7 +1674,11 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     lines = rendered.splitlines()
     logo_index = next(index for index, line in enumerate(lines) if "⬤" in line)
     toolang_index = next(index for index, line in enumerate(lines) if "Toolang" in line)
-    assert toolang_index > logo_index + 1
+    executor_index = next(
+        index for index, line in enumerate(lines) if "executor" in line
+    )
+    assert toolang_index < logo_index
+    assert executor_index > logo_index + 1
     assert all(len(line) <= 40 for line in lines)
     bordered_lines = [line for line in lines if line]
     assert len({len(line) for line in bordered_lines}) == 1
@@ -1680,6 +1687,7 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     assert "executorhttp://runtime.test:7001·v0.3.9" in unwrapped
     assert "sandboxdocker:python:3.13-slim·176191c1528b" in unwrapped
     assert rendered.count("·") == 2
+    assert rendered.count("Toolang v0.1.0") == 1
     assert _CONTAINER_ID not in rendered
 
 
@@ -1806,6 +1814,9 @@ def test_chat_header_links_remote_endpoint_and_preserves_vertical_padding() -> N
     assert len(remote_lines) == len(local_lines)
     assert len(sandboxed_lines) == len(remote_lines)
     for lines in (local_lines, remote_lines, sandboxed_lines):
+        assert "Toolang v0.2.7-87-g69439a4e*" in lines[1]
+        assert " ".join(lines).count("Toolang") == 1
+        assert " ".join(lines).count("v0.2.7-87-g69439a4e*") == 1
         bordered = [line for line in lines if line]
         assert not bordered[1].strip("│ ")
         assert not bordered[-2].strip("│ ")
@@ -1848,8 +1859,7 @@ def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
 
     logo_blocks = [segment for segment in segments if "█" in segment.text]
     logo_dots = [segment for segment in segments if "⬤" in segment.text]
-    brand = next(segment for segment in segments if segment.text.strip() == "Toolang")
-    version = next(segment for segment in segments if segment.text.strip() == "v0.1.0")
+    caption = next(segment for segment in segments if "Toolang v0.1.0" in segment.text)
     keys = [
         next(segment for segment in segments if segment.text.strip() == key)
         for key in ("home", "executor", "sandbox")
@@ -1883,10 +1893,10 @@ def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
         and not segment.style.reverse
         for segment in logo_dots
     )
-    assert brand.style is not None and brand.style.bold
-    assert brand.style.color is not None
-    assert brand.style.color.name == "bright_cyan"
-    assert version.style is not None and version.style.dim
+    assert caption.style is not None
+    assert not caption.style.bold
+    assert not caption.style.dim
+    assert caption.style.color is None
     assert all(segment.style is not None and segment.style.dim for segment in keys)
     assert all(
         segment.style is None or (not segment.style.bold and not segment.style.dim)

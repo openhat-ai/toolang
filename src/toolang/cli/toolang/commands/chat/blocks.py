@@ -17,7 +17,7 @@ from rich.table import Table
 from rich.text import Text
 
 from toolang.base.types.message import Part, TextPart
-from toolang.cli.common.output import TOOLANG_COLOR, toolang_logo, toolang_logo_text
+from toolang.cli.common.output import toolang_logo, toolang_logo_text
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
 from toolang.execution.types import ExecutionError
 
@@ -486,10 +486,6 @@ class HeaderBlock:
         details = Table.grid(padding=(0, _HEADER_FIELD_GAP))
         details.add_column(no_wrap=True)
         details.add_column(no_wrap=False, overflow="fold")
-        details.add_row(
-            Text("Toolang", style=f"bold {TOOLANG_COLOR}"),
-            Text(self.version_label, style="dim"),
-        )
         executor_value = _header_executor_value(
             self.executor_metadata,
             tui_version=self.version_label,
@@ -506,7 +502,6 @@ class HeaderBlock:
             display_width("executor")
             + _HEADER_FIELD_GAP
             + max(
-                display_width(self.version_label),
                 display_width(self.home),
                 display_width(executor_value.plain),
                 display_width(sandbox_value.plain),
@@ -537,6 +532,11 @@ class HeaderBlock:
             border_style="dim",
             padding=(1, _HEADER_HORIZONTAL_PADDING),
             expand=False,
+            title_align="left",
+            title=Text(
+                f"Toolang {self.version_label}",
+                style=Style(bold=False, dim=False),
+            ),
         )
 
 
