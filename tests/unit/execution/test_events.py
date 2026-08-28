@@ -27,6 +27,8 @@ from toolang.execution.types import (
     CollectionStepNoted,
     ControlRef,
     ControlStatus,
+    HandoffStepGiven,
+    HandoffStepNoted,
     Local,
     LoopStepNoted,
     ModelStepGiven,
@@ -243,6 +245,28 @@ def test_tool_step_summary_round_trips_and_accepts_legacy_given() -> None:
     assert isinstance(parsed, StepBegin)
     assert isinstance(parsed.given, ToolStepGiven)
     assert parsed.given.summary == ""
+
+
+def test_handoff_step_round_trips_requested_and_committed_target() -> None:
+    begin = StepBegin(
+        step=StepPath.parse("run_root.1"),
+        kind="handoff",
+        given=HandoffStepGiven(requested="deliver"),
+        state=ControlRef("run_root", 0),
+        input=(Pointer.step(StepPath.parse("run_root.0"), 1),),
+    )
+    end = StepEnd(
+        step=begin.step,
+        kind="handoff",
+        status="succeeded",
+        noted=HandoffStepNoted(
+            runnable="flow:deliver",
+            module="_flow_deliver",
+        ),
+    )
+
+    assert run_event_from_data(run_event_to_data(begin)) == begin
+    assert run_event_from_data(run_event_to_data(end)) == end
 
 
 def test_loop_step_noted_round_trips_through_the_step_schema() -> None:

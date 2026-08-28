@@ -31,6 +31,8 @@ from .types import (
     AgentResources,
     Local,
     ExecutionError,
+    HandoffStepGiven,
+    HandoffStepNoted,
     LoopStepNoted,
     ModelAccounting,
     ModelCost,
@@ -339,7 +341,9 @@ class StoredModelStepGiven:
             raise TypeError("stored model given requires ModelCallRefs")
 
 
-StoredStepGiven: TypeAlias = FlowStmt | StoredModelStepGiven | ToolStepGiven
+StoredStepGiven: TypeAlias = (
+    FlowStmt | StoredModelStepGiven | ToolStepGiven | HandoffStepGiven
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -905,6 +909,16 @@ def step_given_from_data(kind: StepKind, data: object) -> StepGiven:
             call=_TOOL_CALL_ADAPTER.validate_python(payload["call"]),
             summary=raw_summary,
         )
+    if kind == "handoff":
+        payload = _canonical_object(
+            data,
+            fields={"requested"},
+            label="handoff given",
+        )
+        requested = payload["requested"]
+        if requested is not None and not isinstance(requested, str):
+            raise ValueError("handoff given requested ref must be text or null")
+        return HandoffStepGiven(requested=requested)
     statement = flow_stmt_from_data(data)
     from .types import validate_step_given
 
@@ -930,6 +944,8 @@ def step_given_to_data(kind: StepKind, given: StepGiven) -> dict[str, object]:
         if given.summary:
             data["summary"] = given.summary
         return data
+    if isinstance(given, HandoffStepGiven):
+        return {"requested": given.requested}
     return cast(dict[str, object], ast_to_data(given))
 
 
@@ -1012,6 +1028,17 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
         if not isinstance(summary, str):
             raise ValueError("tool noted summary must be text")
         return ToolStepNoted(summary=summary)
+    if kind == "handoff":
+        payload = _canonical_object(
+            data,
+            fields={"runnable", "module"},
+            label="handoff noted",
+        )
+        runnable = payload["runnable"]
+        module = payload["module"]
+        if not isinstance(runnable, str) or not isinstance(module, str):
+            raise ValueError("handoff noted runnable and module must be text")
+        return HandoffStepNoted(runnable=runnable, module=module)
     if kind in {"value", "par"}:
         payload = _canonical_object(
             data,
@@ -1133,6 +1160,8 @@ def step_noted_to_data(kind: StepKind, noted: StepNoted) -> dict[str, object] | 
         return None
     if isinstance(noted, ToolStepNoted):
         return {"summary": noted.summary}
+    if isinstance(noted, HandoffStepNoted):
+        return {"runnable": noted.runnable, "module": noted.module}
     if isinstance(noted, CollectionStepNoted):
         return {
             "total_items": noted.total_items,

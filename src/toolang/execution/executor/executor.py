@@ -28,6 +28,7 @@ from toolang.lang.ast import (
 )
 from toolang.lang.input import (
     RunnableInput,
+    coerce_output,
     decode_json_input,
     resolve_runnable_input,
     validate_value,
@@ -71,11 +72,12 @@ from ..types import (
     TypedPointer,
 )
 from ..runnables import (
+    ResolvedRunnable,
     parse_runnable_ref,
-    render_runnable_catalog,
     runnable_input_contract,
     resolve_bound_runnable,
     resolve_module_runnable,
+    resolve_public_runnable,
     resolve_state_runnable,
 )
 from .common import (
@@ -83,6 +85,7 @@ from .common import (
     EventEmitter,
     Local,
     _ExecutionFailed,
+    _HandoffCommitted,
     _RunRejected,
     _StepFailed,
     control_text,
@@ -609,6 +612,12 @@ class RunExecutor:
                 f"{control.payload.sandbox} for run {run_id}; use rerun"
             )
 
+    @property
+    def has_state_refresh(self) -> bool:
+        """Return whether model-requested State refresh is available."""
+
+        return self._refresh_state is not None
+
     def _launch(
         self,
         bound: BoundRun,
@@ -966,6 +975,7 @@ class RunExecutor:
             active.ended.add(event.run)
             if active.execution is not None:
                 active.execution._active_bindings.pop(event.run, None)
+                active.execution._run_lineages.pop(event.run, None)
         if active.tracer is not None:
             try:
                 await active.tracer.on_event(event)
@@ -1390,6 +1400,9 @@ class _Execution:
         if root_ref is None:  # pragma: no cover - bound run invariant
             raise RuntimeError(f"run runnable binding is missing: {root.run_id}")
         self._active_bindings: dict[str, BoundRun] = {root.run_id: root}
+        self._run_lineages: dict[str, tuple[tuple[str, str], ...]] = {
+            root.run_id: ((root.module, root_ref),)
+        }
 
     def next_step(self, run_id: str) -> int:
         """Return the next unused top-level physical step index."""
@@ -1463,10 +1476,11 @@ class _Execution:
     def provider_configs(self) -> Mapping[str, ProviderConfig]:
         return cast(Mapping[str, ProviderConfig], self.setup.provider_configs)
 
-    def runnable_catalog(self, state: AgentState) -> str:
-        """Render the bounded public runnable catalog for one State."""
+    @property
+    def has_state_refresh(self) -> bool:
+        """Return whether this execution can refresh Agent State."""
 
-        return render_runnable_catalog(state)
+        return self.executor.has_state_refresh
 
     def refresh_run_binding(
         self,
@@ -1621,6 +1635,80 @@ class _Execution:
         )
         return input
 
+    def require_inactive_runnable(
+        self,
+        parent: BoundRun,
+        target: ResolvedRunnable,
+        *,
+        action: str,
+    ) -> None:
+        """Reject a model route already active in this or an ancestor lineage."""
+
+        identity = (target.module, target.ref)
+        run_id: str | None = parent.run_id
+        while run_id is not None:
+            if identity in self._run_lineages.get(run_id, ()):
+                raise ValueError(
+                    f"{action} cannot call the current or an ancestor runnable: "
+                    f"{target.ref}"
+                )
+            active = self._active_bindings.get(run_id)
+            run_id = active.parent.run if active and active.parent is not None else None
+
+    def prepare_handoff(
+        self,
+        parent: BoundRun,
+        target: ResolvedRunnable,
+        input: RunnableInput,
+        *,
+        step: StepPath,
+        state: AgentState,
+        state_ref: ControlRef,
+    ) -> tuple[BoundRun, dict[str, Local]]:
+        """Prepare a same-Run replacement without committing the transition."""
+
+        self.require_inactive_runnable(parent, target, action="_too/execute")
+        agent_resources, resources = self._public_runnable_resources(
+            parent,
+            target.module,
+            target.executable,
+            state=state,
+        )
+        binding = replace(
+            parent,
+            bindings=RunBindings(
+                model=parent.bindings.model,
+                runnable=target.ref,
+            ),
+            input=input,
+            control_locals=_input_locals(input, target.executable),
+            state=state,
+            state_ref=state_ref,
+            module=target.module,
+            agent_resources=agent_resources,
+            resources=resources,
+            flow_resources=(
+                resources if isinstance(target.executable, FlowDecl) else None
+            ),
+        )
+        return binding, _handoff_locals(input, target.executable, step=step)
+
+    def commit_handoff(
+        self,
+        binding: BoundRun,
+    ) -> None:
+        """Commit an already durable same-Run runnable transition in memory."""
+
+        lineage = self._run_lineages.get(binding.run_id)
+        if lineage is None:  # pragma: no cover - active Run invariant
+            raise RuntimeError(f"active Run lineage is missing: {binding.run_id}")
+        ref = binding.bindings.runnable
+        if ref is None:  # pragma: no cover - bound run invariant
+            raise RuntimeError(f"run runnable binding is missing: {binding.run_id}")
+        self._run_lineages[binding.run_id] = (*lineage, (binding.module, ref))
+        self._active_bindings[binding.run_id] = binding
+        self._run_outputs.pop(binding.run_id, None)
+
     def schedule_time_limit(
         self,
         task: asyncio.Task[RunRecord],
@@ -1683,6 +1771,9 @@ class _Execution:
 
         if binding.resources is None:
             raise RuntimeError(f"run resources missing: {binding.run_id}")
+        entry_binding = binding
+        entry_runnable = runnable
+        handed_off = False
         current = (
             dict(locals) if locals is not None else initial_locals(binding, runnable)
         )
@@ -1712,17 +1803,38 @@ class _Execution:
                 )
             if self._retry is not None and binding.run_id == self._retry.run:
                 self._limits.check_restored()
-            if isinstance(runnable, AgicDecl):
-                result = await agic_run.execute(self, binding, runnable, current)
-                current["_"] = result
-            else:
-                result = await flow_run.execute(
-                    self,
-                    binding,
-                    runnable,
-                    current,
-                    statement_start=statement_start,
-                    step_start=step_start,
+            while True:
+                try:
+                    if isinstance(runnable, AgicDecl):
+                        result = await agic_run.execute(
+                            self,
+                            binding,
+                            runnable,
+                            current,
+                        )
+                        current["_"] = result
+                    else:
+                        result = await flow_run.execute(
+                            self,
+                            binding,
+                            runnable,
+                            current,
+                            statement_start=statement_start,
+                            step_start=step_start,
+                        )
+                    break
+                except _HandoffCommitted as handoff:
+                    binding = handoff.binding
+                    runnable = handoff.runnable
+                    current = handoff.locals
+                    statement_start = 0
+                    step_start = self.next_step(binding.run_id)
+                    handed_off = True
+            if handed_off:
+                result = _coerce_handoff_output(
+                    entry_binding,
+                    entry_runnable,
+                    result,
                 )
         except asyncio.CancelledError as exc:
             if self._limits.error is not None:
@@ -1864,6 +1976,8 @@ class _Execution:
         output_name: str | None = "_",
         resolution: Literal["module", "state"] = "module",
         raw_input: object | None = None,
+        authorize: Callable[[ResolvedRunnable], None] | None = None,
+        state_snapshot: tuple[AgentState, ControlRef] | None = None,
     ) -> Local:
         """Accept and execute one recursive child agic or flow run."""
 
@@ -1873,31 +1987,32 @@ class _Execution:
         ) -> tuple[BoundRun, AgicDecl | FlowDecl]:
             if resolution == "state":
                 runnable_name, runnable_kind = parse_runnable_ref(name)
-                module, runnable = resolve_state_runnable(
+                target = resolve_public_runnable(
                     state,
                     runnable_name,
                     kind=runnable_kind,
                 )
-                ref = f"{runnable.kind}:{runnable_name}"
-                self._reject_recursive_public_child(parent, module, ref)
+                if authorize is not None:
+                    authorize(target)
+                self.require_inactive_runnable(parent, target, action="_too/run")
                 input = self.resolve_public_input(
                     state,
-                    module,
-                    runnable_name,
-                    runnable,
+                    target.module,
+                    target.name,
+                    target.executable,
                     {} if raw_input is None else raw_input,
                 )
                 binding = self._prepare_public_child(
                     parent,
-                    module,
-                    runnable_name,
-                    runnable,
+                    target.module,
+                    target.name,
+                    target.executable,
                     input,
                     parent_step=step,
                     state=state,
                     state_ref=state_ref,
                 )
-                return binding, runnable
+                return binding, target.executable
             if resolution != "module":  # pragma: no cover - typed caller invariant
                 raise ValueError(f"unknown run resolution: {resolution}")
             parent_ref = parent.bindings.runnable
@@ -1945,7 +2060,10 @@ class _Execution:
             )
             return _prepare_child_run(binding, runnable), runnable
 
-        binding, runnable = await self._begin_child(prepare)
+        binding, runnable = await self._begin_child(
+            prepare,
+            state_snapshot=state_snapshot,
+        )
         return await self._execute_child_binding(
             binding,
             runnable,
@@ -2001,25 +2119,6 @@ class _Execution:
             parent=parent_step,
         )
 
-    def _reject_recursive_public_child(
-        self,
-        parent: BoundRun,
-        module: str,
-        ref: str,
-    ) -> None:
-        target = (module, ref)
-        active_run_id: str | None = parent.run_id
-        while active_run_id is not None:
-            active = self._active_bindings.get(active_run_id)
-            if active is None:
-                break
-            binding = active
-            if target == (binding.module, binding.bindings.runnable):
-                raise ValueError(
-                    f"_too/run cannot call the current or an ancestor runnable: {ref}"
-                )
-            active_run_id = binding.parent.run if binding.parent is not None else None
-
     def _public_runnable_resources(
         self,
         parent: BoundRun,
@@ -2065,6 +2164,8 @@ class _Execution:
             [AgentState, ControlRef],
             tuple[BoundRun, AgicDecl | FlowDecl],
         ],
+        *,
+        state_snapshot: tuple[AgentState, ControlRef] | None = None,
     ) -> tuple[BoundRun, AgicDecl | FlowDecl]:
         """Resolve, accept, and begin one child at the latest State boundary."""
 
@@ -2083,6 +2184,9 @@ class _Execution:
                 raise RuntimeError(f"run resources missing: {binding.run_id}")
             try:
                 self._active_bindings[binding.run_id] = binding
+                self._run_lineages[binding.run_id] = (
+                    (binding.module, _bound_runnable(binding)),
+                )
                 self.store.accept_run(
                     run_id=binding.run_id,
                     parent=binding.parent,
@@ -2120,14 +2224,15 @@ class _Execution:
                     await self.executor._emit_event_locked(self._active, event)
             except BaseException:
                 self._active_bindings.pop(binding.run_id, None)
+                self._run_lineages.pop(binding.run_id, None)
                 raise
             return binding, runnable
 
         if self._active is None:
-            state, state_ref = self._current_state
+            state, state_ref = state_snapshot or self._current_state
             return await accept(state, state_ref)
         async with self._active.event_lock:
-            state, state_ref = self._current_state
+            state, state_ref = state_snapshot or self._current_state
             return await accept(state, state_ref)
 
     async def _execute_child_binding(
@@ -2721,6 +2826,41 @@ def _input_locals(
     return tuple(result)
 
 
+def _handoff_locals(
+    input: RunnableInput,
+    runnable: AgicDecl | FlowDecl,
+    *,
+    step: StepPath,
+) -> dict[str, Local]:
+    """Bind replacement inputs to the durable Handoff Step output."""
+
+    parameters = {item.name: item for item in runnable.params}
+    result: dict[str, Local] = {}
+    if runnable.input is not None and input.primary is not None:
+        type_name = runnable.input.type_name or "Part[]"
+        pointer = Pointer.step(step).select("_")
+        result["_"] = Local(
+            input.primary,
+            "item",
+            pointer,
+            type_name,
+            RecordLocal.typed(type_name, pointer, "_"),
+        )
+    else:
+        result["_"] = Local()
+    for name, value in input.named.items():
+        type_name = parameters[name].type_name or "Part[]"
+        pointer = Pointer.step(step).select(name)
+        result[name] = Local(
+            value,
+            "item",
+            pointer,
+            type_name,
+            RecordLocal.typed(type_name, pointer, name),
+        )
+    return result
+
+
 def _child_control_local(
     name: str,
     local: Local,
@@ -2804,6 +2944,37 @@ def _bound_model(binding: BoundRun) -> str:
     if not model:
         raise RuntimeError(f"run model binding is missing: {binding.run_id}")
     return model
+
+
+def _coerce_handoff_output(
+    entry: BoundRun,
+    runnable: AgicDecl | FlowDecl,
+    result: Local,
+) -> Local:
+    """Apply the entry runnable's output contract after same-Run replacement."""
+
+    type_name = runnable.output or (
+        "Part[]" if isinstance(runnable, AgicDecl) else "Json"
+    )
+    program = state_program(entry.state, entry.module)
+    value = coerce_output(
+        result.value,
+        type_name,
+        structs={item.name: item for item in program.structs},
+    )
+    source_type = (
+        f"{result.type_name or 'Json'}[]"
+        if result.shape == "list"
+        else result.type_name or "Json"
+    )
+    preserve = source_type == type_name
+    return Local(
+        value=value,
+        shape="item",
+        ref=result.ref if preserve else None,
+        type_name=type_name,
+        record=result.record if preserve else None,
+    )
 
 
 def _run_result_local(

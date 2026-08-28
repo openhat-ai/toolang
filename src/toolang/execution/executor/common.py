@@ -136,6 +136,21 @@ class Local:
     record: RecordLocal | None = None
 
 
+class _HandoffCommitted(Exception):
+    """Transfer execution to a prepared replacement within the same Run."""
+
+    def __init__(
+        self,
+        binding: BoundRun,
+        runnable: AgicDecl | FlowDecl,
+        locals: Mapping[str, Local],
+    ) -> None:
+        super().__init__(binding.bindings.runnable or runnable.name)
+        self.binding = binding
+        self.runnable = runnable
+        self.locals = dict(locals)
+
+
 async def execute_step(
     emit: EventEmitter,
     *,

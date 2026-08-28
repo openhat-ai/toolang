@@ -106,12 +106,10 @@ def _patch_tool_entry_points(monkeypatch) -> None:
     from toolang.execution.tools.agent_state import (
         create_toolset as create_agent_state_tool,
     )
-    from toolang.execution.tools.runtime import create_toolset as create_runtime_tool
     from toolang.base.examples.tools import create_working_tree_toolset
 
     entries = [
         _FakeEntryPoint("_me", create_agent_state_tool, distribution="toolang"),
-        _FakeEntryPoint("_too", create_runtime_tool, distribution="toolang"),
         _FakeEntryPoint("echo", create_echo_toolset),
         _FakeEntryPoint("fs", create_filesystem_tool, distribution="toolang"),
         _FakeEntryPoint("math_add", create_math_add_toolset),
@@ -131,7 +129,6 @@ def test_toolsets_load_from_entry_points(monkeypatch) -> None:
 
     assert list_plugin_names(group="toolang.toolset") == [
         "_me",
-        "_too",
         "echo",
         "fs",
         "math_add",
@@ -240,8 +237,6 @@ def test_load_tools_uses_encoded_model_names(monkeypatch) -> None:
         "_me__create_prompt",
         "_me__update_prompt",
         "_me__delete_prompt",
-        "_too__reload",
-        "_too__run",
     }
 
     assert expected <= tools.keys()
@@ -249,11 +244,7 @@ def test_load_tools_uses_encoded_model_names(monkeypatch) -> None:
     assert tools["service__init"].definition().name == "service__init"
     assert tools["service__start_auth"].definition().name == "service__start_auth"
     assert tools["service__call_tool"].definition().name == "service__call_tool"
-    assert getattr(tools["_too__run"], "ref") == ToolRef(
-        plugin="_too",
-        toolset="_too",
-        name="run",
-    )
+    assert not any(name.startswith("_too__") for name in tools)
     assert (
         not {
             "fs__read_text",

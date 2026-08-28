@@ -633,6 +633,19 @@ class RunStore:
                     raise ValueError(
                         f"run has applied Agent State reloads: {run_id}; use rerun"
                     )
+                tree_runs = self._root_tree_runs(run_id)
+                placeholders = ", ".join("?" for _ in tree_runs)
+                succeeded_handoff = self._conn.execute(
+                    f"""
+                    SELECT 1 FROM steps
+                    WHERE run IN ({placeholders}) AND kind = 'handoff'
+                      AND status = 'succeeded'
+                    LIMIT 1
+                    """,
+                    tree_runs,
+                ).fetchone()
+                if succeeded_handoff is not None:
+                    raise ValueError(f"run has succeeded handoffs: {run_id}; use rerun")
                 preparation_row = self._conn.execute(
                     'SELECT * FROM controls WHERE target = ? AND "index" = ?',
                     (run.control.target, run.control.index),
@@ -3135,6 +3148,7 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
 def _step_kind_from_data(value: object) -> StepKind:
     if not isinstance(value, str) or value not in {
         "run",
+        "handoff",
         "agent",
         "human",
         "model",

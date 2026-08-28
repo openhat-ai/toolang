@@ -341,6 +341,8 @@ skills
 services
 tools
 recall
+hands
+handoffs
 ```
 
 Selection directives apply ordered set operations to the immutable run
@@ -354,6 +356,25 @@ snapshot:
 
 `models` and `recall` are scalar selections and support `=` only. `recall`
 accepts `default`, `none`, `history`, `memory`, or `history, memory`.
+
+`hands` and `handoffs` are Agic-only runnable routes. They accept ordered,
+exact public refs in `name`, `agic:name`, or `flow:name` form and support only
+`=`:
+
+```too
+agic coordinate(_: Text) -> Report:
+  hands = agic:research, flow:verify
+  handoffs = flow:deliver
+
+  Coordinate the work.
+```
+
+A hand is a synchronous child Run: the Agic receives its result and continues.
+A handoff replaces the current runnable in the same Run: the target continues
+at the next Step and owns the Run's result. Missing but well-formed public refs
+remain authored routes and may become available after an explicit State reload.
+Flows cannot declare either route. `_too` executor actions cannot be selected
+through `tools`; use `hands` or `handoffs` instead.
 
 An agic directive narrows or extends only that agic's runtime setup. It does
 not mutate the prepared program or affect sibling runnables.
@@ -460,8 +481,9 @@ flow research(_: Text) -> Report:
   gather synthesize
 ```
 
-Flows use the same parameters, output declaration, directives, and runnable
-namespace as agics. Statement syntax, bindings, inline agics, and result shapes
+Flows use the same parameters, output declaration, resource directives, and
+runnable namespace as agics. Agic-only `hands` and `handoffs` are excluded.
+Statement syntax, bindings, inline agics, and result shapes
 are defined in [flow-syntax.md](./flow-syntax.md).
 
 Each flow invocation starts from the `AgentResources` resolved at root-run

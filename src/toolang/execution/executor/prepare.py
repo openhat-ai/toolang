@@ -42,7 +42,8 @@ from . import prompts
 from .common import BoundRun, value_parts, value_text
 from .resources import resource_caps, resource_tools
 from .resources import snapshot_model_selection
-from ..tools.runtime import RUN_ACTION, runtime_action
+from ..runnables import AgicRoutes, render_runnable_catalog, resolve_agic_routes
+from ..tools.runtime import RuntimeAction, runtime_actions
 
 if TYPE_CHECKING:
     from .executor import _Execution
@@ -66,6 +67,8 @@ class _AgicFrame:
     prompt_context: str
     messages: tuple[Message, ...]
     tools: dict[str, AgentTool]
+    actions: dict[str, RuntimeAction]
+    routes: AgicRoutes
     services: tuple[ToolService, ...]
     runtime_instructions: str = ""
 
@@ -97,6 +100,17 @@ def prepare_agic(
         allowed_selectors=model_selectors,
     )
     tools = dict(resource_tools(run.setup, resources))
+    routes = resolve_agic_routes(run.state, agic)
+    actions = runtime_actions(
+        run=bool(routes.hands),
+        execute=bool(routes.handoffs),
+        reload=context.has_state_refresh,
+    )
+    collisions = sorted(set(tools) & set(actions))
+    if collisions:
+        raise ToolangError(
+            "public tools conflict with executor actions: " + ", ".join(collisions)
+        )
     caps = resource_caps(run.state, resources, module=run.module)
     program = state_program(run.state, run.module)
     psyches = tuple(item for item in caps if item.kind == "psyche")
@@ -151,8 +165,8 @@ def prepare_agic(
     )
     instructions = _render_instructions(program, agic, system_runtime)
     runtime_instructions = ""
-    if any(runtime_action(tool) == RUN_ACTION for tool in tools.values()):
-        runtime_instructions = context.runnable_catalog(run.state)
+    if routes.hands or routes.handoffs:
+        runtime_instructions = render_runnable_catalog(run.state, routes)
     adapter = run.setup.adapters.get(model.adapter)
     if adapter is None:
         raise ToolangError(f"unknown model adapter: {model.adapter}")
@@ -166,6 +180,8 @@ def prepare_agic(
         prompt_context=prompt_context,
         messages=messages,
         tools=tools,
+        actions=actions,
+        routes=routes,
         services=_tool_services(services, context.setup.envs),
     )
     _log_prepared(prepared)

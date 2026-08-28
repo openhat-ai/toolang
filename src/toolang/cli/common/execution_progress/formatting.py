@@ -8,6 +8,7 @@ from toolang.base.types.message import (
 )
 from toolang.execution.events import StepEnd
 from toolang.execution.types import (
+    HandoffStepGiven,
     ModelStepGiven,
     StepGiven,
     ToolStepGiven,
@@ -160,7 +161,11 @@ def output_parts(event: StepEnd) -> tuple[Part, ...]:
 def flow_statement(given: StepGiven) -> FlowStmt | None:
     """Return the Flow statement carried directly by one Step given value."""
 
-    return None if isinstance(given, ModelStepGiven | ToolStepGiven) else given
+    return (
+        None
+        if isinstance(given, ModelStepGiven | ToolStepGiven | HandoffStepGiven)
+        else given
+    )
 
 
 def shape_label(event: StepEnd) -> str:

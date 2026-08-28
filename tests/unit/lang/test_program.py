@@ -7,6 +7,7 @@ import pytest
 
 from tests import FIXTURES_ROOT, PROJECT_ROOT
 from toolang.common.errors import ToolangError
+from toolang.lang.errors import ToolangValidationError
 from toolang.lang import Program, to_data
 from toolang.lang.ast import LetStmt, RepeatStmt, ScatterStmt, SettleStmt
 from toolang.base.types.message import TextPart
@@ -314,6 +315,52 @@ agic configured:
         "tools",
         "skills",
     ]
+
+
+def test_agic_routing_directives_keep_exact_public_refs_in_authored_order() -> None:
+    program = Program.from_source(
+        """
+agic coordinate:
+  hands = research, agic:review, flow:verify
+  handoffs = flow:deliver
+
+  Coordinate.
+"""
+    )
+
+    assert [(item.name, item.values) for item in program.agics[0].directives] == [
+        ("hands", ("research", "agic:review", "flow:verify")),
+        ("handoffs", ("flow:deliver",)),
+    ]
+
+
+@pytest.mark.parametrize(
+    "directive",
+    [
+        "hands += research",
+        "hands = research, research",
+        "hands = flow:*",
+        "hands = team/research",
+        "handoffs -= flow:deliver",
+    ],
+)
+def test_agic_routing_directives_reject_non_exact_routes(directive: str) -> None:
+    with pytest.raises(ToolangValidationError):
+        Program.from_source(f"agic coordinate:\n  {directive}\n\n  Coordinate.\n")
+
+
+@pytest.mark.parametrize("name", ["hands", "handoffs"])
+def test_flow_rejects_agic_routing_directives(name: str) -> None:
+    with pytest.raises(ToolangValidationError, match="must not declare"):
+        Program.from_source(f"flow coordinate:\n  {name} = research\n\n  pass\n")
+
+
+@pytest.mark.parametrize("selector", ["_too", "_too/*", "_too/run", "_too__run"])
+def test_tools_directive_rejects_executor_actions(selector: str) -> None:
+    with pytest.raises(ToolangValidationError, match="hands or handoffs"):
+        Program.from_source(
+            f"agic coordinate:\n  tools = {selector}\n\n  Coordinate.\n"
+        )
 
 
 def test_to_data_uses_node_kinds_and_span_objects() -> None:

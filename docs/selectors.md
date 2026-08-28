@@ -189,9 +189,13 @@ service/call_tool,_me/*
 *[plugin:core]
 ```
 
-Internal toolsets use the same selector path and resource policy as public
-toolsets. For example, `_me/*` selects every current-agent authoring tool; an
-allow list that omits it does not grant those tools implicitly.
+The `_me` internal toolset uses the same selector path and resource policy as
+public toolsets. For example, `_me/*` selects every current-agent authoring
+tool; an allow list that omits it does not grant those tools implicitly.
+
+Executor-owned `_too` model actions are not tools and never enter this selector
+domain. `tools = _too/run` is invalid; Agic runnable authority comes from
+`hands` and `handoffs`.
 
 
 ### Caps
