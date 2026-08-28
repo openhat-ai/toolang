@@ -27,6 +27,8 @@ from toolang.execution.events import (
 )
 from toolang.execution.types import (
     CollectionStepNoted,
+    HandoffStepGiven,
+    HandoffStepNoted,
     ControlRef,
     IterationOccurrence,
     Local,
@@ -941,6 +943,40 @@ def test_tool_output_uses_compact_json_and_preserves_text_lines(
     assert all(row.tone == "progress" for row in update.committed[0].rows)
     assert update.committed[0].rows[0].surface == "tool_summary"
     assert all(row.surface == "tool_detail" for row in update.committed[0].rows[1:])
+
+
+def test_handoff_progress_uses_semantic_step_facts() -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    path = StepPath.parse("run_root.0")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="agic:caller",
+        )
+    )
+
+    live = projector.handle(
+        StepBegin(
+            step=path,
+            kind="handoff",
+            given=HandoffStepGiven(requested="deliver"),
+        )
+    )
+    terminal = projector.handle(
+        StepEnd(
+            step=path,
+            kind="handoff",
+            status="succeeded",
+            noted=HandoffStepNoted(
+                runnable="flow:deliver",
+                module="_flow_deliver",
+            ),
+        )
+    )
+
+    assert _rows(live.live) == [["• Handing off to deliver..."]]
+    assert _rows(terminal.committed) == [["• Handed off to flow:deliver"]]
 
 
 def test_tool_error_preserves_complete_multiline_output() -> None:

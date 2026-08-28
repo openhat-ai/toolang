@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 from toolang.base.errors import ToolangError
 from toolang.lang.ast import (
@@ -12,6 +13,7 @@ from toolang.lang.ast import (
     Program,
     StructDecl,
 )
+from toolang.lang.types import parse_public_runnable_ref
 from toolang.state.state import (
     AgentState,
     effective_agics,
@@ -22,8 +24,8 @@ Runnable: TypeAlias = AgicDecl | FlowDecl
 RUNNABLE_CATALOG_MAX_ENTRIES = 64
 RUNNABLE_CATALOG_MAX_BYTES = 32_768
 RUNNABLE_DOCUMENTATION_MAX_CHARS = 512
-_CATALOG_OPEN = "<available-runnables>\n"
-_CATALOG_CLOSE = "\n</available-runnables>"
+_CATALOG_OPEN = "<available-runnable-routes>\n"
+_CATALOG_CLOSE = "\n</available-runnable-routes>"
 _BUILTIN_TYPES = frozenset(
     {
         "Text",
@@ -39,6 +41,106 @@ _BUILTIN_TYPES = frozenset(
         "ToolResultPart",
     }
 )
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedRunnable:
+    """One public runnable resolved to its owning State module."""
+
+    name: str
+    module: str
+    executable: Runnable
+
+    @property
+    def ref(self) -> str:
+        """Return the kind-qualified public runnable reference."""
+
+        return f"{self.executable.kind}:{self.name}"
+
+    @property
+    def qualified(self) -> str:
+        """Return the stable State-local runnable identity."""
+
+        return f"{self.module}${self.ref}"
+
+
+RouteAction: TypeAlias = Literal["run", "execute"]
+
+
+@dataclass(frozen=True, slots=True)
+class RunnableRoute:
+    """One currently resolved public target and its allowed model actions."""
+
+    runnable: ResolvedRunnable
+    actions: tuple[RouteAction, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AgicRoutes:
+    """Authored Agic routing authority and State-resolved model hints."""
+
+    hands: tuple[str, ...] = ()
+    handoffs: tuple[str, ...] = ()
+    resolved: tuple[RunnableRoute, ...] = ()
+
+    def allows(self, action: RouteAction, target: ResolvedRunnable) -> bool:
+        """Return whether authored routing authority permits one target."""
+
+        refs = self.hands if action == "run" else self.handoffs
+        for ref in refs:
+            name, kind = parse_runnable_ref(ref)
+            if name == target.name and (kind is None or kind == target.executable.kind):
+                return True
+        return False
+
+
+def resolve_public_runnable(
+    state: AgentState,
+    name: str,
+    *,
+    kind: str | None = None,
+) -> ResolvedRunnable:
+    """Resolve one public runnable with its effective name and owner module."""
+
+    module, executable = resolve_state_runnable(state, name, kind=kind)
+    return ResolvedRunnable(name=name, module=module, executable=executable)
+
+
+def resolve_agic_routes(state: AgentState, agic: AgicDecl) -> AgicRoutes:
+    """Resolve one Agic's authored routes against a captured State."""
+
+    hands = _directive_values(agic, "hands")
+    handoffs = _directive_values(agic, "handoffs")
+    grouped: dict[str, tuple[ResolvedRunnable, set[RouteAction]]] = {}
+    groups: tuple[tuple[RouteAction, tuple[str, ...]], ...] = (
+        ("run", hands),
+        ("execute", handoffs),
+    )
+    for route_action, refs in groups:
+        for ref in refs:
+            name, kind = parse_runnable_ref(ref)
+            try:
+                target = resolve_public_runnable(state, name, kind=kind)
+            except ToolangError:
+                continue
+            current = grouped.get(target.ref)
+            if current is None:
+                grouped[target.ref] = (target, {route_action})
+            else:
+                current[1].add(route_action)
+    resolved = tuple(
+        RunnableRoute(
+            runnable=target,
+            actions=tuple(action for action in ("run", "execute") if action in actions),
+        )
+        for target, actions in (grouped[ref] for ref in sorted(grouped))
+    )
+    return AgicRoutes(hands=hands, handoffs=handoffs, resolved=resolved)
+
+
+def _directive_values(agic: AgicDecl, name: str) -> tuple[str, ...]:
+    directive = next((item for item in agic.directives if item.name == name), None)
+    return directive.values if directive is not None else ()
 
 
 def resolve_runnable(
@@ -141,12 +243,7 @@ def resolve_bound_runnable(
 def parse_runnable_ref(value: str) -> tuple[str, str | None]:
     """Split one optional kind-qualified runnable reference."""
 
-    kind, separator, name = value.partition(":")
-    if not separator:
-        return value, None
-    if kind not in {"agic", "flow"} or not name or name != name.strip() or ":" in name:
-        raise ValueError(f"invalid runnable ref: {value}")
-    return name, kind
+    return parse_public_runnable_ref(value)
 
 
 def runnable_binding_defaults(
@@ -181,23 +278,10 @@ def runnable_binding_defaults(
     return (name, None) if isinstance(runnable, AgicDecl) else (None, name)
 
 
-def render_runnable_catalog(
-    state: AgentState,
-) -> str:
-    """Render a bounded deterministic catalog of public runnable hints."""
+def render_runnable_catalog(state: AgentState, routes: AgicRoutes) -> str:
+    """Render a bounded deterministic catalog of authorized runnable hints."""
 
-    entries = [
-        _runnable_catalog_entry(
-            state,
-            name,
-            state.runnable_modules[name],
-            runnable,
-        )
-        for name, runnable in sorted(
-            state.runnables.items(),
-            key=lambda item: f"{item[1].kind}:{item[0]}",
-        )
-    ]
+    entries = [_runnable_catalog_entry(state, route) for route in routes.resolved]
     accepted: list[dict[str, object]] = []
     for entry in entries[:RUNNABLE_CATALOG_MAX_ENTRIES]:
         candidate = [*accepted, entry]
@@ -227,7 +311,11 @@ def _catalog_document(
 ) -> dict[str, object]:
     return {
         "instruction": (
-            "Call _too/run only when the user explicitly asks to run or delegate "
+            "Use run when the caller needs the listed runnable's result and should "
+            "continue. Use execute only when the listed runnable should take over "
+            "the remainder of this Run; execute must be the only action in the "
+            "response. Call either action only when the user explicitly asks to "
+            "run or delegate "
             "to a listed runnable, or the current runnable's authored instructions "
             "explicitly require delegation. Do not call a runnable merely because "
             "it resembles the current request. Never call the current or an "
@@ -236,7 +324,7 @@ def _catalog_document(
             "parameters. For Part or Part[] input, a JSON string represents one text "
             "part; an array represents ordered parts, and a serialized text part is "
             '{"type":"text","text":"..."}. Do not invent missing required input. '
-            "If required input is unavailable or ambiguous, do not call _too/run; "
+            "If required input is unavailable or ambiguous, do not call an action; "
             "respond to the user in the normal model output with a specific question "
             "requesting it. After an input validation error, retry only when the "
             "expected signature and available context provide the required values; "
@@ -287,10 +375,11 @@ def runnable_input_contract(
 
 def _runnable_catalog_entry(
     state: AgentState,
-    name: str,
-    module: str,
-    runnable: Runnable,
+    route: RunnableRoute,
 ) -> dict[str, object]:
+    target = route.runnable
+    runnable = target.executable
+    module = target.module
     structs = {item.name: item for item in state.modules[module].structs}
     signature_types = (
         *((runnable.input.type_name or "Part[]",) if runnable.input else ()),
@@ -298,6 +387,7 @@ def _runnable_catalog_entry(
         runnable.output or ("Part[]" if isinstance(runnable, AgicDecl) else "Json"),
     )
     return {
+        "actions": list(route.actions),
         "documentation": (runnable.doc or "")[:RUNNABLE_DOCUMENTATION_MAX_CHARS],
         "input": (
             {
@@ -317,7 +407,7 @@ def _runnable_catalog_entry(
             }
             for parameter in runnable.params
         ],
-        "ref": f"{runnable.kind}:{name}",
+        "ref": target.ref,
         "structs": _reachable_structs(signature_types, structs=structs),
     }
 

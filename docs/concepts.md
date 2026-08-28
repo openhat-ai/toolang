@@ -237,6 +237,7 @@ A step is one execution unit inside one run.
 Current step kinds are:
 
 - `run`
+- `handoff`
 - `agent`
 - `human`
 - `model`

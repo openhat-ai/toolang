@@ -8,7 +8,7 @@ from typing import Any
 
 from . import ast
 from .errors import ToolangValidationError
-from .types import validate_struct_type
+from .types import parse_public_runnable_ref, validate_struct_type
 
 _SERVICE_FIELDS = frozenset(
     {"description", "transport", "protocol", "target", "headers", "env"}
@@ -28,7 +28,11 @@ def _validate(program: ast.Program) -> None:
 
     for agic in program.agics:
         _validate_parameters(agic.input, agic.params, owner=f"Agic {agic.name!r}")
-        _validate_directives(agic.directives, owner=f"Agic {agic.name!r}")
+        _validate_directives(
+            agic.directives,
+            owner=f"Agic {agic.name!r}",
+            allow_routes=True,
+        )
         _validate_prompt_ref(agic.context, contexts, target="context", owner=agic.name)
         _validate_prompt_ref(
             agic.instruct, instructs, target="instruct", owner=agic.name
@@ -36,7 +40,11 @@ def _validate(program: ast.Program) -> None:
 
     for flow in program.flows:
         _validate_parameters(flow.input, flow.params, owner=f"Flow {flow.name!r}")
-        _validate_directives(flow.directives, owner=f"Flow {flow.name!r}")
+        _validate_directives(
+            flow.directives,
+            owner=f"Flow {flow.name!r}",
+            allow_routes=False,
+        )
         _validate_stmts(flow.stmts, runnables=runnables)
 
 
@@ -184,7 +192,12 @@ def _validate_parameters(
         seen.add(param.name)
 
 
-def _validate_directives(directives: tuple[ast.Directive, ...], *, owner: str) -> None:
+def _validate_directives(
+    directives: tuple[ast.Directive, ...],
+    *,
+    owner: str,
+    allow_routes: bool,
+) -> None:
     models = [item for item in directives if item.name == "models"]
     if len(models) > 1:
         raise ToolangValidationError(
@@ -203,6 +216,55 @@ def _validate_directives(directives: tuple[ast.Directive, ...], *, owner: str) -
         if routed := [selector for selector in directive.values if "@" in selector]:
             raise ToolangValidationError(
                 f"{owner} must declare route-neutral model refs, not routed selectors: {', '.join(routed)}"
+            )
+
+    for name in ("hands", "handoffs"):
+        routes = [item for item in directives if item.name == name]
+        if routes and not allow_routes:
+            raise ToolangValidationError(
+                f"{owner} must not declare the {name} routing directive."
+            )
+        if len(routes) > 1:
+            raise ToolangValidationError(
+                f"{owner} may declare at most one {name} directive."
+            )
+        if not routes:
+            continue
+        directive = routes[0]
+        if directive.operator != "=":
+            raise ToolangValidationError(
+                f"{owner} must use '=' for its {name} directive."
+            )
+        if not directive.values:
+            raise ToolangValidationError(
+                f"{owner} must declare at least one public runnable in its {name} directive."
+            )
+        seen: set[str] = set()
+        for value in directive.values:
+            try:
+                parse_public_runnable_ref(value)
+            except ValueError as exc:
+                raise ToolangValidationError(
+                    f"{owner} declares invalid public runnable ref {value!r} in its {name} directive."
+                ) from exc
+            if value in seen:
+                raise ToolangValidationError(
+                    f"{owner} declares duplicate public runnable ref {value!r} in its {name} directive."
+                )
+            seen.add(value)
+
+    for directive in (item for item in directives if item.name == "tools"):
+        internal = [
+            value
+            for value in directive.values
+            if value == "_too"
+            or value.startswith("_too/")
+            or value.startswith("_too__")
+        ]
+        if internal:
+            raise ToolangValidationError(
+                f"{owner} must authorize runnable routes with hands or handoffs, "
+                f"not tools: {', '.join(internal)}"
             )
 
     recalls = [item for item in directives if item.name == "recall"]

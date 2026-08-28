@@ -6,13 +6,16 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Literal
 
 from toolang.lang.ast import FlowStmt
+from toolang.state.state import AgentState
 
+from ...events import StepBegin
 from ...records import RunControlRecord, StepPath
-from ...types import Occurrence, Pointer
+from ...types import ControlRef, Occurrence, Pointer
 from ..common import BoundRun
 from ..common import Local, StepBoundary, _RunRejected, execute_step
 
 if TYPE_CHECKING:
+    from ...runnables import ResolvedRunnable
     from ..executor import _Execution
 
 
@@ -31,10 +34,26 @@ async def execute(
     raw_input: object | None = None,
     inputs: Sequence[Pointer] | None = None,
     begin_step: StepBoundary | None = None,
+    authorize: Callable[[ResolvedRunnable], None] | None = None,
 ) -> Local:
     """Evaluate one child-run Step and emit its event boundary."""
 
+    captured: tuple[AgentState, ControlRef] | None = None
+    boundary = begin_step or execution.begin_step
+
+    async def capture_boundary(
+        build: Callable[[AgentState, ControlRef], StepBegin],
+    ) -> tuple[AgentState, ControlRef]:
+        def capture(agent_state: AgentState, state_ref: ControlRef) -> StepBegin:
+            nonlocal captured
+            captured = agent_state, state_ref
+            return build(agent_state, state_ref)
+
+        return await boundary(capture)
+
     async def evaluate() -> Local:
+        if captured is None:  # pragma: no cover - Step boundary invariant
+            raise RuntimeError("Run Step did not capture Agent State")
         if validate is not None:
             try:
                 validate()
@@ -47,6 +66,7 @@ async def execute(
                 path,
                 runnable,
                 occurrence,
+                state_snapshot=captured,
             )
         return await execution.execute_child(
             binding,
@@ -56,11 +76,13 @@ async def execute(
             occurrence,
             resolution=resolution,
             raw_input=raw_input,
+            authorize=authorize,
+            state_snapshot=captured,
         )
 
     return await execute_step(
         execution.emit,
-        begin_step=begin_step or execution.begin_step,
+        begin_step=capture_boundary,
         kind="run",
         path=path,
         binding=binding,

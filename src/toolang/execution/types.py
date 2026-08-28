@@ -858,6 +858,7 @@ ControlStatus = Literal["pending", "applied", "wontapply", "revoked"]
 
 StepKind = Literal[
     "run",
+    "handoff",
     "agent",
     "human",
     "model",
@@ -898,6 +899,17 @@ class ToolStepGiven:
         _validate_step_summary(self.summary, label="tool Step given", allow_empty=True)
 
 
+@dataclass(frozen=True, slots=True)
+class HandoffStepGiven:
+    """The public runnable ref requested when a Handoff Step begins."""
+
+    requested: str | None
+
+    def __post_init__(self) -> None:
+        if self.requested is not None and not isinstance(self.requested, str):
+            raise TypeError("handoff Step requested ref must be text or None")
+
+
 def _serialize_step_given(value: StepGiven, handler: Any) -> object:
     if isinstance(value, Node):
         return ast_to_data(value)
@@ -912,7 +924,7 @@ def _parse_step_given(value: object) -> object:
 
 
 StepGiven: TypeAlias = Annotated[
-    FlowStmt | ModelStepGiven | ToolStepGiven,
+    FlowStmt | ModelStepGiven | ToolStepGiven | HandoffStepGiven,
     BeforeValidator(_parse_step_given),
     WrapSerializer(_serialize_step_given),
 ]
@@ -1096,6 +1108,18 @@ class ToolStepNoted:
         _validate_step_summary(self.summary, label="tool Step noted")
 
 
+@dataclass(frozen=True, slots=True)
+class HandoffStepNoted:
+    """Canonical target identity committed by a successful Handoff Step."""
+
+    runnable: str
+    module: str
+
+    def __post_init__(self) -> None:
+        if not self.runnable or not self.module:
+            raise ValueError("handoff Step noted requires runnable and module")
+
+
 LoopTermination = Literal["exhausted", "satisfied", "failed", "canceled"]
 
 
@@ -1151,7 +1175,12 @@ class LoopStepNoted:
 
 
 StepNoted: TypeAlias = (
-    ModelStepNoted | ToolStepNoted | CollectionStepNoted | LoopStepNoted | None
+    ModelStepNoted
+    | ToolStepNoted
+    | HandoffStepNoted
+    | CollectionStepNoted
+    | LoopStepNoted
+    | None
 )
 
 
@@ -1236,6 +1265,10 @@ def validate_step_given(kind: StepKind, given: StepGiven) -> StepGiven:
         if not isinstance(given, ToolStepGiven):
             raise TypeError("tool Step requires ToolStepGiven")
         return given
+    if kind == "handoff":
+        if not isinstance(given, HandoffStepGiven):
+            raise TypeError("handoff Step requires HandoffStepGiven")
+        return given
     if not _flow_statement_matches_kind(given, kind):
         raise TypeError(f"{kind} Step requires a compatible FlowStmt")
     return given
@@ -1257,6 +1290,14 @@ def validate_step_noted(
             raise TypeError("tool Step noted requires ToolStepNoted or None")
         if status in {"pending", "running"} and noted is not None:
             raise ValueError(f"{status} tool Step cannot have terminal noted facts")
+        return noted
+    if kind == "handoff":
+        if noted is not None and not isinstance(noted, HandoffStepNoted):
+            raise TypeError("handoff Step noted requires HandoffStepNoted or None")
+        if status == "succeeded" and noted is None:
+            raise ValueError("succeeded handoff Step requires target facts")
+        if status in {"pending", "running", "failed", "canceled"} and noted is not None:
+            raise ValueError(f"{status} handoff Step cannot have target facts")
         return noted
     if kind == "loop":
         if noted is not None and not isinstance(noted, LoopStepNoted):

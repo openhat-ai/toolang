@@ -342,6 +342,10 @@ async def invoke_tool_call(
     name = call.name
     arguments = dict(call.input)
     try:
+        if name.startswith("_too__"):
+            raise ToolangError(
+                f"executor runtime action cannot be invoked as a tool: {name}"
+            )
         tool = tools.get(name)
         if tool is None:
             raise ToolangError(f"unknown tool call: {name or '<empty>'}")

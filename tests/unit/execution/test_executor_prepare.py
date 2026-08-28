@@ -245,6 +245,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
             envs=setup.envs,
             date="2026-01-01",
             timezone="UTC",
+            has_state_refresh=False,
         ),
     )
 
@@ -347,6 +348,7 @@ def test_prepare_agic_includes_declared_output_contract(tmp_path: Path) -> None:
             layout=setup.layout,
             date="2026-01-01",
             timezone="UTC",
+            has_state_refresh=False,
         ),
     )
 
@@ -441,6 +443,7 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
             envs=setup.envs,
             date="2026-01-01",
             timezone="UTC",
+            has_state_refresh=False,
         ),
     )
 

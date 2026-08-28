@@ -27,6 +27,7 @@ Number: TypeAlias = int | float
 Boolean: TypeAlias = bool
 
 _VALUE_TYPE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\[\])*$")
+_RUNNABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 _PART_TYPES = (
     TextPart,
     ImagePart,
@@ -64,6 +65,24 @@ def validate_struct_type(type_name: str) -> str:
     if type_name in _RESERVED_STRUCT_TYPES:
         raise ValueError(f"struct type conflicts with built-in type: {type_name}")
     return type_name
+
+
+def parse_public_runnable_ref(value: str) -> tuple[str, str | None]:
+    """Parse one exact public runnable reference owned by the language."""
+
+    if not isinstance(value, str) or value != value.strip():
+        raise ValueError(f"invalid public runnable ref: {value!r}")
+    kind, separator, name = value.partition(":")
+    if not separator:
+        name = value
+        kind = ""
+    if (
+        (kind and kind not in {"agic", "flow"})
+        or not _RUNNABLE_NAME_RE.fullmatch(name)
+        or ":" in name
+    ):
+        raise ValueError(f"invalid public runnable ref: {value!r}")
+    return name, kind or None
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,5 +235,6 @@ __all__ = [
     "Value",
     "validate_type",
     "validate_struct_type",
+    "parse_public_runnable_ref",
     "value_type",
 ]

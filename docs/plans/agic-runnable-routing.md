@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed.
+Approved for implementation.
 
 This definition supersedes the tool-selection and all-public-catalog decisions
 for `_too/run` in [Agic runtime calls](agic-runtime-calls.md). It retains that

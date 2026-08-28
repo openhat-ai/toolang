@@ -11,6 +11,7 @@ from toolang.execution.runnables import (
     RUNNABLE_CATALOG_MAX_ENTRIES,
     RUNNABLE_DOCUMENTATION_MAX_CHARS,
     render_runnable_catalog,
+    resolve_agic_routes,
 )
 from toolang.lang import Program
 from toolang.state.state import AgentState, agent_state_revision
@@ -35,8 +36,8 @@ def _state(source: str) -> AgentState:
 
 
 def _document(rendered: str) -> dict[str, Any]:
-    opening = "<available-runnables>\n"
-    closing = "\n</available-runnables>"
+    opening = "<available-runnable-routes>\n"
+    closing = "\n</available-runnable-routes>"
     assert rendered.startswith(opening)
     assert rendered.endswith(closing)
     return cast(dict[str, Any], json.loads(rendered[len(opening) : -len(closing)]))
@@ -54,15 +55,24 @@ struct Node:
 ## {documentation}
 agic inspect(_: Node) -> Node:
   Inspect.
+
+agic caller:
+  hands = inspect
+
+  Call.
 """
     )
 
-    rendered = render_runnable_catalog(state)
+    caller = state.modules["agent"].find_agic("caller")
+    assert caller is not None
+    routes = resolve_agic_routes(state, caller)
+    rendered = render_runnable_catalog(state, routes)
     document = _document(rendered)
     entries = document["runnables"]
     inspect = next(item for item in entries if item["ref"] == "agic:inspect")
 
     assert len(inspect["documentation"]) == RUNNABLE_DOCUMENTATION_MAX_CHARS
+    assert inspect["actions"] == ["run"]
     assert [item["name"] for item in inspect["structs"]] == ["Node"]
     assert [field["type"] for field in inspect["structs"][0]["fields"]] == [
         "Text",
@@ -73,23 +83,35 @@ agic inspect(_: Node) -> Node:
 
 
 def test_catalog_keeps_longest_entry_prefix_and_exact_omitted_count() -> None:
-    source = "\n\n".join(
+    targets = "\n\n".join(
         f"agic action_{index:02d}:\n  Act."
         for index in range(RUNNABLE_CATALOG_MAX_ENTRIES + 6)
     )
+    hands = ", ".join(
+        f"action_{index:02d}" for index in range(RUNNABLE_CATALOG_MAX_ENTRIES + 6)
+    )
+    state = _state(f"{targets}\n\nagic caller:\n  hands = {hands}\n\n  Call.\n")
+    caller = state.modules["agent"].find_agic("caller")
+    assert caller is not None
+    routes = resolve_agic_routes(state, caller)
 
-    first = render_runnable_catalog(_state(source))
-    second = render_runnable_catalog(_state(source))
+    first = render_runnable_catalog(state, routes)
+    second = render_runnable_catalog(state, routes)
     document = _document(first)
 
     assert first == second
     assert len(document["runnables"]) == RUNNABLE_CATALOG_MAX_ENTRIES
-    assert document["omitted"] == {"count": 7}
+    assert document["omitted"] == {"count": 6}
     assert len(first.encode("utf-8")) <= RUNNABLE_CATALOG_MAX_BYTES
 
 
 def test_catalog_requires_explicit_delegation_intent() -> None:
-    document = _document(render_runnable_catalog(_state("agic action:\n  Act.")))
+    state = _state("agic action:\n  Act.\n\nagic caller:\n  hands = action\n  Call.")
+    caller = state.modules["agent"].find_agic("caller")
+    assert caller is not None
+    document = _document(
+        render_runnable_catalog(state, resolve_agic_routes(state, caller))
+    )
 
     instruction = document["instruction"]
     assert "user explicitly asks" in instruction
@@ -107,17 +129,49 @@ def test_catalog_requires_explicit_delegation_intent() -> None:
 
 def test_catalog_byte_limit_stops_before_a_complete_multibyte_entry() -> None:
     documentation = "界" * RUNNABLE_DOCUMENTATION_MAX_CHARS
-    source = "\n\n".join(
+    targets = "\n\n".join(
         f"## {documentation}\nagic action_{index:02d}:\n  Act."
         for index in range(RUNNABLE_CATALOG_MAX_ENTRIES)
     )
+    hands = ", ".join(
+        f"action_{index:02d}" for index in range(RUNNABLE_CATALOG_MAX_ENTRIES)
+    )
+    state = _state(f"{targets}\n\nagic caller:\n  hands = {hands}\n\n  Call.\n")
+    caller = state.modules["agent"].find_agic("caller")
+    assert caller is not None
+    routes = resolve_agic_routes(state, caller)
 
-    rendered = render_runnable_catalog(_state(source))
+    rendered = render_runnable_catalog(state, routes)
     document = _document(rendered)
     accepted = document["runnables"]
-    total = RUNNABLE_CATALOG_MAX_ENTRIES + 1  # implicit default agic
+    total = RUNNABLE_CATALOG_MAX_ENTRIES
 
     assert 0 < len(accepted) < RUNNABLE_CATALOG_MAX_ENTRIES
     assert document["omitted"] == {"count": total - len(accepted)}
     assert all(len(item["documentation"]) <= 512 for item in accepted)
     assert len(rendered.encode("utf-8")) <= RUNNABLE_CATALOG_MAX_BYTES
+
+
+def test_catalog_unions_run_and_execute_membership_for_one_target() -> None:
+    state = _state(
+        """
+agic target:
+  Target.
+
+agic caller:
+  hands = target
+  handoffs = agic:target
+
+  Call.
+"""
+    )
+    caller = state.modules["agent"].find_agic("caller")
+    assert caller is not None
+
+    document = _document(
+        render_runnable_catalog(state, resolve_agic_routes(state, caller))
+    )
+
+    assert [(item["ref"], item["actions"]) for item in document["runnables"]] == [
+        ("agic:target", ["run", "execute"])
+    ]

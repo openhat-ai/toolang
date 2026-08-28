@@ -26,6 +26,8 @@ from toolang.execution.records import (
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     ControlRef,
+    HandoffStepGiven,
+    HandoffStepNoted,
     Local,
     ModelStepGiven,
     Pointer,
@@ -573,6 +575,61 @@ def test_retry_rejects_applied_reload_history_without_mutation(tmp_path: Path) -
                 locals=entry.payload.locals,
                 sandbox="host",
                 request_id="retry-applied-reload",
+                created_at="2026-01-01T00:00:03Z",
+            )
+        unchanged = store.get_run(run_id=run.id)
+        assert unchanged is not None and unchanged.status == "succeeded"
+    finally:
+        store.close()
+
+
+def test_retry_rejects_succeeded_handoff_history_without_mutation(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_handoff_succeeded",
+            thread_id="term_handoff_succeeded",
+            origin="chat",
+            input=Message.user("hello"),
+            runnable_kind="agic",
+        )
+        path = StepPath(run.id, (0,))
+        store.begin_step(
+            path=path,
+            kind="handoff",
+            input=(),
+            given=HandoffStepGiven(requested="target"),
+            state=run.state,
+            started_at="2026-01-01T00:00:01Z",
+        )
+        store.finish_step(
+            path=path,
+            kind="handoff",
+            status="succeeded",
+            output=Local.typed("Json", {}, "_"),
+            noted=HandoffStepNoted(runnable="agic:target", module="agent"),
+            error=None,
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        project_run_end(store, run_id=run.id)
+        entry = store.get_run_control(run_id=run.id, index=0)
+        assert entry is not None and isinstance(entry.payload, RunControlPayload)
+
+        with pytest.raises(ValueError, match="succeeded handoffs.*use rerun"):
+            store.accept_retry(
+                run_id=run.id,
+                anchor=None,
+                resources=entry.payload.resources,
+                limits=entry.payload.limits,
+                state=entry.payload.state,
+                runnable=entry.payload.runnable,
+                model=entry.payload.model,
+                locals=entry.payload.locals,
+                sandbox="host",
+                request_id="retry-succeeded-handoff",
                 created_at="2026-01-01T00:00:03Z",
             )
         unchanged = store.get_run(run_id=run.id)

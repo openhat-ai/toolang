@@ -2719,6 +2719,8 @@ def _prepared_agic(
         program=Program(span=Span(1)),
         fingerprint="live-1",
     )
+    from toolang.execution.runnables import AgicRoutes
+
     return _AgicFrame(
         run=BoundRun(
             run_id="run-1",
@@ -2758,6 +2760,8 @@ def _prepared_agic(
         prompt_context="",
         messages=(Message.user("hello"),),
         tools={tool.name: tool},
+        actions={},
+        routes=AgicRoutes(),
         services=(),
     )
 

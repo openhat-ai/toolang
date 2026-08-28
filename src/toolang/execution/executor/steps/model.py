@@ -30,6 +30,7 @@ from toolang.base.types.run import (
     ModelPartStart,
     ToolCall,
 )
+from toolang.base.types.tool import ToolDefinition
 from toolang.common.time import elapsed_ms, utc_now
 from toolang.lang.types import Array
 from toolang.state.state import AgentState
@@ -109,12 +110,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             instructions=_model_instructions(state, prepared),
             messages=list(next_messages),
             tools=(
-                tuple(
-                    tool.definition()
-                    for tool in sorted(
-                        prepared.tools.values(), key=lambda item: item.name
-                    )
-                )
+                _model_tools(prepared)
                 if prepared.model.tools and not state.repairing_output
                 else ()
             ),
@@ -211,6 +207,16 @@ def _model_instructions(state: _AgicState, prepared: _AgicFrame) -> str:
     if prepared.instructions and runtime:
         return f"{prepared.instructions}\n\n{runtime}"
     return prepared.instructions or runtime
+
+
+def _model_tools(prepared: _AgicFrame) -> tuple[ToolDefinition, ...]:
+    """Combine public tools and trusted actions only at the adapter boundary."""
+
+    definitions = {name: tool.definition() for name, tool in prepared.tools.items()}
+    definitions.update(
+        {name: action.definition for name, action in prepared.actions.items()}
+    )
+    return tuple(definitions[name] for name in sorted(definitions))
 
 
 async def _apply_response(

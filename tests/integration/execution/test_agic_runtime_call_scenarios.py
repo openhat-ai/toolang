@@ -14,50 +14,37 @@ from tests.support.execution_harness import (
     RecordingTool,
     RecordingRunTracer,
 )
-from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor.steps.tool import invoke_tool_call
 from toolang.execution.records import RunControlPayload
-from toolang.execution.tools.runtime import create_toolset
-from toolang.execution.types import Pointer, ThreadPrefix, TypedPointer
+from toolang.execution.types import (
+    HandoffStepGiven,
+    HandoffStepNoted,
+    Pointer,
+    ThreadPrefix,
+    TypedPointer,
+)
 from toolang.lang.ast import RunStmt
 from toolang.lang.input import resolve_input_parts
-from toolang.plugin.toolsets.loading import LoadedTool
-from toolang.plugin.toolsets.registry import ToolRef
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateWatcher
 
 
-def _runtime_tools() -> dict[str, LoadedTool]:
-    toolset = create_toolset({})
-    return {
-        ref.model_name: LoadedTool(
-            plugin_name="_too",
-            ref=ref,
-            leaf_tool=leaf,
-        )
-        for name, leaf in toolset.tools().items()
-        for ref in (ToolRef(plugin="_too", toolset="_too", name=name),)
-    }
-
-
 def test_agic_dynamic_run_is_one_run_step_and_one_child(tmp_path: Path) -> None:
-    tools = _runtime_tools()
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
 agic parent(_: Text) -> Text:
   recall = none
-  tools = _too/run
+  hands = agic:child
   context: none
   instruct: none
   user: {{_}}
 
 agic child(_: Text) -> Text:
   recall = none
-  tools = -_too/*
   context: none
   instruct: none
   user: Child {{_}}
@@ -79,7 +66,6 @@ agic child(_: Text) -> Text:
             ModelCallResult(message=Message.assistant("child output")),
             ModelCallResult(message=Message.assistant("parent output")),
         ),
-        tools=tools,
     )
     tracer = RecordingRunTracer()
 
@@ -126,10 +112,10 @@ agic child(_: Text) -> Text:
             assert isinstance(result, ToolResultPart)
             assert result.tool_call_id == "call-run"
             assert result.output["run_id"] == children[0].id
-            assert "<available-runnables>" in (
+            assert "<available-runnable-routes>" in (
                 harness.adapter.invocations[0].call.instructions
             )
-            assert "<available-runnables>" not in (
+            assert "<available-runnable-routes>" not in (
                 harness.adapter.invocations[1].call.instructions
             )
             assert harness.adapter.invocations[1].call.tools == ()
@@ -154,14 +140,13 @@ def test_dynamic_run_decodes_part_array_wire_input(
         source="""
 agic parent(_: Text) -> Text:
   recall = none
-  tools = _too/run
+  hands = flow:check
   context: none
   instruct: none
   user: {{_}}
 
 agic reviewer(_: Part[]) -> Text:
   recall = none
-  tools = -_too/*
   context: none
   instruct: none
   user: Review {{_}}
@@ -169,7 +154,6 @@ agic reviewer(_: Part[]) -> Text:
 flow check(_: Part[]) -> Text:
   run reviewer
 """,
-        tools=_runtime_tools(),
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -217,7 +201,7 @@ def test_dynamic_run_input_failure_returns_the_expected_signature(
         source="""
 agic parent(_: Text) -> Text:
   recall = none
-  tools = _too/run
+  hands = flow:check
   context: none
   instruct: none
   user: {{_}}
@@ -225,7 +209,6 @@ agic parent(_: Text) -> Text:
 flow check(_: Text, threshold: Number) -> Text:
   pass
 """,
-        tools=_runtime_tools(),
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -295,7 +278,7 @@ def test_dynamic_run_input_failure_can_be_corrected(tmp_path: Path) -> None:
         source="""
 agic parent(_: Text) -> Text:
   recall = none
-  tools = _too/run
+  hands = flow:check
   context: none
   instruct: none
   user: {{_}}
@@ -303,7 +286,6 @@ agic parent(_: Text) -> Text:
 flow check(_: Text, threshold: Number) -> Text:
   pass
 """,
-        tools=_runtime_tools(),
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -370,12 +352,11 @@ def test_dynamic_run_rejects_the_current_agic_and_model_recovers(
         source="""
 agic parent(_: Text, threshold: Number) -> Text:
   recall = none
-  tools = _too/run
+  hands = agic:parent
   context: none
   instruct: none
   user: {{_}}
 """,
-        tools=_runtime_tools(),
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -432,7 +413,7 @@ def test_dynamic_run_rejects_an_ancestor_flow_and_model_recovers(
         source="""
 agic caller(_: Text) -> Text:
   recall = none
-  tools = _too/run
+  hands = flow:outer
   context: none
   instruct: none
   user: {{_}}
@@ -440,7 +421,6 @@ agic caller(_: Text) -> Text:
 flow outer(_: Text) -> Text:
   run caller
 """,
-        tools=_runtime_tools(),
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -500,7 +480,7 @@ agic default(_: Text) -> Text:
     initial_flow = """
 agic caller(_: Text) -> Text:
   recall = none
-  tools = _too/*
+  hands = flow:outer
   context: none
   instruct: none
   user: {{_}}
@@ -523,7 +503,6 @@ flow:
         source=source,
         state=initial,
         refresh_state=watcher.refresh_result,
-        tools=_runtime_tools(),
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -580,20 +559,19 @@ flow:
     asyncio.run(scenario())
 
 
-def test_runtime_action_rejects_generic_tool_invocation(tmp_path: Path) -> None:
-    tools = _runtime_tools()
-    reload_tool = tools["_too__reload"]
-
+def test_generic_tool_dispatch_rejects_executor_action_names(tmp_path: Path) -> None:
     result = asyncio.run(
         invoke_tool_call(
             run_id="run-test",
-            tools=tools,
+            tools={
+                "_too__execute": RecordingTool("_too__execute", output={"bad": True})
+            },
             services=(),
             layout=harness_layout(tmp_path),
             call=ToolCall(
-                tool_call_id="reload",
-                call_id="provider-reload",
-                name=reload_tool.name,
+                tool_call_id="execute",
+                call_id="provider-execute",
+                name="_too__execute",
                 input={},
             ),
         )
@@ -601,7 +579,7 @@ def test_runtime_action_rejects_generic_tool_invocation(tmp_path: Path) -> None:
 
     assert result.output == {}
     assert result.error == (
-        "runtime action must be handled by the agic executor: reload"
+        "executor runtime action cannot be invoked as a tool: _too__execute"
     )
 
 
@@ -613,12 +591,11 @@ def test_invalid_dynamic_run_records_failure_and_model_recovers(
         source="""
 agic parent(_: Text) -> Text:
   recall = none
-  tools = _too/run
+  hands = missing
   context: none
   instruct: none
   user: {{_}}
 """,
-        tools=_runtime_tools(),
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -668,19 +645,17 @@ def test_dynamic_child_failure_keeps_its_pointer_and_model_recovers(
         source="""
 agic parent(_: Text) -> Text:
   recall = none
-  tools = _too/run
+  hands = agic:child
   context: none
   instruct: none
   user: {{_}}
 
 agic child(_: Text) -> Text:
   recall = none
-  tools = -_too/*
   context: none
   instruct: none
   user: {{_}}
 """,
-        tools=_runtime_tools(),
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -735,7 +710,7 @@ def test_reload_has_no_step_and_new_flow_runs_in_same_root(tmp_path: Path) -> No
     source = """
 agic parent(_: Text) -> Text:
   recall = none
-  tools = _too/*
+  hands = flow:new_flow
   context: none
   instruct: none
   user: {{_}}
@@ -750,7 +725,6 @@ agic parent(_: Text) -> Text:
         source=source,
         state=initial,
         refresh_state=watcher.refresh_result,
-        tools=_runtime_tools(),
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -848,7 +822,7 @@ def test_reload_then_run_does_not_rebuild_the_calling_agic_frame(
     source = """
 agic parent(_: Text) -> Text:
   recall = none
-  tools = _too/*
+  hands = flow:target
   context: none
   instruct: none
   user: {{_}}
@@ -872,7 +846,6 @@ flow target(_: Text) -> Text:
         source=source,
         state=initial,
         refresh_state=watcher.refresh_result,
-        tools=_runtime_tools(),
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -938,7 +911,6 @@ def test_model_reload_applies_state_and_next_model_step_reports_missing_agic(
     source = """
 agic parent(_: Text) -> Text:
   recall = none
-  tools = _too/reload
   context: none
   instruct: none
   user: {{_}}
@@ -953,7 +925,6 @@ agic parent(_: Text) -> Text:
         source=source,
         state=initial,
         refresh_state=watcher.refresh_result,
-        tools=_runtime_tools(),
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -1010,7 +981,7 @@ def test_dynamic_run_store_failure_fails_the_root(
         source="""
 agic parent(_: Text) -> Text:
   recall = none
-  tools = _too/run
+  hands = flow:child
   context: none
   instruct: none
   user: {{_}}
@@ -1019,7 +990,6 @@ flow child(_: Text) -> Text:
   let result:
     completed {{_}}
 """,
-        tools=_runtime_tools(),
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -1077,7 +1047,6 @@ def test_reload_returns_candidate_diagnostics_without_a_control(
     source = """
 agic parent(_: Text) -> Text:
   recall = none
-  tools = _too/reload
   context: none
   instruct: none
   user: {{_}}
@@ -1092,7 +1061,6 @@ agic parent(_: Text) -> Text:
         source=source,
         state=initial,
         refresh_state=watcher.refresh_result,
-        tools=_runtime_tools(),
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -1148,7 +1116,6 @@ def test_reload_of_unchanged_state_records_an_applied_noop_control(
     source = """
 agic parent(_: Text) -> Text:
   recall = none
-  tools = _too/reload
   context: none
   instruct: none
   user: {{_}}
@@ -1163,7 +1130,6 @@ agic parent(_: Text) -> Text:
         source=source,
         state=initial,
         refresh_state=watcher.refresh_result,
-        tools=_runtime_tools(),
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -1228,7 +1194,6 @@ def test_reload_worker_failure_finishes_control_and_wakes_model(
     source = """
 agic parent(_: Text) -> Text:
   recall = none
-  tools = _too/reload
   context: none
   instruct: none
   user: {{_}}
@@ -1243,7 +1208,6 @@ agic parent(_: Text) -> Text:
         source=source,
         state=initial,
         refresh_state=watcher.refresh_result,
-        tools=_runtime_tools(),
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -1308,7 +1272,7 @@ def test_dynamic_run_uses_target_module_types_and_optional_arrays(
     source = """
 agic parent(_: Text) -> Text:
   recall = none
-  tools = _too/run
+  hands = research
   context: none
   instruct: none
   user: {{_}}
@@ -1325,7 +1289,6 @@ agic parent(_: Text) -> Text:
 
 agic echo(brief: Brief, prefix?: Text) -> Text:
   recall = none
-  tools = -_too/*
   context: none
   instruct: none
   user: {{prefix}} {{brief.title}}
@@ -1340,7 +1303,6 @@ flow research(brief: Brief, prefix?: Text) -> Text:
         tmp_path,
         source=source,
         state=state,
-        tools=_runtime_tools(),
         responses=(
             ModelCallResult(
                 tool_calls=(
@@ -1404,24 +1366,561 @@ flow research(brief: Brief, prefix?: Text) -> Text:
     asyncio.run(scenario())
 
 
+def test_execute_handoff_replaces_the_runnable_within_the_same_run(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic caller(_: Text) -> Text:
+  recall = none
+  handoffs = agic:target
+  context: none
+  instruct: none
+  user: Caller {{_}}
+
+agic target(_: Text) -> Text:
+  recall = none
+  context: none
+  instruct: none
+  user: Target {{_}}
+""",
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="handoff",
+                        call_id="provider-handoff",
+                        name="_too__execute",
+                        input={"runnable": "target", "input": {"_": "work"}},
+                    ),
+                ),
+                cont={"id": "caller-cont"},
+            ),
+            ModelCallResult(message=Message.assistant("completed")),
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="agic:caller",
+                    primary=resolve_input_parts("start"),
+                )
+            )
+
+            assert root.status == "succeeded", root.error
+            assert root.output is not None
+            assert harness.store.resolve_value(root.output.value) == "completed"
+            assert harness.store.list_run_tree(root_run_id=root.id) == [root]
+            steps = harness.store.list_steps(run_id=root.id)
+            assert [step.kind for step in steps] == ["model", "handoff", "model"]
+            transition = steps[1]
+            assert isinstance(transition.given, HandoffStepGiven)
+            assert transition.given.requested == "target"
+            assert transition.noted == HandoffStepNoted(
+                runnable="agic:target",
+                module="agent",
+            )
+            assert steps[2].input == (Pointer.step(transition.path).select("_"),)
+            target_call = harness.adapter.invocations[1].call
+            assert {
+                tool.name for tool in harness.adapter.invocations[0].call.tools
+            } == {"_too__execute"}
+            assert target_call.tools == ()
+            assert target_call.cont is None
+            assert [message.role for message in target_call.messages] == ["user"]
+            assert "Target work" in str(target_call.messages[0].parts[0])
+
+    asyncio.run(scenario())
+
+
+def test_execute_handoff_failure_returns_to_the_calling_agic(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic caller(_: Text) -> Text:
+  recall = none
+  handoffs = agic:allowed
+  context: none
+  instruct: none
+  user: {{_}}
+
+agic allowed -> Text:
+  Allowed.
+
+agic blocked -> Text:
+  Blocked.
+""",
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="blocked-handoff",
+                        call_id="provider-blocked",
+                        name="_too__execute",
+                        input={"runnable": "agic:blocked"},
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("recovered")),
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="agic:caller",
+                    primary=resolve_input_parts("start"),
+                )
+            )
+
+            assert root.status == "succeeded", root.error
+            steps = harness.store.list_steps(run_id=root.id)
+            assert [(step.kind, step.status) for step in steps] == [
+                ("model", "succeeded"),
+                ("handoff", "failed"),
+                ("model", "succeeded"),
+            ]
+            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            assert isinstance(result, ToolResultPart)
+            assert result.tool_call_id == "blocked-handoff"
+            assert result.error == (
+                "runnable is not authorized by handoffs: agic:blocked"
+            )
+
+    asyncio.run(scenario())
+
+
+def test_unavailable_runtime_action_is_rejected_without_a_tool_step(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic caller() -> Text:
+  recall = none
+  context: none
+  instruct: none
+  Call.
+""",
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "unavailable",
+                        "provider-unavailable",
+                        "_too__execute",
+                        {"runnable": "target"},
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("recovered")),
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="agic:caller")
+            )
+
+            assert root.status == "succeeded", root.error
+            assert [step.kind for step in harness.store.list_steps(run_id=root.id)] == [
+                "model",
+                "model",
+            ]
+            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            assert isinstance(result, ToolResultPart)
+            assert result.error == (
+                "runtime action is unavailable in this Model Step: _too__execute"
+            )
+
+    asyncio.run(scenario())
+
+
+def test_execute_handoff_must_be_the_only_model_action(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic caller() -> Text:
+  recall = none
+  handoffs = target
+  context: none
+  instruct: none
+  Call.
+
+agic target() -> Text:
+  Target.
+""",
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "first",
+                        "provider-first",
+                        "_too__execute",
+                        {"runnable": "target"},
+                    ),
+                    ToolCall(
+                        "second",
+                        "provider-second",
+                        "_too__execute",
+                        {"runnable": "target"},
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("recovered")),
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="agic:caller")
+            )
+
+            assert root.status == "succeeded", root.error
+            steps = harness.store.list_steps(run_id=root.id)
+            assert [(step.kind, step.status) for step in steps] == [
+                ("model", "succeeded"),
+                ("handoff", "failed"),
+                ("handoff", "failed"),
+                ("model", "succeeded"),
+            ]
+            results = tuple(
+                part
+                for message in harness.adapter.invocations[1].call.messages[-2:]
+                for part in message.parts
+            )
+            assert len(results) == 2
+            assert all(
+                isinstance(item, ToolResultPart)
+                and item.error
+                == "_too/execute must be the only action in its Model Call"
+                for item in results
+            )
+
+    asyncio.run(scenario())
+
+
+def test_chained_handoff_rejects_a_runnable_already_in_the_lineage(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic caller() -> Text:
+  recall = none
+  handoffs = target
+  context: none
+  instruct: none
+  Call.
+
+agic target() -> Text:
+  recall = none
+  handoffs = caller
+  context: none
+  instruct: none
+  Target.
+""",
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "to-target",
+                        "provider-target",
+                        "_too__execute",
+                        {"runnable": "target"},
+                    ),
+                )
+            ),
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "to-caller",
+                        "provider-caller",
+                        "_too__execute",
+                        {"runnable": "caller"},
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("target recovered")),
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="agic:caller")
+            )
+
+            assert root.status == "succeeded", root.error
+            steps = harness.store.list_steps(run_id=root.id)
+            assert [(step.kind, step.status) for step in steps] == [
+                ("model", "succeeded"),
+                ("handoff", "succeeded"),
+                ("model", "succeeded"),
+                ("handoff", "failed"),
+                ("model", "succeeded"),
+            ]
+            result = harness.adapter.invocations[2].call.messages[-1].parts[0]
+            assert isinstance(result, ToolResultPart)
+            assert result.error == (
+                "_too/execute cannot call the current or an ancestor runnable: "
+                "agic:caller"
+            )
+
+    asyncio.run(scenario())
+
+
+def test_chained_handoffs_keep_one_run_and_reach_the_final_target(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic caller() -> Text:
+  recall = none
+  handoffs = middle
+  context: none
+  instruct: none
+  Call.
+
+agic middle(_: Text) -> Text:
+  recall = none
+  handoffs = flow:deliver
+  context: none
+  instruct: none
+  Middle {{_}}.
+
+flow deliver(_: Text) -> Text:
+  let result:
+    delivered {{_}}
+""",
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "to-middle",
+                        "provider-middle",
+                        "_too__execute",
+                        {"runnable": "middle", "input": {"_": "work"}},
+                    ),
+                )
+            ),
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "to-deliver",
+                        "provider-deliver",
+                        "_too__execute",
+                        {"runnable": "flow:deliver", "input": {"_": "work"}},
+                    ),
+                )
+            ),
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="agic:caller")
+            )
+
+            assert root.status == "succeeded", root.error
+            assert len(harness.store.list_run_tree(root_run_id=root.id)) == 1
+            steps = harness.store.list_steps(run_id=root.id)
+            assert [step.kind for step in steps] == [
+                "model",
+                "handoff",
+                "model",
+                "handoff",
+                "value",
+            ]
+            transitions = [step for step in steps if step.kind == "handoff"]
+            assert [step.noted for step in transitions] == [
+                HandoffStepNoted(runnable="agic:middle", module="agent"),
+                HandoffStepNoted(runnable="flow:deliver", module="agent"),
+            ]
+
+    asyncio.run(scenario())
+
+
+def test_run_call_rejects_an_active_ancestor_runnable(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+flow outer() -> Text:
+  run inner
+
+agic inner() -> Text:
+  recall = none
+  hands = flow:outer
+  context: none
+  instruct: none
+  Inner.
+""",
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "run-ancestor",
+                        "provider-ancestor",
+                        "_too__run",
+                        {"runnable": "flow:outer"},
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("recovered")),
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="flow:outer")
+            )
+
+            assert root.status == "succeeded", root.error
+            tree = harness.store.list_run_tree(root_run_id=root.id)
+            assert len(tree) == 2
+            child = next(run for run in tree if run.id != root.id)
+            steps = harness.store.list_steps(run_id=child.id)
+            assert [(step.kind, step.status) for step in steps] == [
+                ("model", "succeeded"),
+                ("run", "failed"),
+                ("model", "succeeded"),
+            ]
+            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            assert isinstance(result, ToolResultPart)
+            assert result.error == (
+                "_too/run cannot call the current or an ancestor runnable: flow:outer"
+            )
+
+    asyncio.run(scenario())
+
+
+def test_handoff_target_failure_does_not_restore_the_caller(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic caller() -> Text:
+  handoffs = target
+  Call.
+
+agic target() -> Text:
+  Fail.
+""",
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "handoff",
+                        "provider-handoff",
+                        "_too__execute",
+                        {"runnable": "target"},
+                    ),
+                )
+            ),
+            RuntimeError("target provider failed"),
+            ModelCallResult(message=Message.assistant("must not resume")),
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="agic:caller")
+            )
+
+            assert root.status == "failed"
+            assert root.error is not None
+            assert "target provider failed" in harness.store.resolve_error(root.error)
+            assert len(harness.adapter.invocations) == 2
+            assert [step.kind for step in harness.store.list_steps(run_id=root.id)] == [
+                "model",
+                "handoff",
+                "model",
+            ]
+
+    asyncio.run(scenario())
+
+
+def test_handoff_preserves_the_entry_output_contract(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic caller() -> Number:
+  handoffs = target
+  Call.
+
+agic target() -> Text:
+  Target.
+""",
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "handoff",
+                        "provider-handoff",
+                        "_too__execute",
+                        {"runnable": "target"},
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("not a number")),
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="agic:caller")
+            )
+
+            assert root.status == "failed"
+            assert "Number" in str(root.error)
+            steps = harness.store.list_steps(run_id=root.id)
+            assert [(step.kind, step.status) for step in steps] == [
+                ("model", "succeeded"),
+                ("handoff", "succeeded"),
+                ("model", "succeeded"),
+            ]
+
+    asyncio.run(scenario())
+
+
 def test_dynamic_public_agic_keeps_its_resource_scope_after_reload(
     tmp_path: Path,
 ) -> None:
     source = """
 flow outer(_: Text) -> Text:
-  tools = _too/*
   run caller
 
 agic caller(_: Text) -> Text:
   recall = none
-  tools = _too/run
+  hands = agic:target
   context: none
   instruct: none
   user: {{_}}
 
 agic target(_: Text) -> Text:
   recall = none
-  tools = _too/reload, beta/*
+  tools = beta/*
   context: none
   instruct:
     old target state
@@ -1432,8 +1931,7 @@ agic target(_: Text) -> Text:
     layout.program.write_text(source, encoding="utf-8")
     initial = prepare_agent_state(layout)
     watcher = StateWatcher(layout)
-    tools: dict[str, AgentTool] = dict(_runtime_tools())
-    tools["beta__use"] = RecordingTool("beta__use", output={})
+    tools = {"beta__use": RecordingTool("beta__use", output={})}
     harness = ExecutionHarness.create(
         tmp_path,
         source=source,
