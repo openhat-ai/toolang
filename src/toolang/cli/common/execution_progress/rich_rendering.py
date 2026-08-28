@@ -419,7 +419,7 @@ class _HyphenDividerRow:
         caption = self.row.text.removeprefix("---  ")
         yield from self._left_boundary(
             width,
-            marker="┌",
+            marker="╓",
             content=caption,
             border_style="dim",
         )
@@ -491,7 +491,7 @@ class _HyphenDividerRow:
             yield line
 
     def _footer(self, width: int) -> RenderResult:
-        prefix = "└ "
+        prefix = "╙ "
         prefix_width = display_width(prefix)
         border_style = _terminal_status_color(self.row.right_status) or "dim"
         facts = " · ".join(self.row.facts)

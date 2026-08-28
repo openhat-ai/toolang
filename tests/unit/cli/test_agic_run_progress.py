@@ -228,8 +228,8 @@ def test_dynamic_run_dividers_align_and_preserve_complete_identity_when_narrow()
         )
     )
     wide_lines = wide.getvalue().splitlines()
-    assert wide_lines[0].startswith("┌ run agic:summarize ───")
-    assert wide_lines[1].startswith("└ 2.0s · 1 run · 1 model call ───")
+    assert wide_lines[0].startswith("╓ run agic:summarize ───")
+    assert wide_lines[1].startswith("╙ 2.0s · 1 run · 1 model call ───")
     assert wide_lines[1].endswith("succeeded run_abc123")
     assert all(display_width(line) == 72 for line in wide_lines)
 
@@ -527,7 +527,7 @@ def test_dynamic_footer_colors_only_the_terminal_border(
         if segment.text.strip()
     ]
 
-    marker = next(segment for segment in segments if "└" in segment.text)
+    marker = next(segment for segment in segments if "╙" in segment.text)
     border = next(segment for segment in segments if "─" in segment.text)
     facts = next(segment for segment in segments if "2.0s" in segment.text)
     terminal = next(segment for segment in segments if status in segment.text)
@@ -708,8 +708,8 @@ def test_dynamic_boundaries_keep_single_blank_row_between_sections() -> None:
     rendered = _render_progress(progress, width=72)
 
     assert "\n\n\n" not in rendered
-    assert re.search(r"┌ run agic:summarize ─+\n\n• Summary", rendered)
-    assert re.search(r"• Summary\n\n└ 2.0s", rendered)
+    assert re.search(r"╓ run agic:summarize ─+\n\n• Summary", rendered)
+    assert re.search(r"• Summary\n\n╙ 2.0s", rendered)
     assert re.search(r"succeeded run_child\n\n• Parent continues", rendered)
 
 
