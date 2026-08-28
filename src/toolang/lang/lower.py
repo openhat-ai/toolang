@@ -460,7 +460,7 @@ class _Lowerer:
         if node.type == "scatter_statement":
             return ast.ScatterStmt(
                 count=self._required_int(node, "count"),
-                runnable=self._runnable(node),
+                runnable=self._runnable(node, array_output=True),
                 span=span,
                 doc=doc,
             )
@@ -566,6 +566,7 @@ class _Lowerer:
         output: str | None = None,
         generated_params: tuple[ast.Parameter, ...] = (),
         evaluator: bool = False,
+        array_output: bool = False,
     ) -> str:
         if runnable := node.child_by_field_name("runnable"):
             return self._text(runnable).strip()
@@ -573,6 +574,8 @@ class _Lowerer:
         if agic is None:
             raise RuntimeError(f"Missing runnable at line {self._line(node)}.")
         declared_output = self._optional_text(agic.child_by_field_name("return"))
+        if array_output and declared_output is not None:
+            declared_output = f"{declared_output}[]"
         return self._generated_agic(
             agic,
             body=self._block_text(self._required(agic, "body")),
