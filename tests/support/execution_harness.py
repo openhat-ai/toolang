@@ -26,7 +26,10 @@ from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.executor import RunExecutor, RunSpec
-from toolang.execution.runnables import parse_runnable_ref, resolve_state_runnable
+from toolang.execution.runnables import (
+    parse_runnable_ref,
+    resolve_state_runnable,
+)
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.lang import Program
@@ -311,9 +314,11 @@ class ExecutionHarness:
             root_config={},
             home_config={},
             config={},
-            program_source="agents/alice/agent.too",
-            program=program,
-            caps=(),
+            caps={},
+            modules={"agent": program},
+            module_sources={"agent": "agent.too"},
+            module_digests={"agent": home_revision},
+            module_caps={"agent": ()},
         )
         provider = FakeModels(streaming=streaming)
         adapter = ScriptedModelAdapter(responses)
@@ -374,12 +379,11 @@ class ExecutionHarness:
         """Build a run spec while keeping scenario tests focused on behavior."""
 
         runnable_name, runnable_kind = parse_runnable_ref(runnable)
-        resolved = resolve_state_runnable(
+        module, declaration = resolve_state_runnable(
             self.state,
             runnable_name,
             kind=runnable_kind,
         )
-        executable = resolved.executable
         return RunSpec(
             setup=self.setup,
             state=self.state,
@@ -388,10 +392,12 @@ class ExecutionHarness:
             limits=limits if limits is not None else self.setup.limits,
             ceilings=ceilings,
             input=resolve_runnable_input(
-                executable,
+                declaration,
                 primary=primary,
                 named=named,
-                structs={item.name: item for item in resolved.module.program.structs},
+                structs={
+                    item.name: item for item in self.state.modules[module].structs
+                },
             ),
         )
 

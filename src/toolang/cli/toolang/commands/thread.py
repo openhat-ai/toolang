@@ -56,7 +56,7 @@ from ...common.execution_runtime import (
     open_execution_runtime,
 )
 from ...common.execution_progress.config import resolve_progress_max_width
-from ...common.output import echo_table, executable_label, parse_utc_timestamp
+from ...common.output import echo_table, runnable_label, parse_utc_timestamp
 from ...common.run_client import open_run_client
 from ...common.script_progress import ScriptRunPresenter
 
@@ -613,7 +613,7 @@ def _render_thread(thread: Mapping[str, Any]) -> None:
     _section("runs")
     for run in runs:
         status = _display_status(run.get("status"))
-        target = executable_label(
+        target = runnable_label(
             _text(run.get("runnable_kind")),
             _text(run.get("runnable_name")),
         )
@@ -630,7 +630,7 @@ def _render_thread(thread: Mapping[str, Any]) -> None:
 
 def _render_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]]) -> None:
     _section("run")
-    target = executable_label(
+    target = runnable_label(
         _text(run.get("runnable_kind")),
         _text(run.get("runnable_name")),
     )

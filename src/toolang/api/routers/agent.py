@@ -59,9 +59,7 @@ async def agics(core: AgentCoreDep) -> dict[str, object]:
     default, _flow = _runnable_defaults(state, setup.bindings.runnable)
     return {
         "default": default,
-        "items": [
-            {"name": runnable.name} for runnable in state.public_runnables("agic")
-        ],
+        "items": [{"name": name} for name in state.agics],
     }
 
 
@@ -72,9 +70,7 @@ async def flows(core: AgentCoreDep) -> dict[str, object]:
     _agic, default = _runnable_defaults(state, setup.bindings.runnable)
     return {
         "default": default,
-        "items": [
-            {"name": runnable.name} for runnable in state.public_runnables("flow")
-        ],
+        "items": [{"name": name} for name in state.flows],
     }
 
 

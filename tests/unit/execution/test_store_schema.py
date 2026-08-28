@@ -176,7 +176,7 @@ def test_run_store_migrates_historical_run_and_step_state_references(
         thread_id="term_state_migration",
         origin="test",
         input=Message.user("root"),
-        executable_kind="flow",
+        runnable_kind="flow",
     )
     parent = project_step(
         store,

@@ -17,13 +17,14 @@ from uuid import uuid4
 from toolang.common.layout import AgentLayout
 
 from ..common.immutable import freeze_mapping
-from ..lang.ast import Program
+from ..lang.ast import Program, program_from_data
 from .source import SourceTree
 from .state import (
     CapResolution,
     StateCap,
-    StateModule,
-    public_runnable_catalog,
+    program_term_data,
+    public_runnable_index,
+    validate_program_term,
 )
 
 LayerScope = Literal["root", "home"]
@@ -62,15 +63,21 @@ class HomeLayer:
     source: SourceTree
     resolutions: tuple[CapResolution, ...]
     config: Mapping[str, object]
-    program: Program
     caps: tuple[StateCap, ...]
-    modules: tuple[StateModule, ...]
+    modules: Mapping[str, Program]
+    module_sources: Mapping[str, str]
+    module_digests: Mapping[str, str]
+    module_caps: Mapping[str, tuple[StateCap, ...]]
 
     def __post_init__(self) -> None:
         _require_revision(self.revision)
         if self.revision_dir.name != self.revision:
             raise ValueError("home State layer directory does not match its revision")
         object.__setattr__(self, "config", freeze_mapping(self.config))
+        object.__setattr__(self, "modules", freeze_mapping(self.modules))
+        object.__setattr__(self, "module_sources", freeze_mapping(self.module_sources))
+        object.__setattr__(self, "module_digests", freeze_mapping(self.module_digests))
+        object.__setattr__(self, "module_caps", freeze_mapping(self.module_caps))
 
 
 def state_root(layout: AgentLayout, scope: LayerScope) -> Path:
@@ -158,17 +165,21 @@ def load_home_layer(
 
     effective = load_current_revision(layout, "home") if revision is None else revision
     document, revision_dir = _load_layer(layout, "home", effective)
-    modules = _modules(document, revision_dir=revision_dir)
-    agent_module = next(module for module in modules if module.kind == "agent")
+    modules, module_sources, module_digests, module_caps = _program_indexes(
+        document,
+        revision_dir=revision_dir,
+    )
     return HomeLayer(
         revision=effective,
         revision_dir=revision_dir,
         source=_source_tree(document),
         resolutions=_resolutions(document),
         config=_config(document),
-        program=agent_module.program,
         caps=_caps(document, revision_dir=revision_dir),
         modules=modules,
+        module_sources=module_sources,
+        module_digests=module_digests,
+        module_caps=module_caps,
     )
 
 
@@ -180,7 +191,10 @@ def write_layer(
     resolutions: tuple[CapResolution, ...],
     config: Mapping[str, object],
     caps: tuple[StateCap, ...],
-    modules: tuple[StateModule, ...],
+    modules: Mapping[str, Program],
+    module_sources: Mapping[str, str],
+    module_digests: Mapping[str, str],
+    module_caps: Mapping[str, tuple[StateCap, ...]],
     files: Mapping[str, bytes],
 ) -> str:
     """Atomically store one complete immutable State layer."""
@@ -193,6 +207,9 @@ def write_layer(
         config=config,
         caps=caps,
         modules=modules,
+        module_sources=module_sources,
+        module_digests=module_digests,
+        module_caps=module_caps,
         files=normalized_files,
     )
     encoded = canonical_json(document)
@@ -368,7 +385,10 @@ def _layer_document(
     resolutions: tuple[CapResolution, ...],
     config: Mapping[str, object],
     caps: tuple[StateCap, ...],
-    modules: tuple[StateModule, ...],
+    modules: Mapping[str, Program],
+    module_sources: Mapping[str, str],
+    module_digests: Mapping[str, str],
+    module_caps: Mapping[str, tuple[StateCap, ...]],
     files: Mapping[str, bytes],
 ) -> dict[str, object]:
     if scope == "root" and modules:
@@ -385,7 +405,14 @@ def _layer_document(
             for path, content in files.items()
         ],
         "modules": [
-            module.to_data() for module in sorted(modules, key=lambda item: item.name)
+            program_term_data(
+                name=name,
+                source=module_sources[name],
+                digest=module_digests[name],
+                program=modules[name],
+                here_caps=module_caps[name],
+            )
+            for name in sorted(modules)
         ],
         "resolutions": [
             item.to_data() for item in sorted(resolutions, key=_resolution_key)
@@ -439,7 +466,11 @@ def _validate_layer_dir(
     manifest = _validate_file_manifest(revision_dir, document)
     resolutions = _resolutions(document)
     caps = _caps(document, revision_dir=revision_dir)
-    modules = _modules(document, revision_dir=revision_dir, required=scope == "home")
+    modules, module_sources, module_digests, module_caps = _program_indexes(
+        document,
+        revision_dir=revision_dir,
+        required=scope == "home",
+    )
     if scope == "root" and modules:
         raise ValueError("root State layer cannot contain program modules")
     if any(cap.scope != scope for cap in caps):
@@ -453,16 +484,16 @@ def _validate_layer_dir(
         raise FileNotFoundError(
             f"State layer references files outside its manifest: {sorted(missing)!r}"
         )
-    for module in modules:
-        if manifest[module.materialized_path][1] != module.digest:
-            raise ValueError(f"State module digest mismatch: {module.name}")
+    for name, source in module_sources.items():
+        if manifest[f"files/{source}"][1] != module_digests[name]:
+            raise ValueError(f"State Program digest mismatch: {name}")
     for resolution in resolutions:
         for file in resolution.files:
             if manifest[file.path] != (file.size, file.sha256):
                 raise ValueError(
                     f"resolved cap file does not match the manifest: {file.path}"
                 )
-    all_caps = (*caps, *(cap for module in modules for cap in module.here_caps))
+    all_caps = (*caps, *(cap for entries in module_caps.values() for cap in entries))
     for resolution in resolutions:
         matches = tuple(
             cap
@@ -603,46 +634,94 @@ def _caps(
     return caps
 
 
-def _modules(
+def _program_indexes(
     document: Mapping[str, object],
     *,
     revision_dir: Path,
     required: bool = True,
-) -> tuple[StateModule, ...]:
+) -> tuple[
+    dict[str, Program],
+    dict[str, str],
+    dict[str, str],
+    dict[str, tuple[StateCap, ...]],
+]:
     raw_modules = document.get("modules")
     if not isinstance(raw_modules, list):
         raise TypeError("State layer modules must be a list")
     if required and not raw_modules:
         raise ValueError("home State layer requires program modules")
-    modules: list[StateModule] = []
+    modules: dict[str, Program] = {}
+    sources: dict[str, str] = {}
+    digests: dict[str, str] = {}
+    caps: dict[str, tuple[StateCap, ...]] = {}
     names: set[str] = set()
     for raw in raw_modules:
         if not isinstance(raw, dict):
             raise TypeError("State module must be an object")
-        module = StateModule.from_data(
-            {str(key): value for key, value in cast(dict[object, object], raw).items()}
-        )
-        folded_name = module.name.casefold()
-        if folded_name in names:
-            raise ValueError(f"duplicate State module: {module.name}")
-        names.add(folded_name)
-        modules.append(
-            replace(
-                module,
-                here_caps=tuple(
-                    _materialize_cap(cap, revision_dir=revision_dir)
-                    for cap in module.here_caps
+        data = {
+            str(key): value for key, value in cast(dict[object, object], raw).items()
+        }
+        name = str(data["name"])
+        kind = str(data["kind"])
+        source = str(data["authored_path"])
+        digest = str(data["digest"])
+        materialized = str(data["materialized_path"])
+        if kind not in {"agent", "flow"}:
+            raise ValueError(f"invalid State Program kind: {kind!r}")
+        if (name == "agent") != (kind == "agent"):
+            raise ValueError("State Program name and kind do not match")
+        if materialized != f"files/{source}":
+            raise ValueError("State Program materialized path does not match source")
+        raw_caps = data.get("here_caps", [])
+        if not isinstance(raw_caps, list):
+            raise TypeError("State Program here_caps must be a list")
+        here_caps = tuple(
+            _materialize_cap(
+                StateCap.from_data(
+                    {
+                        str(key): value
+                        for key, value in cast(dict[object, object], item).items()
+                    }
                 ),
+                revision_dir=revision_dir,
             )
+            for item in raw_caps
+            if isinstance(item, dict)
         )
-    result = tuple(modules)
-    if tuple(sorted(result, key=lambda item: item.name)) != result:
-        raise ValueError("State modules must be sorted by name")
-    if required and sum(module.kind == "agent" for module in result) != 1:
-        raise ValueError("home State layer requires exactly one agent module")
-    if result:
-        public_runnable_catalog(result)
-    return result
+        if len(here_caps) != len(raw_caps):
+            raise TypeError("State Program here cap must be an object")
+        program = program_from_data(data["program"])
+        validate_program_term(
+            name=name,
+            source=source,
+            digest=digest,
+            program=program,
+            here_caps=here_caps,
+        )
+        expected_export = program_term_data(
+            name=name,
+            source=source,
+            digest=digest,
+            program=program,
+            here_caps=here_caps,
+        )["export"]
+        if data.get("export") != expected_export:
+            raise ValueError("State Program export does not match its Program")
+        folded_name = name.casefold()
+        if folded_name in names:
+            raise ValueError(f"duplicate State Program: {name}")
+        names.add(folded_name)
+        modules[name] = program
+        sources[name] = source
+        digests[name] = digest
+        caps[name] = here_caps
+    if tuple(sorted(modules)) != tuple(modules):
+        raise ValueError("State Programs must be sorted by name")
+    if required and "agent" not in modules:
+        raise ValueError("home State layer requires the agent Program")
+    if modules:
+        public_runnable_index(modules, sources)
+    return modules, sources, digests, caps
 
 
 def _state_cap(raw: object, *, revision_dir: Path) -> StateCap:

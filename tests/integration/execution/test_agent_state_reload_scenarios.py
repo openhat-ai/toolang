@@ -508,9 +508,11 @@ def test_reload_rejects_non_durable_and_cross_layout_state(tmp_path: Path) -> No
                 root_config=cross_layout.root_config,
                 home_config=cross_layout.home_config,
                 config=cross_layout.config,
-                program_source=cross_layout.program_source,
-                program=cross_layout.program,
                 caps=cross_layout.caps,
+                modules=cross_layout.modules,
+                module_sources=cross_layout.module_sources,
+                module_digests=cross_layout.module_digests,
+                module_caps=cross_layout.module_caps,
                 revision_dir=foreign_dir,
             )
             with pytest.raises(ValueError, match="another layout"):

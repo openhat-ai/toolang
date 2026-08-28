@@ -20,7 +20,7 @@ _REMOTE_REF_PATTERN = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
 
 @dataclass(frozen=True, slots=True)
 class Job:
-    """One current executable task or chore definition."""
+    """One current task or chore definition."""
 
     id: str
     kind: JobKind

@@ -19,11 +19,11 @@ service    inline service cap
 prompt     reusable Content template
 task       authored task
 chore      authored recurring work
-agic       model/tool executable
-flow       ordered statement executable
+agic       model/tool runnable
+flow       ordered statement runnable
 ```
 
-Top-level agics and flows share one executable namespace. Their authored names
+Top-level agics and flows share one runnable namespace. Their authored names
 must be unique across both declaration kinds.
 
 
@@ -126,11 +126,11 @@ inline caps. Prepare materializes them under the owning module's `here` cap set
 while retaining the `.too` file as their authored source. They do not leak to
 another program module.
 
-Cap declarations use their own schemas. They are not executable declarations
+Cap declarations use their own schemas. They are not runnable declarations
 and do not share the agic/flow namespace.
 
 
-## Executable Signatures
+## Runnable Signatures
 
 Agics and flows use the same signature rules:
 
@@ -152,14 +152,14 @@ flow:
   pass
 ```
 
-The two agic declarations have the same executable name and therefore cannot
+The two agic declarations have the same runnable name and therefore cannot
 appear together. In a home flow module, the unnamed Flow's public name is
 instead bound from the filename as described above.
 
 
 ### Primary Input
 
-`_` is the primary input parameter. It aligns the executable signature with
+`_` is the primary input parameter. It aligns the runnable signature with
 the primary runtime local used by flows.
 
 ```too
@@ -209,7 +209,7 @@ Rules:
 - Parameters are initialized as named runtime locals.
 - Parameter names must be unique and cannot reuse `_`.
 
-Script CLI arguments and options are derived from the selected executable's
+Script CLI arguments and options are derived from the selected runnable's
 signature. The primary input maps to positional/stdin content rather than a
 synthetic `--in` option.
 
@@ -250,7 +250,7 @@ such as scatter, storm, and map produce `shape=list` collections.
 
 ### Output
 
-The optional `-> T` declaration is the executable's output contract:
+The optional `-> T` declaration is the runnable's output contract:
 
 ```too
 agic summarize(_) -> Text:
@@ -301,7 +301,7 @@ struct ReviewResult:
 ```
 
 `name: Type` is required and `name?: Type` is optional. Structs may be used by
-executable parameters and outputs.
+runnable parameters and outputs.
 
 
 ## Agics
@@ -356,7 +356,7 @@ snapshot:
 accepts `default`, `none`, `history`, `memory`, or `history, memory`.
 
 An agic directive narrows or extends only that agic's runtime setup. It does
-not mutate the prepared program or affect sibling executables.
+not mutate the prepared program or affect sibling runnables.
 
 
 ### Context And Instruct
@@ -460,7 +460,7 @@ flow research(_: Text) -> Report:
   gather synthesize
 ```
 
-Flows use the same parameters, output declaration, directives, and executable
+Flows use the same parameters, output declaration, directives, and runnable
 namespace as agics. Statement syntax, bindings, inline agics, and result shapes
 are defined in [flow-syntax.md](./flow-syntax.md).
 
@@ -471,7 +471,7 @@ has no directives, so a flow's correction does not implicitly constrain
 another independently authored flow.
 
 Inline runnable bodies lower to generated `AgicDecl` values named
-`<agic:LINE>`. The `<...>` prefix cannot be authored as an executable name, so
+`<agic:LINE>`. The `<...>` prefix cannot be authored as a runnable name, so
 generated names cannot collide with user declarations.
 
 
@@ -528,7 +528,7 @@ line executed without a shell. Header values may reference host variables with
 
 ## Surface Rules
 
-Surfaces resolve a default executable by name:
+Surfaces resolve a default runnable by name:
 
 ```text
 script  explicit name, else default
@@ -552,7 +552,7 @@ type before accepting the run. The caller does not duplicate signature
 parsing.
 
 Execution context such as `cwd`, agent home, and Toolang root is runtime state,
-not executable parameters.
+not runnable parameters.
 
 
 ## Instruction Layers

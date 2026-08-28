@@ -109,7 +109,7 @@ title: Review API changes
 Review the API changes and summarize risks.
 ```
 
-A new ready task is pending immediately. Editing its executable body creates a
+A new ready task is pending immediately. Editing its authored body creates a
 new revision; title or path edits do not. Pending edits coalesce to the latest
 body. An edit during a run does not mutate that run and requests the latest
 revision afterward. An unchanged terminal task stays terminal until explicitly

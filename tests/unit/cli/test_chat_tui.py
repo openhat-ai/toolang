@@ -287,7 +287,7 @@ def test_chat_flow_keeps_one_blank_row_at_each_finalized_boundary() -> None:
     app = FakeApp()
     app.live_blocks.append(blocks.RunControlBlock.create("map the items"))
 
-    events.handle_run_event(_run_begin(executable_kind="flow"), app)
+    events.handle_run_event(_run_begin(runnable_kind="flow"), app)
     events.handle_run_event(_flow_step_begin(), app)
     events.handle_run_event(_flow_step_end(), app)
     events.handle_run_event(_run_end(status="succeeded", output_step_index=1), app)
@@ -357,7 +357,7 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
     app = FakeApp()
     par_path = StepPath.parse("run_1.1")
 
-    events.handle_run_event(_run_begin(executable_kind="flow"), app)
+    events.handle_run_event(_run_begin(runnable_kind="flow"), app)
     events.handle_run_event(
         StepBegin(
             step=par_path,
@@ -2429,13 +2429,13 @@ def test_chat_tui_uses_the_root_run_runnable_as_active_status(
     app.status_bar.set_active_runnable("flow:research")
     app.status_bar.set_running(True)
 
-    app.handle_run_event(_run_begin(executable_name="review"))
+    app.handle_run_event(_run_begin(runnable_name="review"))
     app.handle_run_event(
         _run_begin(
             run_id="run_child",
             parent_run_id="run_1",
-            executable_kind="flow",
-            executable_name="child",
+            runnable_kind="flow",
+            runnable_name="child",
         )
     )
 
@@ -3063,8 +3063,8 @@ def _run_begin(
     *,
     run_id: str = "run_1",
     parent_run_id: str | None = None,
-    executable_kind: str = "agic",
-    executable_name: str = "test",
+    runnable_kind: str = "agic",
+    runnable_name: str = "test",
 ) -> RunBegin:
     return RunBegin(
         run=run_id,
@@ -3073,7 +3073,7 @@ def _run_begin(
             StepPath.parse(f"{parent_run_id}.2") if parent_run_id is not None else None
         ),
         started_at="2026-01-01T00:00:00Z",
-        runnable=f"{executable_kind}:{executable_name}",
+        runnable=f"{runnable_kind}:{runnable_name}",
     )
 
 
@@ -3291,7 +3291,7 @@ class FakeClient(ChatClient):
             ],
         }
 
-    def list_executables(self, kind: str) -> dict[str, object]:
+    def list_runnables(self, kind: str) -> dict[str, object]:
         if kind == "runnable":
             return {
                 "default": "agic:chat",

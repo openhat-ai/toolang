@@ -25,7 +25,7 @@ from toolang.state.cache import (
     write_layer,
 )
 from toolang.state.source import scan_source
-from toolang.state.state import StateModule, agent_state_revision
+from toolang.state.state import agent_state_revision
 
 
 def _layout(root: Path) -> AgentLayout:
@@ -40,7 +40,10 @@ def _write_root(layout: AgentLayout) -> str:
         resolutions=(),
         config={},
         caps=(),
-        modules=(),
+        modules={},
+        module_sources={},
+        module_digests={},
+        module_caps={},
         files={},
     )
 
@@ -59,16 +62,10 @@ def _write_home(
         resolutions=(),
         config={"models": {"default": "fast"}},
         caps=(),
-        modules=(
-            StateModule(
-                name="agent",
-                kind="agent",
-                authored_path="agent.too",
-                materialized_path="files/agent.too",
-                digest=sha256(source_text.encode()).hexdigest(),
-                program=Program.from_source(source_text),
-            ),
-        ),
+        modules={"agent": Program.from_source(source_text)},
+        module_sources={"agent": "agent.too"},
+        module_digests={"agent": sha256(source_text.encode()).hexdigest()},
+        module_caps={"agent": ()},
         files={"agent.too": source_text.encode()},
     )
 
@@ -148,7 +145,7 @@ def test_layer_publish_and_load_use_revision_strings(tmp_path: Path) -> None:
     home = load_home_layer(layout)
     assert home.revision == home_revision
     assert home.config == {"models": {"default": "fast"}}
-    assert home.program.find_agic("hello") is not None
+    assert home.modules["agent"].find_agic("hello") is not None
 
 
 def test_home_layer_loads_program_without_reparsing_source(
@@ -165,7 +162,7 @@ def test_home_layer_loads_program_without_reparsing_source(
 
     monkeypatch.setattr(Program, "from_source", classmethod(fail_parse))
 
-    program = load_home_layer(layout).program
+    program = load_home_layer(layout).modules["agent"]
     assert program.find_agic("hello")
     flow = program.find_flow("work")
     assert flow is not None
@@ -278,7 +275,10 @@ def test_layer_rejects_nonportable_file_path(tmp_path: Path) -> None:
             resolutions=(),
             config={},
             caps=(),
-            modules=(),
+            modules={},
+            module_sources={},
+            module_digests={},
+            module_caps={},
             files={"../escape": b"bad"},
         )
 

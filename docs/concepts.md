@@ -125,9 +125,9 @@ makes a cap available to that program, but it does not make the cap effective
 for every agic by itself.
 
 
-## Executable
+## Runnable
 
-An executable is a named program entrypoint. Toolang has two executable kinds:
+A runnable is a named program entrypoint. Toolang has two runnable kinds:
 
 - `agic`: a dynamic model/tool loop
 - `flow`: an ordered set of static statements
@@ -296,8 +296,7 @@ Each message has:
 - one role
 - ordered `parts`
 
-Toolang separates authored and executable content from message-only protocol
-parts:
+Toolang separates authored runnable content from message-only protocol parts:
 
 ```text
 PerceptPart = TextPart | ImagePart | AudioPart | DocumentPart

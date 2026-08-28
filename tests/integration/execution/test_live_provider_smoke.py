@@ -84,8 +84,8 @@ class _LiveExecution:
     async def run(self, runnable: str, marker: str) -> tuple[str, str]:
         thread = self.threads.create(prefix=ThreadPrefix.TERM)
         runnable_name, runnable_kind = parse_runnable_ref(runnable)
-        executable = resolve_runnable(
-            self.state.program,
+        declaration = resolve_runnable(
+            self.state.modules["agent"],
             runnable_name,
             kind=runnable_kind,
         )
@@ -98,10 +98,11 @@ class _LiveExecution:
                     bindings=RunBindings(runnable=runnable),
                     limits=self.setup.limits,
                     input=resolve_runnable_input(
-                        executable,
+                        declaration,
                         primary=resolve_input_parts(marker),
                         structs={
-                            item.name: item for item in self.state.program.structs
+                            item.name: item
+                            for item in self.state.modules["agent"].structs
                         },
                     ),
                 )

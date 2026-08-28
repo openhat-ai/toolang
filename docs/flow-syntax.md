@@ -60,7 +60,7 @@ repeat ...                    update locals through its body
 let NAME: BODY          evaluate Content and assign one `Percept` to `NAME`
 ```
 
-Flow signatures use the executable parameter rules in
+Flow signatures use the runnable parameter rules in
 [program.md](./program.md), including implicit `_ : Part[]`, explicit `()`, and
 named parameters.
 

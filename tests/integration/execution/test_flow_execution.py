@@ -182,7 +182,7 @@ def _spec(
     named: dict[str, object] | None = None,
 ) -> RunSpec:
     runnable_name, runnable_kind = parse_runnable_ref(runnable)
-    executable = resolve_runnable(
+    declaration = resolve_runnable(
         state.program,
         runnable_name,
         kind=runnable_kind,
@@ -195,7 +195,7 @@ def _spec(
         limits=setup.limits,
         ceilings=(ceiling,) if ceiling is not None else (),
         input=resolve_runnable_input(
-            executable,
+            declaration,
             primary=primary if primary else None,
             named=named,
             structs={item.name: item for item in state.program.structs},
@@ -1537,7 +1537,7 @@ def test_remote_process_can_cancel_an_owned_run(
     async def wait_until_canceled(
         runtime: _Execution,
         binding: Any,
-        executable: Any,
+        runnable: Any,
         **_kwargs: Any,
     ) -> Any:
         await runtime.emit(
@@ -1592,7 +1592,7 @@ def test_executor_stop_cancels_and_persists_active_runs(
     async def wait_until_canceled(
         runtime: _Execution,
         binding: Any,
-        executable: Any,
+        runnable: Any,
         **_kwargs: Any,
     ) -> Any:
         await runtime.emit(

@@ -15,11 +15,10 @@ from ..lang.ast import Program
 from .state import (
     AgentState,
     KIND_BY_DIR_NAME,
-    StateModule,
-    ProgramModuleExport,
     compose_agent_state,
+    flow_export,
     flow_module_name,
-    public_runnable_catalog,
+    public_runnable_index,
 )
 from .errors import StateDiagnostic, StatePreparationError, StateValidationLayer
 from .config import parse_config
@@ -87,7 +86,6 @@ def prepare_agent_state(
         return compose_layer_state(
             root,
             home,
-            program_source=layout.program.relative_to(layout.root).as_posix(),
             revision_dir=agent_revision_dir(layout, revision),
         )
 
@@ -96,7 +94,6 @@ def compose_layer_state(
     root: RootLayer,
     home: HomeLayer,
     *,
-    program_source: str,
     revision_dir: Path | None = None,
 ) -> AgentState:
     """Compose runtime State from one exact root/home layer pair."""
@@ -106,11 +103,12 @@ def compose_layer_state(
         home_revision=home.revision,
         root_config=root.config,
         home_config=home.config,
-        program_source=program_source,
-        program=home.program,
         root_caps=root.caps,
         home_caps=home.caps,
         modules=home.modules,
+        module_sources=home.module_sources,
+        module_digests=home.module_digests,
+        module_caps=home.module_caps,
         revision_dir=revision_dir,
     )
 
@@ -125,7 +123,6 @@ def load_agent_state(
     state = compose_layer_state(
         load_root_layer(layout, root_revision),
         load_home_layer(layout, home_revision),
-        program_source=layout.program.relative_to(layout.root).as_posix(),
         revision_dir=agent_revision_dir(layout, effective),
     )
     if state.revision != effective:
@@ -313,24 +310,24 @@ def _prepare_layer(
             progress=progress,
             include_program=scope == "root",
         )
-        modules: tuple[StateModule, ...] = ()
+        modules: dict[str, Program] = {}
+        module_sources: dict[str, str] = {}
+        module_digests: dict[str, str] = {}
+        module_caps: dict[str, tuple[StateCap, ...]] = {}
         module_entries: tuple[StateCap, ...] = ()
-        module_sources: dict[str, ProgramSource] = {}
         if scope == "home":
-            drafts = _program_module_drafts(authored)
-            previous_modules = _previous_program_modules(layout)
-            materialized: list[StateModule] = []
+            drafts = _program_drafts(authored)
+            previous = _previous_home_layer(layout)
             all_module_entries: list[StateCap] = []
-            for draft, module_source in drafts:
-                module_sources[draft.name] = module_source
-                previous = next(
-                    (item for item in previous_modules if item.name == draft.name),
-                    None,
-                )
+            for name, module_source, program in drafts:
                 module_cache = layer_remote_cache(
                     authored,
                     scope="home",
-                    entries=previous.here_caps if previous is not None else (),
+                    entries=(
+                        previous.module_caps.get(name, ())
+                        if previous is not None
+                        else ()
+                    ),
                 )
                 try:
                     here_entries, here_files = materialize_program_caps(
@@ -347,23 +344,27 @@ def _prepare_layer(
                         error=exc,
                     ) from exc
                 here_entries, here_files = _namespace_module_materialization(
-                    draft.name,
+                    name,
                     here_entries,
                     here_files,
                 )
                 generated_files.update(here_files)
                 all_module_entries.extend(here_entries)
-                materialized.append(replace(draft, here_caps=here_entries))
-            modules = tuple(materialized)
+                modules[name] = program
+                module_sources[name] = module_source.authored_path
+                module_digests[name] = module_source.digest
+                module_caps[name] = here_entries
             module_entries = tuple(all_module_entries)
         files = _snapshot_files(
             authored,
             generated_files,
             cap_scope=cap_scope,
         )
-        for module in modules:
-            source_text = module_sources[module.name].source_text
-            files.setdefault(module.authored_path, source_text.encode("utf-8"))
+        for name, module_source, _program in drafts if scope == "home" else ():
+            files.setdefault(
+                module_sources[name],
+                module_source.source_text.encode("utf-8"),
+            )
         entries = tuple(
             _snapshot_entry(
                 entry,
@@ -374,23 +375,20 @@ def _prepare_layer(
             for entry in entries
         )
         if modules:
-            modules = tuple(
-                replace(
-                    module,
-                    here_caps=tuple(
-                        _snapshot_entry(
-                            entry,
-                            agent_name=authored.agent_name,
-                            files=files,
-                            cap_scope=cap_scope,
-                        )
-                        for entry in module.here_caps
-                    ),
+            module_caps = {
+                name: tuple(
+                    _snapshot_entry(
+                        entry,
+                        agent_name=authored.agent_name,
+                        files=files,
+                        cap_scope=cap_scope,
+                    )
+                    for entry in module_caps[name]
                 )
-                for module in modules
-            )
+                for name in modules
+            }
             module_entries = tuple(
-                entry for module in modules for entry in module.here_caps
+                entry for entries in module_caps.values() for entry in entries
             )
         resolutions = _cap_resolutions((*entries, *module_entries), files)
         if source != _scan_scope_source(layout, scope=scope):
@@ -403,6 +401,9 @@ def _prepare_layer(
             config=_snapshot_config(files),
             caps=entries,
             modules=modules,
+            module_sources=module_sources,
+            module_digests=module_digests,
+            module_caps=module_caps,
             files=files,
         )
         publish_layer_current(
@@ -427,13 +428,11 @@ def _previous_state_caps(
         return ()
 
 
-def _previous_program_modules(
-    layout: AgentLayout,
-) -> tuple[StateModule, ...]:
+def _previous_home_layer(layout: AgentLayout) -> HomeLayer | None:
     try:
-        return load_home_layer(layout).modules
+        return load_home_layer(layout)
     except (FileNotFoundError, KeyError, TypeError, ValueError):
-        return ()
+        return None
 
 
 def _scan_scope_source(
@@ -456,9 +455,9 @@ def _require_agent_home(layout: AgentLayout) -> None:
         raise FileNotFoundError(f"agent home not found: {layout.home}")
 
 
-def _program_module_drafts(
+def _program_drafts(
     authored: SourceSnapshot,
-) -> tuple[tuple[StateModule, ProgramSource], ...]:
+) -> tuple[tuple[str, ProgramSource, Program], ...]:
     sources = authored.load_programs()
     programs: list[tuple[ProgramSource, Program]] = []
     diagnostics: list[StateDiagnostic] = []
@@ -482,26 +481,14 @@ def _program_module_drafts(
     )
     _validate_flow_source_names(flow_sources)
 
-    drafts: list[tuple[StateModule, ProgramSource]] = []
+    drafts: list[tuple[str, ProgramSource, Program]] = []
     extension_diagnostics: list[StateDiagnostic] = []
     for source, program in programs:
         if source.kind == "agent":
-            drafts.append(
-                (
-                    StateModule(
-                        name="agent",
-                        kind="agent",
-                        authored_path=source.authored_path,
-                        materialized_path=f"files/{source.authored_path}",
-                        digest=source.digest,
-                        program=program,
-                    ),
-                    source,
-                )
-            )
+            drafts.append(("agent", source, program))
             continue
         try:
-            export = _flow_module_export(source, program)
+            flow_export(source.authored_path, program)
         except ValueError as exc:
             extension_diagnostics.append(
                 _diagnostic(
@@ -512,26 +499,14 @@ def _program_module_drafts(
                 )
             )
             continue
-        drafts.append(
-            (
-                StateModule(
-                    name=flow_module_name(source.authored_path),
-                    kind="flow",
-                    authored_path=source.authored_path,
-                    materialized_path=f"files/{source.authored_path}",
-                    digest=source.digest,
-                    program=program,
-                    export=export,
-                ),
-                source,
-            )
-        )
+        drafts.append((flow_module_name(source.authored_path), source, program))
     if extension_diagnostics:
         raise StatePreparationError(*extension_diagnostics)
 
-    modules = tuple(draft for draft, _source in drafts)
+    modules = {name: program for name, _source, program in drafts}
+    module_sources = {name: source.authored_path for name, source, _program in drafts}
     try:
-        public_runnable_catalog(modules)
+        public_runnable_index(modules, module_sources)
     except ValueError as exc:
         agent = sources[0]
         raise StatePreparationError(
@@ -543,25 +518,6 @@ def _program_module_drafts(
             )
         ) from exc
     return tuple(drafts)
-
-
-def _flow_module_export(
-    source: ProgramSource,
-    program: Program,
-) -> ProgramModuleExport:
-    name = Path(source.authored_path).stem
-    flow_module_name(source.authored_path)
-    candidates = tuple(
-        flow for flow in program.flows if not flow.name_explicit or flow.name == name
-    )
-    if not candidates:
-        raise ValueError(
-            f"Flow module {source.authored_path!r} must contain an unnamed flow "
-            f"or flow {name!r}"
-        )
-    if len(candidates) > 1:
-        raise ValueError(f"Flow module entry is ambiguous: {source.authored_path}")
-    return ProgramModuleExport(public_name=name, local_name=candidates[0].name)
 
 
 def _validate_flow_source_names(sources: tuple[ProgramSource, ...]) -> None:

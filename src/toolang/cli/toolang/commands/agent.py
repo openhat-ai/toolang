@@ -19,7 +19,7 @@ from toolang.up import process as agents
 from toolang.catalog import templates
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.prepare import prepare_agent_state
-from toolang.state.state import AgentState, StateCap
+from toolang.state.state import AgentState
 from ...common.context import (
     cli_context,
     context_model_catalog,
@@ -214,7 +214,12 @@ def info_agent(
 
 
 def _caps_summary(state: AgentState) -> str:
-    counts = _cap_counts(state.caps)
+    counts = {
+        "psyches": len(state.psyches),
+        "skills": len(state.skills),
+        "services": len(state.services),
+        "prompts": len(state.prompts),
+    }
     singular = {
         "psyches": "psyche",
         "skills": "skill",
@@ -225,15 +230,6 @@ def _caps_summary(state: AgentState) -> str:
         f"{count} {singular[label] if count == 1 else label}"
         for label, count in counts.items()
     )
-
-
-def _cap_counts(entries: Sequence[StateCap]) -> dict[str, int]:
-    counts = {"psyches": 0, "skills": 0, "services": 0, "prompts": 0}
-    for entry in entries:
-        key = f"{entry.kind}s"
-        if key in counts:
-            counts[key] += 1
-    return counts
 
 
 def _prepare_state(layout: AgentLayout) -> AgentState:

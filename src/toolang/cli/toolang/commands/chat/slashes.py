@@ -78,7 +78,7 @@ def _model(app: AppContext, _command: str, argument: str) -> SlashOutput:
     return ["Available Models", *_chat_model_list_lines(client.list_models())]
 
 
-def _executable(app: AppContext, command: str, argument: str) -> SlashOutput:
+def _runnable(app: AppContext, command: str, argument: str) -> SlashOutput:
     client = app.get_client()
     selects = app.get_selects()
     del argument
@@ -92,8 +92,8 @@ def _executable(app: AppContext, command: str, argument: str) -> SlashOutput:
         "Available Runnables"
         if command == "runnable"
         else f"Available {command.title()}s",
-        *_chat_executable_list_lines(
-            client.list_executables(command),
+        *_chat_runnable_list_lines(
+            client.list_runnables(command),
             selected=selected,
             show_kind=command == "runnable",
         ),
@@ -160,9 +160,9 @@ SLASHES: tuple[SlashCommand, ...] = (
         _model,
         ":model, :models",
     ),
-    SlashCommand(("agic",), "List agics.", _executable, ":agic"),
-    SlashCommand(("flow",), "List flows.", _executable, ":flow"),
-    SlashCommand(("runnable",), "List runnables.", _executable, ":runnable"),
+    SlashCommand(("agic",), "List agics.", _runnable, ":agic"),
+    SlashCommand(("flow",), "List flows.", _runnable, ":flow"),
+    SlashCommand(("runnable",), "List runnables.", _runnable, ":runnable"),
     SlashCommand(
         ("steer", "s"),
         "Steer the active run.",
@@ -303,7 +303,7 @@ def _chat_model_list_lines(payload: Mapping[str, Any]) -> list[str]:
     return lines or ["No available chat models."]
 
 
-def _chat_executable_list_lines(
+def _chat_runnable_list_lines(
     payload: Mapping[str, Any],
     *,
     selected: str | None,

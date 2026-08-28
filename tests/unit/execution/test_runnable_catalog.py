@@ -26,9 +26,11 @@ def _state(source: str) -> AgentState:
         root_config={},
         home_config={},
         config={},
-        program_source="agents/alice/agent.too",
-        program=Program.from_source(source),
-        caps=(),
+        caps={},
+        modules={"agent": Program.from_source(source)},
+        module_sources={"agent": "agent.too"},
+        module_digests={"agent": home},
+        module_caps={"agent": ()},
     )
 
 
@@ -84,6 +86,23 @@ def test_catalog_keeps_longest_entry_prefix_and_exact_omitted_count() -> None:
     assert len(document["runnables"]) == RUNNABLE_CATALOG_MAX_ENTRIES
     assert document["omitted"] == {"count": 7}
     assert len(first.encode("utf-8")) <= RUNNABLE_CATALOG_MAX_BYTES
+
+
+def test_catalog_requires_explicit_delegation_intent() -> None:
+    document = _document(render_runnable_catalog(_state("agic action:\n  Act.")))
+
+    instruction = document["instruction"]
+    assert "user explicitly asks" in instruction
+    assert "authored instructions explicitly require delegation" in instruction
+    assert "merely because it resembles the current request" in instruction
+    assert "current or an ancestor runnable" in instruction
+    assert "read its input signature" in instruction
+    assert "Do not invent missing required input" in instruction
+    assert "unavailable or ambiguous" in instruction
+    assert "normal model output with a specific question" in instruction
+    assert "After an input validation error, retry only" in instruction
+    assert "a JSON string represents one text part" in instruction
+    assert '"type":"text","text":"..."' in instruction
 
 
 def test_catalog_byte_limit_stops_before_a_complete_multibyte_entry() -> None:

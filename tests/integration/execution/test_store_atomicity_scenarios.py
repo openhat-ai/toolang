@@ -269,7 +269,7 @@ def test_retry_reopens_root_from_a_failed_value_step(
             thread_id="term_retry",
             origin="chat",
             input=Message.user("hello"),
-            executable_kind="flow",
+            runnable_kind="flow",
         )
         first = project_step(
             store,
@@ -409,7 +409,7 @@ def test_reload_control_records_state_and_has_one_claim_or_revocation_winner(
             thread_id="term_reload_lifecycle",
             origin="chat",
             input=Message.user("hello"),
-            executable_kind="flow",
+            runnable_kind="flow",
         )
         assert run.state == ControlRef(run.id, 0)
         step = project_step(
@@ -489,7 +489,7 @@ def test_retry_allows_unapplied_reload_history(
             thread_id=f"term_reload_{unapplied_status}",
             origin="chat",
             input=Message.user("hello"),
-            executable_kind="flow",
+            runnable_kind="flow",
         )
         reload_control = store.accept_reload_control(
             run_id=run.id,
@@ -541,7 +541,7 @@ def test_retry_rejects_applied_reload_history_without_mutation(tmp_path: Path) -
             thread_id="term_reload_applied",
             origin="chat",
             input=Message.user("hello"),
-            executable_kind="flow",
+            runnable_kind="flow",
         )
         reload_control = store.accept_reload_control(
             run_id=run.id,
@@ -655,7 +655,7 @@ def test_retry_preserves_child_controls_and_revision_monotonicity(
             thread_id="term_retry_controls",
             origin="chat",
             input=Message.user("root"),
-            executable_kind="flow",
+            runnable_kind="flow",
         )
         parent = project_step(
             store,
@@ -782,7 +782,7 @@ def test_retry_anchor_selection_distinguishes_run_outcomes_and_explicit_values(
             thread_id=f"term_retry_{run_status}",
             origin="chat",
             input=Message.user("hello"),
-            executable_kind="flow",
+            runnable_kind="flow",
         )
         steps = []
         if include_call:
@@ -981,7 +981,7 @@ def test_retry_does_not_read_or_write_ejection_fields(tmp_path: Path) -> None:
             thread_id=anchor.thread,
             origin="chat",
             input=Message.user("source"),
-            executable_kind="flow",
+            runnable_kind="flow",
         )
         retained = project_step(
             store,

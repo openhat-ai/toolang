@@ -11,7 +11,7 @@ from .ast import _first_syntax_error, _parse_tree
 from .errors import ToolangFormatError
 
 
-_EXECUTABLE_HEADER_RE = re.compile(
+_RUNNABLE_HEADER_RE = re.compile(
     r"^(?P<kind>agic|flow)(?P<rest>.*):(?P<suffix>[ \t]*(?:#.*)?)$"
 )
 _STRUCT_HEADER_RE = re.compile(r"^struct(?P<rest>.*):(?P<suffix>[ \t]*(?:#.*)?)$")
@@ -295,7 +295,7 @@ def _format_syntax_line(stripped_line: str, *, node: Node) -> str:
     if top_level == "struct":
         return _format_struct_header_line(stripped_line)
     if top_level in {"agic", "flow"}:
-        return _format_executable_header_line(stripped_line)
+        return _format_runnable_header_line(stripped_line)
     if top_level in {"context", "instruct"}:
         return _format_named_block_header_line(stripped_line)
     if top_level in {"psyche", "skill", "service", "prompt", "task", "chore"}:
@@ -459,8 +459,8 @@ def _format_property_line(stripped_line: str) -> str:
     return f"{match.group('key')} = {match.group('value').strip()}{comment}".rstrip()
 
 
-def _format_executable_header_line(stripped_line: str) -> str:
-    match = _EXECUTABLE_HEADER_RE.match(stripped_line)
+def _format_runnable_header_line(stripped_line: str) -> str:
+    match = _RUNNABLE_HEADER_RE.match(stripped_line)
     if match is None:
         return stripped_line
     rest = match.group("rest").strip()
@@ -469,7 +469,7 @@ def _format_executable_header_line(stripped_line: str) -> str:
         rest, raw_output = rest.rsplit("->", 1)
         output_type = raw_output.strip()
         output = f" -> {output_type}" if output_type else ""
-    name, params = _parse_executable_rest(rest)
+    name, params = _parse_runnable_rest(rest)
     rendered_name = f" {name}" if name else ""
     rendered_params = "" if params is None else f"({_format_signature_params(params)})"
     suffix = match.group("suffix").strip()
@@ -871,7 +871,7 @@ def _append_blank_lines(lines: list[str], count: int) -> None:
     lines.extend("" for _ in range(max(0, count - existing)))
 
 
-def _parse_executable_rest(rest: str) -> tuple[str | None, str | None]:
+def _parse_runnable_rest(rest: str) -> tuple[str | None, str | None]:
     rest = rest.strip()
     if not rest:
         return None, None

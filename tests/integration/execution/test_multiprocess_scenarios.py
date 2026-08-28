@@ -452,7 +452,7 @@ def test_concurrent_retry_has_one_process_winner(tmp_path: Path) -> None:
             thread_id="term_retry_race",
             origin="chat",
             input=Message.user("hello"),
-            executable_kind="flow",
+            runnable_kind="flow",
         )
         project_step(
             store,

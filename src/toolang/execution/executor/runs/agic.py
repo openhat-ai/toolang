@@ -16,7 +16,7 @@ from toolang.lang.ast import AgicDecl, RunStmt, Span
 from toolang.lang.errors import ToolangOutputError
 from toolang.lang.input import coerce_output
 from toolang.state.state import AgentState
-from toolang.state.state import state_program_module
+from toolang.state.state import state_program
 
 from ...events import StepBegin
 from ...records import RunControlPayload, RunControlRecord
@@ -148,7 +148,7 @@ async def execute(
                 run=replace(cached.run, state=state, state_ref=ref),
             )
         candidate = resolve_runnable(
-            state_program_module(state, binding.module).program,
+            state_program(state, binding.module),
             agic.name,
             kind="agic",
         )
@@ -379,12 +379,17 @@ async def _run(
     except _StepFailed as exc:
         if not isinstance(exc.__cause__, _RunRejected | _ExecutionFailed):
             raise
+        details = (
+            exc.__cause__.details if isinstance(exc.__cause__, _RunRejected) else {}
+        )
+        error = str(exc) or type(exc).__name__
         part = ToolResultPart(
             tool_call_id=call.tool_call_id,
             call_id=call.call_id,
             tool_name=call.name,
             tool_family=call.name,
-            error=str(exc) or type(exc).__name__,
+            output={"error": error, **details},
+            error=error,
         )
     state.messages.append(Message(role="tool", parts=(part,)))
     state.last_step = step_index

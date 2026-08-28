@@ -1,10 +1,12 @@
 # Agent State
 
-Agent State is the immutable runtime input derived from an agent's authored
-program, program modules, configuration, and capabilities. It combines one
-root layer with one home layer. A top-level run starts with one Agent State
-revision. An explicit executor reload can change the State used by later step
-boundaries in that run tree without changing already-started work.
+Agent State is the immutable runtime input derived from an agent's Programs,
+configuration, and capabilities. A module is a term for one named, sourced
+Program in State; it is not a separate runtime type. Agent State holds the
+complete module-name-to-Program index rather than a separate primary Program.
+It combines one root layer with one home layer. A top-level run starts with one
+Agent State revision. An explicit executor reload can change the State used by
+later step boundaries in that run tree without changing already-started work.
 
 Tasks and chores stored as independent Markdown files are work data, not Agent
 State. Task and chore declarations inside `agent.too` are part of State because
@@ -13,7 +15,8 @@ other `AgentSetup` data remain separate from Agent State.
 
 State preparation reads authored source but never edits it. The Toolang root
 and agent home must already exist. A missing `agent.too` produces the empty
-default program in State without creating the source file.
+default `agent` module term with an empty Program without creating the source
+file.
 
 ## Vocabulary
 
@@ -23,6 +26,15 @@ State has two persistent layers and one composition:
 - the `home` layer contains agent config, the agent and flow modules, home
   capabilities, and module-local capabilities; and
 - the `agent` composition identifies one exact root/home revision pair.
+
+The in-memory composition exposes aggregate indexes. `modules` resolves stable
+module names to Programs, while matching source, digest, and module-local cap
+indexes retain their runtime context. `caps` indexes effective capabilities by
+`kind:name`; `skills`, `psyches`, `services`, and `prompts` are its name-keyed
+classifications. `agics` and `flows` classify the public `runnables` index. A
+module-local runnable index resolves private and exported `AgicDecl` and
+`FlowDecl` values. These indexes are immutable views of prepared State terms
+and are not separate persisted definitions.
 
 Capability scope is `root`, `home`, or `here`, with precedence
 `root < home < here`. Capability form is exactly `authored`, `inline`,
@@ -116,11 +128,11 @@ that validation. Loading a revision never reads current authored source, falls
 back to `current`, reparses a program source file, or contacts a remote
 provider.
 
-## Program Modules
+## Programs And Module Terms
 
-`agent.too` is the special `agent` module. Each direct
-`flows/<name>.too` file is an independent module named `flow_<name>`. The
-module name is an opaque, single filesystem segment.
+`agent.too` is the special `agent` module term. Each direct
+`flows/<name>.too` file contributes an independent module term named
+`_flow_<name>`. The module name is an opaque, single filesystem segment.
 
 Flow filename stems must match `^[A-Za-z_][A-Za-z0-9_-]{0,63}$`, must not be a
 Windows reserved device name, and must be unique under Unicode `casefold()`.
@@ -134,7 +146,7 @@ Module-local capability files include the module name in their path:
 files/caps/<inline|referenced>/<module>/<kind>/<name>/...
 ```
 
-The public runnable catalog is derived from validated modules and is not
+The aggregate runnable indexes are derived from validated Programs and are not
 duplicated in `layer.json`.
 
 ## Prepare, Publish, and Load

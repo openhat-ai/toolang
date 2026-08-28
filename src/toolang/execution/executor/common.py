@@ -39,7 +39,7 @@ from toolang.lang.ast import (
 )
 from toolang.lang.input import RunnableInput
 from toolang.lang.types import Array
-from toolang.state.state import AgentState, state_program_module
+from toolang.state.state import AgentState, state_program
 from toolang.setup import AgentSetup
 
 from ..events import RunEvent, StepBegin, StepEnd
@@ -88,6 +88,15 @@ class _StepFailed(_ExecutionFailed):
 
 class _RunRejected(Exception):
     """Carry one expected child-run request rejection into its Run Step."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.details = dict(details or {})
 
 
 @dataclass(frozen=True, slots=True)
@@ -423,7 +432,7 @@ def statement_input_refs(
         if child_name is not None:
             try:
                 child = resolve_runnable(
-                    state_program_module(binding.state, binding.module).program,
+                    state_program(binding.state, binding.module),
                     child_name,
                 )
             except (ToolangError, ValueError):
@@ -464,9 +473,9 @@ def _statement_child_runnable(statement: FlowStmt) -> str | None:
 
 
 def initial_locals(
-    binding: BoundRun, executable: AgicDecl | FlowDecl
+    binding: BoundRun, runnable: AgicDecl | FlowDecl
 ) -> dict[str, Local]:
-    """Build the initial locals for one executable run."""
+    """Build the initial locals for one runnable run."""
 
     records = {
         local.name: local for local in binding.control_locals if local.name is not None
@@ -484,7 +493,7 @@ def initial_locals(
             record.type,
             RecordLocal.typed(record.type, pointer, name, record.dim),
         )
-    if executable.input is not None and binding.input.primary is not None:
+    if runnable.input is not None and binding.input.primary is not None:
         record = records.get("_")
         if record is None:
             raise RuntimeError(f"run primary control local missing: {binding.run_id}")
@@ -577,8 +586,7 @@ def number(value: Any, *, operation: str) -> float:
 
 def program_structs(binding: BoundRun) -> dict[str, StructDecl]:
     return {
-        item.name: item
-        for item in state_program_module(binding.state, binding.module).program.structs
+        item.name: item for item in state_program(binding.state, binding.module).structs
     }
 
 

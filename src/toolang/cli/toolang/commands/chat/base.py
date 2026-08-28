@@ -99,7 +99,7 @@ class ChatClient(Protocol):
 
     def list_models(self) -> Mapping[str, Any]: ...
 
-    def list_executables(self, kind: str) -> Mapping[str, Any]: ...
+    def list_runnables(self, kind: str) -> Mapping[str, Any]: ...
 
     def create_thread(self) -> str: ...
 
@@ -181,19 +181,19 @@ def chat_status_label(selects: Mapping[str, object]) -> str:
     model_label = model or "default"
     flow = as_text(selects.get("flow"))
     agic = as_text(selects.get("agic"))
-    runnable = as_text(selects.get("runnable"))
+    runnable_ref = as_text(selects.get("runnable"))
     if agic == "default":
         agic = None
-    executable = (
+    runnable = (
         f"flow:{flow}"
         if flow
         else f"agic:{agic}"
         if agic
-        else f"runnable:{runnable}"
-        if runnable
+        else f"runnable:{runnable_ref}"
+        if runnable_ref
         else ""
     )
-    return f"{model_label}  {executable}" if executable else model_label
+    return f"{model_label}  {runnable}" if runnable else model_label
 
 
 def friendly_error(message: ExecutionError) -> str:

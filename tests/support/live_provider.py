@@ -41,9 +41,11 @@ async def create_live_agent(
         root_config={},
         home_config={},
         config={},
-        program_source="agents/alice/agent.too",
-        program=program,
-        caps=(),
+        caps={},
+        modules={"agent": program},
+        module_sources={"agent": "agent.too"},
+        module_digests={"agent": home_revision},
+        module_caps={"agent": ()},
     )
     setup = await SetupWatcher(
         AgentLayout.resident(root, "alice"),

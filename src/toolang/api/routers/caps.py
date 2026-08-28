@@ -1,5 +1,6 @@
 """Capability inspection and management routes."""
 
+from collections.abc import Mapping
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -14,7 +15,7 @@ from toolang.catalog import config as cap_config
 from toolang.catalog.types import CapKind
 from toolang.state import state as cap_state
 from toolang.state.schemas import CapDetail, CapInfo
-from toolang.state.state import StateCap, CapScope
+from toolang.state.state import AgentState, StateCap, CapScope
 
 MutableCapScope = Literal["home", "root"]
 
@@ -195,22 +196,38 @@ def delete_configured_cap(
 
 @router.get("/caps", summary="Get Caps Summary")
 def caps_summary(core: AgentCoreDep) -> dict[str, object]:
-    entries = core.state.current().caps
+    state = core.state.current()
     collections = {
         "psyches": _CAP_INFOS.dump_python(
-            _cap_infos(entries, agent_name=core.layout.name, kind="psyche"),
+            _cap_infos(
+                tuple(state.psyches.values()),
+                agent_name=core.layout.name,
+                kind="psyche",
+            ),
             mode="json",
         ),
         "skills": _CAP_INFOS.dump_python(
-            _cap_infos(entries, agent_name=core.layout.name, kind="skill"),
+            _cap_infos(
+                tuple(state.skills.values()),
+                agent_name=core.layout.name,
+                kind="skill",
+            ),
             mode="json",
         ),
         "services": _CAP_INFOS.dump_python(
-            _cap_infos(entries, agent_name=core.layout.name, kind="service"),
+            _cap_infos(
+                tuple(state.services.values()),
+                agent_name=core.layout.name,
+                kind="service",
+            ),
             mode="json",
         ),
         "prompts": _CAP_INFOS.dump_python(
-            _cap_infos(entries, agent_name=core.layout.name, kind="prompt"),
+            _cap_infos(
+                tuple(state.prompts.values()),
+                agent_name=core.layout.name,
+                kind="prompt",
+            ),
             mode="json",
         ),
     }
@@ -229,7 +246,7 @@ def cap_list(core: AgentCoreDep, request: Request) -> list[CapInfo]:
     kind = _collection_kind(str(request.url.path).rsplit("/", 1)[-1])
     return list(
         _cap_infos(
-            core.state.current().caps,
+            tuple(_state_cap_index(core.state.current(), kind).values()),
             agent_name=core.layout.name,
             kind=kind,
         )
@@ -267,14 +284,7 @@ def cap_template_detail(request: Request, template_name: str) -> dict[str, objec
 def cap_detail(core: AgentCoreDep, request: Request, name: str) -> CapDetail:
     collection = str(request.url.path).split("/")[3]
     kind = _collection_kind(collection)
-    entry = next(
-        (
-            entry
-            for entry in core.state.current().caps
-            if entry.kind == kind and entry.name == name
-        ),
-        None,
-    )
+    entry = _state_cap_index(core.state.current(), kind).get(name)
     if entry is None:
         raise HTTPException(status_code=404, detail=f"{kind} not found: {name}")
     return CapDetail.from_cap(entry, agent_name=core.layout.name)
@@ -287,6 +297,18 @@ def _collection_kind(collection: str) -> CapKind:
             status_code=404, detail=f"unsupported cap collection: {collection}"
         )
     return kind
+
+
+def _state_cap_index(
+    state: AgentState,
+    kind: CapKind,
+) -> Mapping[str, StateCap]:
+    return {
+        "psyche": state.psyches,
+        "skill": state.skills,
+        "service": state.services,
+        "prompt": state.prompts,
+    }[kind]
 
 
 def _authored_caps(

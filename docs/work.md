@@ -47,7 +47,7 @@ stage. It is the sole scheduler key. Both `id` and `kind` are immutable:
 id       durable identity
 kind     immutable behavior
 stage    authored lifecycle placement
-revision current executable body version
+revision current authored body version
 ```
 
 Moving a job between draft, ready, and archived stages, renaming its source
@@ -70,7 +70,7 @@ class Job:
     path: Path | None
 ```
 
-`revision` hashes the normalized executable body. Title, file name, path, and
+`revision` hashes the normalized authored body. Title, file name, path, and
 schedule do not affect it. The schedule is compared separately so an RRULE
 change can reset its cursor without pretending that the body changed.
 
