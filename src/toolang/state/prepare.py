@@ -15,7 +15,7 @@ from ..lang.ast import Program
 from .state import (
     AgentState,
     KIND_BY_DIR_NAME,
-    StateModule,
+    Module,
     ProgramModuleExport,
     compose_agent_state,
     flow_module_name,
@@ -313,13 +313,13 @@ def _prepare_layer(
             progress=progress,
             include_program=scope == "root",
         )
-        modules: tuple[StateModule, ...] = ()
+        modules: tuple[Module, ...] = ()
         module_entries: tuple[StateCap, ...] = ()
         module_sources: dict[str, ProgramSource] = {}
         if scope == "home":
             drafts = _program_module_drafts(authored)
             previous_modules = _previous_program_modules(layout)
-            materialized: list[StateModule] = []
+            materialized: list[Module] = []
             all_module_entries: list[StateCap] = []
             for draft, module_source in drafts:
                 module_sources[draft.name] = module_source
@@ -429,7 +429,7 @@ def _previous_state_caps(
 
 def _previous_program_modules(
     layout: AgentLayout,
-) -> tuple[StateModule, ...]:
+) -> tuple[Module, ...]:
     try:
         return load_home_layer(layout).modules
     except (FileNotFoundError, KeyError, TypeError, ValueError):
@@ -458,7 +458,7 @@ def _require_agent_home(layout: AgentLayout) -> None:
 
 def _program_module_drafts(
     authored: SourceSnapshot,
-) -> tuple[tuple[StateModule, ProgramSource], ...]:
+) -> tuple[tuple[Module, ProgramSource], ...]:
     sources = authored.load_programs()
     programs: list[tuple[ProgramSource, Program]] = []
     diagnostics: list[StateDiagnostic] = []
@@ -482,13 +482,13 @@ def _program_module_drafts(
     )
     _validate_flow_source_names(flow_sources)
 
-    drafts: list[tuple[StateModule, ProgramSource]] = []
+    drafts: list[tuple[Module, ProgramSource]] = []
     extension_diagnostics: list[StateDiagnostic] = []
     for source, program in programs:
         if source.kind == "agent":
             drafts.append(
                 (
-                    StateModule(
+                    Module(
                         name="agent",
                         kind="agent",
                         authored_path=source.authored_path,
@@ -514,7 +514,7 @@ def _program_module_drafts(
             continue
         drafts.append(
             (
-                StateModule(
+                Module(
                     name=flow_module_name(source.authored_path),
                     kind="flow",
                     authored_path=source.authored_path,

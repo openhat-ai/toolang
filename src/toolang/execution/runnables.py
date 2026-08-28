@@ -17,7 +17,7 @@ from toolang.lang.ast import (
 )
 from toolang.state.state import (
     AgentState,
-    StateModule,
+    Module,
     PublicRunnable,
     state_program_module,
 )
@@ -51,8 +51,8 @@ class ResolvedRunnable:
     """One runnable resolved with its owning program module and effective name."""
 
     public: PublicRunnable
-    module: StateModule
-    executable: Runnable
+    module: Module
+    runnable: Runnable
 
     @property
     def ref(self) -> str:
@@ -118,28 +118,28 @@ def resolve_state_runnable(
     catalog = getattr(state, "catalog", None)
     if catalog is None:
         module = state_program_module(state)
-        executable = resolve_runnable(module.program, name, kind=kind)
+        runnable = resolve_runnable(module.program, name, kind=kind)
         public = PublicRunnable(
             name,
-            cast(RunnableKind, executable.kind),
+            cast(RunnableKind, runnable.kind),
             module.name,
-            executable.name,
+            runnable.name,
         )
         return ResolvedRunnable(
             public=public,
             module=module,
-            executable=executable,
+            runnable=runnable,
         )
     public = catalog.get(name)
     if public is None or (kind is not None and public.kind != kind):
         raise ToolangError(f"Runnable not found: {name}")
     module = state.module(public.module)
-    executable = resolve_runnable(
+    runnable = resolve_runnable(
         module.program,
         public.local_name,
         kind=public.kind,
     )
-    return ResolvedRunnable(public=public, module=module, executable=executable)
+    return ResolvedRunnable(public=public, module=module, runnable=runnable)
 
 
 def resolve_module_runnable(
@@ -152,7 +152,7 @@ def resolve_module_runnable(
     """Resolve a module-local runnable and assign its effective identity."""
 
     module = state_program_module(state, module_name)
-    executable = resolve_runnable(module.program, name, kind=kind)
+    runnable = resolve_runnable(module.program, name, kind=kind)
     list_public = getattr(state, "public_runnables", None)
     public_runnables = tuple(list_public()) if callable(list_public) else ()
     public = next(
@@ -160,17 +160,17 @@ def resolve_module_runnable(
             item
             for item in public_runnables
             if item.module == module.name
-            and item.local_name == executable.name
-            and item.kind == executable.kind
+            and item.local_name == runnable.name
+            and item.kind == runnable.kind
         ),
         PublicRunnable(
-            executable.name,
-            cast(RunnableKind, executable.kind),
+            runnable.name,
+            cast(RunnableKind, runnable.kind),
             module.name,
-            executable.name,
+            runnable.name,
         ),
     )
-    return ResolvedRunnable(public=public, module=module, executable=executable)
+    return ResolvedRunnable(public=public, module=module, runnable=runnable)
 
 
 def resolve_bound_runnable(
@@ -233,7 +233,7 @@ def runnable_binding_defaults(
         return agic, None
     name, kind = parse_runnable_ref(binding)
     runnable = (
-        resolve_state_runnable(program, name, kind=kind).executable
+        resolve_state_runnable(program, name, kind=kind).runnable
         if isinstance(program, AgentState)
         else resolve_runnable(program, name, kind=kind)
     )
@@ -310,7 +310,7 @@ def _catalog_document(
 def runnable_input_contract(resolved: ResolvedRunnable) -> dict[str, object]:
     """Return the model-facing input contract for one resolved runnable."""
 
-    runnable = resolved.executable
+    runnable = resolved.runnable
     structs = {item.name: item for item in resolved.module.program.structs}
     signature_types = (
         *((runnable.input.type_name or "Part[]",) if runnable.input else ()),
@@ -338,7 +338,7 @@ def runnable_input_contract(resolved: ResolvedRunnable) -> dict[str, object]:
 
 
 def _runnable_catalog_entry(resolved: ResolvedRunnable) -> dict[str, object]:
-    runnable = resolved.executable
+    runnable = resolved.runnable
     structs = {item.name: item for item in resolved.module.program.structs}
     signature_types = (
         *((runnable.input.type_name or "Part[]",) if runnable.input else ()),

@@ -346,7 +346,7 @@ class ProgramModuleExport:
 
 
 @dataclass(frozen=True, slots=True)
-class StateModule:
+class Module:
     """One independently validated program fixed in a home State layer."""
 
     name: str
@@ -421,7 +421,7 @@ class StateModule:
         }
 
     @classmethod
-    def from_data(cls, data: Mapping[str, object]) -> StateModule:
+    def from_data(cls, data: Mapping[str, object]) -> Module:
         raw_export = data.get("export")
         if raw_export is not None and not isinstance(raw_export, Mapping):
             raise TypeError("program module export must be an object")
@@ -470,7 +470,7 @@ class PublicRunnable:
 
 
 def public_runnable_catalog(
-    modules: tuple[StateModule, ...],
+    modules: tuple[Module, ...],
 ) -> dict[str, PublicRunnable]:
     """Compose unique public runnable bindings from State modules."""
 
@@ -511,18 +511,18 @@ def public_runnable_catalog(
 def state_program_module(
     state: object,
     name: str = "agent",
-) -> StateModule:
+) -> Module:
     """Return a module while preserving legacy single-Program state fixtures."""
 
     resolver = getattr(state, "module", None)
     if callable(resolver):
-        return cast(StateModule, resolver(name))
+        return cast(Module, resolver(name))
     if name != "agent":
         raise ValueError(f"Program module not found: {name}")
     program = getattr(state, "program", None)
     if not isinstance(program, Program):
         raise TypeError("agent state is missing its program")
-    return StateModule(
+    return Module(
         name="agent",
         kind="agent",
         authored_path="agent.too",
@@ -557,7 +557,7 @@ class AgentState:
     program_source: str
     program: Program
     caps: tuple[StateCap, ...]
-    modules: tuple[StateModule, ...] = ()
+    modules: tuple[Module, ...] = ()
     catalog: Mapping[str, PublicRunnable] = field(default_factory=dict)
     base_caps: tuple[StateCap, ...] | None = None
     revision_dir: Path | None = None
@@ -577,7 +577,7 @@ class AgentState:
         object.__setattr__(self, "home_config", freeze_mapping(self.home_config))
         object.__setattr__(self, "config", freeze_mapping(self.config))
         modules = self.modules or (
-            StateModule(
+            Module(
                 name="agent",
                 kind="agent",
                 authored_path="agent.too",
@@ -600,7 +600,7 @@ class AgentState:
             freeze_mapping(self.catalog or public_runnable_catalog(modules)),
         )
 
-    def module(self, name: str) -> StateModule:
+    def module(self, name: str) -> Module:
         """Return one State module by stable name."""
 
         module = next((item for item in self.modules if item.name == name), None)
@@ -609,7 +609,7 @@ class AgentState:
         return module
 
     @property
-    def agent_module(self) -> StateModule:
+    def agent_module(self) -> Module:
         return next(item for item in self.modules if item.kind == "agent")
 
     def caps_for(self, module: str) -> tuple[StateCap, ...]:
@@ -650,7 +650,7 @@ def compose_agent_state(
     program: Program,
     root_caps: tuple[StateCap, ...],
     home_caps: tuple[StateCap, ...],
-    modules: tuple[StateModule, ...] = (),
+    modules: tuple[Module, ...] = (),
     revision_dir: Path | None = None,
 ) -> AgentState:
     """Compose runtime State from one exact root/home layer pair."""

@@ -473,9 +473,9 @@ def _statement_child_runnable(statement: FlowStmt) -> str | None:
 
 
 def initial_locals(
-    binding: BoundRun, executable: AgicDecl | FlowDecl
+    binding: BoundRun, runnable: AgicDecl | FlowDecl
 ) -> dict[str, Local]:
-    """Build the initial locals for one executable run."""
+    """Build the initial locals for one runnable run."""
 
     records = {
         local.name: local for local in binding.control_locals if local.name is not None
@@ -493,7 +493,7 @@ def initial_locals(
             record.type,
             RecordLocal.typed(record.type, pointer, name, record.dim),
         )
-    if executable.input is not None and binding.input.primary is not None:
+    if runnable.input is not None and binding.input.primary is not None:
         record = records.get("_")
         if record is None:
             raise RuntimeError(f"run primary control local missing: {binding.run_id}")

@@ -24,7 +24,7 @@ class _Client:
                 }
             ],
         }
-        self.executables: dict[str, Mapping[str, Any]] = {
+        self.runnables: dict[str, Mapping[str, Any]] = {
             "agic": {"default": "chat", "items": [{"name": "chat"}]},
             "flow": {"default": None, "items": [{"name": "review"}]},
             "runnable": {
@@ -51,7 +51,7 @@ class _Client:
     def list_executables(self, kind: str) -> Mapping[str, Any]:
         if self.error is not None:
             raise self.error
-        return self.executables[kind]
+        return self.runnables[kind]
 
     def get_result(
         self,

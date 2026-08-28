@@ -67,7 +67,7 @@ async def _run_stream(
             runnable_name,
             kind=runnable_kind,
         )
-        runnable = resolved.executable
+        runnable = resolved.runnable
         handle = core.executor.run(
             RunSpec(
                 setup=setup,

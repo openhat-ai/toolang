@@ -279,7 +279,7 @@ toolang SCRIPT rerun RUN
 
 It also supports `steer`, `cancel`, `rewind`, and `fork`. These command names
 immediately following the source are interpreted as agent commands. Prefix a
-same-named executable with `agic:`, `flow:`, or `runnable:` to invoke it.
+same-named runnable with `agic:`, `flow:`, or `runnable:` to invoke it.
 
 Visiting selectors support the same agent-self and execution-history commands:
 
@@ -698,7 +698,7 @@ run starts, not by this inspection endpoint. The response includes:
   - `tools`
   - `streaming`
 
-`GET /api/v1/agics` and `GET /api/v1/flows` list the agent's executable
+`GET /api/v1/agics` and `GET /api/v1/flows` list the agent's runnable
 definitions.
 
 

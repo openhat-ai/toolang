@@ -153,7 +153,7 @@ class LocalChatSession:
                     for item in state.public_runnables()
                 ],
             }
-        raise ValueError(f"unknown executable kind: {kind}")
+        raise ValueError(f"unknown runnable kind: {kind}")
 
     def create_thread(self) -> str:
         return self.threads.create(prefix=ThreadPrefix.TERM)

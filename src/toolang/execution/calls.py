@@ -124,7 +124,7 @@ def resolve_spec(
         runnable_name,
         kind=runnable_kind,
     )
-    runnable = resolved.executable
+    runnable = resolved.runnable
     program = resolved.module.program
     if surface_named and surface_named_sources:
         raise ValueError("surface named inputs cannot be both bound and sourced")
@@ -199,7 +199,7 @@ def validate_commands(
         runnable_name,
         kind=runnable_kind,
     )
-    runnable = resolved.executable
+    runnable = resolved.runnable
     resources = resolve_agent_resources(
         setup,
         state,
@@ -216,7 +216,7 @@ def validate_commands(
         )
     resources = resolve_runnable_resources(
         snapshot_model_selection(setup, state),
-        executable=runnable,
+        runnable=runnable,
         base=resources,
         setup=setup,
         state=state,
@@ -224,7 +224,7 @@ def validate_commands(
     )
     validate_model_binding(
         snapshot_model_selection(setup, state),
-        executable=runnable,
+        runnable=runnable,
         resources=resources,
         model=bindings.model,
     )

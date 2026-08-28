@@ -227,7 +227,7 @@ def test_flow_resets_resources_while_agics_use_current_flow(
     model_selection = snapshot_model_selection(setup, state)
     outer = resolve_runnable_resources(
         model_selection,
-        executable=FlowDecl(
+        runnable=FlowDecl(
             name="outer",
             directives=(_directive("tools", "alpha/*"),),
             span=Span(line=1),
@@ -238,7 +238,7 @@ def test_flow_resets_resources_while_agics_use_current_flow(
     )
     blocked_agic = resolve_runnable_resources(
         model_selection,
-        executable=AgicDecl(
+        runnable=AgicDecl(
             name="blocked",
             directives=(_directive("tools", "beta/*"),),
             span=Span(line=1),
@@ -249,14 +249,14 @@ def test_flow_resets_resources_while_agics_use_current_flow(
     )
     inner = resolve_runnable_resources(
         model_selection,
-        executable=FlowDecl(name="inner", span=Span(line=1)),
+        runnable=FlowDecl(name="inner", span=Span(line=1)),
         base=agent,
         setup=setup,
         state=state,
     )
     inner_agic = resolve_runnable_resources(
         model_selection,
-        executable=AgicDecl(
+        runnable=AgicDecl(
             name="inner_agic",
             directives=(_directive("tools", "beta/*"),),
             span=Span(line=1),
@@ -267,7 +267,7 @@ def test_flow_resets_resources_while_agics_use_current_flow(
     )
     outer_sibling = resolve_runnable_resources(
         model_selection,
-        executable=AgicDecl(name="outer_sibling", span=Span(line=1)),
+        runnable=AgicDecl(name="outer_sibling", span=Span(line=1)),
         base=outer,
         setup=setup,
         state=state,

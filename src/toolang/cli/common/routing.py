@@ -198,7 +198,7 @@ class PrefixAgentJobGroup(TyperGroup):
 
 
 class OptionalPrefixAgentGroup(TyperGroup):
-    """Render optional AGENT between the executable and command path."""
+    """Render optional AGENT between the runnable and command path."""
 
     prefix_agent_metavar = "[AGENT]"
     argument_metavar = "TEXT"

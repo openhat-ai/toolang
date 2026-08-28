@@ -215,7 +215,7 @@ The implementation is divided by semantic level:
 - `runs/agic.py` owns the fixed model-tool cycle for one agic;
 - `runs/flow.py` advances through lowered flow statements and updates locals;
 - `stmts/` implements lowered statement semantics and chooses a step type;
-- `steps/` owns executable step boundaries and their `StepBegin`, part, and
+- `steps/` owns execution step boundaries and their `StepBegin`, part, and
   `StepEnd` events.
 
 Preparation produces one private `_AgicFrame` consumed directly by the agic
@@ -290,7 +290,7 @@ retried execution's effective totals. Per-agic call counters restart only for
 agics that execute again.
 
 The `_Execution` object emits `RunBegin` and `RunEnd` and dispatches each
-accepted executable to the appropriate run body. Input coercion initializes the
+accepted runnable to the appropriate run body. Input coercion initializes the
 primary local before the body starts, and output coercion validates its final
 value before `RunEnd`. A top-level agic or flow has no containing step. When a
 flow statement invokes another agic or flow, `steps/run.py` emits the containing

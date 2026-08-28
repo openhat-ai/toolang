@@ -264,10 +264,10 @@ class RemoteChatSession:
             return _catalog_payload(
                 payload,
                 operation=kind,
-                item_kind="executable",
+                item_kind="runnable",
             )
         if kind != "runnable":
-            raise ValueError(f"unknown executable kind: {kind}")
+            raise ValueError(f"unknown runnable kind: {kind}")
         agics, flows = await asyncio.gather(
             self._request_json("GET", "/api/v1/agics", operation="agics"),
             self._request_json("GET", "/api/v1/flows", operation="flows"),
@@ -275,12 +275,12 @@ class RemoteChatSession:
         agic_payload = _catalog_payload(
             agics,
             operation="agics",
-            item_kind="executable",
+            item_kind="runnable",
         )
         flow_payload = _catalog_payload(
             flows,
             operation="flows",
-            item_kind="executable",
+            item_kind="runnable",
         )
         defaults = [
             f"{candidate_kind}:{default}"

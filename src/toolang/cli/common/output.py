@@ -217,8 +217,8 @@ def runtime_value(value: object) -> str:
     return value
 
 
-def executable_label(kind: str | None, name: str | None) -> str:
-    """Return one compact executable label for CLI output."""
+def runnable_label(kind: str | None, name: str | None) -> str:
+    """Return one compact runnable label for CLI output."""
 
     normalized_kind = (kind or "run").strip() or "run"
     normalized_name = (name or "").strip()

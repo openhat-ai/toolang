@@ -122,7 +122,7 @@ async def run(
                     runnable_name,
                     kind=runnable_kind,
                 )
-                runnable = resolved.executable
+                runnable = resolved.runnable
                 handle = executor.run(
                     RunSpec(
                         setup=setup,

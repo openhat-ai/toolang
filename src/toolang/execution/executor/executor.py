@@ -311,12 +311,12 @@ class RunExecutor:
             )
         loop = asyncio.get_running_loop()
         sandbox = _setup_sandbox(spec.setup)
-        executable, input, agent_resources, resources = _prepare_run_spec(spec)
+        runnable, input, agent_resources, resources = _prepare_run_spec(spec)
         if not isinstance(spec.limits, RunLimits):
             raise TypeError("run limits must be RunLimits")
         bound = _bind_run(
             spec,
-            executable=executable,
+            runnable=runnable,
             run_id=run_id or self.ids.issue_run(),
             input=input,
             agent_resources=agent_resources,
@@ -337,7 +337,7 @@ class RunExecutor:
             request_id=request_id,
             created_at=bound.created_at,
         )
-        return self._launch(bound, executable, loop=loop, tracer=tracer)
+        return self._launch(bound, runnable, loop=loop, tracer=tracer)
 
     def rerun(
         self,
@@ -382,10 +382,10 @@ class RunExecutor:
             model=model,
             limits=limits if limits is not None else setup.limits,
         )
-        executable, input, agent_resources, resources = _prepare_run_spec(spec)
+        runnable, input, agent_resources, resources = _prepare_run_spec(spec)
         bound = _bind_run(
             spec,
-            executable=executable,
+            runnable=runnable,
             run_id=run_id or self.ids.issue_run(),
             input=input,
             agent_resources=agent_resources,
@@ -408,7 +408,7 @@ class RunExecutor:
             kind="rerun",
             source=source,
         )
-        return self._launch(bound, executable, loop=loop, tracer=tracer)
+        return self._launch(bound, runnable, loop=loop, tracer=tracer)
 
     def retry(
         self,
@@ -456,10 +456,10 @@ class RunExecutor:
             model=model,
             limits=limits if limits is not None else setup.limits,
         )
-        executable, input, agent_resources, resources = _prepare_run_spec(spec)
+        runnable, input, agent_resources, resources = _prepare_run_spec(spec)
         bound = _bind_run(
             spec,
-            executable=executable,
+            runnable=runnable,
             run_id=run_id,
             input=input,
             agent_resources=agent_resources,
@@ -481,7 +481,7 @@ class RunExecutor:
         bound = replace(bound, control_index=control.index)
         return self._launch(
             bound,
-            executable,
+            runnable,
             loop=loop,
             tracer=tracer,
             retry=control,
@@ -613,14 +613,14 @@ class RunExecutor:
     def _launch(
         self,
         bound: BoundRun,
-        executable: AgicDecl | FlowDecl,
+        runnable: AgicDecl | FlowDecl,
         *,
         loop: asyncio.AbstractEventLoop,
         tracer: RunTracer | None,
         retry: RunControlRecord | None = None,
     ) -> LocalRunHandle:
         task = asyncio.create_task(
-            self._execute_owned(bound, executable, tracer=tracer, retry=retry),
+            self._execute_owned(bound, runnable, tracer=tracer, retry=retry),
             name=f"toolang-run-{bound.run_id}",
         )
         active = _ActiveRun(
@@ -645,7 +645,7 @@ class RunExecutor:
     async def _execute_owned(
         self,
         bound: BoundRun,
-        executable: AgicDecl | FlowDecl,
+        runnable: AgicDecl | FlowDecl,
         *,
         tracer: RunTracer | None,
         retry: RunControlRecord | None = None,
@@ -672,7 +672,7 @@ class RunExecutor:
         try:
             await execution.execute(
                 bound,
-                executable,
+                runnable,
             )
         except asyncio.CancelledError:
             await self._ensure_terminal(bound.run_id, emit=emit, status="canceled")
@@ -1390,15 +1390,7 @@ class _Execution:
         root_ref = root.bindings.runnable
         if root_ref is None:  # pragma: no cover - bound run invariant
             raise RuntimeError(f"run runnable binding is missing: {root.run_id}")
-        self._active_bindings: dict[
-            str,
-            tuple[BoundRun, AgicDecl | FlowDecl],
-        ] = {
-            root.run_id: (
-                root,
-                resolve_bound_runnable(root.state, root.module, root_ref).executable,
-            )
-        }
+        self._active_bindings: dict[str, BoundRun] = {root.run_id: root}
 
     def next_step(self, run_id: str) -> int:
         """Return the next unused top-level physical step index."""
@@ -1482,7 +1474,7 @@ class _Execution:
         binding: BoundRun,
         state: AgentState,
         state_ref: ControlRef,
-        executable: AgicDecl | FlowDecl,
+        runnable: AgicDecl | FlowDecl,
         *,
         module: str,
     ) -> BoundRun:
@@ -1504,13 +1496,13 @@ class _Execution:
             )
         flow_resources: AgentResources | None = None
         if (
-            not isinstance(executable, FlowDecl)
+            not isinstance(runnable, FlowDecl)
             and binding.parent is not None
             and binding.flow_resources is not None
         ):
             parent = self._active_bindings.get(binding.parent.run)
             if parent is not None:
-                parent_binding, _previous_parent = parent
+                parent_binding = parent
                 parent_ref = parent_binding.bindings.runnable
                 if parent_ref is None:  # pragma: no cover - bound run invariant
                     raise RuntimeError(
@@ -1525,21 +1517,21 @@ class _Execution:
                     parent_binding,
                     state,
                     state_ref,
-                    current_parent.executable,
+                    current_parent.runnable,
                     module=current_parent.module.name,
                 )
                 flow_resources = (
                     refreshed_parent.resources
-                    if isinstance(current_parent.executable, FlowDecl)
+                    if isinstance(current_parent.runnable, FlowDecl)
                     else refreshed_parent.flow_resources
                 )
         selection = snapshot_model_selection(binding.setup, state)
         resources = resolve_runnable_resources(
             selection,
-            executable=executable,
+            runnable=runnable,
             base=(
                 agent_resources
-                if isinstance(executable, FlowDecl)
+                if isinstance(runnable, FlowDecl)
                 else flow_resources or agent_resources
             ),
             setup=binding.setup,
@@ -1548,7 +1540,7 @@ class _Execution:
         )
         validate_model_binding(
             selection,
-            executable=executable,
+            runnable=runnable,
             resources=resources,
             model=binding.bindings.model,
         )
@@ -1560,7 +1552,7 @@ class _Execution:
             agent_resources=agent_resources,
             resources=resources,
             flow_resources=(
-                resources if isinstance(executable, FlowDecl) else flow_resources
+                resources if isinstance(runnable, FlowDecl) else flow_resources
             ),
         )
 
@@ -1578,13 +1570,13 @@ class _Execution:
             if not all(isinstance(name, str) for name in raw_input):
                 raise ValueError("_too/run input field names must be text")
             input_values = cast(Mapping[str, object], raw_input)
-            executable = resolved.executable
-            parameters = {item.name: item for item in executable.params}
+            runnable = resolved.runnable
+            parameters = {item.name: item for item in runnable.params}
             primary = input_values.get("_") if "_" in input_values else None
-            if primary is not None and executable.input is not None:
+            if primary is not None and runnable.input is not None:
                 primary = decode_json_input(
                     primary,
-                    executable.input.type_name or "Part[]",
+                    runnable.input.type_name or "Part[]",
                     structs=structs,
                 )
             named = {
@@ -1601,7 +1593,7 @@ class _Execution:
                 if name != "_"
             }
             input = resolve_runnable_input(
-                executable,
+                runnable,
                 primary=primary,
                 named=named,
                 structs=structs,
@@ -1622,7 +1614,7 @@ class _Execution:
             ) from exc
         _validate_inputs(
             program=resolved.module.program,
-            executable=resolved.executable,
+            runnable=resolved.runnable,
             input=input,
         )
         return input
@@ -1676,7 +1668,7 @@ class _Execution:
     async def execute(
         self,
         binding: BoundRun,
-        executable: AgicDecl | FlowDecl,
+        runnable: AgicDecl | FlowDecl,
         *,
         locals: Mapping[str, Local] | None = None,
         output_name: str | None = "_",
@@ -1690,7 +1682,7 @@ class _Execution:
         if binding.resources is None:
             raise RuntimeError(f"run resources missing: {binding.run_id}")
         current = (
-            dict(locals) if locals is not None else initial_locals(binding, executable)
+            dict(locals) if locals is not None else initial_locals(binding, runnable)
         )
         statement_start = 0
         step_start = self.next_step(binding.run_id)
@@ -1709,23 +1701,23 @@ class _Execution:
             if (
                 self._retry is not None
                 and binding.run_id == self._retry.run
-                and isinstance(executable, FlowDecl)
+                and isinstance(runnable, FlowDecl)
             ):
                 current, statement_start = self._resume_flow(
                     binding,
-                    executable,
+                    runnable,
                     current,
                 )
             if self._retry is not None and binding.run_id == self._retry.run:
                 self._limits.check_restored()
-            if isinstance(executable, AgicDecl):
-                result = await agic_run.execute(self, binding, executable, current)
+            if isinstance(runnable, AgicDecl):
+                result = await agic_run.execute(self, binding, runnable, current)
                 current["_"] = result
             else:
                 result = await flow_run.execute(
                     self,
                     binding,
-                    executable,
+                    runnable,
                     current,
                     statement_start=statement_start,
                     step_start=step_start,
@@ -1896,7 +1888,7 @@ class _Execution:
                     state=state,
                     state_ref=state_ref,
                 )
-                return binding, resolved.executable
+                return binding, resolved.runnable
             if resolution != "module":  # pragma: no cover - typed caller invariant
                 raise ValueError(f"unknown run resolution: {resolution}")
             parent_ref = parent.bindings.runnable
@@ -1915,7 +1907,7 @@ class _Execution:
                     parent,
                     state,
                     state_ref,
-                    current_parent.executable,
+                    current_parent.runnable,
                     module=current_parent.module.name,
                 )
             )
@@ -1940,12 +1932,12 @@ class _Execution:
                 state=state,
                 state_ref=state_ref,
             )
-            return _prepare_child_run(binding, resolved.executable), resolved.executable
+            return _prepare_child_run(binding, resolved.runnable), resolved.runnable
 
-        binding, executable = await self._begin_child(prepare)
+        binding, runnable = await self._begin_child(prepare)
         return await self._execute_child_binding(
             binding,
-            executable,
+            runnable,
             output_name=output_name,
         )
 
@@ -1960,13 +1952,13 @@ class _Execution:
         state_ref: ControlRef,
         validate_input: bool = True,
     ) -> BoundRun:
-        executable = resolved.executable
+        runnable = resolved.runnable
         module = resolved.module.name
         self._reject_recursive_public_child(parent, resolved)
         if validate_input:
             _validate_inputs(
                 program=resolved.module.program,
-                executable=executable,
+                runnable=runnable,
                 input=input,
             )
         agent_resources, resources = self._public_runnable_resources(
@@ -1983,7 +1975,7 @@ class _Execution:
                 runnable=f"{resolved.public.kind}:{resolved.public.name}",
             ),
             input=input,
-            control_locals=_input_locals(input, executable),
+            control_locals=_input_locals(input, runnable),
             state=state,
             state_ref=state_ref,
             setup=parent.setup,
@@ -1992,7 +1984,7 @@ class _Execution:
             ceilings=parent.ceilings,
             agent_resources=agent_resources,
             resources=resources,
-            flow_resources=resources if isinstance(executable, FlowDecl) else None,
+            flow_resources=resources if isinstance(runnable, FlowDecl) else None,
             created_at=utc_now(),
             call="run",
             parent=parent_step,
@@ -2003,18 +1995,14 @@ class _Execution:
         parent: BoundRun,
         resolved: ResolvedRunnable,
     ) -> None:
-        target = (
-            resolved.module.name,
-            resolved.executable.kind,
-            resolved.executable.name,
-        )
+        target = (resolved.module.name, resolved.ref)
         active_run_id: str | None = parent.run_id
         while active_run_id is not None:
             active = self._active_bindings.get(active_run_id)
             if active is None:
                 break
-            binding, executable = active
-            if target == (binding.module, executable.kind, executable.name):
+            binding = active
+            if target == (binding.module, binding.bindings.runnable):
                 raise ValueError(
                     "_too/run cannot call the current or an ancestor runnable: "
                     f"{resolved.ref}"
@@ -2046,7 +2034,7 @@ class _Execution:
         selection = snapshot_model_selection(parent.setup, state)
         resources = resolve_runnable_resources(
             selection,
-            executable=resolved.executable,
+            runnable=resolved.runnable,
             base=agent_resources,
             setup=parent.setup,
             state=state,
@@ -2054,7 +2042,7 @@ class _Execution:
         )
         validate_model_binding(
             selection,
-            executable=resolved.executable,
+            runnable=resolved.runnable,
             resources=resources,
             model=parent.bindings.model,
         )
@@ -2076,14 +2064,14 @@ class _Execution:
             AgicDecl | FlowDecl,
         ]:
             try:
-                binding, executable = prepare(state, state_ref)
+                binding, runnable = prepare(state, state_ref)
             except (ToolangError, TypeError, ValueError) as exc:
                 raise _RunRejected(str(exc) or type(exc).__name__) from exc
             resources = binding.resources
             if resources is None:
                 raise RuntimeError(f"run resources missing: {binding.run_id}")
             try:
-                self._active_bindings[binding.run_id] = (binding, executable)
+                self._active_bindings[binding.run_id] = binding
                 self.store.accept_run(
                     run_id=binding.run_id,
                     parent=binding.parent,
@@ -2122,7 +2110,7 @@ class _Execution:
             except BaseException:
                 self._active_bindings.pop(binding.run_id, None)
                 raise
-            return binding, executable
+            return binding, runnable
 
         if self._active is None:
             state, state_ref = self._current_state
@@ -2134,7 +2122,7 @@ class _Execution:
     async def _execute_child_binding(
         self,
         binding: BoundRun,
-        executable: AgicDecl | FlowDecl,
+        runnable: AgicDecl | FlowDecl,
         *,
         output_name: str | None = "_",
     ) -> Local:
@@ -2144,7 +2132,7 @@ class _Execution:
         try:
             result = await self.execute(
                 binding,
-                executable,
+                runnable,
                 output_name=output_name,
                 begun=True,
             )
@@ -2416,37 +2404,37 @@ def _child_binding(
     state: AgentState,
     state_ref: ControlRef,
 ) -> BoundRun:
-    executable = resolved.executable
+    runnable = resolved.runnable
     structs = {item.name: item for item in resolved.module.program.structs}
     source_locals: dict[str, Local] = {}
     primary_value: object | None = None
-    if executable.input is not None:
+    if runnable.input is not None:
         primary = locals.get("_", Local())
         if primary.shape != "none":
-            primary_value = _argument_value(primary, executable.input)
+            primary_value = _argument_value(primary, runnable.input)
             source_locals["_"] = primary
     named: dict[str, object] = {}
-    for parameter in executable.params:
+    for parameter in runnable.params:
         local = locals.get(parameter.name)
         if local is None or local.shape == "none":
             continue
         named[parameter.name] = _argument_value(local, parameter)
         source_locals[parameter.name] = local
     input = resolve_runnable_input(
-        executable,
+        runnable,
         primary=primary_value,
         named=named,
         structs=structs,
     )
     declared_types = {
         **(
-            {"_": executable.input.type_name or "Part[]"}
-            if executable.input is not None
+            {"_": runnable.input.type_name or "Part[]"}
+            if runnable.input is not None
             else {}
         ),
         **{
             parameter.name: parameter.type_name or "Part[]"
-            for parameter in executable.params
+            for parameter in runnable.params
         },
     }
     control_locals: list[RecordLocal] = []
@@ -2503,7 +2491,7 @@ def _argument_value(local: Local, parameter: Parameter) -> Value:
 def _bind_run(
     spec: RunSpec,
     *,
-    executable: AgicDecl | FlowDecl,
+    runnable: AgicDecl | FlowDecl,
     run_id: str,
     input: RunnableInput,
     agent_resources: AgentResources,
@@ -2519,7 +2507,7 @@ def _bind_run(
         runnable_name,
         kind=runnable_kind,
     )
-    control_locals = _input_locals(input, executable)
+    control_locals = _input_locals(input, runnable)
     return BoundRun(
         run_id=run_id,
         root_run_id=run_id,
@@ -2539,7 +2527,7 @@ def _bind_run(
         ceilings=spec.ceilings,
         agent_resources=agent_resources,
         resources=resources,
-        flow_resources=resources if isinstance(executable, FlowDecl) else None,
+        flow_resources=resources if isinstance(runnable, FlowDecl) else None,
         created_at=utc_now(),
     )
 
@@ -2566,11 +2554,11 @@ def _prepare_run_spec(
         runnable_name,
         kind=runnable_kind,
     )
-    executable = resolved.executable
+    runnable = resolved.runnable
     input = spec.input
     _validate_inputs(
         program=resolved.module.program,
-        executable=executable,
+        runnable=runnable,
         input=input,
     )
     agent_resources = resolve_agent_resources(
@@ -2590,7 +2578,7 @@ def _prepare_run_spec(
     selection = snapshot_model_selection(spec.setup, spec.state)
     resources = resolve_runnable_resources(
         selection,
-        executable=executable,
+        runnable=runnable,
         base=agent_resources,
         setup=spec.setup,
         state=spec.state,
@@ -2598,11 +2586,11 @@ def _prepare_run_spec(
     )
     validate_model_binding(
         selection,
-        executable=executable,
+        runnable=runnable,
         resources=resources,
         model=spec.bindings.model,
     )
-    return executable, input, agent_resources, resources
+    return runnable, input, agent_resources, resources
 
 
 def _setup_sandbox(setup: AgentSetup) -> str:
@@ -2617,20 +2605,20 @@ def _setup_sandbox(setup: AgentSetup) -> str:
 
 def _prepare_child_run(
     binding: BoundRun,
-    executable: AgicDecl | FlowDecl,
+    runnable: AgicDecl | FlowDecl,
 ) -> BoundRun:
     agent_resources = binding.agent_resources
     if agent_resources is None:
         raise RuntimeError(f"agent resources missing: {binding.run_id}")
     base = (
         agent_resources
-        if isinstance(executable, FlowDecl)
+        if isinstance(runnable, FlowDecl)
         else binding.flow_resources or agent_resources
     )
     selection = snapshot_model_selection(binding.setup, binding.state)
     resources = resolve_runnable_resources(
         selection,
-        executable=executable,
+        runnable=runnable,
         base=base,
         setup=binding.setup,
         state=binding.state,
@@ -2640,7 +2628,7 @@ def _prepare_child_run(
         binding,
         resources=resources,
         flow_resources=(
-            resources if isinstance(executable, FlowDecl) else binding.flow_resources
+            resources if isinstance(runnable, FlowDecl) else binding.flow_resources
         ),
     )
 
@@ -2648,16 +2636,16 @@ def _prepare_child_run(
 def _validate_inputs(
     *,
     program: Program,
-    executable: AgicDecl | FlowDecl,
+    runnable: AgicDecl | FlowDecl,
     input: RunnableInput,
 ) -> None:
     structs = {item.name: item for item in program.structs}
-    params = {param.name: param for param in executable.params}
+    params = {param.name: param for param in runnable.params}
     args = input.named
     unknown = sorted(set(args) - set(params))
     if unknown:
         joined = ", ".join(unknown)
-        raise ValueError(f"unknown named inputs for {executable.name}: {joined}")
+        raise ValueError(f"unknown named inputs for {runnable.name}: {joined}")
     missing = sorted(
         name
         for name, param in params.items()
@@ -2665,19 +2653,19 @@ def _validate_inputs(
     )
     if missing:
         joined = ", ".join(missing)
-        raise ValueError(f"missing named inputs for {executable.name}: {joined}")
-    if executable.input is None and input.primary is not None:
-        raise ValueError(f"{executable.name} does not accept primary input")
+        raise ValueError(f"missing named inputs for {runnable.name}: {joined}")
+    if runnable.input is None and input.primary is not None:
+        raise ValueError(f"{runnable.name} does not accept primary input")
     if (
-        executable.input is not None
-        and not executable.input.optional
+        runnable.input is not None
+        and not runnable.input.optional
         and input.primary is None
     ):
-        raise ValueError(f"{executable.name} requires primary input")
-    if executable.input is not None and input.primary is not None:
+        raise ValueError(f"{runnable.name} requires primary input")
+    if runnable.input is not None and input.primary is not None:
         validate_value(
             input.primary,
-            executable.input.type_name or "Part[]",
+            runnable.input.type_name or "Part[]",
             structs=structs,
             path="primary input",
         )
@@ -2698,12 +2686,12 @@ def _run_event_id(event: RunEvent) -> str:
 
 def _input_locals(
     input: RunnableInput,
-    executable: AgicDecl | FlowDecl,
+    runnable: AgicDecl | FlowDecl,
 ) -> tuple[RecordLocal, ...]:
-    parameters = {item.name: item for item in executable.params}
+    parameters = {item.name: item for item in runnable.params}
     result: list[RecordLocal] = []
-    if executable.input is not None and input.primary is not None:
-        type_name = executable.input.type_name or "Part[]"
+    if runnable.input is not None and input.primary is not None:
+        type_name = runnable.input.type_name or "Part[]"
         result.append(
             RecordLocal.typed(
                 type_name=type_name,

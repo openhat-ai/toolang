@@ -25,7 +25,7 @@ from toolang.state.cache import (
     write_layer,
 )
 from toolang.state.source import scan_source
-from toolang.state.state import StateModule, agent_state_revision
+from toolang.state.state import Module, agent_state_revision
 
 
 def _layout(root: Path) -> AgentLayout:
@@ -60,7 +60,7 @@ def _write_home(
         config={"models": {"default": "fast"}},
         caps=(),
         modules=(
-            StateModule(
+            Module(
                 name="agent",
                 kind="agent",
                 authored_path="agent.too",

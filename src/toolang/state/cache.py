@@ -22,7 +22,7 @@ from .source import SourceTree
 from .state import (
     CapResolution,
     StateCap,
-    StateModule,
+    Module,
     public_runnable_catalog,
 )
 
@@ -64,7 +64,7 @@ class HomeLayer:
     config: Mapping[str, object]
     program: Program
     caps: tuple[StateCap, ...]
-    modules: tuple[StateModule, ...]
+    modules: tuple[Module, ...]
 
     def __post_init__(self) -> None:
         _require_revision(self.revision)
@@ -180,7 +180,7 @@ def write_layer(
     resolutions: tuple[CapResolution, ...],
     config: Mapping[str, object],
     caps: tuple[StateCap, ...],
-    modules: tuple[StateModule, ...],
+    modules: tuple[Module, ...],
     files: Mapping[str, bytes],
 ) -> str:
     """Atomically store one complete immutable State layer."""
@@ -368,7 +368,7 @@ def _layer_document(
     resolutions: tuple[CapResolution, ...],
     config: Mapping[str, object],
     caps: tuple[StateCap, ...],
-    modules: tuple[StateModule, ...],
+    modules: tuple[Module, ...],
     files: Mapping[str, bytes],
 ) -> dict[str, object]:
     if scope == "root" and modules:
@@ -608,18 +608,18 @@ def _modules(
     *,
     revision_dir: Path,
     required: bool = True,
-) -> tuple[StateModule, ...]:
+) -> tuple[Module, ...]:
     raw_modules = document.get("modules")
     if not isinstance(raw_modules, list):
         raise TypeError("State layer modules must be a list")
     if required and not raw_modules:
         raise ValueError("home State layer requires program modules")
-    modules: list[StateModule] = []
+    modules: list[Module] = []
     names: set[str] = set()
     for raw in raw_modules:
         if not isinstance(raw, dict):
             raise TypeError("State module must be an object")
-        module = StateModule.from_data(
+        module = Module.from_data(
             {str(key): value for key, value in cast(dict[object, object], raw).items()}
         )
         folded_name = module.name.casefold()

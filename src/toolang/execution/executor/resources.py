@@ -41,7 +41,7 @@ from toolang.state.state import (
     state_module_caps,
 )
 
-_Executable = AgicDecl | FlowDecl
+_Runnable = AgicDecl | FlowDecl
 
 
 class _ModelSelection(Protocol):
@@ -195,7 +195,7 @@ def apply_agent_ceiling(
 def resolve_runnable_resources(
     selection: _ModelSelection,
     *,
-    executable: _Executable,
+    runnable: _Runnable,
     base: AgentResources,
     setup: AgentSetup,
     state: AgentState,
@@ -203,7 +203,7 @@ def resolve_runnable_resources(
 ) -> AgentResources:
     """Apply one runnable's authored selectors within a chosen resource base."""
 
-    model_directives = _directives(executable, "models")
+    model_directives = _directives(runnable, "models")
     if model_directives:
         if not base.models:
             raise ToolangError("run resources include no models")
@@ -224,7 +224,7 @@ def resolve_runnable_resources(
     available_tools = resource_tools(setup, base)
     tool_names = apply_selector_operations(
         tuple(available_tools),
-        _selector_operations(_directives(executable, "tools")),
+        _selector_operations(_directives(runnable, "tools")),
         lambda values: selected_tool_names(
             {
                 name: tool_ref_for_model_tool(name, available_tools[name])
@@ -251,7 +251,7 @@ def resolve_runnable_resources(
             (item.kind, item.name, item.ref)
             for item in apply_selector_operations(
                 entries,
-                _selector_operations(_directives(executable, directive_name)),
+                _selector_operations(_directives(runnable, directive_name)),
                 lambda values, entries=entries, kind=kind: select_cap_entries(
                     entries,
                     values,
@@ -272,13 +272,13 @@ def resolve_runnable_resources(
 def validate_model_binding(
     selection: _ModelSelection,
     *,
-    executable: _Executable,
+    runnable: _Runnable,
     resources: AgentResources,
     model: str | None,
 ) -> None:
     """Validate one bound model within final runnable resources."""
 
-    if model is not None or isinstance(executable, AgicDecl):
+    if model is not None or isinstance(runnable, AgicDecl):
         resolve_model(
             selection,
             selector=model,
@@ -367,10 +367,10 @@ def _agent_resources(
 
 
 def _directives(
-    executable: _Executable,
+    runnable: _Runnable,
     name: str,
 ) -> tuple[Directive, ...]:
-    return tuple(item for item in executable.directives if item.name == name)
+    return tuple(item for item in runnable.directives if item.name == name)
 
 
 def _selector_operations(

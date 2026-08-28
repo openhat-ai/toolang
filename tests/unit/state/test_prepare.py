@@ -618,7 +618,7 @@ def test_unnamed_flow_export_renames_with_its_file(tmp_path: Path) -> None:
     local = resolve_bound_runnable(first, "_flow_research", "flow:research")
     assert public.ref == local.ref == "flow:research"
     assert public.qualified == local.qualified == "_flow_research$flow:research"
-    assert public.executable.name == local.executable.name == "main"
+    assert public.runnable.name == local.runnable.name == "main"
 
     source.rename(flows / "report.too")
     second = prepare_agent_state(_layout(toolang_root))

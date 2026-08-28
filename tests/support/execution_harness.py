@@ -379,7 +379,7 @@ class ExecutionHarness:
             runnable_name,
             kind=runnable_kind,
         )
-        executable = resolved.executable
+        declaration = resolved.runnable
         return RunSpec(
             setup=self.setup,
             state=self.state,
@@ -388,7 +388,7 @@ class ExecutionHarness:
             limits=limits if limits is not None else self.setup.limits,
             ceilings=ceilings,
             input=resolve_runnable_input(
-                executable,
+                declaration,
                 primary=primary,
                 named=named,
                 structs={item.name: item for item in resolved.module.program.structs},

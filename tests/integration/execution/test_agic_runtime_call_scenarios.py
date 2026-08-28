@@ -489,6 +489,96 @@ flow outer(_: Text) -> Text:
     asyncio.run(scenario())
 
 
+def test_dynamic_run_rejects_reloaded_ancestor_by_public_identity(
+    tmp_path: Path,
+) -> None:
+    source = """
+agic default(_: Text) -> Text:
+  Return {{_}}
+"""
+    initial_flow = """
+agic caller(_: Text) -> Text:
+  recall = none
+  tools = _too/*
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow:
+  run caller
+"""
+    reloaded_flow = initial_flow.replace("flow:", "flow outer(_: Text) -> Text:")
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True, exist_ok=True)
+    layout.program.write_text(source, encoding="utf-8")
+    flows = layout.home / "flows"
+    flows.mkdir(parents=True, exist_ok=True)
+    flow_source = flows / "outer.too"
+    flow_source.write_text(initial_flow, encoding="utf-8")
+    initial = prepare_agent_state(layout)
+    watcher = StateWatcher(layout)
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        state=initial,
+        refresh_state=watcher.refresh_result,
+        tools=_runtime_tools(),
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="reload-ancestor",
+                        call_id="provider-reload-ancestor",
+                        name="_too__reload",
+                        input={},
+                    ),
+                    ToolCall(
+                        tool_call_id="run-reloaded-ancestor",
+                        call_id="provider-run-reloaded-ancestor",
+                        name="_too__run",
+                        input={
+                            "runnable": "flow:outer",
+                            "input": {"_": "again"},
+                        },
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("recovered")),
+        ),
+    )
+
+    async def scenario() -> None:
+        await watcher.refresh()
+        flow_source.write_text(reloaded_flow, encoding="utf-8")
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="flow:outer",
+                    primary=resolve_input_parts("start"),
+                )
+            )
+
+            assert root.status == "succeeded", root.error
+            runs = harness.store.list_run_tree(root_run_id=root.id)
+            assert len(runs) == 2
+            caller = next(run for run in runs if run.id != root.id)
+            steps = harness.store.list_steps(run_id=caller.id)
+            assert [(step.kind, step.status) for step in steps] == [
+                ("model", "succeeded"),
+                ("run", "failed"),
+                ("model", "succeeded"),
+            ]
+            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            assert isinstance(result, ToolResultPart)
+            assert result.error == (
+                "_too/run cannot call the current or an ancestor runnable: flow:outer"
+            )
+
+    asyncio.run(scenario())
+
+
 def test_runtime_action_rejects_generic_tool_invocation(tmp_path: Path) -> None:
     tools = _runtime_tools()
     reload_tool = tools["_too__reload"]
