@@ -42,7 +42,6 @@ from toolang.lang.input import resolve_runnable_input
 from toolang.execution.runnables import (
     parse_runnable_ref,
     resolve_state_runnable,
-    runnable_declaration,
 )
 from toolang.state.state import AgentState
 from toolang.up import AgentCore
@@ -66,12 +65,11 @@ async def _run_stream(
     try:
         state = await _fresh_state(core)
         runnable_name, runnable_kind = parse_runnable_ref(payload.runnable)
-        resolved = resolve_state_runnable(
+        module, runnable = resolve_state_runnable(
             state,
             runnable_name,
             kind=runnable_kind,
         )
-        runnable = runnable_declaration(state, resolved)
         handle = core.executor.run(
             RunSpec(
                 setup=setup,
@@ -90,10 +88,7 @@ async def _run_stream(
                     runnable,
                     primary=parse_parts(payload.input) if payload.input else None,
                     named=payload.args,
-                    structs={
-                        item.name: item
-                        for item in state.modules[resolved.module].structs
-                    },
+                    structs={item.name: item for item in state.modules[module].structs},
                 ),
             ),
             request_id=payload.request_id,

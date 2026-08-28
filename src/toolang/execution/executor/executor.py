@@ -39,7 +39,7 @@ from toolang.plugin.models.config import (
     parse_default_models,
     parse_model_aliases,
 )
-from toolang.state.state import AgentState, PublicRunnable, state_program
+from toolang.state.state import AgentState, state_program
 from toolang.state.watcher import StateRefresh
 from toolang.state.cache import agent_revision_dir, validate_agent_revision
 from toolang.state.prepare import load_agent_state
@@ -77,7 +77,6 @@ from ..runnables import (
     resolve_bound_runnable,
     resolve_module_runnable,
     resolve_state_runnable,
-    runnable_declaration,
 )
 from .common import (
     BoundRun,
@@ -550,13 +549,13 @@ class RunExecutor:
         _kind, _separator, runnable = control.payload.runnable.partition(":")
         if not runnable:
             raise ValueError(f"run runnable not found: {run_id}")
-        resolved = resolve_state_runnable(state, runnable)
+        _module, declaration = resolve_state_runnable(state, runnable)
         return RunSpec(
             setup=setup,
             state=state,
             thread=run.thread,
             bindings=RunBindings(
-                runnable=f"{resolved.kind}:{resolved.name}",
+                runnable=f"{declaration.kind}:{runnable}",
                 model=model if model is not None else control.payload.model,
             ),
             limits=limits,
@@ -1517,12 +1516,12 @@ class _Execution:
                     parent_binding,
                     state,
                     state_ref,
-                    runnable_declaration(state, current_parent),
-                    module=current_parent.module,
+                    current_parent,
+                    module=parent_binding.module,
                 )
                 flow_resources = (
                     refreshed_parent.resources
-                    if isinstance(runnable_declaration(state, current_parent), FlowDecl)
+                    if isinstance(current_parent, FlowDecl)
                     else refreshed_parent.flow_resources
                 )
         selection = snapshot_model_selection(binding.setup, state)
@@ -1559,12 +1558,14 @@ class _Execution:
     def resolve_public_input(
         self,
         state: AgentState,
-        resolved: PublicRunnable,
+        module: str,
+        name: str,
+        runnable: AgicDecl | FlowDecl,
         raw_input: object,
     ) -> RunnableInput:
         """Coerce one JSON object through the target module's input contracts."""
 
-        program = state_program(state, resolved.module)
+        program = state_program(state, module)
         structs = {item.name: item for item in program.structs}
         try:
             if not isinstance(raw_input, Mapping):
@@ -1572,7 +1573,6 @@ class _Execution:
             if not all(isinstance(name, str) for name in raw_input):
                 raise ValueError("_too/run input field names must be text")
             input_values = cast(Mapping[str, object], raw_input)
-            runnable = runnable_declaration(state, resolved)
             parameters = {item.name: item for item in runnable.params}
             primary = input_values.get("_") if "_" in input_values else None
             if primary is not None and runnable.input is not None:
@@ -1605,8 +1605,8 @@ class _Execution:
                 str(exc) or type(exc).__name__,
                 details={
                     "code": "invalid_runnable_input",
-                    "runnable": resolved.ref,
-                    "expected": runnable_input_contract(state, resolved),
+                    "runnable": f"{runnable.kind}:{name}",
+                    "expected": runnable_input_contract(state, module, runnable),
                     "guidance": (
                         "Retry only when available context provides the required "
                         "values; otherwise respond to the user in the normal model "
@@ -1616,7 +1616,7 @@ class _Execution:
             ) from exc
         _validate_inputs(
             program=program,
-            runnable=runnable_declaration(state, resolved),
+            runnable=runnable,
             input=input,
         )
         return input
@@ -1873,25 +1873,31 @@ class _Execution:
         ) -> tuple[BoundRun, AgicDecl | FlowDecl]:
             if resolution == "state":
                 runnable_name, runnable_kind = parse_runnable_ref(name)
-                resolved = resolve_state_runnable(
+                module, runnable = resolve_state_runnable(
                     state,
                     runnable_name,
                     kind=runnable_kind,
                 )
+                ref = f"{runnable.kind}:{runnable_name}"
+                self._reject_recursive_public_child(parent, module, ref)
                 input = self.resolve_public_input(
                     state,
-                    resolved,
+                    module,
+                    runnable_name,
+                    runnable,
                     {} if raw_input is None else raw_input,
                 )
                 binding = self._prepare_public_child(
                     parent,
-                    resolved,
+                    module,
+                    runnable_name,
+                    runnable,
                     input,
                     parent_step=step,
                     state=state,
                     state_ref=state_ref,
                 )
-                return binding, runnable_declaration(state, resolved)
+                return binding, runnable
             if resolution != "module":  # pragma: no cover - typed caller invariant
                 raise ValueError(f"unknown run resolution: {resolution}")
             parent_ref = parent.bindings.runnable
@@ -1910,8 +1916,8 @@ class _Execution:
                     parent,
                     state,
                     state_ref,
-                    runnable_declaration(state, current_parent),
-                    module=current_parent.module,
+                    current_parent,
+                    module=parent.module,
                 )
             )
             runnable_name, runnable_kind = (
@@ -1919,7 +1925,7 @@ class _Execution:
                 if name.startswith(("agic:", "flow:"))
                 else (name, None)
             )
-            resolved = resolve_module_runnable(
+            effective_name, runnable = resolve_module_runnable(
                 state,
                 parent.module,
                 runnable_name,
@@ -1928,14 +1934,15 @@ class _Execution:
             binding = _child_binding(
                 self,
                 current_parent_binding,
-                resolved,
+                parent.module,
+                effective_name,
+                runnable,
                 locals,
                 parent_step=step,
                 occurrence=occurrence,
                 state=state,
                 state_ref=state_ref,
             )
-            runnable = runnable_declaration(state, resolved)
             return _prepare_child_run(binding, runnable), runnable
 
         binding, runnable = await self._begin_child(prepare)
@@ -1948,7 +1955,9 @@ class _Execution:
     def _prepare_public_child(
         self,
         parent: BoundRun,
-        resolved: PublicRunnable,
+        module: str,
+        name: str,
+        runnable: AgicDecl | FlowDecl,
         input: RunnableInput,
         *,
         parent_step: StepPath,
@@ -1956,9 +1965,6 @@ class _Execution:
         state_ref: ControlRef,
         validate_input: bool = True,
     ) -> BoundRun:
-        runnable = runnable_declaration(state, resolved)
-        module = resolved.module
-        self._reject_recursive_public_child(parent, resolved)
         if validate_input:
             _validate_inputs(
                 program=state_program(state, module),
@@ -1967,7 +1973,8 @@ class _Execution:
             )
         agent_resources, resources = self._public_runnable_resources(
             parent,
-            resolved,
+            module,
+            runnable,
             state=state,
         )
         return BoundRun(
@@ -1976,7 +1983,7 @@ class _Execution:
             thread=parent.thread,
             bindings=RunBindings(
                 model=parent.bindings.model,
-                runnable=f"{resolved.kind}:{resolved.name}",
+                runnable=f"{runnable.kind}:{name}",
             ),
             input=input,
             control_locals=_input_locals(input, runnable),
@@ -1997,9 +2004,10 @@ class _Execution:
     def _reject_recursive_public_child(
         self,
         parent: BoundRun,
-        resolved: PublicRunnable,
+        module: str,
+        ref: str,
     ) -> None:
-        target = (resolved.module, resolved.ref)
+        target = (module, ref)
         active_run_id: str | None = parent.run_id
         while active_run_id is not None:
             active = self._active_bindings.get(active_run_id)
@@ -2008,19 +2016,18 @@ class _Execution:
             binding = active
             if target == (binding.module, binding.bindings.runnable):
                 raise ValueError(
-                    "_too/run cannot call the current or an ancestor runnable: "
-                    f"{resolved.ref}"
+                    f"_too/run cannot call the current or an ancestor runnable: {ref}"
                 )
             active_run_id = binding.parent.run if binding.parent is not None else None
 
     def _public_runnable_resources(
         self,
         parent: BoundRun,
-        resolved: PublicRunnable,
+        module: str,
+        runnable: AgicDecl | FlowDecl,
         *,
         state: AgentState,
     ) -> tuple[AgentResources, AgentResources]:
-        module = resolved.module
         agent_resources = resolve_agent_resources(
             parent.setup,
             state,
@@ -2038,7 +2045,7 @@ class _Execution:
         selection = snapshot_model_selection(parent.setup, state)
         resources = resolve_runnable_resources(
             selection,
-            runnable=runnable_declaration(state, resolved),
+            runnable=runnable,
             base=agent_resources,
             setup=parent.setup,
             state=state,
@@ -2046,7 +2053,7 @@ class _Execution:
         )
         validate_model_binding(
             selection,
-            runnable=runnable_declaration(state, resolved),
+            runnable=runnable,
             resources=resources,
             model=parent.bindings.model,
         )
@@ -2400,7 +2407,9 @@ def _parallel_output_type(
 def _child_binding(
     context: _Execution,
     parent: BoundRun,
-    resolved: PublicRunnable,
+    module: str,
+    effective_name: str,
+    runnable: AgicDecl | FlowDecl,
     locals: Mapping[str, Local],
     *,
     parent_step: StepPath,
@@ -2408,10 +2417,7 @@ def _child_binding(
     state: AgentState,
     state_ref: ControlRef,
 ) -> BoundRun:
-    runnable = runnable_declaration(state, resolved)
-    structs = {
-        item.name: item for item in state_program(state, resolved.module).structs
-    }
+    structs = {item.name: item for item in state_program(state, module).structs}
     source_locals: dict[str, Local] = {}
     primary_value: object | None = None
     if runnable.input is not None:
@@ -2463,14 +2469,14 @@ def _child_binding(
         thread=parent.thread,
         bindings=RunBindings(
             model=parent.bindings.model,
-            runnable=resolved.ref,
+            runnable=f"{runnable.kind}:{effective_name}",
         ),
         input=input,
         control_locals=tuple(control_locals),
         state=state,
         state_ref=state_ref,
         setup=parent.setup,
-        module=resolved.module,
+        module=module,
         limits=parent.limits,
         ceilings=parent.ceilings,
         agent_resources=parent.agent_resources,
@@ -2508,7 +2514,7 @@ def _bind_run(
     if spec.bindings.runnable is None:
         raise ValueError("run spec requires a runnable binding")
     runnable_name, runnable_kind = parse_runnable_ref(spec.bindings.runnable)
-    resolved = resolve_state_runnable(
+    module, resolved_runnable = resolve_state_runnable(
         spec.state,
         runnable_name,
         kind=runnable_kind,
@@ -2519,7 +2525,7 @@ def _bind_run(
         root_run_id=run_id,
         thread=spec.thread,
         bindings=RunBindings(
-            runnable=f"{resolved.kind}:{resolved.name}",
+            runnable=f"{resolved_runnable.kind}:{runnable_name}",
             model=spec.bindings.model
             or (resources.models[0] if resources.models else "none"),
         ),
@@ -2528,7 +2534,7 @@ def _bind_run(
         state=spec.state,
         state_ref=ControlRef(run_id, 0),
         setup=spec.setup,
-        module=resolved.module,
+        module=module,
         limits=spec.limits,
         ceilings=spec.ceilings,
         agent_resources=agent_resources,
@@ -2555,15 +2561,14 @@ def _prepare_run_spec(
     if spec.bindings.runnable is None:
         raise ValueError("run spec requires a runnable binding")
     runnable_name, runnable_kind = parse_runnable_ref(spec.bindings.runnable)
-    resolved = resolve_state_runnable(
+    module, runnable = resolve_state_runnable(
         spec.state,
         runnable_name,
         kind=runnable_kind,
     )
-    runnable = runnable_declaration(spec.state, resolved)
     input = spec.input
     _validate_inputs(
-        program=state_program(spec.state, resolved.module),
+        program=state_program(spec.state, module),
         runnable=runnable,
         input=input,
     )
@@ -2571,7 +2576,7 @@ def _prepare_run_spec(
         spec.setup,
         spec.state,
         spec.setup.ceiling,
-        module=resolved.module,
+        module=module,
     )
     for ceiling in spec.ceilings:
         agent_resources = apply_agent_ceiling(
@@ -2579,7 +2584,7 @@ def _prepare_run_spec(
             spec.state,
             agent_resources,
             ceiling,
-            module=resolved.module,
+            module=module,
         )
     selection = snapshot_model_selection(spec.setup, spec.state)
     resources = resolve_runnable_resources(
@@ -2588,7 +2593,7 @@ def _prepare_run_spec(
         base=agent_resources,
         setup=spec.setup,
         state=spec.state,
-        module=resolved.module,
+        module=module,
     )
     validate_model_binding(
         selection,

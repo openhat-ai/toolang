@@ -331,24 +331,6 @@ class StateCap:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class PublicRunnable:
-    """One public runnable name bound to its Program declaration."""
-
-    name: str
-    kind: RunnableKind
-    module: str
-    local_name: str
-
-    @property
-    def ref(self) -> str:
-        return f"{self.kind}:{self.name}"
-
-    @property
-    def qualified(self) -> str:
-        return f"{self.module}${self.ref}"
-
-
 _RUNTIME_DEFAULT_AGIC = AgicDecl(
     name="default",
     input=Parameter(name="_", type_name="Part[]", span=Span(line=1)),
@@ -367,29 +349,36 @@ def effective_agics(program: Program) -> tuple[AgicDecl, ...]:
 def public_runnable_index(
     modules: Mapping[str, Program],
     module_sources: Mapping[str, str],
-) -> dict[str, PublicRunnable]:
+) -> tuple[dict[str, AgicDecl | FlowDecl], dict[str, str]]:
     """Index unique public runnable bindings across State Programs."""
 
-    result: dict[str, PublicRunnable] = {}
+    result: dict[str, AgicDecl | FlowDecl] = {}
+    owners: dict[str, str] = {}
 
-    def add(entry: PublicRunnable) -> None:
-        if entry.name in result:
-            raise ValueError(f"Public runnable name is not unique: {entry.name}")
-        result[entry.name] = entry
+    def add(name: str, module: str, declaration: AgicDecl | FlowDecl) -> None:
+        if name in result:
+            raise ValueError(f"Public runnable name is not unique: {name}")
+        result[name] = declaration
+        owners[name] = module
 
     agent = modules.get("agent")
     if agent is None:
         raise ValueError("home State layer is missing the agent module")
     for agic in effective_agics(agent):
-        add(PublicRunnable(agic.name, "agic", "agent", agic.name))
+        add(agic.name, "agent", agic)
     for flow in agent.flows:
-        add(PublicRunnable(flow.name, "flow", "agent", flow.name))
+        add(flow.name, "agent", flow)
     for module, program in modules.items():
         if module == "agent":
             continue
         public_name, local_name = flow_export(module_sources[module], program)
-        add(PublicRunnable(public_name, "flow", module, local_name))
-    return result
+        declaration = program.find_flow(local_name)
+        if declaration is None:  # pragma: no cover - flow_export invariant
+            raise ValueError(
+                f"Public flow declaration not found: {module}${local_name}"
+            )
+        add(public_name, module, declaration)
+    return result, owners
 
 
 def module_runnable_index(
@@ -518,9 +507,10 @@ class AgentState:
     psyches: Mapping[str, StateCap] = field(init=False, repr=False)
     services: Mapping[str, StateCap] = field(init=False, repr=False)
     prompts: Mapping[str, StateCap] = field(init=False, repr=False)
-    agics: Mapping[str, PublicRunnable] = field(init=False, repr=False)
-    flows: Mapping[str, PublicRunnable] = field(init=False, repr=False)
-    runnables: Mapping[str, PublicRunnable] = field(init=False, repr=False)
+    agics: Mapping[str, AgicDecl] = field(init=False, repr=False)
+    flows: Mapping[str, FlowDecl] = field(init=False, repr=False)
+    runnables: Mapping[str, AgicDecl | FlowDecl] = field(init=False, repr=False)
+    runnable_modules: Mapping[str, str] = field(init=False, repr=False)
     module_runnables: Mapping[str, AgicDecl | FlowDecl] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -581,11 +571,16 @@ class AgentState:
                     {cap.name: cap for cap in caps_index.values() if cap.kind == kind}
                 ),
             )
-        public_runnables = public_runnable_index(modules, sources)
+        public_runnables, runnable_modules = public_runnable_index(modules, sources)
         object.__setattr__(
             self,
             "runnables",
             freeze_mapping(public_runnables),
+        )
+        object.__setattr__(
+            self,
+            "runnable_modules",
+            freeze_mapping(runnable_modules),
         )
         object.__setattr__(
             self, "agics", _runnable_kind_index(public_runnables, "agic")
@@ -683,12 +678,13 @@ def compose_agent_state(
 
 
 def _runnable_kind_index(
-    runnables: Mapping[str, PublicRunnable],
+    runnables: Mapping[str, AgicDecl | FlowDecl],
     kind: RunnableKind,
-) -> Mapping[str, PublicRunnable]:
-    return freeze_mapping(
-        {name: entry for name, entry in runnables.items() if entry.kind == kind}
-    )
+) -> Mapping[str, AgicDecl] | Mapping[str, FlowDecl]:
+    entries = {name: entry for name, entry in runnables.items() if entry.kind == kind}
+    if kind == "agic":
+        return freeze_mapping(cast(dict[str, AgicDecl], entries))
+    return freeze_mapping(cast(dict[str, FlowDecl], entries))
 
 
 def cap_index(caps: tuple[StateCap, ...]) -> Mapping[str, StateCap]:

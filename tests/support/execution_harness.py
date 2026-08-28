@@ -29,7 +29,6 @@ from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.runnables import (
     parse_runnable_ref,
     resolve_state_runnable,
-    runnable_declaration,
 )
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
@@ -380,12 +379,11 @@ class ExecutionHarness:
         """Build a run spec while keeping scenario tests focused on behavior."""
 
         runnable_name, runnable_kind = parse_runnable_ref(runnable)
-        resolved = resolve_state_runnable(
+        module, declaration = resolve_state_runnable(
             self.state,
             runnable_name,
             kind=runnable_kind,
         )
-        declaration = runnable_declaration(self.state, resolved)
         return RunSpec(
             setup=self.setup,
             state=self.state,
@@ -398,8 +396,7 @@ class ExecutionHarness:
                 primary=primary,
                 named=named,
                 structs={
-                    item.name: item
-                    for item in self.state.modules[resolved.module].structs
+                    item.name: item for item in self.state.modules[module].structs
                 },
             ),
         )

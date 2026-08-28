@@ -132,7 +132,7 @@ class LocalChatSession:
             fallback_agic="chat",
         )
         if kind == "agic":
-            names = [item.name for item in state.agics.values()]
+            names = list(state.agics)
             default = default_agic
             return {
                 "default": default,
@@ -141,14 +141,14 @@ class LocalChatSession:
         if kind == "flow":
             return {
                 "default": default_flow,
-                "items": [{"name": item.name} for item in state.flows.values()],
+                "items": [{"name": name} for name in state.flows],
             }
         if kind == "runnable":
             return {
                 "default": setup.bindings.runnable or f"agic:{default_agic}",
                 "items": [
-                    {"kind": item.kind, "name": item.name}
-                    for item in state.runnables.values()
+                    {"kind": item.kind, "name": name}
+                    for name, item in state.runnables.items()
                 ],
             }
         raise ValueError(f"unknown runnable kind: {kind}")

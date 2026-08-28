@@ -13,7 +13,6 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.runnables import (
     resolve_bound_runnable,
     resolve_state_runnable,
-    runnable_declaration,
 )
 from toolang.state import state as cap_state
 from toolang.state.cache import (
@@ -596,7 +595,7 @@ def test_prepare_discovers_independent_flow_module_exports(tmp_path: Path) -> No
 
     state = prepare_agent_state(_layout(toolang_root))
 
-    assert [(item.kind, item.name) for item in state.runnables.values()] == [
+    assert [(item.kind, name) for name, item in state.runnables.items()] == [
         ("agic", "default"),
         ("flow", "research"),
     ]
@@ -612,11 +611,11 @@ def test_prepare_discovers_independent_flow_module_exports(tmp_path: Path) -> No
     assert helper is not None
     assert helper is program.find_agic("helper")
     exported = state.runnables["research"]
-    assert exported.module == "_flow_research"
-    assert runnable_declaration(state, exported) is program.find_flow("main")
+    assert state.runnable_modules["research"] == "_flow_research"
+    assert exported is program.find_flow("main")
     default = state.runnables["default"]
-    assert default.module == "agent"
-    assert default.local_name == "default"
+    assert state.runnable_modules["default"] == "agent"
+    assert default.name == "default"
 
 
 def test_unnamed_flow_export_renames_with_its_file(tmp_path: Path) -> None:
@@ -629,22 +628,18 @@ def test_unnamed_flow_export_renames_with_its_file(tmp_path: Path) -> None:
     source.write_text("flow:\n  pass\n", encoding="utf-8")
     first = prepare_agent_state(_layout(toolang_root))
 
-    public = resolve_state_runnable(first, "research", kind="flow")
+    public_module, public = resolve_state_runnable(first, "research", kind="flow")
     local = resolve_bound_runnable(first, "_flow_research", "flow:research")
-    assert public.ref == local.ref == "flow:research"
-    assert public.qualified == local.qualified == "_flow_research$flow:research"
-    assert (
-        runnable_declaration(first, public).name
-        == runnable_declaration(first, local).name
-        == "main"
-    )
+    assert public_module == "_flow_research"
+    assert public is local
+    assert public.name == local.name == "main"
 
     source.rename(flows / "report.too")
     second = prepare_agent_state(_layout(toolang_root))
 
     assert "research" in first.runnables
     assert "research" not in second.runnables
-    assert second.runnables["report"].local_name == "main"
+    assert second.runnables["report"].name == "main"
     assert first.revision != second.revision
 
 

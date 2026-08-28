@@ -23,7 +23,6 @@ from .policy import parse_policy_prefix, resolve_commands
 from .runnables import (
     parse_runnable_ref,
     resolve_state_runnable,
-    runnable_declaration,
 )
 from .schemas import RerunRequest, RetryRequest, RunRequest
 from .types import RunOverride
@@ -123,13 +122,12 @@ def resolve_spec(
     )
     runnable_ref = bindings.runnable or default_runnable
     runnable_name, runnable_kind = parse_runnable_ref(runnable_ref)
-    resolved = resolve_state_runnable(
+    module, runnable = resolve_state_runnable(
         state,
         runnable_name,
         kind=runnable_kind,
     )
-    runnable = runnable_declaration(state, resolved)
-    program = state.modules[resolved.module]
+    program = state.modules[module]
     if surface_named and surface_named_sources:
         raise ValueError("surface named inputs cannot be both bound and sourced")
     if input.named and (surface_named or surface_named_sources):
@@ -159,7 +157,7 @@ def resolve_spec(
         thread=thread,
         bindings=RunBindings(
             model=bindings.model,
-            runnable=f"{resolved.kind}:{resolved.name}",
+            runnable=f"{runnable.kind}:{runnable_name}",
         ),
         limits=limits,
         ceilings=ceilings,
@@ -198,17 +196,16 @@ def validate_commands(
     runnable_name, runnable_kind = parse_runnable_ref(
         bindings.runnable or default_runnable
     )
-    resolved = resolve_state_runnable(
+    module, runnable = resolve_state_runnable(
         state,
         runnable_name,
         kind=runnable_kind,
     )
-    runnable = runnable_declaration(state, resolved)
     resources = resolve_agent_resources(
         setup,
         state,
         setup.ceiling,
-        module=resolved.module,
+        module=module,
     )
     for ceiling in ceilings:
         resources = apply_agent_ceiling(
@@ -216,7 +213,7 @@ def validate_commands(
             state,
             resources,
             ceiling,
-            module=resolved.module,
+            module=module,
         )
     resources = resolve_runnable_resources(
         snapshot_model_selection(setup, state),
@@ -224,7 +221,7 @@ def validate_commands(
         base=resources,
         setup=setup,
         state=state,
-        module=resolved.module,
+        module=module,
     )
     validate_model_binding(
         snapshot_model_selection(setup, state),

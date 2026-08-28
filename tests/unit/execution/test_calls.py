@@ -27,7 +27,7 @@ agic bound(_: Part[]):
 """
 
 
-def test_root_runnable_selector_is_not_forwarded_to_the_model(tmp_path) -> None:
+def test_root_runnable_selector_is_removed_from_current_model_input(tmp_path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -61,6 +61,68 @@ flow hello_flow(_: Text) -> Text:
             assert harness.adapter.invocations[0].call.messages[-1] == Message.user(
                 "hello world"
             )
+
+    asyncio.run(scenario())
+
+
+def test_root_runnable_selector_is_removed_from_recalled_history(tmp_path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic worker(_: Text) -> Text:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+
+agic chat(_: Text) -> Text:
+  recall = history
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow hello_flow(_: Text) -> Text:
+  run worker
+""",
+        responses=(
+            ModelCallResult(message=Message.assistant("first done")),
+            ModelCallResult(message=Message.assistant("second done")),
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            commands, input = parse_call(":flow hello_flow\n\nhello world")
+            first = await harness.executor.run(
+                resolve_spec(
+                    commands,
+                    input,
+                    setup=harness.setup,
+                    state=harness.state,
+                    thread=thread,
+                    default_runnable="default",
+                )
+            )
+            commands, input = parse_call(":agic chat\n\nnext")
+            second = await harness.executor.run(
+                resolve_spec(
+                    commands,
+                    input,
+                    setup=harness.setup,
+                    state=harness.state,
+                    thread=thread,
+                    default_runnable="default",
+                )
+            )
+
+            assert first.status == second.status == "succeeded"
+            assert harness.adapter.invocations[1].call.messages == [
+                Message.user("hello world"),
+                Message.user("hello world"),
+                Message.assistant("first done"),
+                Message.user("next"),
+            ]
 
     asyncio.run(scenario())
 

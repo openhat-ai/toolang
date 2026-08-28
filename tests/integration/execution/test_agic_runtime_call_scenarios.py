@@ -368,7 +368,7 @@ def test_dynamic_run_rejects_the_current_agic_and_model_recovers(
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
-agic parent(_: Text) -> Text:
+agic parent(_: Text, threshold: Number) -> Text:
   recall = none
   tools = _too/run
   context: none
@@ -402,6 +402,7 @@ agic parent(_: Text) -> Text:
                     thread=thread,
                     runnable="agic:parent",
                     primary=resolve_input_parts("start"),
+                    named={"threshold": 0.8},
                 )
             )
 
