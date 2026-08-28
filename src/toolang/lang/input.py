@@ -9,7 +9,7 @@ import math
 import re
 import shlex
 from types import MappingProxyType
-from typing import TypeAlias, cast
+from typing import Any, TypeAlias, cast
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import (
@@ -17,6 +17,7 @@ from toolang.base.types.message import (
     Part,
     TextPart,
     message_text,
+    part_from_data,
 )
 from toolang.common.template import render_text_template
 
@@ -184,6 +185,17 @@ def coerce_input(
         structs=structs or {},
         boundary="input",
     )
+
+
+def decode_json_input(
+    value: object,
+    type_name: str,
+    *,
+    structs: Mapping[str, StructDecl] | None = None,
+) -> object:
+    """Decode one JSON-compatible caller value for a declared input type."""
+
+    return _decode_input_value(value, type_name, structs=structs or {})
 
 
 def coerce_output(
@@ -683,6 +695,57 @@ def _plain_value(value: object) -> object:
         return {str(name): _plain_value(item) for name, item in value.items()}
     if isinstance(value, tuple | list):
         return [_plain_value(item) for item in value]
+    return value
+
+
+def _decode_input_value(
+    value: object,
+    type_name: str,
+    *,
+    structs: Mapping[str, StructDecl],
+) -> object:
+    """Decode JSON-compatible part values against one declared input type."""
+
+    if type_name == "Part[]":
+        if isinstance(value, str):
+            return (TextPart(value),)
+        if isinstance(value, Array | tuple | list):
+            return tuple(_decode_input_part(item) for item in value)
+        return value
+    if type_name == "Part":
+        return _decode_input_part(value)
+    if type_name.endswith("[]"):
+        if not isinstance(value, Array | tuple | list):
+            return value
+        item_type = type_name[:-2]
+        return tuple(
+            _decode_input_value(item, item_type, structs=structs) for item in value
+        )
+    struct = structs.get(type_name)
+    if struct is None or not isinstance(value, Mapping):
+        return value
+    fields = {field.name: field for field in struct.fields}
+    mapping = cast(Mapping[str, object], value)
+    return {
+        name: (
+            _decode_input_value(item, fields[name].type_name, structs=structs)
+            if name in fields
+            else item
+        )
+        for name, item in mapping.items()
+    }
+
+
+def _decode_input_part(value: object) -> object:
+    if _is_part(value):
+        return value
+    if isinstance(value, str):
+        return TextPart(value)
+    if isinstance(value, Mapping):
+        try:
+            return part_from_data(cast(Mapping[str, Any], value))
+        except (TypeError, ValueError) as exc:
+            raise ToolangError(str(exc) or type(exc).__name__) from exc
     return value
 
 

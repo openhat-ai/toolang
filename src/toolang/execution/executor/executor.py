@@ -28,6 +28,7 @@ from toolang.lang.ast import (
 )
 from toolang.lang.input import (
     RunnableInput,
+    decode_json_input,
     resolve_runnable_input,
     validate_value,
 )
@@ -73,6 +74,7 @@ from ..runnables import (
     ResolvedRunnable,
     parse_runnable_ref,
     render_runnable_catalog,
+    runnable_input_contract,
     resolve_bound_runnable,
     resolve_module_runnable,
     resolve_state_runnable,
@@ -1569,18 +1571,55 @@ class _Execution:
     ) -> RunnableInput:
         """Coerce one JSON object through the target module's input contracts."""
 
-        if not isinstance(raw_input, Mapping):
-            raise ValueError("_too/run input must be an object")
-        if not all(isinstance(name, str) for name in raw_input):
-            raise ValueError("_too/run input field names must be text")
-        input_values = cast(Mapping[str, object], raw_input)
         structs = {item.name: item for item in resolved.module.program.structs}
-        input = resolve_runnable_input(
-            resolved.executable,
-            primary=input_values.get("_") if "_" in input_values else None,
-            named={name: value for name, value in input_values.items() if name != "_"},
-            structs=structs,
-        )
+        try:
+            if not isinstance(raw_input, Mapping):
+                raise ValueError("_too/run input must be an object")
+            if not all(isinstance(name, str) for name in raw_input):
+                raise ValueError("_too/run input field names must be text")
+            input_values = cast(Mapping[str, object], raw_input)
+            executable = resolved.executable
+            parameters = {item.name: item for item in executable.params}
+            primary = input_values.get("_") if "_" in input_values else None
+            if primary is not None and executable.input is not None:
+                primary = decode_json_input(
+                    primary,
+                    executable.input.type_name or "Part[]",
+                    structs=structs,
+                )
+            named = {
+                name: (
+                    decode_json_input(
+                        value,
+                        parameters[name].type_name or "Part[]",
+                        structs=structs,
+                    )
+                    if name in parameters
+                    else value
+                )
+                for name, value in input_values.items()
+                if name != "_"
+            }
+            input = resolve_runnable_input(
+                executable,
+                primary=primary,
+                named=named,
+                structs=structs,
+            )
+        except (ToolangError, TypeError, ValueError) as exc:
+            raise _RunRejected(
+                str(exc) or type(exc).__name__,
+                details={
+                    "code": "invalid_runnable_input",
+                    "runnable": resolved.ref,
+                    "expected": runnable_input_contract(resolved),
+                    "guidance": (
+                        "Retry only when available context provides the required "
+                        "values; otherwise respond to the user in the normal model "
+                        "output with a specific question."
+                    ),
+                },
+            ) from exc
         _validate_inputs(
             program=resolved.module.program,
             executable=resolved.executable,

@@ -94,6 +94,13 @@ def test_catalog_requires_explicit_delegation_intent() -> None:
     assert "authored instructions explicitly require delegation" in instruction
     assert "merely because it resembles the current request" in instruction
     assert "current or an ancestor runnable" in instruction
+    assert "read its input signature" in instruction
+    assert "Do not invent missing required input" in instruction
+    assert "unavailable or ambiguous" in instruction
+    assert "normal model output with a specific question" in instruction
+    assert "After an input validation error, retry only" in instruction
+    assert "a JSON string represents one text part" in instruction
+    assert '"type":"text","text":"..."' in instruction
 
 
 def test_catalog_byte_limit_stops_before_a_complete_multibyte_entry() -> None:

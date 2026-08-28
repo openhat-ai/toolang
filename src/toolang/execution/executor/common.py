@@ -89,6 +89,15 @@ class _StepFailed(_ExecutionFailed):
 class _RunRejected(Exception):
     """Carry one expected child-run request rejection into its Run Step."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.details = dict(details or {})
+
 
 @dataclass(frozen=True, slots=True)
 class BoundRun:

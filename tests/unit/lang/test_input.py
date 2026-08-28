@@ -22,6 +22,7 @@ from toolang.lang.input import (
     RunnableInputRaw,
     coerce_input,
     coerce_output,
+    decode_json_input,
     parse_input,
     resolve_input_parts,
     resolve_runnable_input,
@@ -342,6 +343,43 @@ def test_struct_coercion_validates_fields() -> None:
             "Review",
             structs={"Review": review},
         )
+
+
+def test_input_coercion_decodes_parts_nested_in_structs() -> None:
+    request = StructDecl(
+        name="Request",
+        fields=(
+            Field(name="prompt", type_name="Part", span=Span(1)),
+            Field(name="context", type_name="Part[]", span=Span(1)),
+        ),
+        span=Span(1),
+    )
+
+    raw = {
+        "prompt": {"type": "text", "text": "Review"},
+        "context": [
+            "the draft",
+            {"type": "image", "file_id": "image-1"},
+        ],
+    }
+    decoded = decode_json_input(
+        raw,
+        "Request",
+        structs={"Request": request},
+    )
+
+    assert coerce_input(decoded, "Request", structs={"Request": request}) == Struct(
+        "Request",
+        {
+            "prompt": TextPart("Review"),
+            "context": Array(
+                "Part[]",
+                (TextPart("the draft"), ImagePart(file_id="image-1")),
+            ),
+        },
+    )
+    with pytest.raises(ToolangError, match="ordered part sequence"):
+        coerce_input("the draft", "Part[]")
 
 
 def test_output_coercion_keeps_undeclared_assistant_parts() -> None:

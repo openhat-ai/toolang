@@ -138,6 +138,230 @@ agic child(_: Text) -> Text:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    "primary",
+    (
+        "candidate",
+        [{"type": "text", "text": "candidate"}],
+    ),
+)
+def test_dynamic_run_decodes_part_array_wire_input(
+    tmp_path: Path,
+    primary: object,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic parent(_: Text) -> Text:
+  recall = none
+  tools = _too/run
+  context: none
+  instruct: none
+  user: {{_}}
+
+agic reviewer(_: Part[]) -> Text:
+  recall = none
+  tools = -_too/*
+  context: none
+  instruct: none
+  user: Review {{_}}
+
+flow check(_: Part[]) -> Text:
+  run reviewer
+""",
+        tools=_runtime_tools(),
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="run-check",
+                        call_id="provider-run-check",
+                        name="_too__run",
+                        input={
+                            "runnable": "flow:check",
+                            "input": {"_": primary},
+                        },
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("checked")),
+            ModelCallResult(message=Message.assistant("done")),
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="agic:parent",
+                    primary=resolve_input_parts("start"),
+                )
+            )
+
+            assert root.status == "succeeded", root.error
+            runs = harness.store.list_run_tree(root_run_id=root.id)
+            assert len(runs) == 3
+            reviewer_call = harness.adapter.invocations[1].call
+            assert reviewer_call.messages[-1] == Message.user("Review candidate")
+
+    asyncio.run(scenario())
+
+
+def test_dynamic_run_input_failure_returns_the_expected_signature(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic parent(_: Text) -> Text:
+  recall = none
+  tools = _too/run
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow check(_: Text, threshold: Number) -> Text:
+  pass
+""",
+        tools=_runtime_tools(),
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="run-check",
+                        call_id="provider-run-check",
+                        name="_too__run",
+                        input={
+                            "runnable": "flow:check",
+                            "input": {"_": "candidate"},
+                        },
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("What threshold should I use?")),
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="agic:parent",
+                    primary=resolve_input_parts("start"),
+                )
+            )
+
+            assert root.status == "succeeded", root.error
+            assert harness.store.list_run_tree(root_run_id=root.id) == [root]
+            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
+            assert isinstance(result, ToolResultPart)
+            assert result.error == "missing named inputs for check: threshold"
+            assert result.output == {
+                "error": "missing named inputs for check: threshold",
+                "code": "invalid_runnable_input",
+                "runnable": "flow:check",
+                "expected": {
+                    "input": {"optional": False, "type": "Text"},
+                    "parameters": [
+                        {
+                            "name": "threshold",
+                            "optional": False,
+                            "type": "Number",
+                        }
+                    ],
+                    "structs": [],
+                },
+                "guidance": (
+                    "Retry only when available context provides the required "
+                    "values; otherwise respond to the user in the normal model "
+                    "output with a specific question."
+                ),
+            }
+            assert root.output is not None
+            assert harness.store.resolve_value(root.output.value) == (
+                "What threshold should I use?"
+            )
+
+    asyncio.run(scenario())
+
+
+def test_dynamic_run_input_failure_can_be_corrected(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic parent(_: Text) -> Text:
+  recall = none
+  tools = _too/run
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow check(_: Text, threshold: Number) -> Text:
+  pass
+""",
+        tools=_runtime_tools(),
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="run-check-invalid",
+                        call_id="provider-run-check-invalid",
+                        name="_too__run",
+                        input={
+                            "runnable": "flow:check",
+                            "input": {"_": "candidate"},
+                        },
+                    ),
+                )
+            ),
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="run-check-corrected",
+                        call_id="provider-run-check-corrected",
+                        name="_too__run",
+                        input={
+                            "runnable": "flow:check",
+                            "input": {"_": "candidate", "threshold": 0.8},
+                        },
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("checked")),
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="agic:parent",
+                    primary=resolve_input_parts("start"),
+                )
+            )
+
+            assert root.status == "succeeded", root.error
+            assert len(harness.store.list_run_tree(root_run_id=root.id)) == 2
+            assert [
+                (step.kind, step.status)
+                for step in harness.store.list_steps(run_id=root.id)
+            ] == [
+                ("model", "succeeded"),
+                ("run", "failed"),
+                ("model", "succeeded"),
+                ("run", "succeeded"),
+                ("model", "succeeded"),
+            ]
+
+    asyncio.run(scenario())
+
+
 def test_dynamic_run_rejects_the_current_agic_and_model_recovers(
     tmp_path: Path,
 ) -> None:
@@ -194,6 +418,7 @@ agic parent(_: Text) -> Text:
             assert result.error == (
                 "_too/run cannot call the current or an ancestor runnable: agic:parent"
             )
+            assert result.output == {"error": result.error}
 
     asyncio.run(scenario())
 
@@ -259,6 +484,7 @@ flow outer(_: Text) -> Text:
             assert result.error == (
                 "_too/run cannot call the current or an ancestor runnable: flow:outer"
             )
+            assert result.output == {"error": result.error}
 
     asyncio.run(scenario())
 
