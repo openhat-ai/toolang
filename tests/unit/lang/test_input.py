@@ -25,6 +25,7 @@ from toolang.lang.input import (
     decode_json_input,
     parse_input,
     resolve_input_parts,
+    resolve_input_parts_with_provenance,
     resolve_runnable_input,
 )
 from toolang.lang.types import Array, Struct
@@ -150,7 +151,7 @@ def test_typed_part_splice_preserves_multimodal_order() -> None:
 
 
 def test_structured_parts_are_canonical_data_not_source_syntax() -> None:
-    parts = (TextPart("@README.md\n/review target"),)
+    parts = (TextPart("@README.md\n$review target"),)
 
     assert resolve_input_parts(parts) is parts
 
@@ -174,12 +175,16 @@ def test_include_resolver_inserts_one_typed_part() -> None:
 
 def test_content_markers_are_special_only_at_the_start_of_a_line() -> None:
     assert resolve_input_parts(
-        " //review\n @file.md\n::model gpt-5\n//review\n@@file.md"
-    ) == (TextPart(" //review\n @file.md\n:model gpt-5\n/review\n@file.md"),)
+        " //review\n $review\n @file.md\n::model gpt-5\n//review\n$$review\n@@file.md"
+    ) == (
+        TextPart(
+            " //review\n $review\n @file.md\n:model gpt-5\n/review\n$review\n@file.md"
+        ),
+    )
 
 
 def test_markdown_fences_suspend_content_recognition() -> None:
-    source = "```text\n/review\n@file.md\n```\nAfter"
+    source = "```text\n$review\n@file.md\n```\nAfter"
 
     assert resolve_input_parts(source) == (TextPart(source),)
 
@@ -200,7 +205,7 @@ def test_prompt_without_input_leaves_following_content_outside() -> None:
         ),
     )
 
-    assert resolve_input_parts("/label\nFollowing", program=program) == (
+    assert resolve_input_parts("$label\nFollowing", program=program) == (
         TextPart("LABEL\nFollowing"),
     )
 
@@ -221,7 +226,7 @@ def test_tail_prompt_consumes_all_remaining_content() -> None:
         ),
     )
 
-    assert resolve_input_parts("/wrap -\nOne\nTwo", program=program) == (
+    assert resolve_input_parts("$wrap -\nOne\nTwo", program=program) == (
         TextPart("Before One\nTwo after"),
     )
 
@@ -243,12 +248,12 @@ def test_fenced_prompt_consumes_only_its_exact_backtick_scope() -> None:
     )
 
     assert resolve_input_parts(
-        "/wrap ```\nInside\n```\nOutside",
+        "$wrap ```\nInside\n```\nOutside",
         program=program,
     ) == (TextPart("[Inside\n]\nOutside"),)
 
     with pytest.raises(ToolangError, match="Unclosed prompt fence"):
-        resolve_input_parts("/wrap ````\nInside\n```", program=program)
+        resolve_input_parts("$wrap ````\nInside\n```", program=program)
 
 
 def test_prompt_arguments_require_named_syntax() -> None:
@@ -268,7 +273,89 @@ def test_prompt_arguments_require_named_syntax() -> None:
     )
 
     with pytest.raises(ToolangError, match="name=value syntax"):
-        resolve_input_parts("/review security", program=program)
+        resolve_input_parts("$review security", program=program)
+
+
+def test_inline_prompt_consumes_only_nonempty_current_line_text() -> None:
+    from toolang.lang.ast import CapDecl, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="wrap",
+                params=(),
+                body="[{{_}}]",
+                span=Span(1),
+            ),
+        ),
+    )
+
+    assert resolve_input_parts(
+        "$wrap -- $literal @literal /literal :literal\nOutside",
+        program=program,
+    ) == (TextPart("[$literal @literal /literal :literal]\nOutside"),)
+    with pytest.raises(ToolangError, match="requires nonempty text"):
+        resolve_input_parts("$wrap --   ", program=program)
+
+
+def test_prompt_resolution_records_ordered_nested_provenance() -> None:
+    from toolang.lang.ast import CapDecl, Parameter, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="outer",
+                params=(Parameter(name="focus", span=Span(1)),),
+                body="{{focus}} {{_}}",
+                span=Span(1),
+            ),
+            CapDecl(
+                kind="prompt",
+                name="inner",
+                params=(),
+                body="inner {{_}}",
+                span=Span(2),
+            ),
+        ),
+    )
+
+    resolved = resolve_input_parts_with_provenance(
+        "$outer focus=security -\n$inner -- target",
+        program=program,
+    )
+
+    assert resolved.parts == (TextPart("security inner target"),)
+    assert [invocation.name for invocation in resolved.prompts] == ["outer", "inner"]
+    assert resolved.prompts[0].arguments == (("focus", "security"),)
+    assert resolved.prompts[0].input_scope == "tail"
+    assert resolved.prompts[0].parent is None
+    assert resolved.prompts[1].input_scope == "inline"
+    assert resolved.prompts[1].parent == 0
+    assert all(len(invocation.content_hash) == 64 for invocation in resolved.prompts)
+
+
+def test_legacy_slash_prompt_call_is_accepted_with_a_diagnostic() -> None:
+    from toolang.lang.ast import CapDecl, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="label",
+                params=(),
+                body="LABEL",
+                span=Span(1),
+            ),
+        ),
+    )
+
+    with pytest.warns(FutureWarning, match=r"use \$label"):
+        assert resolve_input_parts("/label", program=program) == (TextPart("LABEL"),)
 
 
 def test_input_coercion_preserves_parts_and_parses_declared_values() -> None:

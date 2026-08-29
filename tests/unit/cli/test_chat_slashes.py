@@ -5,6 +5,7 @@ from typing import Any
 
 from toolang.base.types.message import TextPart
 from toolang.common.errors import ToolangError
+from toolang.execution.types import RunOverride
 from toolang.cli.toolang.commands.chat import slashes
 from toolang.cli.toolang.commands.chat.base import ChatResult, QueuedCall
 from toolang.cli.toolang.commands.chat.input import QuickCommand
@@ -42,6 +43,7 @@ class _Client:
                 output=(TextPart("saved result"),),
             )
         }
+        self.applied: list[tuple[RunOverride, ...]] = []
 
     def list_models(self) -> Mapping[str, Any]:
         if self.error is not None:
@@ -61,6 +63,24 @@ class _Client:
     ) -> ChatResult:
         del thread_id
         return self.results[run_id or "run_saved"]
+
+    def apply_settings(
+        self,
+        commands: tuple[RunOverride, ...],
+        selects: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        self.applied.append(commands)
+        result = dict(selects)
+        for command in commands:
+            if command.field == "model":
+                result["model"] = command.value
+            elif command.field == "runnable" and isinstance(command.value, str):
+                kind, name = command.value.split(":", 1)
+                result.pop("agic", None)
+                result.pop("flow", None)
+                result.pop("runnable", None)
+                result[kind] = name
+        return result
 
 
 class _App:
@@ -136,7 +156,7 @@ def test_quick_handle_reports_unknown_commands() -> None:
     result = slashes.handle(app, QuickCommand("missing"))
 
     assert result.handled is True
-    assert app.error == "Unknown command: :missing"
+    assert app.error == "Unknown command: /missing"
 
 
 def test_quick_help_and_exit_are_declarative_commands() -> None:
@@ -161,6 +181,17 @@ def test_quick_model_lists_models_without_changing_settings() -> None:
     assert app.status_refreshes == 0
 
 
+def test_model_argument_updates_validated_session_default() -> None:
+    app = _App()
+
+    result = slashes.handle(app, QuickCommand("model", "openai/gpt-5"))
+
+    assert result.lines is None
+    assert app.client.applied == [(RunOverride("default", "model", "[openai]"),)]
+    assert app.selects == {"model": "[openai]"}
+    assert app.status_refreshes == 1
+
+
 def test_quick_runnable_lists_without_changing_settings() -> None:
     app = _App()
     app.selects["flow"] = "review"
@@ -183,6 +214,17 @@ def test_quick_runnable_lists_qualified_agics_and_flows() -> None:
         "agic:chat  default",
         "flow:review  current",
     ]
+
+
+def test_runnable_argument_updates_validated_session_default() -> None:
+    app = _App()
+
+    result = slashes.handle(app, QuickCommand("flow", "review"))
+
+    assert result.lines is None
+    assert app.client.applied == [(RunOverride("default", "runnable", "flow:review"),)]
+    assert app.selects == {"flow": "review"}
+    assert app.status_refreshes == 1
 
 
 def test_quick_show_loads_an_explicit_or_latest_durable_result() -> None:
@@ -227,4 +269,17 @@ def test_quick_steer_requires_message() -> None:
 
     slashes.handle(app, QuickCommand("steer"))
 
-    assert app.error == ":steer requires a message."
+    assert app.error == "/steer requires a message."
+
+
+def test_legacy_colon_command_reports_canonical_replacement() -> None:
+    app = _App()
+
+    result = slashes.handle(app, QuickCommand("help", legacy=":help"))
+
+    assert result.lines is not None
+    assert result.lines[:3] == [
+        ":help is deprecated; use /help.",
+        "",
+        "Chat Commands",
+    ]

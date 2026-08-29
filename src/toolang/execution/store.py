@@ -19,6 +19,7 @@ from toolang.base.types.message import (
     message_text,
 )
 from toolang.base.types.run import ModelCall
+from toolang.lang.input import PromptInvocation, RunnableInputRaw
 from toolang.lang.types import Array, Struct, Value
 from toolang.base.types.tool import ToolDefinition
 from toolang.base.types.policy import RunLimits
@@ -78,6 +79,7 @@ from .types import (
     Occurrence,
     Pointer,
     TypedPointer,
+    RunOverride,
     validate_runtime_value,
     valid_run_id,
     valid_thread_id,
@@ -205,6 +207,10 @@ class RunStore:
         kind: Literal["run", "rerun"] = "run",
         source: str | None = None,
         state_ref: ControlRef | None = None,
+        authored_input: RunnableInputRaw | None = None,
+        authored_commands: tuple[RunOverride, ...] = (),
+        authored_session_commands: tuple[RunOverride, ...] = (),
+        prompt_invocations: tuple[PromptInvocation, ...] = (),
     ) -> tuple[RunRecord, ControlRecord]:
         """Atomically insert one new run and its entry control."""
 
@@ -337,6 +343,10 @@ class RunStore:
                         model=model,
                         locals=locals,
                         sandbox=sandbox,
+                        authored_input=authored_input,
+                        authored_commands=authored_commands,
+                        authored_session_commands=authored_session_commands,
+                        prompt_invocations=prompt_invocations,
                     )
                     if kind == "run"
                     else RerunControlPayload(
@@ -348,6 +358,10 @@ class RunStore:
                         locals=locals,
                         rerun_from=cast(str, source),
                         sandbox=sandbox,
+                        authored_input=authored_input,
+                        authored_commands=authored_commands,
+                        authored_session_commands=authored_session_commands,
+                        prompt_invocations=prompt_invocations,
                     )
                 )
                 self._insert_control(
@@ -672,6 +686,10 @@ class RunStore:
         sandbox: str,
         request_id: str | None,
         created_at: str,
+        authored_input: RunnableInputRaw | None = None,
+        authored_commands: tuple[RunOverride, ...] = (),
+        authored_session_commands: tuple[RunOverride, ...] = (),
+        prompt_invocations: tuple[PromptInvocation, ...] = (),
     ) -> tuple[RunRecord, ControlRecord, tuple[StepPath, ...]]:
         """Atomically cut one root run at a step and reopen it for execution."""
 
@@ -802,6 +820,10 @@ class RunStore:
                         locals=locals,
                         retry_from=resolved_anchor,
                         sandbox=sandbox,
+                        authored_input=authored_input,
+                        authored_commands=authored_commands,
+                        authored_session_commands=authored_session_commands,
+                        prompt_invocations=prompt_invocations,
                     ),
                     request=request_id,
                     status="applied",

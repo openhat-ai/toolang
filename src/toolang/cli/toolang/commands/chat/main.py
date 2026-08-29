@@ -283,7 +283,11 @@ def _chat_interactive_scripted_local(
         except KeyboardInterrupt:
             typer.echo()
             return
+        if text.strip() in {"/exit", "/quit"}:
+            return
         if text.strip() in {":exit", ":quit"}:
+            replacement = text.strip().removeprefix(":")
+            typer.echo(f"{text.strip()} is deprecated; use /{replacement}.")
             return
         if not text.strip():
             continue
@@ -336,6 +340,9 @@ def _chat_handle_scripted_command(
     if not isinstance(chat_input, QuickCommand):
         raise AssertionError("unknown chat input value")
     command = chat_input.name
+    if chat_input.legacy is not None:
+        primary = chat_slashes._SLASH_BY_NAME[command].primary
+        typer.echo(f"{chat_input.legacy} is deprecated; use /{primary}.")
     if command in {"help", "?"}:
         for line in chat_slashes._chat_help_lines():
             typer.echo(line)
@@ -343,17 +350,41 @@ def _chat_handle_scripted_command(
     if command in {"agic", "flow", "runnable"}:
         return _chat_handle_scripted_runnable_command(
             command,
+            chat_input.tail,
             selector_payload,
             client=client,
         )
-    if command not in {"model", "models"}:
-        typer.echo(f"Unknown command: :{command}")
+    if command != "model":
+        typer.echo(f"Unknown command: /{command}")
         return True
     try:
         payload = client.list_models()
     except (click.ClickException, ToolangError, ValueError) as exc:
         message = exc.message if isinstance(exc, click.ClickException) else str(exc)
         typer.echo(chat_friendly_error(message))
+        return True
+    if chat_input.tail is not None:
+        tokens = chat_input.tail.split()
+        resolved = (
+            chat_slashes._chat_resolve_model_command(payload, tokens[0])
+            if len(tokens) == 1
+            else None
+        )
+        if resolved is None:
+            typer.echo(f"Model selector is unknown or ambiguous: {chat_input.tail}")
+            return True
+        try:
+            updated = client.apply_settings(
+                (RunOverride("default", "model", resolved[0]),),
+                selector_payload,
+            )
+        except (click.ClickException, ToolangError, ValueError) as exc:
+            message = exc.message if isinstance(exc, click.ClickException) else str(exc)
+            typer.echo(chat_friendly_error(message))
+            return True
+        selector_payload.clear()
+        selector_payload.update(updated)
+        typer.echo(chat_status_label(selector_payload))
         return True
     typer.echo("available models")
     for line in chat_slashes._chat_model_list_lines(payload):
@@ -363,6 +394,7 @@ def _chat_handle_scripted_command(
 
 def _chat_handle_scripted_runnable_command(
     command: str,
+    argument: str | None,
     selector_payload: dict[str, object],
     *,
     client: ChatClient,
@@ -372,6 +404,29 @@ def _chat_handle_scripted_runnable_command(
     except (click.ClickException, ToolangError, ValueError) as exc:
         message = exc.message if isinstance(exc, click.ClickException) else str(exc)
         typer.echo(chat_friendly_error(message))
+        return True
+    if argument is not None:
+        tokens = argument.split()
+        resolved = (
+            chat_slashes._resolve_runnable_command(payload, tokens[0], kind=command)
+            if len(tokens) == 1
+            else None
+        )
+        if resolved is None:
+            typer.echo(f"Runnable selector is unknown or ambiguous: {argument}")
+            return True
+        try:
+            updated = client.apply_settings(
+                (RunOverride("default", "runnable", resolved),),
+                selector_payload,
+            )
+        except (click.ClickException, ToolangError, ValueError) as exc:
+            message = exc.message if isinstance(exc, click.ClickException) else str(exc)
+            typer.echo(chat_friendly_error(message))
+            return True
+        selector_payload.clear()
+        selector_payload.update(updated)
+        typer.echo(chat_status_label(selector_payload))
         return True
     selected = _text(selector_payload.get(command))
     if command == "runnable" and selected is None:

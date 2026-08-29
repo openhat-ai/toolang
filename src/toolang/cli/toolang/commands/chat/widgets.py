@@ -19,6 +19,7 @@ from toolang.cli.common.execution_progress.formatting import truncate
 
 from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
+from .input import normalize_chat_input
 from .rendering import (
     ACCENT_CELL,
     INPUT_BACKGROUND,
@@ -224,7 +225,7 @@ class PromptBox:
         @keys.add("enter")
         def submit(_event) -> None:
             self._notify_input()
-            message = self.buffer.text.strip()
+            message = normalize_chat_input(self.buffer.text)
             if not message:
                 return
             self._record_history(message)

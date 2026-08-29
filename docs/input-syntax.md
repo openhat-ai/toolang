@@ -104,25 +104,30 @@ Review this API.
 
 ## Terminal Chat Input
 
-The no-argument forms `:model`, `:models`, `:agic`, `:flow`, and `:runnable`
-are quick commands that list available choices. Other quick commands include:
+Slash commands are terminal-chat interactions and must occupy the complete
+normalized submission:
 
 ```text
-:help                 :show [RUN_ID]
-:?                    :queue [ACTION]
-:steer MESSAGE        :quit
-                      :exit
+/help                     /show [RUN_ID]
+/?                        /queue [ACTION]
+/model [MODEL]            /steer MESSAGE
+/agic [AGIC]              /quit
+/flow [FLOW]              /exit
+/runnable [RUNNABLE]
 ```
 
-A quick command cannot be combined with policy or runnable input. Chat removes
-leading and trailing blank lines, then removes horizontal whitespace from the
-end of the final line. It preserves indentation on the first nonblank line and
-all internal runnable-input whitespace.
+`/model` without an argument lists models; `/model MODEL` validates and applies
+the session default. There is no `/models` command. The runnable commands use
+the same no-argument listing and one-argument selection rule. A slash command
+cannot be combined with policy or runnable input. Chat removes leading and
+trailing blank lines, then removes horizontal whitespace from the end of the
+final line. It preserves indentation on the first nonblank line and all
+internal runnable-input whitespace.
 
-Until primary input starts, an unescaped `:` at column zero enters the command
-namespace. An unknown or malformed command is an error, not text. Use `::` to
-start primary input with a literal colon. After primary input starts, `:` is
-ordinary text.
+During the compatibility release, existing colon quick commands remain aliases
+and report their slash replacement. Colon policy directives remain canonical
+and are not deprecated. In particular, no-argument `:models` aliases `/model`,
+while `:models SELECTORS` remains an allow-policy shortcut.
 
 ## Runnable Input
 
@@ -148,13 +153,16 @@ ContentItem  = Text | IncludeRef | PromptCall
 evaluate(InputContent | Content) -> Part[]
 ```
 
-`/` and `@` are special only as the first character of a line. Ordinary
-Markdown code fences suspend special-line recognition. Double a leading marker
-to produce literal text:
+`$` and `@` are special only as the first character of a `Content` line. `:` is
+special only in the policy prefix, and `/` is special only when Chat classifies
+a complete command. Ordinary Markdown code fences suspend special-line
+recognition. Double a leading marker where its single form would be special to
+produce literal text:
 
 ```text
+//help           -> /help
+$$review         -> $review
 ::model gpt-5    -> :model gpt-5
-//review         -> /review
 @@README.md      -> @README.md
 ```
 
@@ -173,11 +181,14 @@ resources; a UI file picker inserts the same syntax.
 ### Prompts
 
 ```text
-PromptCall = PromptHeader | TailPrompt | FencedPrompt(n)
-PromptHeader = "/" PromptName (Space Argument)*
+PromptCall = PromptHeader | TailPrompt | InlinePrompt | FencedPrompt(n)
+PromptHeader = "$" PromptName (Space Argument)*
 
 TailPrompt
     = PromptHeader Space "-" LineBreak RemainingContent
+
+InlinePrompt
+    = PromptHeader Space "--" Space InlineText
 
 FencedPrompt(n)
     = PromptHeader Space Fence(n) LineBreak FencedContent(n) FenceLine(n)
@@ -189,21 +200,27 @@ FenceLine(n) = Fence(n) followed by LineBreak or EOF
 No prompt input; later lines remain in the enclosing content:
 
 ```text
-/common a=b c=d
+$common a=b c=d
 ```
 
 Use all remaining content in the current scope:
 
 ```text
-/common a=b c=d -
+$common a=b c=d -
 Review this file:
 @./api.md
+```
+
+Use the nonempty remainder of the current line as literal text input:
+
+```text
+$common a=b c=d -- Review this file
 ```
 
 Use only a matching fenced block:
 
 ````text
-/common a=b c=d ```
+$common a=b c=d ```
 Review this file:
 @./api.md
 ```
@@ -211,11 +228,22 @@ Review this file:
 Continue outside the prompt.
 ````
 
-`RemainingContent` ends with the current content scope. `FencedContent(n)` is
-the exact text before the first complete line equal to `Fence(n)` and may be
-empty. The `-` or opening fence must be the final header token. Fence lines are
-excluded; an unclosed fence is invalid. Prompt calls evaluate from the
-innermost call outward.
+`RemainingContent` ends with the current content scope. Inline input consumes
+only its current line, requires non-whitespace text, and does not recognize
+embedded markers. `FencedContent(n)` is the exact text before the first
+complete line equal to `Fence(n)` and may be empty. The `-`, `--`, or opening
+fence delimiter must be an unquoted standalone token after all `name=value`
+arguments. Tail and fenced bodies recursively evaluate nested `$` and `@`
+lines. Fence lines are excluded; an unclosed fence is invalid. Prompt calls
+evaluate from the innermost call outward.
+
+During the compatibility release, legacy `/prompt` calls remain accepted with
+a diagnostic. Canonical output and examples use `$prompt`. Shell commands must
+single-quote dollar-prefixed input, for example:
+
+```sh
+too run alice '$review focus=security'
+```
 
 ## Evaluation
 
@@ -241,3 +269,10 @@ Json/S/T[]  parse JSON and validate the declared type
 Conversion never discards non-text parts. Invalid input is rejected before the
 run starts. Output uses the same declared-type validation; structured model
 output may also be one Markdown code block labeled `json`.
+
+Run preparation persists both authored and effective facts. The authored
+policy and `RunnableInputRaw` sources retain `$prompt` syntax for transcript and
+history views. Ordered prompt provenance records canonical arguments, input
+scope, nesting parent, cap ref, and definition hash. Resolved locals drive
+conversation recall and retry/rerun, while model steps retain the exact
+normalized `ModelCall` sent to the adapter.

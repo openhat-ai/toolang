@@ -577,7 +577,7 @@ agic:
     program = read_authored_source(root, "alice").load_program().parse()
 
     expanded = resolve_input_parts(
-        '/review path=src/app.py focus="only errors" -\n\nAlso inspect tests.',
+        '$review path=src/app.py focus="only errors" -\n\nAlso inspect tests.',
         program=program,
     )
 

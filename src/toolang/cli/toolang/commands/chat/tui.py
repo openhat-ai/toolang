@@ -80,7 +80,6 @@ _BLOCKED_READ_ONLY_COMMANDS = frozenset(
         "help",
         "?",
         "model",
-        "models",
         "agic",
         "flow",
         "runnable",
@@ -595,6 +594,16 @@ class ChatTuiApp:
                 result = slash_result.result
                 rendering.write_renderables(
                     [
+                        *(
+                            [
+                                blocks.SlashBlock(
+                                    message,
+                                    slash_result.lines,
+                                ).render()
+                            ]
+                            if slash_result.lines is not None
+                            else []
+                        ),
                         blocks.SlashResultBlock(
                             message=message,
                             run_id=result.run_id,
@@ -779,4 +788,6 @@ def _blocked_input_allowed(value: object) -> bool:
         return False
     if value.name == "queue":
         return not (value.tail or "").strip()
+    if value.name in {"model", "agic", "flow", "runnable"}:
+        return value.tail is None
     return value.name in _BLOCKED_READ_ONLY_COMMANDS
