@@ -35,6 +35,9 @@ definition before the operational-progress feature is complete.
 - Some commands construct `ProgressEvent` values and hard-code prepare labels,
   while other paths use `as_progress_sink()` or omit a sink. This makes command
   orchestration responsible for domain vocabulary and progress lifetime.
+- `CliProgress.finish(details=...)` and prepare summary options let each command
+  choose different successful residue, so equivalent work can leave a list, a
+  summary, or nothing before the real command result.
 
 ## Goal
 
@@ -108,7 +111,8 @@ stream and `enabled`. The presenter determines TTY mode from its stream. Its
 read-only `sink` property is a `ProgressSink` when enabled and `None` when
 disabled; this removes `as_progress_sink()` and prevents quiet commands from
 activating guest progress transport. Context exit closes it idempotently, so a
-command normally owns exactly one instance per operational segment:
+command normally owns exactly one instance per operational segment. It has no
+successful retention, summary, or details option:
 
 ```python
 watcher = SetupWatcher(layout)
@@ -449,6 +453,30 @@ TTY displays the same activity sequence in one transient row, then leaves only
 the Run transcript. Successful cleanup is transient, so the Run footer remains
 the final stable line.
 
+## Successful Closure
+
+Successful operational progress never becomes stable TTY output. Closing a
+segment clears its live region completely, whether the segment prepared caps,
+loaded setup, started a runtime, or performed cleanup. `CliProgress` has no
+`retain`, `summary`, or `finish(details=...)` mode.
+
+Non-TTY output cannot be retracted, so its already emitted chronological action
+and outcome sentences remain. Closure adds no synthetic `Prepared N caps`,
+`Completed setup`, or elapsed summary in either mode. The next terminal owner
+starts immediately according to the handoff rules:
+
+```text
+too caps:     transient progress -> result table
+too chat:     transient progress -> banner and prompt
+too start:    transient progress -> Agent eve started: ...
+too script:   transient progress -> Run transcript
+```
+
+Warnings and failure blocks remain stable because they require action. If a
+future command explicitly makes preparation its result, that command may print
+an object-first result such as `Agent eve prepared: 5 caps`; it is not retained
+progress.
+
 ## Command Results
 
 Operational progress does not replace stable command outcomes. A final result
@@ -475,8 +503,9 @@ sentence. Commands do not gain an aggregate `Prepared`, `Loaded`, or
   shared display-cell width, wrapping, delayed live reveal, activity selection,
   and failure rendering. Make `CliProgress` context-managed with idempotent
   close and an optional `sink`; remove `as_progress_sink()` and domain-specific
-  factory options. Treat IDs as opaque and derive prepare facts only from
-  pending registration and terminal materialize events.
+  factory options, `finish(details=...)`, and successful summary retention.
+  Treat IDs as opaque and derive prepare facts only from pending registration
+  and terminal materialize events.
 - Runtime, Script, Chat, clone, cap, and inspection command orchestration: pass
   one presenter through contiguous pre-execution work, close it at the defined
   handoff, and request a new segment only for cleanup. Remove command-authored
@@ -517,52 +546,56 @@ compatibility path.
    instrumented `refresh()` or blocking mutation emits its own events. The same
    long-lived object supports a visible foreground call followed by silent
    background calls without stored presenter state.
-4. TTY cache hits and operations completing before 150 milliseconds leave no
+4. Successful TTY closure always clears all operational live state and leaves
+   no summary or detail residue before a table, banner, command result, Run, or
+   foreground logs. Non-TTY closure retains only rows already emitted and adds
+   no synthetic completion summary.
+5. TTY cache hits and operations completing before 150 milliseconds leave no
    live residue or artificial delay; slower work becomes visible by the
    threshold.
-5. A TTY activity shows no elapsed time before 1 second, updates its own elapsed
+6. A TTY activity shows no elapsed time before 1 second, updates its own elapsed
    time after the threshold, and retains the final value only when the threshold
    was reached. A new activity starts a new timer; reselecting a concurrent
    prepare item preserves that item's original timer.
-6. Non-TTY output is ordered, append-only, ANSI-free, never includes elapsed
+7. Non-TTY output is ordered, append-only, ANSI-free, never includes elapsed
    time or timer-only rows, and never replaces a line; it emits and deduplicates
    each material running sentence followed by its checkpoint or terminal
    sentence, such as `Fetching X...` then `Fetched X`.
-7. Concurrent cap preparation emits its complete pending set before running
+8. Concurrent cap preparation emits its complete pending set before running
    work. The generic presenter treats IDs as opaque, selects the most recently
    changed active item, and derives accurate `N/T caps` from pending and terminal
    materialize events without `set_prepare_total()` or multiple live rows.
-8. A later prepare set resets completed private counts. Direct single-item work
+9. A later prepare set resets completed private counts. Direct single-item work
    has no aggregate facts, and cached or skipped work leaves no pending or
    running residue.
-9. Setup load and discover use the same grammar; expected Ollama and llama.cpp
+10. Setup load and discover use the same grammar; expected Ollama and llama.cpp
    offline or timeout results remain successful discovery, while unexpected
    exceptions produce one `setup.discover` failure block.
-10. Runtime create closes before start; initial guest setup temporarily owns the
+11. Runtime create closes before start; initial guest setup temporarily owns the
    live leaf inside start; readiness resumes after setup without a second live
    region.
-11. Wide, narrow, and Unicode sentences/details wrap by display cells within the
+12. Wide, narrow, and Unicode sentences/details wrap by display cells within the
    same configured maximum as Run output.
-12. One failure block contains the qualified stage and reason, conditional fix
+13. One failure block contains the qualified stage and reason, conditional fix
    and log, and no duplicated outer or workload error.
-13. Prepare-to-setup-to-runtime changes add no blank line, presenter reset, or
+14. Prepare-to-setup-to-runtime changes add no blank line, presenter reset, or
     duplicate activity. Each new activity intentionally starts its own elapsed
     timer; no segment-total clock appears.
-14. Operational-to-Run handoff has exactly one leading Run gap and no residual
+15. Operational-to-Run handoff has exactly one leading Run gap and no residual
     live row; Run projection and footer output remain byte-for-byte unchanged.
-15. A root Run footer precedes cleanup. Non-TTY has exactly one intervening
+16. A root Run footer precedes cleanup. Non-TTY has exactly one intervening
     blank row; successful TTY cleanup is transient and leaves the footer as the
     final stable line.
-16. Ready lines precede all foreground logs, Ctrl+C stops log following before
+17. Ready lines precede all foreground logs, Ctrl+C stops log following before
     cleanup presentation, and no log corrupts a live row.
-17. Progress sentences always begin with a verb and never display the agent
+18. Progress sentences always begin with a verb and never display the agent
     name; command results begin with the object and stable identity, as in
     `Agent eve started: ...` or `Skill browser added: ...`, and never include
     operational elapsed time.
-18. Agent-first and command-first forms, embedded host execution, attached
+19. Agent-first and command-first forms, embedded host execution, attached
     execution, temporary guest execution, Linux/macOS terminals, and Docker
     controlled from Linux/macOS/WSL2 produce the defined semantics.
-19. Default verification and opt-in Docker transcript tests pass.
+20. Default verification and opt-in Docker transcript tests pass.
 
 ## Risks and Open Questions
 
