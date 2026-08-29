@@ -342,17 +342,18 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
     )
     help_code = cli.main(["--root", str(root), "alice", "inspect", "--help"])
     help_output = capsys.readouterr()
+    help_text = strip_ansi(help_output.out)
 
     assert combined.exit_code == 2
     assert "mutually exclusive" in combined.stderr
     assert removed.exit_code == 2
-    assert "No such option: --limit" in removed.stderr
+    assert "No such option: --limit" in strip_ansi(removed.stderr)
     assert help_code == 0
-    assert "POINTER" in help_output.out
-    assert "--human" in help_output.out
-    assert "--json" in help_output.out
-    assert "--type" in help_output.out
-    assert "--focus" not in help_output.out
+    assert "POINTER" in help_text
+    assert "--human" in help_text
+    assert "--json" in help_text
+    assert "--type" in help_text
+    assert "--focus" not in help_text
 
 
 def test_inspect_human_reports_pointer_resolution_errors(tmp_path: Path) -> None:
