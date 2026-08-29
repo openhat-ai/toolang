@@ -12,6 +12,7 @@ from pathlib import Path
 from watchfiles import Change, awatch
 
 from toolang.common.layout import AgentLayout
+from toolang.common.progress import ProgressSink
 from .state import AgentState
 from .errors import StateDiagnostic, StatePreparationError
 from .cache import (
@@ -36,6 +37,7 @@ _RELEVANT_CHANGES = {Change.added, Change.modified, Change.deleted}
 class _CheckRequest:
     requested: bool
     force: bool
+    progress: ProgressSink | None
     future: asyncio.Future[StateRefresh]
 
 
@@ -100,21 +102,42 @@ class StateWatcher:
 
         return load_agent_state(self.layout, revision)
 
-    async def refresh(self, *, force: bool = False) -> AgentState:
+    async def refresh(
+        self,
+        *,
+        force: bool = False,
+        progress: ProgressSink | None = None,
+    ) -> AgentState:
         """Request one serialized check and wait until that check completes."""
 
-        return (await self._request_check(requested=True, force=force)).state
+        return (
+            await self._request_check(
+                requested=True,
+                force=force,
+                progress=progress,
+            )
+        ).state
 
-    async def refresh_result(self, *, force: bool = False) -> StateRefresh:
+    async def refresh_result(
+        self,
+        *,
+        force: bool = False,
+        progress: ProgressSink | None = None,
+    ) -> StateRefresh:
         """Return one serialized check with diagnostics from that exact check."""
 
-        return await self._request_check(requested=True, force=force)
+        return await self._request_check(
+            requested=True,
+            force=force,
+            progress=progress,
+        )
 
     async def _request_check(
         self,
         *,
         requested: bool,
         force: bool = False,
+        progress: ProgressSink | None = None,
     ) -> StateRefresh:
         loop = asyncio.get_running_loop()
         task = self._check_task
@@ -125,6 +148,7 @@ class StateWatcher:
             _CheckRequest(
                 requested=requested,
                 force=force,
+                progress=progress,
                 future=future,
             )
         )
@@ -149,6 +173,7 @@ class StateWatcher:
                     state = await self._perform_check(
                         requested=request.requested,
                         force=request.force,
+                        progress=request.progress,
                     )
                 except asyncio.CancelledError:
                     request.future.cancel()
@@ -169,6 +194,7 @@ class StateWatcher:
         *,
         requested: bool,
         force: bool = False,
+        progress: ProgressSink | None = None,
     ) -> StateRefresh:
         """Run the sole candidate check and publication path."""
 
@@ -194,6 +220,7 @@ class StateWatcher:
                 prepare_agent_state,
                 self.layout,
                 force=force,
+                progress=progress,
             )
         except StatePreparationError as exc:
             self._record_checked_candidate(root_source, home_source)

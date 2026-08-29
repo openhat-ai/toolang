@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import time
 from urllib.error import HTTPError, URLError
@@ -25,6 +26,7 @@ from toolang.common.github import (
 )
 from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common.layout import AgentLayout
+from toolang.catalog.agent import LocalAgents
 from ..common.progress import ProgressSink, emit_progress
 
 AgentSelectorForm = Literal["name", "shorthand", "ref"]
@@ -47,6 +49,124 @@ class HttpAgentRef:
 
 
 AgentRef = HttpAgentRef | GitHubRef
+
+
+def clone_agent(
+    root: Path,
+    source: str,
+    *,
+    target: str | None = None,
+    progress: ProgressSink | None = None,
+) -> Path:
+    """Clone one local or remote authored agent into the resident catalog."""
+
+    homes = LocalAgents(root / "agents")
+    selector = parse_agent_selector(source)
+    progress_id = f"agent:{source}"
+    if selector.form == "name":
+        emit_progress(
+            progress,
+            id=progress_id,
+            kind="prepare",
+            stage="resolve",
+            label="Resolving agent...",
+            status="running",
+        )
+        try:
+            if target is None:
+                raise ValueError("target name is required when cloning one local agent")
+            source_home = homes.get(selector.name or "")
+            if source_home is None:
+                raise FileNotFoundError(source)
+        except Exception as exc:
+            emit_progress(
+                progress,
+                id=progress_id,
+                kind="prepare",
+                stage="resolve",
+                label="Failed to resolve agent",
+                status="failed",
+                detail=str(exc),
+            )
+            raise
+        emit_progress(
+            progress,
+            id=progress_id,
+            kind="prepare",
+            stage="resolve",
+            label="Resolved agent",
+            status="ok",
+        )
+        home = homes.path(target)
+        emit_progress(
+            progress,
+            id=progress_id,
+            kind="prepare",
+            stage="materialize",
+            label="Preparing agent...",
+            status="running",
+        )
+        try:
+            if home.exists():
+                raise FileExistsError(home)
+            shutil.copytree(
+                source_home,
+                home,
+                ignore=shutil.ignore_patterns(".caps", ".state", ".runtime"),
+            )
+        except Exception as exc:
+            emit_progress(
+                progress,
+                id=progress_id,
+                kind="prepare",
+                stage="materialize",
+                label="Failed to prepare agent",
+                status="failed",
+                detail=str(exc),
+            )
+            raise
+    else:
+        ref = resolve_agent_selector_ref(
+            selector,
+            progress=progress,
+            progress_id=progress_id,
+        )
+        name = target or selector.default_name()
+        content = fetch_agent_ref(
+            ref,
+            progress=progress,
+            progress_id=progress_id,
+        )
+        emit_progress(
+            progress,
+            id=progress_id,
+            kind="prepare",
+            stage="materialize",
+            label="Preparing agent...",
+            status="running",
+        )
+        try:
+            home = homes.create(name, content=content)
+        except Exception as exc:
+            emit_progress(
+                progress,
+                id=progress_id,
+                kind="prepare",
+                stage="materialize",
+                label="Failed to prepare agent",
+                status="failed",
+                detail=str(exc),
+            )
+            raise
+    emit_progress(
+        progress,
+        id=progress_id,
+        kind="prepare",
+        stage="materialize",
+        label="Prepared agent",
+        status="ok",
+    )
+    return home
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,7 +253,7 @@ def fetch_agent_ref(
         id=item_id,
         kind="prepare",
         stage="fetch",
-        label="Fetch agent",
+        label="Fetching agent...",
         status="running",
         detail=url,
     )
@@ -145,7 +265,7 @@ def fetch_agent_ref(
             id=item_id,
             kind="prepare",
             stage="fetch",
-            label="Fetch agent",
+            label="Failed to fetch agent",
             status="failed",
             detail=str(exc),
         )
@@ -155,7 +275,7 @@ def fetch_agent_ref(
         id=item_id,
         kind="prepare",
         stage="fetch",
-        label="Fetch agent",
+        label="Fetched agent",
         status="ok",
     )
     return source
@@ -176,7 +296,7 @@ def resolve_agent_selector_ref(
             id=item_id,
             kind="prepare",
             stage="resolve",
-            label="Resolve agent",
+            label="Resolving agent...",
             status="running",
             detail=selector.text,
         )
@@ -185,7 +305,7 @@ def resolve_agent_selector_ref(
             id=item_id,
             kind="prepare",
             stage="resolve",
-            label="Resolve agent",
+            label="Resolved agent",
             status="ok",
             detail=selector.ref.render(),
         )
@@ -197,7 +317,7 @@ def resolve_agent_selector_ref(
         id=item_id,
         kind="prepare",
         stage="resolve",
-        label="Resolve agent",
+        label="Resolving agent...",
         status="running",
         detail=selector.text,
     )
@@ -213,7 +333,7 @@ def resolve_agent_selector_ref(
             id=item_id,
             kind="prepare",
             stage="resolve",
-            label="Resolve agent",
+            label="Failed to resolve agent",
             status="failed",
             detail=str(exc),
         )
@@ -223,7 +343,7 @@ def resolve_agent_selector_ref(
         id=item_id,
         kind="prepare",
         stage="resolve",
-        label="Resolve agent",
+        label="Resolved agent",
         status="ok",
         detail=ref.render(),
     )
@@ -317,21 +437,87 @@ class AgentProcess:
 VISITING_PROGRAM_CACHE_TTL_SEC = 3600
 
 
-def materialize_roaming_program(source_path: Path) -> AgentLayout:
+def materialize_roaming_program(
+    source_path: Path,
+    *,
+    progress: ProgressSink | None = None,
+) -> AgentLayout:
     """Materialize one local .too source into its fixed roaming root."""
 
     resolved_source = source_path.expanduser().resolve()
-    if not resolved_source.is_file():
-        raise FileNotFoundError(f"agent program not found: {resolved_source}")
-    if resolved_source.suffix != ".too":
-        raise ValueError(f"agent program must point to a .too file: {resolved_source}")
-    layout = AgentLayout.roaming(resolved_source)
-    layout.home.mkdir(parents=True, exist_ok=True)
-    _replace_relative_symlink(
-        layout.program,
-        resolved_source,
+    progress_id = f"agent:{resolved_source}"
+    emit_progress(
+        progress,
+        id=progress_id,
+        kind="prepare",
+        stage="resolve",
+        label="Resolving agent...",
+        status="running",
     )
-    _sync_roaming_config_link(layout.home, resolved_source.parent / "toolang.toml")
+    try:
+        if not resolved_source.is_file():
+            raise FileNotFoundError(f"agent program not found: {resolved_source}")
+        if resolved_source.suffix != ".too":
+            raise ValueError(
+                f"agent program must point to a .too file: {resolved_source}"
+            )
+        layout = AgentLayout.roaming(resolved_source)
+    except Exception as exc:
+        emit_progress(
+            progress,
+            id=progress_id,
+            kind="prepare",
+            stage="resolve",
+            label="Failed to resolve agent",
+            status="failed",
+            detail=str(exc),
+        )
+        raise
+    emit_progress(
+        progress,
+        id=progress_id,
+        kind="prepare",
+        stage="resolve",
+        label="Resolved agent",
+        status="ok",
+    )
+    emit_progress(
+        progress,
+        id=progress_id,
+        kind="prepare",
+        stage="materialize",
+        label="Preparing agent...",
+        status="running",
+    )
+    try:
+        layout.home.mkdir(parents=True, exist_ok=True)
+        _replace_relative_symlink(
+            layout.program,
+            resolved_source,
+        )
+        _sync_roaming_config_link(
+            layout.home,
+            resolved_source.parent / "toolang.toml",
+        )
+    except Exception as exc:
+        emit_progress(
+            progress,
+            id=progress_id,
+            kind="prepare",
+            stage="materialize",
+            label="Failed to prepare agent",
+            status="failed",
+            detail=str(exc),
+        )
+        raise
+    emit_progress(
+        progress,
+        id=progress_id,
+        kind="prepare",
+        stage="materialize",
+        label="Prepared agent",
+        status="ok",
+    )
     return layout
 
 
@@ -440,7 +626,7 @@ def _resolve_visiting_layout(
         id=progress_id,
         kind="prepare",
         stage="materialize",
-        label="Materialize agent",
+        label="Preparing agent...",
         status="running",
         detail=layout.name,
     )
@@ -456,7 +642,7 @@ def _resolve_visiting_layout(
             id=progress_id,
             kind="prepare",
             stage="materialize",
-            label="Materialize agent",
+            label="Failed to prepare agent",
             status="failed",
             detail=str(exc),
         )
@@ -466,7 +652,7 @@ def _resolve_visiting_layout(
         id=progress_id,
         kind="prepare",
         stage="materialize",
-        label="Materialize agent",
+        label="Prepared agent",
         status="ok",
         detail=layout.name,
     )

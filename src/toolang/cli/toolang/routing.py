@@ -11,7 +11,7 @@ from toolang.common.layout import AgentLayout, AgentPlacement
 from toolang.up import process as agents
 from ..caps.commands import CAP_KINDS
 from ..common.output import echo_error
-from ..common.progress import as_progress_sink, make_cli_progress
+from ..common.progress import CliProgress, make_cli_progress
 from ..common.routing import explicit_agent, extract_root_args
 from .commands import runtime, script
 
@@ -191,7 +191,7 @@ def dispatch_roaming(
     argv: list[str],
     *,
     prog_name: str,
-    run_app: Callable[[list[str], AgentLayout], int],
+    run_app: Callable[[list[str], AgentLayout, CliProgress | None], int],
 ) -> int | None:
     """Route a local source target or fall through to runnable invocation."""
 
@@ -206,14 +206,31 @@ def dispatch_roaming(
         spec = command_spec(command)
         if not spec.accepts(position, "roaming"):
             return _unsupported_target(command, "roaming", position)
+        progress = (
+            make_cli_progress(enabled=_progress_enabled(body))
+            if spec.prepare == "program"
+            else None
+        )
         try:
-            layout = _roaming_layout(source, spec.prepare)
+            layout = _roaming_layout(
+                source,
+                spec.prepare,
+                progress=progress,
+            )
         except (FileExistsError, FileNotFoundError, ValueError) as exc:
-            echo_error(str(exc))
+            message = (
+                progress.failure_message(exc)
+                if progress is not None and progress.failure_stage is not None
+                else str(exc)
+            )
+            if progress is not None:
+                progress.close()
+            echo_error(message)
             return 1
         return run_app(
             _selected_command_args(body, position, target=layout.name),
             layout,
+            progress,
         )
     if runtime.is_roaming_file_request(body[1:]):
         if global_args:
@@ -225,7 +242,7 @@ def dispatch_roaming(
 def dispatch_visiting(
     argv: list[str],
     *,
-    run_app: Callable[[list[str], AgentLayout], int],
+    run_app: Callable[[list[str], AgentLayout, CliProgress | None], int],
 ) -> int | None:
     """Route a supported remote-selector command through a visiting layout."""
 
@@ -237,33 +254,41 @@ def dispatch_visiting(
     spec = command_spec(command)
     if not spec.accepts(position, "visiting"):
         return _unsupported_target(command, "visiting", position)
-    progress = make_cli_progress() if spec.prepare == "program" else None
+    progress = (
+        make_cli_progress(enabled=_progress_enabled(body))
+        if spec.prepare == "program"
+        else None
+    )
     try:
         layout = (
             agents.resolve_visiting_layout(
                 selector,
-                progress=as_progress_sink(progress),
+                progress=progress.sink if progress is not None else None,
             )
             if spec.prepare == "program"
             else agents.visiting_layout(selector)
         )
     except KeyboardInterrupt:
         if progress is not None:
-            progress.interrupt()
+            progress.close()
         return 130
     except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
+        message = (
+            progress.failure_message(exc)
+            if progress is not None and progress.failure_stage is not None
+            else str(exc)
+        )
         if progress is not None:
-            progress.finish(details=False)
-        echo_error(str(exc))
+            progress.close()
+        echo_error(message)
         return 1
-    if progress is not None:
-        progress.finish(details=False)
     return run_app(
         [
             *global_args,
             *_selected_command_args(body, position, target=layout.name),
         ],
         layout,
+        progress,
     )
 
 
@@ -359,10 +384,22 @@ def _selected_command_args(
     return [command, *rest]
 
 
-def _roaming_layout(source: Path, prepare: Preparation | None) -> AgentLayout:
+def _roaming_layout(
+    source: Path,
+    prepare: Preparation | None,
+    *,
+    progress: CliProgress | None = None,
+) -> AgentLayout:
     if prepare == "program":
-        return agents.materialize_roaming_program(source)
+        return agents.materialize_roaming_program(
+            source,
+            progress=progress.sink if progress is not None else None,
+        )
     return AgentLayout.roaming(source)
+
+
+def _progress_enabled(body: list[str]) -> bool:
+    return not any(token in {"-q", "--quiet"} for token in body)
 
 
 def _source_path(token: str) -> Path | None:

@@ -25,6 +25,7 @@ from toolang.base.types.sandbox import (
     SandboxRequest,
 )
 from toolang.common.progress import LAUNCH_PROGRESS_FILE_ENV
+from toolang.common.progress import emit_progress
 
 from ._docker_cli import (
     DEFAULT_HOST_GATEWAY,
@@ -326,13 +327,27 @@ class DockerSandbox:
         }
         return dotenv_envs, process_envs
 
-    async def launch(self, plan: SandboxPlan) -> SandboxRef:
+    async def launch(
+        self,
+        plan: SandboxPlan,
+        *,
+        progress: ProgressSink | None = None,
+        progress_id: str | None = None,
+    ) -> SandboxRef:
         container_name = _plan_text(plan, "container_name")
         runtime_id = container_name
         image = _plan_text(plan, "image")
         if len(plan.ports) != 1:
             raise ValueError("docker sandbox requires exactly one published port")
         port = plan.ports[0]
+        emit_progress(
+            progress,
+            id=progress_id or f"runtime:{container_name}",
+            kind="runtime",
+            stage="create",
+            label=f"Fetching image {image}...",
+            status="running",
+        )
         try:
             runtime_id = await docker_run_detached(
                 image=image,
@@ -384,6 +399,14 @@ class DockerSandbox:
             if isinstance(exc, (OSError, RuntimeError)):
                 raise ToolangError(f"Could not start docker sandbox: {exc}") from exc
             raise
+        emit_progress(
+            progress,
+            id=progress_id or f"runtime:{container_name}",
+            kind="runtime",
+            stage="create",
+            label=f"Fetched image {image}",
+            status="running",
+        )
         return _docker_ref(
             plan,
             runtime_id=runtime_id,

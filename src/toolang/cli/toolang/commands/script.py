@@ -46,8 +46,12 @@ from toolang.up import process as agents
 from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 
 from ...common.context import load_runtime_environ
-from ...common.execution_runtime import DEVELOPMENT_WHEEL_HELP, open_execution_runtime
-from ...common.progress import CliProgress, as_progress_sink, make_cli_progress
+from ...common.execution_runtime import (
+    DEVELOPMENT_WHEEL_HELP,
+    ExecutionRuntimeError,
+    open_execution_runtime,
+)
+from ...common.progress import CliProgress, make_cli_progress
 from ...common.remote_runtime import inspect_remote_runtime
 from ...common.result_saving import save_result
 from ...common.output import echo_error
@@ -436,20 +440,24 @@ def _run(
     save: str | None,
     quiet: bool,
 ) -> int:
-    progress = make_cli_progress() if not quiet else None
+    progress = make_cli_progress(enabled=not quiet)
     layout: AgentLayout | None = None
     store: RunStore | None = None
     run_id: str | None = None
     log_path: Path | None = None
     accepted: list[str] = []
     try:
-        layout = agents.materialize_roaming_program(source_path)
+        layout = agents.materialize_roaming_program(
+            source_path,
+            progress=progress.sink,
+        )
         _reject_runnable_option(default_options)
         with open_execution_runtime(
             layout,
+            operational=progress,
             sandbox=sandbox,
             dev=dev,
-            show_progress=not quiet,
+            show_cleanup_progress=not quiet,
         ) as runtime:
             if runtime.mode == "embedded":
                 store = RunStore(layout.run_store)
@@ -464,7 +472,7 @@ def _run(
                 log_path = log_plan.path
                 state = prepare_agent_state(
                     layout,
-                    progress=as_progress_sink(progress),
+                    progress=progress.sink,
                 )
                 result = asyncio.run(
                     _execute(
@@ -488,6 +496,7 @@ def _run(
             else:
                 if runtime.endpoint is None:  # pragma: no cover - value invariant
                     raise RuntimeError("remote execution runtime has no endpoint")
+                progress.close()
                 log_path = layout.runtime_log
                 result = asyncio.run(
                     _execute_remote(
@@ -509,8 +518,7 @@ def _run(
     except KeyboardInterrupt:
         if run_id is None and accepted:
             run_id = accepted[0]
-        if progress is not None:
-            progress.interrupt()
+        progress.close()
         interruption_reported = False
         if layout is not None and run_id is not None and not quiet:
             record = _stored_run(layout, run_id, store=store)
@@ -521,9 +529,14 @@ def _run(
             typer.echo(f"Log: {log_path}", err=True)
         return 130
     except (OSError, ValueError, ToolangError, RuntimeError) as exc:
-        if progress is not None:
-            progress.finish(details=False)
-        _error(str(exc))
+        message = (
+            progress.failure_message(exc)
+            if progress.failure_stage is not None
+            and not isinstance(exc, ExecutionRuntimeError)
+            else str(exc)
+        )
+        progress.close()
+        _error(message)
         if log_path is not None and log_path.exists():
             typer.echo(f"Log: {log_path}", err=True)
         return 1
@@ -803,12 +816,12 @@ async def _execute(
         limit_overrides=resolve_limit_overrides(environ, limit_options),
     )
     setup = (
-        await setup_watcher.refresh(progress=as_progress_sink(progress))
+        await setup_watcher.refresh(progress=progress.sink)
         if progress is not None
         else await setup_watcher.refresh()
     )
     if progress is not None:
-        progress.finish(details=False)
+        progress.close()
     state_watcher = StateWatcher(layout)
     await state_watcher.refresh()
     executor = RunExecutor(

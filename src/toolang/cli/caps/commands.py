@@ -22,7 +22,7 @@ from toolang.catalog import config as cap_config
 from toolang.catalog.types import CAP_KINDS, CapKind
 from toolang.state import state as cap_state
 from toolang.state.prepare import prepare_agent_state
-from ..common.context import context_agent, context_root, user_call
+from ..common.context import command_progress, context_agent, context_root, user_call
 from ..common.output import echo_block, echo_table
 from ..common.routing import (
     OptionalPrefixAgentCommand,
@@ -221,6 +221,7 @@ def list_caps(
         scope=effective_scope,
         prepare=selected_agent is not None,
         kinds=set(CAP_KINDS),
+        progress=command_progress(ctx),
     )
     try:
         selected_entries = cap_state.select_cap_entries(
@@ -274,6 +275,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             scope=effective_scope,
             prepare=selected_agent is not None,
             kinds={kind},
+            progress=command_progress(ctx),
         )
         try:
             selected_entries = cap_state.select_cap_entries(
@@ -338,12 +340,13 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             cap,
         )
         if selected_agent:
-            _refresh_agent_state(
-                context_root(ctx),
-                selected_agent,
-                progress_total=1,
-            )
-        typer.echo(f"Created {kind} {name}: {saved.path}")
+            with _make_cap_write_progress(ctx) as progress:
+                _refresh_agent_state(
+                    context_root(ctx),
+                    selected_agent,
+                    progress=progress,
+                )
+        typer.echo(f"{kind.title()} {name} created: {saved.path}")
 
     return new_cap
 
@@ -378,12 +381,13 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             cap,
         )
         if selected_agent:
-            _refresh_agent_state(
-                context_root(ctx),
-                selected_agent,
-                progress_total=1,
-            )
-        typer.echo(f"Updated {kind} {name}: {saved.path}")
+            with _make_cap_write_progress(ctx) as progress:
+                _refresh_agent_state(
+                    context_root(ctx),
+                    selected_agent,
+                    progress=progress,
+                )
+        typer.echo(f"{kind.title()} {name} updated: {saved.path}")
 
     return edit_cap
 
@@ -393,26 +397,24 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         ref: str = typer.Argument(..., help=f"{title} ref"),
     ) -> None:
-        from ..common.progress import as_progress_sink
-
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
-        progress = _make_cap_write_progress()
+        progress = _make_cap_write_progress(ctx)
         try:
             canonical_ref = cap_state.resolve_remote_ref(
-                kind, ref, progress=as_progress_sink(progress)
+                kind, ref, progress=progress.sink
             )
             name = cap_state.remote_entry_name(kind, canonical_ref)
             _configured_caps(context_root(ctx), agent_name, scope).create(
                 cap_config.CapRef(kind=kind, name=name, ref=canonical_ref)
             )
         except CatalogConflictError as exc:
-            progress.finish(details=False)
+            progress.close()
             raise click.ClickException(
                 f"{title} {cap_state.remote_entry_name(kind, ref)} already exists"
             ) from exc
         except ValueError as exc:
-            progress.finish(details=False)
+            progress.close()
             message = str(exc)
             if "conflicting entries" in message:
                 raise click.ClickException(
@@ -433,14 +435,13 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 _refresh_agent_state(
                     context_root(ctx),
                     selected_agent,
-                    progress_total=1,
                     progress=progress,
                 )
             finally:
-                progress.finish(details=False)
+                progress.close()
         else:
-            progress.finish(details=False)
-        typer.echo(f"Added {kind} {entry.name}: {entry.ref}")
+            progress.close()
+        typer.echo(f"{kind.title()} {entry.name} added: {entry.ref}")
 
     return add_cap
 
@@ -467,12 +468,13 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             name,
         )
         if selected_agent:
-            _refresh_agent_state(
-                context_root(ctx),
-                selected_agent,
-                progress_total=0,
-            )
-        typer.echo(f"Removed {kind} {name}: {entry.ref}")
+            with _make_cap_write_progress(ctx) as progress:
+                _refresh_agent_state(
+                    context_root(ctx),
+                    selected_agent,
+                    progress=progress,
+                )
+        typer.echo(f"{kind.title()} {name} removed: {entry.ref}")
 
     return remove_cap
 
@@ -501,12 +503,13 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             name,
         )
         if selected_agent:
-            _refresh_agent_state(
-                context_root(ctx),
-                selected_agent,
-                progress_total=0,
-            )
-        typer.echo(f"Deleted {kind} {name}: {deleted_path}")
+            with _make_cap_write_progress(ctx) as progress:
+                _refresh_agent_state(
+                    context_root(ctx),
+                    selected_agent,
+                    progress=progress,
+                )
+        typer.echo(f"{kind.title()} {name} deleted: {deleted_path}")
 
     return delete_cap
 
@@ -606,25 +609,20 @@ def _all_cap_entries(
     scope: CapScope | Literal["all"],
     prepare: bool,
     kinds: set[EntryKind],
+    progress: CliProgress | None = None,
 ) -> tuple[StateCap, ...]:
     if prepare and (toolang_root / "agents" / agent_name / "agent.too").is_file():
-        from ..common.progress import as_progress_sink, make_cli_progress
-
-        progress = make_cli_progress(
-            prepare_summary_label="Resolved",
-            show_materialize_summary=True,
-        )
+        active = progress or _make_cap_write_progress()
         try:
             state = user_call(
                 prepare_agent_state,
                 AgentLayout.resident(toolang_root, agent_name),
-                progress=as_progress_sink(progress),
+                progress=active.sink,
             )
             entries = _state_cap_entries(state, scope=scope, kinds=kinds)
-            progress.set_prepare_total(len(entries))
             return entries
         finally:
-            progress.finish(details=False)
+            active.close()
     return cap_state.list_entries(
         toolang_root,
         agent_name,
@@ -710,33 +708,28 @@ def _configured_caps(
     )
 
 
-def _make_cap_write_progress() -> CliProgress:
+def _make_cap_write_progress(ctx: typer.Context | None = None) -> CliProgress:
     from ..common.progress import make_cli_progress
 
-    return make_cli_progress(
-        prepare_summary_label="Resolved",
-        show_materialize_summary=True,
-    )
+    if ctx is not None:
+        return command_progress(ctx)
+    return make_cli_progress()
 
 
 def _refresh_agent_state(
     toolang_root: Path,
     agent_name: str,
     *,
-    progress_total: int,
     progress: CliProgress | None = None,
 ) -> None:
-    from ..common.progress import as_progress_sink
-
     owned_progress = progress is None
     active = progress or _make_cap_write_progress()
     try:
         user_call(
             prepare_agent_state,
             AgentLayout.resident(toolang_root, agent_name),
-            progress=as_progress_sink(active),
+            progress=active.sink,
         )
-        active.set_prepare_total(progress_total)
     finally:
         if owned_progress:
-            active.finish(details=False)
+            active.close()

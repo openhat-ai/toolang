@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Annotated
 
+import click
 import typer
 
 from ...common.context import context_agent, context_root
@@ -114,18 +115,23 @@ def _setup(
     force: bool = False,
     model_catalog: Path | None = None,
 ) -> AgentSetup:
-    from ...common.progress import as_progress_sink, make_cli_progress
+    from ...common.progress import make_cli_progress
 
-    progress = make_cli_progress(agent=layout.name)
+    progress = make_cli_progress()
     try:
-        return asyncio.run(
-            SetupWatcher(layout, model_catalog=model_catalog).refresh(
-                force=force,
-                progress=as_progress_sink(progress),
+        try:
+            return asyncio.run(
+                SetupWatcher(layout, model_catalog=model_catalog).refresh(
+                    force=force,
+                    progress=progress.sink,
+                )
             )
-        )
+        except Exception as exc:
+            if progress.failure_stage is not None:
+                raise click.ClickException(progress.failure_message(exc)) from exc
+            raise
     finally:
-        progress.finish(details=False)
+        progress.close()
 
 
 def _layout(ctx: typer.Context) -> AgentLayout:

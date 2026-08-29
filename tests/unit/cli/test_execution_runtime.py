@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -17,24 +18,45 @@ from toolang.base.types.sandbox import SandboxRef
 
 
 class _Progress:
-    current_stage = "Starting workload"
+    current_stage = "Starting agent..."
     failure_reason: str | None = None
     failure_stage: str | None = None
     failure_label: str | None = None
 
     def __init__(self) -> None:
-        self.finished = 0
-        self.interrupted = 0
+        self.closed = 0
 
     def __call__(self, _event: object) -> None:
         pass
 
-    def finish(self, *, details: bool = True) -> None:
-        del details
-        self.finished += 1
+    @property
+    def sink(self) -> _Progress:
+        return self
 
-    def interrupt(self) -> None:
-        self.interrupted += 1
+    def close(self) -> None:
+        self.closed += 1
+
+    def suspended(self):
+        return nullcontext()
+
+    def failure_message(
+        self,
+        error: BaseException,
+        *,
+        reason: str | None = None,
+        fix: str | None = None,
+        log_path: Path | None = None,
+    ) -> str:
+        lines = [
+            self.failure_label or "Failed to start agent",
+            f"  Stage: {self.failure_stage or 'runtime.start'}",
+            f"  Reason: {reason or self.failure_reason or str(error)}",
+        ]
+        if fix is not None:
+            lines.append(f"  Fix: {fix}")
+        if log_path is not None:
+            lines.append(f"  Log: {log_path}")
+        return "\n".join(lines)
 
 
 def _status(
@@ -93,6 +115,7 @@ def test_execution_runtime_attaches_to_a_compatible_running_agent(
 
     with runtime.open_execution_runtime(
         layout,
+        operational=cast(Any, _Progress()),
         sandbox="docker",
         ui_base_url="https://ui.test",
     ) as selected:
@@ -124,6 +147,7 @@ def test_execution_runtime_rejects_dev_for_an_attached_agent(
     ):
         with runtime.open_execution_runtime(
             layout,
+            operational=cast(Any, _Progress()),
             sandbox="docker",
             dev=tmp_path / "dist",
             ui_base_url="https://ui.test",
@@ -158,6 +182,7 @@ def test_execution_runtime_rejects_a_running_sandbox_mismatch(
     with pytest.raises(runtime.ExecutionRuntimeError, match=message):
         with runtime.open_execution_runtime(
             layout,
+            operational=cast(Any, _Progress()),
             sandbox=requested,
             ui_base_url="https://ui.test",
         ):
@@ -180,6 +205,7 @@ def test_execution_runtime_rejects_an_unready_agent(
     with pytest.raises(runtime.ExecutionRuntimeError, match=status):
         with runtime.open_execution_runtime(
             layout,
+            operational=cast(Any, _Progress()),
             sandbox=None,
             ui_base_url="https://ui.test",
         ):
@@ -215,6 +241,7 @@ def test_execution_runtime_opens_embedded_host_and_releases_stopped_state(
 
     with runtime.open_execution_runtime(
         layout,
+        operational=cast(Any, _Progress()),
         sandbox=None,
         ui_base_url="https://ui.test",
     ) as selected:
@@ -241,6 +268,7 @@ def test_execution_runtime_rejects_dev_for_embedded_host(
     ):
         with runtime.open_execution_runtime(
             layout,
+            operational=cast(Any, _Progress()),
             sandbox="host",
             dev=tmp_path / "dist",
             ui_base_url="https://ui.test",
@@ -268,11 +296,9 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
 
     monkeypatch.setattr(runtime, "_resolve_inactive_launch", resolve_launch)
     progress = _Progress()
-    launch_cleanup_progress = _Progress()
     shutdown_progress = _Progress()
-    progresses = iter((progress, launch_cleanup_progress, shutdown_progress))
     monkeypatch.setattr(
-        runtime, "make_cli_progress", lambda **_kwargs: next(progresses)
+        runtime, "make_cli_progress", lambda **_kwargs: shutdown_progress
     )
     implementation = cast(Any, SimpleNamespace())
     state = SandboxState(
@@ -282,10 +308,8 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
     handle = runtime.sandbox_runtime.SandboxHandle(implementation, state)
     calls: list[object] = []
 
-    async def launch_runtime(
-        spec: object, *, progress: object, cleanup_progress: object
-    ) -> object:
-        calls.append(("launch", spec, progress, cleanup_progress))
+    async def launch_runtime(spec: object, *, progress: object) -> object:
+        calls.append(("launch", spec, progress))
         return handle
 
     async def stop_handle(
@@ -303,6 +327,7 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
 
     with runtime.open_execution_runtime(
         layout,
+        operational=cast(Any, progress),
         sandbox="docker",
         dev=development,
         ui_base_url="https://ui.test",
@@ -316,13 +341,12 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
         )
 
     assert calls == [
-        ("launch", launch, progress, launch_cleanup_progress),
+        ("launch", launch, progress),
         "body",
         ("stop", layout, handle, False, shutdown_progress),
     ]
-    assert progress.finished == 1
-    assert launch_cleanup_progress.finished == 1
-    assert shutdown_progress.finished == 1
+    assert progress.closed == 0
+    assert shutdown_progress.closed == 1
 
 
 def test_execution_runtime_warns_when_a_development_cli_uses_the_package_index(
@@ -349,11 +373,9 @@ def test_execution_runtime_warns_when_a_development_cli_uses_the_package_index(
         lambda: (True, tmp_path),
     )
     progress = _Progress()
-    launch_cleanup_progress = _Progress()
     shutdown_progress = _Progress()
-    progresses = iter((progress, launch_cleanup_progress, shutdown_progress))
     monkeypatch.setattr(
-        runtime, "make_cli_progress", lambda **_kwargs: next(progresses)
+        runtime, "make_cli_progress", lambda **_kwargs: shutdown_progress
     )
     handle = runtime.sandbox_runtime.SandboxHandle(
         cast(Any, SimpleNamespace()),
@@ -363,10 +385,8 @@ def test_execution_runtime_warns_when_a_development_cli_uses_the_package_index(
         ),
     )
 
-    async def launch_runtime(
-        _spec: object, *, progress: object, cleanup_progress: object
-    ) -> object:
-        del progress, cleanup_progress
+    async def launch_runtime(_spec: object, *, progress: object) -> object:
+        del progress
         return handle
 
     async def stop_handle(*_args: object, **_kwargs: object) -> bool:
@@ -377,6 +397,7 @@ def test_execution_runtime_warns_when_a_development_cli_uses_the_package_index(
 
     with runtime.open_execution_runtime(
         layout,
+        operational=cast(Any, progress),
         sandbox="docker",
         ui_base_url="https://ui.test",
     ):
@@ -395,13 +416,13 @@ def test_execution_runtime_warns_when_a_development_cli_uses_the_package_index(
     (
         (
             None,
-            "Toolang package installed in the guest cannot start",
-            "again with `--dev dist`",
+            "guest Toolang package cannot start",
+            "use --dev dist",
         ),
         (
             Path("dist/toolang-0.3.0-py3-none-any.whl"),
             "selected Toolang wheel cannot start",
-            "again with `--dev PATH`",
+            "use --dev PATH",
         ),
     ),
 )
@@ -429,7 +450,7 @@ def test_execution_runtime_startup_failure_uses_structured_package_guidance(
     )
     progress = _Progress()
     progress.failure_stage = "runtime.create"
-    progress.failure_label = "Checking Toolang compatibility"
+    progress.failure_label = "Failed to check Toolang"
     progress.failure_reason = "guest compatibility check failed"
     monkeypatch.setattr(
         runtime,
@@ -446,6 +467,7 @@ def test_execution_runtime_startup_failure_uses_structured_package_guidance(
     with pytest.raises(runtime.ExecutionRuntimeError) as captured:
         with runtime.open_execution_runtime(
             layout,
+            operational=cast(Any, progress),
             sandbox="docker",
             dev=development,
             ui_base_url="https://ui.test",
@@ -501,6 +523,7 @@ def test_execution_runtime_cleanup_does_not_hide_a_body_failure(
     with pytest.raises(LookupError, match="body failed"):
         with runtime.open_execution_runtime(
             layout,
+            operational=cast(Any, _Progress()),
             sandbox="docker",
             ui_base_url="https://ui.test",
         ):
@@ -561,6 +584,7 @@ def test_execution_runtime_cleans_up_a_launched_guest_with_invalid_identity(
     with pytest.raises(runtime.ExecutionRuntimeError, match="requires an endpoint"):
         with runtime.open_execution_runtime(
             layout,
+            operational=cast(Any, _Progress()),
             sandbox="docker",
             ui_base_url="https://ui.test",
         ):
@@ -656,6 +680,7 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
         "log_spec": "error",
         "temporary_port": True,
         "environ": {"LOGGED": "yes"},
+        "progress": None,
     }
 
 

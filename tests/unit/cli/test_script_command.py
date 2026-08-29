@@ -580,7 +580,7 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
     monkeypatch.setattr(
         script.agents,
         "materialize_roaming_program",
-        lambda _source: layout,
+        lambda _source, **_kwargs: layout,
     )
     monkeypatch.setattr(script, "open_execution_runtime", execution_runtime)
     monkeypatch.setattr(script, "_execute_remote", execute_remote)
@@ -606,10 +606,13 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
     )
 
     assert result == 0
-    assert captured["runtime"] == {
+    runtime_options = cast(dict[str, object], captured["runtime"])
+    operational = runtime_options.pop("operational")
+    assert getattr(operational, "sink") is None
+    assert runtime_options == {
         "sandbox": "docker",
         "dev": tmp_path / "dist",
-        "show_progress": False,
+        "show_cleanup_progress": False,
     }
     execute = cast(dict[str, object], captured["execute"])
     assert execute["sandbox"] == "docker:python:3.13-slim"

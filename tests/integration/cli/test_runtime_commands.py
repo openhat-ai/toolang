@@ -210,35 +210,39 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
     async def run(
         spec: sandbox_runtime.LaunchSpec,
         *,
-        on_ready: Any,
+        name: str,
         progress: Any,
-        cleanup_progress: Any,
     ) -> int:
-        del cleanup_progress
         captured["run"] = spec
         captured["progress"] = progress
         for event in (
-            _startup_event("prepare", "Preparing sandbox", "running", spec.sandbox),
-            _startup_event("prepare", "Preparing sandbox", "ok"),
-            _startup_event("launch", "Starting workload", "running"),
-            _startup_event("launch", "Starting workload", "ok"),
-            _startup_event("ready", "Waiting for agent API", "running"),
-            _startup_event("ready", "Waiting for agent API", "ok"),
+            _startup_event("prepare", "Preparing Docker sandbox...", "running"),
+            _startup_event("prepare", "Created runtime", "ok"),
+            _startup_event("server", "Starting agent...", "running"),
+            _startup_event(
+                "ready",
+                f"Waiting for the agent API at {spec.serve.endpoint}...",
+                "running",
+            ),
+            _startup_event(
+                "ready",
+                f"Connected to the agent API at {spec.serve.endpoint}",
+                "ok",
+            ),
         ):
             progress(event)
-        on_ready(
+        progress.close()
+        runtime_commands._report_foreground_ready(
+            name,
             sandbox_runtime.SandboxState(
                 sandbox=spec.sandbox,
-                ref=SandboxRef(
-                    runtime_id="workload-1",
-                    endpoint=spec.serve.endpoint,
-                ),
-            )
+                ref=SandboxRef("workload-1", spec.serve.endpoint),
+            ),
         )
         return 0
 
     monkeypatch.setattr(sandbox_runtime, "resolve_launch", resolve_launch)
-    monkeypatch.setattr(sandbox_runtime, "run", run)
+    monkeypatch.setattr(runtime_commands, "_run_foreground", run)
 
     result = runner.invoke(
         cli.app,
@@ -296,10 +300,12 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
     assert captured["run"] is captured["resolved_spec"]
     assert result.stdout == ""
     assert result.stderr.strip().splitlines() == [
-        "Preparing sandbox: docker:registry.example/a:b",
-        "Starting workload",
-        "Waiting for agent API",
-        "Running agent alice: http://0.0.0.0:8123 (Ctrl+C to stop)",
+        "Preparing Docker sandbox...",
+        "Created runtime",
+        "Starting agent...",
+        "Waiting for the agent API at http://0.0.0.0:8123...",
+        "Connected to the agent API at http://0.0.0.0:8123",
+        "Agent alice running: http://0.0.0.0:8123 (Ctrl+C to stop)",
     ]
 
 
@@ -383,14 +389,17 @@ def test_start_launches_in_background_and_reports_endpoint(
         spec: sandbox_runtime.LaunchSpec,
         *,
         progress: Any,
-        cleanup_progress: Any,
     ) -> object:
-        del cleanup_progress
         captured["progress"] = progress
         for event in (
-            _startup_event("prepare", "Preparing sandbox", "running", spec.sandbox),
-            _startup_event("launch", "Starting workload", "running"),
-            _startup_event("ready", "Waiting for agent API", "running"),
+            _startup_event("prepare", "Preparing Docker sandbox...", "running"),
+            _startup_event("prepare", "Created runtime", "ok"),
+            _startup_event("server", "Starting agent...", "running"),
+            _startup_event(
+                "ready",
+                f"Connected to the agent API at {spec.serve.endpoint}",
+                "ok",
+            ),
         ):
             progress(event)
         return type(
@@ -428,11 +437,12 @@ def test_start_launches_in_background_and_reports_endpoint(
     )
 
     assert result.exit_code == 0, result.stderr
-    assert result.stdout.strip() == "Started agent alice: http://localhost:8124"
+    assert result.stdout.strip() == "Agent alice started: http://localhost:8124"
     assert result.stderr.strip().splitlines() == [
-        "Preparing sandbox: docker",
-        "Starting workload",
-        "Waiting for agent API",
+        "Preparing Docker sandbox...",
+        "Created runtime",
+        "Starting agent...",
+        "Connected to the agent API at http://localhost:8124",
     ]
     resolved = captured["resolve"]
     assert resolved["sandbox"] == "docker"
@@ -455,25 +465,27 @@ def test_start_reports_guest_failure_stage_reason_hint_and_log(
         _spec: sandbox_runtime.LaunchSpec,
         *,
         progress: Any,
-        cleanup_progress: Any,
     ) -> object:
-        del cleanup_progress
         for event in (
-            _startup_event("install", "Installing Toolang", "running", "package index"),
             _startup_event(
-                "validate",
-                "Checking Toolang compatibility",
+                "install",
+                "Installing Toolang from the package index...",
                 "running",
             ),
             _startup_event(
                 "validate",
-                "Checking Toolang compatibility",
+                "Checking Toolang...",
+                "running",
+            ),
+            _startup_event(
+                "validate",
+                "Failed to check Toolang",
                 "failed",
-                "The installed Toolang package cannot start the required AgentServer.",
+                "The installed Toolang package cannot start the required AgentServer",
             ),
             _startup_event(
                 "ready",
-                "Waiting for agent API",
+                "Failed to start agent",
                 "failed",
                 "agent server exited before becoming ready",
             ),
@@ -495,14 +507,13 @@ def test_start_reports_guest_failure_stage_reason_hint_and_log(
     assert result.exit_code == 1
     stderr = strip_ansi(result.stderr)
     normalized = " ".join(stderr.replace("│", " ").split())
-    assert "Installing Toolang: package index" in stderr
-    assert "Checking Toolang compatibility" in stderr
-    assert "Could not start agent alice in docker" in normalized
+    assert "Installing Toolang from the package index..." in stderr
+    assert "Checking Toolang..." in stderr
+    assert "Failed to check Toolang" in normalized
     assert "Stage: runtime.create" in normalized
-    assert "Activity: Checking Toolang compatibility" in normalized
     assert (
-        "Reason: The Toolang package installed in the guest cannot start the "
-        "required AgentServer." in normalized
+        "Reason: The guest Toolang package cannot start the required AgentServer"
+        in normalized
     )
     assert "Fix: Build or select a compatible Toolang wheel" in normalized
     compact = "".join(stderr.replace("│", "").split())
@@ -524,10 +535,8 @@ def test_start_interruption_during_sandbox_launch_exits_130(
         _spec: sandbox_runtime.LaunchSpec,
         *,
         progress: Any,
-        cleanup_progress: Any,
     ) -> object:
-        del cleanup_progress
-        progress(_startup_event("prepare", "Preparing sandbox", "running", "docker"))
+        progress(_startup_event("prepare", "Preparing Docker sandbox...", "running"))
         raise KeyboardInterrupt
 
     monkeypatch.setattr(sandbox_runtime, "resolve_launch", resolve_launch)
@@ -543,7 +552,7 @@ def test_start_interruption_during_sandbox_launch_exits_130(
 
     assert result.exit_code == 130
     assert result.stdout == ""
-    assert strip_ansi(result.stderr).strip() == "Preparing sandbox: docker"
+    assert strip_ansi(result.stderr).strip() == "Preparing Docker sandbox..."
 
 
 def test_stop_forwards_force_to_sandbox(
@@ -569,7 +578,7 @@ def test_stop_forwards_force_to_sandbox(
     )
 
     assert result.exit_code == 0, result.stderr
-    assert result.stdout.strip() == "Stopped agent alice"
+    assert result.stdout.strip() == "Agent alice stopped"
     assert captured == {"target": layout, "force": True}
 
 
@@ -618,7 +627,7 @@ def test_remove_releases_sandbox_resources_before_deleting_agent(
     result = runner.invoke(cli.app, ["--root", str(root), "remove", "alice"])
 
     assert result.exit_code == 0, result.stderr
-    assert result.stdout.strip() == "Removed agent alice"
+    assert result.stdout.strip() == "Agent alice removed"
     assert calls == [layout]
     assert not layout.home.exists()
 
@@ -638,5 +647,5 @@ def test_remove_deletes_stopped_agent_home_without_authored_source(
     assert "alice" in listed.stdout
     assert "stopped" in listed.stdout
     assert removed.exit_code == 0, removed.stderr
-    assert removed.stdout.strip() == "Removed agent alice"
+    assert removed.stdout.strip() == "Agent alice removed"
     assert not layout.home.exists()

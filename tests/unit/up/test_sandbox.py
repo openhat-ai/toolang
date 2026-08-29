@@ -53,7 +53,14 @@ class FakeSandbox:
             endpoint=request.endpoint,
         )
 
-    async def launch(self, plan: SandboxPlan) -> SandboxRef:
+    async def launch(
+        self,
+        plan: SandboxPlan,
+        *,
+        progress: ProgressSink | None = None,
+        progress_id: str | None = None,
+    ) -> SandboxRef:
+        del progress, progress_id
         self.calls.append(("launch", plan))
         return SandboxRef("workload-1", plan.endpoint)
 
@@ -63,7 +70,7 @@ class FakeSandbox:
         ref: SandboxRef,
         *,
         progress: ProgressSink | None = None,
-        progress_id: str,
+        progress_id: str | None = None,
     ) -> None:
         del progress, progress_id
         self.calls.append(("attach", plan, ref))
@@ -101,10 +108,20 @@ class ConcurrentSandbox(FakeSandbox):
         super().__init__()
         self.launches = 0
 
-    async def launch(self, plan: SandboxPlan) -> SandboxRef:
+    async def launch(
+        self,
+        plan: SandboxPlan,
+        *,
+        progress: ProgressSink | None = None,
+        progress_id: str | None = None,
+    ) -> SandboxRef:
         self.launches += 1
         await asyncio.sleep(0)
-        return await super().launch(plan)
+        return await super().launch(
+            plan,
+            progress=progress,
+            progress_id=progress_id,
+        )
 
 
 class BlockingSandbox(FakeSandbox):
@@ -126,7 +143,14 @@ class FailingWaitSandbox(FakeSandbox):
 
 
 class RecoverableLaunchSandbox(FakeSandbox):
-    async def launch(self, plan: SandboxPlan) -> SandboxRef:
+    async def launch(
+        self,
+        plan: SandboxPlan,
+        *,
+        progress: ProgressSink | None = None,
+        progress_id: str | None = None,
+    ) -> SandboxRef:
+        del progress, progress_id
         ref = SandboxRef("recoverable-workload", plan.endpoint)
         self.calls.append(("launch", plan))
         raise SandboxLaunchError("launch cleanup failed", ref=ref)
@@ -139,7 +163,7 @@ class GuestFailureSandbox(FakeSandbox):
         ref: SandboxRef,
         *,
         progress: ProgressSink | None = None,
-        progress_id: str,
+        progress_id: str | None = None,
     ) -> None:
         self.calls.append(("attach", plan, ref))
         if progress is None:
@@ -502,6 +526,7 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
         ("runtime", "create", "running"),
         ("runtime", "create", "ok"),
         ("runtime", "start", "running"),
+        ("runtime", "start", "running"),
         ("runtime", "start", "ok"),
     ]
 
@@ -572,13 +597,11 @@ def test_launch_failure_stops_releases_and_clears_state(
     spec = _launch_spec(tmp_path)
 
     events: list[ProgressEvent] = []
-    cleanup_events: list[ProgressEvent] = []
     with pytest.raises(TimeoutError, match="not ready"):
         asyncio.run(
             sandbox.launch(
                 spec,
                 progress=events.append,
-                cleanup_progress=cleanup_events.append,
             )
         )
 
@@ -592,11 +615,11 @@ def test_launch_failure_stops_releases_and_clears_state(
         SandboxRef("workload-1", spec.serve.endpoint),
     ) in implementation.calls
     assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
-    assert events[-1].kind == "runtime"
-    assert events[-1].stage == "start"
-    assert events[-1].status == "failed"
-    assert events[-1].detail == "not ready"
-    assert [(event.stage, event.status) for event in cleanup_events] == [
+    failure = next(event for event in events if event.status == "failed")
+    assert failure.kind == "runtime"
+    assert failure.stage == "start"
+    assert failure.detail == "not ready"
+    assert [(event.stage, event.status) for event in events[-4:]] == [
         ("stop", "running"),
         ("stop", "ok"),
         ("destroy", "running"),
@@ -621,8 +644,9 @@ def test_guest_failure_progress_wins_the_early_exit_diagnostic_race(
     stages = [(event.stage, event.label, event.status) for event in events]
     assert ("create", "Installing Toolang", "running") in stages
     assert ("create", "Checking Toolang compatibility", "failed") in stages
-    assert ("start", "Waiting for agent API", "running") not in stages
-    assert stages[-1] == ("create", "Starting workload", "failed")
+    assert [event.label for event in events if event.status == "failed"] == [
+        "Checking Toolang compatibility"
+    ]
 
 
 def test_readiness_cleanup_failure_preserves_sandbox_state(
@@ -891,9 +915,7 @@ def test_canceled_run_stops_releases_and_clears_state(
     cleanup_events: list[ProgressEvent] = []
 
     async def cancel_run() -> BaseException | None:
-        task = asyncio.create_task(
-            sandbox.run(spec, cleanup_progress=cleanup_events.append)
-        )
+        task = asyncio.create_task(sandbox.run(spec, progress=cleanup_events.append))
         await implementation.waiting.wait()
         task.cancel()
         try:
@@ -912,7 +934,7 @@ def test_canceled_run_stops_releases_and_clears_state(
     )
     assert ("release", ref) in implementation.calls
     assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
-    assert [(event.stage, event.status) for event in cleanup_events] == [
+    assert [(event.stage, event.status) for event in cleanup_events[-4:]] == [
         ("stop", "running"),
         ("stop", "ok"),
         ("destroy", "running"),

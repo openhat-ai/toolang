@@ -162,3 +162,20 @@ def test_materialize_roaming_program_links_source_and_config(tmp_path: Path) -> 
     assert layout.config.is_symlink()
     assert (layout.program.parent / os.readlink(layout.program)).resolve() == source
     assert (layout.config.parent / os.readlink(layout.config)).resolve() == config
+
+
+def test_materialize_roaming_program_reports_owned_prepare_work(tmp_path: Path) -> None:
+    source = tmp_path / "demo.too"
+    source.write_text("agent demo\n", encoding="utf-8")
+    events = []
+
+    agents.materialize_roaming_program(source, progress=events.append)
+
+    assert [
+        (event.kind, event.stage, event.label, event.status) for event in events
+    ] == [
+        ("prepare", "resolve", "Resolving agent...", "running"),
+        ("prepare", "resolve", "Resolved agent", "ok"),
+        ("prepare", "materialize", "Preparing agent...", "running"),
+        ("prepare", "materialize", "Prepared agent", "ok"),
+    ]

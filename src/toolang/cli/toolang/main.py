@@ -20,6 +20,7 @@ from ...common import version as _version
 from ...up.logging import configure_logging
 from ..caps import commands as cap_commands
 from ..common.context import CliContext, resolve_root
+from ..common.progress import CliProgress
 from ..common.output import echo_error
 from ..common.routing import (
     OptionalPrefixAgentGroup,
@@ -46,6 +47,9 @@ _PREFIX_AGENT: ContextVar[str | None] = ContextVar(
 )
 _SELECTED_LAYOUT: ContextVar[AgentLayout | None] = ContextVar(
     "toolang_cli_selected_layout", default=None
+)
+_SELECTED_OPERATIONAL: ContextVar[CliProgress | None] = ContextVar(
+    "toolang_cli_selected_operational", default=None
 )
 AGENT_COMMAND_PANEL = "Agent Commands"
 CAPS_COMMAND_PANEL = "Cap Commands"
@@ -175,6 +179,7 @@ def callback(
             if model_catalog is not None
             else None
         ),
+        operational=_SELECTED_OPERATIONAL.get(),
     )
 
 
@@ -448,11 +453,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     routed = routing.dispatch_roaming(
         raw_args,
         prog_name=prog_name,
-        run_app=lambda args, layout: _run_app(
+        run_app=lambda args, layout, operational: _run_app(
             args,
             layout.name,
             prog_name=prog_name,
             layout=layout,
+            operational=operational,
         ),
     )
     if routed is not None:
@@ -465,11 +471,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_target_help(target_help, prog_name=prog_name)
     routed = routing.dispatch_visiting(
         raw_args,
-        run_app=lambda args, layout: _run_app(
+        run_app=lambda args, layout, operational: _run_app(
             args,
             layout.name,
             prog_name=prog_name,
             layout=layout,
+            operational=operational,
         ),
     )
     if routed is not None:
@@ -520,9 +527,11 @@ def _run_app(
     *,
     prog_name: str,
     layout: AgentLayout | None = None,
+    operational: CliProgress | None = None,
 ) -> int:
     agent_token = _PREFIX_AGENT.set(prefix_agent)
     layout_token = _SELECTED_LAYOUT.set(layout)
+    operational_token = _SELECTED_OPERATIONAL.set(operational)
     try:
         result = app(
             args=args,
@@ -539,6 +548,9 @@ def _run_app(
         echo_error(str(exc))
         return 1
     finally:
+        if operational is not None:
+            operational.close()
+        _SELECTED_OPERATIONAL.reset(operational_token)
         _SELECTED_LAYOUT.reset(layout_token)
         _PREFIX_AGENT.reset(agent_token)
     return result if isinstance(result, int) else 0

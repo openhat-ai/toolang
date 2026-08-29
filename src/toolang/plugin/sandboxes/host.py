@@ -72,7 +72,14 @@ class HostSandbox:
             },
         )
 
-    async def launch(self, plan: SandboxPlan) -> SandboxRef:
+    async def launch(
+        self,
+        plan: SandboxPlan,
+        *,
+        progress: ProgressSink | None = None,
+        progress_id: str | None = None,
+    ) -> SandboxRef:
+        del progress, progress_id
         worker = asyncio.create_task(asyncio.to_thread(_launch, plan))
         try:
             process = await asyncio.shield(worker)

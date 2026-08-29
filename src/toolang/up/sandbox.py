@@ -18,7 +18,12 @@ from weakref import WeakKeyDictionary
 
 from toolang.base.errors import SandboxLaunchError
 from toolang.base.protocols.sandbox import Sandbox
-from toolang.base.types.progress import ProgressSink, ProgressStage, ProgressStatus
+from toolang.base.types.progress import (
+    ProgressEvent,
+    ProgressSink,
+    ProgressStage,
+    ProgressStatus,
+)
 from toolang.base.types.sandbox import (
     SandboxOutput,
     SandboxPlan,
@@ -93,11 +98,12 @@ async def resolve_launch(
     output: SandboxOutput = "inherit",
     log_path: Path | None = None,
     temporary_port: bool = False,
+    progress: ProgressSink | None = None,
 ) -> LaunchSpec:
     """Resolve source state, server inputs, and one sandbox selection."""
 
     watcher = StateWatcher(layout)
-    state = await watcher.refresh()
+    state = await watcher.refresh(progress=progress)
     selected, config = _select_sandbox(
         state,
         explicit=sandbox,
@@ -145,7 +151,6 @@ async def launch(
     spec: LaunchSpec,
     *,
     progress: ProgressSink | None = None,
-    cleanup_progress: ProgressSink | None = None,
 ) -> SandboxHandle:
     """Launch an AgentServer and return after it becomes ready."""
 
@@ -155,7 +160,6 @@ async def launch(
             return await _launch_locked(
                 spec,
                 progress=progress,
-                cleanup_progress=cleanup_progress,
             )
 
 
@@ -163,13 +167,12 @@ async def _launch_locked(
     spec: LaunchSpec,
     *,
     progress: ProgressSink | None,
-    cleanup_progress: ProgressSink | None,
 ) -> SandboxHandle:
     _runtime_progress(
         progress,
         id=spec.progress_id,
         stage="create",
-        label="Preparing sandbox",
+        label=f"Preparing {spec.sandbox.partition(':')[0].title()} sandbox...",
         status="running",
         detail=spec.sandbox,
     )
@@ -237,7 +240,7 @@ async def _launch_locked(
             progress,
             id=spec.progress_id,
             stage="create",
-            label="Preparing sandbox",
+            label="Failed to prepare sandbox",
             status="failed",
             detail=str(exc),
         )
@@ -246,17 +249,21 @@ async def _launch_locked(
         progress,
         id=spec.progress_id,
         stage="create",
-        label="Starting workload",
+        label=f"Prepared {spec.sandbox.partition(':')[0].title()} sandbox",
         status="running",
-        detail=plan.sandbox,
     )
     ref: SandboxRef | None = None
     state: SandboxState | None = None
+    progress_failure_observed = False
     active_stage: ProgressStage = "create"
-    active_label = "Starting workload"
+    active_label = "Failed to create runtime"
     try:
         try:
-            ref = await implementation.launch(plan)
+            ref = await implementation.launch(
+                plan,
+                progress=progress,
+                progress_id=spec.progress_id,
+            )
         except SandboxLaunchError as exc:
             ref = exc.ref
             state = SandboxState(sandbox=plan.sandbox, ref=ref)
@@ -264,11 +271,45 @@ async def _launch_locked(
             raise
         state = SandboxState(sandbox=plan.sandbox, ref=ref)
         state.save(spec.serve.layout.sandbox_state)
+        observes_runtime_start = isinstance(plan.meta.get("startup_events_path"), str)
+
+        def forward_launch_progress(event: ProgressEvent) -> None:
+            nonlocal active_stage, active_label, progress_failure_observed
+            if event.status == "failed":
+                progress_failure_observed = True
+            if (
+                event.kind == "runtime"
+                and event.stage == "start"
+                and event.status == "running"
+            ):
+                active_stage = "start"
+                active_label = "Failed to start agent"
+            if progress is not None:
+                with suppress(Exception):
+                    progress(event)
+
+        if on_host or not observes_runtime_start:
+            _runtime_progress(
+                progress,
+                id=spec.progress_id,
+                stage="create",
+                label="Created runtime",
+                status="ok",
+            )
+            _runtime_progress(
+                progress,
+                id=spec.progress_id,
+                stage="start",
+                label="Starting agent...",
+                status="running",
+            )
+            active_stage = "start"
+            active_label = "Failed to start agent"
         attach_task = asyncio.create_task(
             implementation.attach(
                 plan,
                 ref,
-                progress=progress,
+                progress=(forward_launch_progress if progress is not None else None),
                 progress_id=spec.progress_id,
             )
         )
@@ -310,47 +351,37 @@ async def _launch_locked(
         _runtime_progress(
             progress,
             id=spec.progress_id,
-            stage="create",
-            label="Creating runtime",
-            status="ok",
-            detail=ref.runtime_id,
-        )
-        active_stage = "start"
-        active_label = "Waiting for agent API"
-        _runtime_progress(
-            progress,
-            id=spec.progress_id,
             stage="start",
-            label="Waiting for agent API",
+            label=f"Waiting for the agent API at {ref.endpoint}...",
             status="running",
-            detail=ref.endpoint,
         )
         await ready_task
         _runtime_progress(
             progress,
             id=spec.progress_id,
             stage="start",
-            label="Waiting for agent API",
+            label=f"Connected to the agent API at {ref.endpoint}",
             status="ok",
             detail=ref.endpoint,
         )
         return SandboxHandle(implementation, state, plan)
     except BaseException as exc:
-        _runtime_progress(
-            progress,
-            id=spec.progress_id,
-            stage=active_stage,
-            label=active_label,
-            status="failed",
-            detail=str(exc),
-        )
+        if not progress_failure_observed:
+            _runtime_progress(
+                progress,
+                id=spec.progress_id,
+                stage=active_stage,
+                label=active_label,
+                status="failed",
+                detail=str(exc),
+            )
         await asyncio.shield(
             _recover_failed_launch(
                 spec.serve.layout,
                 implementation,
                 ref=ref,
                 state=state,
-                progress=cleanup_progress,
+                progress=progress,
             )
         )
         if ref is None and local_progress_path is not None:
@@ -364,14 +395,12 @@ async def run(
     *,
     on_ready: Callable[[SandboxState], None] | None = None,
     progress: ProgressSink | None = None,
-    cleanup_progress: ProgressSink | None = None,
 ) -> int:
     """Launch, follow, and release one foreground AgentServer."""
 
     handle = await launch(
         spec,
         progress=progress,
-        cleanup_progress=cleanup_progress,
     )
     try:
         if on_ready is not None:
@@ -385,7 +414,7 @@ async def run(
                 spec.serve.layout,
                 handle,
                 force=False,
-                progress=cleanup_progress,
+                progress=progress,
             )
         )
         raise
@@ -395,11 +424,11 @@ async def run(
                 spec.serve.layout,
                 handle,
                 force=True,
-                progress=cleanup_progress,
+                progress=progress,
             )
         )
         raise
-    await _release(spec.serve.layout, handle, progress=cleanup_progress)
+    await release_handle(spec.serve.layout, handle, progress=progress)
     return exit_code
 
 
@@ -428,7 +457,7 @@ async def _recover_failed_launch(
         progress,
         id=progress_id,
         stage="stop",
-        label="Stopping failed workload",
+        label="Stopping agent...",
         status="running",
     )
     try:
@@ -438,7 +467,7 @@ async def _recover_failed_launch(
             progress,
             id=progress_id,
             stage="stop",
-            label="Stopping failed workload",
+            label="Failed to stop agent",
             status="failed",
             detail=str(exc),
         )
@@ -447,14 +476,14 @@ async def _recover_failed_launch(
             progress,
             id=progress_id,
             stage="stop",
-            label="Stopping failed workload",
+            label="Stopped agent",
             status="ok",
         )
     _runtime_progress(
         progress,
         id=progress_id,
         stage="destroy",
-        label="Destroying failed runtime",
+        label="Removing runtime...",
         status="running",
     )
     try:
@@ -464,7 +493,7 @@ async def _recover_failed_launch(
             progress,
             id=progress_id,
             stage="destroy",
-            label="Destroying failed runtime",
+            label="Failed to remove runtime",
             status="failed",
             detail=str(exc),
         )
@@ -476,17 +505,19 @@ async def _recover_failed_launch(
         progress,
         id=progress_id,
         stage="destroy",
-        label="Destroying failed runtime",
+        label="Removed runtime",
         status="ok",
     )
 
 
-async def _release(
+async def release_handle(
     layout: AgentLayout,
     handle: SandboxHandle,
     *,
     progress: ProgressSink | None = None,
 ) -> None:
+    """Release one exact process-owned sandbox after its workload exits."""
+
     progress_id = f"runtime:{handle.state.ref.runtime_id}"
     with suppress(Exception):
         await handle.implementation.unfollow(handle.state.ref)
@@ -494,7 +525,7 @@ async def _release(
         progress,
         id=progress_id,
         stage="destroy",
-        label="Destroying runtime",
+        label="Removing runtime...",
         status="running",
         detail=handle.state.sandbox,
     )
@@ -506,7 +537,7 @@ async def _release(
             progress,
             id=progress_id,
             stage="destroy",
-            label="Destroying runtime",
+            label="Failed to remove runtime",
             status="failed",
             detail=str(exc),
         )
@@ -515,7 +546,7 @@ async def _release(
         progress,
         id=progress_id,
         stage="destroy",
-        label="Destroying runtime",
+        label="Removed runtime",
         status="ok",
         detail=handle.state.sandbox,
     )
@@ -542,7 +573,7 @@ async def stop(
                 progress,
                 id=progress_id,
                 stage="stop",
-                label="Stopping workload",
+                label="Stopping agent...",
                 status="running",
                 detail=state.sandbox,
             )
@@ -553,7 +584,7 @@ async def stop(
                     progress,
                     id=progress_id,
                     stage="stop",
-                    label="Stopping workload",
+                    label="Failed to stop agent",
                     status="failed",
                     detail=str(exc),
                 )
@@ -562,7 +593,7 @@ async def stop(
                 progress,
                 id=progress_id,
                 stage="stop",
-                label="Stopping workload",
+                label="Stopped agent",
                 status="ok",
                 detail=state.sandbox,
             )
@@ -570,7 +601,7 @@ async def stop(
                 progress,
                 id=progress_id,
                 stage="destroy",
-                label="Destroying runtime",
+                label="Removing runtime...",
                 status="running",
                 detail=state.sandbox,
             )
@@ -581,7 +612,7 @@ async def stop(
                     progress,
                     id=progress_id,
                     stage="destroy",
-                    label="Destroying runtime",
+                    label="Failed to remove runtime",
                     status="failed",
                     detail=str(exc),
                 )
@@ -591,7 +622,7 @@ async def stop(
                 progress,
                 id=progress_id,
                 stage="destroy",
-                label="Destroying runtime",
+                label="Removed runtime",
                 status="ok",
                 detail=state.sandbox,
             )
@@ -625,7 +656,7 @@ async def stop_handle(
                 progress,
                 id=progress_id,
                 stage="stop",
-                label="Stopping workload",
+                label="Stopping agent...",
                 status="running",
                 detail=handle.state.sandbox,
             )
@@ -636,7 +667,7 @@ async def stop_handle(
                     progress,
                     id=progress_id,
                     stage="stop",
-                    label="Stopping workload",
+                    label="Failed to stop agent",
                     status="failed",
                     detail=str(exc),
                 )
@@ -645,7 +676,7 @@ async def stop_handle(
                 progress,
                 id=progress_id,
                 stage="stop",
-                label="Stopping workload",
+                label="Stopped agent",
                 status="ok",
                 detail=handle.state.sandbox,
             )
@@ -653,7 +684,7 @@ async def stop_handle(
                 progress,
                 id=progress_id,
                 stage="destroy",
-                label="Destroying runtime",
+                label="Removing runtime...",
                 status="running",
                 detail=handle.state.sandbox,
             )
@@ -665,7 +696,7 @@ async def stop_handle(
                     progress,
                     id=progress_id,
                     stage="destroy",
-                    label="Destroying runtime",
+                    label="Failed to remove runtime",
                     status="failed",
                     detail=str(exc),
                 )
@@ -674,7 +705,7 @@ async def stop_handle(
                 progress,
                 id=progress_id,
                 stage="destroy",
-                label="Destroying runtime",
+                label="Removed runtime",
                 status="ok",
                 detail=handle.state.sandbox,
             )
@@ -883,7 +914,7 @@ async def _release_stopped_locked(
         progress,
         id=progress_id,
         stage="destroy",
-        label="Destroying stopped runtime",
+        label="Removing runtime...",
         status="running",
         detail=state.sandbox,
     )
@@ -896,7 +927,7 @@ async def _release_stopped_locked(
             progress,
             id=progress_id,
             stage="destroy",
-            label="Destroying stopped runtime",
+            label="Failed to remove runtime",
             status="failed",
             detail=str(exc),
         )
@@ -905,7 +936,7 @@ async def _release_stopped_locked(
         progress,
         id=progress_id,
         stage="destroy",
-        label="Destroying stopped runtime",
+        label="Removed runtime",
         status="ok",
         detail=state.sandbox,
     )

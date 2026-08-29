@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import click
 import typer
@@ -19,6 +19,9 @@ from ...common.layout import AgentLayout
 from ..config import load_config
 from ...catalog.errors import CatalogError
 
+if TYPE_CHECKING:
+    from .progress import CliProgress
+
 
 @dataclass(slots=True)
 class CliContext:
@@ -26,6 +29,7 @@ class CliContext:
     agent: str | None = None
     layout: AgentLayout | None = None
     model_catalog: Path | None = None
+    operational: CliProgress | None = None
 
 
 def cli_context(ctx: typer.Context) -> CliContext:
@@ -42,6 +46,22 @@ def context_model_catalog(ctx: typer.Context) -> Path | None:
     """Return the process-level explicit model catalog override."""
 
     return cli_context(ctx).model_catalog
+
+
+def command_progress(
+    ctx: typer.Context,
+    *,
+    enabled: bool = True,
+) -> CliProgress:
+    """Return routed progress or create one presenter for this command segment."""
+
+    from .progress import make_cli_progress
+
+    state = getattr(ctx, "obj", None)
+    routed = state.operational if isinstance(state, CliContext) else None
+    if routed is not None:
+        return routed
+    return make_cli_progress(enabled=enabled)
 
 
 def context_agent(ctx: typer.Context) -> str | None:

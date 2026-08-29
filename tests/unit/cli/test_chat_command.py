@@ -270,6 +270,8 @@ def test_chat_runtime_builds_process_local_execution_resources(
         **kwargs: object,
     ) -> Iterator[ExecutionRuntime]:
         assert selected == layout
+        operational = kwargs.pop("operational")
+        assert getattr(operational, "sink") is not None
         assert kwargs == {
             "sandbox": "host",
             "dev": None,
@@ -335,6 +337,8 @@ def test_chat_runtime_uses_remote_execution_without_local_environment(
         **kwargs: object,
     ) -> Iterator[ExecutionRuntime]:
         assert selected == layout
+        operational = kwargs.pop("operational")
+        assert getattr(operational, "sink") is not None
         assert kwargs == {
             "sandbox": "docker",
             "dev": None,

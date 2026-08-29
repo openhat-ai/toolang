@@ -133,9 +133,13 @@ def _chat_runtime(
     model_catalog = (
         context_model_catalog(ctx) if isinstance(ctx, typer.Context) else None
     )
+    from toolang.cli.common.context import command_progress
+
+    progress = command_progress(ctx)
     try:
         runtime_context = open_execution_runtime(
             layout,
+            operational=progress,
             sandbox=sandbox,
             dev=dev,
             model_catalog=model_catalog,
@@ -143,6 +147,7 @@ def _chat_runtime(
         )
         with runtime_context as runtime:
             if runtime.mode == "remote":
+                progress.close()
                 if runtime.endpoint is None:  # pragma: no cover - value invariant
                     raise RuntimeError("remote execution runtime has no endpoint")
                 remote: RemoteChatSession | None = None
@@ -174,9 +179,6 @@ def _chat_runtime(
                 return
 
             environ = load_runtime_environ(layout, base_environ=os.environ)
-            from toolang.cli.common.progress import as_progress_sink, make_cli_progress
-
-            progress = make_cli_progress(agent=layout.name)
             try:
                 local = LocalChatSession(
                     layout,
@@ -201,16 +203,18 @@ def _chat_runtime(
                         environ,
                         limit_options,
                     ),
-                    progress=as_progress_sink(progress),
+                    progress=progress.sink,
                 )
             finally:
-                progress.finish(details=False)
+                progress.close()
             try:
                 yield local
             finally:
                 local.close()
     except ExecutionRuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
+    finally:
+        progress.close()
 
 
 def _remote_session_commands(

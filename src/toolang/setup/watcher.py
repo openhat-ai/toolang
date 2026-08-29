@@ -101,7 +101,6 @@ class SetupWatcher:
                 progress,
                 progress_id=progress_id,
                 stage="load",
-                label="Loading agent setup",
             ):
                 root_config = load_setup_config(self.layout)
                 agent_config = load_agent_config(self.layout)
@@ -178,7 +177,6 @@ class SetupWatcher:
                 progress,
                 progress_id=progress_id,
                 stage="discover",
-                label="Discovering models",
             ):
                 merged = await MergedModelCatalog(
                     (
@@ -283,14 +281,21 @@ def _setup_stage(
     *,
     progress_id: str,
     stage: ProgressStage,
-    label: str,
 ) -> Iterator[None]:
+    running_label, completed_label, failed_label = {
+        "load": ("Loading setup...", "Loaded setup", "Failed to load setup"),
+        "discover": (
+            "Discovering models...",
+            "Discovered models",
+            "Failed to discover models",
+        ),
+    }[stage]
     emit_progress(
         progress,
         id=progress_id,
         kind="setup",
         stage=stage,
-        label=label,
+        label=running_label,
         status="running",
     )
     try:
@@ -301,7 +306,7 @@ def _setup_stage(
             id=progress_id,
             kind="setup",
             stage=stage,
-            label=label,
+            label=failed_label,
             status="failed",
             detail=_failure_detail(exc),
         )
@@ -311,7 +316,7 @@ def _setup_stage(
         id=progress_id,
         kind="setup",
         stage=stage,
-        label=label,
+        label=completed_label,
         status="ok",
     )
 

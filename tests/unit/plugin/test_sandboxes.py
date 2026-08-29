@@ -820,21 +820,31 @@ def test_docker_startup_observer_preserves_order_and_curated_failure(
     )
 
     assert [
-        (event.kind, event.stage, event.status, event.detail) for event in events
+        (event.kind, event.stage, event.label, event.status, event.detail)
+        for event in events
     ] == [
-        ("runtime", "create", "running", "toolang.whl"),
-        ("runtime", "create", "running", None),
         (
             "runtime",
             "create",
-            "failed",
-            docker_guest.DOCKER_TOOLANG_COMPATIBILITY_ERROR,
+            "Installing Toolang from toolang.whl...",
+            "running",
+            None,
         ),
-    ]
-    assert [event.label for event in events] == [
-        "Installing Toolang",
-        "Checking Toolang compatibility",
-        "Checking Toolang compatibility",
+        (
+            "runtime",
+            "create",
+            "Installed Toolang from toolang.whl",
+            "running",
+            None,
+        ),
+        ("runtime", "create", "Checking Toolang...", "running", None),
+        (
+            "runtime",
+            "create",
+            "Failed to check Toolang",
+            "failed",
+            docker_guest.DOCKER_TOOLANG_COMPATIBILITY_ERROR.rstrip("."),
+        ),
     ]
 
 
@@ -906,6 +916,10 @@ def test_docker_launch_observer_forwards_only_closed_guest_setup_tokens(
     assert [(event.id, event.kind, event.stage, event.status) for event in events] == [
         ("runtime:container", "runtime", "create", "running"),
         ("runtime:container", "runtime", "create", "running"),
+        ("runtime:container", "runtime", "create", "running"),
+        ("runtime:container", "runtime", "create", "running"),
+        ("runtime:container", "runtime", "create", "ok"),
+        ("runtime:container", "runtime", "start", "running"),
         ("setup:alice", "setup", "load", "running"),
         ("setup:alice", "setup", "load", "ok"),
         ("setup:alice", "setup", "discover", "running"),

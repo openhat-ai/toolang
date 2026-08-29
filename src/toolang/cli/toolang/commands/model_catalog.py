@@ -9,6 +9,7 @@ import json
 from typing import Annotated, cast
 
 from rich.text import Text
+import click
 import typer
 
 from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
@@ -187,19 +188,24 @@ def adapters_command(
 
 
 def _setup(ctx: typer.Context) -> AgentSetup:
-    from ...common.progress import as_progress_sink, make_cli_progress
+    from ...common.progress import make_cli_progress
 
     layout = _layout(ctx)
-    progress = make_cli_progress(agent=layout.name)
+    progress = make_cli_progress()
     try:
-        return asyncio.run(
-            SetupWatcher(
-                layout,
-                model_catalog=context_model_catalog(ctx),
-            ).refresh(progress=as_progress_sink(progress))
-        )
+        try:
+            return asyncio.run(
+                SetupWatcher(
+                    layout,
+                    model_catalog=context_model_catalog(ctx),
+                ).refresh(progress=progress.sink)
+            )
+        except Exception as exc:
+            if progress.failure_stage is not None:
+                raise click.ClickException(progress.failure_message(exc)) from exc
+            raise
     finally:
-        progress.finish(details=False)
+        progress.close()
 
 
 def _layout(ctx: typer.Context) -> AgentLayout:

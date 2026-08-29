@@ -159,7 +159,7 @@ def test_models_explicit_missing_catalog_does_not_fall_back(tmp_path: Path) -> N
 
     assert result.exit_code != 0
     assert result.exception is not None
-    assert "explicit model catalog" in str(result.exception)
+    assert "explicit model catalog" in result.output
 
 
 def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(

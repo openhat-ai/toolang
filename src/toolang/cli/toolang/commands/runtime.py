@@ -26,6 +26,7 @@ from ....up.logging import (
 )
 from ...common.context import (
     cli_context,
+    command_progress,
     context_model_catalog,
     context_root,
     require_runtime_agent,
@@ -41,6 +42,7 @@ from ...common.output import active_agent_error, echo_error
 from toolang.common.version import development_source
 
 if TYPE_CHECKING:
+    from toolang.common.progress import ProgressSink
     from toolang.up.sandbox import SandboxState, LaunchSpec
     from ...common.progress import CliProgress
 
@@ -80,11 +82,14 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
     from ...common.progress import make_cli_progress
 
     startup_progress: CliProgress | None = None
-    cleanup_progress: CliProgress | None = None
     startup: LaunchSpec | None = None
     try:
         options = _parse_roaming_file_options(args)
-        layout = agents.materialize_roaming_program(source)
+        startup_progress = make_cli_progress()
+        layout = agents.materialize_roaming_program(
+            source,
+            progress=startup_progress.sink,
+        )
         existing = agents.AgentProcess(layout).status(ui_base_url=ui_base_url())
         if existing is not None and existing.status in {
             "running",
@@ -133,37 +138,22 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
                 log_path=layout.runtime_log,
                 temporary_port=options.port is None,
                 environ=log_plan.environ,
+                progress=startup_progress.sink,
             ),
         )
-        warn_development_package_source(startup)
-        startup_progress = make_cli_progress(
-            agent=layout.name,
-            sandbox=startup.sandbox,
-        )
-        cleanup_progress = make_cli_progress(
-            agent=layout.name,
-            sandbox=startup.sandbox,
-        )
+        warn_development_package_source(startup, progress=startup_progress)
         exit_code = user_call(
             asyncio.run,
-            sandbox_runtime.run(
+            _run_foreground(
                 startup,
-                on_ready=lambda state: _report_foreground_ready(
-                    layout.name,
-                    state,
-                    startup_progress,
-                ),
+                name=layout.name,
                 progress=startup_progress,
-                cleanup_progress=cleanup_progress,
             ),
         )
-        cleanup_progress.finish(details=False)
         return exit_code
     except KeyboardInterrupt:
         if startup_progress is not None:
-            startup_progress.interrupt()
-        if cleanup_progress is not None:
-            cleanup_progress.finish(details=False)
+            startup_progress.close()
         return 130
     except (
         FileExistsError,
@@ -174,13 +164,9 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
         click.ClickException,
     ) as exc:
         if startup_progress is not None:
-            startup_progress.finish()
-        if cleanup_progress is not None:
-            cleanup_progress.finish(details=False)
+            startup_progress.close()
         if startup_progress is not None:
             message = runtime_startup_failure_message(
-                layout.name,
-                startup.sandbox if startup is not None else options.sandbox,
                 startup_progress,
                 exc,
                 dev_artifact=startup.dev_artifact if startup is not None else None,
@@ -324,14 +310,9 @@ def run(
         typer.Option("--endpoint-host", help="Endpoint host name.", hidden=True),
     ] = None,
 ) -> None:
-    from toolang.up import sandbox as sandbox_runtime
-    from ...common.progress import as_progress_sink, make_cli_progress
-
     selector = require_runtime_agent(ctx, agent)
-    progress = make_cli_progress()
-    source_finished = False
-    startup_progress: CliProgress | None = None
-    cleanup_progress: CliProgress | None = None
+    progress = command_progress(ctx)
+    launch: RuntimeLaunch | None = None
     try:
         selected_layout = cli_context(ctx).layout
         target = (
@@ -340,7 +321,7 @@ def run(
             else agents.resolve_run_layout(
                 context_root(ctx),
                 selector,
-                progress=as_progress_sink(progress),
+                progress=progress.sink,
             )
         )
         launch = resolve_startup(
@@ -356,38 +337,19 @@ def run(
             endpoint_host=endpoint_host,
             dev=dev,
             background=False,
+            progress=progress.sink,
         )
-        progress.finish(details=False)
-        source_finished = True
-        warn_development_package_source(launch.startup)
-        startup_progress = make_cli_progress(
-            agent=launch.target.name,
-            sandbox=launch.startup.sandbox,
-        )
-        cleanup_progress = make_cli_progress(
-            agent=launch.target.name,
-            sandbox=launch.startup.sandbox,
-        )
+        warn_development_package_source(launch.startup, progress=progress)
         exit_code = user_call(
             asyncio.run,
-            sandbox_runtime.run(
+            _run_foreground(
                 launch.startup,
-                on_ready=lambda state: _report_foreground_ready(
-                    launch.target.name,
-                    state,
-                    startup_progress,
-                ),
-                progress=startup_progress,
-                cleanup_progress=cleanup_progress,
+                name=launch.target.name,
+                progress=progress,
             ),
         )
     except KeyboardInterrupt:
-        if not source_finished:
-            progress.interrupt()
-        if startup_progress is not None:
-            startup_progress.interrupt()
-        if cleanup_progress is not None:
-            cleanup_progress.finish(details=False)
+        progress.close()
         raise typer.Exit(130) from None
     except (
         FileExistsError,
@@ -397,41 +359,80 @@ def run(
         ValueError,
         click.ClickException,
     ) as exc:
-        if not source_finished:
-            progress.finish(details=False)
-        if startup_progress is not None:
-            startup_progress.finish()
-        if cleanup_progress is not None:
-            cleanup_progress.finish(details=False)
-        if isinstance(exc, click.ClickException) and startup_progress is None:
+        progress.close()
+        operational_failed = launch is not None and progress.failure_stage is not None
+        if isinstance(exc, click.ClickException) and not operational_failed:
             raise
-        if startup_progress is not None:
+        if operational_failed and launch is not None:
             raise click.ClickException(
                 runtime_startup_failure_message(
-                    launch.target.name,
-                    launch.startup.sandbox,
-                    startup_progress,
+                    progress,
                     exc,
                     dev_artifact=launch.startup.dev_artifact,
                     development_build=development_source()[0],
                 )
             ) from exc
         raise click.ClickException(str(exc)) from exc
-    if cleanup_progress is not None:
-        cleanup_progress.finish(details=False)
     raise typer.Exit(exit_code)
 
 
 def _report_foreground_ready(
     name: str,
     state: SandboxState,
-    progress: CliProgress,
 ) -> None:
-    progress.finish()
     typer.echo(
-        f"Running agent {name}: {state.ref.endpoint} (Ctrl+C to stop)",
+        f"Agent {name} running: {state.ref.endpoint} (Ctrl+C to stop)",
         err=True,
     )
+
+
+async def _run_foreground(
+    startup: LaunchSpec,
+    *,
+    name: str,
+    progress: CliProgress,
+) -> int:
+    """Run one foreground sandbox with explicit terminal-owner handoffs."""
+
+    from toolang.up import sandbox as sandbox_runtime
+    from ...common.progress import make_cli_progress
+
+    handle = await sandbox_runtime.launch(startup, progress=progress.sink)
+    progress.close()
+    _report_foreground_ready(name, handle.state)
+    try:
+        if handle.plan is not None:
+            await handle.implementation.follow(handle.plan, handle.state.ref)
+        exit_code = await handle.implementation.wait(handle.state.ref)
+    except asyncio.CancelledError:
+        with make_cli_progress() as cleanup:
+            await asyncio.shield(
+                sandbox_runtime.stop_handle(
+                    startup.serve.layout,
+                    handle,
+                    force=False,
+                    progress=cleanup.sink,
+                )
+            )
+        raise
+    except BaseException:
+        with make_cli_progress() as cleanup:
+            await asyncio.shield(
+                sandbox_runtime.stop_handle(
+                    startup.serve.layout,
+                    handle,
+                    force=True,
+                    progress=cleanup.sink,
+                )
+            )
+        raise
+    with make_cli_progress() as cleanup:
+        await sandbox_runtime.release_handle(
+            startup.serve.layout,
+            handle,
+            progress=cleanup.sink,
+        )
+    return exit_code
 
 
 def start(
@@ -484,19 +485,18 @@ def start(
     ] = None,
 ) -> None:
     from toolang.up import sandbox as sandbox_runtime
-    from ...common.progress import as_progress_sink, make_cli_progress
 
     selector = require_runtime_agent(ctx, agent)
     if user_call(agents.parse_agent_selector, selector).form != "name":
         raise click.ClickException(
             "start only supports local agent names; clone the remote source first"
         )
-    progress = make_cli_progress()
+    progress = command_progress(ctx)
     try:
         target = agents.resolve_run_layout(
             context_root(ctx),
             selector,
-            progress=as_progress_sink(progress),
+            progress=progress.sink,
         )
         launch = resolve_startup(
             ctx,
@@ -511,36 +511,26 @@ def start(
             endpoint_host=endpoint_host,
             dev=dev,
             background=True,
+            progress=progress.sink,
         )
     except KeyboardInterrupt:
-        progress.interrupt()
+        progress.close()
         raise typer.Exit(130) from None
     except click.ClickException:
-        progress.finish(details=False)
+        progress.close()
         raise
 
-    progress.finish(details=False)
-    warn_development_package_source(launch.startup)
-    startup_progress = make_cli_progress(
-        agent=launch.target.name,
-        sandbox=launch.startup.sandbox,
-    )
-    cleanup_progress = make_cli_progress(
-        agent=launch.target.name,
-        sandbox=launch.startup.sandbox,
-    )
+    warn_development_package_source(launch.startup, progress=progress)
     try:
         handle = user_call(
             asyncio.run,
             sandbox_runtime.launch(
                 launch.startup,
-                progress=startup_progress,
-                cleanup_progress=cleanup_progress,
+                progress=progress.sink,
             ),
         )
     except KeyboardInterrupt:
-        startup_progress.interrupt()
-        cleanup_progress.finish(details=False)
+        progress.close()
         raise typer.Exit(130) from None
     except (
         TimeoutError,
@@ -549,22 +539,18 @@ def start(
         ValueError,
         click.ClickException,
     ) as exc:
-        startup_progress.finish()
-        cleanup_progress.finish(details=False)
+        progress.close()
         raise click.ClickException(
             runtime_startup_failure_message(
-                launch.target.name,
-                launch.startup.sandbox,
-                startup_progress,
+                progress,
                 exc,
                 log_path=launch.target.runtime_log,
                 dev_artifact=launch.startup.dev_artifact,
                 development_build=development_source()[0],
             )
         ) from exc
-    startup_progress.finish()
-    cleanup_progress.finish(details=False)
-    typer.echo(f"Started agent {launch.target.name}: {handle.state.ref.endpoint}")
+    progress.close()
+    typer.echo(f"Agent {launch.target.name} started: {handle.state.ref.endpoint}")
 
 
 def stop(
@@ -581,24 +567,20 @@ def stop(
     agent_name = require_runtime_agent(ctx, agent)
     root = context_root(ctx)
     layout = AgentLayout.resident(root, agent_name)
-    status = agents.AgentProcess(layout).status(ui_base_url=ui_base_url())
-    progress = make_cli_progress(
-        agent=agent_name,
-        sandbox=status.sandbox if status is not None else None,
-    )
+    progress = make_cli_progress()
     try:
         stopped = user_call(
             asyncio.run,
-            sandbox_runtime.stop(layout, force=force, progress=progress),
+            sandbox_runtime.stop(layout, force=force, progress=progress.sink),
         )
     except KeyboardInterrupt:
-        progress.interrupt()
+        progress.close()
         raise typer.Exit(130) from None
     finally:
-        progress.finish(details=False)
+        progress.close()
     if not stopped:
         raise click.ClickException(f"Agent {agent_name} not running")
-    typer.echo(f"Stopped agent {agent_name}")
+    typer.echo(f"Agent {agent_name} stopped")
 
 
 def serve(
@@ -680,6 +662,7 @@ def resolve_startup(
     endpoint_host: str | None,
     dev: Path | None,
     background: bool,
+    progress: ProgressSink | None = None,
 ) -> RuntimeLaunch:
     from toolang.up import sandbox as sandbox_runtime
 
@@ -733,6 +716,7 @@ def resolve_startup(
             log_path=log_plan.path if background else target.runtime_log,
             temporary_port=target.placement == "visiting" and port is None,
             environ=log_plan.environ,
+            progress=progress,
         ),
     )
     return RuntimeLaunch(target, startup, log_plan.environ, log_plan)

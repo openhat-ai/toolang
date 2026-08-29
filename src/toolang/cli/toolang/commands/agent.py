@@ -6,17 +6,15 @@ import asyncio
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-import shutil
 from typing import Annotated, cast
 
 import click
 import typer
 
+from toolang.base.types.progress import ProgressSink
 from toolang.catalog.job import AuthoredJobs
 from toolang.catalog.agent import LocalAgents
 from toolang.common.layout import AgentLayout
-from toolang.common.progress import emit_progress
-from toolang.base.types.progress import ProgressSink, ProgressStage
 from toolang.up import process as agents
 from toolang.catalog import templates
 from toolang.setup import AgentSetup, SetupWatcher
@@ -24,6 +22,7 @@ from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import AgentState
 from ...common.context import (
     cli_context,
+    command_progress,
     context_model_catalog,
     context_root,
     require_runtime_agent,
@@ -40,7 +39,6 @@ from ...common.output import (
     runtime_value,
     shorten_home_path,
 )
-from ...common.progress import as_progress_sink, make_cli_progress
 from . import plugin
 
 
@@ -63,7 +61,7 @@ def new_agent(
         home = LocalAgents(root / "agents").create(agent, content=source_text)
     except FileExistsError as exc:
         raise click.ClickException(f"Agent {agent} already exists") from exc
-    typer.echo(f"Created agent {agent}: {home / 'agent.too'}")
+    typer.echo(f"Agent {agent} created: {home / 'agent.too'}")
 
 
 def clone_agent(
@@ -72,122 +70,22 @@ def clone_agent(
     target: Annotated[str | None, typer.Argument(help="New local agent name.")] = None,
 ) -> None:
     root = context_root(ctx)
-    progress = make_cli_progress()
-    sink = as_progress_sink(progress)
-    progress_id = f"agent:{source}"
-    active_stage: ProgressStage = "resolve"
-    try:
-        homes = LocalAgents(root / "agents")
-        selector = agents.parse_agent_selector(source)
-        if selector.form == "name":
-            emit_progress(
-                sink,
-                id=progress_id,
-                kind="prepare",
-                stage="resolve",
-                label="Resolve agent",
-                status="running",
-                detail=source,
+    with command_progress(ctx) as progress:
+        try:
+            home = agents.clone_agent(
+                root,
+                source,
+                target=target,
+                progress=progress.sink,
             )
-            if target is None:
-                raise ValueError("target name is required when cloning one local agent")
-            source_home = homes.get(selector.name or "")
-            if source_home is None:
-                raise FileNotFoundError(source)
-            emit_progress(
-                sink,
-                id=progress_id,
-                kind="prepare",
-                stage="resolve",
-                label="Resolve agent",
-                status="ok",
-                detail=source,
-            )
-            active_stage = "materialize"
-            home = homes.path(target)
-            if home.exists():
-                raise FileExistsError(home)
-            emit_progress(
-                sink,
-                id=progress_id,
-                kind="prepare",
-                stage="materialize",
-                label="Materialize agent",
-                status="running",
-                detail=target,
-            )
-            shutil.copytree(
-                source_home,
-                home,
-                ignore=shutil.ignore_patterns(".caps", ".state", ".runtime"),
-            )
-        else:
-            ref = agents.resolve_agent_selector_ref(
-                selector,
-                progress=sink,
-                progress_id=progress_id,
-            )
-            name = target or selector.default_name()
-            active_stage = "fetch"
-            content = agents.fetch_agent_ref(
-                ref,
-                progress=sink,
-                progress_id=progress_id,
-            )
-            active_stage = "materialize"
-            emit_progress(
-                sink,
-                id=progress_id,
-                kind="prepare",
-                stage="materialize",
-                label="Materialize agent",
-                status="running",
-                detail=name,
-            )
-            home = homes.create(name, content=content)
-        emit_progress(
-            sink,
-            id=progress_id,
-            kind="prepare",
-            stage="materialize",
-            label="Materialize agent",
-            status="ok",
-            detail=home.name,
-        )
-    except FileExistsError as exc:
-        _emit_clone_failure(sink, progress_id, active_stage, exc)
-        target_name = target or Path(source).stem
-        raise click.ClickException(f"Agent {target_name} already exists") from exc
-    except FileNotFoundError as exc:
-        _emit_clone_failure(sink, progress_id, active_stage, exc)
-        raise click.ClickException(f"Agent {source} not found") from exc
-    except ValueError as exc:
-        _emit_clone_failure(sink, progress_id, active_stage, exc)
-        raise click.ClickException(str(exc)) from exc
-    finally:
-        progress.finish(details=False)
-    typer.echo(f"Cloned agent {home.name}: {home / 'agent.too'}")
-
-
-def _emit_clone_failure(
-    progress: ProgressSink | None,
-    progress_id: str,
-    stage: ProgressStage,
-    error: Exception,
-) -> None:
-    emit_progress(
-        progress,
-        id=progress_id,
-        kind="prepare",
-        stage=stage,
-        label={
-            "resolve": "Resolve agent",
-            "fetch": "Fetch agent",
-            "materialize": "Materialize agent",
-        }[stage],
-        status="failed",
-        detail=str(error),
-    )
+        except FileExistsError as exc:
+            target_name = target or Path(source).stem
+            raise click.ClickException(f"Agent {target_name} already exists") from exc
+        except FileNotFoundError as exc:
+            raise click.ClickException(f"Agent {source} not found") from exc
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+    typer.echo(f"Agent {home.name} cloned: {home / 'agent.too'}")
 
 
 def remove_agent(
@@ -211,7 +109,7 @@ def remove_agent(
         raise click.ClickException(f"Agent {agent} not found") from exc
     except (OSError, RuntimeError) as exc:
         raise click.ClickException(f"Could not release agent {agent}: {exc}") from exc
-    typer.echo(f"Removed agent {agent}")
+    typer.echo(f"Agent {agent} removed")
 
 
 def list_agents(ctx: typer.Context) -> None:
@@ -247,18 +145,20 @@ def info_agent(
     if status is None:
         raise click.ClickException(f"Agent {agent_name} not found")
     runtime_state = process.state() or {}
-    state = _prepare_state(layout)
     model_catalog = context_model_catalog(ctx)
     watcher = (
         SetupWatcher(layout, model_catalog=model_catalog)
         if model_catalog is not None
         else SetupWatcher(layout)
     )
-    progress = make_cli_progress(agent=layout.name)
-    try:
-        setup = asyncio.run(watcher.refresh(progress=as_progress_sink(progress)))
-    finally:
-        progress.finish(details=False)
+    with command_progress(ctx) as progress:
+        try:
+            state = _prepare_state(layout, progress=progress.sink)
+            setup = asyncio.run(watcher.refresh(progress=progress.sink))
+        except Exception as exc:
+            if progress.failure_stage is not None:
+                raise click.ClickException(progress.failure_message(exc)) from exc
+            raise
     created_at = created_time(layout.home)
     started_at = runtime_value(runtime_state.get("started_at"))
     updated_at = runtime_value(runtime_state.get("updated_at"))
@@ -325,19 +225,19 @@ def _caps_summary(state: AgentState) -> str:
     )
 
 
-def _prepare_state(layout: AgentLayout) -> AgentState:
-    progress = make_cli_progress(show_materialize_summary=True)
-    try:
-        return cast(
-            AgentState,
-            user_call(
-                prepare_agent_state,
-                layout,
-                progress=as_progress_sink(progress),
-            ),
-        )
-    finally:
-        progress.finish(details=False)
+def _prepare_state(
+    layout: AgentLayout,
+    *,
+    progress: ProgressSink | None = None,
+) -> AgentState:
+    return cast(
+        AgentState,
+        user_call(
+            prepare_agent_state,
+            layout,
+            progress=progress,
+        ),
+    )
 
 
 def _jobs_summary(layout: AgentLayout) -> str:

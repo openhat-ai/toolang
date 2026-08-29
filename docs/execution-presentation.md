@@ -7,6 +7,37 @@ events, records, identities, or lifecycle states.
 Inspection reads durable state and may reuse the same vocabulary, but it does
 not reconstruct live progress from stored records.
 
+## Operational Handoff
+
+Blocking environment work uses `ProgressEvent` through `CliProgress`, not the
+Run projection pipeline. Its closed vocabulary is:
+
+- `prepare`: `resolve`, `fetch`, and `materialize` authored sources;
+- `setup`: `load` plugins and configuration, then `discover` dynamic models;
+- `runtime`: `create`, `start`, `stop`, and `destroy` an AgentServer runtime.
+
+Producers supply complete, verb-first sentences. Running work ends in `...`,
+successful work uses simple past without terminal punctuation, and agent names
+appear only in object-first command results. For example:
+
+```text
+Fetching image python:3.13-slim...
+Fetched image python:3.13-slim
+Agent eve started: http://localhost:7001
+```
+
+A TTY has one delayed, transient, dim live row with no spinner; it adds the
+current activity's elapsed time after one second. Non-TTY output immediately
+appends each material action and outcome without ANSI or elapsed time. Both use
+the width and display-cell wrapping rules below.
+
+Prepare, setup, and runtime startup share one operational segment. It closes
+before Run presentation, Chat input, foreground logs, a result, or a stable
+diagnostic takes terminal ownership. Cleanup after a Run or foreground session
+is a new segment; non-TTY output places one blank row between the Run footer and
+cleanup, while successful TTY cleanup remains transient. Operational progress
+adds no retained success summary.
+
 ## Projection Model
 
 Ordered native events pass through one terminal-independent pipeline:

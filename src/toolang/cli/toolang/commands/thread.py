@@ -43,6 +43,7 @@ from toolang.execution.types import (
 )
 
 from ...common.context import (
+    command_progress,
     context_layout,
     context_model_catalog,
     load_runtime_environ,
@@ -57,6 +58,7 @@ from ...common.execution_runtime import (
 )
 from ...common.execution_progress.config import resolve_progress_max_width
 from ...common.output import echo_table, runnable_label, parse_utc_timestamp
+from ...common.progress import CliProgress, make_cli_progress
 from ...common.run_client import open_run_client
 from ...common.script_progress import ScriptRunPresenter
 
@@ -292,6 +294,7 @@ def retry_command(
         ),
         show_progress=show_progress,
         model_catalog=context_model_catalog(ctx),
+        operational=command_progress(ctx),
     )
     status = _display_status(result.status)
     if not show_progress:
@@ -357,6 +360,7 @@ def rerun_command(
         ),
         show_progress=show_progress,
         model_catalog=context_model_catalog(ctx),
+        operational=command_progress(ctx),
     )
     status = _display_status(result.status)
     if not show_progress:
@@ -768,14 +772,17 @@ def _run_retry_or_rerun(
     commands: tuple[RunOverride, ...],
     show_progress: bool,
     model_catalog: Path | None = None,
+    operational: CliProgress | None = None,
 ) -> RunDetail:
+    progress = operational or make_cli_progress()
     try:
         with open_execution_runtime(
             layout,
+            operational=progress,
             sandbox=sandbox,
             dev=dev,
             model_catalog=model_catalog,
-            show_progress=show_progress,
+            show_cleanup_progress=True,
         ) as runtime:
             return asyncio.run(
                 _execute_retry_or_rerun(
@@ -787,12 +794,15 @@ def _run_retry_or_rerun(
                     commands=commands,
                     show_progress=show_progress,
                     model_catalog=model_catalog,
+                    operational=progress,
                 )
             )
     except ExecutionRuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
     except (OSError, ToolangError, ValueError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
+    finally:
+        progress.close()
 
 
 def _restart_commands(
@@ -833,9 +843,8 @@ async def _execute_retry_or_rerun(
     commands: tuple[RunOverride, ...],
     show_progress: bool,
     model_catalog: Path | None,
+    operational: CliProgress,
 ) -> RunDetail:
-    from ...common.progress import as_progress_sink, make_cli_progress
-
     environ = load_runtime_environ(layout, base_environ=os.environ)
     run_id = source if kind == "retry" else None
     tracer = (
@@ -847,20 +856,14 @@ async def _execute_retry_or_rerun(
         if show_progress
         else None
     )
-    operational = (
-        make_cli_progress(agent=layout.name)
-        if runtime.mode == "embedded" and show_progress
-        else None
-    )
     try:
         async with open_run_client(
             layout,
             runtime,
             model_catalog=model_catalog,
-            progress=as_progress_sink(operational),
+            progress=operational.sink,
         ) as client:
-            if operational is not None:
-                operational.finish(details=False)
+            operational.close()
             request_id = f"term_{uuid4().hex}"
             handle = (
                 await client.retry(
@@ -888,8 +891,7 @@ async def _execute_retry_or_rerun(
                 await _cancel_restart(client, handle, operation=kind)
                 raise
     finally:
-        if operational is not None:
-            operational.finish(details=False)
+        operational.close()
         if tracer is not None:
             tracer.close()
 

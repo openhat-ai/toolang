@@ -27,7 +27,13 @@ class Sandbox(Protocol):
     def prepare(self, spec: str | None, request: SandboxRequest) -> SandboxPlan:
         """Parse an implementation-owned spec and prepare one launch."""
 
-    async def launch(self, plan: SandboxPlan) -> SandboxRef:
+    async def launch(
+        self,
+        plan: SandboxPlan,
+        *,
+        progress: ProgressSink | None = None,
+        progress_id: str | None = None,
+    ) -> SandboxRef:
         """Launch one workload and return its durable recovery reference."""
 
     async def attach(

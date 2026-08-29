@@ -19,6 +19,34 @@ def test_current_requires_initial_refresh(tmp_path: Path) -> None:
         watcher.current()
 
 
+def test_refresh_forwards_invocation_progress_to_preparation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def run() -> None:
+        layout = AgentLayout.resident(tmp_path / "toolang", "alice")
+        home = layout.home
+        home.mkdir(parents=True)
+        layout.program.write_text("agent alice\n", encoding="utf-8")
+        observed = []
+        original = state_watcher.prepare_agent_state
+
+        def capture(*args, **kwargs):
+            observed.append(kwargs.get("progress"))
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(state_watcher, "prepare_agent_state", capture)
+
+        def sink(_event) -> None:
+            pass
+
+        await state_watcher.StateWatcher(layout).refresh(progress=sink)
+
+        assert observed == [sink]
+
+    asyncio.run(run())
+
+
 def test_timeout_check_recovers_change_before_watch_registration(
     tmp_path: Path,
     monkeypatch,

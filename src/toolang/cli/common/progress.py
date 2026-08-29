@@ -1,13 +1,16 @@
-"""CLI rendering for progress events."""
+"""CLI rendering for operational progress events."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+import os
 from pathlib import Path
 import sys
-from threading import RLock
+from threading import RLock, Timer
 import time
-from typing import TextIO
+from typing import Callable, TextIO
 
 from rich.console import Console
 from rich.live import Live
@@ -15,91 +18,120 @@ from rich.text import Text
 
 from ...common.events import ProgressEvent
 from ...common.progress import ProgressSink
+from .execution_progress.config import resolve_progress_max_width
+from .execution_progress.formatting import one_line, wrap_display
 
 
-_SPINNER = ("⠋", "⠙", "⠹", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+_LIVE_REVEAL_SECONDS = 0.15
+_ELAPSED_REVEAL_SECONDS = 1.0
 _MAX_DETAIL = 80
 
 
+@dataclass(slots=True)
+class _ItemState:
+    """Private presentation state for one opaque progress item."""
+
+    event: ProgressEvent
+    order: int
+    activity_started_at: float | None = None
+    activity_elapsed: float | None = None
+    began: bool = False
+
+    @property
+    def active(self) -> bool:
+        return self.event.status == "running" and self.event.label.endswith("...")
+
+
 class CliProgress:
-    """Render progress updates to stderr without affecting stdout contracts."""
+    """Present one contiguous operational segment on stderr."""
 
     def __init__(
         self,
         *,
         stream: TextIO | None = None,
-        live: bool | None = None,
-        show_cached_prepare: bool = False,
-        show_materialize_summary: bool = False,
-        prepare_summary_label: str = "Prepared",
-        agent: str | None = None,
-        sandbox: str | None = None,
         enabled: bool = True,
+        max_width: int | None = None,
+        leading_gap: bool = False,
+        _clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._stream = stream or sys.stderr
-        stream_is_tty = bool(getattr(self._stream, "isatty", lambda: False)())
-        force_terminal = (
-            True if live is True or (live is False and stream_is_tty) else None
+        self._enabled = enabled
+        self._terminal = bool(getattr(self._stream, "isatty", lambda: False)())
+        self._max_width = (
+            resolve_progress_max_width(os.environ) if max_width is None else max_width
         )
-        color_system = "standard" if force_terminal else "auto"
+        if self._max_width < 1:
+            raise ValueError("progress max width must be positive")
+        self._clock = _clock
+        self._leading_gap = leading_gap
         self._console = Console(
             file=self._stream,
-            force_terminal=force_terminal,
-            color_system=color_system,
+            force_terminal=True if self._terminal else False,
+            color_system="auto" if self._terminal else None,
             highlight=False,
+            width=self._available_width(),
         )
-        self._items: dict[str, _ProgressItem] = {}
-        self._prepare: dict[str, str] = {}
-        self._prepare_details: dict[str, str] = {}
-        self._agent_name: str | None = None
-        self._live = stream_is_tty if live is None else live
-        self._live_display: Live | None = None
-        self._printed = False
-        self._finished = False
-        self._interrupted = False
-        self._show_cached_prepare = show_cached_prepare
-        self._show_materialize_summary = show_materialize_summary
-        self._prepare_summary_label = prepare_summary_label
-        self.agent = agent
-        self.sandbox = sandbox
-        self._enabled = enabled
-        self._current_event: ProgressEvent | None = None
+        self._items: dict[tuple[str, str], _ItemState] = {}
+        self._order = 0
+        self._selected_terminal: tuple[str, str] | None = None
         self._failure_event: ProgressEvent | None = None
-        self._printed_activities: set[tuple[str, str, str, str, str, str | None]] = (
-            set()
-        )
-        self._prepare_total: int | None = None
-        self._materialized_keys: set[str] = set()
-        self._post_resolve_started_at: float | None = None
-        self._materialize_started_at: float | None = None
-        self._materialize_finished_at: float | None = None
-        self._started_at = time.monotonic()
+        self._plain_events: set[
+            tuple[str, str, str, str, str, str | None, str | None]
+        ] = set()
+        self._plain_started = False
+        self._prepare_registered: set[str] = set()
+        self._prepare_completed: set[str] = set()
+        self._live_display: Live | None = None
+        self._reveal_timer: Timer | None = None
+        self._refresh_timer: Timer | None = None
+        self._closed = False
         self._lock = RLock()
+
+    def __enter__(self) -> CliProgress:
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        del exc_type, exc, traceback
+        self.close()
 
     def __call__(self, event: ProgressEvent) -> None:
         with self._lock:
-            if self._finished:
+            if self._closed:
                 return
-            self._record(event)
-            self._printed = True
-            if not self._enabled:
+            previous = self._items.get((event.kind, event.id))
+            if _same_event(previous.event if previous is not None else None, event):
                 return
-            if self._live:
-                self._render_live()
+            self._record(event, previous)
+            if not self._enabled or event.status == "pending":
+                return
+            if event.status == "failed":
+                self._clear_live()
+                return
+            if self._terminal:
+                self._render_terminal()
             else:
-                self._render_plain(event)
+                self._render_plain(event, previous)
+
+    @property
+    def sink(self) -> ProgressSink | None:
+        """Return this segment's sink, or ``None`` when presentation is disabled."""
+
+        return self if self._enabled else None
 
     @property
     def current_stage(self) -> str | None:
         with self._lock:
-            event = self._current_event
-            return event.label if event is not None else None
+            state = self._selected_state()
+            return state.event.label if state is not None else None
 
     @property
     def failure_reason(self) -> str | None:
         with self._lock:
-            event = self._failure_event
-            return event.detail if event is not None else None
+            return (
+                _bounded_detail(self._failure_event.detail)
+                if self._failure_event is not None
+                else None
+            )
 
     @property
     def failure_stage(self) -> str | None:
@@ -110,529 +142,360 @@ class CliProgress:
     @property
     def failure_label(self) -> str | None:
         with self._lock:
-            event = self._failure_event
-            return event.label if event is not None else None
-
-    def finish(self, *, details: bool = True) -> None:
-        with self._lock:
-            if self._finished:
-                return
-            self._finished = True
-            if self._live_display is not None:
-                self._live_display.stop()
-                self._live_display = None
-            if not self._printed or not self._enabled:
-                return
-            if not self._has_prepare_output():
-                self._reset_terminal_style()
-                return
-            if details:
-                for line in self._lines():
-                    print(line, file=self._stream)
-            self._print_summary()
-            self._reset_terminal_style()
-
-    def interrupt(self) -> None:
-        with self._lock:
-            self._interrupted = True
-            self.finish(details=False)
-
-    def set_prepare_total(self, total: int) -> None:
-        with self._lock:
-            self._prepare_total = total
-
-    def _render_live(self) -> None:
-        if not self._has_visible_items():
-            return
-        renderable = self._live_text()
-        if self._live_display is None:
-            self._live_display = Live(
-                renderable,
-                console=self._console,
-                refresh_per_second=10,
-                transient=True,
+            return (
+                self._failure_event.label if self._failure_event is not None else None
             )
-            self._live_display.start(refresh=True)
-            return
-        self._live_display.update(renderable, refresh=True)
 
-    def _render_plain(self, event: ProgressEvent) -> None:
-        if event.status not in {"running", "failed"}:
+    def close(self) -> None:
+        """Close this segment idempotently without retaining successful output."""
+
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._cancel_reveal()
+            self._clear_live()
+
+    def failure_message(
+        self,
+        error: BaseException,
+        *,
+        reason: str | None = None,
+        fix: str | None = None,
+        log_path: Path | None = None,
+    ) -> str:
+        """Compose the single stable block for this segment's first failure."""
+
+        with self._lock:
+            event = self._failure_event
+            if event is None:
+                return str(error).strip() or type(error).__name__
+            fallback_reason = str(error).strip() or type(error).__name__
+            lines = [
+                event.label,
+                f"  Stage: {event.kind}.{event.stage}",
+                f"  Reason: {reason or _bounded_detail(event.detail) or fallback_reason}",
+            ]
+            if fix is not None:
+                lines.append(f"  Fix: {fix}")
+            if log_path is not None:
+                lines.append(f"  Log: {log_path}")
+            return "\n".join(lines)
+
+    @contextmanager
+    def suspended(self) -> Iterator[None]:
+        """Temporarily release terminal ownership for committed output."""
+
+        with self._lock:
+            was_visible = self._live_display is not None
+            was_pending = self._reveal_timer is not None
+            self._cancel_reveal()
+            self._clear_live()
+        try:
+            yield
+        finally:
+            with self._lock:
+                if self._closed or self._selected_state() is None:
+                    return
+                if was_visible:
+                    self._reveal_live()
+                elif was_pending:
+                    self._render_terminal()
+
+    def _record(self, event: ProgressEvent, previous: _ItemState | None) -> None:
+        now = self._clock()
+        self._order += 1
+        if event.kind == "prepare" and event.status == "pending":
+            self._register_prepare(event.id)
+
+        same_stage = previous is not None and previous.event.stage == event.stage
+        began = previous.began if previous is not None and same_stage else False
+        started_at = previous.activity_started_at if previous is not None else None
+        elapsed = previous.activity_elapsed if previous is not None else None
+        if event.status == "running":
+            if event.label.endswith("..."):
+                begins_activity = (
+                    previous is None
+                    or not previous.active
+                    or previous.event.stage != event.stage
+                    or previous.event.label != event.label
+                )
+                if begins_activity:
+                    started_at = now
+                    elapsed = None
+                began = True
+            else:
+                if same_stage and previous is not None and previous.active:
+                    elapsed = (
+                        max(now - previous.activity_started_at, 0.0)
+                        if previous.activity_started_at is not None
+                        else None
+                    )
+                started_at = None
+        elif event.status in {"ok", "skipped", "failed"}:
+            if same_stage and previous is not None and previous.active:
+                started_at = previous.activity_started_at
+                elapsed = max(now - started_at, 0.0) if started_at is not None else None
+
+        key = (event.kind, event.id)
+        self._items[key] = _ItemState(
+            event=event,
+            order=self._order,
+            activity_started_at=started_at,
+            activity_elapsed=elapsed,
+            began=began,
+        )
+        if (
+            event.kind == "prepare"
+            and event.id in self._prepare_registered
+            and event.stage == "materialize"
+            and event.status in {"ok", "skipped"}
+        ):
+            self._prepare_completed.add(event.id)
+        if event.status == "failed" and self._failure_event is None:
+            self._failure_event = event
+        if (
+            event.status in {"ok", "skipped"}
+            or (event.status == "running" and not event.label.endswith("..."))
+        ) and began:
+            self._selected_terminal = key
+        elif event.status == "running" and event.label.endswith("..."):
+            self._selected_terminal = None
+
+    def _register_prepare(self, item_id: str) -> None:
+        if (
+            self._prepare_registered
+            and self._prepare_registered <= self._prepare_completed
+        ):
+            self._prepare_registered.clear()
+            self._prepare_completed.clear()
+        self._prepare_registered.add(item_id)
+
+    def _render_plain(self, event: ProgressEvent, previous: _ItemState | None) -> None:
+        if event.status in {"ok", "skipped"} and not (
+            previous is not None
+            and previous.event.stage == event.stage
+            and previous.began
+        ):
             return
-        detail = _bounded_detail(_normalized_detail(event.detail))
-        activity = (
-            event.id,
+        if event.status not in {"running", "ok", "skipped"}:
+            return
+        key = (
             event.kind,
+            event.id,
             event.stage,
             event.status,
             event.label,
-            detail,
+            _bounded_detail(event.detail),
+            self._prepare_fact(event),
         )
-        if activity in self._printed_activities:
+        if key in self._plain_events:
             return
-        self._printed_activities.add(activity)
-        suffix = f": {detail}" if detail else ""
-        label = f"{event.label} failed" if event.status == "failed" else event.label
-        print(f"{label}{suffix}", file=self._stream)
+        self._plain_events.add(key)
+        if self._leading_gap and not self._plain_started:
+            print(file=self._stream)
+        self._plain_started = True
+        for line in self._wrapped_text(self._event_text(event, terminal=False)):
+            print(line, file=self._stream)
 
-    def _record(self, event: ProgressEvent) -> None:
-        if event.kind != "prepare":
-            self._record_operational(event)
+    def _render_terminal(self) -> None:
+        if self._selected_state() is None:
+            self._cancel_reveal()
+            self._clear_live()
             return
-        if event.id.startswith("cap:"):
-            self._record_cap(event)
+        if self._live_display is not None:
+            self._live_display.update(self._live_text(), refresh=True)
+            self._schedule_refresh()
             return
-        if event.id.startswith("agent:") and event.label.startswith("Prepare "):
-            self._record_prepare(event)
-            return
-        if event.id.startswith("agent:"):
-            self._record_agent(event)
+        if self._reveal_timer is None:
+            timer = Timer(_LIVE_REVEAL_SECONDS, self._reveal_live)
+            timer.daemon = True
+            self._reveal_timer = timer
+            timer.start()
 
-    def _record_operational(self, event: ProgressEvent) -> None:
-        if self._failure_event is not None:
-            return
-        if event.status in {"running", "failed"}:
-            self._current_event = event
-        elif (
-            event.status in {"ok", "skipped"}
-            and self._current_event is not None
-            and self._current_event.id == event.id
-            and self._current_event.stage == event.stage
-        ):
-            self._current_event = event
-        if event.status == "failed":
-            self._failure_event = event
-
-    def _record_prepare(self, event: ProgressEvent) -> None:
-        key = event.id
-        self._prepare[key] = event.status
-        if event.detail:
-            self._prepare_details[key] = event.detail
-        if event.status == "running" and event.detail:
-            self._agent_name = event.detail
-
-    def _record_agent(self, event: ProgressEvent) -> None:
-        step = event.stage
-        event_ref = event.id.split(":", 1)[1] if ":" in event.id else event.detail
-        item = self._items.setdefault(
-            "agent",
-            _ProgressItem(
-                kind="agent",
-                title="Agent",
-                sort_key=("0", "agent"),
-                name=event_ref or "agent",
-            ),
-        )
-        item.steps[step] = event.status
-        if event.detail:
-            item.step_details[step] = event.detail
-        if event.detail and item.ref is None:
-            item.ref = event.detail
-
-    def _record_cap(self, event: ProgressEvent) -> None:
-        parsed = _parse_cap_event(event)
-        if parsed is None:
-            return
-        kind, ref = parsed
-        step = event.stage
-        key = event.id
-        item = self._items.setdefault(
-            key,
-            _ProgressItem(
-                kind=kind,
-                title=kind.capitalize(),
-                name=ref,
-                sort_key=("1", kind, ref),
-            ),
-        )
-        item.kind = kind
-        item.title = kind.capitalize()
-        if item.ref is None:
-            item.ref = ref
-        if item.name is None:
-            item.name = ref
-        item.sort_key = ("1", kind, item.name or "", item.ref or "")
-        item.steps[step] = event.status
-        if event.detail:
-            item.step_details[step] = event.detail
-            if step == "fetch" and event.status == "ok":
-                item.detail = event.detail
-        if step in {"fetch", "materialize"} and self._post_resolve_started_at is None:
-            self._post_resolve_started_at = time.monotonic()
-        if step == "materialize":
-            if event.status == "running" and self._materialize_started_at is None:
-                self._materialize_started_at = time.monotonic()
-            if event.status == "ok":
-                self._materialized_keys.add(key)
-                self._materialize_finished_at = time.monotonic()
-            if event.status == "failed":
-                self._materialize_finished_at = time.monotonic()
-
-    def _lines(self) -> tuple[str, ...]:
-        lines: list[str] = []
-        for group in self._item_groups():
-            lines.extend(_format_item(item) for item in group)
-        return tuple(lines)
-
-    def _summary_line(self) -> str:
-        lines = self._summary_lines()
-        return lines[0] if lines else ""
-
-    def _summary_lines(self) -> tuple[str, ...]:
-        agent_items = [item for item in self._items.values() if item.kind == "agent"]
-        cap_items = [item for item in self._items.values() if item.kind != "agent"]
-        if not cap_items and self._prepare_is_cached():
-            if not self._show_cached_prepare:
-                return ()
-            elapsed = _format_elapsed(time.monotonic() - self._started_at)
-            return (
-                f"{self._prepare_summary_label} {self._cap_count_label()} from cache in {elapsed}",
+    def _reveal_live(self) -> None:
+        with self._lock:
+            self._reveal_timer = None
+            if self._closed or self._selected_state() is None:
+                return
+            self._live_display = Live(
+                self._live_text(),
+                console=self._console,
+                auto_refresh=False,
+                transient=True,
+                redirect_stdout=False,
+                redirect_stderr=False,
             )
-        failed = sum(1 for item in cap_items if _item_status(item) == "failed")
-        running = sum(1 for item in cap_items if _item_status(item) == "running")
-        pending = sum(1 for item in cap_items if _item_status(item) == "pending")
-        elapsed = self._prepare_elapsed()
-        prepare_status = (
-            _aggregate_status(tuple(self._prepare.values()))
-            if self._prepare
-            else "skipped"
-        )
-        if self._interrupted:
-            if cap_items or self._prepare:
-                return ("Prepare caps interrupted",)
-            if agent_items:
-                return ("Fetch agent interrupted",)
-            return ()
-        if self._prepare:
-            total = (
-                self._prepare_total
-                if self._prepare_total is not None
-                else len(cap_items)
-            )
-            if failed:
-                return (f"Failed {failed}/{total} caps",)
-            if running:
-                return (f"Preparing {total} caps: {running} running, {elapsed}",)
-            if pending:
-                return (f"Preparing {total} caps: {pending} pending, {elapsed}",)
-            if prepare_status in {"ok", "skipped"}:
-                return self._with_materialize_summary(
-                    f"{self._prepare_summary_label} {self._cap_count_label(total)} in {elapsed}"
-                )
-            if prepare_status in {"running", "pending"}:
-                return (f"Preparing {total} caps: {elapsed}",)
-            return self._with_materialize_summary(
-                f"{self._prepare_summary_label} {self._cap_count_label(total)} in {elapsed}"
-            )
-        if not cap_items and agent_items:
-            item = agent_items[0]
-            agent_status = _aggregate_status(
-                tuple(_item_status(item) for item in agent_items)
-            )
-            if agent_status == "failed":
-                detail = _failed_detail(item)
-                suffix = f": {detail}" if detail else ""
-                if _first_step_with_status(item, "failed") == "resolve":
-                    return (f"Resolve agent failed{suffix}",)
-                return (f"Fetch agent failed{suffix}",)
-            if agent_status in {"running", "pending"}:
-                return (f"Fetching 1 agent: {_agent_progress_word(item)}, {elapsed}",)
-            return (f"Fetched 1 agent in {elapsed}",)
-        if failed:
-            return (f"Failed {failed}/{len(cap_items)} caps",)
-        if running:
-            return (f"Preparing {len(cap_items)} caps: {running} running, {elapsed}",)
-        if pending:
-            return (f"Preparing {len(cap_items)} caps: {pending} pending, {elapsed}",)
-        if prepare_status in {"ok", "skipped"}:
-            return self._with_materialize_summary(
-                f"{self._prepare_summary_label} {self._cap_count_label(len(cap_items))} in {elapsed}"
-            )
-        return self._with_materialize_summary(
-            f"{self._prepare_summary_label} {self._cap_count_label(len(cap_items))} in {elapsed}"
-        )
+            self._live_display.start(refresh=True)
+            self._schedule_refresh()
 
-    def _with_materialize_summary(self, summary: str) -> tuple[str, ...]:
-        if not self._show_materialize_summary or not self._materialized_keys:
-            return (summary,)
-        started_at = (
-            self._post_resolve_started_at
-            or self._materialize_started_at
-            or self._started_at
-        )
-        finished_at = self._materialize_finished_at or time.monotonic()
-        elapsed = _format_elapsed(max(finished_at - started_at, 0))
-        return (summary, f"Updated {len(self._materialized_keys)} caps in {elapsed}")
-
-    def _prepare_elapsed(self) -> str:
-        if (
-            self._show_materialize_summary
-            and self._materialized_keys
-            and self._post_resolve_started_at is not None
-        ):
-            return _format_elapsed(
-                max(self._post_resolve_started_at - self._started_at, 0)
-            )
-        return _format_elapsed(time.monotonic() - self._started_at)
-
-    def _cap_count_label(self, total: int | None = None) -> str:
-        value = self._prepare_total if total is None else total
-        if value is None:
-            return "caps"
-        return f"{value} caps"
-
-    def _print_summary(self) -> None:
-        summaries = self._summary_lines()
-        if not summaries:
+    def _schedule_refresh(self) -> None:
+        self._cancel_refresh()
+        state = self._selected_state()
+        if state is None or not state.active or state.activity_started_at is None:
             return
-        for summary in summaries:
-            self._console.print(Text(summary, style="dim"))
+        elapsed = max(self._clock() - state.activity_started_at, 0.0)
+        interval = 0.1 if elapsed < 10 else 1.0
+        timer = Timer(interval, self._refresh_elapsed)
+        timer.daemon = True
+        self._refresh_timer = timer
+        timer.start()
 
-    def _reset_terminal_style(self) -> None:
-        if not self._console.is_terminal:
-            return
-        self._stream.write("\x1b[0m")
-        self._stream.flush()
+    def _refresh_elapsed(self) -> None:
+        with self._lock:
+            self._refresh_timer = None
+            if self._closed or self._live_display is None:
+                return
+            self._live_display.update(self._live_text(), refresh=True)
+            self._schedule_refresh()
+
+    def _cancel_reveal(self) -> None:
+        timer = self._reveal_timer
+        self._reveal_timer = None
+        if timer is not None:
+            timer.cancel()
+
+    def _clear_live(self) -> None:
+        self._cancel_refresh()
+        display = self._live_display
+        self._live_display = None
+        if display is not None:
+            display.stop()
+
+    def _cancel_refresh(self) -> None:
+        timer = self._refresh_timer
+        self._refresh_timer = None
+        if timer is not None:
+            timer.cancel()
+
+    def _selected_state(self) -> _ItemState | None:
+        active = [state for state in self._items.values() if state.active]
+        if active:
+            return max(active, key=lambda state: state.order)
+        if self._selected_terminal is None:
+            return None
+        return self._items.get(self._selected_terminal)
 
     def _live_text(self) -> Text:
-        current = self._current_event
-        if current is not None and current.kind != "prepare":
-            return self._operational_text(current)
-        text = Text()
-        agent_items = [item for item in self._items.values() if item.kind == "agent"]
-        cap_items = [item for item in self._items.values() if item.kind != "agent"]
-        if (
-            agent_items
-            and not cap_items
-            and not self._prepare
-            and not self._agent_stage_uses_summary(agent_items[0])
+        state = self._selected_state()
+        if state is None:
+            return Text()
+        value = self._state_text(state)
+        return Text("\n".join(self._wrapped_text(value)), style="dim")
+
+    def _state_text(self, state: _ItemState) -> str:
+        elapsed: str | None = None
+        if state.active and state.activity_started_at is not None:
+            seconds = max(self._clock() - state.activity_started_at, 0.0)
+            if seconds >= _ELAPSED_REVEAL_SECONDS:
+                elapsed = _format_elapsed(seconds)
+        elif (
+            not state.active
+            and state.activity_elapsed is not None
+            and state.activity_elapsed >= _ELAPSED_REVEAL_SECONDS
         ):
-            text.append(f"{_format_item(agent_items[0])}\n", style="dim")
-            return text
-        for summary in self._summary_lines():
-            text.append(f"{summary}\n", style="dim")
-        for group in self._item_groups():
-            for item in group:
-                if item.kind == "agent":
-                    continue
-                text.append(f"+ {_format_item(item)}\n", style="dim")
-        return text
+            elapsed = _format_elapsed(state.activity_elapsed)
+        return self._event_text(state.event, terminal=True, elapsed=elapsed)
 
-    def _operational_text(self, event: ProgressEvent) -> Text:
-        elapsed = max(time.monotonic() - self._started_at, 0)
-        spinner = _SPINNER[int(elapsed * 10) % len(_SPINNER)]
-        subject = f"agent {self.agent}" if self.agent else "Toolang"
-        parts = [f"{spinner} {subject}"]
-        if self.sandbox:
-            parts.append(self.sandbox)
-        parts.append(event.label)
-        detail = _bounded_detail(_normalized_detail(event.detail))
-        if detail and detail != self.sandbox:
-            parts.append(detail)
-        parts.append(_format_elapsed(elapsed))
-        return Text(" · ".join(parts), style="dim")
+    def _event_text(
+        self,
+        event: ProgressEvent,
+        *,
+        terminal: bool,
+        elapsed: str | None = None,
+    ) -> str:
+        del terminal
+        facts = [value for value in (self._prepare_fact(event), elapsed) if value]
+        return _with_facts(one_line(event.label), facts)
 
-    def _agent_stage_uses_summary(self, item: _ProgressItem) -> bool:
-        if self._interrupted or _item_status(item) == "failed":
-            return True
-        return item.steps.get("fetch") == "ok" or item.steps.get("materialize") == "ok"
+    def _prepare_fact(self, event: ProgressEvent) -> str | None:
+        if event.kind != "prepare" or event.id not in self._prepare_registered:
+            return None
+        total = len(self._prepare_registered)
+        if total <= 1:
+            return None
+        return f"{len(self._prepare_completed)}/{total} caps"
 
-    def _has_visible_items(self) -> bool:
-        return bool(self._items) or self._current_event is not None
+    def _wrapped_text(self, value: str) -> tuple[str, ...]:
+        width = self._available_width()
+        if width <= 2:
+            return tuple(wrap_display(value, width))
+        lines: list[str] = []
+        remaining = value
+        available = width
+        while remaining:
+            line = wrap_display(remaining, available)[0]
+            prefix = "" if not lines else "  "
+            lines.append(f"{prefix}{line}")
+            remaining = remaining[len(line) :].lstrip()
+            available = width - 2
+        return tuple(lines) or ("",)
 
-    def _has_prepare_output(self) -> bool:
-        return bool(self._items) or self._agent_name is not None
-
-    def _prepare_is_cached(self) -> bool:
-        scopes = tuple(self._prepare)
-        return bool(scopes) and all(
-            self._prepare.get(scope) == "ok"
-            and self._prepare_details.get(scope) == "cached"
-            for scope in scopes
-        )
-
-    def _item_groups(self) -> tuple[tuple[_ProgressItem, ...], ...]:
-        cap_items = tuple(
-            sorted(
-                (item for item in self._items.values() if item.kind != "agent"),
-                key=lambda value: value.sort_key,
-            )
-        )
-        if cap_items:
-            return (cap_items,)
-        agent_items = tuple(
-            sorted(
-                (item for item in self._items.values() if item.kind == "agent"),
-                key=lambda value: value.sort_key,
-            )
-        )
-        return (agent_items,) if agent_items else ()
+    def _available_width(self) -> int:
+        if not self._terminal:
+            return self._max_width
+        try:
+            terminal_width = os.get_terminal_size(self._stream.fileno()).columns
+        except (AttributeError, OSError, ValueError):
+            terminal_width = self._max_width
+        return max(1, min(terminal_width, self._max_width))
 
 
 def make_cli_progress(
     *,
-    live: bool | None = None,
-    show_cached_prepare: bool = False,
-    show_materialize_summary: bool = False,
-    prepare_summary_label: str = "Prepared",
-    agent: str | None = None,
-    sandbox: str | None = None,
+    stream: TextIO | None = None,
     enabled: bool = True,
+    max_width: int | None = None,
+    leading_gap: bool = False,
 ) -> CliProgress:
-    """Return the default CLI progress sink."""
+    """Create one invocation-scoped operational presenter."""
 
     return CliProgress(
-        live=live,
-        show_cached_prepare=show_cached_prepare,
-        show_materialize_summary=show_materialize_summary,
-        prepare_summary_label=prepare_summary_label,
-        agent=agent,
-        sandbox=sandbox,
+        stream=stream,
         enabled=enabled,
+        max_width=max_width,
+        leading_gap=leading_gap,
     )
 
 
-def as_progress_sink(progress: CliProgress | None) -> ProgressSink | None:
-    """Expose a CLI progress renderer as a core progress sink."""
-
-    return progress
+def _same_event(previous: ProgressEvent | None, current: ProgressEvent) -> bool:
+    return previous == current
 
 
-@dataclass(slots=True)
-class _ProgressItem:
-    kind: str
-    title: str
-    sort_key: tuple[str, ...]
-    name: str | None = None
-    ref: str | None = None
-    detail: str | None = None
-    steps: dict[str, str] = field(default_factory=dict)
-    step_details: dict[str, str] = field(default_factory=dict)
-
-
-def _format_item(item: _ProgressItem) -> str:
-    name = item.name or item.ref or item.title
-    status, info = _item_state(item)
-    if info == name or (item.kind != "agent" and info == item.ref):
-        info = ""
-    suffix = f": {info}" if info else ""
-    return f"{item.kind} {name} {status}{suffix}"
-
-
-def _item_state(item: _ProgressItem) -> tuple[str, str]:
-    failed_step = _first_step_with_status(item, "failed")
-    if failed_step is not None:
-        return "failed", item.step_details.get(failed_step, "")
-    running_step = _first_step_with_status(item, "running")
-    if running_step is not None:
-        return _running_word(running_step), item.step_details.get(running_step, "")
-    pending_step = _first_step_with_status(item, "pending")
-    if pending_step is not None:
-        return "pending", item.step_details.get(pending_step, "")
-    if item.kind == "agent":
-        if item.steps.get("materialize") == "ok" or item.steps.get("fetch") == "ok":
-            return "fetched", ""
-        if item.steps.get("resolve") == "ok":
-            return "resolved", item.step_details.get("resolve", "")
-    if item.steps.get("materialize") == "ok":
-        return "materialized", ""
-    if item.steps.get("fetch") == "ok":
-        return "fetched", item.detail or ""
-    if item.steps.get("resolve") == "ok":
-        return "resolved", item.step_details.get("resolve", "")
-    if item.steps:
-        return _item_status(item), ""
-    return "pending", ""
-
-
-def _first_step_with_status(item: _ProgressItem, status: str) -> str | None:
-    for step in ("resolve", "fetch", "materialize"):
-        if item.steps.get(step) == status:
-            return step
-    return None
-
-
-def _running_word(step: str) -> str:
-    return {
-        "resolve": "resolving",
-        "fetch": "fetching",
-        "materialize": "materializing",
-    }.get(step, "running")
-
-
-def _agent_progress_word(item: _ProgressItem) -> str:
-    running_step = _first_step_with_status(item, "running")
-    if running_step == "resolve":
-        return "resolving"
-    if running_step == "fetch":
-        return "fetching"
-    if running_step == "materialize":
-        return "materializing"
-    pending_step = _first_step_with_status(item, "pending")
-    if pending_step is not None:
-        return "pending"
-    return "running"
-
-
-def _failed_detail(item: _ProgressItem) -> str:
-    failed_step = _first_step_with_status(item, "failed")
-    if failed_step is None:
-        return ""
-    return item.step_details.get(failed_step, "")
-
-
-def _item_status(item: _ProgressItem) -> str:
-    return _aggregate_status(tuple(item.steps.values()))
-
-
-def _aggregate_status(statuses: tuple[str, ...]) -> str:
-    if not statuses:
-        return "running"
-    if any(status == "failed" for status in statuses):
-        return "failed"
-    if any(status == "running" for status in statuses):
-        return "running"
-    if any(status == "pending" for status in statuses):
-        return "pending"
-    if all(status == "skipped" for status in statuses):
-        return "skipped"
-    return "ok"
+def _with_facts(label: str, facts: list[str]) -> str:
+    if not facts:
+        return label
+    running = label.endswith("...")
+    base = label[:-3].rstrip() if running else label
+    suffix = f" ({', '.join(facts)})"
+    return f"{base}{suffix}{'...' if running else ''}"
 
 
 def _format_elapsed(seconds: float) -> str:
-    if seconds < 1:
-        return f"{max(round(seconds * 1000), 1)}ms"
     if seconds < 10:
         return f"{seconds:.1f}s"
-    return f"{seconds:.0f}s"
-
-
-def _parse_cap_event(event: ProgressEvent) -> tuple[str, str] | None:
-    parts = event.id.split(":", 2)
-    if len(parts) != 3:
-        return None
-    prefix, kind, ref = parts
-    if prefix != "cap":
-        return None
-    return kind, ref
+    rounded = round(seconds)
+    if rounded < 60:
+        return f"{rounded}s"
+    minutes, secs = divmod(rounded, 60)
+    if minutes < 60:
+        return f"{minutes}m {secs:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m {secs:02d}s"
 
 
 def _bounded_detail(detail: str | None) -> str | None:
-    if detail is None or len(detail) <= _MAX_DETAIL:
-        return detail
-    return detail[: _MAX_DETAIL - 1] + "…"
-
-
-def _normalized_detail(detail: str | None) -> str | None:
     if detail is None:
         return None
-    normalized = " ".join(detail.split())
-    return normalized or None
+    normalized = one_line(detail)
+    if not normalized:
+        return None
+    if len(normalized) <= _MAX_DETAIL:
+        return normalized
+    return normalized[: _MAX_DETAIL - 1] + "…"
 
 
 def runtime_startup_failure_message(
-    name: str,
-    sandbox: str,
     progress: CliProgress,
     error: BaseException,
     *,
@@ -640,7 +503,7 @@ def runtime_startup_failure_message(
     dev_artifact: Path | None = None,
     development_build: bool = False,
 ) -> str:
-    """Describe one failed AgentServer startup with its active activity."""
+    """Describe one failed AgentServer startup without duplicating its cause."""
 
     fallback_reason = (
         progress.failure_reason or str(error).strip() or type(error).__name__
@@ -651,19 +514,12 @@ def runtime_startup_failure_message(
         dev_artifact=dev_artifact,
         development_build=development_build,
     )
-    stage = progress.failure_stage or "runtime.start"
-    activity = progress.failure_label or progress.current_stage or "Starting agent"
-    lines = [
-        f"Could not start agent {name} in {sandbox}",
-        f"Stage: {stage}",
-        f"Activity: {activity}",
-        f"Reason: {reason}",
-    ]
-    if fix is not None:
-        lines.append(f"Fix: {fix}")
-    if log_path is not None:
-        lines.append(f"Log: {log_path}")
-    return "\n".join(lines)
+    return progress.failure_message(
+        error,
+        reason=reason,
+        fix=fix,
+        log_path=log_path,
+    )
 
 
 def _runtime_failure_guidance(
@@ -673,35 +529,29 @@ def _runtime_failure_guidance(
     dev_artifact: Path | None,
     development_build: bool,
 ) -> tuple[str, str | None]:
-    if activity == "Installing Toolang":
+    if activity and "install Toolang" in activity:
         if dev_artifact is not None:
             return (
-                f"Could not install Toolang from {dev_artifact.name}.",
-                "Rebuild the wheel and check the installation log.",
+                f"Could not install Toolang from {dev_artifact.name}",
+                "Rebuild the wheel and check the installation log",
             )
         return (
-            "Could not install Toolang from the package index.",
-            "Check the log and network access, or run this command again with a "
-            "local wheel using `--dev PATH`.",
+            "Could not install Toolang from the package index",
+            "Check network access or use --dev PATH with a compatible wheel",
         )
-    if activity == "Checking Toolang compatibility":
+    if activity and "check Toolang" in activity:
         if dev_artifact is not None:
             return (
-                "The selected Toolang wheel cannot start the required AgentServer.",
-                "Rebuild or select a compatible Toolang wheel, then run this command "
-                "again with `--dev PATH`.",
+                "The selected Toolang wheel cannot start the required AgentServer",
+                "Rebuild or select a compatible Toolang wheel, then use --dev PATH",
             )
         if development_build:
             return (
-                "The Toolang package installed in the guest cannot start the required "
-                "AgentServer.",
-                "Build the current source with `uv build --wheel`, then run this "
-                "command again with `--dev dist`.",
+                "The guest Toolang package cannot start the required AgentServer",
+                "Build the current source with `uv build --wheel`, then use --dev dist",
             )
         return (
-            "The Toolang package installed in the guest cannot start the required "
-            "AgentServer.",
-            "Build or select a compatible Toolang wheel, then run this command again "
-            "with `--dev PATH`.",
+            "The guest Toolang package cannot start the required AgentServer",
+            "Build or select a compatible Toolang wheel, then use --dev PATH",
         )
     return fallback_reason, None

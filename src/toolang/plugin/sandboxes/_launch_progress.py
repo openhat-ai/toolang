@@ -20,41 +20,7 @@ from toolang.common.progress import emit_progress
 POLL_INTERVAL_SEC = 0.05
 MAX_BYTES = 1024
 
-_EVENTS: dict[str, tuple[ProgressKind, ProgressStage, str, ProgressStatus] | None] = {
-    "install.running": ("runtime", "create", "Installing Toolang", "running"),
-    "install.ok": None,
-    "install.failed": ("runtime", "create", "Installing Toolang", "failed"),
-    "validate.running": (
-        "runtime",
-        "create",
-        "Checking Toolang compatibility",
-        "running",
-    ),
-    "validate.ok": None,
-    "validate.failed": (
-        "runtime",
-        "create",
-        "Checking Toolang compatibility",
-        "failed",
-    ),
-    "server.running": None,
-    "setup.load.running": ("setup", "load", "Loading agent setup", "running"),
-    "setup.load.ok": ("setup", "load", "Loading agent setup", "ok"),
-    "setup.load.failed": ("setup", "load", "Loading agent setup", "failed"),
-    "setup.discover.running": (
-        "setup",
-        "discover",
-        "Discovering models",
-        "running",
-    ),
-    "setup.discover.ok": ("setup", "discover", "Discovering models", "ok"),
-    "setup.discover.failed": (
-        "setup",
-        "discover",
-        "Discovering models",
-        "failed",
-    ),
-}
+_ProgressTuple = tuple[ProgressKind, ProgressStage, str, ProgressStatus, str | None]
 _TRANSITIONS: dict[str | None, frozenset[str]] = {
     None: frozenset({"install.running", "server.running", "setup.load.running"}),
     "install.running": frozenset({"install.ok", "install.failed"}),
@@ -101,9 +67,10 @@ async def observe_launch_progress(
             if token not in _TRANSITIONS.get(previous, frozenset()):
                 continue
             previous = token
-            event = _EVENTS[token]
-            if event is not None:
-                kind, stage, label, status = event
+            for kind, stage, label, status, detail in _token_events(
+                token,
+                package_source=package_source,
+            ):
                 emit_progress(
                     progress,
                     id=(
@@ -113,7 +80,7 @@ async def observe_launch_progress(
                     stage=stage,
                     label=label,
                     status=status,
-                    detail=_event_detail(token, package_source=package_source),
+                    detail=detail,
                 )
             if token in _TERMINAL:
                 return
@@ -127,14 +94,63 @@ async def observe_launch_progress(
         await asyncio.sleep(POLL_INTERVAL_SEC)
 
 
-def _event_detail(token: str, *, package_source: str) -> str | None:
-    if token == "install.running":
-        return package_source
-    if token == "install.failed":
-        return "Toolang installation failed."
-    if token == "validate.failed":
-        return "The installed Toolang package cannot start the required AgentServer."
-    return None
+def _token_events(token: str, *, package_source: str) -> tuple[_ProgressTuple, ...]:
+    source = (
+        "the package index" if package_source == "package index" else package_source
+    )
+    events: dict[str, tuple[_ProgressTuple, ...]] = {
+        "install.running": (
+            (
+                "runtime",
+                "create",
+                f"Installing Toolang from {source}...",
+                "running",
+                None,
+            ),
+        ),
+        "install.ok": (
+            ("runtime", "create", f"Installed Toolang from {source}", "running", None),
+        ),
+        "install.failed": (
+            (
+                "runtime",
+                "create",
+                "Failed to install Toolang",
+                "failed",
+                "Toolang installation failed",
+            ),
+        ),
+        "validate.running": (
+            ("runtime", "create", "Checking Toolang...", "running", None),
+        ),
+        "validate.ok": (("runtime", "create", "Checked Toolang", "running", None),),
+        "validate.failed": (
+            (
+                "runtime",
+                "create",
+                "Failed to check Toolang",
+                "failed",
+                "The installed Toolang package cannot start the required AgentServer",
+            ),
+        ),
+        "server.running": (
+            ("runtime", "create", "Created runtime", "ok", None),
+            ("runtime", "start", "Starting agent...", "running", None),
+        ),
+        "setup.load.running": (("setup", "load", "Loading setup...", "running", None),),
+        "setup.load.ok": (("setup", "load", "Loaded setup", "ok", None),),
+        "setup.load.failed": (
+            ("setup", "load", "Failed to load setup", "failed", None),
+        ),
+        "setup.discover.running": (
+            ("setup", "discover", "Discovering models...", "running", None),
+        ),
+        "setup.discover.ok": (("setup", "discover", "Discovered models", "ok", None),),
+        "setup.discover.failed": (
+            ("setup", "discover", "Failed to discover models", "failed", None),
+        ),
+    }
+    return events.get(token, ())
 
 
 def read_launch_progress(path: Path) -> str:

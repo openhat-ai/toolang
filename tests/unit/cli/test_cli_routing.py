@@ -24,6 +24,7 @@ from toolang.cli.toolang.routing import (
     select_target_help,
 )
 from toolang.cli.common.routing import extract_root_args
+from toolang.cli.common.progress import CliProgress
 from toolang.up import process as agents
 
 
@@ -573,8 +574,14 @@ def test_cli_routes_roaming_agent_command_to_its_exact_layout(
     source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
     captured: dict[str, object] = {}
 
-    def fake_run_app(args: list[str], layout: AgentLayout) -> int:
-        captured.update(args=args, layout=layout)
+    def fake_run_app(
+        args: list[str],
+        layout: AgentLayout,
+        operational: CliProgress | None,
+    ) -> int:
+        captured.update(args=args, layout=layout, operational=operational)
+        if operational is not None:
+            operational.close()
         return 9
 
     result = dispatch_roaming(
@@ -584,10 +591,14 @@ def test_cli_routes_roaming_agent_command_to_its_exact_layout(
     )
 
     assert result == 9
-    assert captured == {
-        "args": ["info", source.stem] if arguments == ["info"] else arguments,
-        "layout": AgentLayout.roaming(source),
-    }
+    assert captured["args"] == (
+        ["info", source.stem] if arguments == ["info"] else arguments
+    )
+    assert captured["layout"] == AgentLayout.roaming(source)
+    if arguments[0] in {"threads", "runs", "inspect", "steer"}:
+        assert captured["operational"] is None
+    else:
+        assert captured["operational"] is not None
 
 
 def test_cli_opens_roaming_chat_with_its_exact_layout(
@@ -685,8 +696,14 @@ def test_cli_routes_visiting_chat_through_materialization(
         captured.update(source=source, progress=progress)
         return layout
 
-    def run_app(args: list[str], selected: AgentLayout) -> int:
-        captured.update(args=args, layout=selected)
+    def run_app(
+        args: list[str],
+        selected: AgentLayout,
+        operational: CliProgress | None,
+    ) -> int:
+        captured.update(args=args, layout=selected, operational=operational)
+        if operational is not None:
+            operational.close()
         return 12
 
     monkeypatch.setattr(agents, "resolve_visiting_layout", resolve)
@@ -700,6 +717,7 @@ def test_cli_routes_visiting_chat_through_materialization(
     assert captured["source"] == selector
     assert captured["args"] == ["chat", "term_1"]
     assert captured["layout"] == layout
+    assert captured["operational"] is captured["progress"]
 
 
 def test_cli_routes_visiting_inspect_without_materialization(
@@ -723,10 +741,11 @@ def test_cli_routes_visiting_inspect_without_materialization(
 
     result = dispatch_visiting(
         [selector, "inspect", "run_1"],
-        run_app=lambda args, selected: (
+        run_app=lambda args, selected, operational: (
             captured.update(
                 args=args,
                 layout=selected,
+                operational=operational,
             )
             or 13
         ),
@@ -736,6 +755,7 @@ def test_cli_routes_visiting_inspect_without_materialization(
     assert captured == {
         "args": ["inspect", "run_1"],
         "layout": layout,
+        "operational": None,
     }
 
 
@@ -764,10 +784,11 @@ def test_cli_routes_command_before_visiting_info_through_materialization(
 
     result = dispatch_visiting(
         ["info", selector],
-        run_app=lambda args, selected: (
+        run_app=lambda args, selected, operational: (
             captured.update(
                 args=args,
                 layout=selected,
+                operational=operational,
             )
             or 14
         ),
@@ -777,6 +798,8 @@ def test_cli_routes_command_before_visiting_info_through_materialization(
     assert captured["source"] == selector
     assert captured["args"] == ["info", "researcher"]
     assert captured["layout"] == layout
+    assert captured["operational"] is captured["progress"]
+    cast(CliProgress, captured["operational"]).close()
 
 
 def test_cli_opens_visiting_chat_with_its_exact_layout(

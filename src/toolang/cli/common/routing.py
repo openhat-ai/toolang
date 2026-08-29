@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Collection, Sequence
 from copy import copy
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import click
 from rich.console import Console
@@ -181,6 +181,12 @@ class PrefixAgentJobGroup(TyperGroup):
     """Render required AGENT between the CLI root and group name."""
 
     prefix_agent_metavar = "AGENT"
+
+    def invoke(self, ctx: click.Context) -> Any:
+        state = ctx.obj
+        if isinstance(state, CliContext) and state.operational is not None:
+            state.operational.close()
+        return TyperGroup.invoke(self, ctx)
 
     def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         command_path = _strip_help_only_agent_metavars(ctx.command_path)

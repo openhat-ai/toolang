@@ -2,21 +2,41 @@ from __future__ import annotations
 
 from io import StringIO
 from pathlib import Path
+import time
 
-from toolang.base.types.progress import ProgressEvent, ProgressStage, ProgressStatus
-from toolang.cli.common.progress import CliProgress, runtime_startup_failure_message
+from toolang.base.types.progress import (
+    ProgressEvent,
+    ProgressKind,
+    ProgressStage,
+    ProgressStatus,
+)
+from toolang.cli.common.execution_progress.formatting import display_width
+from toolang.cli.common.progress import (
+    CliProgress,
+    runtime_startup_failure_message,
+)
+
+
+class _TTYBuffer(StringIO):
+    def isatty(self) -> bool:
+        return True
+
+    def fileno(self) -> int:
+        raise OSError
 
 
 def _event(
+    kind: ProgressKind,
     stage: ProgressStage,
     label: str,
     *,
+    item_id: str = "opaque/item",
     status: ProgressStatus = "running",
     detail: str | None = None,
 ) -> ProgressEvent:
     return ProgressEvent(
-        id="runtime:launch-1",
-        kind="runtime",
+        id=item_id,
+        kind=kind,
         stage=stage,
         label=label,
         status=status,
@@ -24,173 +44,291 @@ def _event(
     )
 
 
-def test_non_tty_progress_prints_materially_changed_activities_once() -> None:
+def test_non_tty_progress_is_an_append_only_action_transcript() -> None:
     stream = StringIO()
-    progress = CliProgress(
-        agent="alice",
-        sandbox="docker:python:3.13-slim",
-        stream=stream,
-        live=False,
-    )
-
-    progress(_event("create", "Preparing sandbox", detail="docker"))
-    progress(_event("create", "Preparing sandbox", detail="docker"))
-    progress(_event("create", "Preparing sandbox", status="ok"))
-    progress(_event("start", "Waiting for agent API"))
-    progress.finish()
+    with CliProgress(stream=stream) as progress:
+        progress(_event("runtime", "create", "Preparing Docker sandbox..."))
+        progress(
+            _event(
+                "runtime",
+                "create",
+                "Prepared Docker sandbox",
+                status="running",
+            )
+        )
+        progress(
+            _event(
+                "runtime",
+                "create",
+                "Installing Toolang from the package index...",
+            )
+        )
+        progress(
+            _event(
+                "runtime",
+                "create",
+                "Installed Toolang from the package index",
+                status="running",
+            )
+        )
+        progress(_event("runtime", "create", "Created runtime", status="ok"))
 
     assert stream.getvalue().splitlines() == [
-        "Preparing sandbox: docker",
-        "Waiting for agent API",
+        "Preparing Docker sandbox...",
+        "Prepared Docker sandbox",
+        "Installing Toolang from the package index...",
+        "Installed Toolang from the package index",
+        "Created runtime",
     ]
 
 
-def test_non_tty_prepare_progress_is_append_only() -> None:
+def test_non_tty_deduplicates_exact_events_but_keeps_outcomes() -> None:
     stream = StringIO()
-    progress = CliProgress(stream=stream, live=False)
-    event = ProgressEvent(
-        id="agent:github://example/agent",
-        kind="prepare",
-        stage="fetch",
-        label="Fetch agent",
-        status="running",
-        detail="github://example/agent",
-    )
+    progress = CliProgress(stream=stream)
+    running = _event("setup", "load", "Loading setup...")
 
-    progress(event)
-    progress(event)
-    progress(
-        ProgressEvent(
-            id=event.id,
-            kind="prepare",
-            stage="fetch",
-            label="Fetch agent",
-            status="ok",
+    progress(running)
+    progress(running)
+    progress(_event("setup", "load", "Loaded setup", status="ok"))
+    progress.close()
+    progress.close()
+
+    assert stream.getvalue().splitlines() == ["Loading setup...", "Loaded setup"]
+
+
+def test_non_tty_cleanup_segment_can_own_one_leading_gap() -> None:
+    stream = StringIO()
+    progress = CliProgress(stream=stream, leading_gap=True)
+
+    progress(_event("runtime", "stop", "Stopping agent..."))
+    progress(_event("runtime", "stop", "Stopped agent", status="ok"))
+
+    assert stream.getvalue() == "\nStopping agent...\nStopped agent\n"
+
+
+def test_pending_prepare_set_derives_counts_without_parsing_ids() -> None:
+    stream = StringIO()
+    progress = CliProgress(stream=stream)
+    ids = ("one", "two:with:colons", "not-a-cap-prefix")
+    for item_id in ids:
+        progress(
+            _event(
+                "prepare",
+                "fetch",
+                "Fetching skill...",
+                item_id=item_id,
+                status="pending",
+            )
         )
-    )
-    progress.finish(details=False)
-
-    assert stream.getvalue().splitlines()[0] == ("Fetch agent: github://example/agent")
-
-
-def test_progress_can_track_without_rendering() -> None:
-    stream = StringIO()
-    progress = CliProgress(
-        agent="alice",
-        sandbox="docker",
-        stream=stream,
-        live=False,
-        enabled=False,
-    )
-
-    progress(_event("start", "Starting AgentServer"))
-    progress.finish()
-
-    assert progress.current_stage == "Starting AgentServer"
-    assert stream.getvalue() == ""
-
-
-def test_tty_progress_has_one_compact_operational_line() -> None:
-    stream = StringIO()
-    progress = CliProgress(
-        agent="alice",
-        sandbox="docker:python:3.13-slim",
-        stream=stream,
-        live=True,
-    )
-    event = _event("create", "Installing Toolang", detail="package index")
-
-    progress(event)
-    output = progress._operational_text(event).plain
-    progress.finish()
-
-    assert "agent alice" in output
-    assert "docker:python:3.13-slim" in output
-    assert "Installing Toolang" in output
-    assert "package index" in output
-
-
-def test_first_failure_remains_authoritative() -> None:
-    progress = CliProgress(
-        agent="alice",
-        sandbox="docker",
-        stream=StringIO(),
-        live=False,
-    )
 
     progress(
         _event(
+            "prepare",
+            "fetch",
+            "Fetching skill browser...",
+            item_id=ids[0],
+        )
+    )
+    progress(
+        _event(
+            "prepare",
+            "fetch",
+            "Fetched skill browser",
+            item_id=ids[0],
+            status="ok",
+        )
+    )
+    progress(
+        _event(
+            "prepare",
+            "materialize",
+            "Updating skill browser...",
+            item_id=ids[0],
+        )
+    )
+    progress(
+        _event(
+            "prepare",
+            "materialize",
+            "Updated skill browser",
+            item_id=ids[0],
+            status="ok",
+        )
+    )
+
+    assert stream.getvalue().splitlines() == [
+        "Fetching skill browser (0/3 caps)...",
+        "Fetched skill browser (0/3 caps)",
+        "Updating skill browser (0/3 caps)...",
+        "Updated skill browser (1/3 caps)",
+    ]
+
+
+def test_unstarted_cache_hit_is_silent() -> None:
+    stream = StringIO()
+    progress = CliProgress(stream=stream)
+
+    progress(
+        _event(
+            "prepare",
+            "materialize",
+            "Skipped updating skill browser",
+            status="skipped",
+        )
+    )
+
+    assert stream.getvalue() == ""
+
+
+def test_disabled_progress_exposes_no_sink() -> None:
+    progress = CliProgress(stream=StringIO(), enabled=False)
+
+    assert progress.sink is None
+
+
+def test_setup_leaf_restores_still_running_runtime_activity() -> None:
+    progress = CliProgress(stream=_TTYBuffer())
+    progress(_event("runtime", "start", "Starting agent...", item_id="runtime"))
+    progress(_event("setup", "load", "Loading setup...", item_id="setup"))
+
+    assert progress._live_text().plain == "Loading setup..."
+
+    progress(
+        _event(
+            "setup",
+            "load",
+            "Loaded setup",
+            item_id="setup",
+            status="ok",
+        )
+    )
+
+    assert progress._live_text().plain == "Starting agent..."
+    progress.close()
+
+
+def test_tty_elapsed_is_per_activity_and_appears_after_one_second() -> None:
+    now = [0.0]
+    progress = CliProgress(stream=_TTYBuffer(), _clock=lambda: now[0])
+    progress(_event("runtime", "create", "Installing Toolang..."))
+
+    now[0] = 0.9
+    assert progress._live_text().plain == "Installing Toolang..."
+    now[0] = 1.2
+    assert progress._live_text().plain == "Installing Toolang (1.2s)..."
+
+    progress(
+        _event(
+            "runtime",
             "create",
-            "Installing Toolang",
+            "Installed Toolang",
+            status="running",
+        )
+    )
+    assert progress._live_text().plain == "Installed Toolang (1.2s)"
+    now[0] = 1.3
+    progress(_event("runtime", "create", "Checking Toolang..."))
+    assert progress._live_text().plain == "Checking Toolang..."
+    progress.close()
+
+
+def test_fast_tty_activity_closes_before_delayed_reveal() -> None:
+    stream = _TTYBuffer()
+    progress = CliProgress(stream=stream)
+
+    progress(_event("setup", "load", "Loading setup..."))
+    progress(_event("setup", "load", "Loaded setup", status="ok"))
+    progress.close()
+    time.sleep(0.2)
+
+    assert stream.getvalue() == ""
+
+
+def test_progress_wraps_with_two_cell_hanging_indent() -> None:
+    stream = StringIO()
+    progress = CliProgress(stream=stream, max_width=20)
+
+    progress(
+        _event(
+            "setup",
+            "discover",
+            "Discovering 模型 from a very long provider name...",
+        )
+    )
+
+    lines = stream.getvalue().splitlines()
+    assert len(lines) > 1
+    assert all(display_width(line) <= 20 for line in lines)
+    assert all(line.startswith("  ") for line in lines[1:])
+
+
+def test_first_failure_remains_authoritative() -> None:
+    progress = CliProgress(stream=StringIO())
+    progress(
+        _event(
+            "runtime",
+            "create",
+            "Failed to install Toolang",
             status="failed",
             detail="installer exited",
         )
     )
     progress(
         _event(
+            "runtime",
             "start",
-            "Waiting for agent API",
+            "Failed to start agent",
             status="failed",
             detail="workload exited",
         )
     )
 
     assert progress.failure_stage == "runtime.create"
-    assert progress.failure_label == "Installing Toolang"
+    assert progress.failure_label == "Failed to install Toolang"
     assert progress.failure_reason == "installer exited"
 
 
-def test_install_failure_uses_the_resolved_package_source() -> None:
-    progress = CliProgress(
-        agent="alice",
-        sandbox="docker",
-        stream=StringIO(),
-        live=False,
-    )
+def test_runtime_failure_uses_one_stable_block() -> None:
+    progress = CliProgress(stream=StringIO())
     progress(
         _event(
+            "runtime",
             "create",
-            "Installing Toolang",
+            "Failed to install Toolang",
             status="failed",
             detail="installer exited",
         )
     )
 
-    package_index = runtime_startup_failure_message(
-        "alice", "docker", progress, RuntimeError("startup failed")
-    )
-    wheel = runtime_startup_failure_message(
-        "alice",
-        "docker",
+    message = runtime_startup_failure_message(
         progress,
         RuntimeError("startup failed"),
-        dev_artifact=Path("dist/toolang-0.3.0-py3-none-any.whl"),
+        log_path=Path("agent.log"),
     )
 
-    assert "Stage: runtime.create" in package_index
-    assert "Activity: Installing Toolang" in package_index
-    assert "Reason: Could not install Toolang from the package index." in package_index
-    assert "Fix: Check the log and network access" in package_index
-    assert (
-        "Reason: Could not install Toolang from toolang-0.3.0-py3-none-any.whl."
-        in wheel
+    assert message.splitlines() == [
+        "Failed to install Toolang",
+        "  Stage: runtime.create",
+        "  Reason: Could not install Toolang from the package index",
+        "  Fix: Check network access or use --dev PATH with a compatible wheel",
+        "  Log: agent.log",
+    ]
+
+
+def test_setup_failure_uses_the_same_stable_block() -> None:
+    progress = CliProgress(stream=StringIO())
+    progress(
+        _event(
+            "setup",
+            "discover",
+            "Failed to discover models",
+            status="failed",
+            detail="catalog crashed",
+        )
     )
 
-
-def test_cleanup_uses_the_same_presenter_contract() -> None:
-    stream = StringIO()
-    progress = CliProgress(
-        agent="alice",
-        sandbox="docker",
-        stream=stream,
-        live=False,
-    )
-
-    progress(_event("stop", "Stopping workload", detail="docker"))
-    progress(_event("destroy", "Destroying runtime", detail="docker"))
-    progress.finish()
-
-    assert stream.getvalue().splitlines() == [
-        "Stopping workload: docker",
-        "Destroying runtime: docker",
+    assert progress.failure_message(RuntimeError("refresh failed")).splitlines() == [
+        "Failed to discover models",
+        "  Stage: setup.discover",
+        "  Reason: catalog crashed",
     ]

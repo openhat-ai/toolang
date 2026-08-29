@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -13,6 +13,7 @@ from typing import Literal
 
 from toolang.base.errors import ToolangError
 from toolang.common.layout import AgentLayout
+from toolang.common.progress import ProgressSink
 from toolang.common.version import development_source
 from toolang.plugin.models.catalog import MODEL_CATALOG_ENV
 from toolang.up import process as agents
@@ -20,7 +21,7 @@ from toolang.up import sandbox as sandbox_runtime
 from toolang.up.logging import resolve_agent_logging
 
 from .context import load_runtime_environ
-from .progress import make_cli_progress, runtime_startup_failure_message
+from .progress import CliProgress, make_cli_progress, runtime_startup_failure_message
 
 
 ExecutionMode = Literal["embedded", "remote"]
@@ -65,12 +66,13 @@ class ExecutionRuntime:
 def open_execution_runtime(
     layout: AgentLayout,
     *,
+    operational: CliProgress,
     sandbox: str | None,
     dev: Path | None = None,
     model_catalog: Path | None = None,
     ui_base_url: str = "",
     base_environ: Mapping[str, str] | None = None,
-    show_progress: bool = True,
+    show_cleanup_progress: bool = True,
 ) -> Iterator[ExecutionRuntime]:
     """Attach to, embed, or temporarily launch one execution runtime."""
 
@@ -105,9 +107,13 @@ def open_execution_runtime(
                 "--dev only applies to guest sandboxes; host uses the current "
                 "Toolang installation."
             )
-        progress = make_cli_progress(agent=layout.name, enabled=show_progress)
         try:
-            asyncio.run(sandbox_runtime.release_stopped(layout, progress=progress))
+            asyncio.run(
+                sandbox_runtime.release_stopped(
+                    layout,
+                    progress=operational.sink,
+                )
+            )
         except (
             ImportError,
             OSError,
@@ -117,8 +123,6 @@ def open_execution_runtime(
             ValueError,
         ) as exc:
             raise ExecutionRuntimeError(str(exc)) from exc
-        finally:
-            progress.finish(details=False)
         yield ExecutionRuntime(sandbox="host", mode="embedded")
         return
 
@@ -128,30 +132,17 @@ def open_execution_runtime(
         dev=dev,
         model_catalog=model_catalog,
         base_environ=base_environ,
+        progress=operational.sink,
     )
-    warn_development_package_source(launch)
-
-    progress = make_cli_progress(
-        agent=layout.name,
-        sandbox=launch.sandbox,
-        enabled=show_progress,
-    )
-    launch_cleanup_progress = make_cli_progress(
-        agent=layout.name,
-        sandbox=launch.sandbox,
-        enabled=show_progress,
-    )
+    warn_development_package_source(launch, progress=operational)
     try:
         handle = asyncio.run(
             sandbox_runtime.launch(
                 launch,
-                progress=progress,
-                cleanup_progress=launch_cleanup_progress,
+                progress=operational.sink,
             )
         )
     except KeyboardInterrupt:
-        progress.interrupt()
-        launch_cleanup_progress.finish(details=False)
         raise
     except (
         ImportError,
@@ -161,22 +152,15 @@ def open_execution_runtime(
         TypeError,
         ValueError,
     ) as exc:
-        progress.finish()
-        launch_cleanup_progress.finish(details=False)
         raise ExecutionRuntimeError(
             runtime_startup_failure_message(
-                layout.name,
-                launch.sandbox,
-                progress,
+                operational,
                 exc,
                 log_path=layout.runtime_log,
                 dev_artifact=launch.dev_artifact,
                 development_build=development_source()[0],
             )
         ) from exc
-    progress.finish()
-    launch_cleanup_progress.finish(details=False)
-
     runtime: ExecutionRuntime | None = None
     body_error: BaseException | None = None
     try:
@@ -194,20 +178,19 @@ def open_execution_runtime(
         raise
     finally:
         shutdown_progress = make_cli_progress(
-            agent=layout.name,
-            sandbox=handle.state.sandbox,
-            enabled=show_progress,
+            enabled=show_cleanup_progress,
+            leading_gap=True,
         )
         try:
             asyncio.run(
                 sandbox_runtime.stop_handle(
                     layout,
                     handle,
-                    progress=shutdown_progress,
+                    progress=shutdown_progress.sink,
                 )
             )
         except KeyboardInterrupt:
-            shutdown_progress.interrupt()
+            shutdown_progress.close()
             raise
         except Exception as exc:
             message = (
@@ -221,7 +204,7 @@ def open_execution_runtime(
             else:
                 raise ExecutionRuntimeError(message) from exc
         finally:
-            shutdown_progress.finish()
+            shutdown_progress.close()
 
 
 def sandbox_matches(requested: str, running: str) -> bool:
@@ -236,6 +219,8 @@ def sandbox_matches(requested: str, running: str) -> bool:
 
 def warn_development_package_source(
     launch: sandbox_runtime.LaunchSpec,
+    *,
+    progress: CliProgress | None = None,
 ) -> None:
     """Warn when a development CLI starts a guest from the package index."""
 
@@ -255,12 +240,14 @@ def warn_development_package_source(
             f"Warning: the new {sandbox_name} guest will install Toolang from the "
             f"package index, not from {source}."
         )
-    print(warning, file=sys.stderr)
-    print(
-        "Build the current source with `uv build --wheel`, then run this command "
-        "again with `--dev dist`.",
-        file=sys.stderr,
-    )
+    ownership = progress.suspended() if progress is not None else nullcontext()
+    with ownership:
+        print(warning, file=sys.stderr)
+        print(
+            "Build the current source with `uv build --wheel`, then run this command "
+            "again with `--dev dist`.",
+            file=sys.stderr,
+        )
 
 
 def _attached_runtime(
@@ -291,6 +278,7 @@ def _resolve_inactive_launch(
     dev: Path | None,
     model_catalog: Path | None,
     base_environ: Mapping[str, str] | None,
+    progress: ProgressSink | None = None,
 ) -> sandbox_runtime.LaunchSpec:
     try:
         environ = load_runtime_environ(
@@ -315,6 +303,7 @@ def _resolve_inactive_launch(
                 log_spec=log_plan.spec,
                 temporary_port=True,
                 environ=log_plan.environ,
+                progress=progress,
             )
         )
     except (
