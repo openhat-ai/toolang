@@ -426,11 +426,23 @@ def _resolve_visiting_layout(
         status="running",
         detail=layout.name,
     )
-    layout = materialize_visiting_program(
-        resolved_ref,
-        source_text,
-        source=selector.text,
-    )
+    try:
+        layout = materialize_visiting_program(
+            resolved_ref,
+            source_text,
+            source=selector.text,
+        )
+    except Exception as exc:
+        emit_progress(
+            progress,
+            id=progress_id,
+            kind="prepare",
+            stage="materialize",
+            label="Materialize agent",
+            status="failed",
+            detail=str(exc),
+        )
+        raise
     emit_progress(
         progress,
         id=progress_id,

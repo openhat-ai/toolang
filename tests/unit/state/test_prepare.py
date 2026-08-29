@@ -10,14 +10,17 @@ import time
 
 import pytest
 
+from toolang.base.types.progress import ProgressEvent
 from toolang.common.layout import AgentLayout
 from toolang.execution.runnables import (
     resolve_bound_runnable,
     resolve_state_runnable,
 )
+from toolang.state import prepare as state_prepare
 from toolang.state import state as cap_state
 from toolang.state.cache import (
     LAYER_SCHEMA,
+    LayerScope,
     _agent_check_lock,
     _persist_agent_revision,
     canonical_json,
@@ -82,6 +85,68 @@ def _wait_for_path(path: Path, *, timeout: float = 10) -> None:
         if time.monotonic() >= deadline:
             raise TimeoutError(f"timed out waiting for {path}")
         time.sleep(0.01)
+
+
+def test_prepare_materialize_fails_if_layer_publication_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    events: list[ProgressEvent] = []
+
+    def fail_write(**_kwargs: object) -> str:
+        raise OSError("layer write failed")
+
+    monkeypatch.setattr(state_prepare, "write_layer", fail_write)
+
+    with pytest.raises(OSError, match="layer write failed"):
+        prepare_agent_state(_layout(toolang_root), progress=events.append)
+
+    root_events = [event for event in events if event.id == "agent:alice:root"]
+    assert [(event.stage, event.status) for event in root_events] == [
+        ("materialize", "running"),
+        ("materialize", "failed"),
+    ]
+
+
+def test_prepare_materialize_stays_open_across_source_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    prompt = toolang_root / "prompts" / "review.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text("First version\n", encoding="utf-8")
+    layout = _layout(toolang_root)
+    events: list[ProgressEvent] = []
+    scan_scope_source = state_prepare._scan_scope_source
+    root_scans = 0
+
+    def scan_with_one_change(
+        selected: AgentLayout,
+        *,
+        scope: LayerScope,
+    ):
+        nonlocal root_scans
+        if scope == "root":
+            root_scans += 1
+            if root_scans == 2:
+                prompt.write_text("Second version\n", encoding="utf-8")
+        return scan_scope_source(selected, scope=scope)
+
+    monkeypatch.setattr(state_prepare, "_scan_scope_source", scan_with_one_change)
+
+    state_prepare.prepare_root(layout, progress=events.append)
+
+    root_events = [event for event in events if event.id == "agent:alice:root"]
+    assert [(event.stage, event.status) for event in root_events] == [
+        ("materialize", "running"),
+        ("materialize", "ok"),
+    ]
+    assert root_scans == 4
 
 
 def test_prepare_root_home_snapshot_root_and_home(tmp_path: Path) -> None:

@@ -585,7 +585,8 @@ def test_guest_start_activity_follows_create_completion(
     monkeypatch.setattr(sandbox, "_wait_ready", ready)
     events: list[ProgressEvent] = []
 
-    asyncio.run(sandbox.launch(_launch_spec(tmp_path), progress=events.append))
+    spec = _launch_spec(tmp_path)
+    handle = asyncio.run(sandbox.launch(spec, progress=events.append))
 
     create_ok = next(
         index
@@ -598,6 +599,7 @@ def test_guest_start_activity_follows_create_completion(
         if event.stage == "start" and event.status == "running"
     )
     assert create_ok < start_running
+    asyncio.run(sandbox.stop_handle(spec.serve.layout, handle, progress=events.append))
     assert len({event.id for event in events}) == 1
 
 

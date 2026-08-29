@@ -76,6 +76,7 @@ class SandboxHandle:
 
     implementation: Sandbox
     state: SandboxState
+    progress_id: str | None = None
 
 
 async def resolve_launch(
@@ -336,7 +337,7 @@ async def _launch_locked(
             status="ok",
             detail=ref.endpoint,
         )
-        return SandboxHandle(implementation, state)
+        return SandboxHandle(implementation, state, progress_id=spec.progress_id)
     except BaseException as exc:
         if not attach_failure_observed:
             _startup_progress(
@@ -465,10 +466,11 @@ async def stop_handle(
                 raise ValueError(
                     f"sandbox ownership changed while agent was running: {layout.name}"
                 )
+            progress_id = handle.progress_id or f"runtime:{handle.state.ref.runtime_id}"
             _shutdown_progress(
                 progress,
-                layout,
                 handle.state,
+                progress_id=progress_id,
                 stage="stop",
                 label="Stopping workload",
                 status="running",
@@ -478,8 +480,8 @@ async def stop_handle(
             except BaseException as exc:
                 _shutdown_progress(
                     progress,
-                    layout,
                     handle.state,
+                    progress_id=progress_id,
                     stage="stop",
                     label="Stopping workload",
                     status="failed",
@@ -488,16 +490,16 @@ async def stop_handle(
                 raise
             _shutdown_progress(
                 progress,
-                layout,
                 handle.state,
+                progress_id=progress_id,
                 stage="stop",
                 label="Stopping workload",
                 status="ok",
             )
             _shutdown_progress(
                 progress,
-                layout,
                 handle.state,
+                progress_id=progress_id,
                 stage="destroy",
                 label="Releasing sandbox resources",
                 status="running",
@@ -508,8 +510,8 @@ async def stop_handle(
             except BaseException as exc:
                 _shutdown_progress(
                     progress,
-                    layout,
                     handle.state,
+                    progress_id=progress_id,
                     stage="destroy",
                     label="Releasing sandbox resources",
                     status="failed",
@@ -518,8 +520,8 @@ async def stop_handle(
                 raise
             _shutdown_progress(
                 progress,
-                layout,
                 handle.state,
+                progress_id=progress_id,
                 stage="destroy",
                 label="Releasing sandbox resources",
                 status="ok",
@@ -655,9 +657,9 @@ def _startup_progress(
 
 def _shutdown_progress(
     progress: ProgressSink | None,
-    layout: AgentLayout,
     state: SandboxState,
     *,
+    progress_id: str,
     stage: ProgressStage,
     label: str,
     status: ProgressStatus,
@@ -666,7 +668,7 @@ def _shutdown_progress(
     with suppress(Exception):
         emit_progress(
             progress,
-            id=f"runtime:{state.ref.runtime_id}",
+            id=progress_id,
             kind="runtime",
             stage=stage,
             label=label,

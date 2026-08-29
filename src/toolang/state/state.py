@@ -1300,15 +1300,6 @@ def materialize_scope(
 ) -> tuple[tuple[StateCap, ...], dict[str, bytes]]:
     """Build State capabilities and materialized files for one scope."""
 
-    emit_progress(
-        progress,
-        id=f"agent:{authored.agent_name}:{scope}",
-        kind="prepare",
-        stage="materialize",
-        label=f"Prepare {scope} caps",
-        status="running",
-        detail=authored.agent_name,
-    )
     entries, files = _collect_scope_entries_with_files(
         authored,
         scope=scope,
@@ -1318,15 +1309,6 @@ def materialize_scope(
         include_program=include_program,
     )
     _ensure_no_conflicts(entries)
-    emit_progress(
-        progress,
-        id=f"agent:{authored.agent_name}:{scope}",
-        kind="prepare",
-        stage="materialize",
-        label=f"Prepare {scope} caps",
-        status="ok",
-        detail=f"{len(entries)} entries",
-    )
     return entries, files
 
 

@@ -187,6 +187,34 @@ def test_visiting_agent_keeps_one_progress_id_across_prepare_stages(
     assert events[0].id == f"agent:{selector}"
 
 
+def test_visiting_agent_closes_materialize_progress_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = f"https://agents.example{tmp_path}/broken.too"
+    monkeypatch.setattr(agents, "_visiting_program_cache_fresh", lambda _path: False)
+    monkeypatch.setattr(
+        agents,
+        "_fetch_http_text",
+        lambda _url: "agent broken\n",
+    )
+    monkeypatch.setattr(
+        agents,
+        "materialize_visiting_program",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("write failed")),
+    )
+    events: list[ProgressEvent] = []
+
+    with pytest.raises(OSError, match="write failed"):
+        agents.resolve_visiting_layout(source, progress=events.append)
+
+    assert [(event.stage, event.status) for event in events[-2:]] == [
+        ("materialize", "running"),
+        ("materialize", "failed"),
+    ]
+    assert len({event.id for event in events}) == 1
+
+
 def test_materialize_roaming_program_links_source_and_config(tmp_path: Path) -> None:
     source = tmp_path / "demo.too"
     source.write_text("agent demo\n", encoding="utf-8")
