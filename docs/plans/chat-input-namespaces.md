@@ -130,13 +130,13 @@ Canonical commands are:
 /help                     /show [RUN_ID]
 /?                        /queue [ACTION]
 /model [MODEL]            /steer MESSAGE
-/models                   /quit
-/agic [AGIC]              /exit
-/flow [FLOW]
+/agic [AGIC]              /quit
+/flow [FLOW]              /exit
 /runnable [RUNNABLE]
 ```
 
-No-argument model and runnable forms retain their current listing behavior.
+`/model` without an argument lists models; there is no plural `/models`
+command. No-argument runnable forms retain their current listing behavior.
 Supplying one model or runnable selector validates and applies the corresponding
 session default without creating a run. `/agic` and `/flow` qualify the selected
 runnable kind. They do not accept runnable named inputs; use a colon runnable
@@ -348,6 +348,8 @@ During the compatibility release:
 - dollar is canonical for prompt calls;
 - existing colon quick commands remain accepted and emit one concise
   deprecation diagnostic with the slash replacement;
+- legacy no-argument `:models` maps to `/model`, while `:models SELECTORS`
+  remains a durable policy directive;
 - existing `/prompt` calls remain accepted on all `Content` surfaces and emit a
   deprecation diagnostic with the dollar replacement;
 - help, completion, examples, generated guidance, and formatting emit only the
