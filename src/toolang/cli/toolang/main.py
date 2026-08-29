@@ -141,13 +141,6 @@ def callback(
         Path | None,
         typer.Option("--root", "-r", help="Use a custom Toolang root."),
     ] = None,
-    model_catalog: Annotated[
-        Path | None,
-        typer.Option(
-            "--models",
-            help="Use a specified model catalog.",
-        ),
-    ] = None,
     version: Annotated[
         bool,
         typer.Option(
@@ -170,11 +163,6 @@ def callback(
         root=resolve_root(toolang_root),
         agent=_PREFIX_AGENT.get(),
         layout=_SELECTED_LAYOUT.get(),
-        model_catalog=(
-            model_catalog.expanduser().resolve(strict=False)
-            if model_catalog is not None
-            else None
-        ),
     )
 
 

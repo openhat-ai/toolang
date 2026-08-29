@@ -7,6 +7,7 @@ from typing import Annotated
 
 import typer
 
+from toolang.cli.common.context import ModelCatalogOption
 from toolang.cli.common.execution_runtime import DEVELOPMENT_WHEEL_HELP
 
 
@@ -19,6 +20,7 @@ def chat_command(
             metavar="THREAD",
         ),
     ] = None,
+    model_catalog: ModelCatalogOption = None,
     sandbox: Annotated[
         str | None,
         typer.Option(
@@ -54,6 +56,7 @@ def chat_command(
     run(
         ctx,
         thread=thread,
+        model_catalog=model_catalog,
         allows=allows,
         defaults=defaults,
         sandbox=sandbox,

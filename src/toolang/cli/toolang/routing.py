@@ -43,11 +43,10 @@ class TargetHelp:
 
 _ALL_PLACEMENTS = frozenset[AgentPlacement]({"resident", "visiting", "roaming"})
 _RESIDENT = frozenset[AgentPlacement]({"resident"})
-_GLOBAL_VALUE_OPTIONS = ("--models",)
 
 
 def _extract_global_args(argv: list[str]) -> tuple[list[str], list[str]]:
-    return extract_root_args(argv, extra_value_options=_GLOBAL_VALUE_OPTIONS)
+    return extract_root_args(argv)
 
 
 def _command(

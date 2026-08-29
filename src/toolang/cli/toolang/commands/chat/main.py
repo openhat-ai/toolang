@@ -25,8 +25,8 @@ from toolang.execution.types import RunOverride, StepPath
 from toolang.lang.types import Array
 from toolang.cli.common.context import (
     context_layout,
-    context_model_catalog,
     load_runtime_environ,
+    resolve_model_catalog_option,
     ui_base_url,
     user_call,
 )
@@ -62,6 +62,7 @@ from .tui import ChatTuiApp
 def chat_command(
     ctx: typer.Context,
     thread: str | None = None,
+    model_catalog: Path | None = None,
     allows: list[str] | None = None,
     defaults: list[str] | None = None,
     sandbox: str | None = None,
@@ -72,6 +73,7 @@ def chat_command(
     _chat_interactive(
         ctx,
         thread_id=thread_id,
+        model_catalog=model_catalog,
         sandbox=sandbox,
         dev=dev,
         allow_options=allows,
@@ -85,6 +87,7 @@ def _chat_interactive(
     *,
     thread_id: str | None,
     selector_payload: dict[str, object] | None = None,
+    model_catalog: Path | None = None,
     sandbox: str | None = None,
     dev: Path | None = None,
     allow_options: list[str] | None = None,
@@ -95,6 +98,7 @@ def _chat_interactive(
     with _chat_runtime(
         ctx,
         selector_payload=selectors,
+        model_catalog=model_catalog,
         sandbox=sandbox,
         dev=dev,
         allow_options=allow_options,
@@ -121,6 +125,7 @@ def _chat_runtime(
     ctx: typer.Context,
     *,
     selector_payload: dict[str, object] | None = None,
+    model_catalog: Path | None = None,
     sandbox: str | None,
     dev: Path | None = None,
     allow_options: list[str] | None = None,
@@ -130,15 +135,12 @@ def _chat_runtime(
     """Own one local, attached, or temporary-remote Chat session."""
 
     layout = context_layout(ctx)
-    model_catalog = (
-        context_model_catalog(ctx) if isinstance(ctx, typer.Context) else None
-    )
     try:
         runtime_context = open_execution_runtime(
             layout,
             sandbox=sandbox,
             dev=dev,
-            model_catalog=model_catalog,
+            model_catalog=resolve_model_catalog_option(model_catalog),
             ui_base_url=ui_base_url(),
         )
         with runtime_context as runtime:

@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
 import json
+from pathlib import Path
 from typing import Annotated, cast
 
 from rich.text import Text
@@ -13,9 +14,10 @@ import typer
 
 from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
 from toolang.cli.common.context import (
+    ModelCatalogOption,
     context_agent,
-    context_model_catalog,
     context_root,
+    resolve_model_catalog_option,
 )
 from toolang.cli.common.output import echo_table
 from toolang.cli.config import load_config_layers
@@ -33,6 +35,7 @@ from toolang.setup import AgentSetup, SetupWatcher
 
 def models_command(
     ctx: typer.Context,
+    model_catalog: ModelCatalogOption = None,
     filter_: Annotated[
         list[str] | None,
         typer.Option(
@@ -48,7 +51,7 @@ def models_command(
 ) -> None:
     """List or export model catalog entries."""
 
-    setup = _setup(ctx)
+    setup = _setup(ctx, model_catalog=model_catalog)
     snapshot = _catalog(setup)
     selectors = _selectors(filter_)
     available = _available_identities(ctx, setup)
@@ -103,6 +106,7 @@ def models_command(
 
 def providers_command(
     ctx: typer.Context,
+    model_catalog: ModelCatalogOption = None,
     filter_: Annotated[
         list[str] | None,
         typer.Option("--filter", "-f", help="Filter provider IDs with globs."),
@@ -116,7 +120,7 @@ def providers_command(
 
     from fnmatch import fnmatchcase
 
-    setup = _setup(ctx)
+    setup = _setup(ctx, model_catalog=model_catalog)
     snapshot = _catalog(setup)
     patterns = _selectors(filter_) or ("*",)
     providers = tuple(
@@ -186,11 +190,15 @@ def adapters_command(
     echo_table(("ADAPTER", "SOURCE"), [(info.name, info.source) for info in infos])
 
 
-def _setup(ctx: typer.Context) -> AgentSetup:
+def _setup(
+    ctx: typer.Context,
+    *,
+    model_catalog: Path | None = None,
+) -> AgentSetup:
     return asyncio.run(
         SetupWatcher(
             _layout(ctx),
-            model_catalog=context_model_catalog(ctx),
+            model_catalog=resolve_model_catalog_option(model_catalog),
         ).refresh()
     )
 

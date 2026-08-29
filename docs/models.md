@@ -24,7 +24,7 @@ availability.
 The static catalog is one complete models.dev-compatible `models.json`. Toolang
 selects it in this order:
 
-1. global `--models PATH`;
+1. command-level `--models PATH`, where supported;
 2. `TOOLANG_MODEL_CATALOG`;
 3. the active agent home `models.json`;
 4. `${TOOLANG_ROOT}/models.json`;

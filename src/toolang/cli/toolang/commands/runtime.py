@@ -25,11 +25,12 @@ from ....up.logging import (
     resolve_agent_logging,
 )
 from ...common.context import (
+    ModelCatalogOption,
     cli_context,
-    context_model_catalog,
     context_root,
     require_runtime_agent,
     load_runtime_environ,
+    resolve_model_catalog_option,
     ui_base_url,
     user_call,
 )
@@ -265,6 +266,7 @@ def run(
         help="Existing local agent name, remote agent ref, or URL.",
         hidden=True,
     ),
+    model_catalog: ModelCatalogOption = None,
     sandbox: Annotated[
         str | None,
         typer.Option(help="Run in this sandbox; defaults to agent config or host."),
@@ -329,8 +331,8 @@ def run(
             )
         )
         launch = resolve_startup(
-            ctx,
             target,
+            model_catalog=model_catalog,
             sandbox=sandbox,
             allows=allows,
             defaults=defaults,
@@ -413,6 +415,7 @@ def start(
     agent: str | None = typer.Argument(
         None, help="Existing local agent name.", hidden=True
     ),
+    model_catalog: ModelCatalogOption = None,
     sandbox: Annotated[
         str | None,
         typer.Option(help="Run in this sandbox; defaults to agent config or host."),
@@ -474,8 +477,8 @@ def start(
             progress=as_progress_sink(progress),
         )
         launch = resolve_startup(
-            ctx,
             target,
+            model_catalog=model_catalog,
             sandbox=sandbox,
             allows=allows,
             defaults=defaults,
@@ -559,6 +562,7 @@ def stop(
 def serve(
     ctx: typer.Context,
     agent: Annotated[str, typer.Argument(help="Agent name.")],
+    model_catalog: ModelCatalogOption = None,
     host: Annotated[str, typer.Option(help="API bind host.")] = "127.0.0.1",
     endpoint_host: Annotated[
         str | None,
@@ -597,7 +601,7 @@ def serve(
     sandbox = os.environ.get("TOOLANG_SANDBOX", "host").strip() or "host"
     environ = load_runtime_environ(layout, base_environ=os.environ)
     environ["TOOLANG_ROOT"] = str(layout.root)
-    if model_catalog := context_model_catalog(ctx):
+    if model_catalog := resolve_model_catalog_option(model_catalog):
         environ[MODEL_CATALOG_ENV] = str(model_catalog)
     spec = user_call(
         resolve_serve,
@@ -622,9 +626,9 @@ def serve(
 
 
 def resolve_startup(
-    ctx: typer.Context,
     target: AgentLayout,
     *,
+    model_catalog: Path | None,
     sandbox: str | None,
     allows: list[str] | None,
     defaults: list[str] | None,
@@ -646,7 +650,7 @@ def resolve_startup(
         raise click.ClickException(active_agent_error(existing))
     environ = load_runtime_environ(target, base_environ=os.environ)
     environ["TOOLANG_ROOT"] = str(root)
-    if model_catalog := context_model_catalog(ctx):
+    if model_catalog := resolve_model_catalog_option(model_catalog):
         environ[MODEL_CATALOG_ENV] = str(model_catalog)
     log_plan = resolve_agent_logging(
         mode="start" if background else "run",
