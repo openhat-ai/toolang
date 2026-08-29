@@ -830,7 +830,7 @@ def resolve_remote_ref(
         id=item_id,
         kind="prepare",
         stage="resolve",
-        label=f"Resolve {kind}",
+        label=f"Resolving {kind}...",
         status="running",
         detail=text,
     )
@@ -866,7 +866,7 @@ def resolve_remote_ref(
             id=item_id,
             kind="prepare",
             stage="resolve",
-            label=f"Resolve {kind}",
+            label=f"Failed to resolve {kind}",
             status="failed",
             detail=str(exc),
         )
@@ -876,7 +876,7 @@ def resolve_remote_ref(
         id=item_id,
         kind="prepare",
         stage="resolve",
-        label=f"Resolve {kind}",
+        label=f"Resolved {kind}",
         status="ok",
         detail=canonical,
     )
@@ -1449,7 +1449,7 @@ def _emit_cached_remote_progress(
             id=request.progress_id,
             kind="prepare",
             stage="resolve",
-            label=f"Resolve {request.kind}",
+            label=f"Resolved {request.kind} {canonical_ref}",
             status="ok",
             detail=canonical_ref,
         )
@@ -1459,7 +1459,7 @@ def _emit_cached_remote_progress(
         id=request.progress_id,
         kind="prepare",
         stage="fetch",
-        label=f"Fetch {request.kind}",
+        label=f"Fetched {request.kind} {canonical_ref}",
         status="ok",
         detail="cached",
     )
@@ -1990,7 +1990,7 @@ def _remote_entry_from_ref(
             id=progress_id,
             kind="prepare",
             stage="materialize",
-            label=f"Extract {kind}",
+            label=f"Updating {kind} {name}...",
             status="running",
             detail=str(relative_entry_path),
         )
@@ -2020,7 +2020,7 @@ def _remote_entry_from_ref(
                 id=progress_id,
                 kind="prepare",
                 stage="materialize",
-                label=f"Extract {kind}",
+                label=f"Failed to update {kind} {name}",
                 status="failed",
                 detail=str(exc),
             )
@@ -2031,7 +2031,7 @@ def _remote_entry_from_ref(
             id=progress_id,
             kind="prepare",
             stage="materialize",
-            label=f"Materialize {kind}",
+            label=f"Updating {kind} {name}...",
             status="running",
             detail=str(relative_entry_path),
         )
@@ -2040,7 +2040,7 @@ def _remote_entry_from_ref(
             id=progress_id,
             kind="prepare",
             stage="materialize",
-            label=f"Materialize {kind}",
+            label=f"Updated {kind} {name}",
             status="ok",
         )
     return entry, entry_files
@@ -2154,6 +2154,7 @@ def _emit_remote_entry_pending(
     progress: ProgressSink | None,
 ) -> None:
     ref = request.ref.strip()
+    object_label = f" {request.name}" if request.name is not None else ""
     if "://" in ref:
         try:
             ref = canonicalize_remote_ref(request.kind, ref)
@@ -2164,7 +2165,7 @@ def _emit_remote_entry_pending(
             id=request.progress_id,
             kind="prepare",
             stage="fetch",
-            label=f"Fetch {request.kind}",
+            label=f"Fetching {request.kind}{object_label}...",
             status="pending",
             detail=ref,
         )
@@ -2174,7 +2175,7 @@ def _emit_remote_entry_pending(
         id=request.progress_id,
         kind="prepare",
         stage="resolve",
-        label=f"Resolve {request.kind}",
+        label=f"Resolving {request.kind}{object_label}...",
         status="pending",
         detail=ref,
     )
@@ -2216,7 +2217,6 @@ def _remote_materialized_files(
     progress: ProgressSink | None = None,
     progress_id: str | None = None,
 ) -> dict[str, bytes]:
-    del name
     if not ref.startswith("github://"):
         raise ValueError(f"unsupported remote {kind} ref: {ref}")
     github_ref = parse_github_ref(ref)
@@ -2226,7 +2226,7 @@ def _remote_materialized_files(
         id=item_id,
         kind="prepare",
         stage="fetch",
-        label=f"Fetch {kind}",
+        label=f"Fetching {kind} {name}...",
         status="running",
         detail=ref,
     )
@@ -2239,7 +2239,7 @@ def _remote_materialized_files(
                 id=item_id,
                 kind="prepare",
                 stage="fetch",
-                label=f"Fetch {kind}",
+                label=f"Failed to fetch {kind} {name}",
                 status="failed",
                 detail=str(exc),
             )
@@ -2250,7 +2250,7 @@ def _remote_materialized_files(
                 id=item_id,
                 kind="prepare",
                 stage="fetch",
-                label=f"Fetch {kind}",
+                label=f"Failed to fetch {kind} {name}",
                 status="failed",
                 detail=f"remote skill is missing SKILL.md: {ref}",
             )
@@ -2271,7 +2271,7 @@ def _remote_materialized_files(
                 id=item_id,
                 kind="prepare",
                 stage="fetch",
-                label=f"Fetch {kind}",
+                label=f"Failed to fetch {kind} {name}",
                 status="failed",
                 detail=str(exc),
             )
@@ -2281,7 +2281,7 @@ def _remote_materialized_files(
         id=item_id,
         kind="prepare",
         stage="fetch",
-        label=f"Fetch {kind}",
+        label=f"Fetched {kind} {name}",
         status="ok",
         detail=f"{len(materialized)} {'file' if len(materialized) == 1 else 'files'}",
     )

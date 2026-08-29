@@ -18,23 +18,50 @@ from toolang.base.types.sandbox import SandboxRef
 
 
 class _Progress:
-    current_stage = "Starting workload"
+    current_stage = "Creating runtime..."
     failure_reason: str | None = None
     failure_stage: str | None = None
     failure_label: str | None = None
 
-    def __init__(self) -> None:
+    def __init__(self, *, enabled: bool = True) -> None:
+        self.enabled = enabled
         self.finished = 0
         self.interrupted = 0
 
     def __call__(self, _event: object) -> None:
         pass
 
-    def finish(self) -> None:
+    def __enter__(self) -> _Progress:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
+
+    @property
+    def sink(self) -> _Progress | None:
+        return self if self.enabled else None
+
+    def close(self) -> None:
         self.finished += 1
 
-    def interrupt(self) -> None:
-        self.interrupted += 1
+    def failure_message(
+        self,
+        error: BaseException,
+        *,
+        reason: str | None = None,
+        fix: str | None = None,
+        log_path: Path | None = None,
+    ) -> str:
+        lines = [
+            self.failure_label or str(error),
+            f"  Stage: {self.failure_stage or 'runtime.create'}",
+            f"  Reason: {reason or self.failure_reason or str(error)}",
+        ]
+        if fix is not None:
+            lines.append(f"  Fix: {fix}")
+        if log_path is not None:
+            lines.append(f"  Log: {log_path}")
+        return "\n".join(lines)
 
 
 def _status(
@@ -265,17 +292,13 @@ def test_agent_server_launches_and_cleans_up_a_temporary_guest(
         return launch
 
     monkeypatch.setattr(agent_server, "_resolve_inactive_launch", resolve_launch)
-    progress = _Progress()
-    shutdown_progress = _Progress()
+    progress = _Progress(enabled=False)
+    shutdown_progress = _Progress(enabled=False)
+    presenters = iter((progress, shutdown_progress))
     monkeypatch.setattr(
         agent_server,
-        "make_runtime_startup_progress",
-        lambda *_args, **_kwargs: progress,
-    )
-    monkeypatch.setattr(
-        agent_server,
-        "make_runtime_shutdown_progress",
-        lambda *_args, **_kwargs: shutdown_progress,
+        "make_cli_progress",
+        lambda **_kwargs: next(presenters),
     )
     implementation = cast(Any, SimpleNamespace())
     state = SandboxState(
@@ -318,7 +341,7 @@ def test_agent_server_launches_and_cleans_up_a_temporary_guest(
     assert calls == [
         ("launch", launch, None),
         "body",
-        ("stop", layout, handle, False, shutdown_progress),
+        ("stop", layout, handle, False, None),
     ]
     assert progress.finished == 1
     assert shutdown_progress.finished == 1
@@ -349,15 +372,11 @@ def test_agent_server_warns_when_a_development_cli_uses_the_package_index(
     )
     progress = _Progress()
     shutdown_progress = _Progress()
+    presenters = iter((progress, shutdown_progress))
     monkeypatch.setattr(
         agent_server,
-        "make_runtime_startup_progress",
-        lambda *_args, **_kwargs: progress,
-    )
-    monkeypatch.setattr(
-        agent_server,
-        "make_runtime_shutdown_progress",
-        lambda *_args, **_kwargs: shutdown_progress,
+        "make_cli_progress",
+        lambda **_kwargs: next(presenters),
     )
     handle = agent_server.sandbox_runtime.SandboxHandle(
         cast(Any, SimpleNamespace()),
@@ -434,8 +453,8 @@ def test_agent_server_startup_failure_uses_structured_package_guidance(
     progress.failure_reason = "guest compatibility check failed"
     monkeypatch.setattr(
         agent_server,
-        "make_runtime_startup_progress",
-        lambda *_args, **_kwargs: progress,
+        "make_cli_progress",
+        lambda **_kwargs: progress,
     )
     monkeypatch.setattr(agent_server, "development_source", lambda: (True, tmp_path))
 
@@ -479,10 +498,16 @@ def test_agent_server_cleanup_does_not_hide_a_body_failure(
             dev_artifact=None,
         ),
     )
+    startup_progress = _Progress()
+    cleanup_progress = _Progress()
+    cleanup_progress.failure_label = "Failed to remove runtime"
+    cleanup_progress.failure_stage = "runtime.destroy"
+    cleanup_progress.failure_reason = "cleanup failed"
+    presenters = iter((startup_progress, cleanup_progress))
     monkeypatch.setattr(
         agent_server,
-        "make_runtime_startup_progress",
-        lambda *_args, **_kwargs: _Progress(),
+        "make_cli_progress",
+        lambda **_kwargs: next(presenters),
     )
     state = SandboxState(
         sandbox="docker:python:3.13-slim",
@@ -509,7 +534,10 @@ def test_agent_server_cleanup_does_not_hide_a_body_failure(
         ):
             raise LookupError("body failed")
 
-    assert "could not stop temporary agent alice" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "Failed to remove runtime" in error
+    assert "Stage: runtime.destroy" in error
+    assert "Reason: cleanup failed" in error
 
 
 def test_agent_server_cleans_up_a_launched_guest_with_invalid_identity(
@@ -533,8 +561,8 @@ def test_agent_server_cleans_up_a_launched_guest_with_invalid_identity(
     )
     monkeypatch.setattr(
         agent_server,
-        "make_runtime_startup_progress",
-        lambda *_args, **_kwargs: _Progress(),
+        "make_cli_progress",
+        lambda **_kwargs: _Progress(),
     )
     state = cast(
         Any,

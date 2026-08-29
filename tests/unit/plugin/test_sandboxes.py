@@ -18,6 +18,7 @@ import pytest
 
 from toolang.base.errors import SandboxLaunchError, ToolangError
 from toolang.base.protocols.sandbox import Sandbox
+from toolang.base.types.progress import ProgressEvent
 from toolang.base.types.sandbox import SandboxMount, SandboxRef, SandboxRequest
 from toolang.common.layout import AgentLayout
 from toolang.plugin.sandboxes import _docker_cli as docker_cli
@@ -286,6 +287,7 @@ def test_docker_sandbox_prepares_and_launches(
     assert stat.S_IMODE(guest_env_mount.local_path.stat().st_mode) == 0o600
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
     diagnostic_path = Path(cast(str, plan.meta["diagnostic_path"]))
+    startup_events_path = Path(cast(str, plan.meta["startup_events_path"]))
     stage_mount = next(
         item
         for item in plan.mounts
@@ -301,6 +303,8 @@ def test_docker_sandbox_prepares_and_launches(
     assert stage_dir.is_relative_to(control_lock.parent / "launches")
     assert diagnostic_path.is_file()
     assert stat.S_IMODE(diagnostic_path.stat().st_mode) == 0o600
+    assert startup_events_path.is_file()
+    assert stat.S_IMODE(startup_events_path.stat().st_mode) == 0o600
     assert {item.name for item in stage_dir.iterdir()} == {
         "docker_guest.sh",
         "docker_guest.py",
@@ -321,6 +325,7 @@ def test_docker_sandbox_prepares_and_launches(
         "/root/.toolang/agents/alice/.env",
         f"/root/.toolang/agents/alice/.runtime/{diagnostic_path.name}",
         str(diagnostic_path),
+        f"/root/.toolang/agents/alice/.runtime/{startup_events_path.name}",
         "/root/.toolang/agents/alice/.runtime/sandbox/toolang-1.2.3-py3-none-any.whl",
         "/root/.toolang/agents/alice/.runtime/agent.log",
         "--",
@@ -337,6 +342,7 @@ def test_docker_sandbox_prepares_and_launches(
     assert ref.runtime_kind == "container"
     assert ref.runtime_name == container_name
     assert ref.meta["diagnostic_path"] == str(diagnostic_path)
+    assert ref.meta["startup_events_path"] == str(startup_events_path)
     assert ref.endpoint == "http://localhost:8123"
     assert asyncio.run(sandbox.running(ref)) is True
     run_call = cast(dict[str, Any], calls["run"])
@@ -367,7 +373,8 @@ def test_docker_background_sandbox_uses_docker_output_and_durable_diagnostics(
     helper = (stage_dir / "docker_guest.py").read_text(encoding="utf-8")
     assert 'exec "$PYTHON_BIN" "$HELPER"' in shell
     assert 'TOOLANG_SANDBOX_INSTANCE"] = hostname' in helper
-    assert "startup.events" not in shell + helper
+    assert "PROGRESS_EVENTS" in shell
+    assert "report_progress" in helper
     assert 'source "$GUEST_ENV"' not in shell
 
 
@@ -508,6 +515,7 @@ def test_docker_guest_reuses_uv_and_preserves_generated_environment(
             str(guest_env),
             str(diagnostic),
             str(diagnostic),
+            "-",
             "/packages with spaces/toolang-test.whl",
             "-",
             "--",
@@ -582,6 +590,7 @@ def test_docker_guest_uses_python_and_pip_to_install_uv(tmp_path: Path) -> None:
             str(guest_env),
             str(diagnostic),
             str(diagnostic),
+            "-",
             "toolang",
             str(workload_log),
             "--",
@@ -629,6 +638,7 @@ def test_docker_guest_rejects_an_image_without_bootstrap_capabilities(
             str(guest_env),
             str(diagnostic),
             str(diagnostic),
+            "-",
             "toolang",
             "-",
             "--",
@@ -672,6 +682,7 @@ def test_docker_guest_requires_the_default_short_container_hostname(
             str(guest_env),
             str(diagnostic),
             str(diagnostic),
+            "-",
             "toolang",
             "-",
             "--",
@@ -694,6 +705,125 @@ def test_docker_guest_requires_the_default_short_container_hostname(
         f"See {diagnostic}",
     ]
 
+
+def test_docker_startup_observer_preserves_order_and_curated_failure(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "startup.events"
+    path.write_text(
+        "python.use\n"
+        "uv.use\n"
+        "uv.use\n"
+        "unknown\n"
+        "python.use\n"
+        "toolang.install.running\n"
+        "toolang.install.ok\n"
+        "toolang.check.running\n"
+        "toolang.check.failed\n",
+        encoding="utf-8",
+    )
+    events: list[ProgressEvent] = []
+
+    asyncio.run(
+        docker_sandbox._observe_startup_events(
+            path,
+            progress=events.append,
+            progress_id="runtime:container",
+            package_source="toolang.whl",
+        )
+    )
+
+    assert [
+        (event.kind, event.stage, event.status, event.detail) for event in events
+    ] == [
+        ("runtime", "create", "running", None),
+        ("runtime", "create", "running", None),
+        ("runtime", "create", "running", "toolang.whl"),
+        ("runtime", "create", "running", None),
+        ("runtime", "create", "running", None),
+        (
+            "runtime",
+            "create",
+            "failed",
+            "The installed Toolang package cannot start the required AgentServer.",
+        ),
+    ]
+    assert [event.label for event in events] == [
+        "Using uv",
+        "Using Python",
+        "Installing Toolang from toolang.whl...",
+        "Installed Toolang from toolang.whl",
+        "Checking Toolang...",
+        "Failed to check Toolang",
+    ]
+
+
+def test_docker_startup_observer_reads_final_token_after_container_exit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "startup.events"
+    path.write_text(
+        "uv.use\npython.use\ntoolang.install.running\n"
+        "toolang.install.ok\ntoolang.check.running\n",
+        encoding="utf-8",
+    )
+    events: list[ProgressEvent] = []
+    monkeypatch.setattr(docker_sandbox, "docker_container_running", lambda _id: False)
+
+    async def append_failure() -> None:
+        await asyncio.sleep(0.01)
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write("toolang.check.failed\n")
+
+    async def observe() -> None:
+        await asyncio.gather(
+            docker_sandbox._observe_startup_events(
+                path,
+                progress=events.append,
+                progress_id="runtime:container",
+                package_source="toolang.whl",
+                runtime_id="container",
+            ),
+            append_failure(),
+        )
+
+    asyncio.run(observe())
+
+    assert [(event.stage, event.status) for event in events][-1] == (
+        "create",
+        "failed",
+    )
+
+
+def test_docker_startup_event_reader_rejects_untrusted_file_shapes(
+    tmp_path: Path,
+) -> None:
+    regular = tmp_path / "regular.events"
+    regular.write_text("uv.use\n", encoding="utf-8")
+    assert docker_sandbox._read_startup_events(regular) == "uv.use\n"
+
+    oversized = tmp_path / "oversized.events"
+    oversized.write_bytes(b"x" * (docker_sandbox._STARTUP_EVENT_MAX_BYTES + 1))
+    assert docker_sandbox._read_startup_events(oversized) == ""
+
+    invalid = tmp_path / "invalid.events"
+    invalid.write_bytes(b"\xff")
+    assert docker_sandbox._read_startup_events(invalid) == ""
+
+    symlink = tmp_path / "symlink.events"
+    symlink.symlink_to(regular)
+    assert docker_sandbox._read_startup_events(symlink) == ""
+
+    directory = tmp_path / "directory.events"
+    directory.mkdir()
+    assert docker_sandbox._read_startup_events(directory) == ""
+
+    mkfifo = getattr(os, "mkfifo", None)
+    if mkfifo is not None:
+        fifo = tmp_path / "fifo.events"
+        mkfifo(fifo)
+        assert docker_sandbox._read_startup_events(fifo) == ""
 
 def test_docker_sandbox_uses_configured_default_image(tmp_path: Path) -> None:
     sandbox = create_sandbox("docker", config={"image": "python:3.14"})
@@ -1050,7 +1180,7 @@ def test_docker_foreground_sandbox_follows_container_logs(
     ref = asyncio.run(sandbox.launch(plan))
     assert calls == []
     asyncio.run(sandbox.attach(plan, ref))
-    assert calls == [("logs", ref.runtime_id)]
+    assert calls == []
     result = asyncio.run(sandbox.wait(ref))
 
     assert result == 0

@@ -47,7 +47,7 @@ from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 
 from ...common.context import load_runtime_environ
 from ...common.agent_server import DEVELOPMENT_WHEEL_HELP, acquire_agent_server
-from ...common.progress import as_progress_sink, make_cli_progress
+from ...common.progress import make_cli_progress
 from ...common.remote_runtime import inspect_remote_runtime
 from ...common.result_saving import save_result
 from ...common.output import echo_error
@@ -436,7 +436,7 @@ def _run(
     save: str | None,
     quiet: bool,
 ) -> int:
-    progress = make_cli_progress() if not quiet else None
+    progress = make_cli_progress(enabled=not quiet)
     layout: AgentLayout | None = None
     store: RunStore | None = None
     run_id: str | None = None
@@ -462,12 +462,11 @@ def _run(
                 )
                 configure_logging_plan(log_plan)
                 log_path = log_plan.path
-                state = prepare_agent_state(
-                    layout,
-                    progress=as_progress_sink(progress),
-                )
-                if progress is not None:
-                    progress.finish(details=False)
+                with progress:
+                    state = prepare_agent_state(
+                        layout,
+                        progress=progress.sink,
+                    )
                 result = asyncio.run(
                     _execute(
                         layout=layout,
@@ -508,8 +507,7 @@ def _run(
     except KeyboardInterrupt:
         if run_id is None and accepted:
             run_id = accepted[0]
-        if progress is not None:
-            progress.interrupt()
+        progress.close()
         interruption_reported = False
         if layout is not None and run_id is not None and not quiet:
             record = _stored_run(layout, run_id, store=store)
@@ -520,8 +518,7 @@ def _run(
             typer.echo(f"Log: {log_path}", err=True)
         return 130
     except (OSError, ValueError, ToolangError, RuntimeError) as exc:
-        if progress is not None:
-            progress.finish(details=False)
+        progress.close()
         _error(str(exc))
         if log_path is not None and log_path.exists():
             typer.echo(f"Log: {log_path}", err=True)

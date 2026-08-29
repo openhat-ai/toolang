@@ -57,6 +57,26 @@ def fail(message: str, diagnostic_display: str, status: int) -> None:
     raise SystemExit(status)
 
 
+def report_progress(path: str, token: str, message: str) -> None:
+    """Write a closed host event or the standalone harness display line."""
+
+    if path == "-":
+        print(message, file=sys.stderr)
+        return
+    try:
+        with Path(path).open("a", encoding="utf-8") as stream:
+            stream.write(f"{token}\n")
+    except OSError:
+        pass
+
+
+def report_event(path: str, token: str) -> None:
+    """Write a product event without changing standalone harness output."""
+
+    if path != "-":
+        report_progress(path, token, "")
+
+
 def _uv_command(
     *,
     mode: str,
@@ -85,9 +105,14 @@ def _install_toolang(
     package_source: str,
     diagnostic: Path,
     diagnostic_display: str,
+    progress_events: str,
 ) -> None:
     package_fact = Path(package_source).name
-    print(f"Installing Toolang · {package_fact}...", file=sys.stderr)
+    report_progress(
+        progress_events,
+        "toolang.install.running",
+        f"Installing Toolang · {package_fact}...",
+    )
     try:
         with diagnostic.open("ab") as stream:
             installed = subprocess.run(
@@ -108,9 +133,12 @@ def _install_toolang(
                 stderr=subprocess.STDOUT,
             )
     except OSError:
+        report_event(progress_events, "toolang.install.failed")
         fail("Could not install Toolang", diagnostic_display, 1)
     if installed.returncode != 0:
+        report_event(progress_events, "toolang.install.failed")
         fail("Could not install Toolang", diagnostic_display, 1)
+    report_event(progress_events, "toolang.install.ok")
 
 
 def _validate_toolang(
@@ -119,8 +147,11 @@ def _validate_toolang(
     environ: dict[str, str],
     diagnostic: Path,
     diagnostic_display: str,
+    progress_events: str,
 ) -> str:
+    report_event(progress_events, "toolang.check.running")
     if not too.is_file() or not os.access(too, os.X_OK):
+        report_event(progress_events, "toolang.check.failed")
         fail("Installed Toolang executable is unavailable", diagnostic_display, 69)
     with diagnostic.open("ab") as stream:
         validated = subprocess.run(
@@ -139,11 +170,13 @@ def _validate_toolang(
             text=True,
         )
     if validated.returncode != 0:
+        report_event(progress_events, "toolang.check.failed")
         fail(
             "The installed Toolang package cannot start the required AgentServer",
             diagnostic_display,
             69,
         )
+    report_event(progress_events, "toolang.check.ok")
     return version.stdout.strip() if version.returncode == 0 else ""
 
 
@@ -161,19 +194,20 @@ def _open_workload_log(path: str, diagnostic_display: str) -> int | None:
 def main() -> None:
     """Load guest state, install Toolang, and exec the requested workload."""
 
-    if len(sys.argv) < 13 or sys.argv[11] != "--":
+    if len(sys.argv) < 14 or sys.argv[12] != "--":
         raise ValueError("invalid docker guest helper arguments")
     guest_env = Path(sys.argv[1])
     diagnostic = Path(sys.argv[2])
     diagnostic_display = sys.argv[3]
-    package_source = sys.argv[4]
-    workload_log = sys.argv[5]
-    python = sys.argv[6]
-    tool_bin_dir = Path(sys.argv[7])
-    uv_mode = sys.argv[8]
-    uv_executable = sys.argv[9]
-    uv_module_dir = sys.argv[10]
-    command = sys.argv[12:]
+    progress_events = sys.argv[4]
+    package_source = sys.argv[5]
+    workload_log = sys.argv[6]
+    python = sys.argv[7]
+    tool_bin_dir = Path(sys.argv[8])
+    uv_mode = sys.argv[9]
+    uv_executable = sys.argv[10]
+    uv_module_dir = sys.argv[11]
+    command = sys.argv[13:]
     if not command:
         raise ValueError("docker guest command is missing")
 
@@ -206,6 +240,7 @@ def main() -> None:
         package_source=package_source,
         diagnostic=diagnostic,
         diagnostic_display=diagnostic_display,
+        progress_events=progress_events,
     )
     too = tool_bin_dir / "too"
     version = _validate_toolang(
@@ -213,9 +248,11 @@ def main() -> None:
         environ=environ,
         diagnostic=diagnostic,
         diagnostic_display=diagnostic_display,
+        progress_events=progress_events,
     )
     suffix = f" · {version}" if version else ""
-    print(f"Installed Toolang{suffix}", file=sys.stderr)
+    if progress_events == "-":
+        print(f"Installed Toolang{suffix}", file=sys.stderr)
 
     authored_command = command[0]
     if authored_command in {"too", "toolang"}:
@@ -223,9 +260,9 @@ def main() -> None:
     descriptor = _open_workload_log(workload_log, diagnostic_display)
     diagnostic.unlink(missing_ok=True)
     if authored_command in {"too", "toolang"} and command[1:2] == ["serve"]:
-        print("Starting agent...", file=sys.stderr)
+        report_progress(progress_events, "server.running", "Starting agent...")
     else:
-        print("Starting command...", file=sys.stderr)
+        report_progress(progress_events, "server.running", "Starting command...")
     if descriptor is not None:
         sys.stderr.flush()
         os.dup2(descriptor, sys.stdout.fileno())

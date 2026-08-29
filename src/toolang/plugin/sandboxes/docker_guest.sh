@@ -11,9 +11,9 @@ fail() {
     exit "${2:-1}"
 }
 
-if [ "$#" -lt 8 ]; then
+if [ "$#" -lt 9 ]; then
     printf '%s\n' \
-        "usage: docker_guest.sh HELPER GUEST_ENV DIAGNOSTIC DISPLAY PACKAGE LOG -- COMMAND..." \
+        "usage: docker_guest.sh HELPER GUEST_ENV DIAGNOSTIC DISPLAY EVENTS PACKAGE LOG -- COMMAND..." \
         >&2
     exit 64
 fi
@@ -22,9 +22,10 @@ HELPER=$1
 GUEST_ENV=$2
 DIAGNOSTIC=$3
 DIAGNOSTIC_DISPLAY=$4
-PACKAGE_SOURCE=$5
-WORKLOAD_LOG=$6
-shift 6
+PROGRESS_EVENTS=$5
+PACKAGE_SOURCE=$6
+WORKLOAD_LOG=$7
+shift 7
 if [ "$1" != "--" ]; then
     printf '%s\n' "docker guest command separator is missing" >&2
     exit 64
@@ -88,6 +89,16 @@ UV_MODE=
 UV_BIN=
 UV_PYTHON=
 
+progress() {
+    TOKEN=$1
+    shift
+    if [ "$PROGRESS_EVENTS" = "-" ]; then
+        printf '%s\n' "$*" >&2
+    else
+        { printf '%s\n' "$TOKEN" >>"$PROGRESS_EVENTS"; } 2>/dev/null || :
+    fi
+}
+
 uv_run() {
     if [ "$UV_MODE" = "module" ]; then
         PYTHONPATH=$UV_MODULE_DIR "$UV_PYTHON" -m uv "$@"
@@ -134,9 +145,9 @@ fi
 
 if [ -n "$UV_MODE" ]; then
     UV_FACT=$(uv_fact) || fail "Existing uv is unusable" 69
-    printf 'Using uv · %s\n' "$UV_FACT" >&2
+    progress uv.use "Using uv · $UV_FACT"
 else
-    printf 'Installing uv...\n' >&2
+    progress uv.install.running "Installing uv..."
     BOOTSTRAP_PYTHON=$(find_pip_python || :)
     if [ -n "$BOOTSTRAP_PYTHON" ]; then
         if "$BOOTSTRAP_PYTHON" -m pip install \
@@ -174,7 +185,7 @@ else
         uv_capable || fail "Installed uv is unusable" 69
     fi
     UV_FACT=$(uv_fact) || fail "Installed uv is unusable" 69
-    printf 'Installed uv · %s\n' "$UV_FACT" >&2
+    progress uv.install.ok "Installed uv · $UV_FACT"
 fi
 
 PYTHON_BIN=$(uv_run python find '>=3.11,<4' 2>>"$DIAGNOSTIC" || :)
@@ -183,9 +194,9 @@ if [ -n "$PYTHON_BIN" ] && [ -x "$PYTHON_BIN" ]; then
         "$PYTHON_BIN" -c 'import platform; print(platform.python_version())' \
             2>>"$DIAGNOSTIC"
     ) || fail "Existing Python is unusable" 69
-    printf 'Using Python · %s\n' "$PYTHON_FACT" >&2
+    progress python.use "Using Python · $PYTHON_FACT"
 else
-    printf 'Installing Python · %s...\n' "$PYTHON_VERSION" >&2
+    progress python.install.running "Installing Python · $PYTHON_VERSION..."
     uv_run python install "$PYTHON_VERSION" --no-progress \
         >>"$DIAGNOSTIC" 2>&1 || fail "Could not install Python $PYTHON_VERSION" 69
     PYTHON_BIN=$(uv_run python find "$PYTHON_VERSION" 2>>"$DIAGNOSTIC" || :)
@@ -196,7 +207,7 @@ else
         "$PYTHON_BIN" -c 'import platform; print(platform.python_version())' \
             2>>"$DIAGNOSTIC"
     ) || fail "Installed Python is unusable" 69
-    printf 'Installed Python · %s\n' "$PYTHON_FACT" >&2
+    progress python.install.ok "Installed Python · $PYTHON_FACT"
 fi
 
 if [ "$UV_MODE" = "module" ]; then
@@ -208,6 +219,7 @@ exec "$PYTHON_BIN" "$HELPER" \
     "$GUEST_ENV" \
     "$DIAGNOSTIC" \
     "$DIAGNOSTIC_DISPLAY" \
+    "$PROGRESS_EVENTS" \
     "$PACKAGE_SOURCE" \
     "$WORKLOAD_LOG" \
     "$PYTHON_BIN" \

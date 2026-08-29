@@ -7,6 +7,35 @@ events, records, identities, or lifecycle states.
 Inspection reads durable state and may reuse the same vocabulary, but it does
 not reconstruct live progress from stored records.
 
+## Operational Progress
+
+Preparation, setup discovery, and AgentServer runtime work use `ProgressEvent`,
+not `RunEvent`. One `CliProgress` segment owns each uninterrupted interval
+before terminal control passes to Run output, foreground logs, a prompt UI, or
+a command result. Cleanup after that handoff opens a new segment.
+
+Producers supply complete verb-first sentences. Running work ends in `...` and
+successful work uses simple past without terminal punctuation:
+
+```text
+Fetching skill browser...
+Fetched skill browser
+Installing Toolang from the package index...
+Installed Toolang from the package index
+```
+
+A TTY uses one dim, transient row with no spinner. It delays the row for 150
+milliseconds and adds per-activity elapsed time only after one second.
+Successful closure clears the row without a summary. Non-TTY output writes
+each material action, checkpoint, and outcome immediately as append-only,
+ANSI-free stderr and never includes elapsed time.
+
+Operational rows use the width and display-cell wrapping rules below. They do
+not display agent identity; the stable command result owns it, for example
+`Agent eve started: http://localhost:7001`. Failures leave one verb-first block
+with the qualified stage and reason, plus a fix and log path when applicable.
+Run projection remains a separate event and presentation contract.
+
 ## Projection Model
 
 Ordered native events pass through one terminal-independent pipeline:

@@ -19,9 +19,8 @@ from toolang.up.logging import resolve_agent_logging
 from toolang.up.types import AgentServerRef
 
 from .context import load_runtime_environ
-from .shutdown_progress import make_runtime_shutdown_progress
-from .startup_progress import (
-    make_runtime_startup_progress,
+from .progress import (
+    make_cli_progress,
     runtime_startup_failure_message,
 )
 
@@ -103,20 +102,11 @@ def acquire_agent_server(
     )
     warn_development_package_source(launch)
 
-    progress = make_runtime_startup_progress(
-        layout.name,
-        launch.sandbox,
-        enabled=show_progress,
-    )
+    progress = make_cli_progress(enabled=show_progress)
     try:
-        handle = asyncio.run(
-            sandbox_runtime.launch(
-                launch,
-                progress=progress if show_progress else None,
-            )
-        )
+        with progress:
+            handle = asyncio.run(sandbox_runtime.launch(launch, progress=progress.sink))
     except KeyboardInterrupt:
-        progress.interrupt()
         raise
     except (
         ImportError,
@@ -126,11 +116,8 @@ def acquire_agent_server(
         TypeError,
         ValueError,
     ) as exc:
-        progress.finish()
         raise AgentServerAcquisitionError(
             runtime_startup_failure_message(
-                layout.name,
-                launch.sandbox,
                 progress,
                 exc,
                 log_path=layout.runtime_log,
@@ -138,8 +125,6 @@ def acquire_agent_server(
                 development_build=development_source()[0],
             )
         ) from exc
-    progress.finish()
-
     server: AgentServerRef | None = None
     body_error: BaseException | None = None
     try:
@@ -154,35 +139,30 @@ def acquire_agent_server(
             raise AgentServerAcquisitionError(str(exc)) from exc
         raise
     finally:
-        shutdown_progress = make_runtime_shutdown_progress(
-            layout.name,
-            handle.state.sandbox,
+        shutdown_progress = make_cli_progress(
             enabled=show_progress,
+            leading_gap=True,
         )
         try:
-            asyncio.run(
-                sandbox_runtime.stop_handle(
-                    layout,
-                    handle,
-                    progress=shutdown_progress,
+            with shutdown_progress:
+                asyncio.run(
+                    sandbox_runtime.stop_handle(
+                        layout,
+                        handle,
+                        progress=shutdown_progress.sink,
+                    )
                 )
-            )
         except KeyboardInterrupt:
-            shutdown_progress.interrupt()
             raise
         except Exception as exc:
-            message = (
-                f"could not stop temporary agent {layout.name} in "
-                f"{handle.state.sandbox}: "
-                f"{str(exc).strip() or type(exc).__name__}; "
-                f"log: {layout.runtime_log}"
+            message = shutdown_progress.failure_message(
+                exc,
+                log_path=layout.runtime_log,
             )
             if body_error is not None:
                 print(message, file=sys.stderr)
             else:
                 raise AgentServerAcquisitionError(message) from exc
-        finally:
-            shutdown_progress.finish()
 
 
 def sandbox_matches(requested: str, running: str) -> bool:
