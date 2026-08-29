@@ -7,6 +7,7 @@ from rich.console import Console
 from toolang.base.types.message import TextPart
 from toolang.cli.toolang.commands.thread import (
     _HumanValue,
+    _human_type_label,
     _print_human_table,
     _render_human_rows,
 )
@@ -14,6 +15,12 @@ from toolang.execution.records import ThreadPeer, ThreadRecord
 from toolang.execution.schemas import RecordSelection
 from toolang.execution.types import ControlRef, Pointer
 from toolang.lang.types import Array
+
+
+def test_human_type_labels_use_nullable_suffix() -> None:
+    assert _human_type_label("StepPath | None") == "StepPath?"
+    assert _human_type_label("str | int | None") == "(str | int)?"
+    assert _human_type_label("RunRecord") == "RunRecord"
 
 
 def test_human_table_never_truncates_a_pointer_in_a_narrow_terminal() -> None:
@@ -24,6 +31,12 @@ def test_human_table_never_truncates_a_pointer_in_a_narrow_terminal() -> None:
     _print_human_table(console, ((pointer, "Text", "complete"),))
 
     rendered = output.getvalue()
+    rules = [
+        line
+        for line in rendered.splitlines()
+        if line.strip() and set(line.strip()) == {"─"}
+    ]
+    assert len(rules) == 3
     assert pointer in rendered
     assert "POINTER" in rendered
     assert "TYPE" in rendered

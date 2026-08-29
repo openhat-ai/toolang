@@ -300,10 +300,14 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     assert field.exit_code == 0
     assert json.loads(field.stdout) == {"type": "text", "text": "prepared"}
     assert human.exit_code == 0
-    assert human.stdout.splitlines()[0] == "run_inspect.0 has type StepRecord."
+    assert human.stdout.splitlines()[-1] == (
+        "run_inspect.0 has type StepRecord; append a FIELD to inspect a child."
+    )
     assert "FIELD" in human.stdout
     assert "TYPE" in human.stdout
     assert "StepPath" in human.stdout
+    assert "ControlRef?" in human.stdout
+    assert "ControlRef | None" not in human.stdout
     assert "/path" in human.stdout
     assert "/output" in human.stdout
     assert "run_inspect.0/path" not in human.stdout
@@ -316,17 +320,17 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     assert "run_inspect.0/input/0" not in resolved.stdout
     assert "Inspect this" in resolved.stdout
     assert resolved_value.exit_code == 0
-    assert resolved_value.stdout.splitlines()[0] == (
+    assert resolved_value.stdout.splitlines()[-1] == (
         "run_inspect.0/input/0 resolves to Part[]."
     )
     assert status.exit_code == 0
-    assert status.stdout == "run_inspect.0/status has type StepStatus.\n\nsucceeded\n"
+    assert status.stdout == "succeeded\n\nrun_inspect.0/status has type StepStatus.\n"
     assert ejected_by.exit_code == 0
     assert ejected_by.stdout == (
-        "run_inspect.0/ejected_by has type ControlRef | None.\n\nnull\n"
+        "null\n\nrun_inspect.0/ejected_by has type ControlRef?.\n"
     )
     assert response.exit_code == 0
-    assert response.stdout.splitlines()[0] == (
+    assert response.stdout.splitlines()[-1] == (
         "run_inspect.0/output/value has type Part[]."
     )
     assert response.stdout.count("run_inspect.0/output/value") == 1

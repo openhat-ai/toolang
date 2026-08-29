@@ -315,15 +315,16 @@ run_ab12@1/payload/locals/0/value nested Control field
 field using RFC 6901 escaping (`~0` for `~` and `~1` for `/`). Run ids occupy
 the `run_` namespace; thread ids cannot begin with `run_`.
 
-Human output is the default. Its dim first line names the selected Pointer and
-displayed type; record and container tables then list direct children as
-relative field suffixes with TYPE in the second column. Strings have no JSON
-quotes. Multiline Part content stays aligned inside the VALUE cell without a
-leading bullet. A separate `→` means the shown value was resolved from a
-Pointer-valued field. `--json` prints only the selected canonical JSON value.
-The two display modes are mutually exclusive, and `--type` is not an option.
-Inspection is read-only and historical; it does not prepare future model calls
-or load a runnable.
+Human output is the default. Record and container tables use the CLI's
+horizontal-rule Rich style and list direct children as relative field suffixes
+with TYPE in the second column. Output ends with dim context naming the selected
+Pointer and displayed type plus, for a table, how to inspect a child. Strings
+have no JSON quotes, and nullable Human type labels use `T?`. Multiline Part
+content stays aligned inside the VALUE cell without a leading bullet. A
+separate `→` means the shown value was resolved from a Pointer-valued field.
+`--json` prints only the selected canonical JSON value. The two display modes
+are mutually exclusive, and `--type` is not an option. Inspection is read-only
+and historical; it does not prepare future model calls or load a runnable.
 
 ## File Request Runtime
 

@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import click
 import typer
+from rich import box
 from rich.cells import cell_len
 from rich.console import Console, RenderableType
 from rich.table import Table
@@ -200,24 +201,28 @@ class _HumanValue:
 def _render_pointer(store: RunStore, selected: RecordSelection) -> None:
     console = Console(highlight=False)
     root = _human_value(store, selected)
-    relation = "resolves to" if root.resolved else "has type"
-    console.print(
-        Text(f"{selected.pointer} {relation} {root.render_type}.", style="dim"),
-        soft_wrap=True,
-    )
-    console.print()
-    if _browse_children(selected, root):
+    browsable = _browse_children(selected, root)
+    if browsable:
         _render_human_rows(
             console,
             _human_children(store, selected),
             base=selected.pointer,
         )
-        return
-    block = _human_block(root)
-    if block is not None:
-        console.print(block)
-        return
-    console.print(Text(_human_summary(root)), soft_wrap=True)
+    else:
+        block = _human_block(root)
+        if block is not None:
+            console.print(block)
+        else:
+            console.print(Text(_human_summary(root)), soft_wrap=True)
+
+    console.print()
+    relation = "resolves to" if root.resolved else "has type"
+    suffix = "; append a FIELD to inspect a child." if browsable else "."
+    context = Text(
+        f"{selected.pointer} {relation} {_human_type_label(root.render_type)}{suffix}",
+        style="dim",
+    )
+    console.print(context, soft_wrap=True)
 
 
 def _browse_children(selected: RecordSelection, value: _HumanValue) -> bool:
@@ -296,7 +301,7 @@ def _render_human_rows(
         compact.append(
             (
                 label,
-                value.render_type,
+                _human_type_label(value.render_type),
                 rendered if rendered is not None else _human_summary(value),
             )
         )
@@ -324,11 +329,12 @@ def _print_human_table(
         + cell_len("VALUE")
     )
     table = Table(
+        box=box.HORIZONTALS,
+        header_style="",
+        show_lines=False,
+        collapse_padding=True,
         show_header=True,
-        show_edge=False,
-        box=None,
         pad_edge=False,
-        padding=(0, 2),
         width=minimum_width if minimum_width > console.width else None,
     )
     table.add_column(pointer_heading, no_wrap=True, overflow="ignore")
@@ -337,6 +343,17 @@ def _print_human_table(
     for pointer, type_name, value in rows:
         table.add_row(pointer, type_name, value)
     console.print(table, crop=False)
+
+
+def _human_type_label(type_name: str) -> str:
+    members = type_name.split(" | ")
+    if "None" not in members:
+        return type_name
+    present = [member for member in members if member != "None"]
+    if len(present) == len(members) or not present:
+        return type_name
+    inner = " | ".join(present)
+    return f"{inner}?" if len(present) == 1 else f"({inner})?"
 
 
 def _human_block(value: _HumanValue) -> RenderableType | None:

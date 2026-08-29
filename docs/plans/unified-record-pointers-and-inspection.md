@@ -17,9 +17,9 @@ Pointer and displays either a typed human value or canonical JSON.
   `TypedPointer` suffix.
 - Inspection requires an existing historical Pointer and never prepares future
   work.
-- Human output supports progressive, one-level traversal. Its first line names
-  the complete Pointer and displayed type; child tables use relative field
-  suffixes without repeating that Pointer.
+- Human output supports progressive, one-level traversal. It ends with dim
+  context naming the complete Pointer and displayed type; child tables use
+  relative field suffixes without repeating that Pointer.
 - Human output resolves Pointer-valued fields, marks the displayed field with
   `→`, and renders the resolved value through a type-owned human renderer.
 - `--human` and `--json` are the complete, mutually exclusive display modes;
@@ -242,52 +242,64 @@ The command has no `--focus`, `--full`, `--limit`, `--input`, `--arg`,
 ### Human display
 
 Human display is schema-directed. It uses the generic record browser for
-structure and a human renderer registry for values. Its first line always
-introduces the selected Pointer and the type of the value being displayed. The
-line uses the terminal's `dim` style so it remains context rather than data:
+structure and a human renderer registry for values. It always ends with a
+context line introducing the selected Pointer and the type of the value being
+displayed. The line uses the terminal's `dim` style so it remains context
+rather than data:
 
 ```text
 run_ab12 has type RunRecord.
 ```
 
-When a selected Pointer is resolved for Human display, the line instead names
-the resolved type with `resolves to`. A Local is displayed through its contained
-runtime type. These same displayed type names occupy the second table column.
-They come from shared schema/runtime metadata rather than an inspect-specific
-type map. A null value retains its declared schema type; only its displayed
-value is `null`.
+When a selected Pointer is resolved for Human display, the trailing line instead
+names the resolved type with `resolves to`. A Local is displayed through its
+contained runtime type. These same displayed type names occupy the second table
+column. They come from shared schema/runtime metadata rather than an
+inspect-specific type map. A null value retains its declared schema type; only
+its displayed value is `null`. Human type labels abbreviate `T | None` as `T?`;
+unions with more than one non-null member use `(A | B)?`.
 
 For a canonical object or array, it lists exactly the direct children. Compact
-values use three columns. The first column contains field suffixes relative to
-the complete Pointer in the introductory line:
+values use the same horizontal-rule Rich table style as other CLI list
+commands, with three columns. The first column contains field suffixes relative
+to the complete Pointer in the trailing context:
 
 ```text
-FIELD       TYPE          VALUE
-/status     RunStatus     succeeded
-/control    ControlRef    {target: run_ab12, index: 0}
-/output     Part[]        {name: _, value: {...}}
-/error      ExecutionError | None  null
+──────────────────────────────────────────────────────────────────────
+FIELD       TYPE                   VALUE
+──────────────────────────────────────────────────────────────────────
+/status     RunStatus              succeeded
+/control    ControlRef             {target: run_ab12, index: 0}
+/output     Part[]                 {name: _, value: {...}}
+/error      ExecutionError?        null
+──────────────────────────────────────────────────────────────────────
+
+run_ab12 has type RunRecord; append a FIELD to inspect a child.
 ```
 
-Append one first-column suffix to the introductory Pointer to form the complete
-Pointer for the next `inspect` invocation. Member names use their RFC 6901
-escaped form; array children use their canonical numeric indexes. A directly
-selected scalar or block prints its value directly below the introductory line;
-it does not repeat the Pointer in a one-row table. Pointer and field text is
-plain text and is never truncated or split by styling. The optional `→` is
-rendered after a separating space outside a child field suffix. It is a human
-marker, is not accepted by the Pointer parser, and means that the shown child
-value came from resolving a Pointer-valued field. A directly selected resolved
-value instead uses `resolves to` in its introductory line.
+The dim context explains that appending one first-column suffix to the selected
+Pointer forms the complete Pointer for the next `inspect` invocation. Member
+names use their RFC 6901 escaped form; array children use their canonical
+numeric indexes. A directly selected scalar or block prints its value before
+the trailing context and does not repeat the Pointer in a one-row table. Pointer
+and field text is plain text and is never truncated or split by styling. The
+optional `→` is rendered after a separating space outside a child field suffix.
+It is a human marker, is not accepted by the Pointer parser, and means that the
+shown child value came from resolving a Pointer-valued field. A directly
+selected resolved value instead uses `resolves to` in its trailing context
+line.
 
 For example, inspecting a Step's input array renders its Pointer-valued direct
 children after resolution:
 
 ```text
-run_ab12.0/input has type Pointer[].
-
+────────────────────────────────────────
 FIELD   TYPE     VALUE
+────────────────────────────────────────
 /0 →    Part[]   Review the changes
+────────────────────────────────────────
+
+run_ab12.0/input has type Pointer[]; append a FIELD to inspect a child.
 ```
 
 Human resolution follows these rules:
@@ -331,15 +343,15 @@ without adding an inspect branch. Initial specialized behavior is:
 Multiline and Markdown renderables occupy the VALUE cell when they are children
 of a browsed object or array, so continuation lines remain aligned beneath that
 cell. `Part` and `Part[]` add no leading `•`. A directly selected renderable is
-placed below the introductory line without a redundant one-row table. For
+placed before the trailing context without a redundant one-row table. For
 example:
 
 ```text
-run_ab12.0/output/value resolves to Part[].
-
 **Review complete**
 
   Two issues remain in the parser.
+
+run_ab12.0/output/value resolves to Part[].
 ```
 
 The generic fallback follows these rules:
@@ -461,10 +473,11 @@ store errors exit 1. No inspection or error path mutates the store.
    schema metadata and validates each typed expectation after resolution.
 6. Assert every runtime-produced value/error Pointer names its explicit field
    and uses `@` for Controls; no implicit or `^` form is produced.
-7. Assert Human object and array output starts with the complete selected
-   Pointer and displayed type, lists one level, puts types in the second column,
-   includes nulls, summarizes containers deterministically, and uses relative
-   RFC 6901 field suffixes without repeating the selected Pointer.
+7. Assert Human object and array output lists one level in the shared
+   horizontal-rule table style, puts types in the second column, includes nulls,
+   summarizes containers deterministically, uses relative RFC 6901 field
+   suffixes without repeating the selected Pointer, and ends with dim type and
+   child-inspection context.
 8. Assert Human Pointer resolution appends exactly one separate `→` marker,
    leaves the source Pointer and canonical field unchanged, and reports missing,
    hidden, cyclic, and type-mismatched Pointer values without mutation.
@@ -526,11 +539,12 @@ store errors exit 1. No inspection or error path mutates the store.
 - There is no focus stage and no independent record-schema command.
 - `--human` and `--json` are mutually exclusive; Human is default and `--type`
   is not an option.
-- Human display is a progressive one-level browser. Its first line introduces
-  the complete selected Pointer and displayed type; tables put types second and
-  use relative field suffixes without repeating the selected Pointer. It
-  resolves Pointer values, marks them with a separate `→`, shows strings without
-  JSON quotes, and uses optional type-owned renderers with a generic fallback.
+- Human display is a progressive one-level browser. It ends with dim context
+  introducing the complete selected Pointer and displayed type; tables put
+  types second, use relative field suffixes without repeating the selected
+  Pointer, and explain how to inspect a child. It resolves Pointer values, marks
+  them with a separate `→`, shows strings without JSON quotes, and uses optional
+  type-owned renderers with a generic fallback.
 - Inspect obtains record shape and type metadata from the shared schema and has
   no record-specific dispatch, so ordinary record/type evolution does not
   require inspect changes.
