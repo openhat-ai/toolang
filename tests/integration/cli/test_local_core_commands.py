@@ -535,6 +535,61 @@ def test_inspect_collections_are_unbounded_and_empty_stores_succeed(
     assert len(json.loads(runs.stdout)) == 51
 
 
+def test_inspect_human_collection_uses_resolved_run_records(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    store = RunStore(AgentLayout.resident(root, "alice").run_store)
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_single_query",
+            thread_id="term_single_query",
+            origin="test",
+            input=Message.user("One query"),
+        )
+        project_run_end(store, run_id=run.id)
+    finally:
+        store.close()
+
+    original = RunStore.list_runs
+    calls = 0
+
+    def list_runs_once(instance: RunStore, **kwargs: Any):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise AssertionError("inspect must not re-query its Run collection")
+        return original(instance, **kwargs)
+
+    monkeypatch.setattr(RunStore, "list_runs", list_runs_once)
+
+    result = _invoke(root, "alice", "inspect", "runs")
+
+    assert result.exit_code == 0, result.stderr
+    assert "run_single_query" in result.stdout
+    assert calls == 1
+
+    calls = 0
+    monkeypatch.setattr(
+        RunHistory,
+        "describe_runs",
+        lambda *_args, **_kwargs: pytest.fail(
+            "JSON collection output must not build human summaries"
+        ),
+    )
+
+    json_result = _invoke(root, "alice", "inspect", "runs", "--json")
+
+    assert json_result.exit_code == 0, json_result.stderr
+    assert [item["id"] for item in json.loads(json_result.stdout)] == [
+        "run_single_query"
+    ]
+    assert calls == 1
+
+
 @pytest.mark.parametrize(
     ("subjects", "allowed"),
     (
