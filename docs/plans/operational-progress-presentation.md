@@ -61,7 +61,7 @@ projectors:
 | --- | --- | --- |
 | Source | `ProgressEvent` | `RunEvent` |
 | Meaning | environment work | agent execution |
-| Running form | spinner plus a verb-first sentence | `•` activity rows |
+| Running form | verb-first sentence ending in `...` | `•` activity rows |
 | Successful form | simple-past verb-first sentence | committed output |
 | Segment closure | object-first command result or one failure block | `∎` root Run footer |
 | TTY mechanics | one transient Rich live region | committed blocks plus one live region |
@@ -113,32 +113,32 @@ useful and stable.
 The running TTY row is:
 
 ```text
-SPINNER RUNNING_CLAUSE [(FACTS, ELAPSED)]...
+RUNNING_CLAUSE [(FACTS, ELAPSED)]...
 ```
 
-The successful TTY row uses the same two-cell marker slot without a spinner:
+The successful TTY row replaces it in the same live region:
 
 ```text
-  COMPLETED_CLAUSE [(FACTS, ELAPSED)]
+COMPLETED_CLAUSE [(FACTS, ELAPSED)]
 ```
 
 Examples are successive live snapshots, not accumulated lines:
 
 ```text
-⠋ Fetching skill browser (2/5 caps, 1.2s)...
-  Fetched skill browser (3/5 caps, 1.3s)
-⠙ Loading setup (1.4s)...
-  Loaded setup (1.6s)
-⠹ Discovering models (2.1s)...
-  Discovered 12 models from 5 providers (2.2s)
-⠼ Installing Toolang from the package index (8.4s)...
-  Installed Toolang from the package index (8.8s)
-⠴ Waiting for the agent API at http://localhost:7001 (9.1s)...
-  Connected to the agent API at http://localhost:7001 (9.3s)
+Fetching skill browser (2/5 caps, 1.2s)...
+Fetched skill browser (3/5 caps, 1.3s)
+Loading setup (1.4s)...
+Loaded setup (1.6s)
+Discovering models (2.1s)...
+Discovered 12 models from 5 providers (2.2s)
+Installing Toolang from the package index (8.4s)...
+Installed Toolang from the package index (8.8s)
+Waiting for the agent API at http://localhost:7001 (9.1s)...
+Connected to the agent API at http://localhost:7001 (9.3s)
 ```
 
-Non-TTY output removes the marker slot and elapsed time and commits both action
-and outcome sentences:
+Non-TTY output removes elapsed time and commits both action and outcome
+sentences:
 
 ```text
 Fetching skill browser (2/5 caps)...
@@ -229,8 +229,9 @@ sentence in event order, including `Fetching X...` followed later by
 
 TTY live presentation is delayed for 150 milliseconds to avoid flashing for
 cache hits and fast local work. It never delays the operation itself and has no
-minimum hold time. Non-TTY rows are emitted immediately. Spinner refresh is
-presentation-only and never causes new semantic rows.
+minimum hold time. Non-TTY rows are emitted immediately. TTY redraws only for a
+material semantic event or a visible elapsed-time change; there is no spinner,
+status glyph, or animation-only refresh.
 
 ## Runtime and Setup Ordering
 
@@ -384,7 +385,8 @@ compatibility path.
 ## Acceptance Tests
 
 1. Prepare, setup, and runtime events render through the same sentence grammar,
-   width logic, style rules, and presenter instance within one segment.
+   width logic, style rules, and presenter instance within one segment. TTY
+   progress begins directly with the verb and uses no spinner or status glyph.
 2. TTY cache hits and operations completing before 150 milliseconds leave no
    live residue or artificial delay; slower work becomes visible by the
    threshold.
@@ -429,8 +431,8 @@ compatibility path.
 - Cross-kind setup nesting requires explicit active-state restoration; choosing
   only the last received event will leave a terminal setup row visible or hide
   readiness.
-- Full transcript tests must normalize elapsed values and spinner frames without
-  weakening ordering, spacing, or ownership assertions.
+- Full transcript tests must normalize elapsed values without weakening
+  ordering, spacing, or ownership assertions.
 
 There are no open product questions. Human confirmation is required before
 implementation.
