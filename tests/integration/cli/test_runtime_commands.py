@@ -181,6 +181,7 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
 ) -> None:
     root = tmp_path / "toolang"
     layout = _create_agent(root)
+    model_catalog = tmp_path / "models.json"
     (root / "config.toml").write_text(
         '[limit]\ntokens = 1000\ncost = "5"\n',
         encoding="utf-8",
@@ -234,6 +235,8 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
             str(root),
             "run",
             "alice",
+            "--models",
+            str(model_catalog),
             "--sandbox",
             "docker:registry.example/a:b",
             "--host",
@@ -267,6 +270,7 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
     assert resolved["host"] == "0.0.0.0"
     assert resolved["port"] == 8123
     assert resolved["dev"] == dev
+    assert resolved["environ"]["TOOLANG_MODEL_CATALOG"] == str(model_catalog)
     assert resolved["ceiling_overrides"] == {
         "models": ("openai/gpt-5[openai]", "o3"),
         "tools": ("fs", "shell"),

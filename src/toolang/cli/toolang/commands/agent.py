@@ -21,10 +21,11 @@ from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import AgentState
 from ...common.context import (
+    ModelCatalogOption,
     cli_context,
-    context_model_catalog,
     context_root,
     require_runtime_agent,
+    resolve_model_catalog_option,
     ui_base_url,
     user_call,
 )
@@ -149,6 +150,7 @@ def list_agents(ctx: typer.Context) -> None:
 def info_agent(
     ctx: typer.Context,
     agent: str | None = typer.Argument(None, help="Agent name", hidden=True),
+    model_catalog: ModelCatalogOption = None,
 ) -> None:
     agent_name = require_runtime_agent(ctx, agent)
     selected_layout = cli_context(ctx).layout
@@ -159,7 +161,7 @@ def info_agent(
         raise click.ClickException(f"Agent {agent_name} not found")
     runtime_state = process.state() or {}
     state = _prepare_state(layout)
-    model_catalog = context_model_catalog(ctx)
+    model_catalog = resolve_model_catalog_option(model_catalog)
     watcher = (
         SetupWatcher(layout, model_catalog=model_catalog)
         if model_catalog is not None

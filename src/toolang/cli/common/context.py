@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import os
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import click
 import typer
@@ -25,7 +25,12 @@ class CliContext:
     root: Path
     agent: str | None = None
     layout: AgentLayout | None = None
-    model_catalog: Path | None = None
+
+
+ModelCatalogOption = Annotated[
+    Path | None,
+    typer.Option("--models", help="Use a specified model catalog."),
+]
 
 
 def cli_context(ctx: typer.Context) -> CliContext:
@@ -38,10 +43,10 @@ def context_root(ctx: typer.Context) -> Path:
     return cli_context(ctx).root
 
 
-def context_model_catalog(ctx: typer.Context) -> Path | None:
-    """Return the process-level explicit model catalog override."""
+def resolve_model_catalog_option(value: Path | None) -> Path | None:
+    """Resolve one command-level model catalog override."""
 
-    return cli_context(ctx).model_catalog
+    return value.expanduser().resolve(strict=False) if value is not None else None
 
 
 def context_agent(ctx: typer.Context) -> str | None:

@@ -21,7 +21,7 @@ from toolang.plugin.models.local import LlamaCppModelCatalog, OllamaModelCatalog
 runner = CliRunner()
 
 
-def test_plural_model_commands_are_public_resources() -> None:
+def test_model_catalog_override_is_scoped_to_consuming_commands() -> None:
     result = runner.invoke(cli.app, ["--help"])
     stdout = unstyle(result.stdout)
 
@@ -29,10 +29,33 @@ def test_plural_model_commands_are_public_resources() -> None:
     assert "models" in stdout
     assert "providers" in stdout
     assert "adapters" in stdout
-    assert "--models" in stdout
-    assert "Use a specified model catalog." in stdout
+    assert "--models" not in stdout
     assert "Inspect models." in stdout
     assert "--model-catalog" not in stdout
+
+    for command in (
+        ["info", "--help"],
+        ["run", "--help"],
+        ["start", "--help"],
+        ["chat", "alice", "--help"],
+        ["retry", "alice", "--help"],
+        ["rerun", "alice", "--help"],
+        ["models", "--help"],
+        ["providers", "--help"],
+        ["serve", "--help"],
+    ):
+        command_result = runner.invoke(cli.app, command)
+        assert command_result.exit_code == 0, command_result.stderr
+        assert "--models" in unstyle(command_result.stdout)
+
+    for command in (["list", "--help"], ["adapters", "--help"]):
+        command_result = runner.invoke(cli.app, command)
+        assert command_result.exit_code == 0, command_result.stderr
+        assert "--models" not in unstyle(command_result.stdout)
+
+    unsupported = runner.invoke(cli.app, ["--models", "models.json", "list"])
+    assert unsupported.exit_code == 2
+    assert "No such option: --models" in unstyle(unsupported.stderr)
 
 
 def test_models_is_a_leaf_command_without_file_output_options() -> None:
@@ -67,9 +90,9 @@ def test_models_filter_exports_a_valid_complete_catalog(
         [
             "--root",
             str(tmp_path / "root"),
+            "models",
             "--models",
             str(catalog),
-            "models",
             "--filter",
             "test/two[reasoning:false]",
             "--json",
@@ -95,9 +118,9 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
         [
             "--root",
             str(tmp_path / "root"),
+            "models",
             "--models",
             str(catalog),
-            "models",
             "--filter",
             "test/one",
         ],
@@ -150,9 +173,9 @@ def test_models_explicit_missing_catalog_does_not_fall_back(tmp_path: Path) -> N
         [
             "--root",
             str(tmp_path / "root"),
+            "models",
             "--models",
             str(tmp_path / "missing.json"),
-            "models",
         ],
         env={},
     )
@@ -219,9 +242,9 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
         [
             "--root",
             str(tmp_path / "root"),
+            "models",
             "--models",
             str(catalog),
-            "models",
         ],
         env={},
     )
@@ -250,9 +273,9 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
         [
             "--root",
             str(tmp_path / "root"),
+            "providers",
             "--models",
             str(catalog),
-            "providers",
         ],
         env={},
     )
@@ -303,9 +326,9 @@ def test_providers_lists_resolved_api_and_model_adapters(
         [
             "--root",
             str(tmp_path / "root"),
+            "providers",
             "--models",
             str(catalog),
-            "providers",
         ],
         env={},
     )
@@ -327,9 +350,9 @@ def test_providers_lists_resolved_api_and_model_adapters(
         [
             "--root",
             str(tmp_path / "root"),
+            "models",
             "--models",
             str(catalog),
-            "models",
             "--filter",
             "*[adapter:messages]",
             "--json",
@@ -357,9 +380,9 @@ def test_providers_lists_resolved_api_and_model_adapters(
         [
             "--root",
             str(tmp_path / "root"),
+            "providers",
             "--models",
             str(catalog),
-            "providers",
         ],
         env={},
     )
@@ -385,9 +408,9 @@ def test_providers_lists_resolved_api_and_model_adapters(
         [
             "--root",
             str(tmp_path / "root"),
+            "providers",
             "--models",
             str(catalog),
-            "providers",
             "--json",
         ],
         env={},

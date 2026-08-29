@@ -380,6 +380,9 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
     assert "No such option: --limit" in strip_ansi(removed.stderr)
     assert help_code == 0
     assert "POINTER" in help_text
+    assert "Inspect runs." in help_text
+    assert "Pointer to inspect." in help_text
+    assert "Render human-readable output (default)." in help_text
     assert "--human" in help_text
     assert "--json" in help_text
     assert "--type" not in help_text

@@ -114,6 +114,39 @@ def test_cli_package_is_executable_as_a_module(module: str, prefix: str) -> None
 
 
 @pytest.mark.parametrize(
+    ("name", "app"), (("toolang", toolang_app), ("caps", caps_app))
+)
+def test_version_option_has_no_short_alias(name: str, app: typer.Typer) -> None:
+    runner = CliRunner()
+    help_result = runner.invoke(app, ["--help"], prog_name=name)
+    short_result = runner.invoke(app, ["-V"], prog_name=name)
+    help_output = click.unstyle(help_result.output)
+    short_output = click.unstyle(short_result.output)
+
+    assert help_result.exit_code == 0, help_result.output
+    assert "--version" in help_output
+    assert "-V" not in help_output
+    assert short_result.exit_code == 2
+    assert "No such option: -V" in short_output
+
+
+def test_inspect_help_is_concise_and_consistent() -> None:
+    runner = CliRunner()
+    root_result = runner.invoke(toolang_app, ["--help"], prog_name="toolang")
+    inspect_result = runner.invoke(
+        toolang_app, ["inspect", "--help"], prog_name="toolang"
+    )
+
+    assert root_result.exit_code == 0, root_result.output
+    assert inspect_result.exit_code == 0, inspect_result.output
+    for result in (root_result, inspect_result):
+        output = click.unstyle(result.output)
+        assert "Inspect runs." in output
+        assert "Inspect run records." not in output
+        assert "Inspect a historical record or one of its fields." not in output
+
+
+@pytest.mark.parametrize(
     ("name", "app", "path"),
     CLI_COMMANDS,
     ids=[f"{name} {' '.join(path)}" for name, _app, path in CLI_COMMANDS],

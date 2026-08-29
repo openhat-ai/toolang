@@ -56,9 +56,10 @@ from toolang.execution.types import (
 )
 
 from ...common.context import (
+    ModelCatalogOption,
     context_layout,
-    context_model_catalog,
     load_runtime_environ,
+    resolve_model_catalog_option,
     user_call,
 )
 from ...common.execution import ExecutionResources, open_execution
@@ -159,17 +160,16 @@ def runs_command(
 
 def inspect_command(
     ctx: typer.Context,
-    pointer: Annotated[
-        str, typer.Argument(help="Historical record or field Pointer to inspect.")
-    ],
+    pointer: Annotated[str, typer.Argument(help="Pointer to inspect.")],
     human: Annotated[
-        bool, typer.Option("--human", help="Render a human-readable value.")
+        bool,
+        typer.Option("--human", help="Render human-readable output (default)."),
     ] = False,
     json_view: Annotated[
         bool, typer.Option("--json", help="Render exact canonical JSON.")
     ] = False,
 ) -> None:
-    """Inspect one historical execution record or field."""
+    """Inspect runs."""
 
     if human and json_view:
         raise click.UsageError("--human and --json are mutually exclusive")
@@ -432,6 +432,7 @@ def retry_command(
         ...,
         help="Run id to retry. Thread id means its latest visible run.",
     ),
+    model_catalog: ModelCatalogOption = None,
     anchor: Annotated[
         str | None,
         typer.Option(
@@ -486,7 +487,7 @@ def retry_command(
             limit_options=limit,
         ),
         show_progress=show_progress,
-        model_catalog=context_model_catalog(ctx),
+        model_catalog=resolve_model_catalog_option(model_catalog),
     )
     status = _display_status(result.status)
     if not show_progress:
@@ -501,6 +502,7 @@ def rerun_command(
         ...,
         help="Run id to rerun. Thread id means its latest visible run.",
     ),
+    model_catalog: ModelCatalogOption = None,
     sandbox: Annotated[
         str | None,
         typer.Option("--sandbox", help="Execute the new run in this sandbox."),
@@ -551,7 +553,7 @@ def rerun_command(
             limit_options=limit,
         ),
         show_progress=show_progress,
-        model_catalog=context_model_catalog(ctx),
+        model_catalog=resolve_model_catalog_option(model_catalog),
     )
     status = _display_status(result.status)
     if not show_progress:
