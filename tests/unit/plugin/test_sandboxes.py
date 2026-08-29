@@ -164,7 +164,7 @@ def test_none_sandbox_selector_is_not_supported() -> None:
         create_sandbox("none", config={})
 
 
-def test_host_foreground_sandbox_inherits_console_streams(
+def test_host_foreground_sandbox_buffers_console_streams(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -179,9 +179,40 @@ def test_host_foreground_sandbox_inherits_console_streams(
     sandbox = create_sandbox("host", config={})
     plan = sandbox.prepare(None, _request(tmp_path, foreground=True))
 
-    assert host_sandbox._launch(plan) is process
-    assert "stdout" not in captured
-    assert "stderr" not in captured
+    workload = host_sandbox._launch(plan)
+
+    assert workload.process is process
+    assert captured["stderr"] is subprocess.STDOUT
+    assert captured["stdout"] is not None
+    assert workload.output_path is not None
+    assert workload.output_path.is_file()
+    host_sandbox._remove_output(workload.output_path)
+
+
+def test_host_foreground_output_starts_after_ready_line(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    sandbox = create_sandbox("host", config={})
+    plan = replace(
+        sandbox.prepare(None, _request(tmp_path, foreground=True)),
+        command=(
+            sys.executable,
+            "-c",
+            "import sys; print('server log', file=sys.stderr)",
+        ),
+    )
+
+    ref = asyncio.run(sandbox.launch(plan))
+    print("Agent alice running", file=sys.stderr)
+    exit_code = asyncio.run(sandbox.wait(ref))
+
+    assert exit_code == 0
+    assert capsys.readouterr().err.splitlines() == [
+        "Agent alice running",
+        "server log",
+    ]
+    asyncio.run(sandbox.release(ref))
 
 
 def test_host_launch_cancellation_waits_for_creation_and_stops_the_process(
@@ -192,11 +223,12 @@ def test_host_launch_cancellation_waits_for_creation_and_stops_the_process(
     finish = threading.Event()
     stopped: list[int] = []
     process = SimpleNamespace(pid=12345)
+    workload = host_sandbox._HostWorkload(cast(Any, process))
 
     def launch(_plan: object) -> object:
         started.set()
         finish.wait(timeout=5)
-        return process
+        return workload
 
     monkeypatch.setattr(host_sandbox, "_launch", launch)
     monkeypatch.setattr(host_sandbox, "_process_identity", lambda _pid: "identity")
@@ -825,6 +857,7 @@ def test_docker_startup_event_reader_rejects_untrusted_file_shapes(
         mkfifo(fifo)
         assert docker_sandbox._read_startup_events(fifo) == ""
 
+
 def test_docker_sandbox_uses_configured_default_image(tmp_path: Path) -> None:
     sandbox = create_sandbox("docker", config={"image": "python:3.14"})
 
@@ -1137,7 +1170,7 @@ def test_docker_diagnostics_are_bounded_and_streamed_to_a_private_log(
     assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
 
 
-def test_docker_foreground_sandbox_follows_container_logs(
+def test_docker_foreground_sandbox_follows_logs_only_when_waiting(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1210,6 +1243,55 @@ def test_docker_log_follower_detaches_without_waiting_for_the_container() -> Non
     follower = Follower()
 
     asyncio.run(docker_cli.finish_process(cast(Any, follower)))
+
+    assert follower.terminated is True
+
+
+def test_docker_foreground_wait_stops_log_follower_before_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class Follower:
+        def __init__(self) -> None:
+            self.returncode: int | None = None
+            self.started = asyncio.Event()
+            self.finished = asyncio.Event()
+            self.terminated = False
+
+        async def wait(self) -> int:
+            self.started.set()
+            await self.finished.wait()
+            return cast(int, self.returncode)
+
+        def terminate(self) -> None:
+            self.terminated = True
+            self.returncode = -15
+            self.finished.set()
+
+    follower = Follower()
+    monkeypatch.setattr(
+        docker_sandbox,
+        "docker_run_detached",
+        _async_value("container-123"),
+    )
+    monkeypatch.setattr(
+        docker_sandbox,
+        "docker_follow_container_logs",
+        lambda _name: asyncio.sleep(0, result=follower),
+    )
+    sandbox = create_sandbox("docker", config={})
+    plan = sandbox.prepare(None, _request(tmp_path, foreground=True))
+    ref = asyncio.run(sandbox.launch(plan))
+    asyncio.run(sandbox.attach(plan, ref))
+
+    async def cancel_wait() -> None:
+        task = asyncio.create_task(sandbox.wait(ref))
+        await follower.started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(cancel_wait())
 
     assert follower.terminated is True
 

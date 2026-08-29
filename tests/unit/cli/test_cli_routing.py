@@ -11,6 +11,7 @@ import typer
 
 import toolang.cli.caps.main as caps_cli
 import toolang.cli.toolang.main as cli
+from toolang.base.types.progress import ProgressEvent
 from toolang.common.layout import AgentLayout
 from toolang.cli.toolang.commands import script
 from toolang.cli.toolang.commands.chat import main as chat_commands
@@ -700,6 +701,73 @@ def test_cli_routes_visiting_chat_through_materialization(
     assert captured["source"] == selector
     assert captured["args"] == ["chat", "term_1"]
     assert captured["layout"] == layout
+
+
+def test_cli_visiting_failure_uses_the_operational_failure_block(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(_source: str, *, progress: Any) -> AgentLayout:
+        progress(
+            ProgressEvent(
+                id="agent:missing",
+                kind="prepare",
+                stage="fetch",
+                label="Failed to fetch agent",
+                status="failed",
+                detail="remote agent not found",
+            )
+        )
+        raise ValueError("fetch failed")
+
+    monkeypatch.setattr(agents, "resolve_visiting_layout", fail)
+
+    result = dispatch_visiting(
+        ["missing/agent", "chat"],
+        run_app=lambda _args, _layout: pytest.fail("failed resolution must not run"),
+    )
+
+    assert result == 1
+    error = capsys.readouterr().err
+    assert "Failed to fetch agent" in error
+    assert "Stage: prepare.fetch" in error
+    assert "Reason: remote agent not found" in error
+
+
+def test_caps_add_failure_uses_the_operational_failure_block(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def fail(
+        _kind: str,
+        _ref: str,
+        *,
+        progress: Any,
+    ) -> str:
+        progress(
+            ProgressEvent(
+                id="cap:skill:missing",
+                kind="prepare",
+                stage="resolve",
+                label="Failed to resolve skill",
+                status="failed",
+                detail="remote skill not found",
+            )
+        )
+        raise ValueError("resolve failed")
+
+    monkeypatch.setattr(caps_cli.commands.cap_state, "resolve_remote_ref", fail)
+
+    result = caps_cli.main(
+        ["--root", str(tmp_path / "toolang"), "skill", "add", "missing"]
+    )
+
+    assert result == 1
+    error = capsys.readouterr().err
+    assert "Failed to resolve skill" in error
+    assert "Stage: prepare.resolve" in error
+    assert "Reason: remote skill not found" in error
 
 
 def test_cli_routes_visiting_inspect_without_materialization(

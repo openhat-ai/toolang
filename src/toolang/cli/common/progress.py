@@ -94,7 +94,7 @@ class CliProgress:
 
     def __call__(self, event: ProgressEvent) -> None:
         with self._lock:
-            if self._closed:
+            if self._closed or self._failure_event is not None:
                 return
             key = (event.kind, event.id)
             previous = self._items.get(key)
@@ -209,9 +209,7 @@ class CliProgress:
             if previous is not None and same_stage
             else None
         )
-        elapsed = (
-            previous.activity_elapsed if previous is not None and same_stage else None
-        )
+        elapsed = None
 
         if event.status == "running":
             if event.label.endswith("..."):
@@ -294,13 +292,17 @@ class CliProgress:
             print(line, file=self._stream)
 
     def _render_terminal(self) -> None:
-        if self._selected_state() is None:
+        state = self._selected_state()
+        if state is None:
             self._cancel_reveal()
             self._clear_live()
             return
         if self._live_display is not None:
             self._live_display.update(self._live_text(), refresh=True)
             self._schedule_refresh()
+            return
+        if not state.active:
+            self._cancel_reveal()
             return
         if self._reveal_timer is None:
             timer = Timer(self._reveal_seconds, self._reveal_live)

@@ -710,6 +710,7 @@ def test_guest_failure_progress_wins_the_early_exit_diagnostic_race(
     assert activities[-1] == ("Failed to check Toolang", "failed")
     assert len({event.id for event in events}) == 1
 
+
 def test_readiness_cleanup_failure_preserves_sandbox_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

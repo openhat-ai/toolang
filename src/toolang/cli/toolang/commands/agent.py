@@ -235,15 +235,21 @@ def _caps_summary(state: AgentState) -> str:
 
 
 def _prepare_state(layout: AgentLayout) -> AgentState:
-    with make_cli_progress() as progress:
-        return cast(
-            AgentState,
-            user_call(
-                prepare_agent_state,
-                layout,
-                progress=progress.sink,
-            ),
-        )
+    progress = make_cli_progress()
+    try:
+        with progress:
+            return cast(
+                AgentState,
+                user_call(
+                    prepare_agent_state,
+                    layout,
+                    progress=progress.sink,
+                ),
+            )
+    except Exception as exc:
+        if progress.failure_stage is not None:
+            raise click.ClickException(progress.failure_message(exc)) from exc
+        raise
 
 
 def _jobs_summary(layout: AgentLayout) -> str:

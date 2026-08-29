@@ -352,16 +352,35 @@ def test_tty_elapsed_is_per_activity_and_appears_after_one_second() -> None:
     progress.close()
 
 
-def test_fast_tty_activity_closes_before_delayed_reveal() -> None:
+def test_fast_tty_activity_cancels_delayed_reveal_before_segment_close() -> None:
     stream = _TTYBuffer()
     progress = CliProgress(stream=stream)
 
     progress(_event("setup", "load", "Loading setup..."))
     progress(_event("setup", "load", "Loaded setup", status="ok"))
-    progress.close()
     time.sleep(0.2)
 
     assert stream.getvalue() == ""
+    assert progress._live_display is None
+    progress.close()
+
+
+def test_tty_stage_terminal_does_not_inherit_checkpoint_elapsed() -> None:
+    now = [0.0]
+    progress = CliProgress(
+        stream=_TTYBuffer(),
+        _clock=lambda: now[0],
+        _reveal_seconds=60,
+    )
+
+    progress(_event("runtime", "create", "Checking Toolang..."))
+    now[0] = 2.2
+    progress(_event("runtime", "create", "Checked Toolang"))
+    now[0] = 2.3
+    progress(_event("runtime", "create", "Created runtime", status="ok"))
+
+    assert progress._live_text().plain == "Created runtime"
+    progress.close()
 
 
 def test_tty_failure_cancels_a_pending_live_reveal() -> None:
@@ -413,7 +432,15 @@ def test_progress_wraps_with_two_cell_hanging_indent() -> None:
 
 
 def test_first_failure_remains_authoritative() -> None:
-    progress = CliProgress(stream=StringIO())
+    stream = StringIO()
+    progress = CliProgress(stream=stream)
+    progress(
+        _event(
+            "runtime",
+            "create",
+            "Installing Toolang...",
+        )
+    )
     progress(
         _event(
             "runtime",
@@ -432,10 +459,19 @@ def test_first_failure_remains_authoritative() -> None:
             detail="workload exited",
         )
     )
+    progress(
+        _event(
+            "runtime",
+            "create",
+            "Installed Toolang",
+            status="ok",
+        )
+    )
 
     assert progress.failure_stage == "runtime.create"
     assert progress.failure_label == "Failed to install Toolang"
     assert progress.failure_reason == "installer exited"
+    assert stream.getvalue().splitlines() == ["Installing Toolang..."]
 
 
 def test_runtime_failure_uses_one_stable_block() -> None:

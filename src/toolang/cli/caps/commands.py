@@ -393,8 +393,9 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
+        progress = _make_cap_write_progress()
         try:
-            with _make_cap_write_progress() as progress:
+            with progress:
                 canonical_ref = cap_state.resolve_remote_ref(
                     kind,
                     ref,
@@ -415,6 +416,8 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 f"{title} {cap_state.remote_entry_name(kind, ref)} already exists"
             ) from exc
         except ValueError as exc:
+            if progress.failure_stage is not None:
+                raise click.ClickException(progress.failure_message(exc)) from exc
             message = str(exc)
             if "conflicting entries" in message:
                 raise click.ClickException(
@@ -598,14 +601,20 @@ def _all_cap_entries(
     if prepare and (toolang_root / "agents" / agent_name / "agent.too").is_file():
         from ..common.progress import make_cli_progress
 
-        with make_cli_progress() as progress:
-            state = user_call(
-                prepare_agent_state,
-                AgentLayout.resident(toolang_root, agent_name),
-                progress=progress.sink,
-            )
-            entries = _state_cap_entries(state, scope=scope, kinds=kinds)
-            return entries
+        progress = make_cli_progress()
+        try:
+            with progress:
+                state = user_call(
+                    prepare_agent_state,
+                    AgentLayout.resident(toolang_root, agent_name),
+                    progress=progress.sink,
+                )
+                entries = _state_cap_entries(state, scope=scope, kinds=kinds)
+                return entries
+        except Exception as exc:
+            if progress.failure_stage is not None:
+                raise click.ClickException(progress.failure_message(exc)) from exc
+            raise
     return cap_state.list_entries(
         toolang_root,
         agent_name,
@@ -704,15 +713,24 @@ def _refresh_agent_state(
     progress: CliProgress | None = None,
 ) -> None:
     if progress is not None:
+        _prepare_agent_state_with_progress(toolang_root, agent_name, progress)
+        return
+    with _make_cap_write_progress() as owned_progress:
+        _prepare_agent_state_with_progress(toolang_root, agent_name, owned_progress)
+
+
+def _prepare_agent_state_with_progress(
+    toolang_root: Path,
+    agent_name: str,
+    progress: CliProgress,
+) -> None:
+    try:
         user_call(
             prepare_agent_state,
             AgentLayout.resident(toolang_root, agent_name),
             progress=progress.sink,
         )
-        return
-    with _make_cap_write_progress() as owned_progress:
-        user_call(
-            prepare_agent_state,
-            AgentLayout.resident(toolang_root, agent_name),
-            progress=owned_progress.sink,
-        )
+    except Exception as exc:
+        if progress.failure_stage is not None:
+            raise click.ClickException(progress.failure_message(exc)) from exc
+        raise

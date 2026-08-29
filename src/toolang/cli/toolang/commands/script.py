@@ -519,7 +519,12 @@ def _run(
         return 130
     except (OSError, ValueError, ToolangError, RuntimeError) as exc:
         progress.close()
-        _error(str(exc))
+        message = (
+            progress.failure_message(exc)
+            if progress.failure_stage is not None
+            else str(exc)
+        )
+        _error(message)
         if log_path is not None and log_path.exists():
             typer.echo(f"Log: {log_path}", err=True)
         return 1

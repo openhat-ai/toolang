@@ -95,18 +95,14 @@ _STARTUP_EVENT_TRANSITIONS = {
     "uv.install.running": frozenset({"uv.install.ok", "uv.install.failed"}),
     "uv.use": frozenset({"python.use", "python.install.running"}),
     "uv.install.ok": frozenset({"python.use", "python.install.running"}),
-    "python.install.running": frozenset(
-        {"python.install.ok", "python.install.failed"}
-    ),
+    "python.install.running": frozenset({"python.install.ok", "python.install.failed"}),
     "python.use": frozenset({"toolang.install.running"}),
     "python.install.ok": frozenset({"toolang.install.running"}),
     "toolang.install.running": frozenset(
         {"toolang.install.ok", "toolang.install.failed"}
     ),
     "toolang.install.ok": frozenset({"toolang.check.running"}),
-    "toolang.check.running": frozenset(
-        {"toolang.check.ok", "toolang.check.failed"}
-    ),
+    "toolang.check.running": frozenset({"toolang.check.ok", "toolang.check.failed"}),
     "toolang.check.ok": frozenset({"server.running"}),
 }
 

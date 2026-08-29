@@ -250,7 +250,12 @@ def dispatch_visiting(
     except KeyboardInterrupt:
         return 130
     except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
-        echo_error(str(exc))
+        message = (
+            progress.failure_message(exc)
+            if progress.failure_stage is not None
+            else str(exc)
+        )
+        echo_error(message)
         return 1
     return run_app(
         [

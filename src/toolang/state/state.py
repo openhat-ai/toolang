@@ -2014,7 +2014,7 @@ def _remote_entry_from_ref(
             meta=_load_meta_text(entry_content.decode("utf-8")),
         )
     except Exception as exc:
-        if materialize and cached is None:
+        if materialize:
             emit_progress(
                 progress,
                 id=progress_id,
@@ -2025,24 +2025,35 @@ def _remote_entry_from_ref(
                 detail=str(exc),
             )
         raise
-    if materialize and cached is None:
-        emit_progress(
-            progress,
-            id=progress_id,
-            kind="prepare",
-            stage="materialize",
-            label=f"Updating {kind} {name}...",
-            status="running",
-            detail=str(relative_entry_path),
-        )
-        emit_progress(
-            progress,
-            id=progress_id,
-            kind="prepare",
-            stage="materialize",
-            label=f"Updated {kind} {name}",
-            status="ok",
-        )
+    if materialize:
+        if cached is not None:
+            emit_progress(
+                progress,
+                id=progress_id,
+                kind="prepare",
+                stage="materialize",
+                label=f"Skipped updating {kind} {name}",
+                status="skipped",
+                detail="cached",
+            )
+        else:
+            emit_progress(
+                progress,
+                id=progress_id,
+                kind="prepare",
+                stage="materialize",
+                label=f"Updating {kind} {name}...",
+                status="running",
+                detail=str(relative_entry_path),
+            )
+            emit_progress(
+                progress,
+                id=progress_id,
+                kind="prepare",
+                stage="materialize",
+                label=f"Updated {kind} {name}",
+                status="ok",
+            )
     return entry, entry_files
 
 
