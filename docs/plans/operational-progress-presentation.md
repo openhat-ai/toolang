@@ -46,8 +46,8 @@ Success means:
 - all three kinds use one row grammar and one presenter state model;
 - TTY and non-TTY output preserve the same material activity ordering, subject
   to the defined suppression of sub-threshold TTY work;
-- successful operational work leaves no redundant summary before the command's
-  actual result;
+- successful operational work reports natural action outcomes but leaves no
+  redundant aggregate summary before the command's actual result;
 - Run rows, operational rows, warnings, diagnostics, and logs never compete for
   terminal ownership; and
 - full-transcript tests specify every seam.
@@ -61,11 +61,11 @@ projectors:
 | --- | --- | --- |
 | Source | `ProgressEvent` | `RunEvent` |
 | Meaning | environment work | agent execution |
-| Active marker | animated spinner | `•` activity rows |
-| Stable running marker | `…` | committed `•` content |
-| Terminal closure | command result or one failure block | `∎` root Run footer |
+| Running form | spinner plus a verb-first sentence | `•` activity rows |
+| Successful form | simple-past verb-first sentence | committed output |
+| Segment closure | object-first command result or one failure block | `∎` root Run footer |
 | TTY mechanics | one transient Rich live region | committed blocks plus one live region |
-| Non-TTY mechanics | append-only activity starts | append-only committed blocks |
+| Non-TTY mechanics | append-only action and outcome sentences | append-only committed blocks |
 
 There is no operational Run header or footer and no adapter between the two
 event families. `CliProgress` remains the only public operational presenter.
@@ -88,78 +88,100 @@ recreate a presenter merely because the event kind changes.
 Events retain the approved lifecycle rules:
 
 - `pending` contributes only to aggregate facts and is never a visible row;
-- `running` starts or materially updates the visible activity;
-- `ok` and `skipped` close the activity without committing a success row;
+- `running` starts or materially updates the visible activity; it normally uses
+  a present-participle sentence and may use a simple-past checkpoint when the
+  stage owns several actions;
+- `ok` closes it with a corresponding simple-past sentence;
+- `skipped` is silent when no work began, or uses one explicit verb-first
+  outcome when it closes visible work;
 - `failed` closes live state and transfers stable output to the single failure
   block; and
-- cached work that emits only `ok` or `skipped` remains silent.
+- cache hits that perform no visible work remain silent.
 
 For concurrent prepare items, the most recently changed running item is the
 visible activity. When it closes, the most recently changed remaining running
 item becomes visible. Aggregate facts carry overall progress, so concurrency
 does not grow the live region vertically.
 
-## Row Grammar
+## Sentence Grammar
 
-The TTY live row is:
+Progress is a natural short sentence whose first word is a verb. It never
+prefixes the sentence with an agent name, sandbox selector, kind, stage, or
+progress ID. Agent identity belongs to the final command result, where it is
+useful and stable.
 
-```text
-SPINNER SUBJECT [· SANDBOX] · ACTIVITY [· DETAIL] [· FACTS] · ELAPSED
-```
-
-Examples are:
-
-```text
-⠋ agent eve · Fetching skill · browser · 2/5 caps · 1.2s
-⠙ agent eve · Loading setup · 180ms
-⠹ agent eve · Discovering models · 2.1s
-⠼ agent eve · docker:python:3.13-slim · Installing Toolang · package index · 8.4s
-⠴ agent eve · docker:python:3.13-slim · Waiting for agent API · http://localhost:7001 · 9.1s
-```
-
-The non-TTY committed activity row is the same semantic row without animation
-or elapsed time:
+The running TTY row is:
 
 ```text
-… SUBJECT [· SANDBOX] · ACTIVITY [· DETAIL] [· FACTS]
+SPINNER RUNNING_SENTENCE [· DETAIL] [· FACTS] · ELAPSED
 ```
 
-For example:
+The successful TTY row uses the same two-cell marker slot without a spinner:
 
 ```text
-… agent eve · Fetching skill · browser · 2/5 caps
-… agent eve · docker:python:3.13-slim · Installing Toolang · package index
+  COMPLETED_SENTENCE [· DETAIL] [· FACTS] · ELAPSED
 ```
 
-Exact duplicate running events produce no output. A change to activity, bounded
-detail, selected concurrent item, or aggregate facts is material and appends a
-new non-TTY row. Terminal success is not material output because the following
-command result, inspection view, Run, or foreground session proves completion.
+Examples are successive live snapshots, not accumulated lines:
 
-`SUBJECT` is `agent NAME` for agent-scoped commands. Before a remote agent name
-is known it is `agent SOURCE`; root-only operations may use `Toolang`. Raw
-progress IDs are never displayed. `SANDBOX` is shown when the segment owns a
-selected runtime, including guest setup nested inside launch. It is omitted for
-embedded host setup and unrelated preparation.
+```text
+⠋ Fetching skill browser... · 2/5 caps · 1.2s
+  Fetched skill browser. · 3/5 caps · 1.3s
+⠙ Loading setup... · 1.4s
+  Loaded setup. · 1.6s
+⠹ Discovering models... · 2.1s
+  Discovered 12 models from 5 providers. · 2.2s
+⠼ Installing Toolang... · package index · 8.4s
+  Installed Toolang. · package index · 8.8s
+⠴ Waiting for the agent API... · http://localhost:7001 · 9.1s
+  Connected to the agent API. · http://localhost:7001 · 9.3s
+```
 
-`ACTIVITY` is a short present-participle phrase. Producers may specialize the
-object, but use this vocabulary and tone:
+Non-TTY output removes the marker slot and elapsed time and commits both action
+and outcome sentences:
 
-| Kind and stage | Canonical activities |
-| --- | --- |
-| `prepare.resolve` | `Resolving agent`, `Resolving KIND` |
-| `prepare.fetch` | `Fetching agent`, `Fetching KIND` |
-| `prepare.materialize` | `Preparing agent`, `Updating KIND`, `Preparing caps` |
-| `setup.load` | `Loading setup` |
-| `setup.discover` | `Discovering models` |
-| `runtime.create` | `Preparing sandbox`, `Fetching image`, `Installing Toolang`, `Checking Toolang` |
-| `runtime.start` | `Starting agent`, `Waiting for agent API` |
-| `runtime.stop` | `Stopping agent` |
-| `runtime.destroy` | `Removing runtime` |
+```text
+Fetching skill browser... · 2/5 caps
+Fetched skill browser. · 3/5 caps
+Installing Toolang... · package index
+Installed Toolang. · package index
+```
 
-Labels do not contain status words, trailing punctuation, agent identity, or
-sandbox identity. They may identify a third-party implementation action when
-the phrase remains concise and follows the same active-verb form. Installer
+Exact duplicate events produce no output. A change to sentence, bounded detail,
+selected concurrent item, or aggregate facts is material and appends a new
+non-TTY line. On a TTY, a completed sentence replaces its running sentence and
+remains until the next material event or segment handoff; it is never separately
+committed to scrollback.
+
+The producer supplies the complete sentence, including punctuation; the
+presenter never conjugates verbs. A running activity normally uses the present
+participle and ends in `...`. A completed action uses simple past and ends in
+`.`. A stage that owns several actions may emit a past-tense checkpoint while
+the stage remains `running`, then begin its next action; only the final sentence
+uses the stage's terminal status. Failures use `Failed to ...`. Explicit skips
+use `Skipped ...` or another unambiguous past-tense verb. Labels never contain
+an agent name.
+
+Use this vocabulary and tone:
+
+| Kind and stage | Running | Successful |
+| --- | --- | --- |
+| `prepare.resolve` | `Resolving agent`, `Resolving KIND` | `Resolved agent`, `Resolved KIND` |
+| `prepare.fetch` | `Fetching agent`, `Fetching KIND` | `Fetched agent`, `Fetched KIND` |
+| `prepare.materialize` | `Preparing agent`, `Updating KIND`, `Preparing caps` | `Prepared agent`, `Updated KIND`, `Prepared caps` |
+| `setup.load` | `Loading setup` | `Loaded setup` |
+| `setup.discover` | `Discovering models` | `Discovered models` |
+| `runtime.create` | `Preparing sandbox`, `Fetching image`, `Installing Toolang`, `Checking Toolang` | intermediate `Prepared sandbox`, `Fetched image`, `Installed Toolang`, `Checked Toolang`; terminal `Created runtime` |
+| `runtime.start` | `Starting agent`, `Waiting for the agent API` | intermediate `Started agent`; terminal `Connected to the agent API` |
+| `runtime.stop` | `Stopping agent` | `Stopped agent` |
+| `runtime.destroy` | `Removing runtime` | `Removed runtime` |
+
+The object or bounded detail may complete the sentence naturally, as in
+`Fetching skill browser` or `Fetching image python:3.13-slim`. A supplemental
+field is used when joining it into the sentence would be awkward, as with an
+endpoint or package source. Sandbox type may appear as the object of an action,
+such as `Preparing Docker sandbox`, but is never repeated as a prefix on every
+line. Third-party implementations follow the same verb forms. Installer
 commands, environment values, secrets, and raw logs are never labels or
 details.
 
@@ -182,14 +204,16 @@ min(attached terminal width, TOOLANG_PROGRESS_MAX_WIDTH)
 The configured maximum is used for non-TTY output. Measurement and wrapping use
 display cells. Logical fields wrap at ` · ` boundaries with a two-cell hanging
 indent; a single overlong field folds by display cells. Details are whitespace
-normalized and bounded to 80 display cells before layout. Subject, activity,
-status, and aggregate facts are not silently dropped.
+normalized and bounded to 80 display cells before layout. The sentence and
+aggregate facts are not silently dropped.
 
 The TTY live row is dim so it remains secondary to execution and command
-results. A stable failure marker and its activity use normal-intensity red;
-continuation labels are dim and the reason uses normal intensity. Success green
-is not used. Non-TTY output contains UTF-8 text but no ANSI, cursor movement, or
-carriage-return rewriting.
+results. A stable failure sentence uses normal-intensity red; continuation
+labels are dim and the reason uses normal intensity. Success green is not used.
+Non-TTY output contains UTF-8 text but no ANSI, cursor movement,
+carriage-return rewriting, or in-place replacement. It writes every material
+sentence in event order, including `Fetching ...` followed later by
+`Fetched ...`.
 
 TTY live presentation is delayed for 150 milliseconds to avoid flashing for
 cache hits and fast local work. It never delays the operation itself and has no
@@ -224,16 +248,16 @@ or Run ownership ends.
 One operational failure produces one block:
 
 ```text
-× agent eve · docker:python:3.13-slim · Installing Toolang failed
+Failed to install Toolang.
   Stage: runtime.create
   Reason: Could not install Toolang from the package index.
   Fix: Check network access or use --dev PATH with a compatible wheel.
   Log: ~/.toolang/agents/eve/.runtime/agent.log
 ```
 
-The first line follows the operational row order and replaces the running
-marker with `×`. Continuations use exactly the applicable fields above. `Stage`
-and `Reason` are mandatory; `Fix` and `Log` are conditional. The responsible
+The first line remains a verb-first progress sentence and contains no agent
+name. Continuations use exactly the applicable fields above. `Stage` and
+`Reason` are mandatory; `Fix` and `Log` are conditional. The responsible
 command and presenter compose this block once. Typer, Click, sandbox logs, and
 outer exception handlers must not repeat the same cause as another top-level
 error. An error before any operational event continues through the normal CLI
@@ -266,20 +290,33 @@ redirection.
 ### Complete Non-TTY Temporary Run
 
 ```text
-… agent eve · Fetching skill · browser · 2/5 caps
-… agent eve · docker:python:3.13-slim · Preparing sandbox
-… agent eve · docker:python:3.13-slim · Installing Toolang · package index
-… agent eve · docker:python:3.13-slim · Loading setup
-… agent eve · docker:python:3.13-slim · Discovering models
-… agent eve · docker:python:3.13-slim · Waiting for agent API · http://localhost:7001
+Fetching skill browser... · 1/5 caps
+Fetched skill browser. · 2/5 caps
+Preparing Docker sandbox...
+Prepared Docker sandbox.
+Installing Toolang... · package index
+Installed Toolang. · package index
+Checking Toolang...
+Checked Toolang.
+Created runtime.
+Starting agent...
+Started agent.
+Loading setup...
+Loaded setup.
+Discovering models...
+Discovered 12 models from 5 providers.
+Waiting for the agent API... · http://localhost:7001
+Connected to the agent API. · http://localhost:7001
 
 • Thinking...
 • Finished the report.
 
 ∎ run_abc123 succeeded                                      9.4s · 1 model call
 
-… agent eve · docker:python:3.13-slim · Stopping agent
-… agent eve · docker:python:3.13-slim · Removing runtime
+Stopping agent...
+Stopped agent.
+Removing runtime...
+Removed runtime.
 ```
 
 TTY displays the same activity sequence in one transient row, then leaves only
@@ -288,18 +325,22 @@ the final stable line.
 
 ## Command Results
 
-Operational progress does not replace stable command outcomes. Existing concise
-outcomes remain the closure for lifecycle commands:
+Operational progress does not replace stable command outcomes. A final result
+starts with its object, uses a stable state or past-tense action, includes
+stable identity, and may append extra information after `:`:
 
 ```text
-Running agent eve: http://localhost:7001 (Ctrl+C to stop)
-Started agent eve: http://localhost:7001
-Stopped agent eve
+Agent eve running: http://localhost:7001 (Ctrl+C to stop)
+Agent eve started: http://localhost:7001
+Agent eve stopped.
+Agent brice cloned: ~/.toolang/agents/brice/agent.too
+Skill browser added: ~/.toolang/agents/eve/skills/browser/SKILL.md
+Skill browser removed.
 ```
 
-Clone, cap mutation, and inspection commands likewise keep their existing
-result line or view. They do not gain an additional `Prepared`, `Loaded`, or
-`Completed` progress summary.
+Inspection commands keep their result view and do not add a separate final
+sentence. Commands do not gain an aggregate `Prepared`, `Loaded`, or
+`Completed` summary after their action-level progress.
 
 ## Implementation Touchpoints
 
@@ -314,8 +355,8 @@ result line or view. They do not gain an additional `Prepared`, `Loaded`, or
   `runtime.create` before starting AgentServer, open `runtime.start` before
   initial setup, and resume its readiness activity after setup.
 - Prepare producers: use stable IDs and stage semantics rather than label
-  prefixes to drive aggregation; normalize running labels to the activity
-  vocabulary.
+  prefixes to drive aggregation; emit complete verb-first running, checkpoint,
+  terminal, and failure sentences from the activity vocabulary.
 - Setup and sandbox plugins: retain semantic events and bounded details; do not
   preformat rows or failures.
 - Operational, command, integration, PTY, and live Docker tests: assert complete
@@ -330,13 +371,15 @@ compatibility path.
 
 ## Acceptance Tests
 
-1. Prepare, setup, and runtime events render through the same field order,
+1. Prepare, setup, and runtime events render through the same sentence grammar,
    width logic, style rules, and presenter instance within one segment.
 2. TTY cache hits and operations completing before 150 milliseconds leave no
    live residue or artificial delay; slower work becomes visible by the
    threshold.
-3. Non-TTY output is ordered, append-only, ANSI-free, deduplicates exact
-   activities, and emits no success rows.
+3. Non-TTY output is ordered, append-only, ANSI-free, and never replaces a
+   line; it emits and deduplicates each material running sentence followed by
+   its checkpoint or terminal sentence, such as `Fetching ...` then
+   `Fetched ...`.
 4. Concurrent prepare events select the most recently changed active item and
    maintain accurate `N/T caps` facts without growing multiple live rows.
 5. Cached and skipped prepare work leaves no pending or running residue.
@@ -346,7 +389,7 @@ compatibility path.
 7. Runtime create closes before start; initial guest setup temporarily owns the
    live leaf inside start; readiness resumes after setup without a second live
    region.
-8. Wide, narrow, and Unicode subjects/details wrap by display cells within the
+8. Wide, narrow, and Unicode sentences/details wrap by display cells within the
    same configured maximum as Run output.
 9. One failure block contains the qualified stage and reason, conditional fix
    and log, and no duplicated outer or workload error.
@@ -359,8 +402,9 @@ compatibility path.
     final stable line.
 13. Ready lines precede all foreground logs, Ctrl+C stops log following before
     cleanup presentation, and no log corrupts a live row.
-14. Command results and inspection views follow successful operational work
-    directly and gain no redundant success summary.
+14. Progress sentences always begin with a verb and never display the agent
+    name; command results begin with the object and stable identity, as in
+    `Agent eve started: ...` or `Skill browser added: ...`.
 15. Agent-first and command-first forms, embedded host execution, attached
     execution, temporary guest execution, Linux/macOS terminals, and Docker
     controlled from Linux/macOS/WSL2 produce the defined semantics.
