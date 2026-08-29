@@ -11,18 +11,20 @@ fail() {
     exit "${2:-1}"
 }
 
-if [ "$#" -lt 6 ]; then
+if [ "$#" -lt 8 ]; then
     printf '%s\n' \
-        "usage: docker_guest.sh GUEST_ENV DIAGNOSTIC DISPLAY_PATH PACKAGE -- COMMAND..." \
+        "usage: docker_guest.sh HELPER GUEST_ENV DIAGNOSTIC DISPLAY PACKAGE LOG -- COMMAND..." \
         >&2
     exit 64
 fi
 
-GUEST_ENV=$1
-DIAGNOSTIC=$2
-DIAGNOSTIC_DISPLAY=$3
-PACKAGE_SOURCE=$4
-shift 4
+HELPER=$1
+GUEST_ENV=$2
+DIAGNOSTIC=$3
+DIAGNOSTIC_DISPLAY=$4
+PACKAGE_SOURCE=$5
+WORKLOAD_LOG=$6
+shift 6
 if [ "$1" != "--" ]; then
     printf '%s\n' "docker guest command separator is missing" >&2
     exit 64
@@ -46,7 +48,6 @@ PYTHON_BIN_DIR=$RUNTIME_ROOT/python-bin
 TOOL_DIR=$RUNTIME_ROOT/tools
 TOOL_BIN_DIR=$RUNTIME_ROOT/bin
 CACHE_DIR=$RUNTIME_ROOT/cache
-HELPER=$RUNTIME_ROOT/exec.py
 INSTALLER=$RUNTIME_ROOT/install-uv.sh
 
 umask 077
@@ -157,12 +158,10 @@ else
         INSTALLER_URL="https://astral.sh/uv/$UV_VERSION/install.sh"
         if command -v curl >/dev/null 2>&1; then
             curl -LsSf "$INSTALLER_URL" -o "$INSTALLER" \
-                >>"$DIAGNOSTIC" 2>&1 ||
-                fail "Could not download uv" 69
+                >>"$DIAGNOSTIC" 2>&1 || fail "Could not download uv" 69
         elif command -v wget >/dev/null 2>&1; then
             wget -qO "$INSTALLER" "$INSTALLER_URL" \
-                >>"$DIAGNOSTIC" 2>&1 ||
-                fail "Could not download uv" 69
+                >>"$DIAGNOSTIC" 2>&1 || fail "Could not download uv" 69
         else
             fail \
                 "Unsupported image: provide uv, Python 3.8+ with pip, curl, or wget" \
@@ -200,173 +199,6 @@ else
     printf 'Installed Python · %s\n' "$PYTHON_FACT" >&2
 fi
 
-cat >"$HELPER" <<'PYTHON'
-from __future__ import annotations
-
-import os
-from pathlib import Path
-import subprocess
-import sys
-
-
-def load_generated_dotenv(path: Path) -> dict[str, str]:
-    text = path.read_text(encoding="utf-8")
-    values: dict[str, str] = {}
-    index = 0
-    while index < len(text):
-        if text[index] in " \t\n":
-            index += 1
-            continue
-        if text[index] == "#":
-            newline = text.find("\n", index)
-            index = len(text) if newline < 0 else newline + 1
-            continue
-        separator = text.find('="', index)
-        if separator < 0:
-            raise ValueError("invalid staged guest environment")
-        name = text[index:separator]
-        index = separator + 2
-        value: list[str] = []
-        while index < len(text):
-            char = text[index]
-            index += 1
-            if char == "\\":
-                if index >= len(text):
-                    raise ValueError("invalid staged guest environment")
-                escaped = text[index]
-                index += 1
-                value.append("\r" if escaped == "r" else escaped)
-            elif char == '"':
-                break
-            else:
-                value.append(char)
-        else:
-            raise ValueError("invalid staged guest environment")
-        if not name or any(char.isspace() or char in "=#\x00" for char in name):
-            raise ValueError("invalid staged guest environment")
-        values[name] = "".join(value)
-    return values
-
-
-def fail(message: str, diagnostic_display: str, status: int) -> None:
-    print(message, file=sys.stderr)
-    print(f"See {diagnostic_display}", file=sys.stderr)
-    raise SystemExit(status)
-
-
-def main() -> None:
-    guest_env = Path(sys.argv[1])
-    diagnostic = Path(sys.argv[2])
-    diagnostic_display = sys.argv[3]
-    package_source = sys.argv[4]
-    python = sys.argv[5]
-    tool_bin_dir = Path(sys.argv[6])
-    uv_mode = sys.argv[7]
-    uv_executable = sys.argv[8]
-    uv_module_dir = sys.argv[9]
-    if sys.argv[10] != "--":
-        raise ValueError("docker guest command separator is missing")
-    command = sys.argv[11:]
-    if not command:
-        raise ValueError("docker guest command is missing")
-    hostname = os.environ["HOSTNAME"]
-    environ = dict(os.environ)
-    environ.update(load_generated_dotenv(guest_env))
-    environ["HOSTNAME"] = hostname
-    environ["TOOLANG_SANDBOX_INSTANCE"] = hostname
-    for name in (
-        "UV_CACHE_DIR",
-        "UV_PYTHON_INSTALL_DIR",
-        "UV_PYTHON_BIN_DIR",
-        "UV_TOOL_DIR",
-        "UV_TOOL_BIN_DIR",
-        "UV_NO_PROGRESS",
-    ):
-        environ[name] = os.environ[name]
-    environ["PATH"] = str(tool_bin_dir) + os.pathsep + environ.get("PATH", "")
-
-    uv_command = [uv_executable]
-    uv_environ = dict(environ)
-    if uv_mode == "module":
-        uv_command.extend(("-m", "uv"))
-        existing_pythonpath = uv_environ.get("PYTHONPATH")
-        uv_environ["PYTHONPATH"] = uv_module_dir + (
-            os.pathsep + existing_pythonpath if existing_pythonpath else ""
-        )
-    elif uv_mode != "bin":
-        raise ValueError("docker guest uv mode is invalid")
-
-    package_fact = Path(package_source).name
-    print(f"Installing Toolang · {package_fact}...", file=sys.stderr)
-    try:
-        with diagnostic.open("ab") as stream:
-            installed = subprocess.run(
-                (
-                    *uv_command,
-                    "tool",
-                    "install",
-                    "--quiet",
-                    "--no-progress",
-                    "--force",
-                    "--python",
-                    python,
-                    package_source,
-                ),
-                check=False,
-                env=uv_environ,
-                stdout=stream,
-                stderr=subprocess.STDOUT,
-            )
-    except OSError:
-        fail("Could not install Toolang", diagnostic_display, 1)
-    if installed.returncode != 0:
-        fail("Could not install Toolang", diagnostic_display, 1)
-
-    too = tool_bin_dir / "too"
-    if not too.is_file() or not os.access(too, os.X_OK):
-        fail("Installed Toolang executable is unavailable", diagnostic_display, 69)
-    with diagnostic.open("ab") as stream:
-        validated = subprocess.run(
-            (str(too), "serve", "--help"),
-            check=False,
-            env=environ,
-            stdout=stream,
-            stderr=subprocess.STDOUT,
-        )
-        version = subprocess.run(
-            (str(too), "--version"),
-            check=False,
-            env=environ,
-            stdout=subprocess.PIPE,
-            stderr=stream,
-            text=True,
-        )
-    if validated.returncode != 0:
-        fail(
-            "The installed Toolang package cannot start the required AgentServer",
-            diagnostic_display,
-            69,
-        )
-    toolang_fact = version.stdout.strip() if version.returncode == 0 else ""
-    suffix = f" · {toolang_fact}" if toolang_fact else ""
-    print(f"Installed Toolang{suffix}", file=sys.stderr)
-
-    diagnostic.unlink(missing_ok=True)
-    authored_command = command[0]
-    if command[0] in {"too", "toolang"}:
-        command[0] = str(too)
-    if authored_command in {"too", "toolang"} and command[1:2] == ["serve"]:
-        print("Starting agent...", file=sys.stderr)
-    else:
-        print("Starting command...", file=sys.stderr)
-    os.execvpe(command[0], command, environ)
-
-
-if __name__ == "__main__":
-    main()
-PYTHON
-chmod 700 "$HELPER"
-
 if [ "$UV_MODE" = "module" ]; then
     UV_EXECUTABLE=$UV_PYTHON
 else
@@ -377,6 +209,7 @@ exec "$PYTHON_BIN" "$HELPER" \
     "$DIAGNOSTIC" \
     "$DIAGNOSTIC_DISPLAY" \
     "$PACKAGE_SOURCE" \
+    "$WORKLOAD_LOG" \
     "$PYTHON_BIN" \
     "$TOOL_BIN_DIR" \
     "$UV_MODE" \

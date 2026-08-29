@@ -15,7 +15,6 @@ shift
 DEV=
 KEEP=0
 COMMAND_SET=0
-
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --dev)
@@ -23,19 +22,11 @@ while [ "$#" -gt 0 ]; do
             DEV=$2
             shift 2
             ;;
-        --keep)
-            KEEP=1
-            shift
-            ;;
-        --)
-            shift
-            COMMAND_SET=1
-            break
-            ;;
+        --keep) KEEP=1; shift ;;
+        --) shift; COMMAND_SET=1; break ;;
         *) usage ;;
     esac
 done
-
 if [ "$COMMAND_SET" -eq 0 ]; then
     set -- too --version
 elif [ "$#" -eq 0 ]; then
@@ -44,46 +35,25 @@ fi
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPOSITORY_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-GUEST_SCRIPT=$REPOSITORY_DIR/src/toolang/plugin/sandboxes/docker_guest.sh
-[ -f "$GUEST_SCRIPT" ] || {
-    printf 'Guest script not found · %s\n' "$GUEST_SCRIPT" >&2
-    exit 66
-}
+GUEST_SOURCE=$REPOSITORY_DIR/src/toolang/plugin/sandboxes
+for FILE in docker_guest.sh docker_guest.py; do
+    [ -f "$GUEST_SOURCE/$FILE" ] || {
+        printf 'Guest file not found · %s\n' "$GUEST_SOURCE/$FILE" >&2
+        exit 66
+    }
+done
 command -v docker >/dev/null 2>&1 || {
     printf '%s\n' "Docker is not available" >&2
     exit 69
 }
 
-resolve_wheel() {
-    VALUE=$1
-    if [ -f "$VALUE" ]; then
-        case "${VALUE##*/}" in
-            toolang-*.whl) CDPATH= cd -- "$(dirname -- "$VALUE")" && printf '%s/%s\n' "$(pwd)" "${VALUE##*/}" ;;
-            *) return 1 ;;
-        esac
-        return
-    fi
-    [ -d "$VALUE" ] || return 1
-    CANDIDATES=$STAGE/wheels
-    find "$VALUE" -type f -name 'toolang-*.whl' -print >"$CANDIDATES"
-    SELECTED=
-    while IFS= read -r CANDIDATE; do
-        if [ -z "$SELECTED" ] || [ "$CANDIDATE" -nt "$SELECTED" ]; then
-            SELECTED=$CANDIDATE
-        fi
-    done <"$CANDIDATES"
-    [ -n "$SELECTED" ] || return 1
-    CDPATH= cd -- "$(dirname -- "$SELECTED")" && printf '%s/%s\n' "$(pwd)" "${SELECTED##*/}"
-}
-
 STAGE=$(mktemp -d "${TMPDIR:-/tmp}/toolang-docker-guest.XXXXXX") || exit 73
+GUEST_DIR=$STAGE/guest
+STATE_DIR=$STAGE/state
+DIAGNOSTIC=$STATE_DIR/diagnostic.log
+DIAGNOSTIC_DISPLAY=${TMPDIR:-/tmp}/toolang-docker-guest-${STAGE##*.}.log
 CONTAINER_ID=
 CONTAINER_NAME=toolang-guest-$$-${STAGE##*.}
-STAGED_GUEST=$STAGE/docker_guest.sh
-GUEST_ENV=$STAGE/guest.env
-DIAGNOSTIC_DIR=$STAGE/state
-DIAGNOSTIC=$DIAGNOSTIC_DIR/diagnostic.log
-DIAGNOSTIC_DISPLAY=${TMPDIR:-/tmp}/toolang-docker-guest-${STAGE##*.}.log
 
 cleanup() {
     if [ "$KEEP" -eq 1 ]; then
@@ -115,61 +85,61 @@ interrupt() {
     exit 130
 }
 
+resolve_wheel() {
+    VALUE=$1
+    if [ -f "$VALUE" ]; then
+        case "${VALUE##*/}" in
+            toolang-*.whl)
+                CDPATH= cd -- "$(dirname -- "$VALUE")" &&
+                    printf '%s/%s\n' "$(pwd)" "${VALUE##*/}"
+                ;;
+            *) return 1 ;;
+        esac
+        return
+    fi
+    [ -d "$VALUE" ] || return 1
+    find "$VALUE" -type f -name 'toolang-*.whl' -print >"$STAGE/wheels"
+    SELECTED=
+    while IFS= read -r CANDIDATE; do
+        if [ -z "$SELECTED" ] || [ "$CANDIDATE" -nt "$SELECTED" ]; then
+            SELECTED=$CANDIDATE
+        fi
+    done <"$STAGE/wheels"
+    [ -n "$SELECTED" ] || return 1
+    CDPATH= cd -- "$(dirname -- "$SELECTED")" &&
+        printf '%s/%s\n' "$(pwd)" "${SELECTED##*/}"
+}
+
 trap cleanup 0
 trap interrupt INT TERM HUP
-
-mkdir "$DIAGNOSTIC_DIR" || exit 73
-cp "$GUEST_SCRIPT" "$STAGED_GUEST" || exit 73
-chmod 755 "$STAGED_GUEST"
-printf '%s\n' '# Generated guest environment' >"$GUEST_ENV"
+mkdir "$GUEST_DIR" "$STATE_DIR" || exit 73
+cp "$GUEST_SOURCE/docker_guest.sh" "$GUEST_SOURCE/docker_guest.py" "$GUEST_DIR" || exit 73
+chmod 755 "$GUEST_DIR/docker_guest.sh"
+printf '%s\n' '# Generated guest environment' >"$GUEST_DIR/guest.env"
 : >"$DIAGNOSTIC"
-chmod 600 "$GUEST_ENV" "$DIAGNOSTIC"
+chmod 600 "$GUEST_DIR/guest.env" "$DIAGNOSTIC"
 
 PACKAGE_SOURCE=toolang
-STAGED_WHEEL=
 if [ -n "$DEV" ]; then
     WHEEL=$(resolve_wheel "$DEV") || {
         printf 'No Toolang wheel found · %s\n' "$DEV" >&2
         exit 66
     }
-    STAGED_WHEEL=$STAGE/${WHEEL##*/}
-    cp "$WHEEL" "$STAGED_WHEEL" || exit 73
+    cp "$WHEEL" "$GUEST_DIR/${WHEEL##*/}" || exit 73
     PACKAGE_SOURCE=/tmp/toolang-guest/${WHEEL##*/}
 fi
 
 printf 'Creating container · %s...\n' "$IMAGE" >&2
-if [ -n "$STAGED_WHEEL" ]; then
-    CONTAINER_ID=$(docker create \
-        --name "$CONTAINER_NAME" \
-        --volume "$STAGED_GUEST:/tmp/toolang-guest/docker_guest.sh:ro" \
-        --volume "$GUEST_ENV:/tmp/toolang-guest/guest.env:ro" \
-        --volume "$DIAGNOSTIC_DIR:/tmp/toolang-guest-state" \
-        --volume "$STAGED_WHEEL:$PACKAGE_SOURCE:ro" \
-        "$IMAGE" \
-        /bin/sh \
-        /tmp/toolang-guest/docker_guest.sh \
-        /tmp/toolang-guest/guest.env \
-        /tmp/toolang-guest-state/diagnostic.log \
-        "$DIAGNOSTIC_DISPLAY" \
-        "$PACKAGE_SOURCE" \
-        -- \
-        "$@") || exit $?
-else
-    CONTAINER_ID=$(docker create \
-        --name "$CONTAINER_NAME" \
-        --volume "$STAGED_GUEST:/tmp/toolang-guest/docker_guest.sh:ro" \
-        --volume "$GUEST_ENV:/tmp/toolang-guest/guest.env:ro" \
-        --volume "$DIAGNOSTIC_DIR:/tmp/toolang-guest-state" \
-        "$IMAGE" \
-        /bin/sh \
-        /tmp/toolang-guest/docker_guest.sh \
-        /tmp/toolang-guest/guest.env \
-        /tmp/toolang-guest-state/diagnostic.log \
-        "$DIAGNOSTIC_DISPLAY" \
-        "$PACKAGE_SOURCE" \
-        -- \
-        "$@") || exit $?
-fi
+CONTAINER_ID=$(docker create \
+    --name "$CONTAINER_NAME" \
+    --volume "$GUEST_DIR:/tmp/toolang-guest:ro" \
+    --volume "$STATE_DIR:/tmp/toolang-guest-state" \
+    "$IMAGE" \
+    /bin/sh /tmp/toolang-guest/docker_guest.sh \
+    /tmp/toolang-guest/docker_guest.py \
+    /tmp/toolang-guest/guest.env \
+    /tmp/toolang-guest-state/diagnostic.log \
+    "$DIAGNOSTIC_DISPLAY" "$PACKAGE_SOURCE" - -- "$@") || exit $?
 
 SHORT_ID=$(printf '%.12s' "$CONTAINER_ID")
 printf 'Created container · %s\n' "$SHORT_ID" >&2

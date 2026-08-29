@@ -11,13 +11,18 @@ from toolang.base.types.sandbox import SandboxRequest
 from toolang.common.files import atomic_write_text
 
 
-def stage_guest_script(path: Path) -> None:
-    """Copy the packaged guest core into one immutable launch stage."""
+_GUEST_FILES = {"docker_guest.sh": 0o755, "docker_guest.py": 0o644}
 
-    source = files("toolang.plugin.sandboxes").joinpath("docker_guest.sh")
-    with source.open("rb") as reader, path.open("wb") as writer:
-        shutil.copyfileobj(reader, writer)
-    path.chmod(0o755)
+
+def stage_guest_files(directory: Path) -> None:
+    """Copy the fixed guest bootstrap files into one immutable launch stage."""
+
+    package = files("toolang.plugin.sandboxes")
+    for name, mode in _GUEST_FILES.items():
+        path = directory / name
+        with package.joinpath(name).open("rb") as reader, path.open("wb") as writer:
+            shutil.copyfileobj(reader, writer)
+        path.chmod(mode)
 
 
 def write_guest_env(
@@ -68,13 +73,13 @@ def remove_stage_directory(
                 raise
 
 
-def prepare_background_log(request: SandboxRequest) -> None:
+def prepare_background_log(request: SandboxRequest) -> Path | None:
     """Validate and create the durable log used by background workloads."""
 
     if request.output == "inherit":
         if request.log_path is not None:
             raise ValueError("inherited docker output does not accept a log path")
-        return
+        return None
     if request.output != "file":
         raise ValueError(f"unsupported docker output mode: {request.output}")
     log_path = request.log_path
@@ -89,6 +94,8 @@ def prepare_background_log(request: SandboxRequest) -> None:
     resolved_log.parent.mkdir(parents=True, exist_ok=True)
     resolved_log.touch(mode=0o600, exist_ok=True)
     resolved_log.chmod(0o600)
+    relative_log = resolved_log.relative_to(resolved_home)
+    return request.hosted_home / relative_log
 
 
 def _dotenv_section(title: str, environ: Mapping[str, str]) -> str:

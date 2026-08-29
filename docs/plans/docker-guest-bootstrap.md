@@ -168,19 +168,19 @@ progress bars. Send raw installer output to a per-launch, mode-`0600`
 diagnostic file in the mounted agent runtime. Failures print a concise reason
 and the surviving local diagnostic path.
 
-`start.sh` does not redirect the server stream. Docker owns attachment for the
-whole container process:
+The fixed guest helper redirects only the background workload stream to the
+mapped agent log. Docker owns bootstrap attachment:
 
 - foreground `run` follows Docker logs until server exit or Ctrl+C;
-- background `start` follows the same logs through API readiness, then detaches
-  while Docker continues retaining daemon output;
+- background `start` follows bootstrap logs through API readiness, then
+  detaches while the workload continues writing directly to the agent log;
 - failure or release copies bounded Docker diagnostics to the private agent log
   before removing the container.
 
-Add symmetric `Sandbox.detach()`. Host implements it as a no-op. Docker uses it
-only to stop the controller-side log follower; it never stops the workload.
-`release()` is the attachment-cleanup backstop. Controller live progress ends
-before child output attaches, and readiness probing remains silent.
+Keep output detachment as a Docker-private optional capability so existing
+sandbox plugins retain the public lifecycle contract. `release()` is the
+attachment-cleanup backstop. Controller live progress ends before child output
+attaches, and readiness probing remains silent.
 
 ## Failure And Cleanup
 
@@ -197,6 +197,7 @@ progress, and diagnostics must never contain guest environment values.
 ## Design Touchpoints
 
 - `src/toolang/plugin/sandboxes/_docker_guest.py`
+- `src/toolang/plugin/sandboxes/docker_guest.py`
 - `src/toolang/plugin/sandboxes/docker.py`
 - `src/toolang/plugin/sandboxes/_docker_cli.py`
 - `src/toolang/plugin/sandboxes/host.py`

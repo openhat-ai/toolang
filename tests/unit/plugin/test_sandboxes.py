@@ -18,7 +18,7 @@ import pytest
 
 from toolang.base.errors import SandboxLaunchError, ToolangError
 from toolang.base.protocols.sandbox import Sandbox
-from toolang.base.types.sandbox import SandboxMount, SandboxRequest
+from toolang.base.types.sandbox import SandboxMount, SandboxRef, SandboxRequest
 from toolang.common.layout import AgentLayout
 from toolang.plugin.sandboxes import _docker_cli as docker_cli
 from toolang.plugin.sandboxes import _docker_guest as docker_guest
@@ -303,6 +303,7 @@ def test_docker_sandbox_prepares_and_launches(
     assert stat.S_IMODE(diagnostic_path.stat().st_mode) == 0o600
     assert {item.name for item in stage_dir.iterdir()} == {
         "docker_guest.sh",
+        "docker_guest.py",
         "guest.env",
         "start.json",
         "toolang-1.2.3-py3-none-any.whl",
@@ -310,13 +311,18 @@ def test_docker_sandbox_prepares_and_launches(
     assert (stage_dir / "docker_guest.sh").read_bytes() == (
         Path(docker_guest.__file__).with_name("docker_guest.sh").read_bytes()
     )
+    assert (stage_dir / "docker_guest.py").read_bytes() == (
+        Path(docker_guest.__file__).with_name("docker_guest.py").read_bytes()
+    )
     assert plan.command == (
         "/bin/sh",
         "/root/.toolang/agents/alice/.runtime/sandbox/docker_guest.sh",
+        "/root/.toolang/agents/alice/.runtime/sandbox/docker_guest.py",
         "/root/.toolang/agents/alice/.env",
         f"/root/.toolang/agents/alice/.runtime/{diagnostic_path.name}",
         str(diagnostic_path),
         "/root/.toolang/agents/alice/.runtime/sandbox/toolang-1.2.3-py3-none-any.whl",
+        "/root/.toolang/agents/alice/.runtime/agent.log",
         "--",
         "too",
         "serve",
@@ -357,11 +363,12 @@ def test_docker_background_sandbox_uses_docker_output_and_durable_diagnostics(
     assert log_path.is_file()
     assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
-    source = (stage_dir / "docker_guest.sh").read_text(encoding="utf-8")
-    assert 'exec "$PYTHON_BIN" "$HELPER"' in source
-    assert 'TOOLANG_SANDBOX_INSTANCE"] = hostname' in source
-    assert "startup.events" not in source
-    assert 'source "$GUEST_ENV"' not in source
+    shell = (stage_dir / "docker_guest.sh").read_text(encoding="utf-8")
+    helper = (stage_dir / "docker_guest.py").read_text(encoding="utf-8")
+    assert 'exec "$PYTHON_BIN" "$HELPER"' in shell
+    assert 'TOOLANG_SANDBOX_INSTANCE"] = hostname' in helper
+    assert "startup.events" not in shell + helper
+    assert 'source "$GUEST_ENV"' not in shell
 
 
 def test_docker_sandbox_mounts_roaming_source_links_as_guest_files(
@@ -449,6 +456,29 @@ def test_docker_sandbox_requires_a_concrete_dev_wheel(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="must be a wheel file"):
         sandbox.prepare(None, _request(tmp_path, dev=dev))
 
+    runtime_dir = tmp_path / "agents" / "alice" / ".runtime"
+    assert not list(runtime_dir.glob("docker-guest-*.log"))
+
+
+def test_docker_background_attach_is_quiet_without_progress(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    followed: list[str] = []
+
+    async def follow(container_id: str) -> Any:
+        followed.append(container_id)
+        return cast(Any, object())
+
+    monkeypatch.setattr(docker_sandbox, "docker_follow_container_logs", follow)
+    sandbox = create_sandbox("docker", config={})
+    plan = sandbox.prepare(None, _request(tmp_path))
+    ref = SandboxRef("container-123", plan.endpoint)
+
+    asyncio.run(sandbox.attach(plan, ref, progress=None, progress_id="runtime:test"))
+
+    assert followed == []
+
 
 def test_docker_guest_reuses_uv_and_preserves_generated_environment(
     tmp_path: Path,
@@ -474,10 +504,12 @@ def test_docker_guest_reuses_uv_and_preserves_generated_environment(
         (
             "/bin/sh",
             str(Path(docker_guest.__file__).with_name("docker_guest.sh")),
+            str(Path(docker_guest.__file__).with_name("docker_guest.py")),
             str(guest_env),
             str(diagnostic),
             str(diagnostic),
             "/packages with spaces/toolang-test.whl",
+            "-",
             "--",
             sys.executable,
             "-c",
@@ -540,15 +572,18 @@ def test_docker_guest_uses_python_and_pip_to_install_uv(tmp_path: Path) -> None:
     docker_guest.write_guest_env(guest_env, dotenv_envs={}, process_envs={})
     diagnostic = tmp_path / "diagnostic.log"
     diagnostic.touch()
+    workload_log = tmp_path / "workload.log"
 
     completed = subprocess.run(
         (
             "/bin/sh",
             str(Path(docker_guest.__file__).with_name("docker_guest.sh")),
+            str(Path(docker_guest.__file__).with_name("docker_guest.py")),
             str(guest_env),
             str(diagnostic),
             str(diagnostic),
             "toolang",
+            str(workload_log),
             "--",
             sys.executable,
             "-c",
@@ -568,7 +603,9 @@ def test_docker_guest_uses_python_and_pip_to_install_uv(tmp_path: Path) -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout == "workload\n"
+    assert completed.stdout == ""
+    assert workload_log.read_text(encoding="utf-8") == "workload\n"
+    assert stat.S_IMODE(workload_log.stat().st_mode) == 0o600
     assert completed.stderr.splitlines()[0] == "Installing uv..."
     assert completed.stderr.splitlines()[1] == "Installed uv · test"
 
@@ -588,10 +625,12 @@ def test_docker_guest_rejects_an_image_without_bootstrap_capabilities(
         (
             "/bin/sh",
             str(Path(docker_guest.__file__).with_name("docker_guest.sh")),
+            str(Path(docker_guest.__file__).with_name("docker_guest.py")),
             str(guest_env),
             str(diagnostic),
             str(diagnostic),
             "toolang",
+            "-",
             "--",
             "too",
             "--version",
@@ -629,10 +668,12 @@ def test_docker_guest_requires_the_default_short_container_hostname(
         (
             "/bin/sh",
             str(Path(docker_guest.__file__).with_name("docker_guest.sh")),
+            str(Path(docker_guest.__file__).with_name("docker_guest.py")),
             str(guest_env),
             str(diagnostic),
             str(diagnostic),
             "toolang",
+            "-",
             "--",
             "too",
             "--version",
@@ -1001,6 +1042,7 @@ def test_docker_foreground_sandbox_follows_container_logs(
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
     assert {path.name for path in stage_dir.iterdir()} == {
         "docker_guest.sh",
+        "docker_guest.py",
         "guest.env",
         "start.json",
     }

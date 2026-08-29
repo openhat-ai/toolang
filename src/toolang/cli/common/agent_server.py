@@ -109,7 +109,12 @@ def acquire_agent_server(
         enabled=show_progress,
     )
     try:
-        handle = asyncio.run(sandbox_runtime.launch(launch, progress=progress))
+        handle = asyncio.run(
+            sandbox_runtime.launch(
+                launch,
+                progress=progress if show_progress else None,
+            )
+        )
     except KeyboardInterrupt:
         progress.interrupt()
         raise

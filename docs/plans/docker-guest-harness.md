@@ -23,16 +23,17 @@ scripts/try_docker_guest.sh IMAGE [--dev WHEEL_OR_DIST] \
 This is a repository experiment utility, not a public command, entry point,
 config section, or plugin API.
 
-## Fixed Scripts
+## Fixed Guest Files
 
-- `src/toolang/plugin/sandboxes/docker_guest.sh` is the packaged Linux guest
-  core. Toolang `--sandbox docker` stages and executes only this file.
+- `docker_guest.sh` acquires uv and Python on Linux.
+- `docker_guest.py` safely loads the generated environment, installs Toolang,
+  and replaces itself with the workload after Python is available.
 - `scripts/try_docker_guest.sh` is the host experiment wrapper. Product code
   never references it.
 
-The wrapper invokes the same guest core as production and contains no uv,
-Python, or Toolang installation logic. Do not retain `start.sh`, `agent.sh`, or
-`docker_bootstrap.sh` aliases.
+Production and the wrapper stage the same fixed guest pair. The shell file is
+the only container entry point; the wrapper contains no installation logic. Do
+not retain `start.sh`, `agent.sh`, or `docker_bootstrap.sh` aliases.
 
 ## Guest Core
 
@@ -52,9 +53,9 @@ uv then owns supported-Python discovery or installation and the single Toolang
 installation path. Do not emulate curl with Python, invoke distro package
 managers, or add a separate pip-based Toolang environment.
 
-After Python is available, the shell writes its embedded Python helper into the
-private runtime. The helper parses `guest.env` without shell evaluation,
-validates Toolang, and finishes with `os.execvpe()`.
+After Python is available, the shell runs the staged helper. The helper parses
+`guest.env` without shell evaluation, validates Toolang, and finishes with
+`os.execvpe()`.
 
 ## Host Wrapper
 
@@ -80,8 +81,9 @@ append-only, and installer details remain private diagnostics.
 
 ## Touchpoints And Acceptance
 
-Touchpoints are the two scripts, `_docker_guest.py`, the Docker sandbox staging
-call site, focused offline tests, and opt-in Docker checks. No public CLI,
+Touchpoints are the two shell scripts, the fixed Python helper,
+`_docker_guest.py`, the Docker sandbox staging call site, focused offline tests,
+and opt-in Docker checks. No public CLI,
 configuration, plugin contract, image build, other engine, or remote progress
 change is included.
 

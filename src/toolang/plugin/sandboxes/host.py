@@ -17,6 +17,7 @@ from typing import Any
 
 from toolang.base.errors import SandboxLaunchError
 from toolang.base.protocols.sandbox import Sandbox
+from toolang.base.types.progress import ProgressSink
 from toolang.base.types.sandbox import (
     SandboxLocation,
     SandboxPlan,
@@ -84,15 +85,13 @@ class HostSandbox:
         self,
         plan: SandboxPlan,
         ref: SandboxRef,
+        *,
+        progress: ProgressSink | None = None,
+        progress_id: str | None = None,
     ) -> None:
         """Keep inherited host streams attached by the launched process itself."""
 
-        del plan, ref
-
-    async def detach(self, ref: SandboxRef) -> None:
-        """Keep inherited host streams attached to their launched process."""
-
-        del ref
+        del plan, ref, progress, progress_id
 
     async def running(self, ref: SandboxRef) -> bool:
         pid = _pid(ref)

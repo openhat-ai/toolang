@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from ..types.progress import ProgressSink
 from ..types.sandbox import (
     SandboxLocation,
     SandboxPlan,
@@ -33,11 +34,11 @@ class Sandbox(Protocol):
         self,
         plan: SandboxPlan,
         ref: SandboxRef,
+        *,
+        progress: ProgressSink | None = None,
+        progress_id: str | None = None,
     ) -> None:
         """Attach process-local observers after the reference is persisted."""
-
-    async def detach(self, ref: SandboxRef) -> None:
-        """Detach process-local observers without stopping the workload."""
 
     async def running(self, ref: SandboxRef) -> bool:
         """Return whether a launched workload is still running."""

@@ -60,10 +60,9 @@ def test_harness_forwards_dev_wheel_and_command_without_requoting(
     calls = _docker_calls(log)
     create = calls[0]
     assert create[0] == "create"
-    assert any(
-        item.endswith(":/tmp/toolang-guest/toolang-0.3.0-py3-none-any.whl:ro")
-        for item in create
-    )
+    assert any(item.endswith(":/tmp/toolang-guest:ro") for item in create)
+    assert "/tmp/toolang-guest/docker_guest.py" in create
+    assert "/tmp/toolang-guest/toolang-0.3.0-py3-none-any.whl" in create
     assert create[-3:] == ["printf", "argument with spaces", "$literal"]
     assert calls[1] == ["start", "--attach", _CONTAINER_ID]
     assert calls[2] == ["rm", "--force", _CONTAINER_ID]

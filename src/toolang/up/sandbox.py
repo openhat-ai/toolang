@@ -10,6 +10,7 @@ from decimal import Decimal
 from pathlib import Path
 import threading
 import time
+from typing import Protocol, runtime_checkable
 from urllib.error import URLError
 from urllib.request import urlopen
 from uuid import uuid4
@@ -75,6 +76,14 @@ class SandboxHandle:
     implementation: Sandbox
     state: SandboxState
     progress_id: str | None = None
+
+
+@runtime_checkable
+class _OutputDetach(Protocol):
+    """Optional process-local output attachment owned by a sandbox."""
+
+    async def detach_output(self, ref: SandboxRef) -> None:
+        """Detach output observers without stopping the workload."""
 
 
 async def resolve_launch(
@@ -257,15 +266,20 @@ async def _launch_locked(
         )
         active_stage = "start"
         active_label = "Attaching workload output"
-        await implementation.attach(plan, ref)
+        await implementation.attach(
+            plan,
+            ref,
+            progress=progress,
+            progress_id=spec.progress_id,
+        )
         active_label = "Waiting for agent API"
         await _wait_ready(
             implementation,
             ref,
             timeout_sec=SANDBOX_READY_TIMEOUT_SEC,
         )
-        if plan.output == "file":
-            await implementation.detach(ref)
+        if plan.output == "file" and isinstance(implementation, _OutputDetach):
+            await implementation.detach_output(ref)
         return SandboxHandle(implementation, state, progress_id=spec.progress_id)
     except BaseException as exc:
         _startup_progress(

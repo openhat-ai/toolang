@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from toolang.base.errors import SandboxLaunchError, ToolangError
 from toolang.base.protocols.sandbox import Sandbox
+from toolang.base.types.progress import ProgressSink
 from toolang.base.types.sandbox import (
     SandboxLocation,
     SandboxMount,
@@ -40,7 +41,7 @@ from ._docker_guest import (
     prepare_diagnostic,
     prepare_stage_directory,
     remove_stage_directory,
-    stage_guest_script,
+    stage_guest_files,
     validate_guest_environment,
     write_guest_env,
 )
@@ -152,10 +153,20 @@ class DockerSandbox:
             / "launches"
             / uuid4().hex[:8]
         )
+        diagnostic_path = (
+            request.local_home / ".runtime" / f"docker-guest-{stage_dir.name}.log"
+        )
         try:
-            return self._prepare(spec, request, stage_dir=stage_dir)
+            return self._prepare(
+                spec,
+                request,
+                stage_dir=stage_dir,
+                diagnostic_path=diagnostic_path,
+            )
         except BaseException:
             remove_stage_directory(stage_dir, ignore_errors=True)
+            with suppress(OSError):
+                diagnostic_path.unlink(missing_ok=True)
             raise
 
     def _prepare(
@@ -164,20 +175,18 @@ class DockerSandbox:
         request: SandboxRequest,
         *,
         stage_dir: Path,
+        diagnostic_path: Path,
     ) -> SandboxPlan:
         image = _image(spec, self._default_image)
         runtime_dir = request.hosted_home / ".runtime" / "sandbox"
         dotenv_envs, process_envs = self._guest_environment_sections(request)
         validate_guest_environment(dotenv_envs)
         validate_guest_environment(process_envs)
-        prepare_background_log(request)
+        hosted_log_path = prepare_background_log(request)
         prepare_stage_directory(stage_dir)
-        diagnostic_path = (
-            request.local_home / ".runtime" / f"docker-guest-{stage_dir.name}.log"
-        )
         hosted_diagnostic_path = request.hosted_home / ".runtime" / diagnostic_path.name
         prepare_diagnostic(diagnostic_path)
-        stage_guest_script(stage_dir / "docker_guest.sh")
+        stage_guest_files(stage_dir)
 
         hosted_dev_artifact: Path | None = None
         if request.local_dev_artifact is not None:
@@ -235,10 +244,12 @@ class DockerSandbox:
             command=(
                 "/bin/sh",
                 str(runtime_dir / "docker_guest.sh"),
+                str(runtime_dir / "docker_guest.py"),
                 str(request.hosted_home / ".env"),
                 str(hosted_diagnostic_path),
                 str(diagnostic_path),
                 package_source,
+                str(hosted_log_path) if hosted_log_path is not None else "-",
                 "--",
                 *request.command,
             ),
@@ -343,15 +354,20 @@ class DockerSandbox:
         self,
         plan: SandboxPlan,
         ref: SandboxRef,
+        *,
+        progress: ProgressSink | None = None,
+        progress_id: str | None = None,
     ) -> None:
         """Follow the container stream from bootstrap through the workload."""
 
-        del plan
+        del progress_id
+        if plan.output != "inherit" and progress is None:
+            return
         self._log_followers[ref.runtime_id] = await docker_follow_container_logs(
             ref.runtime_id
         )
 
-    async def detach(self, ref: SandboxRef) -> None:
+    async def detach_output(self, ref: SandboxRef) -> None:
         """Stop following output without stopping the container workload."""
 
         follower = self._log_followers.pop(ref.runtime_id, None)
@@ -377,7 +393,7 @@ class DockerSandbox:
         )
 
     async def release(self, ref: SandboxRef) -> None:
-        await self.detach(ref)
+        await self.detach_output(ref)
         log_path = ref.meta.get("log_path")
         if isinstance(log_path, str) and log_path:
             with suppress(OSError):

@@ -11,7 +11,7 @@ from typing import Any, cast
 import pytest
 
 from toolang.base.errors import SandboxLaunchError
-from toolang.base.types.progress import ProgressEvent
+from toolang.base.types.progress import ProgressEvent, ProgressSink
 from toolang.base.types.sandbox import (
     SandboxPlan,
     SandboxRef,
@@ -62,13 +62,14 @@ class FakeSandbox:
         self,
         plan: SandboxPlan,
         ref: SandboxRef,
+        *,
+        progress: ProgressSink | None = None,
+        progress_id: str | None = None,
     ) -> None:
+        del progress, progress_id
         self.calls.append(("attach", plan, ref))
         if self.attach_error is not None:
             raise self.attach_error
-
-    async def detach(self, ref: SandboxRef) -> None:
-        self.calls.append(("detach", ref))
 
     async def running(self, ref: SandboxRef) -> bool:
         self.calls.append(("running", ref))
@@ -124,6 +125,11 @@ class RecoverableLaunchSandbox(FakeSandbox):
         ref = SandboxRef("recoverable-workload", plan.endpoint)
         self.calls.append(("launch", plan))
         raise SandboxLaunchError("launch cleanup failed", ref=ref)
+
+
+class OutputDetachSandbox(FakeSandbox):
+    async def detach_output(self, ref: SandboxRef) -> None:
+        self.calls.append(("detach_output", ref))
 
 
 def _launch_spec(tmp_path: Path) -> sandbox.LaunchSpec:
@@ -495,7 +501,7 @@ def test_startup_renderer_failure_does_not_change_launch(
     assert handle.state.ref.runtime_id == "workload-1"
 
 
-def test_background_launch_detaches_output_after_readiness(
+def test_background_launch_does_not_require_an_output_capability(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -517,12 +523,42 @@ def test_background_launch_detaches_output_after_readiness(
         log_path=original.serve.layout.runtime_log,
     )
 
+    asyncio.run(sandbox.launch(spec))
+
+    names = [call[0] for call in implementation.calls if isinstance(call, tuple)]
+    assert names[:3] == ["prepare", "launch", "attach"]
+    assert not any(
+        isinstance(call, tuple) and call[0] == "detach_output"
+        for call in implementation.calls
+    )
+    assert asyncio.run(sandbox.stop(spec.serve.layout)) is True
+
+
+def test_background_launch_detaches_optional_output_after_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    implementation = OutputDetachSandbox()
+    monkeypatch.setattr(
+        sandbox,
+        "create_sandbox",
+        lambda _name, config: implementation,
+    )
+
+    async def ready(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    original = _launch_spec(tmp_path)
+    spec = replace(
+        original,
+        output="file",
+        log_path=original.serve.layout.runtime_log,
+    )
+
     handle = asyncio.run(sandbox.launch(spec))
 
-    ref = handle.state.ref
-    names = [call[0] for call in implementation.calls if isinstance(call, tuple)]
-    assert names[:4] == ["prepare", "launch", "attach", "detach"]
-    assert ("detach", ref) in implementation.calls
+    assert ("detach_output", handle.state.ref) in implementation.calls
     assert asyncio.run(sandbox.stop(spec.serve.layout)) is True
 
 

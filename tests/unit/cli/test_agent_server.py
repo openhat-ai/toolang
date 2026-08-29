@@ -307,6 +307,7 @@ def test_agent_server_launches_and_cleans_up_a_temporary_guest(
         sandbox="docker",
         dev=development,
         ui_base_url="https://ui.test",
+        show_progress=False,
     ) as selected:
         calls.append("body")
         assert selected == AgentServerRef(
@@ -315,7 +316,7 @@ def test_agent_server_launches_and_cleans_up_a_temporary_guest(
         )
 
     assert calls == [
-        ("launch", launch, progress),
+        ("launch", launch, None),
         "body",
         ("stop", layout, handle, False, shutdown_progress),
     ]
