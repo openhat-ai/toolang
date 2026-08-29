@@ -113,38 +113,38 @@ useful and stable.
 The running TTY row is:
 
 ```text
-SPINNER RUNNING_SENTENCE [· DETAIL] [· FACTS] · ELAPSED
+SPINNER RUNNING_CLAUSE [(FACTS, ELAPSED)]...
 ```
 
 The successful TTY row uses the same two-cell marker slot without a spinner:
 
 ```text
-  COMPLETED_SENTENCE [· DETAIL] [· FACTS] · ELAPSED
+  COMPLETED_CLAUSE [(FACTS, ELAPSED)]
 ```
 
 Examples are successive live snapshots, not accumulated lines:
 
 ```text
-⠋ Fetching skill browser... · 2/5 caps · 1.2s
-  Fetched skill browser. · 3/5 caps · 1.3s
-⠙ Loading setup... · 1.4s
-  Loaded setup. · 1.6s
-⠹ Discovering models... · 2.1s
-  Discovered 12 models from 5 providers. · 2.2s
-⠼ Installing Toolang... · package index · 8.4s
-  Installed Toolang. · package index · 8.8s
-⠴ Waiting for the agent API... · http://localhost:7001 · 9.1s
-  Connected to the agent API. · http://localhost:7001 · 9.3s
+⠋ Fetching skill browser (2/5 caps, 1.2s)...
+  Fetched skill browser (3/5 caps, 1.3s)
+⠙ Loading setup (1.4s)...
+  Loaded setup (1.6s)
+⠹ Discovering models (2.1s)...
+  Discovered 12 models from 5 providers (2.2s)
+⠼ Installing Toolang from the package index (8.4s)...
+  Installed Toolang from the package index (8.8s)
+⠴ Waiting for the agent API at http://localhost:7001 (9.1s)...
+  Connected to the agent API at http://localhost:7001 (9.3s)
 ```
 
 Non-TTY output removes the marker slot and elapsed time and commits both action
 and outcome sentences:
 
 ```text
-Fetching skill browser... · 2/5 caps
-Fetched skill browser. · 3/5 caps
-Installing Toolang... · package index
-Installed Toolang. · package index
+Fetching skill browser (2/5 caps)...
+Fetched skill browser (3/5 caps)
+Installing Toolang from the package index...
+Installed Toolang from the package index
 ```
 
 Exact duplicate events produce no output. A change to sentence, bounded detail,
@@ -153,14 +153,22 @@ non-TTY line. On a TTY, a completed sentence replaces its running sentence and
 remains until the next material event or segment handoff; it is never separately
 committed to scrollback.
 
-The producer supplies the complete sentence, including punctuation; the
-presenter never conjugates verbs. A running activity normally uses the present
-participle and ends in `...`. A completed action uses simple past and ends in
-`.`. A stage that owns several actions may emit a past-tense checkpoint while
-the stage remains `running`, then begin its next action; only the final sentence
-uses the stage's terminal status. Failures use `Failed to ...`. Explicit skips
-use `Skipped ...` or another unambiguous past-tense verb. Labels never contain
-an agent name.
+The producer supplies the complete progress text; the presenter never
+conjugates verbs. A running activity normally uses the present participle and
+ends in `...`. A completed action uses simple past with no terminal punctuation.
+A stage that owns several actions may emit a past-tense checkpoint while the
+stage remains `running`, then begin its next action; only the final sentence
+uses the stage's terminal status. Failures use `Failed to VERB` with no terminal
+punctuation. Explicit skips use `Skipped VERB` or another unambiguous past-tense
+verb. Labels never contain an agent name.
+
+All supplemental context appears before the running ellipsis or at the end of
+the completed text. Producers fold an object, source, image, endpoint, or other
+useful detail into the natural sentence, for example
+`Installing Toolang from toolang-0.3.0-py3-none-any.whl...`. The presenter
+inserts generated facts and TTY elapsed time as one parenthetical suffix before
+`...` for running work and at the end of completed work. It never appends a
+field after `...` and never adds a period.
 
 Use this vocabulary and tone:
 
@@ -176,14 +184,15 @@ Use this vocabulary and tone:
 | `runtime.stop` | `Stopping agent` | `Stopped agent` |
 | `runtime.destroy` | `Removing runtime` | `Removed runtime` |
 
-The object or bounded detail may complete the sentence naturally, as in
-`Fetching skill browser` or `Fetching image python:3.13-slim`. A supplemental
-field is used when joining it into the sentence would be awkward, as with an
-endpoint or package source. Sandbox type may appear as the object of an action,
-such as `Preparing Docker sandbox`, but is never repeated as a prefix on every
-line. Third-party implementations follow the same verb forms. Installer
-commands, environment values, secrets, and raw logs are never labels or
-details.
+The object or bounded detail completes the sentence naturally, as in
+`Fetching skill browser...`, `Fetching image python:3.13-slim...`, or
+`Waiting for the agent API at http://localhost:7001...`. Sandbox type may
+appear as the object of an action, such as `Preparing Docker sandbox...`, but is
+never repeated as a prefix on every line. Third-party implementations follow
+the same verb and line-ending rules. Installer commands, environment
+values, secrets, and raw logs are never labels or details. `detail` may retain
+bounded diagnostic context, but the presenter does not append it as a generic
+post-sentence field.
 
 Prepare shows `N/T caps` only when a total is known and greater than one. `N`
 counts `ok` and `skipped` items. Setup and runtime add no invented counts.
@@ -202,18 +211,21 @@ min(attached terminal width, TOOLANG_PROGRESS_MAX_WIDTH)
 ```
 
 The configured maximum is used for non-TTY output. Measurement and wrapping use
-display cells. Logical fields wrap at ` · ` boundaries with a two-cell hanging
-indent; a single overlong field folds by display cells. Details are whitespace
-normalized and bounded to 80 display cells before layout. The sentence and
-aggregate facts are not silently dropped.
+display cells. Sentences wrap at word boundaries with a two-cell hanging
+indent; a single overlong word folds by display cells. Natural details are
+whitespace normalized and bounded before sentence construction. Parenthetical
+facts remain intact when they fit and otherwise wrap with the sentence. The
+sentence and aggregate facts are not silently dropped. A logical progress
+sentence may wrap across physical lines. A running sentence ends in `...`; a
+completed or failed sentence has no terminal punctuation.
 
 The TTY live row is dim so it remains secondary to execution and command
 results. A stable failure sentence uses normal-intensity red; continuation
 labels are dim and the reason uses normal intensity. Success green is not used.
 Non-TTY output contains UTF-8 text but no ANSI, cursor movement,
 carriage-return rewriting, or in-place replacement. It writes every material
-sentence in event order, including `Fetching ...` followed later by
-`Fetched ...`.
+sentence in event order, including `Fetching X...` followed later by
+`Fetched X`.
 
 TTY live presentation is delayed for 150 milliseconds to avoid flashing for
 cache hits and fast local work. It never delays the operation itself and has no
@@ -248,10 +260,10 @@ or Run ownership ends.
 One operational failure produces one block:
 
 ```text
-Failed to install Toolang.
+Failed to install Toolang
   Stage: runtime.create
-  Reason: Could not install Toolang from the package index.
-  Fix: Check network access or use --dev PATH with a compatible wheel.
+  Reason: Could not install Toolang from the package index
+  Fix: Check network access or use --dev PATH with a compatible wheel
   Log: ~/.toolang/agents/eve/.runtime/agent.log
 ```
 
@@ -290,23 +302,23 @@ redirection.
 ### Complete Non-TTY Temporary Run
 
 ```text
-Fetching skill browser... · 1/5 caps
-Fetched skill browser. · 2/5 caps
+Fetching skill browser (1/5 caps)...
+Fetched skill browser (2/5 caps)
 Preparing Docker sandbox...
-Prepared Docker sandbox.
-Installing Toolang... · package index
-Installed Toolang. · package index
+Prepared Docker sandbox
+Installing Toolang from the package index...
+Installed Toolang from the package index
 Checking Toolang...
-Checked Toolang.
-Created runtime.
+Checked Toolang
+Created runtime
 Starting agent...
-Started agent.
+Started agent
 Loading setup...
-Loaded setup.
+Loaded setup
 Discovering models...
-Discovered 12 models from 5 providers.
-Waiting for the agent API... · http://localhost:7001
-Connected to the agent API. · http://localhost:7001
+Discovered 12 models from 5 providers
+Waiting for the agent API at http://localhost:7001...
+Connected to the agent API at http://localhost:7001
 
 • Thinking...
 • Finished the report.
@@ -314,9 +326,9 @@ Connected to the agent API. · http://localhost:7001
 ∎ run_abc123 succeeded                                      9.4s · 1 model call
 
 Stopping agent...
-Stopped agent.
+Stopped agent
 Removing runtime...
-Removed runtime.
+Removed runtime
 ```
 
 TTY displays the same activity sequence in one transient row, then leaves only
@@ -332,10 +344,10 @@ stable identity, and may append extra information after `:`:
 ```text
 Agent eve running: http://localhost:7001 (Ctrl+C to stop)
 Agent eve started: http://localhost:7001
-Agent eve stopped.
+Agent eve stopped
 Agent brice cloned: ~/.toolang/agents/brice/agent.too
 Skill browser added: ~/.toolang/agents/eve/skills/browser/SKILL.md
-Skill browser removed.
+Skill browser removed
 ```
 
 Inspection commands keep their result view and do not add a separate final
@@ -378,8 +390,8 @@ compatibility path.
    threshold.
 3. Non-TTY output is ordered, append-only, ANSI-free, and never replaces a
    line; it emits and deduplicates each material running sentence followed by
-   its checkpoint or terminal sentence, such as `Fetching ...` then
-   `Fetched ...`.
+   its checkpoint or terminal sentence, such as `Fetching X...` then
+   `Fetched X`.
 4. Concurrent prepare events select the most recently changed active item and
    maintain accurate `N/T caps` facts without growing multiple live rows.
 5. Cached and skipped prepare work leaves no pending or running residue.
