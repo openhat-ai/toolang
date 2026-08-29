@@ -32,6 +32,9 @@ definition before the operational-progress feature is complete.
 - Current tests cover isolated activity lines, but not complete
   prepare/setup/runtime transcripts, narrow output, segment handoffs, or the
   equivalence of agent-first and command-first forms.
+- Some commands construct `ProgressEvent` values and hard-code prepare labels,
+  while other paths use `as_progress_sink()` or omit a sink. This makes command
+  orchestration responsible for domain vocabulary and progress lifetime.
 
 ## Goal
 
@@ -71,6 +74,63 @@ There is no operational Run header or footer and no adapter between the two
 event families. `CliProgress` remains the only public operational presenter.
 Implementation may use private state, but must not add public presenter or
 projector concepts per kind.
+
+## Programming Model
+
+Progress is an invocation-scoped optional dependency. Every public core entry
+point that may perform visible blocking work accepts the same keyword-only
+parameter:
+
+```python
+progress: ProgressSink | None = None
+```
+
+This applies consistently to preparation, setup refresh, sandbox launch,
+runtime stop and destroy, and corresponding plugin entry points. A core object
+does not store a CLI presenter or sink in its constructor. Nested core calls
+forward the sink they received. Calls with `None` perform identical work
+without producing progress, and a sink failure remains advisory and cannot
+change the operation's result.
+
+The object that owns the work owns its events and complete verb-first text. A
+command never imports `ProgressEvent` or `emit_progress`, synthesizes lifecycle
+events around a core call, or hard-codes text such as `Loading setup...` or
+`Installing Toolang...`. A plugin emits the activities it performs; a core
+orchestrator emits only work it performs itself. Guest transport forwards the
+closed progress vocabulary without moving its text into command code.
+If a command currently performs progress-worthy domain work directly, such as
+copying an agent tree, that operation moves behind the owning core API instead
+of gaining a command-local progress wrapper.
+
+`CliProgress` is an independent presentation object. `make_cli_progress()`
+always returns one and accepts only presentation inputs such as the target
+stream and `enabled`. The presenter determines TTY mode from its stream. Its
+read-only `sink` property is a `ProgressSink` when enabled and `None` when
+disabled; this removes `as_progress_sink()` and prevents quiet commands from
+activating guest progress transport. Context exit closes it idempotently, so a
+command normally owns exactly one instance per operational segment:
+
+```python
+watcher = SetupWatcher(layout)
+
+with make_cli_progress(enabled=not quiet) as ui:
+    state = prepare_agent_state(layout, progress=ui.sink)
+    setup = asyncio.run(watcher.refresh(progress=ui.sink))
+    handle = asyncio.run(runtime.launch(launch, progress=ui.sink))
+```
+
+The same `ui.sink` composes unrelated core operations without command-side
+translation. Leaving the context closes its live region before Run, logs, a
+prompt UI, or the final command result takes the terminal. Stop and destroy
+after that handoff use a new context and sink; a cleanup presenter is not
+created during launch.
+
+`SetupWatcher.current()` remains a synchronous, side-effect-free snapshot read
+and therefore accepts no progress. `refresh()` owns configuration loading and
+model discovery, returns the new snapshot, and accepts progress for that
+invocation. This lets an initial command refresh be visible while periodic
+`SetupWatcher.run()` refreshes remain silent. Other long-lived core objects use
+the same separation between pure reads and blocking mutations.
 
 ## One Operational Segment
 
@@ -399,15 +459,19 @@ sentence. Commands do not gain an aggregate `Prepared`, `Loaded`, or
 - `src/toolang/cli/common/progress.py`: replace the prepare-specific and
   operational-specific render branches with one segment state model; use
   shared display-cell width, wrapping, delayed live reveal, activity selection,
-  and failure rendering.
+  and failure rendering. Make `CliProgress` context-managed with idempotent
+  close and an optional `sink`; remove `as_progress_sink()` and domain-specific
+  factory options.
 - Runtime, Script, Chat, clone, cap, and inspection command orchestration: pass
   one presenter through contiguous pre-execution work, close it at the defined
-  handoff, and request a new segment only for cleanup.
+  handoff, and request a new segment only for cleanup. Remove command-authored
+  progress events and literal progress labels.
 - `src/toolang/up/sandbox.py` and launch-token observation: close
   `runtime.create` before starting AgentServer, open `runtime.start` before
   initial setup, and resume its readiness activity after setup.
-- Prepare producers: use stable IDs and stage semantics rather than label
-  prefixes to drive aggregation; emit complete verb-first running, checkpoint,
+- Prepare, setup, runtime, and plugin producers: accept an invocation-scoped
+  optional sink, use stable IDs and stage semantics rather than label prefixes
+  to drive aggregation, and emit complete verb-first running, checkpoint,
   terminal, and failure sentences from the activity vocabulary.
 - Setup and sandbox plugins: retain semantic events and bounded details; do not
   preformat rows or failures.
@@ -426,48 +490,56 @@ compatibility path.
 1. Prepare, setup, and runtime events render through the same sentence grammar,
    width logic, style rules, and presenter instance within one segment. TTY
    progress begins directly with the verb and uses no spinner or status glyph.
-2. TTY cache hits and operations completing before 150 milliseconds leave no
+2. Commands create one `CliProgress` context per segment and pass its optional
+   sink unchanged to core entry points. Quiet mode produces a `None` sink, TTY
+   selection belongs to the presenter, and no command constructs a
+   `ProgressEvent`, calls `emit_progress`, or contains domain progress text.
+3. `SetupWatcher.current()` and other pure reads emit nothing; an explicitly
+   instrumented `refresh()` or blocking mutation emits its own events. The same
+   long-lived object supports a visible foreground call followed by silent
+   background calls without stored presenter state.
+4. TTY cache hits and operations completing before 150 milliseconds leave no
    live residue or artificial delay; slower work becomes visible by the
    threshold.
-3. A TTY activity shows no elapsed time before 1 second, updates its own elapsed
+5. A TTY activity shows no elapsed time before 1 second, updates its own elapsed
    time after the threshold, and retains the final value only when the threshold
    was reached. A new activity starts a new timer; reselecting a concurrent
    prepare item preserves that item's original timer.
-4. Non-TTY output is ordered, append-only, ANSI-free, never includes elapsed
+6. Non-TTY output is ordered, append-only, ANSI-free, never includes elapsed
    time or timer-only rows, and never replaces a line; it emits and deduplicates
    each material running sentence followed by its checkpoint or terminal
    sentence, such as `Fetching X...` then `Fetched X`.
-5. Concurrent prepare events select the most recently changed active item and
+7. Concurrent prepare events select the most recently changed active item and
    maintain accurate `N/T caps` facts without growing multiple live rows.
-6. Cached and skipped prepare work leaves no pending or running residue.
-7. Setup load and discover use the same grammar; expected Ollama and llama.cpp
+8. Cached and skipped prepare work leaves no pending or running residue.
+9. Setup load and discover use the same grammar; expected Ollama and llama.cpp
    offline or timeout results remain successful discovery, while unexpected
    exceptions produce one `setup.discover` failure block.
-8. Runtime create closes before start; initial guest setup temporarily owns the
+10. Runtime create closes before start; initial guest setup temporarily owns the
    live leaf inside start; readiness resumes after setup without a second live
    region.
-9. Wide, narrow, and Unicode sentences/details wrap by display cells within the
+11. Wide, narrow, and Unicode sentences/details wrap by display cells within the
    same configured maximum as Run output.
-10. One failure block contains the qualified stage and reason, conditional fix
+12. One failure block contains the qualified stage and reason, conditional fix
    and log, and no duplicated outer or workload error.
-11. Prepare-to-setup-to-runtime changes add no blank line, presenter reset, or
+13. Prepare-to-setup-to-runtime changes add no blank line, presenter reset, or
     duplicate activity. Each new activity intentionally starts its own elapsed
     timer; no segment-total clock appears.
-12. Operational-to-Run handoff has exactly one leading Run gap and no residual
+14. Operational-to-Run handoff has exactly one leading Run gap and no residual
     live row; Run projection and footer output remain byte-for-byte unchanged.
-13. A root Run footer precedes cleanup. Non-TTY has exactly one intervening
+15. A root Run footer precedes cleanup. Non-TTY has exactly one intervening
     blank row; successful TTY cleanup is transient and leaves the footer as the
     final stable line.
-14. Ready lines precede all foreground logs, Ctrl+C stops log following before
+16. Ready lines precede all foreground logs, Ctrl+C stops log following before
     cleanup presentation, and no log corrupts a live row.
-15. Progress sentences always begin with a verb and never display the agent
+17. Progress sentences always begin with a verb and never display the agent
     name; command results begin with the object and stable identity, as in
     `Agent eve started: ...` or `Skill browser added: ...`, and never include
     operational elapsed time.
-16. Agent-first and command-first forms, embedded host execution, attached
+18. Agent-first and command-first forms, embedded host execution, attached
     execution, temporary guest execution, Linux/macOS terminals, and Docker
     controlled from Linux/macOS/WSL2 produce the defined semantics.
-17. Default verification and opt-in Docker transcript tests pass.
+19. Default verification and opt-in Docker transcript tests pass.
 
 ## Risks and Open Questions
 
