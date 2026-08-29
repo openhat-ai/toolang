@@ -160,17 +160,16 @@ def runs_command(
 
 def inspect_command(
     ctx: typer.Context,
-    pointer: Annotated[
-        str, typer.Argument(help="Historical record or field Pointer to inspect.")
-    ],
+    pointer: Annotated[str, typer.Argument(help="Pointer to inspect.")],
     human: Annotated[
-        bool, typer.Option("--human", help="Render a human-readable value.")
+        bool,
+        typer.Option("--human", help="Render human-readable output (default)."),
     ] = False,
     json_view: Annotated[
         bool, typer.Option("--json", help="Render exact canonical JSON.")
     ] = False,
 ) -> None:
-    """Inspect one historical execution record or field."""
+    """Inspect runs."""
 
     if human and json_view:
         raise click.UsageError("--human and --json are mutually exclusive")

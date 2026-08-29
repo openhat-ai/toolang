@@ -128,6 +128,22 @@ def test_version_option_has_no_short_alias(name: str, app: typer.Typer) -> None:
     assert "No such option: -V" in short_result.output
 
 
+def test_inspect_help_is_concise_and_consistent() -> None:
+    runner = CliRunner()
+    root_result = runner.invoke(toolang_app, ["--help"], prog_name="toolang")
+    inspect_result = runner.invoke(
+        toolang_app, ["inspect", "--help"], prog_name="toolang"
+    )
+
+    assert root_result.exit_code == 0, root_result.output
+    assert inspect_result.exit_code == 0, inspect_result.output
+    for result in (root_result, inspect_result):
+        output = click.unstyle(result.output)
+        assert "Inspect runs." in output
+        assert "Inspect run records." not in output
+        assert "Inspect a historical record or one of its fields." not in output
+
+
 @pytest.mark.parametrize(
     ("name", "app", "path"),
     CLI_COMMANDS,
