@@ -341,9 +341,8 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             _refresh_agent_state(
                 context_root(ctx),
                 selected_agent,
-                progress_total=1,
             )
-        typer.echo(f"Created {kind} {name}: {saved.path}")
+        typer.echo(f"{kind.title()} {name} created: {saved.path}")
 
     return new_cap
 
@@ -381,9 +380,8 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             _refresh_agent_state(
                 context_root(ctx),
                 selected_agent,
-                progress_total=1,
             )
-        typer.echo(f"Updated {kind} {name}: {saved.path}")
+        typer.echo(f"{kind.title()} {name} updated: {saved.path}")
 
     return edit_cap
 
@@ -393,26 +391,33 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         ref: str = typer.Argument(..., help=f"{title} ref"),
     ) -> None:
-        from ..common.progress import as_progress_sink
-
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
         progress = _make_cap_write_progress()
         try:
-            canonical_ref = cap_state.resolve_remote_ref(
-                kind, ref, progress=as_progress_sink(progress)
-            )
-            name = cap_state.remote_entry_name(kind, canonical_ref)
-            _configured_caps(context_root(ctx), agent_name, scope).create(
-                cap_config.CapRef(kind=kind, name=name, ref=canonical_ref)
-            )
+            with progress:
+                canonical_ref = cap_state.resolve_remote_ref(
+                    kind,
+                    ref,
+                    progress=progress.sink,
+                )
+                name = cap_state.remote_entry_name(kind, canonical_ref)
+                _configured_caps(context_root(ctx), agent_name, scope).create(
+                    cap_config.CapRef(kind=kind, name=name, ref=canonical_ref)
+                )
+                if selected_agent:
+                    _refresh_agent_state(
+                        context_root(ctx),
+                        selected_agent,
+                        progress=progress,
+                    )
         except CatalogConflictError as exc:
-            progress.finish(details=False)
             raise click.ClickException(
                 f"{title} {cap_state.remote_entry_name(kind, ref)} already exists"
             ) from exc
         except ValueError as exc:
-            progress.finish(details=False)
+            if progress.failure_stage is not None:
+                raise click.ClickException(progress.failure_message(exc)) from exc
             message = str(exc)
             if "conflicting entries" in message:
                 raise click.ClickException(
@@ -428,19 +433,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             source_origin="remote",
             source_form="configured",
         )
-        if selected_agent:
-            try:
-                _refresh_agent_state(
-                    context_root(ctx),
-                    selected_agent,
-                    progress_total=1,
-                    progress=progress,
-                )
-            finally:
-                progress.finish(details=False)
-        else:
-            progress.finish(details=False)
-        typer.echo(f"Added {kind} {entry.name}: {entry.ref}")
+        typer.echo(f"{kind.title()} {entry.name} added: {entry.ref}")
 
     return add_cap
 
@@ -470,9 +463,8 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             _refresh_agent_state(
                 context_root(ctx),
                 selected_agent,
-                progress_total=0,
             )
-        typer.echo(f"Removed {kind} {name}: {entry.ref}")
+        typer.echo(f"{kind.title()} {name} removed: {entry.ref}")
 
     return remove_cap
 
@@ -504,9 +496,8 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             _refresh_agent_state(
                 context_root(ctx),
                 selected_agent,
-                progress_total=0,
             )
-        typer.echo(f"Deleted {kind} {name}: {deleted_path}")
+        typer.echo(f"{kind.title()} {name} deleted: {deleted_path}")
 
     return delete_cap
 
@@ -608,23 +599,22 @@ def _all_cap_entries(
     kinds: set[EntryKind],
 ) -> tuple[StateCap, ...]:
     if prepare and (toolang_root / "agents" / agent_name / "agent.too").is_file():
-        from ..common.progress import as_progress_sink, make_cli_progress
+        from ..common.progress import make_cli_progress
 
-        progress = make_cli_progress(
-            prepare_summary_label="Resolved",
-            show_materialize_summary=True,
-        )
+        progress = make_cli_progress()
         try:
-            state = user_call(
-                prepare_agent_state,
-                AgentLayout.resident(toolang_root, agent_name),
-                progress=as_progress_sink(progress),
-            )
-            entries = _state_cap_entries(state, scope=scope, kinds=kinds)
-            progress.set_prepare_total(len(entries))
-            return entries
-        finally:
-            progress.finish(details=False)
+            with progress:
+                state = user_call(
+                    prepare_agent_state,
+                    AgentLayout.resident(toolang_root, agent_name),
+                    progress=progress.sink,
+                )
+                entries = _state_cap_entries(state, scope=scope, kinds=kinds)
+                return entries
+        except Exception as exc:
+            if progress.failure_stage is not None:
+                raise click.ClickException(progress.failure_message(exc)) from exc
+            raise
     return cap_state.list_entries(
         toolang_root,
         agent_name,
@@ -713,25 +703,34 @@ def _configured_caps(
 def _make_cap_write_progress() -> CliProgress:
     from ..common.progress import make_cli_progress
 
-    return make_cli_progress(
-        prepare_summary_label="Resolved",
-        show_materialize_summary=True,
-    )
+    return make_cli_progress()
 
 
 def _refresh_agent_state(
     toolang_root: Path,
     agent_name: str,
     *,
-    progress_total: int,
     progress: CliProgress | None = None,
 ) -> None:
-    from ..common.progress import as_progress_sink
-
-    user_call(
-        prepare_agent_state,
-        AgentLayout.resident(toolang_root, agent_name),
-        progress=as_progress_sink(progress),
-    )
     if progress is not None:
-        progress.set_prepare_total(progress_total)
+        _prepare_agent_state_with_progress(toolang_root, agent_name, progress)
+        return
+    with _make_cap_write_progress() as owned_progress:
+        _prepare_agent_state_with_progress(toolang_root, agent_name, owned_progress)
+
+
+def _prepare_agent_state_with_progress(
+    toolang_root: Path,
+    agent_name: str,
+    progress: CliProgress,
+) -> None:
+    try:
+        user_call(
+            prepare_agent_state,
+            AgentLayout.resident(toolang_root, agent_name),
+            progress=progress.sink,
+        )
+    except Exception as exc:
+        if progress.failure_stage is not None:
+            raise click.ClickException(progress.failure_message(exc)) from exc
+        raise

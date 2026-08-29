@@ -2,12 +2,11 @@
 
 ## Status
 
-Feature definition proposed for human confirmation. This document refines the
+Feature definition, approved for implementation on 2026-08-29. This document refines the
 presentation and terminal-handoff sections of
 [Unify Operational Progress](operational-progress-lifecycle.md). It does not
 change the approved `ProgressEvent` contract or the Run grammar. Pull request
-#375 is the current implementation under review and must be reconciled with this
-definition before the operational-progress feature is complete.
+#375 was superseded by the split implementation of this definition.
 
 ## Verified Current Behavior
 
@@ -608,5 +607,4 @@ compatibility path.
 - Full transcript tests must normalize elapsed values without weakening
   ordering, spacing, or ownership assertions.
 
-There are no open product questions. Human confirmation is required before
-implementation.
+There are no open product questions.

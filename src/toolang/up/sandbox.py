@@ -19,6 +19,7 @@ from weakref import WeakKeyDictionary
 from toolang.base.errors import SandboxLaunchError
 from toolang.base.protocols.sandbox import Sandbox
 from toolang.base.types.progress import (
+    ProgressEvent,
     ProgressSink,
     ProgressStage,
     ProgressStatus,
@@ -44,6 +45,7 @@ from toolang.up.records import SandboxState
 from toolang.up.server import ServeSpec, build_serve_argv, resolve_serve
 
 SANDBOX_READY_TIMEOUT_SEC = 30.0
+SANDBOX_ATTACH_GRACE_SEC = 0.2
 _TASK_LOCKS: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[Path, asyncio.Lock]] = (
     WeakKeyDictionary()
 )
@@ -169,11 +171,13 @@ async def _launch_locked(
     *,
     progress: ProgressSink | None,
 ) -> SandboxHandle:
+    sandbox_name = spec.sandbox.partition(":")[0].replace("_", " ").title()
+    prepare_label = f"Preparing {sandbox_name} sandbox..."
     _startup_progress(
         progress,
         spec,
         stage="create",
-        label="Preparing sandbox",
+        label=prepare_label,
         status="running",
         detail=spec.sandbox,
     )
@@ -229,7 +233,7 @@ async def _launch_locked(
             progress,
             spec,
             stage="create",
-            label="Preparing sandbox",
+            label=f"Failed to prepare {sandbox_name} sandbox",
             status="failed",
             detail=str(exc),
         )
@@ -238,14 +242,23 @@ async def _launch_locked(
         progress,
         spec,
         stage="create",
-        label="Starting workload",
+        label=f"Prepared {sandbox_name} sandbox",
+        status="running",
+        detail=plan.sandbox,
+    )
+    _startup_progress(
+        progress,
+        spec,
+        stage="create",
+        label="Creating runtime...",
         status="running",
         detail=plan.sandbox,
     )
     ref: SandboxRef | None = None
     state: SandboxState | None = None
     active_stage: ProgressStage = "create"
-    active_label = "Starting workload"
+    active_label = "Failed to create runtime"
+    attach_failure_observed = False
     try:
         try:
             ref = await implementation.launch(plan)
@@ -256,40 +269,106 @@ async def _launch_locked(
             raise
         state = SandboxState(sandbox=plan.sandbox, ref=ref)
         state.save(spec.serve.layout.sandbox_state)
+        deferred_start_events: list[ProgressEvent] = []
+
+        def forward_attach_progress(event: ProgressEvent) -> None:
+            nonlocal attach_failure_observed
+            if event.status == "failed":
+                attach_failure_observed = True
+            if event.kind == "runtime" and event.stage == "start":
+                deferred_start_events.append(event)
+                return
+            if progress is not None:
+                with suppress(Exception):
+                    progress(event)
+
+        attach_task = asyncio.create_task(
+            implementation.attach(
+                plan,
+                ref,
+                progress=(forward_attach_progress if progress is not None else None),
+                progress_id=spec.progress_id,
+            )
+        )
+        ready_task = asyncio.create_task(
+            _wait_ready(
+                implementation,
+                ref,
+                timeout_sec=SANDBOX_READY_TIMEOUT_SEC,
+            )
+        )
+        try:
+            done, _pending = await asyncio.wait(
+                (attach_task, ready_task),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if attach_task in done:
+                await attach_task
+            else:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(attach_task),
+                        timeout=SANDBOX_ATTACH_GRACE_SEC,
+                    )
+                except TimeoutError:
+                    attach_task.cancel()
+                    await asyncio.gather(attach_task, return_exceptions=True)
+            if (
+                ready_task.done()
+                and not ready_task.cancelled()
+                and ready_task.exception() is not None
+            ):
+                await ready_task
+        except BaseException:
+            for task in (attach_task, ready_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(attach_task, ready_task, return_exceptions=True)
+            raise
         _startup_progress(
             progress,
             spec,
             stage="create",
-            label="Starting workload",
+            label="Created runtime",
             status="ok",
             detail=ref.runtime_id,
         )
         active_stage = "start"
-        active_label = "Attaching workload output"
-        await implementation.attach(
-            plan,
-            ref,
-            progress=progress,
-            progress_id=spec.progress_id,
+        active_label = "Failed to connect to the agent API"
+        for event in deferred_start_events:
+            if progress is not None:
+                with suppress(Exception):
+                    progress(event)
+        _startup_progress(
+            progress,
+            spec,
+            stage="start",
+            label=f"Waiting for the agent API at {ref.endpoint}...",
+            status="running",
+            detail=ref.endpoint,
         )
-        active_label = "Waiting for agent API"
-        await _wait_ready(
-            implementation,
-            ref,
-            timeout_sec=SANDBOX_READY_TIMEOUT_SEC,
+        await ready_task
+        _startup_progress(
+            progress,
+            spec,
+            stage="start",
+            label=f"Connected to the agent API at {ref.endpoint}",
+            status="ok",
+            detail=ref.endpoint,
         )
         if plan.output == "file" and isinstance(implementation, _OutputDetach):
             await implementation.detach_output(ref)
         return SandboxHandle(implementation, state, progress_id=spec.progress_id)
     except BaseException as exc:
-        _startup_progress(
-            progress,
-            spec,
-            stage=active_stage,
-            label=active_label,
-            status="failed",
-            detail=str(exc),
-        )
+        if not attach_failure_observed:
+            _startup_progress(
+                progress,
+                spec,
+                stage=active_stage,
+                label=active_label,
+                status="failed",
+                detail=str(exc),
+            )
         await asyncio.shield(
             _recover_failed_launch(
                 spec.serve.layout,
@@ -306,6 +385,7 @@ async def run(
     *,
     on_ready: Callable[[SandboxState], None] | None = None,
     progress: ProgressSink | None = None,
+    cleanup_progress: ProgressSink | None = None,
 ) -> int:
     """Launch, follow, and release one foreground AgentServer."""
 
@@ -320,6 +400,7 @@ async def run(
                 spec.serve.layout,
                 handle,
                 force=False,
+                progress=cleanup_progress,
             )
         )
         raise
@@ -329,10 +410,11 @@ async def run(
                 spec.serve.layout,
                 handle,
                 force=True,
+                progress=cleanup_progress,
             )
         )
         raise
-    await _release(spec.serve.layout, handle)
+    await _release(spec.serve.layout, handle, progress=cleanup_progress)
     return exit_code
 
 
@@ -341,9 +423,39 @@ async def _stop_and_release(
     handle: SandboxHandle,
     *,
     force: bool,
+    progress: ProgressSink | None = None,
 ) -> None:
-    await handle.implementation.stop(handle.state.ref, force=force)
-    await _release(layout, handle)
+    progress_id = handle.progress_id or f"runtime:{handle.state.ref.runtime_id}"
+    _shutdown_progress(
+        progress,
+        handle.state,
+        progress_id=progress_id,
+        stage="stop",
+        label="Stopping agent...",
+        status="running",
+    )
+    try:
+        await handle.implementation.stop(handle.state.ref, force=force)
+    except BaseException as exc:
+        _shutdown_progress(
+            progress,
+            handle.state,
+            progress_id=progress_id,
+            stage="stop",
+            label="Failed to stop agent",
+            status="failed",
+            detail=str(exc),
+        )
+        raise
+    _shutdown_progress(
+        progress,
+        handle.state,
+        progress_id=progress_id,
+        stage="stop",
+        label="Stopped agent",
+        status="ok",
+    )
+    await _release(layout, handle, progress=progress)
 
 
 async def _recover_failed_launch(
@@ -366,12 +478,51 @@ async def _recover_failed_launch(
             _clear_state(layout, expected=state)
 
 
-async def _release(layout: AgentLayout, handle: SandboxHandle) -> None:
-    await handle.implementation.release(handle.state.ref)
-    _clear_state(layout, expected=handle.state)
+async def _release(
+    layout: AgentLayout,
+    handle: SandboxHandle,
+    *,
+    progress: ProgressSink | None = None,
+) -> None:
+    progress_id = handle.progress_id or f"runtime:{handle.state.ref.runtime_id}"
+    _shutdown_progress(
+        progress,
+        handle.state,
+        progress_id=progress_id,
+        stage="destroy",
+        label="Removing runtime...",
+        status="running",
+    )
+    try:
+        await handle.implementation.release(handle.state.ref)
+        _clear_state(layout, expected=handle.state)
+    except BaseException as exc:
+        _shutdown_progress(
+            progress,
+            handle.state,
+            progress_id=progress_id,
+            stage="destroy",
+            label="Failed to remove runtime",
+            status="failed",
+            detail=str(exc),
+        )
+        raise
+    _shutdown_progress(
+        progress,
+        handle.state,
+        progress_id=progress_id,
+        stage="destroy",
+        label="Removed runtime",
+        status="ok",
+    )
 
 
-async def stop(layout: AgentLayout, *, force: bool = False) -> bool:
+async def stop(
+    layout: AgentLayout,
+    *,
+    force: bool = False,
+    progress: ProgressSink | None = None,
+) -> bool:
     """Stop and release the currently hosted AgentServer."""
 
     lock_path = layout.sandbox_state.with_suffix(".lock")
@@ -382,9 +533,17 @@ async def stop(layout: AgentLayout, *, force: bool = False) -> bool:
             if state is None:
                 return False
             implementation = load_state_sandbox(layout, state)
-            await implementation.stop(state.ref, force=force)
-            await implementation.release(state.ref)
-            _clear_state(layout, expected=state)
+            handle = SandboxHandle(
+                implementation,
+                state,
+                progress_id=f"runtime:{state.ref.runtime_id}",
+            )
+            await _stop_and_release(
+                layout,
+                handle,
+                force=force,
+                progress=progress,
+            )
             return True
 
 
@@ -408,65 +567,11 @@ async def stop_handle(
                 raise ValueError(
                     f"sandbox ownership changed while agent was running: {layout.name}"
                 )
-            progress_id = handle.progress_id or f"runtime:{handle.state.ref.runtime_id}"
-            _shutdown_progress(
-                progress,
-                handle.state,
-                progress_id=progress_id,
-                stage="stop",
-                label="Stopping workload",
-                status="running",
-            )
-            try:
-                await handle.implementation.stop(handle.state.ref, force=force)
-            except BaseException as exc:
-                _shutdown_progress(
-                    progress,
-                    handle.state,
-                    progress_id=progress_id,
-                    stage="stop",
-                    label="Stopping workload",
-                    status="failed",
-                    detail=str(exc),
-                )
-                raise
-            _shutdown_progress(
-                progress,
-                handle.state,
-                progress_id=progress_id,
-                stage="stop",
-                label="Stopping workload",
-                status="ok",
-            )
-            _shutdown_progress(
-                progress,
-                handle.state,
-                progress_id=progress_id,
-                stage="destroy",
-                label="Releasing sandbox resources",
-                status="running",
-            )
-            try:
-                await handle.implementation.release(handle.state.ref)
-                _clear_state(layout, expected=handle.state)
-            except BaseException as exc:
-                _shutdown_progress(
-                    progress,
-                    handle.state,
-                    progress_id=progress_id,
-                    stage="destroy",
-                    label="Releasing sandbox resources",
-                    status="failed",
-                    detail=str(exc),
-                )
-                raise
-            _shutdown_progress(
-                progress,
-                handle.state,
-                progress_id=progress_id,
-                stage="destroy",
-                label="Releasing sandbox resources",
-                status="ok",
+            await _stop_and_release(
+                layout,
+                handle,
+                force=force,
+                progress=progress,
             )
             return True
 

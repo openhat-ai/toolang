@@ -12,6 +12,8 @@ import platform
 import signal
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 from typing import Any
 
@@ -26,6 +28,15 @@ from toolang.base.types.sandbox import (
 )
 
 HOST_SANDBOX_DESCRIPTION_ENV = "TOOLANG_SANDBOX_DESCRIPTION"
+_OUTPUT_POLL_SECONDS = 0.02
+_OUTPUT_CHUNK_BYTES = 64 * 1024
+
+
+@dataclass(slots=True)
+class _HostWorkload:
+    process: subprocess.Popen[bytes]
+    output_path: Path | None = None
+    follow_stop: threading.Event = field(default_factory=threading.Event)
 
 
 @dataclass(slots=True)
@@ -35,7 +46,7 @@ class HostSandbox:
     config: dict[str, Any]
     name: str = "host"
     location: SandboxLocation = "host"
-    _processes: dict[int, subprocess.Popen[bytes]] = field(
+    _processes: dict[int, _HostWorkload] = field(
         default_factory=dict, init=False, repr=False
     )
 
@@ -62,23 +73,26 @@ class HostSandbox:
     async def launch(self, plan: SandboxPlan) -> SandboxRef:
         worker = asyncio.create_task(asyncio.to_thread(_launch, plan))
         try:
-            process = await asyncio.shield(worker)
+            workload = await asyncio.shield(worker)
         except asyncio.CancelledError as exc:
-            process = await worker
+            workload = await worker
+            process = workload.process
             ref = _process_ref(process, plan.endpoint)
             try:
                 stopped = await asyncio.to_thread(_stop_process, process, force=True)
                 if not stopped:
                     raise RuntimeError(f"agent process did not stop: {process.pid}")
             except BaseException as cleanup_exc:
-                self._processes[process.pid] = process
+                self._processes[process.pid] = workload
                 raise SandboxLaunchError(
                     "Could not cancel host sandbox launch and stop its workload "
                     f"{process.pid}: {cleanup_exc}",
                     ref=ref,
                 ) from exc
+            _remove_output(workload.output_path)
             raise
-        self._processes[process.pid] = process
+        process = workload.process
+        self._processes[process.pid] = workload
         return _process_ref(process, plan.endpoint)
 
     async def attach(
@@ -89,33 +103,37 @@ class HostSandbox:
         progress: ProgressSink | None = None,
         progress_id: str | None = None,
     ) -> None:
-        """Keep inherited host streams attached by the launched process itself."""
+        """Use no process-local startup observer for a host workload."""
 
         del plan, ref, progress, progress_id
 
     async def running(self, ref: SandboxRef) -> bool:
         pid = _pid(ref)
-        process = self._processes.get(pid)
-        if process is not None:
-            return process.poll() is None
+        workload = self._processes.get(pid)
+        if workload is not None:
+            return workload.process.poll() is None
         return _ref_process_running(ref, pid)
 
     async def wait(self, ref: SandboxRef) -> int:
+        """Forward buffered foreground output, then wait for the process."""
+
         pid = _pid(ref)
-        process = self._processes.get(pid)
-        if process is not None:
-            return await asyncio.to_thread(process.wait)
+        workload = self._processes.get(pid)
+        if workload is not None:
+            if workload.output_path is not None:
+                return await _follow_workload_output(workload)
+            return await asyncio.to_thread(workload.process.wait)
         while _ref_process_running(ref, pid):
             await asyncio.sleep(0.1)
         return 0
 
     async def stop(self, ref: SandboxRef, *, force: bool = False) -> None:
         pid = _pid(ref)
-        process = self._processes.get(pid)
-        if process is not None:
+        workload = self._processes.get(pid)
+        if workload is not None:
             stopped = await asyncio.to_thread(
                 _stop_process,
-                process,
+                workload.process,
                 force=force,
             )
         else:
@@ -130,7 +148,10 @@ class HostSandbox:
             raise ValueError(f"agent process did not stop: {pid}; retry with --force")
 
     async def release(self, ref: SandboxRef) -> None:
-        self._processes.pop(_pid(ref), None)
+        workload = self._processes.pop(_pid(ref), None)
+        if workload is not None:
+            workload.follow_stop.set()
+            _remove_output(workload.output_path)
 
 
 def create_sandbox(config: Mapping[str, Any]) -> Sandbox:
@@ -178,32 +199,97 @@ def _fact(value: str) -> str:
     return " ".join(value.split())
 
 
-def _launch(plan: SandboxPlan) -> subprocess.Popen[bytes]:
+def _launch(plan: SandboxPlan) -> _HostWorkload:
     if not plan.command:
         raise ValueError("host sandbox requires a command")
     if plan.output == "inherit":
-        return subprocess.Popen(
-            plan.command,
-            stdin=subprocess.DEVNULL,
-            env=dict(plan.envs),
-            cwd=str(plan.working_directory),
-            start_new_session=True,
-            close_fds=True,
-        )
+        output_path = _make_output_path()
+        try:
+            with output_path.open("ab", buffering=0) as output:
+                process = subprocess.Popen(
+                    plan.command,
+                    stdin=subprocess.DEVNULL,
+                    stdout=output,
+                    stderr=subprocess.STDOUT,
+                    env=dict(plan.envs),
+                    cwd=str(plan.working_directory),
+                    start_new_session=True,
+                    close_fds=True,
+                )
+        except BaseException:
+            _remove_output(output_path)
+            raise
+        return _HostWorkload(process, output_path=output_path)
     if plan.output != "file" or plan.log_path is None:
         raise ValueError("host file output requires a log path")
     plan.log_path.parent.mkdir(parents=True, exist_ok=True)
     with plan.log_path.open("ab") as stream:
-        return subprocess.Popen(
-            plan.command,
-            stdin=subprocess.DEVNULL,
-            stdout=stream,
-            stderr=stream,
-            env=dict(plan.envs),
-            cwd=str(plan.working_directory),
-            start_new_session=True,
-            close_fds=True,
+        return _HostWorkload(
+            subprocess.Popen(
+                plan.command,
+                stdin=subprocess.DEVNULL,
+                stdout=stream,
+                stderr=stream,
+                env=dict(plan.envs),
+                cwd=str(plan.working_directory),
+                start_new_session=True,
+                close_fds=True,
+            )
         )
+
+
+async def _follow_workload_output(workload: _HostWorkload) -> int:
+    follower = asyncio.create_task(asyncio.to_thread(_follow_output, workload))
+    try:
+        return await asyncio.shield(follower)
+    except asyncio.CancelledError:
+        workload.follow_stop.set()
+        await asyncio.shield(follower)
+        raise
+
+
+def _follow_output(workload: _HostWorkload) -> int:
+    path = workload.output_path
+    if path is None:
+        return workload.process.wait()
+    with path.open("rb", buffering=0) as output:
+        while True:
+            content = output.read(_OUTPUT_CHUNK_BYTES)
+            if content:
+                _write_output(content)
+                continue
+            returncode = workload.process.poll()
+            if returncode is not None:
+                remainder = output.read()
+                if remainder:
+                    _write_output(remainder)
+                return returncode
+            if workload.follow_stop.is_set():
+                return 0
+            time.sleep(_OUTPUT_POLL_SECONDS)
+
+
+def _write_output(content: bytes) -> None:
+    binary = getattr(sys.stderr, "buffer", None)
+    if binary is not None:
+        binary.write(content)
+        binary.flush()
+        return
+    sys.stderr.write(content.decode("utf-8", errors="replace"))
+    sys.stderr.flush()
+
+
+def _make_output_path() -> Path:
+    descriptor, raw_path = tempfile.mkstemp(prefix="toolang-host-", suffix=".log")
+    os.close(descriptor)
+    path = Path(raw_path)
+    path.chmod(0o600)
+    return path
+
+
+def _remove_output(path: Path | None) -> None:
+    if path is not None:
+        path.unlink(missing_ok=True)
 
 
 def _local_command(command: tuple[str, ...]) -> tuple[str, ...]:

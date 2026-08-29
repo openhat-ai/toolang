@@ -39,7 +39,7 @@ from ...common.output import (
     runtime_value,
     shorten_home_path,
 )
-from ...common.progress import as_progress_sink, make_cli_progress
+from ...common.progress import make_cli_progress
 from . import plugin
 
 
@@ -62,7 +62,7 @@ def new_agent(
         home = LocalAgents(root / "agents").create(agent, content=source_text)
     except FileExistsError as exc:
         raise click.ClickException(f"Agent {agent} already exists") from exc
-    typer.echo(f"Created agent {agent}: {home / 'agent.too'}")
+    typer.echo(f"Agent {agent} created: {home / 'agent.too'}")
 
 
 def clone_agent(
@@ -99,7 +99,7 @@ def clone_agent(
         raise click.ClickException(f"Agent {source} not found") from exc
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    typer.echo(f"Cloned agent {home.name}: {home / 'agent.too'}")
+    typer.echo(f"Agent {home.name} cloned: {home / 'agent.too'}")
 
 
 def remove_agent(
@@ -123,7 +123,7 @@ def remove_agent(
         raise click.ClickException(f"Agent {agent} not found") from exc
     except (OSError, RuntimeError) as exc:
         raise click.ClickException(f"Could not release agent {agent}: {exc}") from exc
-    typer.echo(f"Removed agent {agent}")
+    typer.echo(f"Agent {agent} removed")
 
 
 def list_agents(ctx: typer.Context) -> None:
@@ -235,18 +235,21 @@ def _caps_summary(state: AgentState) -> str:
 
 
 def _prepare_state(layout: AgentLayout) -> AgentState:
-    progress = make_cli_progress(show_materialize_summary=True)
+    progress = make_cli_progress()
     try:
-        return cast(
-            AgentState,
-            user_call(
-                prepare_agent_state,
-                layout,
-                progress=as_progress_sink(progress),
-            ),
-        )
-    finally:
-        progress.finish(details=False)
+        with progress:
+            return cast(
+                AgentState,
+                user_call(
+                    prepare_agent_state,
+                    layout,
+                    progress=progress.sink,
+                ),
+            )
+    except Exception as exc:
+        if progress.failure_stage is not None:
+            raise click.ClickException(progress.failure_message(exc)) from exc
+        raise
 
 
 def _jobs_summary(layout: AgentLayout) -> str:

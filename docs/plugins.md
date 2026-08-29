@@ -41,9 +41,21 @@ uses `process`, Docker uses `container`, and the default is `workload`.
 
 Core persists the reference before calling
 `attach(plan, ref, progress=...)`. `attach` may start process-local observers
-and emit semantic `startup.*` progress, but progress is presentation-only and
-must not decide readiness or lifecycle state. Callbacks are never stored in a
-plan, request, reference, or persisted state.
+and emit `ProgressEvent` updates within the closed `runtime.create` and
+`runtime.start` stages, but progress is presentation-only and must not decide
+readiness or lifecycle state. Callbacks are never stored in a plan, request,
+reference, or persisted state.
+
+`attach` does not forward raw foreground output to the controller terminal.
+For an inherited-output plan, `wait(ref)` begins forwarding only after core has
+reported readiness and handed the terminal to foreground logs. Cancellation
+stops forwarding before runtime cleanup progress begins.
+
+Progress labels are complete, short, verb-first sentences. Running labels end
+in `...`; checkpoints and terminal outcomes use simple past without terminal
+punctuation; failures use `Failed to VERB`. Labels do not contain agent names,
+commands, environment values, secrets, or raw logs. Useful bounded context is
+part of the sentence when safe, while `detail` is reserved for diagnostics.
 
 ### Model Catalog
 

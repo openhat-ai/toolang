@@ -373,13 +373,13 @@ AgentServer process entrypoint. The sandbox implementation launches that
 entrypoint locally, in Docker, or in another environment; the server and
 executor do not branch on sandbox.
 
-Both commands report the same ordered startup stages on stderr: preparing the
-sandbox, starting its workload, and waiting for the Agent API. Docker adds
-Toolang installation, CLI validation, and AgentServer execution between those
-controller-owned stages. A TTY uses one transient line with the current stage
-and elapsed time. A non-TTY writes each active stage once as a stable plain-text
-line. The existing `Running agent ...` and `Started agent ...` result lines are
-written only after readiness succeeds.
+Both commands report the same ordered operational work on stderr: preparing the
+sandbox, creating the runtime, and connecting to the Agent API. Docker adds
+Toolang installation and compatibility checks. A TTY uses one transient line
+without a spinner and shows elapsed time after one second. A non-TTY writes
+each action and outcome as an append-only plain-text line. The stable
+`Agent NAME running: ...` and `Agent NAME started: ...` result lines are written
+only after readiness succeeds.
 
 Both commands accept repeatable `--allow DOMAIN=SELECTORS`,
 `--limit FIELD=VALUE`, and `--default FIELD=VALUE` options. The CLI parses these

@@ -635,14 +635,26 @@ def test_local_change_reuses_unchanged_remote_materialization(
         ),
     )
 
+    events: list[ProgressEvent] = []
     second, _ = prepare_root_home(
         _layout(toolang_root),
+        progress=events.append,
     )
 
     assert second.revision != first.revision
     assert {entry.name for entry in second.caps} == {"local", "rewrite"}
     remote = next(entry for entry in second.caps if entry.name == "rewrite")
     assert Path(remote.path).read_text(encoding="utf-8").endswith("Remote content.\n")
+    cached_terminals = [
+        event
+        for event in events
+        if event.kind == "prepare"
+        and event.stage == "materialize"
+        and event.status == "skipped"
+    ]
+    assert len(cached_terminals) == 1
+    assert cached_terminals[0].label == "Skipped updating prompt rewrite"
+    assert cached_terminals[0].detail == "cached"
 
 
 def test_declared_ref_change_refreshes_remote_materialization(

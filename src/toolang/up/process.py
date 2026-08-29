@@ -133,7 +133,7 @@ def fetch_agent_ref(
         id=item_id,
         kind="prepare",
         stage="fetch",
-        label="Fetch agent",
+        label="Fetching agent...",
         status="running",
         detail=url,
     )
@@ -145,7 +145,7 @@ def fetch_agent_ref(
             id=item_id,
             kind="prepare",
             stage="fetch",
-            label="Fetch agent",
+            label="Failed to fetch agent",
             status="failed",
             detail=str(exc),
         )
@@ -155,7 +155,7 @@ def fetch_agent_ref(
         id=item_id,
         kind="prepare",
         stage="fetch",
-        label="Fetch agent",
+        label="Fetched agent",
         status="ok",
     )
     return source
@@ -179,7 +179,7 @@ def resolve_agent_selector_ref(
         id=item_id,
         kind="prepare",
         stage="resolve",
-        label="Resolve agent",
+        label="Resolving agent...",
         status="running",
         detail=selector.text,
     )
@@ -195,7 +195,7 @@ def resolve_agent_selector_ref(
             id=item_id,
             kind="prepare",
             stage="resolve",
-            label="Resolve agent",
+            label="Failed to resolve agent",
             status="failed",
             detail=str(exc),
         )
@@ -205,7 +205,7 @@ def resolve_agent_selector_ref(
         id=item_id,
         kind="prepare",
         stage="resolve",
-        label="Resolve agent",
+        label="Resolved agent",
         status="ok",
         detail=ref.render(),
     )
@@ -422,7 +422,7 @@ def _resolve_visiting_layout(
         id=progress_id,
         kind="prepare",
         stage="materialize",
-        label="Materialize agent",
+        label="Preparing agent...",
         status="running",
         detail=layout.name,
     )
@@ -438,7 +438,7 @@ def _resolve_visiting_layout(
             id=progress_id,
             kind="prepare",
             stage="materialize",
-            label="Materialize agent",
+            label="Failed to prepare agent",
             status="failed",
             detail=str(exc),
         )
@@ -448,7 +448,7 @@ def _resolve_visiting_layout(
         id=progress_id,
         kind="prepare",
         stage="materialize",
-        label="Materialize agent",
+        label="Prepared agent",
         status="ok",
         detail=layout.name,
     )

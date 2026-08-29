@@ -11,7 +11,7 @@ from toolang.common.layout import AgentLayout, AgentPlacement
 from toolang.up import process as agents
 from ..caps.commands import CAP_KINDS
 from ..common.output import echo_error
-from ..common.progress import as_progress_sink, make_cli_progress
+from ..common.progress import make_cli_progress
 from ..common.routing import explicit_agent, extract_root_args
 from .commands import runtime, script
 
@@ -236,27 +236,27 @@ def dispatch_visiting(
     spec = command_spec(command)
     if not spec.accepts(position, "visiting"):
         return _unsupported_target(command, "visiting", position)
-    progress = make_cli_progress() if spec.prepare == "program" else None
+    progress = make_cli_progress(enabled=spec.prepare == "program")
     try:
-        layout = (
-            agents.resolve_visiting_layout(
-                selector,
-                progress=as_progress_sink(progress),
+        with progress:
+            layout = (
+                agents.resolve_visiting_layout(
+                    selector,
+                    progress=progress.sink,
+                )
+                if spec.prepare == "program"
+                else agents.visiting_layout(selector)
             )
-            if spec.prepare == "program"
-            else agents.visiting_layout(selector)
-        )
     except KeyboardInterrupt:
-        if progress is not None:
-            progress.interrupt()
         return 130
     except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
-        if progress is not None:
-            progress.finish(details=False)
-        echo_error(str(exc))
+        message = (
+            progress.failure_message(exc)
+            if progress.failure_stage is not None
+            else str(exc)
+        )
+        echo_error(message)
         return 1
-    if progress is not None:
-        progress.finish(details=False)
     return run_app(
         [
             *global_args,

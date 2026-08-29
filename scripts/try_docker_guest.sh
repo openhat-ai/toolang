@@ -139,7 +139,7 @@ CONTAINER_ID=$(docker create \
     /tmp/toolang-guest/docker_guest.py \
     /tmp/toolang-guest/guest.env \
     /tmp/toolang-guest-state/diagnostic.log \
-    "$DIAGNOSTIC_DISPLAY" "$PACKAGE_SOURCE" - -- "$@") || exit $?
+    "$DIAGNOSTIC_DISPLAY" - "$PACKAGE_SOURCE" - -- "$@") || exit $?
 
 SHORT_ID=$(printf '%.12s' "$CONTAINER_ID")
 printf 'Created container · %s\n' "$SHORT_ID" >&2

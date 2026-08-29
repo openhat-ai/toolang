@@ -295,13 +295,12 @@ def _prepare_layer(
     progress: ProgressSink | None,
 ) -> str:
     progress_id = f"agent:{layout.name}:{cap_scope}"
-    label = f"Prepare {cap_scope} caps"
     emit_progress(
         progress,
         id=progress_id,
         kind="prepare",
         stage="materialize",
-        label=label,
+        label="Preparing caps...",
         status="running",
         detail=layout.name,
     )
@@ -319,7 +318,7 @@ def _prepare_layer(
             id=progress_id,
             kind="prepare",
             stage="materialize",
-            label=label,
+            label="Failed to prepare caps",
             status="failed",
             detail=str(exc),
         )
@@ -329,7 +328,7 @@ def _prepare_layer(
         id=progress_id,
         kind="prepare",
         stage="materialize",
-        label=label,
+        label="Prepared caps",
         status="ok",
         detail=f"{entry_count} entries",
     )

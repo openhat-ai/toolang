@@ -11,6 +11,7 @@ import pytest
 from click.utils import strip_ansi
 
 from toolang.base.errors import ToolangError
+from toolang.base.types.progress import ProgressEvent
 from toolang.cli.toolang.commands import script
 from toolang.common.layout import AgentLayout
 from toolang.execution.calls import parse_call
@@ -613,6 +614,61 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
     assert execute["sandbox"] == "docker:python:3.13-slim"
     assert execute["quiet"] is True
     assert capsys.readouterr() == ("", "")
+
+
+def test_embedded_script_prepare_failure_uses_the_operational_failure_block(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = _write_source(tmp_path)
+    layout = AgentLayout.roaming(source)
+
+    @contextmanager
+    def embedded_server(_layout: AgentLayout, **_kwargs):
+        yield None
+
+    def fail_prepare(_layout: AgentLayout, *, progress) -> None:
+        progress(
+            ProgressEvent(
+                id="agent:demo:home",
+                kind="prepare",
+                stage="materialize",
+                label="Failed to prepare caps",
+                status="failed",
+                detail="invalid cap definition",
+            )
+        )
+        raise ValueError("prepare failed")
+
+    monkeypatch.setattr(
+        script.agents,
+        "materialize_roaming_program",
+        lambda _source: layout,
+    )
+    monkeypatch.setattr(script, "acquire_agent_server", embedded_server)
+    monkeypatch.setattr(script, "prepare_agent_state", fail_prepare)
+
+    result = script._run(
+        source,
+        runnable="demo",
+        commands=(),
+        input=RunnableInputRaw(primary="hello"),
+        raw_named=(("count", "2"),),
+        allow_options=(),
+        default_options=(),
+        limit_options=(),
+        sandbox="host",
+        dev=None,
+        save=None,
+        quiet=False,
+    )
+
+    assert result == 1
+    error = capsys.readouterr().err
+    assert "Failed to prepare caps" in error
+    assert "Stage: prepare.materialize" in error
+    assert "Reason: invalid cap definition" in error
 
 
 def test_remote_script_cancellation_cancels_the_accepted_run(
