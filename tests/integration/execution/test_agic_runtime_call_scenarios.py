@@ -1376,6 +1376,7 @@ flow research(brief: Brief, prefix?: Text) -> Text:
 def test_execute_replaces_the_runnable_without_a_transition_step(
     tmp_path: Path,
 ) -> None:
+    web = RecordingTool("web__search", output={"results": ["source"]})
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -1404,8 +1405,19 @@ agic target(_: Text) -> Text:
                 ),
                 cont={"id": "caller-cont"},
             ),
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="search",
+                        call_id="provider-search",
+                        name="web__search",
+                        input={"query": "work"},
+                    ),
+                ),
+            ),
             ModelCallResult(message=Message.assistant("completed")),
         ),
+        tools={web.name: web},
     )
 
     async def scenario() -> None:
@@ -1424,7 +1436,7 @@ agic target(_: Text) -> Text:
             assert harness.store.resolve_value(root.output.value) == "completed"
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
             steps = harness.store.list_steps(run_id=root.id)
-            assert [step.kind for step in steps] == ["model", "model"]
+            assert [step.kind for step in steps] == ["model", "model", "tool", "model"]
             controls = harness.store.list_run_controls(run_id=root.id, kind="execute")
             assert len(controls) == 1
             execute = controls[0]
@@ -1445,12 +1457,28 @@ agic target(_: Text) -> Text:
             target_call = harness.adapter.invocations[1].call
             assert {
                 tool.name for tool in harness.adapter.invocations[0].call.tools
-            } == {"_too__execute", "_too__reload", "_too__run"}
+            } == {
+                "_too__execute",
+                "_too__reload",
+                "_too__run",
+                "web__search",
+            }
             assert {tool.name for tool in target_call.tools} == {
                 "_too__execute",
                 "_too__reload",
                 "_too__run",
+                "web__search",
             }
+            assert {
+                tool.name for tool in harness.adapter.invocations[2].call.tools
+            } == {
+                "_too__execute",
+                "_too__reload",
+                "_too__run",
+                "web__search",
+            }
+            assert len(web.calls) == 1
+            assert web.calls[0][0] == {"query": "work"}
             assert target_call.cont is None
             assert [message.role for message in target_call.messages] == ["user"]
             assert "Target work" in str(target_call.messages[0].parts[0])

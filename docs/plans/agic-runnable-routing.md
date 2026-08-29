@@ -229,6 +229,11 @@ replaces the public runnable, module, explicit input locals, runnable resources,
 and executable. Caller messages, continuation, provisional output, and
 per-Agic counters are discarded.
 
+The target resolves user tools through the normal public runnable resource
+rules. With no authored `tools` directive it receives every tool in the agent
+resource base; an explicit directive narrows that base. The caller's runnable
+selection does not constrain the target, and `_too` remains independent of both.
+
 Target success supplies the existing Run's result. Target failure or
 cancellation ends that Run and never restores the caller. Chained execute
 transfers are allowed when lineage remains acyclic. The final result is coerced
