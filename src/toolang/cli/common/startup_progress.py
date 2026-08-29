@@ -12,19 +12,12 @@ from rich.console import Console, ConsoleOptions, RenderResult
 from rich.live import Live
 from rich.text import Text
 
-from toolang.base.types.progress import ProgressEvent
+from toolang.base.types.progress import ProgressEvent, ProgressStage
 
 
 _SPINNER = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 _MAX_DETAIL = 80
-_PHASE_ORDER = {
-    "startup.prepare": 0,
-    "startup.launch": 1,
-    "startup.install": 2,
-    "startup.validate": 3,
-    "startup.server": 4,
-    "startup.ready": 5,
-}
+_STAGE_ORDER = {"create": 0, "start": 1}
 
 
 class RuntimeStartupProgress:
@@ -54,12 +47,14 @@ class RuntimeStartupProgress:
         self._display: Live | None = None
         self._started_at = time.monotonic()
         self._current_stage: str | None = None
-        self._current_phase: str | None = None
+        self._current_progress_stage: ProgressStage | None = None
+        self._current_label: str | None = None
         self._current_running = False
         self._current_detail: str | None = None
         self._failure_reason: str | None = None
-        self._failure_phase: str | None = None
-        self._printed_phases: set[str] = set()
+        self._failure_stage: ProgressStage | None = None
+        self._failure_label: str | None = None
+        self._printed_activities: set[tuple[ProgressStage, str]] = set()
         self._finished = False
         self._lock = RLock()
 
@@ -74,53 +69,74 @@ class RuntimeStartupProgress:
             return self._failure_reason
 
     @property
-    def failure_phase(self) -> str | None:
+    def failure_stage(self) -> str | None:
         with self._lock:
-            return self._failure_phase
+            if self._failure_stage is None:
+                return None
+            return f"runtime.{self._failure_stage}"
+
+    @property
+    def failure_label(self) -> str | None:
+        with self._lock:
+            return self._failure_label
 
     def __call__(self, event: ProgressEvent) -> None:
-        if not event.phase.startswith("startup."):
+        if event.kind != "runtime" or event.stage not in {"create", "start"}:
             return
         with self._lock:
             if self._finished:
                 return
-            if self._failure_phase is not None:
+            if self._failure_stage is not None:
                 return
             reason = _normalized_detail(event.detail)
             detail = _bounded_detail(reason)
             if (
                 event.status == "running"
-                and self._current_phase is not None
-                and _PHASE_ORDER.get(event.phase, -1)
-                < _PHASE_ORDER.get(self._current_phase, -1)
+                and self._current_progress_stage is not None
+                and _STAGE_ORDER[event.stage]
+                < _STAGE_ORDER[self._current_progress_stage]
             ):
                 return
             if (
                 event.status == "failed"
                 and self._current_running
-                and self._current_phase is not None
-                and _PHASE_ORDER.get(event.phase, -1)
-                < _PHASE_ORDER.get(self._current_phase, -1)
+                and self._current_progress_stage is not None
+                and _STAGE_ORDER[event.stage]
+                < _STAGE_ORDER[self._current_progress_stage]
             ):
                 self._failure_reason = reason
-                self._failure_phase = event.phase
+                self._failure_stage = event.stage
+                self._failure_label = event.label
                 return
             if event.status in {"running", "failed"}:
                 self._current_stage = event.label
-                self._current_phase = event.phase
+                self._current_progress_stage = event.stage
+                self._current_label = event.label
                 self._current_detail = detail
                 self._current_running = event.status == "running"
-            elif event.status == "ok" and event.phase == self._current_phase:
+            elif (
+                event.status == "ok"
+                and event.stage == self._current_progress_stage
+                and event.label == self._current_label
+            ):
                 self._current_running = False
             if event.status == "failed":
                 self._failure_reason = reason
-                self._failure_phase = event.phase
+                self._failure_stage = event.stage
+                self._failure_label = event.label
             if not self._enabled:
                 return
             if self._live_enabled:
                 self._render_live()
-            elif event.status == "running" and event.phase not in self._printed_phases:
-                self._printed_phases.add(event.phase)
+            elif (
+                event.status == "running"
+                and (
+                    event.stage,
+                    event.label,
+                )
+                not in self._printed_activities
+            ):
+                self._printed_activities.add((event.stage, event.label))
                 suffix = f": {self._current_detail}" if self._current_detail else ""
                 print(f"{event.label}{suffix}", file=self._stream)
 
@@ -209,7 +225,8 @@ def runtime_startup_failure_message(
         progress.failure_reason or str(error).strip() or type(error).__name__
     )
     reason, fix = _startup_failure_guidance(
-        progress.failure_phase,
+        progress.failure_stage,
+        progress.failure_label,
         fallback_reason=fallback_reason,
         dev_artifact=dev_artifact,
         development_build=development_build,
@@ -228,13 +245,14 @@ def runtime_startup_failure_message(
 
 
 def _startup_failure_guidance(
-    phase: str | None,
+    stage: str | None,
+    label: str | None,
     *,
     fallback_reason: str,
     dev_artifact: Path | None,
     development_build: bool,
 ) -> tuple[str, str | None]:
-    if phase == "startup.install":
+    if stage == "runtime.create" and label == "Installing Toolang":
         if dev_artifact is not None:
             return (
                 f"Could not install Toolang from {dev_artifact.name}.",
@@ -245,7 +263,7 @@ def _startup_failure_guidance(
             "Check the log and network access, or run this command again with a "
             "local wheel using `--dev PATH`.",
         )
-    if phase == "startup.validate":
+    if stage == "runtime.create" and label == "Checking Toolang compatibility":
         if dev_artifact is not None:
             return (
                 "The selected Toolang wheel cannot start the required AgentServer.",

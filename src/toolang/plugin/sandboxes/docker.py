@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from toolang.base.errors import SandboxLaunchError, ToolangError
 from toolang.base.protocols.sandbox import Sandbox
-from toolang.base.types.progress import ProgressSink, ProgressStatus
+from toolang.base.types.progress import ProgressSink, ProgressStage, ProgressStatus
 from toolang.base.types.sandbox import (
     SandboxLocation,
     SandboxMount,
@@ -78,14 +78,12 @@ _CONTROL_ENV_NAMES = frozenset(
 )
 _STARTUP_EVENT_INTERVAL_SEC = 0.05
 _STARTUP_EVENT_MAX_BYTES = 1024
-_STARTUP_EVENT_MAP: dict[str, tuple[str, str, ProgressStatus]] = {
-    "install.running": ("install", "Installing Toolang", "running"),
-    "install.ok": ("install", "Installing Toolang", "ok"),
-    "install.failed": ("install", "Installing Toolang", "failed"),
-    "validate.running": ("validate", "Checking Toolang compatibility", "running"),
-    "validate.ok": ("validate", "Checking Toolang compatibility", "ok"),
-    "validate.failed": ("validate", "Checking Toolang compatibility", "failed"),
-    "server.running": ("server", "Starting agent server", "running"),
+_STARTUP_EVENT_MAP: dict[str, tuple[ProgressStage, str, ProgressStatus]] = {
+    "install.running": ("create", "Installing Toolang", "running"),
+    "install.failed": ("create", "Installing Toolang", "failed"),
+    "validate.running": ("create", "Checking Toolang compatibility", "running"),
+    "validate.failed": ("create", "Checking Toolang compatibility", "failed"),
+    "server.running": ("start", "Starting agent server", "running"),
 }
 _STARTUP_EVENT_TRANSITIONS = {
     None: frozenset({"install.running"}),
@@ -401,6 +399,7 @@ class DockerSandbox:
         ref: SandboxRef,
         *,
         progress: ProgressSink | None = None,
+        progress_id: str | None = None,
     ) -> None:
         """Follow inherited output after the recovery reference is durable."""
 
@@ -412,7 +411,7 @@ class DockerSandbox:
             await _observe_startup_events_safely(
                 Path(_plan_text(plan, "startup_events_path")),
                 progress=progress,
-                event_prefix=f"startup:{ref.runtime_id}",
+                progress_id=progress_id or f"runtime:{ref.runtime_id}",
                 package_source=_plan_text(plan, "package_source"),
                 runtime_id=ref.runtime_id,
             )
@@ -489,7 +488,7 @@ async def _observe_startup_events(
     path: Path,
     *,
     progress: ProgressSink,
-    event_prefix: str,
+    progress_id: str,
     package_source: str,
     runtime_id: str | None = None,
 ) -> None:
@@ -506,15 +505,18 @@ async def _observe_startup_events(
             if token not in _STARTUP_EVENT_TRANSITIONS.get(previous, frozenset()):
                 continue
             previous = token
-            phase, label, status = _STARTUP_EVENT_MAP[token]
+            if token.endswith(".ok"):
+                continue
+            stage, label, status = _STARTUP_EVENT_MAP[token]
             detail = _startup_event_detail(
                 token,
                 package_source=package_source,
             )
             emit_progress(
                 progress,
-                id=f"{event_prefix}:{phase}",
-                phase=f"startup.{phase}",
+                id=progress_id,
+                kind="runtime",
+                stage=stage,
                 label=label,
                 status=status,
                 detail=detail,
@@ -542,7 +544,7 @@ async def _observe_startup_events_safely(
     path: Path,
     *,
     progress: ProgressSink,
-    event_prefix: str,
+    progress_id: str,
     package_source: str,
     runtime_id: str,
 ) -> None:
@@ -550,7 +552,7 @@ async def _observe_startup_events_safely(
         await _observe_startup_events(
             path,
             progress=progress,
-            event_prefix=event_prefix,
+            progress_id=progress_id,
             package_source=package_source,
             runtime_id=runtime_id,
         )

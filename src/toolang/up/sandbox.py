@@ -12,11 +12,17 @@ import threading
 import time
 from urllib.error import URLError
 from urllib.request import urlopen
+from uuid import uuid4
 from weakref import WeakKeyDictionary
 
 from toolang.base.errors import SandboxLaunchError
 from toolang.base.protocols.sandbox import Sandbox
-from toolang.base.types.progress import ProgressSink, ProgressStatus
+from toolang.base.types.progress import (
+    ProgressEvent,
+    ProgressSink,
+    ProgressStage,
+    ProgressStatus,
+)
 from toolang.base.types.sandbox import SandboxOutput, SandboxRef, SandboxRequest
 from toolang.common.files import file_write_lock
 from toolang.common.progress import emit_progress
@@ -53,6 +59,11 @@ class LaunchSpec:
     sandbox: str
     config: dict[str, object]
     environ: dict[str, str]
+    progress_id: str = field(
+        default_factory=lambda: f"runtime:{uuid4().hex}",
+        compare=False,
+        repr=False,
+    )
     output: SandboxOutput = "inherit"
     log_path: Path | None = None
     dev_artifact: Path | None = None
@@ -153,7 +164,7 @@ async def _launch_locked(
     _startup_progress(
         progress,
         spec,
-        phase="prepare",
+        stage="create",
         label="Preparing sandbox",
         status="running",
         detail=spec.sandbox,
@@ -209,7 +220,7 @@ async def _launch_locked(
         _startup_progress(
             progress,
             spec,
-            phase="prepare",
+            stage="create",
             label="Preparing sandbox",
             status="failed",
             detail=str(exc),
@@ -218,23 +229,16 @@ async def _launch_locked(
     _startup_progress(
         progress,
         spec,
-        phase="prepare",
-        label="Preparing sandbox",
-        status="ok",
-        detail=plan.sandbox,
-    )
-    _startup_progress(
-        progress,
-        spec,
-        phase="launch",
+        stage="create",
         label="Starting workload",
         status="running",
         detail=plan.sandbox,
     )
     ref: SandboxRef | None = None
     state: SandboxState | None = None
-    active_phase = "launch"
+    active_stage: ProgressStage = "create"
     active_label = "Starting workload"
+    attach_failure_observed = False
     try:
         try:
             ref = await implementation.launch(plan)
@@ -245,8 +249,26 @@ async def _launch_locked(
             raise
         state = SandboxState(sandbox=plan.sandbox, ref=ref)
         state.save(spec.serve.layout.sandbox_state)
+        deferred_start_events: list[ProgressEvent] = []
+
+        def forward_attach_progress(event: ProgressEvent) -> None:
+            nonlocal attach_failure_observed
+            if event.status == "failed":
+                attach_failure_observed = True
+            if event.kind == "runtime" and event.stage == "start":
+                deferred_start_events.append(event)
+                return
+            if progress is not None:
+                with suppress(Exception):
+                    progress(event)
+
         attach_task = asyncio.create_task(
-            implementation.attach(plan, ref, progress=progress)
+            implementation.attach(
+                plan,
+                ref,
+                progress=(forward_attach_progress if progress is not None else None),
+                progress_id=spec.progress_id,
+            )
         )
         ready_task = asyncio.create_task(
             _wait_ready(
@@ -286,17 +308,21 @@ async def _launch_locked(
         _startup_progress(
             progress,
             spec,
-            phase="launch",
+            stage="create",
             label="Starting workload",
             status="ok",
             detail=ref.runtime_id,
         )
-        active_phase = "ready"
+        active_stage = "start"
         active_label = "Waiting for agent API"
+        for event in deferred_start_events:
+            if progress is not None:
+                with suppress(Exception):
+                    progress(event)
         _startup_progress(
             progress,
             spec,
-            phase="ready",
+            stage="start",
             label="Waiting for agent API",
             status="running",
             detail=ref.endpoint,
@@ -305,21 +331,22 @@ async def _launch_locked(
         _startup_progress(
             progress,
             spec,
-            phase="ready",
+            stage="start",
             label="Waiting for agent API",
             status="ok",
             detail=ref.endpoint,
         )
         return SandboxHandle(implementation, state)
     except BaseException as exc:
-        _startup_progress(
-            progress,
-            spec,
-            phase=active_phase,
-            label=active_label,
-            status="failed",
-            detail=str(exc),
-        )
+        if not attach_failure_observed:
+            _startup_progress(
+                progress,
+                spec,
+                stage=active_stage,
+                label=active_label,
+                status="failed",
+                detail=str(exc),
+            )
         await asyncio.shield(
             _recover_failed_launch(
                 spec.serve.layout,
@@ -442,7 +469,7 @@ async def stop_handle(
                 progress,
                 layout,
                 handle.state,
-                phase="stop",
+                stage="stop",
                 label="Stopping workload",
                 status="running",
             )
@@ -453,7 +480,7 @@ async def stop_handle(
                     progress,
                     layout,
                     handle.state,
-                    phase="stop",
+                    stage="stop",
                     label="Stopping workload",
                     status="failed",
                     detail=str(exc),
@@ -463,7 +490,7 @@ async def stop_handle(
                 progress,
                 layout,
                 handle.state,
-                phase="stop",
+                stage="stop",
                 label="Stopping workload",
                 status="ok",
             )
@@ -471,7 +498,7 @@ async def stop_handle(
                 progress,
                 layout,
                 handle.state,
-                phase="release",
+                stage="destroy",
                 label="Releasing sandbox resources",
                 status="running",
             )
@@ -483,7 +510,7 @@ async def stop_handle(
                     progress,
                     layout,
                     handle.state,
-                    phase="release",
+                    stage="destroy",
                     label="Releasing sandbox resources",
                     status="failed",
                     detail=str(exc),
@@ -493,7 +520,7 @@ async def stop_handle(
                 progress,
                 layout,
                 handle.state,
-                phase="release",
+                stage="destroy",
                 label="Releasing sandbox resources",
                 status="ok",
             )
@@ -609,7 +636,7 @@ def _startup_progress(
     progress: ProgressSink | None,
     spec: LaunchSpec,
     *,
-    phase: str,
+    stage: ProgressStage,
     label: str,
     status: ProgressStatus,
     detail: str | None = None,
@@ -617,8 +644,9 @@ def _startup_progress(
     with suppress(Exception):
         emit_progress(
             progress,
-            id=f"startup:{spec.serve.layout.name}:{phase}",
-            phase=f"startup.{phase}",
+            id=spec.progress_id,
+            kind="runtime",
+            stage=stage,
             label=label,
             status=status,
             detail=detail,
@@ -630,7 +658,7 @@ def _shutdown_progress(
     layout: AgentLayout,
     state: SandboxState,
     *,
-    phase: str,
+    stage: ProgressStage,
     label: str,
     status: ProgressStatus,
     detail: str | None = None,
@@ -638,8 +666,9 @@ def _shutdown_progress(
     with suppress(Exception):
         emit_progress(
             progress,
-            id=f"shutdown:{layout.name}:{phase}",
-            phase=f"shutdown.{phase}",
+            id=f"runtime:{state.ref.runtime_id}",
+            kind="runtime",
+            stage=stage,
             label=label,
             status=status,
             detail=detail if detail is not None else state.sandbox,

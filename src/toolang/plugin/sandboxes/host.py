@@ -87,10 +87,11 @@ class HostSandbox:
         ref: SandboxRef,
         *,
         progress: ProgressSink | None = None,
+        progress_id: str | None = None,
     ) -> None:
         """Keep inherited host streams attached by the launched process itself."""
 
-        del plan, ref, progress
+        del plan, ref, progress, progress_id
 
     async def running(self, ref: SandboxRef) -> bool:
         pid = _pid(ref)

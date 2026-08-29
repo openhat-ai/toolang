@@ -11,7 +11,7 @@ from click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from toolang.base.errors import ToolangError
-from toolang.base.types.progress import ProgressEvent, ProgressStatus
+from toolang.base.types.progress import ProgressEvent, ProgressStage, ProgressStatus
 from toolang.base.types.sandbox import SandboxOutput, SandboxRef
 import toolang.cli.toolang.main as cli
 from toolang.cli.common import agent_server as agent_server_acquisition
@@ -26,14 +26,16 @@ runner = CliRunner()
 
 
 def _startup_event(
-    phase: str,
+    activity: str,
     label: str,
     status: ProgressStatus,
     detail: str | None = None,
 ) -> ProgressEvent:
+    stage: ProgressStage = "start" if activity in {"server", "ready"} else "create"
     return ProgressEvent(
-        id="agent-startup",
-        phase=f"startup.{phase}",
+        id="runtime:agent-startup",
+        kind="runtime",
+        stage=stage,
         label=label,
         status=status,
         detail=detail,
@@ -207,7 +209,6 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
         captured["progress"] = progress
         for event in (
             _startup_event("prepare", "Preparing sandbox", "running", spec.sandbox),
-            _startup_event("prepare", "Preparing sandbox", "ok"),
             _startup_event("launch", "Starting workload", "running"),
             _startup_event("launch", "Starting workload", "ok"),
             _startup_event("ready", "Waiting for agent API", "running"),

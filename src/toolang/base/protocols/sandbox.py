@@ -36,6 +36,7 @@ class Sandbox(Protocol):
         ref: SandboxRef,
         *,
         progress: ProgressSink | None = None,
+        progress_id: str | None = None,
     ) -> None:
         """Attach process-local observers after the reference is persisted."""
 
