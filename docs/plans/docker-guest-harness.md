@@ -1,6 +1,6 @@
 # Docker Guest Harness
 
-Status: Proposed. Work type: feature definition.
+Status: Approved for implementation on 2026-08-29. Work type: feature definition.
 
 This extends `docker-guest-bootstrap.md` and replaces its generated `start.sh`
 and `bootstrap.py` artifacts.
@@ -23,16 +23,17 @@ scripts/try_docker_guest.sh IMAGE [--dev WHEEL_OR_DIST] \
 This is a repository experiment utility, not a public command, entry point,
 config section, or plugin API.
 
-## Fixed Scripts
+## Fixed Guest Files
 
-- `src/toolang/plugin/sandboxes/docker_guest.sh` is the packaged Linux guest
-  core. Toolang `--sandbox docker` stages and executes only this file.
+- `docker_guest.sh` acquires uv and Python on Linux.
+- `docker_guest.py` safely loads the generated environment, installs Toolang,
+  and replaces itself with the workload after Python is available.
 - `scripts/try_docker_guest.sh` is the host experiment wrapper. Product code
   never references it.
 
-The wrapper invokes the same guest core as production and contains no uv,
-Python, or Toolang installation logic. Do not retain `start.sh`, `agent.sh`, or
-`docker_bootstrap.sh` aliases.
+Production and the wrapper stage the same fixed guest pair. The shell file is
+the only container entry point; the wrapper contains no installation logic. Do
+not retain `start.sh`, `agent.sh`, or `docker_bootstrap.sh` aliases.
 
 ## Guest Core
 
@@ -52,9 +53,9 @@ uv then owns supported-Python discovery or installation and the single Toolang
 installation path. Do not emulate curl with Python, invoke distro package
 managers, or add a separate pip-based Toolang environment.
 
-After Python is available, the shell writes its embedded Python helper into the
-private runtime. The helper parses `guest.env` without shell evaluation,
-validates Toolang, and finishes with `os.execvpe()`.
+After Python is available, the shell runs the staged helper. The helper parses
+`guest.env` without shell evaluation, validates Toolang, and finishes with
+`os.execvpe()`.
 
 ## Host Wrapper
 
@@ -62,11 +63,13 @@ The POSIX shell wrapper runs on Linux, macOS, and Windows through WSL2. Native
 Windows shells, Git Bash path rewriting, and Windows containers are out of
 scope. It:
 
-1. stages environment, diagnostic, instance, and optional wheel files;
+1. stages environment, diagnostic, and optional wheel files;
 2. uses `docker create` with the guest core mounted read-only;
-3. writes the full container ID to the staged instance file;
-4. runs `docker start --attach` and returns the workload exit code; and
-5. stops and removes resources on success, failure, or Ctrl+C unless `--keep`.
+3. retains the full returned container ID for host-side lifecycle operations;
+4. lets the guest use Docker's default twelve-character `HOSTNAME` as its
+   sandbox instance;
+5. runs `docker start --attach` and returns the workload exit code; and
+6. stops and removes resources on success, failure, or Ctrl+C unless `--keep`.
 
 Build Docker commands from quoted positional parameters, never `eval`. Do not
 forward the full host environment. Because `guest.env` loads after Python
@@ -78,8 +81,9 @@ append-only, and installer details remain private diagnostics.
 
 ## Touchpoints And Acceptance
 
-Touchpoints are the two scripts, `_docker_guest.py`, the Docker sandbox staging
-call site, focused offline tests, and opt-in Docker checks. No public CLI,
+Touchpoints are the two shell scripts, the fixed Python helper,
+`_docker_guest.py`, the Docker sandbox staging call site, focused offline tests,
+and opt-in Docker checks. No public CLI,
 configuration, plugin contract, image build, other engine, or remote progress
 change is included.
 

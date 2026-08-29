@@ -162,10 +162,7 @@ async def finish_process(process: asyncio.subprocess.Process) -> None:
     if process.returncode is not None:
         await process.wait()
         return
-    try:
-        await asyncio.wait_for(process.wait(), timeout=2.0)
-    except TimeoutError:
-        await _terminate_process(process)
+    await _terminate_process(process)
 
 
 async def _terminate_process(process: asyncio.subprocess.Process) -> None:

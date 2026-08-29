@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -126,75 +127,9 @@ class RecoverableLaunchSandbox(FakeSandbox):
         raise SandboxLaunchError("launch cleanup failed", ref=ref)
 
 
-class GuestFailureSandbox(FakeSandbox):
-    async def attach(
-        self,
-        plan: SandboxPlan,
-        ref: SandboxRef,
-        *,
-        progress: ProgressSink | None = None,
-        progress_id: str | None = None,
-    ) -> None:
-        self.calls.append(("attach", plan, ref))
-        if progress is None:
-            return
-        progress(
-            ProgressEvent(
-                id=progress_id or "runtime:guest",
-                kind="runtime",
-                stage="create",
-                label="Installing Toolang",
-                status="running",
-            )
-        )
-        await asyncio.sleep(0.01)
-        progress(
-            ProgressEvent(
-                id=progress_id or "runtime:guest",
-                kind="runtime",
-                stage="create",
-                label="Checking Toolang compatibility",
-                status="failed",
-                detail="incompatible CLI",
-            )
-        )
-
-    async def running(self, ref: SandboxRef) -> bool:
-        del ref
-        return False
-
-
-class GuestStartupSandbox(FakeSandbox):
-    async def attach(
-        self,
-        plan: SandboxPlan,
-        ref: SandboxRef,
-        *,
-        progress: ProgressSink | None = None,
-        progress_id: str | None = None,
-    ) -> None:
-        self.calls.append(("attach", plan, ref))
-        if progress is None:
-            return
-        item_id = progress_id or "runtime:guest"
-        progress(
-            ProgressEvent(
-                id=item_id,
-                kind="runtime",
-                stage="create",
-                label="Installing Toolang",
-                status="running",
-            )
-        )
-        progress(
-            ProgressEvent(
-                id=item_id,
-                kind="runtime",
-                stage="start",
-                label="Starting agent server",
-                status="running",
-            )
-        )
+class OutputDetachSandbox(FakeSandbox):
+    async def detach_output(self, ref: SandboxRef) -> None:
+        self.calls.append(("detach_output", ref))
 
 
 def _launch_spec(tmp_path: Path) -> sandbox.LaunchSpec:
@@ -531,8 +466,6 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
         ("runtime", "create", "running"),
         ("runtime", "create", "running"),
         ("runtime", "create", "ok"),
-        ("runtime", "start", "running"),
-        ("runtime", "start", "ok"),
     ]
     assert len({event.id for event in events}) == 1
 
@@ -568,11 +501,11 @@ def test_startup_renderer_failure_does_not_change_launch(
     assert handle.state.ref.runtime_id == "workload-1"
 
 
-def test_guest_start_activity_follows_create_completion(
+def test_background_launch_does_not_require_an_output_capability(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    implementation = GuestStartupSandbox()
+    implementation = FakeSandbox()
     monkeypatch.setattr(
         sandbox,
         "create_sandbox",
@@ -583,24 +516,50 @@ def test_guest_start_activity_follows_create_completion(
         return None
 
     monkeypatch.setattr(sandbox, "_wait_ready", ready)
-    events: list[ProgressEvent] = []
-
-    spec = _launch_spec(tmp_path)
-    handle = asyncio.run(sandbox.launch(spec, progress=events.append))
-
-    create_ok = next(
-        index
-        for index, event in enumerate(events)
-        if event.stage == "create" and event.status == "ok"
+    original = _launch_spec(tmp_path)
+    spec = replace(
+        original,
+        output="file",
+        log_path=original.serve.layout.runtime_log,
     )
-    start_running = next(
-        index
-        for index, event in enumerate(events)
-        if event.stage == "start" and event.status == "running"
+
+    asyncio.run(sandbox.launch(spec))
+
+    names = [call[0] for call in implementation.calls if isinstance(call, tuple)]
+    assert names[:3] == ["prepare", "launch", "attach"]
+    assert not any(
+        isinstance(call, tuple) and call[0] == "detach_output"
+        for call in implementation.calls
     )
-    assert create_ok < start_running
-    asyncio.run(sandbox.stop_handle(spec.serve.layout, handle, progress=events.append))
-    assert len({event.id for event in events}) == 1
+    assert asyncio.run(sandbox.stop(spec.serve.layout)) is True
+
+
+def test_background_launch_detaches_optional_output_after_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    implementation = OutputDetachSandbox()
+    monkeypatch.setattr(
+        sandbox,
+        "create_sandbox",
+        lambda _name, config: implementation,
+    )
+
+    async def ready(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    original = _launch_spec(tmp_path)
+    spec = replace(
+        original,
+        output="file",
+        log_path=original.serve.layout.runtime_log,
+    )
+
+    handle = asyncio.run(sandbox.launch(spec))
+
+    assert ("detach_output", handle.state.ref) in implementation.calls
+    assert asyncio.run(sandbox.stop(spec.serve.layout)) is True
 
 
 def test_stop_failure_preserves_sandbox_state(
@@ -654,28 +613,6 @@ def test_launch_failure_stops_releases_and_clears_state(
     assert (events[-1].kind, events[-1].stage) == ("runtime", "start")
     assert events[-1].status == "failed"
     assert events[-1].detail == "not ready"
-
-
-def test_guest_failure_progress_wins_the_early_exit_diagnostic_race(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    implementation = GuestFailureSandbox()
-    monkeypatch.setattr(
-        sandbox, "create_sandbox", lambda *_args, **_kwargs: implementation
-    )
-    spec = _launch_spec(tmp_path)
-    events: list[ProgressEvent] = []
-
-    with pytest.raises(RuntimeError, match="exited before becoming ready"):
-        asyncio.run(sandbox.launch(spec, progress=events.append))
-
-    activities = [(event.label, event.status) for event in events]
-    assert ("Installing Toolang", "running") in activities
-    assert ("Checking Toolang compatibility", "failed") in activities
-    assert ("Waiting for agent API", "running") not in activities
-    assert activities[-1] == ("Checking Toolang compatibility", "failed")
-    assert len({event.id for event in events}) == 1
 
 
 def test_readiness_cleanup_failure_preserves_sandbox_state(

@@ -206,12 +206,12 @@ def _runtime_instance(runtime_state: dict[str, object], *, driver: str) -> str |
                 detail="runtime sandbox instance is invalid",
             )
         return None
-    if not isinstance(raw, str) or len(raw.strip()) < 12:
+    if not isinstance(raw, str) or re.fullmatch(r"[0-9a-f]{12}", raw) is None:
         raise HTTPException(
             status_code=500,
             detail="runtime sandbox instance is unavailable",
         )
-    return _runtime_token(raw.strip(), label="sandbox instance")
+    return raw
 
 
 def _runtime_description(

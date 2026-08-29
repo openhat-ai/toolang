@@ -128,6 +128,12 @@ class RuntimeStartupProgress:
                 return
             if self._live_enabled:
                 self._render_live()
+                if (
+                    event.stage == "create"
+                    and event.label == "Starting workload"
+                    and event.status == "ok"
+                ):
+                    self._stop_live()
             elif (
                 event.status == "running"
                 and (
@@ -146,8 +152,7 @@ class RuntimeStartupProgress:
                 return
             self._finished = True
             if self._display is not None:
-                self._display.stop()
-                self._display = None
+                self._stop_live()
             if self._enabled and self._console.is_terminal:
                 self._stream.write("\x1b[0m")
                 self._stream.flush()
@@ -168,6 +173,12 @@ class RuntimeStartupProgress:
             self._display.start(refresh=True)
             return
         self._display.refresh()
+
+    def _stop_live(self) -> None:
+        if self._display is None:
+            return
+        self._display.stop()
+        self._display = None
 
     def _text(self) -> Text:
         with self._lock:

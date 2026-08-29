@@ -876,9 +876,9 @@ and conventional twelve-character container ID, for example
 `sandbox  docker:python:3.13-slim · a1b2c3d4e5f6`. Host execution displays the
 ready OS description produced by the host sandbox plugin, for example
 `sandbox  host · macOS 27.0 arm64`. The middle-dot separators use the dim style,
-and OS build identifiers are omitted. `/api/v1/profile` retains the complete
-Docker instance; the remote Chat client validates and shortens it before passing
-structured selector and detail fields to the terminal renderer.
+and OS build identifiers are omitted. `/api/v1/profile` returns the same
+twelve-character Docker hostname used to identify the guest; the host retains
+the complete container ID for Docker lifecycle operations.
 Job thread ids are inspectable and controllable through thread and run commands,
 but `chat` does not implicitly reopen tasks or create manual chore runs.
 

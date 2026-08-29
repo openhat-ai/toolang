@@ -5,6 +5,7 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 import sys
@@ -17,8 +18,7 @@ import pytest
 
 from toolang.base.errors import SandboxLaunchError, ToolangError
 from toolang.base.protocols.sandbox import Sandbox
-from toolang.base.types.progress import ProgressEvent
-from toolang.base.types.sandbox import SandboxMount, SandboxRequest
+from toolang.base.types.sandbox import SandboxMount, SandboxRef, SandboxRequest
 from toolang.common.layout import AgentLayout
 from toolang.plugin.sandboxes import _docker_cli as docker_cli
 from toolang.plugin.sandboxes import _docker_guest as docker_guest
@@ -285,8 +285,7 @@ def test_docker_sandbox_prepares_and_launches(
     assert "UNRELATED_HOST_SECRET" not in guest_env_source
     assert stat.S_IMODE(guest_env_mount.local_path.stat().st_mode) == 0o600
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
-    sandbox_instance_path = Path(cast(str, plan.meta["sandbox_instance_path"]))
-    startup_events_path = Path(cast(str, plan.meta["startup_events_path"]))
+    diagnostic_path = Path(cast(str, plan.meta["diagnostic_path"]))
     stage_mount = next(
         item
         for item in plan.mounts
@@ -300,54 +299,44 @@ def test_docker_sandbox_prepares_and_launches(
     )
     assert control_lock.read_text(encoding="utf-8") == "host control\n"
     assert stage_dir.is_relative_to(control_lock.parent / "launches")
-    assert sandbox_instance_path.read_text(encoding="utf-8") == ""
-    assert stat.S_IMODE(sandbox_instance_path.stat().st_mode) == 0o600
-    assert startup_events_path.is_file()
-    assert stat.S_IMODE(startup_events_path.stat().st_mode) == 0o600
-    assert "bootstrap.py" in (stage_dir / "start.sh").read_text(encoding="utf-8")
-    agent_script = (stage_dir / "agent.sh").read_text(encoding="utf-8")
-    assert (
-        "TOOLANG_SANDBOX_INSTANCE_PATH="
-        "/root/.toolang/agents/alice/.runtime/sandbox/instance" in agent_script
-    )
-    assert "IFS= read -r TOOLANG_SANDBOX_INSTANCE" in agent_script
-    assert (
-        "uv tool install --quiet --no-progress --force "
-        "/root/.toolang/agents/alice/.runtime/sandbox/"
-        "toolang-1.2.3-py3-none-any.whl"
-    ) in agent_script
-    assert "exec too serve alice --port 8123" in agent_script
-    assert not (stage_dir / "environment.json").exists()
-    bootstrap = subprocess.run(
-        (
-            sys.executable,
-            str(stage_dir / "bootstrap.py"),
-            str(guest_env_mount.local_path),
-            sys.executable,
-            "-c",
-            "import json, os; print(json.dumps({"
-            "'COMPLEX': os.environ['COMPLEX'], "
-            "'LITERAL': os.environ['LITERAL'], "
-            "'OPENAI_API_KEY': os.environ['OPENAI_API_KEY']}))",
-        ),
-        check=True,
-        capture_output=True,
-        text=True,
-        env={"HOME": "/outside"},
-    )
-    assert json.loads(bootstrap.stdout) == {
-        "COMPLEX": "line one\nline \"two\" 'three'\r\\tail${HOME}",
-        "LITERAL": "${HOME}/literal",
-        "OPENAI_API_KEY": "provider-secret",
+    assert diagnostic_path.is_file()
+    assert stat.S_IMODE(diagnostic_path.stat().st_mode) == 0o600
+    assert {item.name for item in stage_dir.iterdir()} == {
+        "docker_guest.sh",
+        "docker_guest.py",
+        "guest.env",
+        "start.json",
+        "toolang-1.2.3-py3-none-any.whl",
     }
+    assert (stage_dir / "docker_guest.sh").read_bytes() == (
+        Path(docker_guest.__file__).with_name("docker_guest.sh").read_bytes()
+    )
+    assert (stage_dir / "docker_guest.py").read_bytes() == (
+        Path(docker_guest.__file__).with_name("docker_guest.py").read_bytes()
+    )
+    assert plan.command == (
+        "/bin/sh",
+        "/root/.toolang/agents/alice/.runtime/sandbox/docker_guest.sh",
+        "/root/.toolang/agents/alice/.runtime/sandbox/docker_guest.py",
+        "/root/.toolang/agents/alice/.env",
+        f"/root/.toolang/agents/alice/.runtime/{diagnostic_path.name}",
+        str(diagnostic_path),
+        "/root/.toolang/agents/alice/.runtime/sandbox/toolang-1.2.3-py3-none-any.whl",
+        "/root/.toolang/agents/alice/.runtime/agent.log",
+        "--",
+        "too",
+        "serve",
+        "alice",
+        "--port",
+        "8123",
+    )
 
     ref = asyncio.run(sandbox.launch(plan))
 
     assert ref.runtime_id == "container-123"
-    assert sandbox_instance_path.read_text(encoding="utf-8") == "container-123\n"
     assert ref.runtime_kind == "container"
     assert ref.runtime_name == container_name
-    assert ref.meta["startup_events_path"] == str(startup_events_path)
+    assert ref.meta["diagnostic_path"] == str(diagnostic_path)
     assert ref.endpoint == "http://localhost:8123"
     assert asyncio.run(sandbox.running(ref)) is True
     run_call = cast(dict[str, Any], calls["run"])
@@ -359,12 +348,10 @@ def test_docker_sandbox_prepares_and_launches(
         "TOOLANG_ROOT": "/root/.toolang",
         "TOOLANG_SANDBOX": "docker:python:3.13-slim",
     }
-    assert run_call["log_path"] == (
-        tmp_path / "agents" / "alice" / ".runtime" / "agent.log"
-    )
+    assert run_call["log_path"] is None
 
 
-def test_docker_background_sandbox_keeps_errors_and_quiets_success_output(
+def test_docker_background_sandbox_uses_docker_output_and_durable_diagnostics(
     tmp_path: Path,
 ) -> None:
     request = _request(tmp_path)
@@ -376,15 +363,12 @@ def test_docker_background_sandbox_keeps_errors_and_quiets_success_output(
     assert log_path.is_file()
     assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
-    start_script = (stage_dir / "start.sh").read_text(encoding="utf-8")
-    assert "/root/.toolang/agents/alice/.runtime/agent.log" in start_script
-    assert "2>&1" in start_script
-    agent_script = (stage_dir / "agent.sh").read_text(encoding="utf-8")
-    assert "TOOLANG_UV_ENSUREPIP_DIAGNOSTIC=" in agent_script
-    assert "ensurepip --upgrade 2>&1" in agent_script
-    assert "--root-user-action=ignore --quiet" in agent_script
-    assert "uv tool install --quiet --no-progress" in agent_script
-    assert docker_guest.DOCKER_TOOLANG_COMPATIBILITY_ERROR in agent_script
+    shell = (stage_dir / "docker_guest.sh").read_text(encoding="utf-8")
+    helper = (stage_dir / "docker_guest.py").read_text(encoding="utf-8")
+    assert 'exec "$PYTHON_BIN" "$HELPER"' in shell
+    assert 'TOOLANG_SANDBOX_INSTANCE"] = hostname' in helper
+    assert "startup.events" not in shell + helper
+    assert 'source "$GUEST_ENV"' not in shell
 
 
 def test_docker_sandbox_mounts_roaming_source_links_as_guest_files(
@@ -472,437 +456,243 @@ def test_docker_sandbox_requires_a_concrete_dev_wheel(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="must be a wheel file"):
         sandbox.prepare(None, _request(tmp_path, dev=dev))
 
-
-def test_docker_agent_script_quotes_a_dev_wheel_path(tmp_path: Path) -> None:
-    script = tmp_path / "agent.sh"
-
-    docker_guest.write_agent_script(
-        script,
-        command=("too", "serve", "alice"),
-        hosted_dev_artifact=Path("/runtime/dev wheels/toolang.whl"),
-        sandbox_instance_path=Path("/runtime/sandbox instance"),
-        startup_events_path=Path("/runtime/startup events"),
-        validation_error_to_stderr=False,
-    )
-
-    source = script.read_text(encoding="utf-8")
-    assert (
-        "uv tool install --quiet --no-progress --force "
-        "'/runtime/dev wheels/toolang.whl'" in source
-    )
-    assert ">>'/runtime/startup events'" in source
-    assert "exec too serve alice" in source
+    runtime_dir = tmp_path / "agents" / "alice" / ".runtime"
+    assert not list(runtime_dir.glob("docker-guest-*.log"))
 
 
-def test_docker_agent_script_reports_quiet_install_and_server_stages(
+def test_docker_background_attach_is_quiet_without_progress(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    script = tmp_path / "agent.sh"
-    events = tmp_path / "startup.events"
-    events.touch()
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _write_executable(bin_dir / "uv", "#!/bin/sh\nexit 0\n")
-    _write_executable(
-        bin_dir / "too",
-        "#!/bin/sh\n"
-        'if [ "$2" = "--help" ]; then exit 0; fi\n'
-        'printf "server command\\n"\n',
+    followed: list[str] = []
+
+    async def follow(container_id: str) -> Any:
+        followed.append(container_id)
+        return cast(Any, object())
+
+    monkeypatch.setattr(docker_sandbox, "docker_follow_container_logs", follow)
+    sandbox = create_sandbox("docker", config={})
+    plan = sandbox.prepare(None, _request(tmp_path))
+    ref = SandboxRef("container-123", plan.endpoint)
+
+    asyncio.run(sandbox.attach(plan, ref, progress=None, progress_id="runtime:test"))
+
+    assert followed == []
+
+
+def test_docker_guest_reuses_uv_and_preserves_generated_environment(
+    tmp_path: Path,
+) -> None:
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    _link_guest_utilities(tools)
+    _write_fake_guest_tools(tools, python=sys.executable)
+    guest_env = tmp_path / "guest.env"
+    docker_guest.write_guest_env(
+        guest_env,
+        dotenv_envs={
+            "HTTPS_PROXY": "http://proxy/$literal",
+            "LITERAL": "${HOME}/`literal`\\tail",
+            "MULTILINE": "first\nsecond\rthird",
+        },
+        process_envs={"LITERAL": "process ${HOME}"},
     )
-    docker_guest.write_agent_script(
-        script,
-        command=("too", "serve", "alice"),
-        hosted_dev_artifact=None,
-        sandbox_instance_path=_sandbox_instance(tmp_path),
-        startup_events_path=events,
-        validation_error_to_stderr=False,
-    )
+    diagnostic = tmp_path / "diagnostic.log"
+    diagnostic.touch()
 
     completed = subprocess.run(
-        ("/bin/sh", str(script)),
-        check=True,
-        capture_output=True,
-        text=True,
-        env={"HOME": str(tmp_path / "home"), "PATH": str(bin_dir)},
-    )
-
-    assert completed.stdout == "server command\n"
-    assert completed.stderr == ""
-    assert events.read_text(encoding="utf-8").splitlines() == [
-        "install.running",
-        "install.ok",
-        "validate.running",
-        "validate.ok",
-        "server.running",
-    ]
-
-
-def test_docker_agent_script_waits_for_complete_sandbox_instance(
-    tmp_path: Path,
-) -> None:
-    script = tmp_path / "agent.sh"
-    instance = tmp_path / "sandbox.instance"
-    instance.touch()
-    events = tmp_path / "startup.events"
-    events.touch()
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _write_executable(bin_dir / "sleep", '#!/bin/sh\n/bin/sleep "$1"\n')
-    _write_executable(bin_dir / "uv", "#!/bin/sh\nexit 0\n")
-    _write_executable(
-        bin_dir / "too",
-        "#!/bin/sh\n"
-        'if [ "$2" = "--help" ]; then exit 0; fi\n'
-        'printf "%s\\n" "$TOOLANG_SANDBOX_INSTANCE"\n',
-    )
-    docker_guest.write_agent_script(
-        script,
-        command=("too", "serve", "alice"),
-        hosted_dev_artifact=None,
-        sandbox_instance_path=instance,
-        startup_events_path=events,
-        validation_error_to_stderr=False,
-    )
-
-    process = subprocess.Popen(
-        ("/bin/sh", str(script)),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env={"HOME": str(tmp_path / "home"), "PATH": str(bin_dir)},
-    )
-    try:
-        threading.Event().wait(0.1)
-        assert process.poll() is None
-        instance.write_text(_CONTAINER_ID + "\n", encoding="utf-8")
-        stdout, stderr = process.communicate(timeout=2)
-    finally:
-        if process.poll() is None:
-            process.terminate()
-            process.wait(timeout=2)
-
-    assert process.returncode == 0
-    assert stdout == _CONTAINER_ID + "\n"
-    assert stderr == ""
-
-
-def test_docker_agent_script_ignores_unwritable_startup_event_target(
-    tmp_path: Path,
-) -> None:
-    script = tmp_path / "agent.sh"
-    events = tmp_path / "startup.events"
-    events.mkdir()
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _write_executable(bin_dir / "uv", "#!/bin/sh\nexit 0\n")
-    _write_executable(
-        bin_dir / "too",
-        "#!/bin/sh\n"
-        'if [ "$2" = "--help" ]; then exit 0; fi\n'
-        'printf "server command\\n"\n',
-    )
-    docker_guest.write_agent_script(
-        script,
-        command=("too", "serve", "alice"),
-        hosted_dev_artifact=None,
-        sandbox_instance_path=_sandbox_instance(tmp_path),
-        startup_events_path=events,
-        validation_error_to_stderr=False,
-    )
-
-    completed = subprocess.run(
-        ("/bin/sh", str(script)),
-        check=False,
-        capture_output=True,
-        text=True,
-        env={"HOME": str(tmp_path / "home"), "PATH": str(bin_dir)},
-    )
-
-    assert completed.returncode == 0
-    assert completed.stdout == "server command\n"
-    assert completed.stderr == ""
-
-
-def test_docker_agent_script_discards_successful_uv_fallback_output(
-    tmp_path: Path,
-) -> None:
-    script = tmp_path / "agent.sh"
-    events = tmp_path / "startup.events"
-    events.touch()
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _write_executable(
-        bin_dir / "python",
-        "#!/bin/sh\n"
-        'if [ "$2" = "ensurepip" ]; then\n'
-        '  echo "ensurepip intermediate failure" >&2\n'
-        "  exit 1\n"
-        "fi\n"
-        "printf '#!/bin/sh\\nexit 0\\n' >\"$TOOLANG_TEST_UV_PATH\"\n"
-        '/bin/chmod 755 "$TOOLANG_TEST_UV_PATH"\n'
-        'echo "pip noisy success" >&2\n',
-    )
-    _write_executable(
-        bin_dir / "too",
-        "#!/bin/sh\n"
-        'if [ "$2" = "--help" ]; then exit 0; fi\n'
-        'printf "server command\\n"\n',
-    )
-    docker_guest.write_agent_script(
-        script,
-        command=("too", "serve", "alice"),
-        hosted_dev_artifact=None,
-        sandbox_instance_path=_sandbox_instance(tmp_path),
-        startup_events_path=events,
-        validation_error_to_stderr=False,
-    )
-
-    completed = subprocess.run(
-        ("/bin/sh", str(script)),
+        (
+            "/bin/sh",
+            str(Path(docker_guest.__file__).with_name("docker_guest.sh")),
+            str(Path(docker_guest.__file__).with_name("docker_guest.py")),
+            str(guest_env),
+            str(diagnostic),
+            str(diagnostic),
+            "/packages with spaces/toolang-test.whl",
+            "-",
+            "--",
+            sys.executable,
+            "-c",
+            "import json, os; print(json.dumps({"
+            "'instance': os.environ['TOOLANG_SANDBOX_INSTANCE'], "
+            "'literal': os.environ['LITERAL'], "
+            "'multiline': os.environ['MULTILINE']}))",
+        ),
         check=False,
         capture_output=True,
         text=True,
         env={
-            "HOME": str(tmp_path / "home"),
-            "PATH": str(bin_dir),
-            "TOOLANG_TEST_UV_PATH": str(bin_dir / "uv"),
+            "HOSTNAME": _CONTAINER_ID[:12],
+            "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
+            "TOOLANG_TEST_PYTHON": sys.executable,
+            "TOOLANG_TEST_INSTALL_ENV_LOG": str(tmp_path / "install-env"),
+            "TOOLANG_TEST_TOO": str(tools / "too-template"),
+            "TOOLANG_GUEST_RUNTIME": str(tmp_path / "runtime"),
         },
     )
 
-    assert completed.returncode == 0
-    assert completed.stdout == "server command\n"
-    assert completed.stderr == ""
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "instance": _CONTAINER_ID[:12],
+        "literal": "process ${HOME}",
+        "multiline": "first\nsecond\rthird",
+    }
+    assert completed.stderr.splitlines() == [
+        "Using uv · test",
+        f"Using Python · {sys.version_info.major}.{sys.version_info.minor}."
+        f"{sys.version_info.micro}",
+        "Installing Toolang · toolang-test.whl...",
+        "Installed Toolang · toolang test",
+        "Starting command...",
+    ]
+    assert (tmp_path / "install-env").read_text(encoding="utf-8") == (
+        "http://proxy/$literal\n"
+    )
+    assert not diagnostic.exists()
 
 
-def test_docker_agent_script_reports_all_uv_fallback_failures(
-    tmp_path: Path,
-) -> None:
-    script = tmp_path / "agent.sh"
-    events = tmp_path / "startup.events"
-    events.touch()
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
+def test_docker_guest_uses_python_and_pip_to_install_uv(tmp_path: Path) -> None:
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    _link_guest_utilities(tools)
+    driver = tools / "uv-driver"
+    _write_fake_guest_tools(tools, python=sys.executable, uv_path=driver)
     _write_executable(
-        bin_dir / "python",
+        tools / "python3",
         "#!/bin/sh\n"
-        'if [ "$2" = "ensurepip" ]; then\n'
-        '  echo "ensurepip failed" >&2\n'
-        "else\n"
-        '  echo "pip failed" >&2\n'
+        'if [ "$1" = "-c" ]; then exit 0; fi\n'
+        'if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then exit 0; fi\n'
+        'if [ "$1" = "-m" ] && [ "$2" = "uv" ]; then\n'
+        "  shift 2\n"
+        '  exec "$TOOLANG_TEST_UV" "$@"\n'
         "fi\n"
         "exit 1\n",
     )
-    docker_guest.write_agent_script(
-        script,
-        command=("too", "serve", "alice"),
-        hosted_dev_artifact=None,
-        sandbox_instance_path=_sandbox_instance(tmp_path),
-        startup_events_path=events,
-        validation_error_to_stderr=False,
-    )
+    guest_env = tmp_path / "guest.env"
+    docker_guest.write_guest_env(guest_env, dotenv_envs={}, process_envs={})
+    diagnostic = tmp_path / "diagnostic.log"
+    diagnostic.touch()
+    workload_log = tmp_path / "workload.log"
 
     completed = subprocess.run(
-        ("/bin/sh", str(script)),
+        (
+            "/bin/sh",
+            str(Path(docker_guest.__file__).with_name("docker_guest.sh")),
+            str(Path(docker_guest.__file__).with_name("docker_guest.py")),
+            str(guest_env),
+            str(diagnostic),
+            str(diagnostic),
+            "toolang",
+            str(workload_log),
+            "--",
+            sys.executable,
+            "-c",
+            "print('workload')",
+        ),
         check=False,
         capture_output=True,
         text=True,
-        env={"HOME": str(tmp_path / "home"), "PATH": str(bin_dir)},
+        env={
+            "HOSTNAME": _CONTAINER_ID[:12],
+            "PATH": str(tools),
+            "TOOLANG_TEST_PYTHON": sys.executable,
+            "TOOLANG_TEST_TOO": str(tools / "too-template"),
+            "TOOLANG_TEST_UV": str(driver),
+            "TOOLANG_GUEST_RUNTIME": str(tmp_path / "runtime"),
+        },
     )
 
-    assert completed.returncode == 127
+    assert completed.returncode == 0, completed.stderr
     assert completed.stdout == ""
-    assert completed.stderr.splitlines() == [
-        "ensurepip failed",
-        "pip failed",
-        "uv not available",
-    ]
-    assert events.read_text(encoding="utf-8").splitlines() == [
-        "install.running",
-        "install.failed",
-    ]
+    assert workload_log.read_text(encoding="utf-8") == "workload\n"
+    assert stat.S_IMODE(workload_log.stat().st_mode) == 0o600
+    assert completed.stderr.splitlines()[0] == "Installing uv..."
+    assert completed.stderr.splitlines()[1] == "Installed uv · test"
 
 
-def test_docker_agent_script_reports_curated_compatibility_failure(
+def test_docker_guest_rejects_an_image_without_bootstrap_capabilities(
     tmp_path: Path,
 ) -> None:
-    script = tmp_path / "agent.sh"
-    events = tmp_path / "startup.events"
-    events.touch()
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _write_executable(bin_dir / "uv", "#!/bin/sh\nexit 0\n")
-    _write_executable(bin_dir / "too", "#!/bin/sh\nexit 2\n")
-    docker_guest.write_agent_script(
-        script,
-        command=("too", "serve", "alice"),
-        hosted_dev_artifact=None,
-        sandbox_instance_path=_sandbox_instance(tmp_path),
-        startup_events_path=events,
-        validation_error_to_stderr=True,
-    )
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    _link_guest_utilities(tools)
+    guest_env = tmp_path / "guest.env"
+    docker_guest.write_guest_env(guest_env, dotenv_envs={}, process_envs={})
+    diagnostic = tmp_path / "diagnostic.log"
+    diagnostic.touch()
 
     completed = subprocess.run(
-        ("/bin/sh", str(script)),
+        (
+            "/bin/sh",
+            str(Path(docker_guest.__file__).with_name("docker_guest.sh")),
+            str(Path(docker_guest.__file__).with_name("docker_guest.py")),
+            str(guest_env),
+            str(diagnostic),
+            str(diagnostic),
+            "toolang",
+            "-",
+            "--",
+            "too",
+            "--version",
+        ),
         check=False,
         capture_output=True,
         text=True,
-        env={"HOME": str(tmp_path / "home"), "PATH": str(bin_dir)},
+        env={
+            "HOSTNAME": _CONTAINER_ID[:12],
+            "PATH": str(tools),
+            "TOOLANG_GUEST_RUNTIME": str(tmp_path / "runtime"),
+        },
+    )
+
+    assert completed.returncode == 69
+    assert completed.stderr.splitlines() == [
+        "Installing uv...",
+        "Unsupported image: provide uv, Python 3.8+ with pip, curl, or wget",
+        f"See {diagnostic}",
+    ]
+    assert diagnostic.is_file()
+
+
+def test_docker_guest_requires_the_default_short_container_hostname(
+    tmp_path: Path,
+) -> None:
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    _link_guest_utilities(tools)
+    guest_env = tmp_path / "guest.env"
+    docker_guest.write_guest_env(guest_env, dotenv_envs={}, process_envs={})
+    diagnostic = tmp_path / "diagnostic.log"
+
+    completed = subprocess.run(
+        (
+            "/bin/sh",
+            str(Path(docker_guest.__file__).with_name("docker_guest.sh")),
+            str(Path(docker_guest.__file__).with_name("docker_guest.py")),
+            str(guest_env),
+            str(diagnostic),
+            str(diagnostic),
+            "toolang",
+            "-",
+            "--",
+            "too",
+            "--version",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            "HOSTNAME": "custom-host",
+            "PATH": str(tools),
+            "TOOLANG_GUEST_RUNTIME": str(tmp_path / "runtime"),
+        },
     )
 
     assert completed.returncode == 64
-    assert completed.stdout == ""
-    assert completed.stderr.strip() == (docker_guest.DOCKER_TOOLANG_COMPATIBILITY_ERROR)
-    assert events.read_text(encoding="utf-8").splitlines() == [
-        "install.running",
-        "install.ok",
-        "validate.running",
-        "validate.failed",
+    assert completed.stderr.splitlines() == [
+        "docker guest hostname is not a short container ID",
+        f"See {diagnostic}",
     ]
-
-
-def test_docker_agent_script_reports_uv_bootstrap_as_install_failure(
-    tmp_path: Path,
-) -> None:
-    script = tmp_path / "agent.sh"
-    events = tmp_path / "startup.events"
-    events.touch()
-    empty_bin = tmp_path / "bin"
-    empty_bin.mkdir()
-    docker_guest.write_agent_script(
-        script,
-        command=("too", "serve", "alice"),
-        hosted_dev_artifact=None,
-        sandbox_instance_path=_sandbox_instance(tmp_path),
-        startup_events_path=events,
-        validation_error_to_stderr=False,
-    )
-
-    completed = subprocess.run(
-        ("/bin/sh", str(script)),
-        check=False,
-        capture_output=True,
-        text=True,
-        env={"HOME": str(tmp_path / "home"), "PATH": str(empty_bin)},
-    )
-
-    assert completed.returncode == 127
-    assert completed.stdout == ""
-    assert completed.stderr.strip() == "python not available"
-    assert events.read_text(encoding="utf-8").splitlines() == [
-        "install.running",
-        "install.failed",
-    ]
-
-
-def test_docker_startup_observer_preserves_order_and_curated_failure(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "startup.events"
-    path.write_text(
-        "validate.running\n"
-        "install.running\n"
-        "install.running\n"
-        "unknown\n"
-        "install.ok\n"
-        "validate.running\n"
-        "validate.failed\n",
-        encoding="utf-8",
-    )
-    events: list[ProgressEvent] = []
-
-    asyncio.run(
-        docker_sandbox._observe_startup_events(
-            path,
-            progress=events.append,
-            progress_id="runtime:container",
-            package_source="toolang.whl",
-        )
-    )
-
-    assert [
-        (event.kind, event.stage, event.status, event.detail) for event in events
-    ] == [
-        ("runtime", "create", "running", "toolang.whl"),
-        ("runtime", "create", "running", None),
-        (
-            "runtime",
-            "create",
-            "failed",
-            docker_guest.DOCKER_TOOLANG_COMPATIBILITY_ERROR,
-        ),
-    ]
-    assert [event.label for event in events] == [
-        "Installing Toolang",
-        "Checking Toolang compatibility",
-        "Checking Toolang compatibility",
-    ]
-
-
-def test_docker_startup_observer_reads_final_token_after_container_exit(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    path = tmp_path / "startup.events"
-    path.write_text(
-        "install.running\ninstall.ok\nvalidate.running\n",
-        encoding="utf-8",
-    )
-    events: list[ProgressEvent] = []
-    monkeypatch.setattr(docker_sandbox, "docker_container_running", lambda _id: False)
-
-    async def append_failure() -> None:
-        await asyncio.sleep(0.01)
-        with path.open("a", encoding="utf-8") as stream:
-            stream.write("validate.failed\n")
-
-    async def observe() -> None:
-        await asyncio.gather(
-            docker_sandbox._observe_startup_events(
-                path,
-                progress=events.append,
-                progress_id="runtime:container",
-                package_source="toolang.whl",
-                runtime_id="container",
-            ),
-            append_failure(),
-        )
-
-    asyncio.run(observe())
-
-    assert [(event.stage, event.status) for event in events][-1] == (
-        "create",
-        "failed",
-    )
-
-
-def test_docker_startup_event_reader_rejects_untrusted_file_shapes(
-    tmp_path: Path,
-) -> None:
-    regular = tmp_path / "regular.events"
-    regular.write_text("install.running\n", encoding="utf-8")
-    assert docker_sandbox._read_startup_events(regular) == "install.running\n"
-
-    oversized = tmp_path / "oversized.events"
-    oversized.write_bytes(b"x" * (docker_sandbox._STARTUP_EVENT_MAX_BYTES + 1))
-    assert docker_sandbox._read_startup_events(oversized) == ""
-
-    invalid = tmp_path / "invalid.events"
-    invalid.write_bytes(b"\xff")
-    assert docker_sandbox._read_startup_events(invalid) == ""
-
-    symlink = tmp_path / "symlink.events"
-    symlink.symlink_to(regular)
-    assert docker_sandbox._read_startup_events(symlink) == ""
-
-    directory = tmp_path / "directory.events"
-    directory.mkdir()
-    assert docker_sandbox._read_startup_events(directory) == ""
-
-    mkfifo = getattr(os, "mkfifo", None)
-    if mkfifo is not None:
-        fifo = tmp_path / "fifo.events"
-        mkfifo(fifo)
-        assert docker_sandbox._read_startup_events(fifo) == ""
 
 
 def test_docker_sandbox_uses_configured_default_image(tmp_path: Path) -> None:
@@ -966,13 +756,13 @@ def test_docker_launch_failure_removes_the_staged_guest_environment(
     sandbox = create_sandbox("docker", config={})
     plan = sandbox.prepare(None, _request(tmp_path))
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
-    startup_events_path = Path(cast(str, plan.meta["startup_events_path"]))
+    diagnostic_path = Path(cast(str, plan.meta["diagnostic_path"]))
 
     with pytest.raises(ToolangError, match="Could not start docker sandbox"):
         asyncio.run(sandbox.launch(plan))
 
     assert not stage_dir.exists()
-    assert not startup_events_path.exists()
+    assert diagnostic_path.is_file()
 
 
 def test_docker_launch_cleanup_failure_returns_a_recovery_reference(
@@ -990,7 +780,7 @@ def test_docker_launch_cleanup_failure_returns_a_recovery_reference(
     sandbox = create_sandbox("docker", config={})
     plan = sandbox.prepare(None, _request(tmp_path))
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
-    startup_events_path = Path(cast(str, plan.meta["startup_events_path"]))
+    diagnostic_path = Path(cast(str, plan.meta["diagnostic_path"]))
 
     with pytest.raises(SandboxLaunchError, match="could not remove") as captured:
         asyncio.run(sandbox.launch(plan))
@@ -998,7 +788,7 @@ def test_docker_launch_cleanup_failure_returns_a_recovery_reference(
     assert captured.value.ref.runtime_id == plan.meta["container_name"]
     assert captured.value.ref.meta["stage_dir"] == str(stage_dir)
     assert stage_dir.is_dir()
-    assert startup_events_path.is_file()
+    assert diagnostic_path.is_file()
 
 
 def test_docker_launch_cancellation_terminates_cli_and_removes_container(
@@ -1050,7 +840,7 @@ def test_docker_launch_cancellation_terminates_cli_and_removes_container(
     plan = sandbox.prepare(None, _request(tmp_path))
     container_name = cast(str, plan.meta["container_name"])
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
-    startup_events_path = Path(cast(str, plan.meta["startup_events_path"]))
+    diagnostic_path = Path(cast(str, plan.meta["diagnostic_path"]))
 
     async def cancel_launch() -> None:
         task = asyncio.create_task(sandbox.launch(plan))
@@ -1064,7 +854,7 @@ def test_docker_launch_cancellation_terminates_cli_and_removes_container(
     assert process.terminated is True
     assert removed == [container_name]
     assert not stage_dir.exists()
-    assert not startup_events_path.exists()
+    assert diagnostic_path.is_file()
     assert cast(Path, plan.log_path).is_file()
 
 
@@ -1090,14 +880,14 @@ def test_docker_release_preserves_container_diagnostics_before_removal(
     )
     sandbox = create_sandbox("docker", config={})
     plan = sandbox.prepare(None, _request(tmp_path))
-    startup_events_path = Path(cast(str, plan.meta["startup_events_path"]))
+    diagnostic_path = Path(cast(str, plan.meta["diagnostic_path"]))
     ref = asyncio.run(sandbox.launch(plan))
 
     asyncio.run(sandbox.release(ref))
 
     assert calls == [("logs", ref.runtime_id), ("remove", ref.runtime_id)]
     assert cast(Path, plan.log_path).is_file()
-    assert not startup_events_path.exists()
+    assert diagnostic_path.is_file()
 
 
 def test_docker_release_removes_the_container_when_diagnostics_fail(
@@ -1250,9 +1040,12 @@ def test_docker_foreground_sandbox_follows_container_logs(
     sandbox = create_sandbox("docker", config={})
     plan = sandbox.prepare(None, _request(tmp_path, foreground=True))
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
-    assert docker_guest.DOCKER_TOOLANG_COMPATIBILITY_ERROR not in (
-        stage_dir / "agent.sh"
-    ).read_text(encoding="utf-8")
+    assert {path.name for path in stage_dir.iterdir()} == {
+        "docker_guest.sh",
+        "docker_guest.py",
+        "guest.env",
+        "start.json",
+    }
 
     ref = asyncio.run(sandbox.launch(plan))
     assert calls == []
@@ -1268,6 +1061,29 @@ def test_docker_foreground_sandbox_follows_container_logs(
     ]
 
 
+def test_docker_log_follower_detaches_without_waiting_for_the_container() -> None:
+    class Follower:
+        returncode: int | None = None
+        terminated = False
+
+        async def wait(self) -> int:
+            assert self.returncode is not None
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self) -> None:
+            raise AssertionError("graceful follower termination should succeed")
+
+    follower = Follower()
+
+    asyncio.run(docker_cli.finish_process(cast(Any, follower)))
+
+    assert follower.terminated is True
+
+
 def _async_value(value: str) -> Any:
     async def resolve(**_kwargs: object) -> str:
         return value
@@ -1280,7 +1096,47 @@ def _write_executable(path: Path, content: str) -> None:
     path.chmod(0o755)
 
 
-def _sandbox_instance(root: Path) -> Path:
-    path = root / "sandbox.instance"
-    path.write_text(_CONTAINER_ID + "\n")
-    return path
+def _write_fake_guest_tools(
+    directory: Path,
+    *,
+    python: str,
+    uv_path: Path | None = None,
+) -> None:
+    uv = uv_path or directory / "uv"
+    _write_executable(
+        uv,
+        "#!/bin/sh\n"
+        'if [ "$1" = "--version" ]; then echo "uv test"; exit 0; fi\n'
+        'if [ "$1" = "python" ] && [ "$2" = "find" ]; then\n'
+        '  if [ "${3:-}" = "--help" ]; then exit 0; fi\n'
+        '  printf "%s\\n" "$TOOLANG_TEST_PYTHON"\n'
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = "python" ] && [ "$2" = "install" ]; then exit 0; fi\n'
+        'if [ "$1" = "tool" ] && [ "$2" = "install" ]; then\n'
+        '  if [ "${3:-}" = "--help" ]; then exit 0; fi\n'
+        '  if [ -n "${TOOLANG_TEST_INSTALL_ENV_LOG:-}" ]; then\n'
+        '    printf "%s\\n" "${HTTPS_PROXY:-}" >"$TOOLANG_TEST_INSTALL_ENV_LOG"\n'
+        "  fi\n"
+        '  cp "$TOOLANG_TEST_TOO" "$UV_TOOL_BIN_DIR/too"\n'
+        '  chmod 755 "$UV_TOOL_BIN_DIR/too"\n'
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+    )
+    _write_executable(
+        directory / "too-template",
+        "#!/bin/sh\n"
+        'if [ "$1" = "serve" ] && [ "$2" = "--help" ]; then exit 0; fi\n'
+        'if [ "$1" = "--version" ]; then echo "toolang test"; exit 0; fi\n'
+        "exit 1\n",
+    )
+    assert Path(python).is_file()
+
+
+def _link_guest_utilities(directory: Path) -> None:
+    for name in ("cat", "chmod", "cp", "mkdir", "rm"):
+        source = shutil.which(name)
+        assert source is not None
+        (directory / name).symlink_to(source)
+    _write_executable(directory / "uname", "#!/bin/sh\nprintf 'Linux\\n'\n")

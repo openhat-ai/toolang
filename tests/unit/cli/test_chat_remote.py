@@ -187,7 +187,7 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
                 json=_profile(
                     driver="docker",
                     selector="docker:python:3.13-slim",
-                    instance=_CONTAINER_ID,
+                    instance=_CONTAINER_ID[:12],
                 ),
             )
         if request.url.path == "/api/v1/models":
@@ -369,7 +369,7 @@ def test_remote_chat_runtime_identity_allows_additive_profile_fields() -> None:
                 "sandbox": {
                     "driver": "docker",
                     "selector": "docker:python:3.13-slim",
-                    "instance": _CONTAINER_ID,
+                    "instance": _CONTAINER_ID[:12],
                     "description": None,
                     "future": True,
                 },
@@ -377,7 +377,7 @@ def test_remote_chat_runtime_identity_allows_additive_profile_fields() -> None:
         }
     )
 
-    assert identity.instance == _CONTAINER_ID
+    assert identity.instance == _CONTAINER_ID[:12]
     assert identity.description is None
 
 
@@ -403,7 +403,7 @@ def test_remote_chat_runtime_identity_allows_additive_profile_fields() -> None:
             _profile_without_description(
                 driver="docker",
                 selector="docker:python:3.13-slim",
-                instance=_CONTAINER_ID,
+                instance=_CONTAINER_ID[:12],
             ),
             None,
         ),

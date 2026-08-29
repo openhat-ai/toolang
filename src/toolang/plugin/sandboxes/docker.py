@@ -7,17 +7,15 @@ from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 import json
-import os
 from pathlib import Path
 import re
 import shutil
-import stat
 from typing import Any
 from uuid import uuid4
 
 from toolang.base.errors import SandboxLaunchError, ToolangError
 from toolang.base.protocols.sandbox import Sandbox
-from toolang.base.types.progress import ProgressSink, ProgressStage, ProgressStatus
+from toolang.base.types.progress import ProgressSink
 from toolang.base.types.sandbox import (
     SandboxLocation,
     SandboxMount,
@@ -26,7 +24,6 @@ from toolang.base.types.sandbox import (
     SandboxRef,
     SandboxRequest,
 )
-from toolang.common.progress import emit_progress
 
 from ._docker_cli import (
     DEFAULT_HOST_GATEWAY,
@@ -40,19 +37,13 @@ from ._docker_cli import (
     finish_process,
 )
 from ._docker_guest import (
-    DOCKER_TOOLANG_COMPATIBILITY_ERROR,
     prepare_background_log,
-    prepare_sandbox_instance,
+    prepare_diagnostic,
     prepare_stage_directory,
-    prepare_startup_events,
     remove_stage_directory,
-    remove_startup_events,
+    stage_guest_files,
     validate_guest_environment,
-    write_agent_script,
-    write_bootstrap,
     write_guest_env,
-    write_sandbox_instance,
-    write_start_script,
 )
 
 DEFAULT_IMAGE = "python:3.13-slim"
@@ -74,24 +65,9 @@ _CONTROL_ENV_NAMES = frozenset(
         "TOOLANG_SANDBOX",
         "TOOLANG_SANDBOX_DESCRIPTION",
         "TOOLANG_SANDBOX_INSTANCE",
+        "HOSTNAME",
     }
 )
-_STARTUP_EVENT_INTERVAL_SEC = 0.05
-_STARTUP_EVENT_MAX_BYTES = 1024
-_STARTUP_EVENT_MAP: dict[str, tuple[ProgressStage, str, ProgressStatus]] = {
-    "install.running": ("create", "Installing Toolang", "running"),
-    "install.failed": ("create", "Installing Toolang", "failed"),
-    "validate.running": ("create", "Checking Toolang compatibility", "running"),
-    "validate.failed": ("create", "Checking Toolang compatibility", "failed"),
-    "server.running": ("start", "Starting agent server", "running"),
-}
-_STARTUP_EVENT_TRANSITIONS = {
-    None: frozenset({"install.running"}),
-    "install.running": frozenset({"install.ok", "install.failed"}),
-    "install.ok": frozenset({"validate.running"}),
-    "validate.running": frozenset({"validate.ok", "validate.failed"}),
-    "validate.ok": frozenset({"server.running"}),
-}
 
 
 def _linked_agent_file_mounts(
@@ -177,19 +153,20 @@ class DockerSandbox:
             / "launches"
             / uuid4().hex[:8]
         )
-        startup_events_path = (
-            request.local_home / ".runtime" / f"sandbox-startup-{stage_dir.name}.events"
+        diagnostic_path = (
+            request.local_home / ".runtime" / f"docker-guest-{stage_dir.name}.log"
         )
         try:
             return self._prepare(
                 spec,
                 request,
                 stage_dir=stage_dir,
-                startup_events_path=startup_events_path,
+                diagnostic_path=diagnostic_path,
             )
         except BaseException:
             remove_stage_directory(stage_dir, ignore_errors=True)
-            remove_startup_events(startup_events_path, ignore_errors=True)
+            with suppress(OSError):
+                diagnostic_path.unlink(missing_ok=True)
             raise
 
     def _prepare(
@@ -198,7 +175,7 @@ class DockerSandbox:
         request: SandboxRequest,
         *,
         stage_dir: Path,
-        startup_events_path: Path,
+        diagnostic_path: Path,
     ) -> SandboxPlan:
         image = _image(spec, self._default_image)
         runtime_dir = request.hosted_home / ".runtime" / "sandbox"
@@ -207,9 +184,9 @@ class DockerSandbox:
         validate_guest_environment(process_envs)
         hosted_log_path = prepare_background_log(request)
         prepare_stage_directory(stage_dir)
-        sandbox_instance_path = stage_dir / "instance"
-        prepare_sandbox_instance(sandbox_instance_path)
-        prepare_startup_events(startup_events_path)
+        hosted_diagnostic_path = request.hosted_home / ".runtime" / diagnostic_path.name
+        prepare_diagnostic(diagnostic_path)
+        stage_guest_files(stage_dir)
 
         hosted_dev_artifact: Path | None = None
         if request.local_dev_artifact is not None:
@@ -220,24 +197,6 @@ class DockerSandbox:
             if artifact.resolve() != staged.resolve():
                 shutil.copy2(artifact, staged)
             hosted_dev_artifact = runtime_dir / staged.name
-
-        write_agent_script(
-            stage_dir / "agent.sh",
-            command=request.command,
-            hosted_dev_artifact=hosted_dev_artifact,
-            sandbox_instance_path=runtime_dir / sandbox_instance_path.name,
-            startup_events_path=(
-                request.hosted_home / ".runtime" / startup_events_path.name
-            ),
-            validation_error_to_stderr=request.output == "file",
-        )
-        write_bootstrap(stage_dir / "bootstrap.py")
-        write_start_script(
-            stage_dir / "start.sh",
-            runtime_dir=runtime_dir,
-            guest_env_path=request.hosted_home / ".env",
-            log_path=hosted_log_path,
-        )
         guest_env_path = stage_dir / "guest.env"
         write_guest_env(
             guest_env_path,
@@ -277,9 +236,23 @@ class DockerSandbox:
         container_name = (
             f"toolang-{_container_label(request.agent_name)}-{stage_dir.name}"
         )
+        package_source = (
+            str(hosted_dev_artifact) if hosted_dev_artifact is not None else "toolang"
+        )
         return SandboxPlan(
             sandbox=f"{self.name}:{image}",
-            command=("/bin/sh", str(runtime_dir / "start.sh")),
+            command=(
+                "/bin/sh",
+                str(runtime_dir / "docker_guest.sh"),
+                str(runtime_dir / "docker_guest.py"),
+                str(request.hosted_home / ".env"),
+                str(hosted_diagnostic_path),
+                str(diagnostic_path),
+                package_source,
+                str(hosted_log_path) if hosted_log_path is not None else "-",
+                "--",
+                *request.command,
+            ),
             working_directory=request.hosted_home,
             output=request.output,
             log_path=request.log_path,
@@ -301,13 +274,7 @@ class DockerSandbox:
                 "container_name": container_name,
                 "image": image,
                 "stage_dir": str(stage_dir),
-                "sandbox_instance_path": str(sandbox_instance_path),
-                "startup_events_path": str(startup_events_path),
-                "package_source": (
-                    request.local_dev_artifact.name
-                    if request.local_dev_artifact is not None
-                    else "package index"
-                ),
+                "diagnostic_path": str(diagnostic_path),
             },
         )
 
@@ -347,12 +314,7 @@ class DockerSandbox:
                 published_port=port.local_port,
                 hosted_port=port.hosted_port,
                 env_values=plan.envs,
-                log_path=plan.log_path if plan.output == "file" else None,
-            )
-            await asyncio.to_thread(
-                write_sandbox_instance,
-                _plan_text(plan, "sandbox_instance_path"),
-                runtime_id,
+                log_path=None,
             )
         except BaseException as exc:
             cleanup_error: BaseException | None = None
@@ -366,11 +328,6 @@ class DockerSandbox:
                 await asyncio.to_thread(
                     remove_stage_directory,
                     _plan_text(plan, "stage_dir"),
-                    ignore_errors=True,
-                )
-                await asyncio.to_thread(
-                    remove_startup_events,
-                    _plan_text(plan, "startup_events_path"),
                     ignore_errors=True,
                 )
             else:
@@ -401,20 +358,21 @@ class DockerSandbox:
         progress: ProgressSink | None = None,
         progress_id: str | None = None,
     ) -> None:
-        """Follow inherited output after the recovery reference is durable."""
+        """Follow the container stream from bootstrap through the workload."""
 
-        if plan.output == "inherit":
-            self._log_followers[ref.runtime_id] = await docker_follow_container_logs(
-                ref.runtime_id
-            )
-        if progress is not None:
-            await _observe_startup_events_safely(
-                Path(_plan_text(plan, "startup_events_path")),
-                progress=progress,
-                progress_id=progress_id or f"runtime:{ref.runtime_id}",
-                package_source=_plan_text(plan, "package_source"),
-                runtime_id=ref.runtime_id,
-            )
+        del progress_id
+        if plan.output != "inherit" and progress is None:
+            return
+        self._log_followers[ref.runtime_id] = await docker_follow_container_logs(
+            ref.runtime_id
+        )
+
+    async def detach_output(self, ref: SandboxRef) -> None:
+        """Stop following output without stopping the container workload."""
+
+        follower = self._log_followers.pop(ref.runtime_id, None)
+        if follower is not None:
+            await finish_process(follower)
 
     async def running(self, ref: SandboxRef) -> bool:
         return await asyncio.to_thread(docker_container_running, ref.runtime_id)
@@ -435,9 +393,7 @@ class DockerSandbox:
         )
 
     async def release(self, ref: SandboxRef) -> None:
-        follower = self._log_followers.pop(ref.runtime_id, None)
-        if follower is not None:
-            await finish_process(follower)
+        await self.detach_output(ref)
         log_path = ref.meta.get("log_path")
         if isinstance(log_path, str) and log_path:
             with suppress(OSError):
@@ -450,9 +406,6 @@ class DockerSandbox:
         stage_dir = ref.meta.get("stage_dir")
         if isinstance(stage_dir, str) and stage_dir:
             await asyncio.to_thread(remove_stage_directory, stage_dir)
-        startup_events_path = ref.meta.get("startup_events_path")
-        if isinstance(startup_events_path, str) and startup_events_path:
-            await asyncio.to_thread(remove_startup_events, startup_events_path)
 
 
 def create_sandbox(config: Mapping[str, Any]) -> Sandbox:
@@ -474,7 +427,7 @@ def _docker_ref(
         runtime_name=container_name,
         meta={
             "stage_dir": _plan_text(plan, "stage_dir"),
-            "startup_events_path": _plan_text(plan, "startup_events_path"),
+            "diagnostic_path": _plan_text(plan, "diagnostic_path"),
             **(
                 {"log_path": str(plan.log_path)}
                 if plan.output == "file" and plan.log_path is not None
@@ -482,128 +435,6 @@ def _docker_ref(
             ),
         },
     )
-
-
-async def _observe_startup_events(
-    path: Path,
-    *,
-    progress: ProgressSink,
-    progress_id: str,
-    package_source: str,
-    runtime_id: str | None = None,
-) -> None:
-    processed_lines = 0
-    previous: str | None = None
-    stopped_observed = False
-    while True:
-        content = await asyncio.to_thread(_read_startup_events, path)
-        lines = content.splitlines()
-        complete_count = (
-            len(lines) if content.endswith("\n") else max(len(lines) - 1, 0)
-        )
-        for token in lines[processed_lines:complete_count]:
-            if token not in _STARTUP_EVENT_TRANSITIONS.get(previous, frozenset()):
-                continue
-            previous = token
-            if token.endswith(".ok"):
-                continue
-            stage, label, status = _STARTUP_EVENT_MAP[token]
-            detail = _startup_event_detail(
-                token,
-                package_source=package_source,
-            )
-            emit_progress(
-                progress,
-                id=progress_id,
-                kind="runtime",
-                stage=stage,
-                label=label,
-                status=status,
-                detail=detail,
-            )
-            if token in {
-                "install.failed",
-                "validate.failed",
-                "server.running",
-            }:
-                return
-        processed_lines = complete_count
-        if runtime_id is not None and not await asyncio.to_thread(
-            docker_container_running,
-            runtime_id,
-        ):
-            if stopped_observed:
-                return
-            stopped_observed = True
-        else:
-            stopped_observed = False
-        await asyncio.sleep(_STARTUP_EVENT_INTERVAL_SEC)
-
-
-async def _observe_startup_events_safely(
-    path: Path,
-    *,
-    progress: ProgressSink,
-    progress_id: str,
-    package_source: str,
-    runtime_id: str,
-) -> None:
-    with suppress(Exception):
-        await _observe_startup_events(
-            path,
-            progress=progress,
-            progress_id=progress_id,
-            package_source=package_source,
-            runtime_id=runtime_id,
-        )
-
-
-def _read_startup_events(path: Path) -> str:
-    try:
-        expected = os.lstat(path)
-    except OSError:
-        return ""
-    if not stat.S_ISREG(expected.st_mode):
-        return ""
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_NONBLOCK", 0)
-    )
-    try:
-        descriptor = os.open(path, flags)
-    except OSError:
-        return ""
-    try:
-        opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode) or (
-            expected.st_dev,
-            expected.st_ino,
-        ) != (opened.st_dev, opened.st_ino):
-            return ""
-        content = os.read(descriptor, _STARTUP_EVENT_MAX_BYTES + 1)
-    except OSError:
-        return ""
-    finally:
-        with suppress(OSError):
-            os.close(descriptor)
-    if len(content) > _STARTUP_EVENT_MAX_BYTES:
-        return ""
-    try:
-        return content.decode("utf-8")
-    except UnicodeDecodeError:
-        return ""
-
-
-def _startup_event_detail(token: str, *, package_source: str) -> str | None:
-    if token == "install.running":
-        return package_source
-    if token == "install.failed":
-        return "Toolang installation failed."
-    if token == "validate.failed":
-        return DOCKER_TOOLANG_COMPATIBILITY_ERROR
-    return None
 
 
 def _image(spec: str | None, configured: str | None) -> str:

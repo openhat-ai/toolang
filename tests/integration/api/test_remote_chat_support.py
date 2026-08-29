@@ -144,7 +144,7 @@ agic chat(_: Part[]) -> Part[]:
         asyncio.run(core.close())
 
 
-def test_profile_preserves_source_version_and_complete_docker_instance(
+def test_profile_preserves_source_version_and_short_docker_instance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -156,7 +156,7 @@ def test_profile_preserves_source_version_and_complete_docker_instance(
         started_at="2026-08-25T00:00:00Z",
         pid=123,
         sandbox="docker:python:3.13-slim",
-        sandbox_instance=_CONTAINER_ID,
+        sandbox_instance=_CONTAINER_ID[:12],
     )
     core = AgentCore(layout)
     source_version = "v0.2.7-88-gc73484a9"
@@ -175,7 +175,7 @@ def test_profile_preserves_source_version_and_complete_docker_instance(
             "sandbox": {
                 "driver": "docker",
                 "selector": "docker:python:3.13-slim",
-                "instance": _CONTAINER_ID,
+                "instance": _CONTAINER_ID[:12],
                 "description": None,
             },
         }
@@ -183,7 +183,7 @@ def test_profile_preserves_source_version_and_complete_docker_instance(
         asyncio.run(core.close())
 
 
-def test_profile_rejects_short_docker_instance(tmp_path: Path) -> None:
+def test_profile_rejects_invalid_docker_instance(tmp_path: Path) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     agents.write_runtime_state(

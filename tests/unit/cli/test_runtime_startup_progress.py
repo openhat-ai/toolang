@@ -86,6 +86,30 @@ def test_tty_startup_tracks_stage_and_clears_transient_line() -> None:
     assert progress.current_stage == "Installing Toolang"
 
 
+def test_tty_startup_clears_before_attaching_workload_output() -> None:
+    progress = RuntimeStartupProgress(
+        "alice",
+        "docker:python:3.13-slim",
+        stream=StringIO(),
+        live=True,
+    )
+
+    progress(_event("launch", "Starting workload"))
+    assert progress._display is not None
+
+    progress(
+        _event(
+            "launch",
+            "Starting workload",
+            status="ok",
+            detail="176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb",
+        )
+    )
+
+    assert progress._display is None
+    assert progress.current_stage == "Starting workload"
+
+
 def test_startup_failure_retains_full_reason_while_bounding_display() -> None:
     progress = RuntimeStartupProgress(
         "alice",
