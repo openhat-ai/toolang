@@ -29,22 +29,6 @@ def test_parse_single_quick_command(source: str, expected: QuickCommand) -> None
     assert parse_chat_input(source) == expected
 
 
-@pytest.mark.parametrize(
-    ("source", "expected"),
-    [
-        (":help", QuickCommand("help", legacy=":help")),
-        (":model", QuickCommand("model", legacy=":model")),
-        (":models", QuickCommand("model", legacy=":models")),
-        (":queue edit 2", QuickCommand("queue", "edit 2", legacy=":queue")),
-    ],
-)
-def test_parse_legacy_colon_quick_command(
-    source: str,
-    expected: QuickCommand,
-) -> None:
-    assert parse_chat_input(source) == expected
-
-
 def test_policy_only_input_returns_commands() -> None:
     assert parse_chat_input(":model openai/gpt-5\n\n:limit time=30") == (
         RunOverride("default", "model", "openai/gpt-5"),
@@ -99,7 +83,12 @@ def test_chat_normalization_preserves_first_indentation_and_internal_blanks() ->
         ("", "empty"),
         (" \t\n", "empty"),
         ("/models", "unknown command"),
-        (":unknown", "unknown command"),
+        ("/review", "unknown command"),
+        (":help", "escape a leading colon"),
+        (":model", "escape a leading colon"),
+        (":models", "escape a leading colon"),
+        (":queue edit 2", "escape a leading colon"),
+        (":unknown", "escape a leading colon"),
         ("/steer", "requires an argument"),
         ("/help unexpected", "does not accept an argument"),
         ("/help\nInput", "cannot be combined"),

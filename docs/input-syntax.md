@@ -124,10 +124,10 @@ trailing blank lines, then removes horizontal whitespace from the end of the
 final line. It preserves indentation on the first nonblank line and all
 internal runnable-input whitespace.
 
-During the compatibility release, existing colon quick commands remain aliases
-and report their slash replacement. Colon policy directives remain canonical
-and are not deprecated. In particular, no-argument `:models` aliases `/model`,
-while `:models SELECTORS` remains an allow-policy shortcut.
+Colon policy directives remain canonical. Former colon quick-command spellings
+are not aliases: use `/help`, `/model`, and the other slash interactions.
+`:models SELECTORS` remains an allow-policy shortcut, while no-argument
+`:models` is invalid.
 
 ## Runnable Input
 
@@ -237,9 +237,10 @@ arguments. Tail and fenced bodies recursively evaluate nested `$` and `@`
 lines. Fence lines are excluded; an unclosed fence is invalid. Prompt calls
 evaluate from the innermost call outward.
 
-During the compatibility release, legacy `/prompt` calls remain accepted with
-a diagnostic. Canonical output and examples use `$prompt`. Shell commands must
-single-quote dollar-prefixed input, for example:
+Slash-prefixed prompt calls are not supported. In terminal Chat, a leading
+slash belongs to the interaction namespace; on other `Content` surfaces it is
+ordinary text. Shell commands must single-quote dollar-prefixed input, for
+example:
 
 ```sh
 too run alice '$review focus=security'

@@ -525,8 +525,7 @@ $review path=src/app.py focus="only errors"
 references, and escaping are defined in
 [input-syntax.md](./input-syntax.md). A dollar prompt call invokes one reusable
 prompt template during content evaluation. Slash is reserved for terminal Chat
-commands; legacy slash prompt calls are accepted only during the compatibility
-release.
+commands and does not invoke prompts.
 
 
 ## Service Caps

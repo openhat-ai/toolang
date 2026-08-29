@@ -14,9 +14,9 @@ and this project uses semantic versioning.
   by default. Use `--save -` for stdout or `--save PATH` for atomic file output.
 - Terminal Chat interactions now use slash commands, reusable prompt calls use
   `$prompt`, colon remains the execution-policy prefix, and `@` remains resource
-  inclusion. Legacy colon quick commands and `/prompt` calls remain accepted
-  for one compatibility release with migration diagnostics. Quote dollar prompt
-  calls in shells, for example `too run alice '$review focus=security'`.
+  inclusion. Former colon quick commands and `/prompt` calls are not accepted as
+  aliases. Quote dollar prompt calls in shells, for example
+  `too run alice '$review focus=security'`.
 
 
 ## [0.3.0] - 2026-08-03

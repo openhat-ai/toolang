@@ -338,7 +338,7 @@ def test_prompt_resolution_records_ordered_nested_provenance() -> None:
     assert all(len(invocation.content_hash) == 64 for invocation in resolved.prompts)
 
 
-def test_legacy_slash_prompt_call_is_accepted_with_a_diagnostic() -> None:
+def test_slash_prompt_spelling_is_literal_content() -> None:
     from toolang.lang.ast import CapDecl, Program
 
     program = Program(
@@ -354,8 +354,7 @@ def test_legacy_slash_prompt_call_is_accepted_with_a_diagnostic() -> None:
         ),
     )
 
-    with pytest.warns(FutureWarning, match=r"use \$label"):
-        assert resolve_input_parts("/label", program=program) == (TextPart("LABEL"),)
+    assert resolve_input_parts("/label", program=program) == (TextPart("/label"),)
 
 
 def test_input_coercion_preserves_parts_and_parses_declared_values() -> None:

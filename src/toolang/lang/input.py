@@ -9,7 +9,6 @@ import json
 import math
 import re
 import shlex
-import warnings
 from types import MappingProxyType
 from typing import Any, Literal, TypeAlias, cast
 
@@ -31,7 +30,7 @@ IncludeResolver = Callable[[str], Part]
 NamedInputSources: TypeAlias = tuple[tuple[str, str], ...]
 _ARGUMENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PROMPT_NAME_RE = re.compile(r"^[A-Za-z_][\w-]*$")
-_PROMPT_CALL_RE = re.compile(r"^([$/])([A-Za-z_][\w-]*)(?:\s+(.*))?$")
+_PROMPT_CALL_RE = re.compile(r"^\$([A-Za-z_][\w-]*)(?:\s+(.*))?$")
 _SLOT_RE = re.compile(r"\ue000(\d+)\ue001")
 _MARKDOWN_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _JSON_OUTPUT_FENCE_RE = re.compile(
@@ -117,11 +116,10 @@ class PromptInvocation:
 
 @dataclass(frozen=True, slots=True)
 class InputResolution:
-    """Resolved Content parts plus prompt provenance and migration diagnostics."""
+    """Resolved Content parts plus prompt provenance."""
 
     parts: tuple[Part, ...]
     prompts: tuple[PromptInvocation, ...] = ()
-    diagnostics: tuple[str, ...] = ()
 
 
 def resolve_runnable_input(
@@ -238,7 +236,6 @@ def resolve_input_parts_with_provenance(
     if not isinstance(source, str):
         return InputResolution(_require_parts(source))
     invocations: list[PromptInvocation] = []
-    diagnostics: list[str] = []
     parts = _resolve_parts_body(
         source,
         program=program,
@@ -247,14 +244,11 @@ def resolve_input_parts_with_provenance(
         include=include,
         prompt_definitions=prompt_definitions or {},
         invocations=invocations,
-        diagnostics=diagnostics,
         parent_invocation=None,
         prompt_stack=(),
         depth=0,
     )
-    for diagnostic in diagnostics:
-        warnings.warn(diagnostic, FutureWarning, stacklevel=2)
-    return InputResolution(parts, tuple(invocations), tuple(diagnostics))
+    return InputResolution(parts, tuple(invocations))
 
 
 def coerce_input(
@@ -388,7 +382,6 @@ def _resolve_parts_body(
     include: IncludeResolver | None,
     prompt_definitions: Mapping[str, PromptDefinitionIdentity],
     invocations: list[PromptInvocation],
-    diagnostics: list[str],
     parent_invocation: int | None,
     prompt_stack: tuple[str, ...],
     depth: int,
@@ -458,17 +451,13 @@ def _resolve_parts_body(
                     content_hash=identity.content_hash,
                 )
             )
-            if call.marker == "/" and not diagnostics:
-                diagnostics.append(
-                    f"Prompt call /{prompt_name} is deprecated; use ${prompt_name}."
-                )
             attached_body = ""
             consumed = 1
             following_break = line_break
             if call.scope == "tail":
                 if not line_break or index + 1 >= len(lines):
                     raise ToolangError(
-                        f"Tail prompt {call.marker}{prompt_name} requires a following line."
+                        f"Tail prompt ${prompt_name} requires a following line."
                     )
                 attached_body = "".join(lines[index + 1 :])
                 consumed = len(lines) - index
@@ -479,7 +468,7 @@ def _resolve_parts_body(
             elif call.scope == "fenced":
                 if not line_break or index + 1 >= len(lines):
                     raise ToolangError(
-                        f"Fenced prompt {call.marker}{prompt_name} requires a following line."
+                        f"Fenced prompt ${prompt_name} requires a following line."
                     )
                 assert call.fence is not None
                 closing_index = _find_prompt_fence(
@@ -488,9 +477,7 @@ def _resolve_parts_body(
                     fence=call.fence,
                 )
                 if closing_index is None:
-                    raise ToolangError(
-                        f"Unclosed prompt fence for {call.marker}{prompt_name}."
-                    )
+                    raise ToolangError(f"Unclosed prompt fence for ${prompt_name}.")
                 attached_body = "".join(lines[index + 1 : closing_index])
                 _, following_break = _split_line(lines[closing_index])
                 consumed = closing_index - index + 1
@@ -503,7 +490,6 @@ def _resolve_parts_body(
                     include=include,
                     prompt_definitions=prompt_definitions,
                     invocations=invocations,
-                    diagnostics=diagnostics,
                     parent_invocation=invocation_index,
                     prompt_stack=prompt_stack,
                     depth=depth + 1,
@@ -518,7 +504,6 @@ def _resolve_parts_body(
                     include=include,
                     prompt_definitions=prompt_definitions,
                     invocations=invocations,
-                    diagnostics=diagnostics,
                     parent_invocation=invocation_index,
                     prompt_stack=prompt_stack,
                     depth=depth + 1,
@@ -574,7 +559,6 @@ def _resolve_prompt_parts(
     include: IncludeResolver | None,
     prompt_definitions: Mapping[str, PromptDefinitionIdentity],
     invocations: list[PromptInvocation],
-    diagnostics: list[str],
     parent_invocation: int,
     prompt_stack: tuple[str, ...],
     depth: int,
@@ -592,7 +576,6 @@ def _resolve_prompt_parts(
             include=include,
             prompt_definitions=prompt_definitions,
             invocations=invocations,
-            diagnostics=diagnostics,
             parent_invocation=parent_invocation,
             prompt_stack=(*prompt_stack, prompt_name),
             depth=depth,
@@ -651,7 +634,6 @@ def prompt_definition_identity(
 
 @dataclass(frozen=True, slots=True)
 class _PromptCall:
-    marker: Literal["$", "/"]
     name: str
     raw_args: str
     scope: PromptInputScope
@@ -663,19 +645,15 @@ def _prompt_call(line: str) -> _PromptCall | None:
     match = _PROMPT_CALL_RE.fullmatch(line)
     if match is None:
         return None
-    marker = cast(Literal["$", "/"], match.group(1))
-    prompt_name = match.group(2)
-    raw = match.group(3) or ""
+    prompt_name = match.group(1)
+    raw = match.group(2) or ""
     for start, end, token in _unquoted_plain_tokens(raw):
         if token != "--":
             continue
         inline = raw[end:].lstrip(" \t")
         if not inline:
-            raise ToolangError(
-                f"Inline prompt {marker}{prompt_name} requires nonempty text."
-            )
+            raise ToolangError(f"Inline prompt ${prompt_name} requires nonempty text.")
         return _PromptCall(
-            marker,
             prompt_name,
             raw[:start].rstrip(),
             "inline",
@@ -683,19 +661,18 @@ def _prompt_call(line: str) -> _PromptCall | None:
         )
     terminal = _unquoted_terminal_token(raw)
     if terminal is None:
-        return _PromptCall(marker, prompt_name, raw.strip(), "none")
+        return _PromptCall(prompt_name, raw.strip(), "none")
     start, token = terminal
     if token == "-":
-        return _PromptCall(marker, prompt_name, raw[:start].rstrip(), "tail")
+        return _PromptCall(prompt_name, raw[:start].rstrip(), "tail")
     if len(token) >= 3 and set(token) == {"`"}:
         return _PromptCall(
-            marker,
             prompt_name,
             raw[:start].rstrip(),
             "fenced",
             fence=token,
         )
-    return _PromptCall(marker, prompt_name, raw.strip(), "none")
+    return _PromptCall(prompt_name, raw.strip(), "none")
 
 
 def _unquoted_plain_tokens(value: str) -> tuple[tuple[int, int, str], ...]:

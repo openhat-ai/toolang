@@ -17,7 +17,6 @@ class QuickCommand:
 
     name: str
     tail: str | None = None
-    legacy: str | None = None
 
 
 ChatInput: TypeAlias = (
@@ -26,24 +25,6 @@ ChatInput: TypeAlias = (
     | tuple[tuple[RunOverride, ...], RunnableInputRaw]
 )
 
-_POLICY_HEADS = frozenset(
-    {
-        "allow",
-        "default",
-        "limit",
-        "model",
-        "agic",
-        "flow",
-        "runnable",
-        "models",
-        "tools",
-        "caps",
-        "psyches",
-        "skills",
-        "services",
-        "prompts",
-    }
-)
 _QUICK_COMMANDS = frozenset(
     {
         "?",
@@ -85,8 +66,6 @@ def parse_chat_input(chat_input: str) -> ChatInput:
     first, separator, rest = body.partition("\n")
     first = first.removesuffix("\r")
     quick = _parse_slash(first)
-    if quick is None:
-        quick = _parse_colon_quick(first)
     if quick is not None:
         if separator and rest.strip(" \t\r\n"):
             raise ValueError("quick command cannot be combined with other input")
@@ -95,10 +74,6 @@ def parse_chat_input(chat_input: str) -> ChatInput:
     commands, named, primary_source = parse_policy_prefix(body)
     if commands and not named and not primary_source:
         return commands
-    if primary_source.startswith(":") and not primary_source.startswith("::"):
-        combined = _parse_colon_quick(primary_source.splitlines()[0])
-        if combined is not None:
-            raise ValueError("quick command cannot be combined with other input")
     if primary_source.startswith("/") and not primary_source.startswith("//"):
         combined = _parse_slash(primary_source.splitlines()[0])
         if combined is not None:
@@ -135,54 +110,25 @@ def is_runnable_input(
 def _parse_slash(line: str) -> QuickCommand | None:
     if not line.startswith("/") or line.startswith("//"):
         return None
-    name, tail = _command_parts(line, marker="/")
-    if name == "models":
-        raise ValueError("unknown command: /models")
+    name, tail = _command_parts(line)
     if name not in _QUICK_COMMANDS:
-        return None
-    _validate_quick(name, tail, marker="/")
+        raise ValueError(f"unknown command: /{name}")
+    _validate_quick(name, tail)
     return QuickCommand(name=name, tail=tail)
 
 
-def _parse_colon_quick(line: str) -> QuickCommand | None:
-    if not line.startswith(":") or line.startswith("::"):
-        return None
-
-    name, tail = _command_parts(line, marker=":")
-
-    if name in _POLICY_HEADS and tail is not None:
-        return None
-    if name in {
-        "allow",
-        "default",
-        "limit",
-        "tools",
-        "caps",
-        "psyches",
-        "skills",
-        "services",
-        "prompts",
-    }:
-        return None
-    canonical_name = "model" if name == "models" else name
-    if canonical_name not in _QUICK_COMMANDS:
-        raise ValueError(f"unknown command: :{name}")
-    _validate_quick(canonical_name, tail, marker=":")
-    return QuickCommand(name=canonical_name, tail=tail, legacy=f":{name}")
-
-
-def _command_parts(line: str, *, marker: str) -> tuple[str, str | None]:
+def _command_parts(line: str) -> tuple[str, str | None]:
     head, separator, raw_tail = line.partition(" ")
     if not separator:
         head, _separator, raw_tail = line.partition("\t")
-    return head.removeprefix(marker), raw_tail.strip(" \t") or None
+    return head.removeprefix("/"), raw_tail.strip(" \t") or None
 
 
-def _validate_quick(name: str, tail: str | None, *, marker: str) -> None:
+def _validate_quick(name: str, tail: str | None) -> None:
     if name in _QUICK_WITHOUT_TAIL and tail is not None:
-        raise ValueError(f"{marker}{name} does not accept an argument")
+        raise ValueError(f"/{name} does not accept an argument")
     if name in _QUICK_REQUIRING_TAIL and tail is None:
-        raise ValueError(f"{marker}{name} requires an argument")
+        raise ValueError(f"/{name} requires an argument")
 
 
 __all__ = [

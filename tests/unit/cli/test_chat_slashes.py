@@ -270,16 +270,3 @@ def test_quick_steer_requires_message() -> None:
     slashes.handle(app, QuickCommand("steer"))
 
     assert app.error == "/steer requires a message."
-
-
-def test_legacy_colon_command_reports_canonical_replacement() -> None:
-    app = _App()
-
-    result = slashes.handle(app, QuickCommand("help", legacy=":help"))
-
-    assert result.lines is not None
-    assert result.lines[:3] == [
-        ":help is deprecated; use /help.",
-        "",
-        "Chat Commands",
-    ]

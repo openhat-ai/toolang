@@ -285,10 +285,6 @@ def _chat_interactive_scripted_local(
             return
         if text.strip() in {"/exit", "/quit"}:
             return
-        if text.strip() in {":exit", ":quit"}:
-            replacement = text.strip().removeprefix(":")
-            typer.echo(f"{text.strip()} is deprecated; use /{replacement}.")
-            return
         if not text.strip():
             continue
         if _chat_handle_scripted_command(
@@ -340,9 +336,6 @@ def _chat_handle_scripted_command(
     if not isinstance(chat_input, QuickCommand):
         raise AssertionError("unknown chat input value")
     command = chat_input.name
-    if chat_input.legacy is not None:
-        primary = chat_slashes._SLASH_BY_NAME[command].primary
-        typer.echo(f"{chat_input.legacy} is deprecated; use /{primary}.")
     if command in {"help", "?"}:
         for line in chat_slashes._chat_help_lines():
             typer.echo(line)

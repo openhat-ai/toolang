@@ -25,7 +25,7 @@ Terminal interactions use complete slash commands such as `/help`, `/model`,
 `/runnable`, `/show`, `/queue`, and `/steer`. Colon-prefixed lines remain the
 shared execution-policy prefix, while dollar-prefixed `Content` lines expand
 reusable prompts. See [input-syntax.md](./input-syntax.md) for the complete
-namespace contract and compatibility aliases.
+namespace contract.
 
 Thread ids use one underscore-delimited normalized form:
 

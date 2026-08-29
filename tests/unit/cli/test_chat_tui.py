@@ -2545,7 +2545,7 @@ def test_chat_tui_creates_a_thread_only_for_the_first_submission(
     )
     monkeypatch.setattr(tui.rendering, "write_renderable", lambda *_args: None)
 
-    app.handle_submit(":help")
+    app.handle_submit("/help")
     assert client.created == 0
 
     app.handle_submit("hello")
@@ -2755,7 +2755,7 @@ def test_chat_tui_reports_remote_read_failure_without_exiting() -> None:
         client=FailingRemoteClient(),
     )
 
-    app.handle_submit(":models")
+    app.handle_submit("/model")
 
     assert app.status_bar.error_message == "remote chat models transport failed"
 

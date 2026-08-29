@@ -48,12 +48,6 @@ def handle(app: AppContext, quick: QuickCommand) -> SlashResult:
         app.set_status_error(f"Unknown command: /{command}")
         return SlashResult(True)
 
-    diagnostic = (
-        f"{quick.legacy} is deprecated; use /{slash.primary}."
-        if quick.legacy is not None
-        else None
-    )
-
     try:
         output = slash.run(app, command, argument)
     except (ToolangError, ValueError) as exc:
@@ -64,17 +58,11 @@ def handle(app: AppContext, quick: QuickCommand) -> SlashResult:
         return SlashResult(True)
 
     if isinstance(output, ChatResult):
-        return SlashResult(
-            True,
-            [diagnostic] if diagnostic is not None else None,
-            result=output,
-        )
+        return SlashResult(True, result=output)
     if output is not None:
         lines = output.splitlines() or [""] if isinstance(output, str) else list(output)
-        if diagnostic is not None:
-            lines = [diagnostic, "", *lines]
         return SlashResult(True, lines)
-    return SlashResult(True, [diagnostic] if diagnostic is not None else None)
+    return SlashResult(True)
 
 
 def _help(_app: AppContext, _command: str, _argument: str) -> list[str]:
