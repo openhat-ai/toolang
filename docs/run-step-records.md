@@ -187,10 +187,13 @@ to canonical JSON, and traverses slash tokens. Canonical traversal never
 follows a Pointer stored as data. Missing records, missing members, invalid
 array indexes, scalar traversal, and explicit `null` are distinct outcomes.
 
-`toolang AGENT inspect POINTER` opens the store read-only. Human output lists
-one structural level and may resolve Pointer-valued fields for presentation;
-resolved rows carry a separate `→` marker. `--json` and `--type` never follow a
-stored Pointer. Ejected Runs and Steps remain hidden from ordinary inspection.
+`toolang AGENT inspect POINTER` opens the store read-only. Human output starts
+with a dim line containing the selected Pointer and displayed type, then shows
+one structural level using relative field suffixes with TYPE in the second
+column. Human strings have no JSON quotes, multiline Parts align within VALUE
+without a bullet, and resolved rows carry a separate `→` marker. `--json` never
+follows a stored Pointer, and `--type` is not an option. Ejected Runs and Steps
+remain hidden from ordinary inspection.
 
 ## Projection Ownership
 

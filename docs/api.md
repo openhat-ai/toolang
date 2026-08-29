@@ -272,7 +272,7 @@ toolang SCRIPT run
 toolang SCRIPT chat [THREAD]
 toolang SCRIPT threads
 toolang SCRIPT runs [--thread THREAD]
-toolang SCRIPT inspect POINTER [--human | --json | --type]
+toolang SCRIPT inspect POINTER [--human | --json]
 toolang SCRIPT retry RUN [--anchor STEP]
 toolang SCRIPT rerun RUN
 ```
@@ -287,7 +287,7 @@ Visiting selectors support the same agent-self and execution-history commands:
 toolang brice/alice info
 toolang brice/alice run
 toolang brice/alice chat [THREAD]
-toolang brice/alice inspect POINTER [--human | --json | --type]
+toolang brice/alice inspect POINTER [--human | --json]
 toolang brice/alice retry RUN
 ```
 
@@ -315,12 +315,15 @@ run_ab12@1/payload/locals/0/value nested Control field
 field using RFC 6901 escaping (`~0` for `~` and `~1` for `/`). Run ids occupy
 the `run_` namespace; thread ids cannot begin with `run_`.
 
-Human output is the default and lists the selected record or container's direct
-children with complete Pointers. A separate `→` after a Pointer means its value
-was resolved from a Pointer-valued field. `--json` prints only the selected
-canonical JSON value, and `--type` prints only its current declared code type.
-The three display modes are mutually exclusive. Inspection is read-only and
-historical; it does not prepare future model calls or load a runnable.
+Human output is the default. Its dim first line names the selected Pointer and
+displayed type; record and container tables then list direct children as
+relative field suffixes with TYPE in the second column. Strings have no JSON
+quotes. Multiline Part content stays aligned inside the VALUE cell without a
+leading bullet. A separate `→` means the shown value was resolved from a
+Pointer-valued field. `--json` prints only the selected canonical JSON value.
+The two display modes are mutually exclusive, and `--type` is not an option.
+Inspection is read-only and historical; it does not prepare future model calls
+or load a runnable.
 
 ## File Request Runtime
 

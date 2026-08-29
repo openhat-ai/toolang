@@ -284,15 +284,10 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
         "run_inspect.0/output/value/0",
         "--json",
     )
-    type_name = _invoke(
-        root,
-        "alice",
-        "inspect",
-        "run_inspect.0/input",
-        "--type",
-    )
     human = _invoke(root, "alice", "inspect", "run_inspect.0")
     resolved = _invoke(root, "alice", "inspect", "run_inspect.0/input")
+    resolved_value = _invoke(root, "alice", "inspect", "run_inspect.0/input/0")
+    status = _invoke(root, "alice", "inspect", "run_inspect.0/status")
     response = _invoke(
         root,
         "alice",
@@ -303,18 +298,35 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
 
     assert field.exit_code == 0
     assert json.loads(field.stdout) == {"type": "text", "text": "prepared"}
-    assert type_name.exit_code == 0
-    assert type_name.stdout == "Pointer[]\n"
     assert human.exit_code == 0
-    assert "run_inspect.0/path" in human.stdout
-    assert "run_inspect.0/output" in human.stdout
-    assert "StepRecord" not in human.stdout
+    assert human.stdout.splitlines()[0] == "run_inspect.0 has type StepRecord."
+    assert "FIELD" in human.stdout
+    assert "TYPE" in human.stdout
+    assert "StepPath" in human.stdout
+    assert "/path" in human.stdout
+    assert "/output" in human.stdout
+    assert "run_inspect.0/path" not in human.stdout
+    assert "run_inspect.0/output" not in human.stdout
+    assert '"succeeded"' not in human.stdout
+    assert "succeeded" in human.stdout
+    assert "• prepared" not in human.stdout
     assert resolved.exit_code == 0
-    assert "run_inspect.0/input/0 →" in resolved.stdout
+    assert "/0 →" in resolved.stdout
+    assert "run_inspect.0/input/0" not in resolved.stdout
     assert "Inspect this" in resolved.stdout
+    assert resolved_value.exit_code == 0
+    assert resolved_value.stdout.splitlines()[0] == (
+        "run_inspect.0/input/0 resolves to Part[]."
+    )
+    assert status.exit_code == 0
+    assert status.stdout == "run_inspect.0/status has type StepStatus.\n\nsucceeded\n"
     assert response.exit_code == 0
-    assert "run_inspect.0/output/value" in response.stdout
+    assert response.stdout.splitlines()[0] == (
+        "run_inspect.0/output/value has type Part[]."
+    )
+    assert response.stdout.count("run_inspect.0/output/value") == 1
     assert "prepared" in response.stdout
+    assert "• prepared" not in response.stdout
 
 
 def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
@@ -329,7 +341,14 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
         "alice",
         "inspect",
         "run_missing",
+        "--human",
         "--json",
+    )
+    removed_type = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_missing",
         "--type",
     )
     removed = _invoke(
@@ -346,13 +365,15 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
 
     assert combined.exit_code == 2
     assert "mutually exclusive" in combined.stderr
+    assert removed_type.exit_code == 2
+    assert "No such option: --type" in strip_ansi(removed_type.stderr)
     assert removed.exit_code == 2
     assert "No such option: --limit" in strip_ansi(removed.stderr)
     assert help_code == 0
     assert "POINTER" in help_text
     assert "--human" in help_text
     assert "--json" in help_text
-    assert "--type" in help_text
+    assert "--type" not in help_text
     assert "--focus" not in help_text
 
 

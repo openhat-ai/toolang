@@ -33,7 +33,7 @@ _PART_TYPES = (
     ToolCallPart,
     ToolResultPart,
 )
-_BlockRenderer = Callable[[object], RenderableType | None]
+_RichRenderer = Callable[[object], RenderableType | None]
 _ScalarRenderer = Callable[[object], str | None]
 
 
@@ -54,6 +54,7 @@ def response_renderable(
     text: str,
     *,
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
+    prefix: str = "• ",
 ) -> RenderableType | None:
     """Render one finalized Chat-style response without live state."""
 
@@ -67,7 +68,7 @@ def response_renderable(
                     text,
                     "normal",
                     format="markdown",
-                    prefix="• ",
+                    prefix=prefix,
                 ),
             ),
         ),
@@ -80,19 +81,24 @@ def parts_response_renderable(
     parts: Sequence[Part],
     *,
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
+    prefix: str = "• ",
 ) -> RenderableType | None:
     """Render Parts through the same finalized presentation used by Chat."""
 
-    return response_renderable(parts_response_text(parts), max_width=max_width)
+    return response_renderable(
+        parts_response_text(parts),
+        max_width=max_width,
+        prefix=prefix,
+    )
 
 
 def human_value_renderable(
     value: object,
     type_name: str,
 ) -> RenderableType | None:
-    """Return a registered block renderer for one durable runtime value."""
+    """Return a registered Rich renderer for one durable runtime value."""
 
-    renderer = _BLOCK_RENDERERS.get(type_name)
+    renderer = _RICH_RENDERERS.get(type_name)
     return renderer(value) if renderer is not None else None
 
 
@@ -118,7 +124,7 @@ def _parts(value: object, type_name: str) -> tuple[Part, ...] | None:
 
 def _part_renderable(value: object, type_name: str) -> RenderableType | None:
     parts = _parts(value, type_name)
-    return parts_response_renderable(parts) if parts is not None else None
+    return parts_response_renderable(parts, prefix="") if parts is not None else None
 
 
 def _text_renderable(value: object) -> RenderableType | None:
@@ -129,7 +135,7 @@ def _text_scalar(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
-_BLOCK_RENDERERS: dict[str, _BlockRenderer] = {
+_RICH_RENDERERS: dict[str, _RichRenderer] = {
     "Part": lambda value: _part_renderable(value, "Part"),
     "Part[]": lambda value: _part_renderable(value, "Part[]"),
     "Text": _text_renderable,

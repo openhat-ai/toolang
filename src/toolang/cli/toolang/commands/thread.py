@@ -167,14 +167,11 @@ def inspect_command(
     json_view: Annotated[
         bool, typer.Option("--json", help="Render exact canonical JSON.")
     ] = False,
-    type_view: Annotated[
-        bool, typer.Option("--type", help="Print the current declared type name.")
-    ] = False,
 ) -> None:
     """Inspect one historical execution record or field."""
 
-    if sum((human, json_view, type_view)) > 1:
-        raise click.UsageError("--human, --json, and --type are mutually exclusive")
+    if human and json_view:
+        raise click.UsageError("--human and --json are mutually exclusive")
     try:
         parsed = Pointer(pointer)
     except (TypeError, ValueError) as exc:
@@ -186,8 +183,6 @@ def inspect_command(
             selected = resources.store.select_pointer(parsed)
             if json_view:
                 typer.echo(json.dumps(selected.value, ensure_ascii=False, indent=2))
-            elif type_view:
-                typer.echo(selected.type_name)
             else:
                 _render_pointer(resources.store, selected)
         except (TypeError, ValueError) as exc:
@@ -205,10 +200,24 @@ class _HumanValue:
 def _render_pointer(store: RunStore, selected: RecordSelection) -> None:
     console = Console(highlight=False)
     root = _human_value(store, selected)
+    relation = "resolves to" if root.resolved else "has type"
+    console.print(
+        Text(f"{selected.pointer} {relation} {root.render_type}.", style="dim"),
+        soft_wrap=True,
+    )
+    console.print()
     if _browse_children(selected, root):
-        _render_human_rows(console, _human_children(store, selected))
+        _render_human_rows(
+            console,
+            _human_children(store, selected),
+            base=selected.pointer,
+        )
         return
-    _render_human_rows(console, ((selected, root),))
+    block = _human_block(root)
+    if block is not None:
+        console.print(block)
+        return
+    console.print(Text(_human_summary(root)), soft_wrap=True)
 
 
 def _browse_children(selected: RecordSelection, value: _HumanValue) -> bool:
@@ -273,27 +282,45 @@ def _human_value(store: RunStore, selected: RecordSelection) -> _HumanValue:
 def _render_human_rows(
     console: Console,
     rows: Iterable[tuple[RecordSelection, _HumanValue]],
+    *,
+    base: Pointer | None = None,
 ) -> None:
-    compact: list[tuple[str, str]] = []
+    compact: list[tuple[str, str, RenderableType]] = []
+    pointer_heading = "FIELD" if base is not None else "POINTER"
     for selected, value in rows:
-        label = f"{selected.pointer}{' →' if value.resolved else ''}"
-        block = _human_block(value)
-        if block is None:
-            compact.append((label, _human_summary(value)))
-            continue
-        _print_human_table(console, compact)
-        compact = []
-        console.print(Text(label), soft_wrap=True)
-        console.print(block)
-    _print_human_table(console, compact)
+        pointer = str(selected.pointer)
+        if base is not None:
+            pointer = pointer.removeprefix(str(base))
+        label = f"{pointer}{' →' if value.resolved else ''}"
+        rendered = _human_block(value)
+        compact.append(
+            (
+                label,
+                value.render_type,
+                rendered if rendered is not None else _human_summary(value),
+            )
+        )
+    _print_human_table(console, compact, pointer_heading=pointer_heading)
 
 
-def _print_human_table(console: Console, rows: Sequence[tuple[str, str]]) -> None:
+def _print_human_table(
+    console: Console,
+    rows: Sequence[tuple[str, str, RenderableType]],
+    *,
+    pointer_heading: str = "POINTER",
+) -> None:
     if not rows:
         return
     minimum_width = (
-        max(cell_len("POINTER"), *(cell_len(pointer) for pointer, _value in rows))
-        + 4
+        max(
+            cell_len(pointer_heading),
+            *(cell_len(pointer) for pointer, _type, _value in rows),
+        )
+        + max(
+            cell_len("TYPE"),
+            *(cell_len(type_name) for _pointer, type_name, _value in rows),
+        )
+        + 8
         + cell_len("VALUE")
     )
     table = Table(
@@ -304,10 +331,11 @@ def _print_human_table(console: Console, rows: Sequence[tuple[str, str]]) -> Non
         padding=(0, 2),
         width=minimum_width if minimum_width > console.width else None,
     )
-    table.add_column("POINTER", no_wrap=True, overflow="ignore")
+    table.add_column(pointer_heading, no_wrap=True, overflow="ignore")
+    table.add_column("TYPE", no_wrap=True, overflow="ignore")
     table.add_column("VALUE")
-    for pointer, value in rows:
-        table.add_row(pointer, value)
+    for pointer, type_name, value in rows:
+        table.add_row(pointer, type_name, value)
     console.print(table, crop=False)
 
 
@@ -320,6 +348,8 @@ def _human_summary(value: _HumanValue) -> str:
     natural = human_scalar_text(value.runtime, value.render_type)
     if natural is not None:
         return natural
+    if isinstance(data, str):
+        return data
     if isinstance(data, Mapping):
         items = [f"{key}: {_nested_summary(value)}" for key, value in data.items()]
         return _truncate("{" + ", ".join(items) + "}", width=120)
@@ -329,6 +359,8 @@ def _human_summary(value: _HumanValue) -> str:
 
 
 def _nested_summary(value: object) -> str:
+    if isinstance(value, str):
+        return value
     if isinstance(value, Mapping):
         return "{}" if not value else "{...}"
     if isinstance(value, list):
