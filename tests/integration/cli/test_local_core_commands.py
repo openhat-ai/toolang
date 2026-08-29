@@ -721,6 +721,7 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
         "inspect",
         "run_model_call.0",
         "model-call",
+        "--human",
     )
     rejected = _invoke(
         root,
@@ -749,8 +750,19 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
     assert references.exit_code == 0, references.stderr
     assert json.loads(references.stdout) != json.loads(projected.stdout)
     assert human.exit_code == 0, human.stderr
-    assert "Diagnose the run." in human.stdout
-    assert "provider_cursor" in human.stdout
+    human_output = strip_ansi(human.stdout)
+    assert "Instructions" in human_output
+    assert "Diagnose the run." in human_output
+    assert "Messages" in human_output
+    assert "1. Assistant" in human_output
+    assert "Context" in human_output
+    assert "2. User" in human_output
+    assert "Question" in human_output
+    assert "Tools" in human_output
+    assert "No tools." in human_output
+    assert "Continuation" in human_output
+    assert "provider_cursor" in human_output
+    assert '"instructions":' not in human_output
     assert rejected.exit_code == 2
     assert "does not support projector model-call" in rejected.stderr
 

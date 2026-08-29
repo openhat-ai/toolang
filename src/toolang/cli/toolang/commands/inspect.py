@@ -12,7 +12,7 @@ import typer
 from rich import box
 from rich.cells import cell_len
 from rich.console import Console, RenderableType
-from rich.syntax import Syntax
+from rich.markdown import Markdown
 from rich.table import Table
 from rich.text import Text
 
@@ -79,6 +79,7 @@ class _ProjectorTransition:
     source: _SubjectKind
     name: str
     project: Callable[[RunStore, _InspectSubject], object]
+    render: Callable[[Console, object], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +126,10 @@ def _project_model_call(store: RunStore, source: _InspectSubject) -> object:
     return model_call_to_data(store.rebuild_model_call(source.selection.record))
 
 
+def _render_model_call(console: Console, value: object) -> None:
+    console.print(Markdown(_model_call_markdown(value)))
+
+
 INSPECT_SUBJECT_TRANSITIONS: tuple[_SubjectTransition, ...] = (
     _SubjectTransition("agent", "threads", "threads", _load_threads),
     _SubjectTransition("agent", "runs", "runs", _load_runs),
@@ -133,7 +138,12 @@ INSPECT_SUBJECT_TRANSITIONS: tuple[_SubjectTransition, ...] = (
 )
 
 INSPECT_PROJECTORS: tuple[_ProjectorTransition, ...] = (
-    _ProjectorTransition("step", "model-call", _project_model_call),
+    _ProjectorTransition(
+        "step",
+        "model-call",
+        _project_model_call,
+        _render_model_call,
+    ),
 )
 
 _STATIC_SUBJECT_NAMES = frozenset(
@@ -288,6 +298,20 @@ def _allowed_projectors(source: _SubjectKind) -> tuple[str, ...]:
     )
 
 
+def _projector_transition(
+    source: _SubjectKind,
+    name: str,
+) -> _ProjectorTransition | None:
+    return next(
+        (
+            projector
+            for projector in INSPECT_PROJECTORS
+            if projector.source == source and projector.name == name
+        ),
+        None,
+    )
+
+
 def _invalid_child(subject: _InspectSubject, token: str) -> click.UsageError:
     allowed = (*_allowed_transitions(subject.kind), *_allowed_projectors(subject.kind))
     label = _inspect_subject_label(subject)
@@ -304,14 +328,7 @@ def _apply_projector(
     subject: _InspectSubject,
     name: str,
 ) -> object:
-    projector = next(
-        (
-            item
-            for item in INSPECT_PROJECTORS
-            if item.source == subject.kind and item.name == name
-        ),
-        None,
-    )
+    projector = _projector_transition(subject.kind, name)
     if projector is None:
         raise click.UsageError(
             f"{_inspect_subject_label(subject)} does not support projector {name}"
@@ -402,9 +419,13 @@ def _render_projection(
     projector: str,
     value: object,
 ) -> None:
-    body = json.dumps(value, ensure_ascii=False, indent=2)
+    transition = _projector_transition(subject.kind, projector)
+    if transition is None:  # pragma: no cover - projection was already applied
+        raise RuntimeError(
+            f"missing human renderer for {subject.kind} projector {projector}"
+        )
     console = Console(highlight=False)
-    console.print(Syntax(body, "json", word_wrap=True))
+    transition.render(console, value)
     console.print()
     console.print(
         Text(
@@ -413,6 +434,154 @@ def _render_projection(
         ),
         soft_wrap=True,
     )
+
+
+def _model_call_markdown(value: object) -> str:
+    if not isinstance(value, Mapping):  # pragma: no cover - projector is canonical
+        raise TypeError("model-call projector returned a non-object value")
+    data = cast(Mapping[str, object], value)
+
+    lines = ["# Model Call", "", "## Instructions", ""]
+    instructions = data.get("instructions")
+    lines.append(
+        instructions
+        if isinstance(instructions, str) and instructions
+        else "_No instructions._"
+    )
+
+    lines.extend(("", "## Messages", ""))
+    messages = data.get("messages")
+    if isinstance(messages, list) and messages:
+        for index, message in enumerate(messages, start=1):
+            if not isinstance(message, Mapping):  # pragma: no cover - canonical data
+                continue
+            message_data = cast(Mapping[str, object], message)
+            role = str(message_data.get("role") or "message").replace("_", " ").title()
+            lines.extend((f"### {index}. {role}", ""))
+            parts = message_data.get("parts")
+            if not isinstance(parts, list) or not parts:
+                lines.extend(("_No content._", ""))
+                continue
+            for part in parts:
+                if not isinstance(part, Mapping):  # pragma: no cover - canonical data
+                    continue
+                lines.extend(
+                    (*_message_part_markdown(cast(Mapping[str, object], part)), "")
+                )
+    else:
+        lines.extend(("_No messages._", ""))
+
+    lines.extend(("## Tools", ""))
+    tools = data.get("tools")
+    if isinstance(tools, list) and tools:
+        for tool in tools:
+            if not isinstance(tool, Mapping):  # pragma: no cover - canonical data
+                continue
+            tool_data = cast(Mapping[str, object], tool)
+            name = str(tool_data.get("name") or "unnamed")
+            description = tool_data.get("description")
+            lines.extend(
+                (
+                    f"### {_markdown_code_span(name)}",
+                    "",
+                    description
+                    if isinstance(description, str) and description
+                    else "_No description._",
+                    "",
+                    "**Parameters**",
+                    "",
+                    _markdown_json_block(tool_data.get("parameters", {})),
+                    "",
+                )
+            )
+    else:
+        lines.extend(("_No tools._", ""))
+
+    lines.extend(("## Continuation", ""))
+    continuation = data.get("cont")
+    lines.append(
+        _markdown_json_block(continuation)
+        if continuation is not None
+        else "_No continuation data._"
+    )
+    return "\n".join(lines)
+
+
+def _message_part_markdown(part: Mapping[str, object]) -> tuple[str, ...]:
+    part_type = str(part.get("type") or "part")
+    if part_type == "text":
+        text = part.get("text")
+        return (_markdown_quote(text if isinstance(text, str) else ""),)
+    if part_type == "tool_call":
+        return _tool_part_markdown(part, result=False)
+    if part_type == "tool_result":
+        return _tool_part_markdown(part, result=True)
+    label = part_type.replace("_", " ").title()
+    return (f"#### {label}", "", _markdown_json_block(dict(part)))
+
+
+def _tool_part_markdown(
+    part: Mapping[str, object],
+    *,
+    result: bool,
+) -> tuple[str, ...]:
+    label = "Tool Result" if result else "Tool Call"
+    name = str(part.get("tool_name") or "unnamed")
+    lines = [f"#### {label}: {_markdown_code_span(name)}", ""]
+    for heading, key in (
+        ("Tool call ID", "tool_call_id"),
+        ("Family", "tool_family"),
+        ("Provider call ID", "call_id"),
+    ):
+        item = part.get(key)
+        if item is not None:
+            lines.append(f"- {heading}: {_markdown_code_span(str(item))}")
+    reasoning = part.get("reasoning")
+    if isinstance(reasoning, str) and reasoning:
+        lines.extend(("", "**Reasoning**", "", _markdown_quote(reasoning)))
+    error = part.get("error")
+    if isinstance(error, str) and error:
+        lines.extend(("", "**Error**", "", _markdown_quote(error)))
+    payload_heading = "Output" if result else "Input"
+    payload_key = "output" if result else "input"
+    lines.extend(
+        (
+            "",
+            f"**{payload_heading}**",
+            "",
+            _markdown_json_block(part.get(payload_key, {})),
+        )
+    )
+    return tuple(lines)
+
+
+def _markdown_quote(value: str) -> str:
+    lines = value.splitlines() or [""]
+    return "\n".join(f"> {line}" if line else ">" for line in lines)
+
+
+def _markdown_json_block(value: object) -> str:
+    body = json.dumps(value, ensure_ascii=False, indent=2)
+    fence = _backtick_fence(body, minimum=3)
+    return f"{fence}json\n{body}\n{fence}"
+
+
+def _markdown_code_span(value: str) -> str:
+    fence = _backtick_fence(value, minimum=1)
+    padding = " " if value.startswith("`") or value.endswith("`") else ""
+    return f"{fence}{padding}{value}{padding}{fence}"
+
+
+def _backtick_fence(value: str, *, minimum: int) -> str:
+    longest = 0
+    current = 0
+    for character in value:
+        if character == "`":
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    return "`" * max(minimum, longest + 1)
 
 
 @dataclass(frozen=True, slots=True)
