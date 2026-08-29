@@ -254,7 +254,8 @@ When a selected Pointer is resolved for Human display, the line instead names
 the resolved type with `resolves to`. A Local is displayed through its contained
 runtime type. These same displayed type names occupy the second table column.
 They come from shared schema/runtime metadata rather than an inspect-specific
-type map.
+type map. A null value retains its declared schema type; only its displayed
+value is `null`.
 
 For a canonical object or array, it lists exactly the direct children. Compact
 values use three columns. The first column contains field suffixes relative to
@@ -265,7 +266,7 @@ FIELD       TYPE          VALUE
 /status     RunStatus     succeeded
 /control    ControlRef    {target: run_ab12, index: 0}
 /output     Part[]        {name: _, value: {...}}
-/error      null          null
+/error      ExecutionError | None  null
 ```
 
 Append one first-column suffix to the introductory Pointer to form the complete

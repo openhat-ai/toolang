@@ -288,6 +288,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     resolved = _invoke(root, "alice", "inspect", "run_inspect.0/input")
     resolved_value = _invoke(root, "alice", "inspect", "run_inspect.0/input/0")
     status = _invoke(root, "alice", "inspect", "run_inspect.0/status")
+    ejected_by = _invoke(root, "alice", "inspect", "run_inspect.0/ejected_by")
     response = _invoke(
         root,
         "alice",
@@ -320,6 +321,10 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     )
     assert status.exit_code == 0
     assert status.stdout == "run_inspect.0/status has type StepStatus.\n\nsucceeded\n"
+    assert ejected_by.exit_code == 0
+    assert ejected_by.stdout == (
+        "run_inspect.0/ejected_by has type ControlRef | None.\n\nnull\n"
+    )
     assert response.exit_code == 0
     assert response.stdout.splitlines()[0] == (
         "run_inspect.0/output/value has type Part[]."

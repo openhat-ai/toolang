@@ -311,8 +311,6 @@ def _render_type(value: object, declared: str) -> str:
         return value.type
     if isinstance(value, str) and "ExecutionError" in declared:
         return "ExecutionError"
-    if value is None:
-        return "null"
     return declared
 
 

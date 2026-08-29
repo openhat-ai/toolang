@@ -176,6 +176,7 @@ def test_record_selection_matches_rfc6901_traversal(tmp_path: Path) -> None:
         assert output.type_name == "Part"
         assert missing_null.value is None
         assert missing_null.type_name == "ExecutionError | None"
+        assert missing_null.render_type == "ExecutionError | None"
         with pytest.raises(ValueError, match="field does not exist"):
             store.select_pointer(Pointer.step(step.path, "missing"))
         with pytest.raises(ValueError, match="invalid array index"):
