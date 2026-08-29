@@ -1,16 +1,16 @@
-# Docker Bootstrap Harness
+# Docker Guest Test Harness
 
 Status: Proposed.
 
 ## Work Type
 
-Feature definition for a host-side developer harness that runs the production
+Feature definition for a host-side test harness that runs the production
 Docker guest bootstrap against an arbitrary image.
 
 This plan extends `docker-guest-bootstrap.md`. It does not add a public Toolang
 command or a second bootstrap implementation. It supersedes that plan's
-host-generated `start.sh` and `bootstrap.py` artifacts with the dual-mode shell
-resource defined below.
+host-generated `start.sh` and `bootstrap.py` artifacts with the two shell
+boundaries defined below.
 
 ## Goal And Success Criteria
 
@@ -19,7 +19,7 @@ install the runtime requirements and Toolang, and observe the complete guest
 bootstrap directly:
 
 ```console
-src/toolang/plugin/sandboxes/docker_bootstrap.sh python:3.13-slim
+scripts/test_docker_guest.sh python:3.13-slim
 ```
 
 The change succeeds when the command needs no agent or Toolang configuration,
@@ -32,7 +32,7 @@ success, failure, and interruption.
 Add this repository developer command:
 
 ```console
-src/toolang/plugin/sandboxes/docker_bootstrap.sh IMAGE [--dev WHEEL_OR_DIST] \
+scripts/test_docker_guest.sh IMAGE [--dev WHEEL_OR_DIST] \
   [--keep] [-- COMMAND...]
 ```
 
@@ -49,24 +49,37 @@ configuration section, or supported plugin API.
 
 ## Design
 
-Keep one POSIX-shell implementation at
-`src/toolang/plugin/sandboxes/docker_bootstrap.sh`. The script has two explicit
-modes:
+Use two POSIX shell scripts with one-way ownership:
 
-- host mode is the default when the first argument is an image; and
-- the internal `--guest` mode runs as the container's entry command.
+- `src/toolang/plugin/sandboxes/docker_guest.sh` is the packaged guest core. It
+  owns all uv, Python, environment loading, Toolang installation, validation,
+  progress, and final process replacement.
+- `scripts/test_docker_guest.sh` is a thin repository test wrapper. It owns only
+  host-side argument parsing, staging, Docker lifecycle, attachment, and
+  cleanup.
 
-`DockerSandbox.prepare()` stages this package resource and invokes its guest
-mode. Host mode mounts the same file into the requested container and invokes
-guest mode. The harness must not reproduce bootstrap commands or maintain a
-simplified test-only shell program.
+`DockerSandbox.prepare()` stages and invokes the packaged guest core. The host
+wrapper mounts and invokes that exact same file; it must not contain package
+installation commands or maintain a simplified test-only guest flow. The guest
+core never starts Docker and has no host mode.
 
-The script embeds the fixed Python bootstrap source in a single-quoted heredoc
-and writes it into the container-local runtime only after Python is available.
-That Python program retains the restricted `guest.env` parser, Toolang install
-validation, and final `os.execvpe()`. Dynamic paths, package source, and workload
-arguments are passed as positional values; they are never interpolated into
-generated shell source.
+These names and dependencies are canonical: Toolang `--sandbox docker`
+references only `docker_guest.sh`; product code never imports, locates, or
+executes `test_docker_guest.sh`. Do not retain `start.sh`, `agent.sh`, or
+`docker_bootstrap.sh` aliases.
+
+The guest core supports Linux containers only. It begins by requiring
+`uname -s` to report `Linux` and otherwise exits with an unsupported-guest
+message. Keep Linux paths, signals, executable permissions, and `/bin/sh`
+behavior unconditional; do not add macOS, native Windows, or Windows-container
+branches inside the guest core.
+
+The guest core embeds the fixed Python bootstrap source in a single-quoted
+heredoc and writes it into the container-local runtime only after Python is
+available. That Python program retains the restricted `guest.env` parser,
+Toolang install validation, and final `os.execvpe()`. Dynamic paths, package
+source, and workload arguments are passed as positional values; they are never
+interpolated into generated shell source.
 
 The guest capability order is:
 
@@ -82,8 +95,8 @@ and for the one Toolang installation path. Do not add a parallel pip-based
 Toolang environment, emulate `curl` with Python, detect distributions, or call
 guest package managers.
 
-Host mode uses POSIX shell built-ins, ordinary Unix utilities, and Docker CLI
-commands:
+The host wrapper uses POSIX shell built-ins, ordinary Unix utilities, and Docker
+CLI commands:
 
 1. validate Docker availability and stage the production guest artifacts in a
    host temporary directory;
@@ -104,10 +117,10 @@ inputs. As in production, values loaded from `guest.env` become available only
 after Python acquisition; the image must make earlier bootstrap networking
 available itself.
 
-Run host mode with POSIX `sh` on Linux and macOS, and inside WSL2 on Windows.
-Native PowerShell, cmd.exe, Git Bash path rewriting, and Windows containers are
-out of scope. Docker Desktop or another compatible Docker CLI owns host-path
-translation; guest mode always runs in the Linux container.
+Run the host wrapper with POSIX `sh` on Linux and macOS, and inside WSL2 on
+Windows. Native PowerShell, cmd.exe, Git Bash path rewriting, and Windows
+containers are out of scope. Docker Desktop or another compatible Docker CLI
+owns host-path translation; the guest core always runs in the Linux container.
 
 ## Output
 
@@ -134,8 +147,9 @@ Installer details remain in the private diagnostic log.
 
 In scope:
 
-- the dual-mode
-  `src/toolang/plugin/sandboxes/docker_bootstrap.sh` package resource;
+- the packaged guest core
+  `src/toolang/plugin/sandboxes/docker_guest.sh`;
+- the thin host wrapper `scripts/test_docker_guest.sh`;
 - shared environment, diagnostic, instance, and wheel staging in
   `src/toolang/plugin/sandboxes/_docker_guest.py`;
 - the Docker sandbox call site where staging is currently assembled;
@@ -153,10 +167,10 @@ Out of scope:
 
 ## Acceptance Tests
 
-1. Offline shell tests verify host/guest mode selection, quoted argument
+1. Offline shell tests verify each script's argument boundary, quoted argument
    handling, Docker command construction, exact exit-code propagation, and
    cleanup without contacting Docker or a package index.
-2. Host mode and `DockerSandbox` execute the same packaged shell resource.
+2. The host wrapper and `DockerSandbox` execute the same packaged guest core.
 3. An opt-in Docker test runs the harness with the current development wheel on
    `python:3.13-slim`, covering the Python/pip-to-uv path.
 4. An opt-in Docker test covers a no-Python image whose official uv installer
