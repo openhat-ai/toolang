@@ -283,7 +283,7 @@ def _render_human_rows(
             continue
         _print_human_table(console, compact)
         compact = []
-        console.print(Text(label))
+        console.print(Text(label), soft_wrap=True)
         console.print(block)
     _print_human_table(console, compact)
 

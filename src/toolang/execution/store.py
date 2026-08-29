@@ -1598,7 +1598,19 @@ class RunStore:
                 return _thread_from_row(row) if row is not None else None
             if pointer.kind == "run":
                 row = self._conn.execute(
-                    "SELECT * FROM runs WHERE id = ? AND ejected_by_target IS NULL",
+                    """
+                    SELECT runs.* FROM runs
+                    WHERE runs.id = ?
+                      AND runs.ejected_by_target IS NULL
+                      AND (
+                          runs.parent IS NULL
+                          OR runs.parent NOT IN (
+                              SELECT steps.run || '.' || steps.path
+                              FROM steps
+                              WHERE steps.ejected_by_target IS NOT NULL
+                          )
+                      )
+                    """,
                     (record,),
                 ).fetchone()
                 return _run_from_row(row) if row is not None else None
@@ -1606,8 +1618,21 @@ class RunStore:
                 path = StepPath.parse(record)
                 row = self._conn.execute(
                     """
-                    SELECT * FROM steps
-                    WHERE run = ? AND path = ? AND ejected_by_target IS NULL
+                    SELECT steps.*
+                    FROM steps
+                    JOIN runs ON runs.id = steps.run
+                    WHERE steps.run = ?
+                      AND steps.path = ?
+                      AND steps.ejected_by_target IS NULL
+                      AND runs.ejected_by_target IS NULL
+                      AND (
+                          runs.parent IS NULL
+                          OR runs.parent NOT IN (
+                              SELECT parent_steps.run || '.' || parent_steps.path
+                              FROM steps AS parent_steps
+                              WHERE parent_steps.ejected_by_target IS NOT NULL
+                          )
+                      )
                     """,
                     (path.run, path.local),
                 ).fetchone()
@@ -1624,6 +1649,14 @@ class RunStore:
                       AND controls.target = ?
                       AND controls."index" = ?
                       AND runs.ejected_by_target IS NULL
+                      AND (
+                          runs.parent IS NULL
+                          OR runs.parent NOT IN (
+                              SELECT steps.run || '.' || steps.path
+                              FROM steps
+                              WHERE steps.ejected_by_target IS NOT NULL
+                          )
+                      )
                     """,
                     (target, int(raw_index)),
                 ).fetchone()
@@ -2769,6 +2802,17 @@ class RunStore:
         with self._lock:
             self._conn.execute("PRAGMA busy_timeout=30000;")
             version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+            if (
+                version == 0
+                and not self.read_only
+                and _database_has_user_schema(self._conn)
+            ):
+                raise RunStoreSchemaError(
+                    version,
+                    current=_SCHEMA_VERSION,
+                    supported=_SUPPORTED_SCHEMA_VERSIONS,
+                    read_only=False,
+                )
             allowed = (
                 (_SCHEMA_VERSION,)
                 if self.read_only
@@ -2789,7 +2833,9 @@ class RunStore:
             self._conn.execute("PRAGMA foreign_keys=ON;")
             self._conn.execute("BEGIN IMMEDIATE")
             version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, *_SUPPORTED_SCHEMA_VERSIONS):
+            if version not in (0, *_SUPPORTED_SCHEMA_VERSIONS) or (
+                version == 0 and _database_has_user_schema(self._conn)
+            ):
                 self._conn.rollback()
                 raise RunStoreSchemaError(
                     version,
@@ -2925,6 +2971,19 @@ def _create_steps_table(connection: sqlite3.Connection) -> None:
             PRIMARY KEY(run, path)
         )
         """
+    )
+
+
+def _database_has_user_schema(connection: sqlite3.Connection) -> bool:
+    return (
+        connection.execute(
+            """
+            SELECT 1 FROM sqlite_master
+            WHERE name NOT LIKE 'sqlite_%'
+            LIMIT 1
+            """
+        ).fetchone()
+        is not None
     )
 
 

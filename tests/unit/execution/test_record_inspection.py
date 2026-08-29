@@ -211,6 +211,101 @@ def test_control_pointer_uses_one_record_lookup(tmp_path: Path) -> None:
         store.close()
 
 
+def test_record_lookup_hides_steps_owned_by_an_ejected_run(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_ejected",
+            thread_id="term_ejected",
+            origin="test",
+            input=Message.user("hello"),
+        )
+        step = project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(TextPart("result"),),
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        project_run_end(store, run_id=run.id)
+        thread = store.get_thread(thread_id=run.thread)
+        assert thread is not None
+        store.rewind_thread(
+            thread_id=thread.thread_id,
+            anchor=run.id,
+            request_id=None,
+            expected_head=thread.head,
+            created_at="2026-01-01T00:00:03Z",
+        )
+
+        assert store.get_record(Pointer(str(step.path))) is None
+    finally:
+        store.close()
+
+
+def test_record_lookup_hides_a_run_owned_by_an_ejected_step(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        root = project_run_start(
+            store,
+            run_id="run_parent",
+            thread_id="term_parent",
+            origin="test",
+            input=Message.user("hello"),
+        )
+        parent = project_step(
+            store,
+            run_id=root.id,
+            step_index=0,
+            kind="run",
+            status="succeeded",
+            input=(),
+            output=(TextPart("parent"),),
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        child = project_run_start(
+            store,
+            run_id="run_child",
+            thread_id=root.thread,
+            origin="test",
+            input=Message.user("child"),
+            parent=parent.path,
+        )
+        child_step = project_step(
+            store,
+            run_id=child.id,
+            step_index=0,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(TextPart("child"),),
+            started_at="2026-01-01T00:00:03Z",
+            finished_at="2026-01-01T00:00:04Z",
+        )
+        with store.write_transaction():
+            store._conn.execute(
+                """
+                UPDATE steps
+                SET ejected_by_target = ?, ejected_by_index = ?
+                WHERE run = ? AND path = ?
+                """,
+                (root.thread, 0, parent.path.run, parent.path.local),
+            )
+
+        assert child.id not in {run.id for run in store.list_runs(limit=None)}
+        assert store.get_record(Pointer(child.id)) is None
+        assert store.get_record(Pointer.control(child.id, 0)) is None
+        assert store.get_record(Pointer(str(child_step.path))) is None
+    finally:
+        store.close()
+
+
 def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
     revision = "a" * 64
     resources = AgentResources()

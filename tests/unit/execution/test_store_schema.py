@@ -40,6 +40,34 @@ def test_run_store_rejects_any_other_schema_without_modifying_it(
         connection.close()
 
 
+def test_run_store_rejects_a_nonempty_unversioned_database(tmp_path: Path) -> None:
+    path = tmp_path / "runs.db"
+    connection = sqlite3.connect(path)
+    connection.execute("CREATE TABLE historical_state (value TEXT NOT NULL)")
+    connection.execute("INSERT INTO historical_state VALUES ('preserved')")
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(RunStoreSchemaError) as raised:
+        RunStore(path)
+
+    assert raised.value.version == 0
+    connection = sqlite3.connect(path)
+    try:
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 0
+        assert connection.execute("SELECT value FROM historical_state").fetchone() == (
+            "preserved",
+        )
+        assert (
+            connection.execute(
+                "SELECT name FROM sqlite_master WHERE name = 'runs'"
+            ).fetchone()
+            is None
+        )
+    finally:
+        connection.close()
+
+
 def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
     path = tmp_path / "runs.db"
 
