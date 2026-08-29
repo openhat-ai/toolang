@@ -13,6 +13,7 @@ from toolang.common.layout import AgentLayout
 from toolang.up.logging import LoggingPlan
 from toolang.up.process import AgentStatus
 from toolang.up.records import SandboxState
+from toolang.up.types import AgentServerRef
 from toolang.base.types.sandbox import SandboxRef
 
 
@@ -94,7 +95,7 @@ def test_agent_server_attaches_to_a_compatible_running_agent(
         sandbox="docker",
         ui_base_url="https://ui.test",
     ) as selected:
-        assert selected == agent_server.AgentServerRef(
+        assert selected == AgentServerRef(
             sandbox="docker:python:3.13-slim",
             endpoint="http://127.0.0.1:7001",
         )
@@ -307,7 +308,7 @@ def test_agent_server_launches_and_cleans_up_a_temporary_guest(
         ui_base_url="https://ui.test",
     ) as selected:
         calls.append("body")
-        assert selected == agent_server.AgentServerRef(
+        assert selected == AgentServerRef(
             sandbox="docker:python:3.13-slim",
             endpoint="http://127.0.0.1:8123",
         )

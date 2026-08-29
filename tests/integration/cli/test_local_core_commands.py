@@ -27,7 +27,6 @@ import toolang.cli.toolang.commands.plugin as plugin_commands
 import toolang.cli.toolang.commands.thread as thread_commands
 import toolang.cli.toolang.main as cli
 from toolang.cli.common.output import shorten_home_path
-from toolang.cli.common.agent_server import AgentServerRef
 from toolang.common.layout import AgentLayout
 from toolang.execution.client import LocalRunClient
 from toolang.execution.executor import RunExecutor
@@ -43,6 +42,7 @@ from toolang.execution.types import Local, Pointer, StepPath, ThreadPrefix
 from toolang.lang.input import resolve_input_parts
 from toolang.setup import AgentSetup
 from toolang.up import process as agents
+from toolang.up.types import AgentServerRef
 from toolang.work.state import load_ready_jobs
 from toolang.work.store import JobStore
 from tests.support.execution_fixtures import (

@@ -12,7 +12,6 @@ import click
 import pytest
 
 from toolang.base.types.message import TextPart
-from toolang.cli.common.agent_server import AgentServerRef
 from toolang.cli.common.output import shorten_home_path
 from toolang.cli.toolang.commands.chat import main as chat
 from toolang.cli.toolang.commands.chat.base import (
@@ -23,6 +22,7 @@ from toolang.cli.toolang.commands.chat.base import (
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEnd, RunEvent, StepEnd
 from toolang.execution.types import Local, RunOverride, StepPath
+from toolang.up.types import AgentServerRef
 
 _HOST_DESCRIPTION = "macOS 27.0 arm64"
 

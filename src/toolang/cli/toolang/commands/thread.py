@@ -54,6 +54,7 @@ from toolang.execution.types import (
     local_to_protocol_data,
     validate_runtime_value,
 )
+from toolang.up.types import AgentServerRef
 
 from ...common.context import (
     ModelCatalogOption,
@@ -65,7 +66,6 @@ from ...common.context import (
 from ...common.execution import ExecutionResources, open_execution
 from ...common.agent_server import (
     AgentServerAcquisitionError,
-    AgentServerRef,
     DEVELOPMENT_WHEEL_HELP,
     acquire_agent_server,
 )

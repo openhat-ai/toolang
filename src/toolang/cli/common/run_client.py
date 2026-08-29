@@ -16,8 +16,8 @@ from toolang.execution.remote import RemoteRunClient
 from toolang.execution.store import RunStore
 from toolang.setup import SetupWatcher
 from toolang.state.watcher import StateWatcher
+from toolang.up.types import AgentServerRef
 
-from .agent_server import AgentServerRef
 from .remote_runtime import inspect_remote_runtime
 
 

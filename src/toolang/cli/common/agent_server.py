@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
 import os
 from pathlib import Path
 import sys
@@ -17,6 +16,7 @@ from toolang.plugin.models.catalog import MODEL_CATALOG_ENV
 from toolang.up import process as agents
 from toolang.up import sandbox as sandbox_runtime
 from toolang.up.logging import resolve_agent_logging
+from toolang.up.types import AgentServerRef
 
 from .context import load_runtime_environ
 from .shutdown_progress import make_runtime_shutdown_progress
@@ -34,23 +34,6 @@ DEVELOPMENT_WHEEL_HELP = (
 
 class AgentServerAcquisitionError(RuntimeError):
     """One AgentServer selection or lifecycle failure."""
-
-
-@dataclass(frozen=True, slots=True)
-class AgentServerRef:
-    """One acquired AgentServer endpoint and its sandbox identity."""
-
-    sandbox: str
-    endpoint: str
-
-    def __post_init__(self) -> None:
-        sandbox = self.sandbox.strip()
-        if not sandbox or sandbox != self.sandbox:
-            raise ValueError("agent server requires a canonical sandbox")
-        if not self.endpoint.strip():
-            raise ValueError("agent server requires an endpoint")
-        if self.endpoint != self.endpoint.strip():
-            raise ValueError("agent server requires a canonical endpoint")
 
 
 @contextmanager

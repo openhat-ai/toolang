@@ -12,12 +12,12 @@ from click.utils import strip_ansi
 
 from toolang.base.errors import ToolangError
 from toolang.cli.toolang.commands import script
-from toolang.cli.common.agent_server import AgentServerRef
 from toolang.common.layout import AgentLayout
 from toolang.execution.calls import parse_call
 from toolang.execution.records import RunRecord
 from toolang.execution.types import ControlRef, RunOverride, RunStatus
 from toolang.lang.input import RunnableInputRaw
+from toolang.up.types import AgentServerRef
 from tests.support.execution_harness import ExecutionHarness
 
 
