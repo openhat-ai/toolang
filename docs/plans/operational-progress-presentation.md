@@ -81,9 +81,10 @@ when control passes to a Run presenter, prompt UI, foreground logs, a stable
 command result, or an error diagnostic.
 
 Cleanup after a Run or foreground session is a new segment because another
-owner used the terminal in between. A segment has one elapsed clock, one Rich
-live region, and one ordered non-TTY stream. Call sites must not close and
-recreate a presenter merely because the event kind changes.
+owner used the terminal in between. A segment has one Rich live region and one
+ordered non-TTY stream. Each activity owns its own monotonic timer; no segment
+total is rendered. Call sites must not close and recreate a presenter merely
+because the event kind changes.
 
 Events retain the approved lifecycle rules:
 
@@ -125,15 +126,19 @@ COMPLETED_CLAUSE [(FACTS, ELAPSED)]
 Examples are successive live snapshots, not accumulated lines:
 
 ```text
+Fetching skill browser (2/5 caps)...
 Fetching skill browser (2/5 caps, 1.2s)...
 Fetched skill browser (3/5 caps, 1.3s)
-Loading setup (1.4s)...
-Loaded setup (1.6s)
-Discovering models (2.1s)...
+Loading setup...
+Loaded setup
+Discovering models...
+Discovering models (1.1s)...
 Discovered 12 models from 5 providers (2.2s)
-Installing Toolang from the package index (8.4s)...
+Installing Toolang from the package index...
+Installing Toolang from the package index (1.1s)...
 Installed Toolang from the package index (8.8s)
-Waiting for the agent API at http://localhost:7001 (9.1s)...
+Waiting for the agent API at http://localhost:7001...
+Waiting for the agent API at http://localhost:7001 (1.1s)...
 Connected to the agent API at http://localhost:7001 (9.3s)
 ```
 
@@ -169,6 +174,39 @@ useful detail into the natural sentence, for example
 inserts generated facts and TTY elapsed time as one parenthetical suffix before
 `...` for running work and at the end of completed work. It never appends a
 field after `...` and never adds a period.
+
+### TTY Elapsed Time
+
+Elapsed time describes the current activity, not the operational segment or
+command. It is presentation state derived from a monotonic clock and does not
+alter `ProgressEvent`.
+
+- A TTY first renders an activity without elapsed time. Once that activity has
+  run for 1 second, its live row includes real-time elapsed time.
+- When an activity reaches a successful or explicit skipped outcome, or emits a
+  past-tense checkpoint, its TTY row retains final elapsed time only if that
+  activity reached the 1-second threshold. Fast activities never gain a
+  duration after the fact. Failures transfer to the stable failure block, which
+  omits elapsed time.
+- The first `running` event starts an activity timer. Facts and `detail` updates
+  do not restart it. After a terminal outcome or past-tense checkpoint, the next
+  present-participle running clause begins a new activity and timer. Producers
+  keep that clause stable for the duration of the activity; the presenter does
+  not infer activity identity by conjugating or comparing arbitrary prose.
+- In concurrent prepare work, selecting another active item does not restart
+  either item: each item retains its own start time and resumes with its own
+  continuously increasing elapsed time when selected again.
+- Facts may appear immediately and remain in the same parentheses as elapsed
+  time, as in `Fetching skill browser (2/5 caps)...` followed later by
+  `Fetching skill browser (2/5 caps, 1.2s)...`.
+- Non-TTY progress never includes elapsed time and never emits timer-only lines.
+  Stable object-first command results also omit operational elapsed time.
+
+Elapsed values below 10 seconds use one decimal place, values from 10 through
+59 seconds use whole seconds, and longer values use compact forms such as
+`1m 08s` and `1h 02m 14s`. After the threshold, a TTY may redraw at 100
+millisecond intervals below 10 seconds and once per second thereafter. These
+redraws update only the existing live row and are not material progress events.
 
 Use this vocabulary and tone:
 
@@ -230,8 +268,9 @@ sentence in event order, including `Fetching X...` followed later by
 TTY live presentation is delayed for 150 milliseconds to avoid flashing for
 cache hits and fast local work. It never delays the operation itself and has no
 minimum hold time. Non-TTY rows are emitted immediately. TTY redraws only for a
-material semantic event or a visible elapsed-time change; there is no spinner,
-status glyph, or animation-only refresh.
+material semantic event or a visible elapsed-time change after the 1-second
+elapsed threshold; there is no spinner, status glyph, or animation-only
+refresh.
 
 ## Runtime and Setup Ordering
 
@@ -390,44 +429,51 @@ compatibility path.
 2. TTY cache hits and operations completing before 150 milliseconds leave no
    live residue or artificial delay; slower work becomes visible by the
    threshold.
-3. Non-TTY output is ordered, append-only, ANSI-free, and never replaces a
-   line; it emits and deduplicates each material running sentence followed by
-   its checkpoint or terminal sentence, such as `Fetching X...` then
-   `Fetched X`.
-4. Concurrent prepare events select the most recently changed active item and
+3. A TTY activity shows no elapsed time before 1 second, updates its own elapsed
+   time after the threshold, and retains the final value only when the threshold
+   was reached. A new activity starts a new timer; reselecting a concurrent
+   prepare item preserves that item's original timer.
+4. Non-TTY output is ordered, append-only, ANSI-free, never includes elapsed
+   time or timer-only rows, and never replaces a line; it emits and deduplicates
+   each material running sentence followed by its checkpoint or terminal
+   sentence, such as `Fetching X...` then `Fetched X`.
+5. Concurrent prepare events select the most recently changed active item and
    maintain accurate `N/T caps` facts without growing multiple live rows.
-5. Cached and skipped prepare work leaves no pending or running residue.
-6. Setup load and discover use the same grammar; expected Ollama and llama.cpp
+6. Cached and skipped prepare work leaves no pending or running residue.
+7. Setup load and discover use the same grammar; expected Ollama and llama.cpp
    offline or timeout results remain successful discovery, while unexpected
    exceptions produce one `setup.discover` failure block.
-7. Runtime create closes before start; initial guest setup temporarily owns the
+8. Runtime create closes before start; initial guest setup temporarily owns the
    live leaf inside start; readiness resumes after setup without a second live
    region.
-8. Wide, narrow, and Unicode sentences/details wrap by display cells within the
+9. Wide, narrow, and Unicode sentences/details wrap by display cells within the
    same configured maximum as Run output.
-9. One failure block contains the qualified stage and reason, conditional fix
+10. One failure block contains the qualified stage and reason, conditional fix
    and log, and no duplicated outer or workload error.
-10. Prepare-to-setup-to-runtime changes add no blank line, reset, duplicate
-    activity, or elapsed-clock restart.
-11. Operational-to-Run handoff has exactly one leading Run gap and no residual
+11. Prepare-to-setup-to-runtime changes add no blank line, presenter reset, or
+    duplicate activity. Each new activity intentionally starts its own elapsed
+    timer; no segment-total clock appears.
+12. Operational-to-Run handoff has exactly one leading Run gap and no residual
     live row; Run projection and footer output remain byte-for-byte unchanged.
-12. A root Run footer precedes cleanup. Non-TTY has exactly one intervening
+13. A root Run footer precedes cleanup. Non-TTY has exactly one intervening
     blank row; successful TTY cleanup is transient and leaves the footer as the
     final stable line.
-13. Ready lines precede all foreground logs, Ctrl+C stops log following before
+14. Ready lines precede all foreground logs, Ctrl+C stops log following before
     cleanup presentation, and no log corrupts a live row.
-14. Progress sentences always begin with a verb and never display the agent
+15. Progress sentences always begin with a verb and never display the agent
     name; command results begin with the object and stable identity, as in
-    `Agent eve started: ...` or `Skill browser added: ...`.
-15. Agent-first and command-first forms, embedded host execution, attached
+    `Agent eve started: ...` or `Skill browser added: ...`, and never include
+    operational elapsed time.
+16. Agent-first and command-first forms, embedded host execution, attached
     execution, temporary guest execution, Linux/macOS terminals, and Docker
     controlled from Linux/macOS/WSL2 produce the defined semantics.
-16. Default verification and opt-in Docker transcript tests pass.
+17. Default verification and opt-in Docker transcript tests pass.
 
 ## Risks and Open Questions
 
-- Delayed TTY reveal needs an event-driven timer that cannot outlive a closed
-  presenter or delay command completion.
+- Delayed TTY reveal and per-activity elapsed updates need event-driven timers
+  that cannot outlive a closed presenter, survive under the wrong activity, or
+  delay command completion.
 - Cross-kind setup nesting requires explicit active-state restoration; choosing
   only the last received event will leave a terminal setup row visible or hide
   readiness.
