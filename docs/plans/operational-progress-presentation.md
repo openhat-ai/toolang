@@ -146,6 +146,12 @@ ordered non-TTY stream. Each activity owns its own monotonic timer; no segment
 total is rendered. Call sites must not close and recreate a presenter merely
 because the event kind changes.
 
+The presenter keeps one private record per `(kind, id)`: current stage, status,
+text, bounded detail, change order, and activity timer. This is the only item
+state model for prepare, setup, and runtime. IDs are opaque identity; the
+presenter never splits an ID, checks an ID or label prefix, or derives grammar
+from them.
+
 Events retain the approved lifecycle rules:
 
 - `pending` contributes only to aggregate facts and is never a visible row;
@@ -159,10 +165,20 @@ Events retain the approved lifecycle rules:
   block; and
 - cache hits that perform no visible work remain silent.
 
-For concurrent prepare items, the most recently changed running item is the
-visible activity. When it closes, the most recently changed remaining running
-item becomes visible. Aggregate facts carry overall progress, so concurrency
-does not grow the live region vertically.
+For concurrent prepare, `pending` is reserved for cap work-set registration.
+The producer emits one pending event for every cap in the complete set before
+any worker emits `running`. The presenter counts unique registered IDs as `T`
+and IDs whose `materialize` stage reaches `ok` or `skipped` as `N`. `T` is the
+current scheduled set, not the installed catalog size. A failed item transfers
+immediately to the failure block. A new pending set after the previous set is
+terminal resets these private counts. Other prepare operations start at
+`running` or remain silent; direct single-item work has no aggregate facts.
+Commands never provide or correct totals.
+
+The most recently changed running item is the visible activity. When it closes,
+the most recently changed remaining running item becomes visible. Facts appear
+only for a prepare set with `T > 1`, so concurrency does not grow the live
+region vertically or add a redundant summary.
 
 ## Sentence Grammar
 
@@ -292,13 +308,11 @@ values, secrets, and raw logs are never labels or details. `detail` may retain
 bounded diagnostic context, but the presenter does not append it as a generic
 post-sentence field.
 
-Prepare shows `N/T caps` only when a total is known and greater than one. `N`
-counts `ok` and `skipped` items. Setup and runtime add no invented counts.
-Expected Ollama or llama.cpp absence, connection refusal, or timeout produces
-an offline provider snapshot and a successful aggregate discovery; it is not a
-red progress failure. An unexpected catalog exception fails
-`setup.discover`. The following inspection output remains authoritative for
-provider status and model counts.
+Setup and runtime add no invented counts. Expected Ollama or llama.cpp absence,
+connection refusal, or timeout produces an offline provider snapshot and a
+successful aggregate discovery; it is not a red progress failure. An
+unexpected catalog exception fails `setup.discover`. The following inspection
+output remains authoritative for provider status and model counts.
 
 ## Width, Wrapping, and Style
 
@@ -461,11 +475,13 @@ sentence. Commands do not gain an aggregate `Prepared`, `Loaded`, or
   shared display-cell width, wrapping, delayed live reveal, activity selection,
   and failure rendering. Make `CliProgress` context-managed with idempotent
   close and an optional `sink`; remove `as_progress_sink()` and domain-specific
-  factory options.
+  factory options. Treat IDs as opaque and derive prepare facts only from
+  pending registration and terminal materialize events.
 - Runtime, Script, Chat, clone, cap, and inspection command orchestration: pass
   one presenter through contiguous pre-execution work, close it at the defined
   handoff, and request a new segment only for cleanup. Remove command-authored
-  progress events and literal progress labels.
+  progress events, literal progress labels, prepare summary options, and
+  `set_prepare_total()`.
 - `src/toolang/up/sandbox.py` and launch-token observation: close
   `runtime.create` before starting AgentServer, open `runtime.start` before
   initial setup, and resume its readiness activity after setup.
@@ -473,6 +489,9 @@ sentence. Commands do not gain an aggregate `Prepared`, `Loaded`, or
   optional sink, use stable IDs and stage semantics rather than label prefixes
   to drive aggregation, and emit complete verb-first running, checkpoint,
   terminal, and failure sentences from the activity vocabulary.
+- Cap preparation: register every member of one concurrent work set with
+  `pending` before starting its workers and close every registered successful or
+  cached item through `prepare.materialize`.
 - Setup and sandbox plugins: retain semantic events and bounded details; do not
   preformat rows or failures.
 - Operational, command, integration, PTY, and live Docker tests: assert complete
@@ -509,9 +528,13 @@ compatibility path.
    time or timer-only rows, and never replaces a line; it emits and deduplicates
    each material running sentence followed by its checkpoint or terminal
    sentence, such as `Fetching X...` then `Fetched X`.
-7. Concurrent prepare events select the most recently changed active item and
-   maintain accurate `N/T caps` facts without growing multiple live rows.
-8. Cached and skipped prepare work leaves no pending or running residue.
+7. Concurrent cap preparation emits its complete pending set before running
+   work. The generic presenter treats IDs as opaque, selects the most recently
+   changed active item, and derives accurate `N/T caps` from pending and terminal
+   materialize events without `set_prepare_total()` or multiple live rows.
+8. A later prepare set resets completed private counts. Direct single-item work
+   has no aggregate facts, and cached or skipped work leaves no pending or
+   running residue.
 9. Setup load and discover use the same grammar; expected Ollama and llama.cpp
    offline or timeout results remain successful discovery, while unexpected
    exceptions produce one `setup.discover` failure block.
