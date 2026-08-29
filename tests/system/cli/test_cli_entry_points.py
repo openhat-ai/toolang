@@ -120,12 +120,14 @@ def test_version_option_has_no_short_alias(name: str, app: typer.Typer) -> None:
     runner = CliRunner()
     help_result = runner.invoke(app, ["--help"], prog_name=name)
     short_result = runner.invoke(app, ["-V"], prog_name=name)
+    help_output = click.unstyle(help_result.output)
+    short_output = click.unstyle(short_result.output)
 
     assert help_result.exit_code == 0, help_result.output
-    assert "--version" in help_result.output
-    assert "-V" not in help_result.output
+    assert "--version" in help_output
+    assert "-V" not in help_output
     assert short_result.exit_code == 2
-    assert "No such option: -V" in short_result.output
+    assert "No such option: -V" in short_output
 
 
 def test_inspect_help_is_concise_and_consistent() -> None:
