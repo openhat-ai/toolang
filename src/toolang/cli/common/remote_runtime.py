@@ -89,6 +89,8 @@ def parse_remote_runtime_identity(payload: object) -> RemoteRuntimeIdentity:
         if description_value is not None:
             raise ValueError("docker sandbox returned a description")
         instance = _token(instance_value, label="sandbox instance")
+        if re.fullmatch(r"[0-9a-f]{12}", instance) is None:
+            raise ValueError("sandbox instance is invalid")
         description = None
     else:
         if instance_value is not None:

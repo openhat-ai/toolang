@@ -117,7 +117,8 @@ Remove `agent.sh`.
 `bootstrap.py` then:
 
 1. loads `guest.env` with the restricted generated-dotenv parser;
-2. waits for and exports the full Docker sandbox instance ID;
+2. validates Docker's default twelve-character `HOSTNAME` and exposes it as
+   `TOOLANG_SANDBOX_INSTANCE`;
 3. installs the staged wheel or `toolang` requirement using
    `uv tool install --force` into the fixed tool directory;
 4. verifies the installed executable provides hidden `too serve`; and

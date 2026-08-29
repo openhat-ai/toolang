@@ -110,5 +110,6 @@ target-version = "py311"
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
+    "live_docker: opt-in checks that use the local Docker engine and network",
     "live_provider: opt-in smoke tests that call a real model provider",
 ]

@@ -1,6 +1,6 @@
 # Docker Guest Harness
 
-Status: Proposed. Work type: feature definition.
+Status: Approved for implementation on 2026-08-29. Work type: feature definition.
 
 This extends `docker-guest-bootstrap.md` and replaces its generated `start.sh`
 and `bootstrap.py` artifacts.
@@ -62,11 +62,13 @@ The POSIX shell wrapper runs on Linux, macOS, and Windows through WSL2. Native
 Windows shells, Git Bash path rewriting, and Windows containers are out of
 scope. It:
 
-1. stages environment, diagnostic, instance, and optional wheel files;
+1. stages environment, diagnostic, and optional wheel files;
 2. uses `docker create` with the guest core mounted read-only;
-3. writes the full container ID to the staged instance file;
-4. runs `docker start --attach` and returns the workload exit code; and
-5. stops and removes resources on success, failure, or Ctrl+C unless `--keep`.
+3. retains the full returned container ID for host-side lifecycle operations;
+4. lets the guest use Docker's default twelve-character `HOSTNAME` as its
+   sandbox instance;
+5. runs `docker start --attach` and returns the workload exit code; and
+6. stops and removes resources on success, failure, or Ctrl+C unless `--keep`.
 
 Build Docker commands from quoted positional parameters, never `eval`. Do not
 forward the full host environment. Because `guest.env` loads after Python

@@ -18,7 +18,6 @@ from weakref import WeakKeyDictionary
 from toolang.base.errors import SandboxLaunchError
 from toolang.base.protocols.sandbox import Sandbox
 from toolang.base.types.progress import (
-    ProgressEvent,
     ProgressSink,
     ProgressStage,
     ProgressStatus,
@@ -44,7 +43,6 @@ from toolang.up.records import SandboxState
 from toolang.up.server import ServeSpec, build_serve_argv, resolve_serve
 
 SANDBOX_READY_TIMEOUT_SEC = 30.0
-SANDBOX_ATTACH_GRACE_SEC = 0.2
 _TASK_LOCKS: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[Path, asyncio.Lock]] = (
     WeakKeyDictionary()
 )
@@ -239,7 +237,6 @@ async def _launch_locked(
     state: SandboxState | None = None
     active_stage: ProgressStage = "create"
     active_label = "Starting workload"
-    attach_failure_observed = False
     try:
         try:
             ref = await implementation.launch(plan)
@@ -250,62 +247,6 @@ async def _launch_locked(
             raise
         state = SandboxState(sandbox=plan.sandbox, ref=ref)
         state.save(spec.serve.layout.sandbox_state)
-        deferred_start_events: list[ProgressEvent] = []
-
-        def forward_attach_progress(event: ProgressEvent) -> None:
-            nonlocal attach_failure_observed
-            if event.status == "failed":
-                attach_failure_observed = True
-            if event.kind == "runtime" and event.stage == "start":
-                deferred_start_events.append(event)
-                return
-            if progress is not None:
-                with suppress(Exception):
-                    progress(event)
-
-        attach_task = asyncio.create_task(
-            implementation.attach(
-                plan,
-                ref,
-                progress=(forward_attach_progress if progress is not None else None),
-                progress_id=spec.progress_id,
-            )
-        )
-        ready_task = asyncio.create_task(
-            _wait_ready(
-                implementation,
-                ref,
-                timeout_sec=SANDBOX_READY_TIMEOUT_SEC,
-            )
-        )
-        try:
-            done, _pending = await asyncio.wait(
-                (attach_task, ready_task),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if attach_task in done:
-                await attach_task
-            else:
-                try:
-                    await asyncio.wait_for(
-                        asyncio.shield(attach_task),
-                        timeout=SANDBOX_ATTACH_GRACE_SEC,
-                    )
-                except TimeoutError:
-                    attach_task.cancel()
-                    await asyncio.gather(attach_task, return_exceptions=True)
-            if (
-                ready_task.done()
-                and not ready_task.cancelled()
-                and ready_task.exception() is not None
-            ):
-                await ready_task
-        except BaseException:
-            for task in (attach_task, ready_task):
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(attach_task, ready_task, return_exceptions=True)
-            raise
         _startup_progress(
             progress,
             spec,
@@ -315,39 +256,26 @@ async def _launch_locked(
             detail=ref.runtime_id,
         )
         active_stage = "start"
+        active_label = "Attaching workload output"
+        await implementation.attach(plan, ref)
         active_label = "Waiting for agent API"
-        for event in deferred_start_events:
-            if progress is not None:
-                with suppress(Exception):
-                    progress(event)
-        _startup_progress(
-            progress,
-            spec,
-            stage="start",
-            label="Waiting for agent API",
-            status="running",
-            detail=ref.endpoint,
+        await _wait_ready(
+            implementation,
+            ref,
+            timeout_sec=SANDBOX_READY_TIMEOUT_SEC,
         )
-        await ready_task
-        _startup_progress(
-            progress,
-            spec,
-            stage="start",
-            label="Waiting for agent API",
-            status="ok",
-            detail=ref.endpoint,
-        )
+        if plan.output == "file":
+            await implementation.detach(ref)
         return SandboxHandle(implementation, state, progress_id=spec.progress_id)
     except BaseException as exc:
-        if not attach_failure_observed:
-            _startup_progress(
-                progress,
-                spec,
-                stage=active_stage,
-                label=active_label,
-                status="failed",
-                detail=str(exc),
-            )
+        _startup_progress(
+            progress,
+            spec,
+            stage=active_stage,
+            label=active_label,
+            status="failed",
+            detail=str(exc),
+        )
         await asyncio.shield(
             _recover_failed_launch(
                 spec.serve.layout,

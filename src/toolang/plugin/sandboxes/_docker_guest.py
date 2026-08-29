@@ -1,200 +1,23 @@
-"""Prepare the Toolang guest bootstrap used by Docker sandboxes."""
+"""Stage the fixed Toolang bootstrap used by Docker guests."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from importlib.resources import files
 from pathlib import Path
-import shlex
 import shutil
 
 from toolang.base.types.sandbox import SandboxRequest
 from toolang.common.files import atomic_write_text
 
 
-DOCKER_TOOLANG_COMPATIBILITY_ERROR = (
-    "The installed Toolang package cannot start the required AgentServer."
-)
+def stage_guest_script(path: Path) -> None:
+    """Copy the packaged guest core into one immutable launch stage."""
 
-
-def write_agent_script(
-    path: Path,
-    *,
-    command: tuple[str, ...],
-    hosted_dev_artifact: Path | None,
-    sandbox_instance_path: Path,
-    startup_events_path: Path,
-    validation_error_to_stderr: bool,
-) -> None:
-    if not command:
-        raise ValueError("docker sandbox requires a command")
-    source = str(hosted_dev_artifact) if hosted_dev_artifact is not None else "toolang"
-    tool_command = command if command[0] in {"too", "toolang"} else ("too", *command)
-    lines = [
-        "#!/bin/sh",
-        "set -eu",
-        'export PATH="$HOME/.local/bin:$PATH"',
-        "TOOLANG_SANDBOX_INSTANCE_PATH=" + shlex.quote(str(sandbox_instance_path)),
-        "TOOLANG_SANDBOX_INSTANCE_ATTEMPTS=0",
-        'while [ ! -s "$TOOLANG_SANDBOX_INSTANCE_PATH" ]; do',
-        "  TOOLANG_SANDBOX_INSTANCE_ATTEMPTS="
-        "$((TOOLANG_SANDBOX_INSTANCE_ATTEMPTS + 1))",
-        '  if [ "$TOOLANG_SANDBOX_INSTANCE_ATTEMPTS" -ge 600 ]; then',
-        "    echo 'docker sandbox instance is unavailable' >&2",
-        "    exit 64",
-        "  fi",
-        "  sleep 0.05",
-        "done",
-        'IFS= read -r TOOLANG_SANDBOX_INSTANCE <"$TOOLANG_SANDBOX_INSTANCE_PATH"',
-        'export TOOLANG_SANDBOX_INSTANCE="${TOOLANG_SANDBOX_INSTANCE:'
-        '?docker sandbox instance is unavailable}"',
-        "startup_event() { { printf '%s\\n' \"$1\" >>"
-        + shlex.quote(str(startup_events_path))
-        + "; } 2>/dev/null || :; }",
-        'have() { command -v "$1" >/dev/null 2>&1; }',
-        'PYTHON_BIN=""',
-        'if have python; then PYTHON_BIN="python"; elif have python3; then PYTHON_BIN="python3"; fi',
-        "ensure_uv() {",
-        "  have uv && return 0",
-        '  [ -n "$PYTHON_BIN" ] || { echo "python not available" >&2; return 127; }',
-        '  TOOLANG_UV_ENSUREPIP_DIAGNOSTIC=$("$PYTHON_BIN" -m ensurepip '
-        "--upgrade 2>&1) || true",
-        '  TOOLANG_UV_PIP_DIAGNOSTIC=$("$PYTHON_BIN" -m pip install '
-        "--disable-pip-version-check --root-user-action=ignore --quiet "
-        "--user -U uv 2>&1) || true",
-        "  have uv && return 0",
-        '  TOOLANG_UV_CURL_DIAGNOSTIC=""',
-        "  if have curl; then",
-        "    TOOLANG_UV_CURL_DIAGNOSTIC=$({ curl -LsSf "
-        "https://astral.sh/uv/install.sh | sh; } 2>&1) || true",
-        "  fi",
-        "  have uv && return 0",
-        '  for TOOLANG_UV_DIAGNOSTIC in "$TOOLANG_UV_ENSUREPIP_DIAGNOSTIC" '
-        '"$TOOLANG_UV_PIP_DIAGNOSTIC" "$TOOLANG_UV_CURL_DIAGNOSTIC"; do',
-        "    [ -z \"$TOOLANG_UV_DIAGNOSTIC\" ] || printf '%s\\n' "
-        '"$TOOLANG_UV_DIAGNOSTIC" >&2',
-        "  done",
-        "  echo 'uv not available' >&2",
-        "  return 127",
-        "}",
-        "startup_event install.running",
-        "if ! ensure_uv; then",
-        "  startup_event install.failed",
-        "  exit 127",
-        "fi",
-        "if ! uv tool install --quiet --no-progress --force "
-        + shlex.quote(source)
-        + "; then",
-        "  startup_event install.failed",
-        "  exit 1",
-        "fi",
-        "startup_event install.ok",
-        "startup_event validate.running",
-        "if ! " + shlex.quote(tool_command[0]) + " serve --help >/dev/null 2>&1; then",
-        "  startup_event validate.failed",
-        *(
-            ["  echo " + shlex.quote(DOCKER_TOOLANG_COMPATIBILITY_ERROR) + " >&2"]
-            if validation_error_to_stderr
-            else []
-        ),
-        "  exit 64",
-        "fi",
-        "startup_event validate.ok",
-        "startup_event server.running",
-        "exec " + shlex.join(tool_command),
-    ]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    source = files("toolang.plugin.sandboxes").joinpath("docker_guest.sh")
+    with source.open("rb") as reader, path.open("wb") as writer:
+        shutil.copyfileobj(reader, writer)
     path.chmod(0o755)
-
-
-def write_start_script(
-    path: Path,
-    *,
-    runtime_dir: Path,
-    guest_env_path: Path,
-    log_path: Path | None,
-) -> None:
-    bootstrap = runtime_dir / "bootstrap.py"
-    agent_script = runtime_dir / "agent.sh"
-    lines = [
-        "#!/bin/sh",
-        "set -eu",
-        *(
-            [f"exec >>{shlex.quote(str(log_path))} 2>&1"]
-            if log_path is not None
-            else []
-        ),
-        'PYTHON_BIN=""',
-        'if command -v python >/dev/null 2>&1; then PYTHON_BIN="python"; '
-        'elif command -v python3 >/dev/null 2>&1; then PYTHON_BIN="python3"; fi',
-        '[ -n "$PYTHON_BIN" ] || { echo "python not available" >&2; exit 127; }',
-        'exec "$PYTHON_BIN" '
-        + shlex.join(
-            (str(bootstrap), str(guest_env_path), "/bin/sh", str(agent_script))
-        ),
-    ]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    path.chmod(0o755)
-
-
-def write_bootstrap(path: Path) -> None:
-    path.write_text(
-        """from __future__ import annotations
-
-import os
-from pathlib import Path
-import sys
-
-
-def load_generated_dotenv(path: Path) -> dict[str, str]:
-    text = path.read_text(encoding=\"utf-8\")
-    values: dict[str, str] = {}
-    index = 0
-    while index < len(text):
-        if text[index] in \" \\t\\n\":
-            index += 1
-            continue
-        if text[index] == \"#\":
-            newline = text.find(\"\\n\", index)
-            index = len(text) if newline < 0 else newline + 1
-            continue
-        separator = text.find('=\"', index)
-        if separator < 0:
-            raise ValueError(\"invalid staged guest environment\")
-        name = text[index:separator]
-        index = separator + 2
-        value: list[str] = []
-        while index < len(text):
-            char = text[index]
-            index += 1
-            if char == \"\\\\\":
-                if index >= len(text):
-                    raise ValueError(\"invalid staged guest environment\")
-                escaped = text[index]
-                index += 1
-                value.append(\"\\r\" if escaped == \"r\" else escaped)
-            elif char == '\"':
-                break
-            else:
-                value.append(char)
-        else:
-            raise ValueError(\"invalid staged guest environment\")
-        if not name or any(char.isspace() or char in \"=#\\x00\" for char in name):
-            raise ValueError(\"invalid staged guest environment\")
-        values[name] = \"\".join(value)
-    return values
-
-
-def main() -> None:
-    environ = dict(os.environ)
-    environ.update(load_generated_dotenv(Path(sys.argv[1])))
-    os.execvpe(sys.argv[2], sys.argv[2:], environ)
-
-
-if __name__ == \"__main__\":
-    main()
-""",
-        encoding="utf-8",
-    )
 
 
 def write_guest_env(
@@ -203,6 +26,8 @@ def write_guest_env(
     dotenv_envs: Mapping[str, str],
     process_envs: Mapping[str, str],
 ) -> None:
+    """Write the restricted generated dotenv consumed by the guest core."""
+
     content = _dotenv_section("Root and agent dotenv values", dotenv_envs)
     content += "\n"
     content += _dotenv_section("Filtered host process values", process_envs)
@@ -221,32 +46,10 @@ def prepare_stage_directory(stage_dir: Path) -> None:
     stage_dir.mkdir()
 
 
-def prepare_startup_events(path: Path) -> None:
+def prepare_diagnostic(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, "")
     path.chmod(0o600)
-
-
-def prepare_sandbox_instance(path: Path) -> None:
-    atomic_write_text(path, "")
-    path.chmod(0o600)
-
-
-def write_sandbox_instance(path: str | Path, instance: str) -> None:
-    value = instance.strip()
-    if not value or value != instance:
-        raise ValueError("docker sandbox instance must be a nonempty token")
-    target = Path(path)
-    atomic_write_text(target, value + "\n")
-    target.chmod(0o600)
-
-
-def remove_startup_events(path: str | Path, *, ignore_errors: bool = False) -> None:
-    try:
-        Path(path).unlink(missing_ok=True)
-    except OSError:
-        if not ignore_errors:
-            raise
 
 
 def remove_stage_directory(
@@ -265,11 +68,13 @@ def remove_stage_directory(
                 raise
 
 
-def prepare_background_log(request: SandboxRequest) -> Path | None:
+def prepare_background_log(request: SandboxRequest) -> None:
+    """Validate and create the durable log used by background workloads."""
+
     if request.output == "inherit":
         if request.log_path is not None:
             raise ValueError("inherited docker output does not accept a log path")
-        return None
+        return
     if request.output != "file":
         raise ValueError(f"unsupported docker output mode: {request.output}")
     log_path = request.log_path
@@ -278,13 +83,12 @@ def prepare_background_log(request: SandboxRequest) -> Path | None:
     resolved_home = request.local_home.resolve()
     resolved_log = log_path.resolve()
     try:
-        relative = resolved_log.relative_to(resolved_home)
+        resolved_log.relative_to(resolved_home)
     except ValueError as exc:
         raise ValueError("docker background log must be inside the agent home") from exc
     resolved_log.parent.mkdir(parents=True, exist_ok=True)
     resolved_log.touch(mode=0o600, exist_ok=True)
     resolved_log.chmod(0o600)
-    return request.hosted_home / relative
 
 
 def _dotenv_section(title: str, environ: Mapping[str, str]) -> str:
