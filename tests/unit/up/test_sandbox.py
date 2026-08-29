@@ -63,8 +63,9 @@ class FakeSandbox:
         ref: SandboxRef,
         *,
         progress: ProgressSink | None = None,
+        progress_id: str | None = None,
     ) -> None:
-        del progress
+        del progress, progress_id
         self.calls.append(("attach", plan, ref))
         if self.attach_error is not None:
             raise self.attach_error
@@ -132,14 +133,16 @@ class GuestFailureSandbox(FakeSandbox):
         ref: SandboxRef,
         *,
         progress: ProgressSink | None = None,
+        progress_id: str | None = None,
     ) -> None:
         self.calls.append(("attach", plan, ref))
         if progress is None:
             return
         progress(
             ProgressEvent(
-                id="startup:guest:install",
-                phase="startup.install",
+                id=progress_id or "runtime:guest",
+                kind="runtime",
+                stage="create",
                 label="Installing Toolang",
                 status="running",
             )
@@ -147,8 +150,9 @@ class GuestFailureSandbox(FakeSandbox):
         await asyncio.sleep(0.01)
         progress(
             ProgressEvent(
-                id="startup:guest:validate",
-                phase="startup.validate",
+                id=progress_id or "runtime:guest",
+                kind="runtime",
+                stage="create",
                 label="Checking Toolang compatibility",
                 status="failed",
                 detail="incompatible CLI",
@@ -158,6 +162,39 @@ class GuestFailureSandbox(FakeSandbox):
     async def running(self, ref: SandboxRef) -> bool:
         del ref
         return False
+
+
+class GuestStartupSandbox(FakeSandbox):
+    async def attach(
+        self,
+        plan: SandboxPlan,
+        ref: SandboxRef,
+        *,
+        progress: ProgressSink | None = None,
+        progress_id: str | None = None,
+    ) -> None:
+        self.calls.append(("attach", plan, ref))
+        if progress is None:
+            return
+        item_id = progress_id or "runtime:guest"
+        progress(
+            ProgressEvent(
+                id=item_id,
+                kind="runtime",
+                stage="create",
+                label="Installing Toolang",
+                status="running",
+            )
+        )
+        progress(
+            ProgressEvent(
+                id=item_id,
+                kind="runtime",
+                stage="start",
+                label="Starting agent server",
+                status="running",
+            )
+        )
 
 
 def _launch_spec(tmp_path: Path) -> sandbox.LaunchSpec:
@@ -343,12 +380,13 @@ def test_stop_handle_stops_only_its_exact_owned_workload(
     assert ("stop", state.ref, False) in implementation.calls
     assert ("release", state.ref) in implementation.calls
     assert sandbox.SandboxState.load(layout.sandbox_state) is None
-    assert [(event.phase, event.status) for event in events] == [
-        ("shutdown.stop", "running"),
-        ("shutdown.stop", "ok"),
-        ("shutdown.release", "running"),
-        ("shutdown.release", "ok"),
+    assert [(event.kind, event.stage, event.status) for event in events] == [
+        ("runtime", "stop", "running"),
+        ("runtime", "stop", "ok"),
+        ("runtime", "destroy", "running"),
+        ("runtime", "destroy", "ok"),
     ]
+    assert {event.id for event in events} == {"runtime:toolang-alice-owned"}
 
 
 def test_stop_handle_reports_the_failed_cleanup_stage(
@@ -373,9 +411,11 @@ def test_stop_handle_reports_the_failed_cleanup_stage(
             )
         )
 
-    assert [(event.phase, event.status, event.detail) for event in events] == [
-        ("shutdown.stop", "running", "docker:python:3.13-slim"),
-        ("shutdown.stop", "failed", "stop failed"),
+    assert [
+        (event.kind, event.stage, event.status, event.detail) for event in events
+    ] == [
+        ("runtime", "stop", "running", "docker:python:3.13-slim"),
+        ("runtime", "stop", "failed", "stop failed"),
     ]
     assert sandbox.SandboxState.load(layout.sandbox_state) == state
 
@@ -487,14 +527,14 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
     assert request.hosted_root == Path("/runtime")
     assert request.hosted_home == Path("/runtime/agents/alice")
     assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) == handle.state
-    assert [(event.phase, event.status) for event in events] == [
-        ("startup.prepare", "running"),
-        ("startup.prepare", "ok"),
-        ("startup.launch", "running"),
-        ("startup.launch", "ok"),
-        ("startup.ready", "running"),
-        ("startup.ready", "ok"),
+    assert [(event.kind, event.stage, event.status) for event in events] == [
+        ("runtime", "create", "running"),
+        ("runtime", "create", "running"),
+        ("runtime", "create", "ok"),
+        ("runtime", "start", "running"),
+        ("runtime", "start", "ok"),
     ]
+    assert len({event.id for event in events}) == 1
 
     assert asyncio.run(sandbox.stop(spec.serve.layout, force=True)) is True
     assert ("stop", handle.state.ref, True) in implementation.calls
@@ -526,6 +566,41 @@ def test_startup_renderer_failure_does_not_change_launch(
     handle = asyncio.run(sandbox.launch(spec, progress=fail))
 
     assert handle.state.ref.runtime_id == "workload-1"
+
+
+def test_guest_start_activity_follows_create_completion(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    implementation = GuestStartupSandbox()
+    monkeypatch.setattr(
+        sandbox,
+        "create_sandbox",
+        lambda _name, config: implementation,
+    )
+
+    async def ready(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    events: list[ProgressEvent] = []
+
+    spec = _launch_spec(tmp_path)
+    handle = asyncio.run(sandbox.launch(spec, progress=events.append))
+
+    create_ok = next(
+        index
+        for index, event in enumerate(events)
+        if event.stage == "create" and event.status == "ok"
+    )
+    start_running = next(
+        index
+        for index, event in enumerate(events)
+        if event.stage == "start" and event.status == "running"
+    )
+    assert create_ok < start_running
+    asyncio.run(sandbox.stop_handle(spec.serve.layout, handle, progress=events.append))
+    assert len({event.id for event in events}) == 1
 
 
 def test_stop_failure_preserves_sandbox_state(
@@ -576,7 +651,7 @@ def test_launch_failure_stops_releases_and_clears_state(
         SandboxRef("workload-1", spec.serve.endpoint),
     ) in implementation.calls
     assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
-    assert events[-1].phase == "startup.ready"
+    assert (events[-1].kind, events[-1].stage) == ("runtime", "start")
     assert events[-1].status == "failed"
     assert events[-1].detail == "not ready"
 
@@ -595,11 +670,12 @@ def test_guest_failure_progress_wins_the_early_exit_diagnostic_race(
     with pytest.raises(RuntimeError, match="exited before becoming ready"):
         asyncio.run(sandbox.launch(spec, progress=events.append))
 
-    phases = [(event.phase, event.status) for event in events]
-    assert ("startup.install", "running") in phases
-    assert ("startup.validate", "failed") in phases
-    assert ("startup.ready", "running") not in phases
-    assert phases[-1] == ("startup.launch", "failed")
+    activities = [(event.label, event.status) for event in events]
+    assert ("Installing Toolang", "running") in activities
+    assert ("Checking Toolang compatibility", "failed") in activities
+    assert ("Waiting for agent API", "running") not in activities
+    assert activities[-1] == ("Checking Toolang compatibility", "failed")
+    assert len({event.id for event in events}) == 1
 
 
 def test_readiness_cleanup_failure_preserves_sandbox_state(

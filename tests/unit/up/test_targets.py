@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from toolang.base.types.progress import ProgressEvent
 from toolang.common.layout import AgentLayout
 from toolang.up import process as agents
 from toolang.common.github import GitHubRef
@@ -131,8 +132,13 @@ def test_resolve_visiting_layout_materializes_and_reuses_program(
     source = f"https://agents.example{tmp_path}/researcher.too"
     fetches: list[str] = []
 
-    def fake_fetch(ref: agents.AgentRef, *, progress=None) -> str:
-        del progress
+    def fake_fetch(
+        ref: agents.AgentRef,
+        *,
+        progress=None,
+        progress_id: str | None = None,
+    ) -> str:
+        del progress, progress_id
         fetches.append(ref.render())
         return "agent researcher\n"
 
@@ -145,6 +151,68 @@ def test_resolve_visiting_layout_materializes_and_reuses_program(
     assert first == second == AgentLayout.visiting(source, "researcher")
     assert first.program.read_text(encoding="utf-8") == "agent researcher\n"
     assert fetches == [source]
+
+
+def test_visiting_agent_keeps_one_progress_id_across_prepare_stages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case_id = f"{tmp_path.parent.name}-{tmp_path.name}"
+    selector = f"owner-{case_id}/researcher"
+    monkeypatch.setattr(
+        agents,
+        "_resolve_github_agent_shorthand",
+        lambda *_args, **_kwargs: agents.HttpAgentRef(
+            url=f"https://agents.example/{case_id}/researcher.too"
+        ),
+    )
+    monkeypatch.setattr(
+        agents,
+        "_fetch_http_text",
+        lambda _url: "agent researcher\n",
+    )
+    events: list[ProgressEvent] = []
+
+    agents.resolve_visiting_layout(selector, progress=events.append)
+
+    assert [event.stage for event in events] == [
+        "resolve",
+        "resolve",
+        "fetch",
+        "fetch",
+        "materialize",
+        "materialize",
+    ]
+    assert len({event.id for event in events}) == 1
+    assert events[0].id == f"agent:{selector}"
+
+
+def test_visiting_agent_closes_materialize_progress_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = f"https://agents.example{tmp_path}/broken.too"
+    monkeypatch.setattr(agents, "_visiting_program_cache_fresh", lambda _path: False)
+    monkeypatch.setattr(
+        agents,
+        "_fetch_http_text",
+        lambda _url: "agent broken\n",
+    )
+    monkeypatch.setattr(
+        agents,
+        "materialize_visiting_program",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("write failed")),
+    )
+    events: list[ProgressEvent] = []
+
+    with pytest.raises(OSError, match="write failed"):
+        agents.resolve_visiting_layout(source, progress=events.append)
+
+    assert [(event.stage, event.status) for event in events[-2:]] == [
+        ("materialize", "running"),
+        ("materialize", "failed"),
+    ]
+    assert len({event.id for event in events}) == 1
 
 
 def test_materialize_roaming_program_links_source_and_config(tmp_path: Path) -> None:

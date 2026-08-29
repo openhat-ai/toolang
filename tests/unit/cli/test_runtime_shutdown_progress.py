@@ -7,15 +7,16 @@ from toolang.cli.common.shutdown_progress import RuntimeShutdownProgress
 
 
 def _event(
-    phase: str,
+    stage: str,
     label: str,
     *,
     status: ProgressStatus = "running",
     detail: str | None = None,
 ) -> ProgressEvent:
     return ProgressEvent(
-        id=f"shutdown:alice:{phase}",
-        phase=f"shutdown.{phase}",
+        id="runtime:container-1",
+        kind="runtime",
+        stage="destroy" if stage == "release" else "stop",
         label=label,
         status=status,
         detail=detail,

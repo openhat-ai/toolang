@@ -121,15 +121,18 @@ def fetch_agent_ref(
     ref: AgentRef,
     *,
     progress: ProgressSink | None = None,
+    progress_id: str | None = None,
 ) -> str:
     """Fetch one remote authored agent program by canonical ref."""
 
     detail = ref.render()
+    item_id = progress_id or f"agent:{detail}"
     url = ref.url if isinstance(ref, HttpAgentRef) else github_raw_url(ref)
     emit_progress(
         progress,
-        id=f"agent.fetch:{detail}",
-        phase="agent.fetch",
+        id=item_id,
+        kind="prepare",
+        stage="fetch",
         label="Fetch agent",
         status="running",
         detail=url,
@@ -139,8 +142,9 @@ def fetch_agent_ref(
     except Exception as exc:
         emit_progress(
             progress,
-            id=f"agent.fetch:{detail}",
-            phase="agent.fetch",
+            id=item_id,
+            kind="prepare",
+            stage="fetch",
             label="Fetch agent",
             status="failed",
             detail=str(exc),
@@ -148,8 +152,9 @@ def fetch_agent_ref(
         raise
     emit_progress(
         progress,
-        id=f"agent.fetch:{detail}",
-        phase="agent.fetch",
+        id=item_id,
+        kind="prepare",
+        stage="fetch",
         label="Fetch agent",
         status="ok",
     )
@@ -160,6 +165,7 @@ def resolve_agent_selector_ref(
     selector: AgentSelector,
     *,
     progress: ProgressSink | None = None,
+    progress_id: str | None = None,
 ) -> AgentRef:
     """Resolve one remote selector to one canonical authored ref."""
 
@@ -167,10 +173,12 @@ def resolve_agent_selector_ref(
         return selector.ref
     if selector.github_owner is None or selector.name is None:
         raise ValueError(f"selector is not a remote ref: {selector.text}")
+    item_id = progress_id or f"agent:{selector.text}"
     emit_progress(
         progress,
-        id=f"agent.resolve:{selector.text}",
-        phase="agent.resolve",
+        id=item_id,
+        kind="prepare",
+        stage="resolve",
         label="Resolve agent",
         status="running",
         detail=selector.text,
@@ -184,8 +192,9 @@ def resolve_agent_selector_ref(
     except Exception as exc:
         emit_progress(
             progress,
-            id=f"agent.resolve:{selector.text}",
-            phase="agent.resolve",
+            id=item_id,
+            kind="prepare",
+            stage="resolve",
             label="Resolve agent",
             status="failed",
             detail=str(exc),
@@ -193,8 +202,9 @@ def resolve_agent_selector_ref(
         raise
     emit_progress(
         progress,
-        id=f"agent.resolve:{selector.text}",
-        phase="agent.resolve",
+        id=item_id,
+        kind="prepare",
+        stage="resolve",
         label="Resolve agent",
         status="ok",
         detail=ref.render(),
@@ -396,25 +406,48 @@ def _resolve_visiting_layout(
 
     if _visiting_program_cache_fresh(layout.program):
         return layout
-    resolved_ref = resolve_agent_selector_ref(selector, progress=progress)
-    source_text = fetch_agent_ref(resolved_ref, progress=progress)
+    progress_id = f"agent:{selector.text}"
+    resolved_ref = resolve_agent_selector_ref(
+        selector,
+        progress=progress,
+        progress_id=progress_id,
+    )
+    source_text = fetch_agent_ref(
+        resolved_ref,
+        progress=progress,
+        progress_id=progress_id,
+    )
     emit_progress(
         progress,
-        id=f"agent.materialize:{resolved_ref.render()}",
-        phase="agent.materialize",
+        id=progress_id,
+        kind="prepare",
+        stage="materialize",
         label="Materialize agent",
         status="running",
         detail=layout.name,
     )
-    layout = materialize_visiting_program(
-        resolved_ref,
-        source_text,
-        source=selector.text,
-    )
+    try:
+        layout = materialize_visiting_program(
+            resolved_ref,
+            source_text,
+            source=selector.text,
+        )
+    except Exception as exc:
+        emit_progress(
+            progress,
+            id=progress_id,
+            kind="prepare",
+            stage="materialize",
+            label="Materialize agent",
+            status="failed",
+            detail=str(exc),
+        )
+        raise
     emit_progress(
         progress,
-        id=f"agent.materialize:{resolved_ref.render()}",
-        phase="agent.materialize",
+        id=progress_id,
+        kind="prepare",
+        stage="materialize",
         label="Materialize agent",
         status="ok",
         detail=layout.name,

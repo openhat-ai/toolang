@@ -3,7 +3,7 @@ from __future__ import annotations
 from io import StringIO
 from pathlib import Path
 
-from toolang.base.types.progress import ProgressEvent, ProgressStatus
+from toolang.base.types.progress import ProgressEvent, ProgressStage, ProgressStatus
 from toolang.cli.common.startup_progress import (
     RuntimeStartupProgress,
     runtime_startup_failure_message,
@@ -11,15 +11,17 @@ from toolang.cli.common.startup_progress import (
 
 
 def _event(
-    phase: str,
+    activity: str,
     label: str,
     *,
     status: ProgressStatus = "running",
     detail: str | None = None,
 ) -> ProgressEvent:
+    stage: ProgressStage = "start" if activity in {"server", "ready"} else "create"
     return ProgressEvent(
-        id=f"startup:alice:{phase}",
-        phase=f"startup.{phase}",
+        id="runtime:launch-1",
+        kind="runtime",
+        stage=stage,
         label=label,
         status=status,
         detail=detail,
@@ -102,7 +104,7 @@ def test_startup_failure_retains_full_reason_while_bounding_display() -> None:
     )
 
     assert progress.current_stage == "Checking Toolang compatibility"
-    assert progress.failure_phase == "startup.validate"
+    assert progress.failure_stage == "runtime.create"
     assert progress.failure_reason == "x" * 200
     displayed_detail = progress._text().plain.split(" · ")[-2]
     assert len(displayed_detail) == 80
@@ -132,7 +134,7 @@ def test_controller_failure_replaces_a_completed_guest_stage() -> None:
     assert progress.failure_reason == "container exited"
 
 
-def test_startup_failure_without_detail_keeps_its_structured_phase() -> None:
+def test_startup_failure_without_detail_keeps_its_structured_stage() -> None:
     progress = RuntimeStartupProgress(
         "alice",
         "docker",
@@ -157,7 +159,7 @@ def test_startup_failure_without_detail_keeps_its_structured_phase() -> None:
     )
 
     assert progress.current_stage == "Installing Toolang"
-    assert progress.failure_phase == "startup.install"
+    assert progress.failure_stage == "runtime.create"
     assert progress.failure_reason is None
 
 

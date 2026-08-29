@@ -11,7 +11,7 @@ from rich.console import Console, ConsoleOptions, RenderResult
 from rich.live import Live
 from rich.text import Text
 
-from toolang.base.types.progress import ProgressEvent
+from toolang.base.types.progress import ProgressEvent, ProgressStage
 
 
 _SPINNER = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
@@ -46,7 +46,7 @@ class RuntimeShutdownProgress:
         self._started_at = time.monotonic()
         self._current_stage: str | None = None
         self._current_detail: str | None = None
-        self._printed_phases: set[str] = set()
+        self._printed_activities: set[tuple[ProgressStage, str]] = set()
         self._finished = False
         self._lock = RLock()
 
@@ -56,7 +56,7 @@ class RuntimeShutdownProgress:
             return self._current_stage
 
     def __call__(self, event: ProgressEvent) -> None:
-        if not event.phase.startswith("shutdown."):
+        if event.kind != "runtime" or event.stage not in {"stop", "destroy"}:
             return
         with self._lock:
             if self._finished:
@@ -69,8 +69,15 @@ class RuntimeShutdownProgress:
                 return
             if self._live_enabled:
                 self._render_live()
-            elif event.status == "running" and event.phase not in self._printed_phases:
-                self._printed_phases.add(event.phase)
+            elif (
+                event.status == "running"
+                and (
+                    event.stage,
+                    event.label,
+                )
+                not in self._printed_activities
+            ):
+                self._printed_activities.add((event.stage, event.label))
                 suffix = f": {detail}" if detail else ""
                 print(f"{event.label}{suffix}", file=self._stream)
 

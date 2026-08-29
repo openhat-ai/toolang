@@ -41,7 +41,6 @@ class CliProgress:
             highlight=False,
         )
         self._items: dict[str, _ProgressItem] = {}
-        self._aliases: dict[str, str] = {}
         self._prepare: dict[str, str] = {}
         self._prepare_details: dict[str, str] = {}
         self._agent_name: str | None = None
@@ -113,17 +112,19 @@ class CliProgress:
         self._live_display.update(renderable, refresh=True)
 
     def _record(self, event: ProgressEvent) -> None:
-        if event.phase.startswith("agent."):
+        if event.kind != "prepare":
+            return
+        if event.id.startswith("agent:") and event.label.startswith("Prepare "):
+            self._record_prepare(event)
+            return
+        if event.id.startswith("agent:"):
             self._record_agent(event)
             return
-        if event.phase.startswith("cap."):
+        if event.id.startswith("cap:"):
             self._record_cap(event)
-            return
-        if event.phase.startswith("prepare."):
-            self._record_prepare(event)
 
     def _record_prepare(self, event: ProgressEvent) -> None:
-        key = event.id if event.phase == "prepare.scope" else event.phase
+        key = event.id
         self._prepare[key] = event.status
         if event.detail:
             self._prepare_details[key] = event.detail
@@ -131,7 +132,7 @@ class CliProgress:
             self._agent_name = event.detail
 
     def _record_agent(self, event: ProgressEvent) -> None:
-        step = event.phase.removeprefix("agent.")
+        step = event.stage
         event_ref = event.id.split(":", 1)[1] if ":" in event.id else event.detail
         item = self._items.setdefault(
             "agent",
@@ -153,17 +154,10 @@ class CliProgress:
         if parsed is None:
             return
         kind, ref = parsed
-        step = event.phase.removeprefix("cap.")
+        step = _prepare_step(event)
         if step == "config":
             return
-        key = self._aliases.get(ref, f"cap:{kind}:{ref}")
-        if step == "resolve" and event.status == "ok" and event.detail:
-            canonical_key = f"cap:{kind}:{event.detail}"
-            self._aliases[ref] = canonical_key
-            existing = self._items.pop(key, None)
-            if existing is not None and canonical_key not in self._items:
-                self._items[canonical_key] = existing
-            key = canonical_key
+        key = event.id
         item = self._items.setdefault(
             key,
             _ProgressItem(
@@ -180,6 +174,12 @@ class CliProgress:
         if item.name is None:
             item.name = ref
         item.sort_key = ("1", kind, item.name or "", item.ref or "")
+        if (
+            step == "materialize"
+            and event.status == "running"
+            and item.steps.get("extract") == "running"
+        ):
+            item.steps["extract"] = "ok"
         item.steps[step] = event.status
         if event.detail:
             item.step_details[step] = event.detail
@@ -358,13 +358,13 @@ class CliProgress:
         return self._has_visible_items() or self._agent_name is not None
 
     def _prepare_is_cached(self) -> bool:
-        scope_phases = tuple(
-            phase for phase in self._prepare if phase.startswith("prepare.scope:")
+        scope_ids = tuple(
+            item_id for item_id in self._prepare if item_id.startswith("agent:")
         )
-        return bool(scope_phases) and all(
-            self._prepare.get(phase) == "ok"
-            and self._prepare_details.get(phase) == "cached"
-            for phase in scope_phases
+        return bool(scope_ids) and all(
+            self._prepare.get(item_id) == "ok"
+            and self._prepare_details.get(item_id) == "cached"
+            for item_id in scope_ids
         )
 
     def _item_groups(self) -> tuple[tuple[_ProgressItem, ...], ...]:
@@ -527,12 +527,12 @@ def _parse_cap_event(event: ProgressEvent) -> tuple[str, str] | None:
     if len(parts) != 3:
         return None
     prefix, kind, ref = parts
-    if prefix not in {
-        "cap.resolve",
-        "cap.fetch",
-        "cap.extract",
-        "cap.materialize",
-        "cap.config",
-    }:
+    if prefix != "cap":
         return None
     return kind, ref
+
+
+def _prepare_step(event: ProgressEvent) -> str:
+    if event.stage == "materialize" and event.label.startswith("Extract "):
+        return "extract"
+    return event.stage

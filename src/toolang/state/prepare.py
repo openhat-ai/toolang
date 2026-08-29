@@ -10,7 +10,7 @@ import re
 
 from toolang.common.layout import AgentLayout
 
-from ..common.progress import ProgressSink
+from ..common.progress import ProgressSink, emit_progress
 from ..lang.ast import Program
 from .state import (
     AgentState,
@@ -294,6 +294,56 @@ def _prepare_layer(
     reuse_remote: bool,
     progress: ProgressSink | None,
 ) -> str:
+    progress_id = f"agent:{layout.name}:{cap_scope}"
+    label = f"Prepare {cap_scope} caps"
+    emit_progress(
+        progress,
+        id=progress_id,
+        kind="prepare",
+        stage="materialize",
+        label=label,
+        status="running",
+        detail=layout.name,
+    )
+    try:
+        revision, entry_count = _prepare_layer_revision(
+            layout,
+            scope=scope,
+            cap_scope=cap_scope,
+            reuse_remote=reuse_remote,
+            progress=progress,
+        )
+    except Exception as exc:
+        emit_progress(
+            progress,
+            id=progress_id,
+            kind="prepare",
+            stage="materialize",
+            label=label,
+            status="failed",
+            detail=str(exc),
+        )
+        raise
+    emit_progress(
+        progress,
+        id=progress_id,
+        kind="prepare",
+        stage="materialize",
+        label=label,
+        status="ok",
+        detail=f"{entry_count} entries",
+    )
+    return revision
+
+
+def _prepare_layer_revision(
+    layout: AgentLayout,
+    *,
+    scope: LayerScope,
+    cap_scope: CapScope,
+    reuse_remote: bool,
+    progress: ProgressSink | None,
+) -> tuple[str, int]:
     for _ in range(_MAX_SOURCE_SNAPSHOT_ATTEMPTS):
         source = _scan_scope_source(layout, scope=scope)
         authored = (
@@ -422,7 +472,7 @@ def _prepare_layer(
             scope,
             revision,
         )
-        return revision
+        return revision, len(entries)
     raise RuntimeError(f"{scope} source changed repeatedly while preparing")
 
 

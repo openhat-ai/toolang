@@ -819,14 +819,17 @@ def resolve_remote_ref(
     ref: str,
     *,
     progress: ProgressSink | None = None,
+    progress_id: str | None = None,
 ) -> str:
     """Resolve one remote cap ref or shorthand to a canonical ref."""
 
     text = ref.strip()
+    item_id = progress_id or _cap_progress_id(kind, text)
     emit_progress(
         progress,
-        id=f"cap.resolve:{kind}:{text}",
-        phase="cap.resolve",
+        id=item_id,
+        kind="prepare",
+        stage="resolve",
         label=f"Resolve {kind}",
         status="running",
         detail=text,
@@ -860,8 +863,9 @@ def resolve_remote_ref(
     except Exception as exc:
         emit_progress(
             progress,
-            id=f"cap.resolve:{kind}:{text}",
-            phase="cap.resolve",
+            id=item_id,
+            kind="prepare",
+            stage="resolve",
             label=f"Resolve {kind}",
             status="failed",
             detail=str(exc),
@@ -869,8 +873,9 @@ def resolve_remote_ref(
         raise
     emit_progress(
         progress,
-        id=f"cap.resolve:{kind}:{text}",
-        phase="cap.resolve",
+        id=item_id,
+        kind="prepare",
+        stage="resolve",
         label=f"Resolve {kind}",
         status="ok",
         detail=canonical,
@@ -1054,6 +1059,10 @@ class _RemoteEntryRequest:
     source_mtime_ns: int
     form: Literal["configured", "referenced"]
     source_line: int | None = None
+
+    @property
+    def progress_id(self) -> str:
+        return _cap_progress_id(self.kind, self.ref)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1291,14 +1300,6 @@ def materialize_scope(
 ) -> tuple[tuple[StateCap, ...], dict[str, bytes]]:
     """Build State capabilities and materialized files for one scope."""
 
-    emit_progress(
-        progress,
-        id=f"prepare.scope:{scope}",
-        phase="prepare.scope",
-        label=f"Prepare {scope} caps",
-        status="running",
-        detail=authored.agent_name,
-    )
     entries, files = _collect_scope_entries_with_files(
         authored,
         scope=scope,
@@ -1308,14 +1309,6 @@ def materialize_scope(
         include_program=include_program,
     )
     _ensure_no_conflicts(entries)
-    emit_progress(
-        progress,
-        id=f"prepare.scope:{scope}",
-        phase="prepare.scope",
-        label=f"Prepare {scope} caps",
-        status="ok",
-        detail=f"{len(entries)} entries",
-    )
     return entries, files
 
 
@@ -1453,8 +1446,9 @@ def _emit_cached_remote_progress(
     if "://" not in text:
         emit_progress(
             progress,
-            id=f"cap.resolve:{request.kind}:{text}",
-            phase="cap.resolve",
+            id=request.progress_id,
+            kind="prepare",
+            stage="resolve",
             label=f"Resolve {request.kind}",
             status="ok",
             detail=canonical_ref,
@@ -1462,8 +1456,9 @@ def _emit_cached_remote_progress(
         return
     emit_progress(
         progress,
-        id=f"cap.fetch:{request.kind}:{canonical_ref}",
-        phase="cap.fetch",
+        id=request.progress_id,
+        kind="prepare",
+        stage="fetch",
         label=f"Fetch {request.kind}",
         status="ok",
         detail="cached",
@@ -1942,12 +1937,18 @@ def _remote_entry_from_ref(
         form=form,
         source_line=source_line,
     )
+    progress_id = request.progress_id
     cached = _cached_remote_entry(remote_cache, request)
     if cached is not None:
         canonical_ref = cached.ref
         _emit_cached_remote_progress(request, canonical_ref, progress=progress)
     elif materialize and "://" not in ref:
-        canonical_ref = resolve_remote_ref(kind, ref, progress=progress)
+        canonical_ref = resolve_remote_ref(
+            kind,
+            ref,
+            progress=progress,
+            progress_id=progress_id,
+        )
     else:
         canonical_ref = canonicalize_remote_ref(kind, ref)
     if name is None:
@@ -1966,6 +1967,7 @@ def _remote_entry_from_ref(
             name=name,
             ref=canonical_ref,
             progress=progress,
+            progress_id=progress_id,
         )
     elif materialize:
         entry_files = _remote_materialized_files(
@@ -1985,8 +1987,9 @@ def _remote_entry_from_ref(
     if materialize and cached is None:
         emit_progress(
             progress,
-            id=f"cap.extract:{kind}:{canonical_ref}",
-            phase="cap.extract",
+            id=progress_id,
+            kind="prepare",
+            stage="materialize",
             label=f"Extract {kind}",
             status="running",
             detail=str(relative_entry_path),
@@ -2014,8 +2017,9 @@ def _remote_entry_from_ref(
         if materialize and cached is None:
             emit_progress(
                 progress,
-                id=f"cap.extract:{kind}:{canonical_ref}",
-                phase="cap.extract",
+                id=progress_id,
+                kind="prepare",
+                stage="materialize",
                 label=f"Extract {kind}",
                 status="failed",
                 detail=str(exc),
@@ -2024,23 +2028,18 @@ def _remote_entry_from_ref(
     if materialize and cached is None:
         emit_progress(
             progress,
-            id=f"cap.extract:{kind}:{canonical_ref}",
-            phase="cap.extract",
-            label=f"Extract {kind}",
-            status="ok",
-        )
-        emit_progress(
-            progress,
-            id=f"cap.materialize:{kind}:{canonical_ref}",
-            phase="cap.materialize",
+            id=progress_id,
+            kind="prepare",
+            stage="materialize",
             label=f"Materialize {kind}",
             status="running",
             detail=str(relative_entry_path),
         )
         emit_progress(
             progress,
-            id=f"cap.materialize:{kind}:{canonical_ref}",
-            phase="cap.materialize",
+            id=progress_id,
+            kind="prepare",
+            stage="materialize",
             label=f"Materialize {kind}",
             status="ok",
         )
@@ -2162,8 +2161,9 @@ def _emit_remote_entry_pending(
             pass
         emit_progress(
             progress,
-            id=f"cap.fetch:{request.kind}:{ref}",
-            phase="cap.fetch",
+            id=request.progress_id,
+            kind="prepare",
+            stage="fetch",
             label=f"Fetch {request.kind}",
             status="pending",
             detail=ref,
@@ -2171,8 +2171,9 @@ def _emit_remote_entry_pending(
         return
     emit_progress(
         progress,
-        id=f"cap.resolve:{request.kind}:{ref}",
-        phase="cap.resolve",
+        id=request.progress_id,
+        kind="prepare",
+        stage="resolve",
         label=f"Resolve {request.kind}",
         status="pending",
         detail=ref,
@@ -2213,15 +2214,18 @@ def _remote_materialized_files(
     name: str,
     ref: str,
     progress: ProgressSink | None = None,
+    progress_id: str | None = None,
 ) -> dict[str, bytes]:
     del name
     if not ref.startswith("github://"):
         raise ValueError(f"unsupported remote {kind} ref: {ref}")
     github_ref = parse_github_ref(ref)
+    item_id = progress_id or _cap_progress_id(kind, ref)
     emit_progress(
         progress,
-        id=f"cap.fetch:{kind}:{ref}",
-        phase="cap.fetch",
+        id=item_id,
+        kind="prepare",
+        stage="fetch",
         label=f"Fetch {kind}",
         status="running",
         detail=ref,
@@ -2232,8 +2236,9 @@ def _remote_materialized_files(
         except Exception as exc:
             emit_progress(
                 progress,
-                id=f"cap.fetch:{kind}:{ref}",
-                phase="cap.fetch",
+                id=item_id,
+                kind="prepare",
+                stage="fetch",
                 label=f"Fetch {kind}",
                 status="failed",
                 detail=str(exc),
@@ -2242,8 +2247,9 @@ def _remote_materialized_files(
         if "SKILL.md" not in files:
             emit_progress(
                 progress,
-                id=f"cap.fetch:{kind}:{ref}",
-                phase="cap.fetch",
+                id=item_id,
+                kind="prepare",
+                stage="fetch",
                 label=f"Fetch {kind}",
                 status="failed",
                 detail=f"remote skill is missing SKILL.md: {ref}",
@@ -2262,8 +2268,9 @@ def _remote_materialized_files(
         except Exception as exc:
             emit_progress(
                 progress,
-                id=f"cap.fetch:{kind}:{ref}",
-                phase="cap.fetch",
+                id=item_id,
+                kind="prepare",
+                stage="fetch",
                 label=f"Fetch {kind}",
                 status="failed",
                 detail=str(exc),
@@ -2271,13 +2278,18 @@ def _remote_materialized_files(
             raise
     emit_progress(
         progress,
-        id=f"cap.fetch:{kind}:{ref}",
-        phase="cap.fetch",
+        id=item_id,
+        kind="prepare",
+        stage="fetch",
         label=f"Fetch {kind}",
         status="ok",
         detail=f"{len(materialized)} {'file' if len(materialized) == 1 else 'files'}",
     )
     return materialized
+
+
+def _cap_progress_id(kind: EntryKind, ref: str) -> str:
+    return f"cap:{kind}:{ref.strip()}"
 
 
 def _fetch_github_directory(ref: GitHubRef) -> dict[str, bytes]:

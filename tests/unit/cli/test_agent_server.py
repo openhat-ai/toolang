@@ -20,7 +20,8 @@ from toolang.base.types.sandbox import SandboxRef
 class _Progress:
     current_stage = "Starting workload"
     failure_reason: str | None = None
-    failure_phase: str | None = None
+    failure_stage: str | None = None
+    failure_label: str | None = None
 
     def __init__(self) -> None:
         self.finished = 0
@@ -427,7 +428,8 @@ def test_agent_server_startup_failure_uses_structured_package_guidance(
         ),
     )
     progress = _Progress()
-    progress.failure_phase = "startup.validate"
+    progress.failure_stage = "runtime.create"
+    progress.failure_label = "Checking Toolang compatibility"
     progress.failure_reason = "guest compatibility check failed"
     monkeypatch.setattr(
         agent_server,
