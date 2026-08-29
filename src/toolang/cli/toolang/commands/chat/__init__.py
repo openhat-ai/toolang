@@ -8,7 +8,7 @@ from typing import Annotated
 import typer
 
 from toolang.cli.common.context import ModelCatalogOption
-from toolang.cli.common.execution_runtime import DEVELOPMENT_WHEEL_HELP
+from toolang.cli.common.agent_server import DEVELOPMENT_WHEEL_HELP
 
 
 def chat_command(

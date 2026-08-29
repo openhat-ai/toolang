@@ -1,4 +1,4 @@
-"""CLI ownership of one local or remote transport-neutral run client."""
+"""CLI acquisition of one local or AgentServer-backed run client."""
 
 from __future__ import annotations
 
@@ -16,31 +16,29 @@ from toolang.execution.remote import RemoteRunClient
 from toolang.execution.store import RunStore
 from toolang.setup import SetupWatcher
 from toolang.state.watcher import StateWatcher
+from toolang.up.types import AgentServerRef
 
-from .execution_runtime import ExecutionRuntime
 from .remote_runtime import inspect_remote_runtime
 
 
 @asynccontextmanager
-async def open_run_client(
+async def acquire_run_client(
     layout: AgentLayout,
-    runtime: ExecutionRuntime,
+    server: AgentServerRef | None,
     *,
     model_catalog: Path | None = None,
 ) -> AsyncIterator[RunClient]:
-    """Open the RunClient implementation selected by one execution runtime."""
+    """Acquire a run client for host embedding or one acquired AgentServer."""
 
-    if runtime.mode == "remote":
-        if runtime.endpoint is None:  # pragma: no cover - runtime value invariant
-            raise RuntimeError("remote execution runtime has no endpoint")
+    if server is not None:
         async with httpx.AsyncClient(timeout=httpx.Timeout(3.0)) as http:
-            client = RemoteRunClient(runtime.endpoint, client=http)
+            client = RemoteRunClient(server.endpoint, client=http)
             await client.connect()
             try:
                 await inspect_remote_runtime(
                     http,
                     client.endpoint,
-                    expected_sandbox=runtime.sandbox,
+                    expected_sandbox=server.sandbox,
                 )
                 yield client
             finally:
@@ -50,7 +48,7 @@ async def open_run_client(
     store = RunStore(layout.run_store)
     setup = SetupWatcher(
         layout,
-        sandbox=runtime.sandbox,
+        sandbox="host",
         model_catalog=model_catalog,
     )
     state = StateWatcher(layout)

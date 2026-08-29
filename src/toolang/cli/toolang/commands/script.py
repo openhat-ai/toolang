@@ -46,7 +46,7 @@ from toolang.up import process as agents
 from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 
 from ...common.context import load_runtime_environ
-from ...common.execution_runtime import DEVELOPMENT_WHEEL_HELP, open_execution_runtime
+from ...common.agent_server import DEVELOPMENT_WHEEL_HELP, acquire_agent_server
 from ...common.progress import as_progress_sink, make_cli_progress
 from ...common.remote_runtime import inspect_remote_runtime
 from ...common.result_saving import save_result
@@ -445,13 +445,13 @@ def _run(
     try:
         layout = agents.materialize_roaming_program(source_path)
         _reject_runnable_option(default_options)
-        with open_execution_runtime(
+        with acquire_agent_server(
             layout,
             sandbox=sandbox,
             dev=dev,
             show_progress=not quiet,
-        ) as runtime:
-            if runtime.mode == "embedded":
+        ) as server:
+            if server is None:
                 store = RunStore(layout.run_store)
                 ids = IdIssuer(layout.id_state)
                 run_id = ids.issue_run()
@@ -475,7 +475,7 @@ def _run(
                         store=store,
                         ids=ids,
                         run_id=run_id,
-                        sandbox=runtime.sandbox,
+                        sandbox="host",
                         runnable=runnable,
                         commands=commands,
                         input=input,
@@ -487,14 +487,12 @@ def _run(
                     )
                 )
             else:
-                if runtime.endpoint is None:  # pragma: no cover - value invariant
-                    raise RuntimeError("remote execution runtime has no endpoint")
                 log_path = layout.runtime_log
                 result = asyncio.run(
                     _execute_remote(
                         layout=layout,
-                        endpoint=runtime.endpoint,
-                        sandbox=runtime.sandbox,
+                        endpoint=server.endpoint,
+                        sandbox=server.sandbox,
                         runnable=runnable,
                         commands=commands,
                         input=input,

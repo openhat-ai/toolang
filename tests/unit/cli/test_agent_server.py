@@ -1,4 +1,4 @@
-"""Selection and ownership of CLI execution runtimes."""
+"""AgentServer acquisition for CLI run execution."""
 
 from __future__ import annotations
 
@@ -8,11 +8,12 @@ from typing import Any, cast
 
 import pytest
 
-from toolang.cli.common import execution_runtime as runtime
+from toolang.cli.common import agent_server
 from toolang.common.layout import AgentLayout
 from toolang.up.logging import LoggingPlan
 from toolang.up.process import AgentStatus
 from toolang.up.records import SandboxState
+from toolang.up.types import AgentServerRef
 from toolang.base.types.sandbox import SandboxRef
 
 
@@ -64,10 +65,10 @@ def _set_status(
             assert ui_base_url == "https://ui.test"
             return status
 
-    monkeypatch.setattr(runtime.agents, "AgentProcess", Process)
+    monkeypatch.setattr(agent_server.agents, "AgentProcess", Process)
 
 
-def test_execution_runtime_attaches_to_a_compatible_running_agent(
+def test_agent_server_attaches_to_a_compatible_running_agent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -82,26 +83,25 @@ def test_execution_runtime_attaches_to_a_compatible_running_agent(
         ),
     )
     monkeypatch.setattr(
-        runtime,
+        agent_server,
         "_resolve_inactive_launch",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("a running agent must not resolve another launch")
         ),
     )
 
-    with runtime.open_execution_runtime(
+    with agent_server.acquire_agent_server(
         layout,
         sandbox="docker",
         ui_base_url="https://ui.test",
     ) as selected:
-        assert selected == runtime.ExecutionRuntime(
+        assert selected == AgentServerRef(
             sandbox="docker:python:3.13-slim",
-            mode="remote",
             endpoint="http://127.0.0.1:7001",
         )
 
 
-def test_execution_runtime_rejects_dev_for_an_attached_agent(
+def test_agent_server_rejects_dev_for_an_attached_agent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -117,16 +117,16 @@ def test_execution_runtime_rejects_dev_for_an_attached_agent(
     )
 
     with pytest.raises(
-        runtime.ExecutionRuntimeError,
+        agent_server.AgentServerAcquisitionError,
         match="only applies when starting a new guest",
     ):
-        with runtime.open_execution_runtime(
+        with agent_server.acquire_agent_server(
             layout,
             sandbox="docker",
             dev=tmp_path / "dist",
             ui_base_url="https://ui.test",
         ):
-            raise AssertionError("an attached runtime must not accept --dev")
+            raise AssertionError("an attached AgentServer must not accept --dev")
 
 
 @pytest.mark.parametrize(
@@ -136,7 +136,7 @@ def test_execution_runtime_rejects_dev_for_an_attached_agent(
         ("docker:other", "does not match running sandbox"),
     ),
 )
-def test_execution_runtime_rejects_a_running_sandbox_mismatch(
+def test_agent_server_rejects_a_running_sandbox_mismatch(
     requested: str,
     message: str,
     tmp_path: Path,
@@ -153,17 +153,17 @@ def test_execution_runtime_rejects_a_running_sandbox_mismatch(
         ),
     )
 
-    with pytest.raises(runtime.ExecutionRuntimeError, match=message):
-        with runtime.open_execution_runtime(
+    with pytest.raises(agent_server.AgentServerAcquisitionError, match=message):
+        with agent_server.acquire_agent_server(
             layout,
             sandbox=requested,
             ui_base_url="https://ui.test",
         ):
-            raise AssertionError("a mismatched runtime must not open")
+            raise AssertionError("a mismatched AgentServer must not be acquired")
 
 
 @pytest.mark.parametrize("status", ("preparing", "starting"))
-def test_execution_runtime_rejects_an_unready_agent(
+def test_agent_server_rejects_an_unready_agent(
     status: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -175,17 +175,17 @@ def test_execution_runtime_rejects_an_unready_agent(
         _status(value=status, endpoint="http://127.0.0.1:7001", sandbox="host"),
     )
 
-    with pytest.raises(runtime.ExecutionRuntimeError, match=status):
-        with runtime.open_execution_runtime(
+    with pytest.raises(agent_server.AgentServerAcquisitionError, match=status):
+        with agent_server.acquire_agent_server(
             layout,
             sandbox=None,
             ui_base_url="https://ui.test",
         ):
-            raise AssertionError("an unready runtime must not open")
+            raise AssertionError("an unready AgentServer must not be acquired")
 
 
 @pytest.mark.parametrize("status", (None, "stopped", "failed"))
-def test_execution_runtime_opens_embedded_host_and_releases_stopped_state(
+def test_agent_server_opens_embedded_host_and_releases_stopped_state(
     status: str | None,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -197,7 +197,7 @@ def test_execution_runtime_opens_embedded_host_and_releases_stopped_state(
         _status(value=status) if status is not None else None,
     )
     monkeypatch.setattr(
-        runtime.sandbox_runtime,
+        agent_server.sandbox_runtime,
         "resolve_selection",
         lambda _layout, *, explicit: "host",
     )
@@ -206,35 +206,37 @@ def test_execution_runtime_opens_embedded_host_and_releases_stopped_state(
     async def release_stopped(selected: AgentLayout) -> None:
         released.append(selected)
 
-    monkeypatch.setattr(runtime.sandbox_runtime, "release_stopped", release_stopped)
+    monkeypatch.setattr(
+        agent_server.sandbox_runtime, "release_stopped", release_stopped
+    )
 
-    with runtime.open_execution_runtime(
+    with agent_server.acquire_agent_server(
         layout,
         sandbox=None,
         ui_base_url="https://ui.test",
     ) as selected:
-        assert selected == runtime.ExecutionRuntime(sandbox="host", mode="embedded")
+        assert selected is None
 
     assert released == [layout]
 
 
-def test_execution_runtime_rejects_dev_for_embedded_host(
+def test_agent_server_rejects_dev_for_embedded_host(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     _set_status(monkeypatch, layout, _status(value="stopped"))
     monkeypatch.setattr(
-        runtime.sandbox_runtime,
+        agent_server.sandbox_runtime,
         "resolve_selection",
         lambda _layout, *, explicit: "host",
     )
 
     with pytest.raises(
-        runtime.ExecutionRuntimeError,
+        agent_server.AgentServerAcquisitionError,
         match="only applies to guest sandboxes",
     ):
-        with runtime.open_execution_runtime(
+        with agent_server.acquire_agent_server(
             layout,
             sandbox="host",
             dev=tmp_path / "dist",
@@ -243,14 +245,14 @@ def test_execution_runtime_rejects_dev_for_embedded_host(
             raise AssertionError("embedded host must not accept --dev")
 
 
-def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
+def test_agent_server_launches_and_cleans_up_a_temporary_guest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     _set_status(monkeypatch, layout, _status(value="stopped"))
     monkeypatch.setattr(
-        runtime.sandbox_runtime,
+        agent_server.sandbox_runtime,
         "resolve_selection",
         lambda _layout, *, explicit: explicit or "docker",
     )
@@ -261,16 +263,16 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
         assert kwargs["dev"] == development
         return launch
 
-    monkeypatch.setattr(runtime, "_resolve_inactive_launch", resolve_launch)
+    monkeypatch.setattr(agent_server, "_resolve_inactive_launch", resolve_launch)
     progress = _Progress()
     shutdown_progress = _Progress()
     monkeypatch.setattr(
-        runtime,
+        agent_server,
         "make_runtime_startup_progress",
         lambda *_args, **_kwargs: progress,
     )
     monkeypatch.setattr(
-        runtime,
+        agent_server,
         "make_runtime_shutdown_progress",
         lambda *_args, **_kwargs: shutdown_progress,
     )
@@ -279,7 +281,7 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
         sandbox="docker:python:3.13-slim",
         ref=SandboxRef("container-1", "http://127.0.0.1:8123"),
     )
-    handle = runtime.sandbox_runtime.SandboxHandle(implementation, state)
+    handle = agent_server.sandbox_runtime.SandboxHandle(implementation, state)
     calls: list[object] = []
 
     async def launch_runtime(spec: object, *, progress: object) -> object:
@@ -296,21 +298,19 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
         calls.append(("stop", selected, selected_handle, force, progress))
         return True
 
-    monkeypatch.setattr(runtime.sandbox_runtime, "launch", launch_runtime)
-    monkeypatch.setattr(runtime.sandbox_runtime, "stop_handle", stop_handle)
+    monkeypatch.setattr(agent_server.sandbox_runtime, "launch", launch_runtime)
+    monkeypatch.setattr(agent_server.sandbox_runtime, "stop_handle", stop_handle)
 
-    with runtime.open_execution_runtime(
+    with agent_server.acquire_agent_server(
         layout,
         sandbox="docker",
         dev=development,
         ui_base_url="https://ui.test",
     ) as selected:
         calls.append("body")
-        assert selected == runtime.ExecutionRuntime(
+        assert selected == AgentServerRef(
             sandbox="docker:python:3.13-slim",
-            mode="remote",
             endpoint="http://127.0.0.1:8123",
-            owned=True,
         )
 
     assert calls == [
@@ -322,7 +322,7 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
     assert shutdown_progress.finished == 1
 
 
-def test_execution_runtime_warns_when_a_development_cli_uses_the_package_index(
+def test_agent_server_warns_when_a_development_cli_uses_the_package_index(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -330,34 +330,34 @@ def test_execution_runtime_warns_when_a_development_cli_uses_the_package_index(
     layout = AgentLayout.resident(tmp_path, "alice")
     _set_status(monkeypatch, layout, _status(value="stopped"))
     monkeypatch.setattr(
-        runtime.sandbox_runtime,
+        agent_server.sandbox_runtime,
         "resolve_selection",
         lambda _layout, *, explicit: explicit or "docker",
     )
     launch = SimpleNamespace(sandbox="docker", dev_artifact=None)
     monkeypatch.setattr(
-        runtime,
+        agent_server,
         "_resolve_inactive_launch",
         lambda *_args, **_kwargs: launch,
     )
     monkeypatch.setattr(
-        runtime,
+        agent_server,
         "development_source",
         lambda: (True, tmp_path),
     )
     progress = _Progress()
     shutdown_progress = _Progress()
     monkeypatch.setattr(
-        runtime,
+        agent_server,
         "make_runtime_startup_progress",
         lambda *_args, **_kwargs: progress,
     )
     monkeypatch.setattr(
-        runtime,
+        agent_server,
         "make_runtime_shutdown_progress",
         lambda *_args, **_kwargs: shutdown_progress,
     )
-    handle = runtime.sandbox_runtime.SandboxHandle(
+    handle = agent_server.sandbox_runtime.SandboxHandle(
         cast(Any, SimpleNamespace()),
         SandboxState(
             sandbox="docker:python:3.13-slim",
@@ -371,10 +371,10 @@ def test_execution_runtime_warns_when_a_development_cli_uses_the_package_index(
     async def stop_handle(*_args: object, **_kwargs: object) -> bool:
         return True
 
-    monkeypatch.setattr(runtime.sandbox_runtime, "launch", launch_runtime)
-    monkeypatch.setattr(runtime.sandbox_runtime, "stop_handle", stop_handle)
+    monkeypatch.setattr(agent_server.sandbox_runtime, "launch", launch_runtime)
+    monkeypatch.setattr(agent_server.sandbox_runtime, "stop_handle", stop_handle)
 
-    with runtime.open_execution_runtime(
+    with agent_server.acquire_agent_server(
         layout,
         sandbox="docker",
         ui_base_url="https://ui.test",
@@ -404,7 +404,7 @@ def test_execution_runtime_warns_when_a_development_cli_uses_the_package_index(
         ),
     ),
 )
-def test_execution_runtime_startup_failure_uses_structured_package_guidance(
+def test_agent_server_startup_failure_uses_structured_package_guidance(
     development: Path | None,
     reason: str,
     fix: str,
@@ -414,12 +414,12 @@ def test_execution_runtime_startup_failure_uses_structured_package_guidance(
     layout = AgentLayout.resident(tmp_path, "alice")
     _set_status(monkeypatch, layout, _status(value="stopped"))
     monkeypatch.setattr(
-        runtime.sandbox_runtime,
+        agent_server.sandbox_runtime,
         "resolve_selection",
         lambda _layout, *, explicit: explicit or "docker",
     )
     monkeypatch.setattr(
-        runtime,
+        agent_server,
         "_resolve_inactive_launch",
         lambda *_args, **_kwargs: SimpleNamespace(
             sandbox="docker",
@@ -430,25 +430,25 @@ def test_execution_runtime_startup_failure_uses_structured_package_guidance(
     progress.failure_phase = "startup.validate"
     progress.failure_reason = "guest compatibility check failed"
     monkeypatch.setattr(
-        runtime,
+        agent_server,
         "make_runtime_startup_progress",
         lambda *_args, **_kwargs: progress,
     )
-    monkeypatch.setattr(runtime, "development_source", lambda: (True, tmp_path))
+    monkeypatch.setattr(agent_server, "development_source", lambda: (True, tmp_path))
 
     async def fail_launch(*_args: object, **_kwargs: object) -> object:
         raise RuntimeError("startup failed")
 
-    monkeypatch.setattr(runtime.sandbox_runtime, "launch", fail_launch)
+    monkeypatch.setattr(agent_server.sandbox_runtime, "launch", fail_launch)
 
-    with pytest.raises(runtime.ExecutionRuntimeError) as captured:
-        with runtime.open_execution_runtime(
+    with pytest.raises(agent_server.AgentServerAcquisitionError) as captured:
+        with agent_server.acquire_agent_server(
             layout,
             sandbox="docker",
             dev=development,
             ui_base_url="https://ui.test",
         ):
-            raise AssertionError("a failed runtime must not open")
+            raise AssertionError("a failed AgentServer must not be acquired")
 
     message = str(captured.value)
     assert f"Reason: The {reason}" in message
@@ -456,7 +456,7 @@ def test_execution_runtime_startup_failure_uses_structured_package_guidance(
     assert fix in message
 
 
-def test_execution_runtime_cleanup_does_not_hide_a_body_failure(
+def test_agent_server_cleanup_does_not_hide_a_body_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -464,12 +464,12 @@ def test_execution_runtime_cleanup_does_not_hide_a_body_failure(
     layout = AgentLayout.resident(tmp_path, "alice")
     _set_status(monkeypatch, layout, _status(value="stopped"))
     monkeypatch.setattr(
-        runtime.sandbox_runtime,
+        agent_server.sandbox_runtime,
         "resolve_selection",
         lambda _layout, *, explicit: explicit or "docker",
     )
     monkeypatch.setattr(
-        runtime,
+        agent_server,
         "_resolve_inactive_launch",
         lambda *_args, **_kwargs: SimpleNamespace(
             sandbox="docker",
@@ -477,7 +477,7 @@ def test_execution_runtime_cleanup_does_not_hide_a_body_failure(
         ),
     )
     monkeypatch.setattr(
-        runtime,
+        agent_server,
         "make_runtime_startup_progress",
         lambda *_args, **_kwargs: _Progress(),
     )
@@ -485,7 +485,9 @@ def test_execution_runtime_cleanup_does_not_hide_a_body_failure(
         sandbox="docker:python:3.13-slim",
         ref=SandboxRef("container-1", "http://127.0.0.1:8123"),
     )
-    handle = runtime.sandbox_runtime.SandboxHandle(cast(Any, SimpleNamespace()), state)
+    handle = agent_server.sandbox_runtime.SandboxHandle(
+        cast(Any, SimpleNamespace()), state
+    )
 
     async def launch_runtime(*_args: object, **_kwargs: object) -> object:
         return handle
@@ -493,11 +495,11 @@ def test_execution_runtime_cleanup_does_not_hide_a_body_failure(
     async def fail_cleanup(*_args: object, **_kwargs: object) -> bool:
         raise RuntimeError("cleanup failed")
 
-    monkeypatch.setattr(runtime.sandbox_runtime, "launch", launch_runtime)
-    monkeypatch.setattr(runtime.sandbox_runtime, "stop_handle", fail_cleanup)
+    monkeypatch.setattr(agent_server.sandbox_runtime, "launch", launch_runtime)
+    monkeypatch.setattr(agent_server.sandbox_runtime, "stop_handle", fail_cleanup)
 
     with pytest.raises(LookupError, match="body failed"):
-        with runtime.open_execution_runtime(
+        with agent_server.acquire_agent_server(
             layout,
             sandbox="docker",
             ui_base_url="https://ui.test",
@@ -507,19 +509,19 @@ def test_execution_runtime_cleanup_does_not_hide_a_body_failure(
     assert "could not stop temporary agent alice" in capsys.readouterr().err
 
 
-def test_execution_runtime_cleans_up_a_launched_guest_with_invalid_identity(
+def test_agent_server_cleans_up_a_launched_guest_with_invalid_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     _set_status(monkeypatch, layout, _status(value="stopped"))
     monkeypatch.setattr(
-        runtime.sandbox_runtime,
+        agent_server.sandbox_runtime,
         "resolve_selection",
         lambda _layout, *, explicit: explicit or "docker",
     )
     monkeypatch.setattr(
-        runtime,
+        agent_server,
         "_resolve_inactive_launch",
         lambda *_args, **_kwargs: SimpleNamespace(
             sandbox="docker",
@@ -527,7 +529,7 @@ def test_execution_runtime_cleans_up_a_launched_guest_with_invalid_identity(
         ),
     )
     monkeypatch.setattr(
-        runtime,
+        agent_server,
         "make_runtime_startup_progress",
         lambda *_args, **_kwargs: _Progress(),
     )
@@ -538,7 +540,9 @@ def test_execution_runtime_cleans_up_a_launched_guest_with_invalid_identity(
             ref=SimpleNamespace(endpoint=""),
         ),
     )
-    handle = runtime.sandbox_runtime.SandboxHandle(cast(Any, SimpleNamespace()), state)
+    handle = agent_server.sandbox_runtime.SandboxHandle(
+        cast(Any, SimpleNamespace()), state
+    )
     cleaned: list[object] = []
 
     async def launch_runtime(*_args: object, **_kwargs: object) -> object:
@@ -553,16 +557,18 @@ def test_execution_runtime_cleans_up_a_launched_guest_with_invalid_identity(
         cleaned.append((selected, selected_handle, progress))
         return True
 
-    monkeypatch.setattr(runtime.sandbox_runtime, "launch", launch_runtime)
-    monkeypatch.setattr(runtime.sandbox_runtime, "stop_handle", stop_handle)
+    monkeypatch.setattr(agent_server.sandbox_runtime, "launch", launch_runtime)
+    monkeypatch.setattr(agent_server.sandbox_runtime, "stop_handle", stop_handle)
 
-    with pytest.raises(runtime.ExecutionRuntimeError, match="requires an endpoint"):
-        with runtime.open_execution_runtime(
+    with pytest.raises(
+        agent_server.AgentServerAcquisitionError, match="requires an endpoint"
+    ):
+        with agent_server.acquire_agent_server(
             layout,
             sandbox="docker",
             ui_base_url="https://ui.test",
         ):
-            raise AssertionError("an invalid remote runtime must not open")
+            raise AssertionError("an invalid AgentServer must not be acquired")
 
     assert len(cleaned) == 1
     assert cleaned[0][:2] == (layout, handle)
@@ -574,15 +580,17 @@ def test_inactive_launch_wraps_environment_errors(
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     monkeypatch.setattr(
-        runtime,
+        agent_server,
         "load_runtime_environ",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             OSError("could not read dotenv")
         ),
     )
 
-    with pytest.raises(runtime.ExecutionRuntimeError, match="could not read dotenv"):
-        runtime._resolve_inactive_launch(
+    with pytest.raises(
+        agent_server.AgentServerAcquisitionError, match="could not read dotenv"
+    ):
+        agent_server._resolve_inactive_launch(
             layout,
             sandbox="docker",
             dev=None,
@@ -622,11 +630,11 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
         captured["launch"] = kwargs
         return SimpleNamespace(sandbox="docker")
 
-    monkeypatch.setattr(runtime, "load_runtime_environ", load_environ)
-    monkeypatch.setattr(runtime, "resolve_agent_logging", logging_plan)
-    monkeypatch.setattr(runtime.sandbox_runtime, "resolve_launch", resolve_launch)
+    monkeypatch.setattr(agent_server, "load_runtime_environ", load_environ)
+    monkeypatch.setattr(agent_server, "resolve_agent_logging", logging_plan)
+    monkeypatch.setattr(agent_server.sandbox_runtime, "resolve_launch", resolve_launch)
 
-    result = runtime._resolve_inactive_launch(
+    result = agent_server._resolve_inactive_launch(
         layout,
         sandbox="docker",
         dev=development,
@@ -658,10 +666,10 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
 
 
 def test_sandbox_match_accepts_driver_or_exact_spec() -> None:
-    assert runtime.sandbox_matches("docker", "docker:python:3.13-slim")
-    assert runtime.sandbox_matches(
+    assert agent_server.sandbox_matches("docker", "docker:python:3.13-slim")
+    assert agent_server.sandbox_matches(
         "docker:python:3.13-slim",
         "docker:python:3.13-slim",
     )
-    assert not runtime.sandbox_matches("host", "docker:python:3.13-slim")
-    assert not runtime.sandbox_matches("docker:other", "docker:python:3.13-slim")
+    assert not agent_server.sandbox_matches("host", "docker:python:3.13-slim")
+    assert not agent_server.sandbox_matches("docker:other", "docker:python:3.13-slim")

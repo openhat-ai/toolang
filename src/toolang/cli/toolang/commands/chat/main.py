@@ -31,9 +31,9 @@ from toolang.cli.common.context import (
     user_call,
 )
 from toolang.cli.common.execution import open_execution
-from toolang.cli.common.execution_runtime import (
-    ExecutionRuntimeError,
-    open_execution_runtime,
+from toolang.cli.common.agent_server import (
+    AgentServerAcquisitionError,
+    acquire_agent_server,
 )
 from toolang.cli.common.execution_progress.config import resolve_progress_max_width
 from toolang.cli.common.output import shorten_home_path
@@ -136,22 +136,20 @@ def _chat_runtime(
 
     layout = context_layout(ctx)
     try:
-        runtime_context = open_execution_runtime(
+        server_context = acquire_agent_server(
             layout,
             sandbox=sandbox,
             dev=dev,
             model_catalog=resolve_model_catalog_option(model_catalog),
             ui_base_url=ui_base_url(),
         )
-        with runtime_context as runtime:
-            if runtime.mode == "remote":
-                if runtime.endpoint is None:  # pragma: no cover - value invariant
-                    raise RuntimeError("remote execution runtime has no endpoint")
+        with server_context as server:
+            if server is not None:
                 remote: RemoteChatSession | None = None
                 try:
                     remote = RemoteChatSession(
-                        runtime.endpoint,
-                        expected_sandbox=runtime.sandbox,
+                        server.endpoint,
+                        expected_sandbox=server.sandbox,
                     )
                     current = dict(selector_payload or {})
                     updated = remote.apply_settings(
@@ -178,7 +176,7 @@ def _chat_runtime(
             environ = load_runtime_environ(layout, base_environ=os.environ)
             local = LocalChatSession(
                 layout,
-                sandbox=runtime.sandbox,
+                sandbox="host",
                 **(
                     {"model_catalog": model_catalog}
                     if model_catalog is not None
@@ -204,7 +202,7 @@ def _chat_runtime(
                 yield local
             finally:
                 local.close()
-    except ExecutionRuntimeError as exc:
+    except AgentServerAcquisitionError as exc:
         raise click.ClickException(str(exc)) from exc
 
 

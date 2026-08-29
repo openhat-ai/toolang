@@ -14,7 +14,7 @@ from toolang.base.errors import ToolangError
 from toolang.base.types.progress import ProgressEvent, ProgressStatus
 from toolang.base.types.sandbox import SandboxOutput, SandboxRef
 import toolang.cli.toolang.main as cli
-from toolang.cli.common import execution_runtime
+from toolang.cli.common import agent_server as agent_server_acquisition
 from toolang.cli.toolang.commands import runtime as runtime_commands
 from toolang.common.layout import AgentLayout
 from toolang.up import sandbox as sandbox_runtime
@@ -330,13 +330,17 @@ def test_runtime_warns_when_development_source_uses_index_package(
     development: tuple[bool, Path | None],
     warns: bool,
 ) -> None:
-    monkeypatch.setattr(execution_runtime, "development_source", lambda: development)
+    monkeypatch.setattr(
+        agent_server_acquisition,
+        "development_source",
+        lambda: development,
+    )
     startup = cast(
         sandbox_runtime.LaunchSpec,
         SimpleNamespace(sandbox=sandbox, dev_artifact=dev),
     )
 
-    execution_runtime.warn_development_package_source(startup)
+    agent_server_acquisition.warn_development_package_source(startup)
 
     stderr = capsys.readouterr().err
     assert ("will install Toolang from the package index" in stderr) is warns
@@ -471,7 +475,11 @@ def test_start_reports_guest_failure_stage_reason_hint_and_log(
     monkeypatch.setattr(sandbox_runtime, "resolve_launch", resolve_launch)
     monkeypatch.setattr(sandbox_runtime, "launch", launch)
     monkeypatch.setattr(runtime_commands, "development_source", lambda: (False, None))
-    monkeypatch.setattr(execution_runtime, "development_source", lambda: (False, None))
+    monkeypatch.setattr(
+        agent_server_acquisition,
+        "development_source",
+        lambda: (False, None),
+    )
 
     result = runner.invoke(
         cli.app,
@@ -517,7 +525,11 @@ def test_start_interruption_during_sandbox_launch_exits_130(
     monkeypatch.setattr(sandbox_runtime, "resolve_launch", resolve_launch)
     monkeypatch.setattr(sandbox_runtime, "launch", launch)
     monkeypatch.setattr(runtime_commands, "development_source", lambda: (False, None))
-    monkeypatch.setattr(execution_runtime, "development_source", lambda: (False, None))
+    monkeypatch.setattr(
+        agent_server_acquisition,
+        "development_source",
+        lambda: (False, None),
+    )
 
     result = runner.invoke(
         cli.app,

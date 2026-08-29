@@ -12,12 +12,12 @@ from click.utils import strip_ansi
 
 from toolang.base.errors import ToolangError
 from toolang.cli.toolang.commands import script
-from toolang.cli.common.execution_runtime import ExecutionRuntime
 from toolang.common.layout import AgentLayout
 from toolang.execution.calls import parse_call
 from toolang.execution.records import RunRecord
 from toolang.execution.types import ControlRef, RunOverride, RunStatus
 from toolang.lang.input import RunnableInputRaw
+from toolang.up.types import AgentServerRef
 from tests.support.execution_harness import ExecutionHarness
 
 
@@ -553,14 +553,12 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
     captured: dict[str, object] = {}
 
     @contextmanager
-    def execution_runtime(selected: AgentLayout, **kwargs):
+    def agent_server_context(selected: AgentLayout, **kwargs):
         assert selected == layout
         captured["runtime"] = kwargs
-        yield ExecutionRuntime(
+        yield AgentServerRef(
             sandbox="docker:python:3.13-slim",
-            mode="remote",
             endpoint="http://127.0.0.1:7001",
-            owned=True,
         )
 
     async def execute_remote(**kwargs):
@@ -582,7 +580,7 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
         "materialize_roaming_program",
         lambda _source: layout,
     )
-    monkeypatch.setattr(script, "open_execution_runtime", execution_runtime)
+    monkeypatch.setattr(script, "acquire_agent_server", agent_server_context)
     monkeypatch.setattr(script, "_execute_remote", execute_remote)
     monkeypatch.setattr(
         script,

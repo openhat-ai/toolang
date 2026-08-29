@@ -27,7 +27,6 @@ import toolang.cli.toolang.commands.plugin as plugin_commands
 import toolang.cli.toolang.commands.thread as thread_commands
 import toolang.cli.toolang.main as cli
 from toolang.cli.common.output import shorten_home_path
-from toolang.cli.common.execution_runtime import ExecutionRuntime
 from toolang.common.layout import AgentLayout
 from toolang.execution.client import LocalRunClient
 from toolang.execution.executor import RunExecutor
@@ -43,6 +42,7 @@ from toolang.execution.types import Local, Pointer, StepPath, ThreadPrefix
 from toolang.lang.input import resolve_input_parts
 from toolang.setup import AgentSetup
 from toolang.up import process as agents
+from toolang.up.types import AgentServerRef
 from toolang.work.state import load_ready_jobs
 from toolang.work.store import JobStore
 from tests.support.execution_fixtures import (
@@ -741,19 +741,19 @@ agic reply(_: Part[]) -> Part[]:
         return harness.state
 
     @contextmanager
-    def execution_runtime(
+    def agent_server_context(
         _layout: AgentLayout,
         *,
         sandbox: str | None,
         **_kwargs: object,
     ):
         runtime_selections.append(sandbox)
-        yield ExecutionRuntime(sandbox=sandbox or "host", mode="embedded")
+        yield None
 
     @asynccontextmanager
     async def run_client(
         _layout: AgentLayout,
-        _runtime: ExecutionRuntime,
+        _server: AgentServerRef | None,
         **_kwargs: object,
     ):
         executor = RunExecutor(
@@ -772,8 +772,8 @@ agic reply(_: Part[]) -> Part[]:
             await client.disconnect()
             await executor.stop()
 
-    monkeypatch.setattr(thread_commands, "open_execution_runtime", execution_runtime)
-    monkeypatch.setattr(thread_commands, "open_run_client", run_client)
+    monkeypatch.setattr(thread_commands, "acquire_agent_server", agent_server_context)
+    monkeypatch.setattr(thread_commands, "acquire_run_client", run_client)
 
     async def run_source():
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
@@ -934,7 +934,7 @@ agic reply(_: Part[]) -> Part[]:
             return _Handle(rerun_detail)
 
     @contextmanager
-    def execution_runtime(
+    def agent_server_context(
         _layout: AgentLayout,
         *,
         sandbox: str | None,
@@ -942,22 +942,21 @@ agic reply(_: Part[]) -> Part[]:
         **_kwargs: object,
     ):
         runtime_selections.append((sandbox, dev))
-        yield ExecutionRuntime(
+        yield AgentServerRef(
             sandbox=sandbox or "host",
-            mode="remote",
             endpoint="http://runtime.test",
         )
 
     @asynccontextmanager
     async def run_client(
         _layout: AgentLayout,
-        _runtime: ExecutionRuntime,
+        _server: AgentServerRef | None,
         **_kwargs: object,
     ):
         yield _Client()
 
-    monkeypatch.setattr(thread_commands, "open_execution_runtime", execution_runtime)
-    monkeypatch.setattr(thread_commands, "open_run_client", run_client)
+    monkeypatch.setattr(thread_commands, "acquire_agent_server", agent_server_context)
+    monkeypatch.setattr(thread_commands, "acquire_run_client", run_client)
     dev = tmp_path / "dist"
     dev.mkdir()
 
