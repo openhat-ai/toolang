@@ -295,7 +295,7 @@ _registered_command(
 )(thread_commands.runs_command)
 _registered_command(
     "inspect",
-    help="Inspect runs.",
+    help="Inspect execution subjects.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,

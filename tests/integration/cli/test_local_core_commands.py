@@ -17,7 +17,7 @@ import pytest
 from click.testing import CliRunner
 
 from toolang.base.types.message import Message, TextPart
-from toolang.base.types.run import ModelCallResult, ModelUsage
+from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.catalog import templates
 from toolang.catalog.agent import LocalAgents
@@ -38,7 +38,14 @@ from toolang.execution.records import (
 )
 from toolang.execution.store import RunStore
 from toolang.execution.schemas import RerunRequest, RetryRequest
-from toolang.execution.types import Local, Pointer, StepPath, ThreadPrefix
+from toolang.execution.types import (
+    ControlRef,
+    Local,
+    ModelStepGiven,
+    Pointer,
+    StepPath,
+    ThreadPrefix,
+)
 from toolang.lang.input import resolve_input_parts
 from toolang.setup import AgentSetup
 from toolang.up import process as agents
@@ -338,6 +345,413 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     assert "• prepared" not in response.stdout
 
 
+def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    store = RunStore(AgentLayout.resident(root, "alice").run_store)
+    try:
+        first = project_run_start(
+            store,
+            run_id="run_subject_first",
+            thread_id="custom_subject",
+            origin="test",
+            input=Message.user("First"),
+            created_at="2026-01-01T00:00:00Z",
+        )
+        project_step(
+            store,
+            run_id=first.id,
+            step_index=2,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(TextPart("outer"),),
+            started_at="2026-01-01T00:00:02Z",
+            finished_at="2026-01-01T00:00:03Z",
+        )
+        project_step(
+            store,
+            parent=StepPath(first.id, (2,)),
+            index=10,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(TextPart("nested"),),
+            started_at="2026-01-01T00:00:03Z",
+            finished_at="2026-01-01T00:00:04Z",
+        )
+        project_step(
+            store,
+            run_id=first.id,
+            step_index=11,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(TextPart("last"),),
+            started_at="2026-01-01T00:00:04Z",
+            finished_at="2026-01-01T00:00:05Z",
+        )
+        project_run_end(store, run_id=first.id)
+        child = project_run_start(
+            store,
+            run_id="run_subject_child",
+            thread_id=first.thread,
+            origin="test",
+            input=Message.user("Child"),
+            created_at="2026-01-01T12:00:00Z",
+            parent=StepPath(first.id, (2,)),
+        )
+        project_run_end(store, run_id=child.id)
+        second = project_run_start(
+            store,
+            run_id="run_subject_second",
+            thread_id=first.thread,
+            origin="test",
+            input=Message.user("Second"),
+            created_at="2026-01-02T00:00:00Z",
+        )
+        project_run_end(store, run_id=second.id)
+        unrelated = project_run_start(
+            store,
+            run_id="run_subject_other",
+            thread_id="term_subject_other",
+            origin="test",
+            input=Message.user("Other"),
+            created_at="2026-01-03T00:00:00Z",
+        )
+        project_run_end(store, run_id=unrelated.id)
+        store.create_thread(
+            thread_id="threads",
+            origin="test",
+            created_at="2025-12-31T00:00:00Z",
+        )
+    finally:
+        store.close()
+
+    threads = _invoke(root, "alice", "inspect", "threads", "--json")
+    runs = _invoke(root, "alice", "inspect", "runs", "--json")
+    scoped_runs = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "custom_subject",
+        "runs",
+        "--json",
+    )
+    steps = _invoke(
+        root,
+        "alice",
+        "inspect",
+        first.id,
+        "steps",
+        "--json",
+    )
+
+    assert threads.exit_code == 0, threads.stderr
+    assert [item["thread_id"] for item in json.loads(threads.stdout)] == [
+        "term_subject_other",
+        "custom_subject",
+        "threads",
+    ]
+    assert runs.exit_code == 0, runs.stderr
+    assert [item["id"] for item in json.loads(runs.stdout)] == [
+        "run_subject_other",
+        "run_subject_second",
+        "run_subject_child",
+        "run_subject_first",
+    ]
+    assert scoped_runs.exit_code == 0, scoped_runs.stderr
+    assert [item["id"] for item in json.loads(scoped_runs.stdout)] == [
+        "run_subject_second",
+        "run_subject_child",
+        "run_subject_first",
+    ]
+    assert steps.exit_code == 0, steps.stderr
+    step_documents = json.loads(steps.stdout)
+    assert [item["path"] for item in step_documents] == [
+        "run_subject_first.2",
+        "run_subject_first.2.10",
+        "run_subject_first.11",
+    ]
+    for document in step_documents:
+        selected = _invoke(
+            root,
+            "alice",
+            "inspect",
+            document["path"],
+            "--json",
+        )
+        assert selected.exit_code == 0, selected.stderr
+        assert json.loads(selected.stdout) == document
+
+    human = _invoke(root, "alice", "inspect", first.id, "steps")
+    assert human.exit_code == 0, human.stderr
+    assert "STEP" in human.stdout
+    assert (
+        human.stdout.index("run_subject_first.2")
+        < human.stdout.index("run_subject_first.2.10")
+        < human.stdout.index("run_subject_first.11")
+    )
+
+
+def test_inspect_collections_are_unbounded_and_empty_stores_succeed(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    layout = AgentLayout.resident(root, "alice")
+    empty = RunStore(layout.run_store)
+    empty.close()
+
+    empty_threads = _invoke(root, "alice", "inspect", "threads", "--json")
+    empty_runs = _invoke(root, "alice", "inspect", "runs")
+
+    assert empty_threads.exit_code == 0, empty_threads.stderr
+    assert json.loads(empty_threads.stdout) == []
+    assert empty_runs.exit_code == 0, empty_runs.stderr
+    assert "RUN" in empty_runs.stdout
+
+    store = RunStore(layout.run_store)
+    try:
+        for index in range(51):
+            run = project_run_start(
+                store,
+                run_id=f"run_unbounded_{index}",
+                thread_id=f"term_unbounded_{index}",
+                origin="test",
+                input=Message.user(str(index)),
+                created_at=f"2026-01-01T00:00:{index:02}Z",
+            )
+            project_run_end(store, run_id=run.id)
+    finally:
+        store.close()
+
+    threads = _invoke(root, "alice", "inspect", "threads", "--json")
+    runs = _invoke(root, "alice", "inspect", "runs", "--json")
+
+    assert threads.exit_code == 0, threads.stderr
+    assert len(json.loads(threads.stdout)) == 51
+    assert runs.exit_code == 0, runs.stderr
+    assert len(json.loads(runs.stdout)) == 51
+
+
+@pytest.mark.parametrize(
+    ("subjects", "allowed"),
+    (
+        (("custom_subject", "steps"), "runs"),
+        (("run_subject", "runs"), "steps"),
+        (("run_subject.0", "steps"), "model-call"),
+        (("run_subject/status", "steps"), None),
+    ),
+)
+def test_inspect_rejects_disallowed_subject_transitions(
+    tmp_path: Path,
+    subjects: tuple[str, ...],
+    allowed: str | None,
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    store = RunStore(AgentLayout.resident(root, "alice").run_store)
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_subject",
+            thread_id="custom_subject",
+            origin="test",
+            input=Message.user("Subject"),
+        )
+        project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(TextPart("value"),),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+    finally:
+        store.close()
+
+    result = _invoke(root, "alice", "inspect", *subjects)
+
+    assert result.exit_code == 2
+    if allowed is None:
+        assert "does not accept a child subject" in result.stderr
+    else:
+        assert f"allowed: {allowed}" in result.stderr
+
+
+def test_inspect_static_subjects_are_reserved_and_missing_scopes_fail(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    store = RunStore(AgentLayout.resident(root, "alice").run_store)
+    store.close()
+
+    reserved = _invoke(root, "alice", "inspect", "steps")
+    missing_thread = _invoke(root, "alice", "inspect", "custom_missing", "runs")
+    missing_run = _invoke(root, "alice", "inspect", "run_missing", "steps")
+
+    assert reserved.exit_code == 2
+    assert "allowed: threads, runs" in reserved.stderr
+    assert missing_thread.exit_code == 1
+    assert "record not found: custom_missing" in missing_thread.stderr
+    assert missing_run.exit_code == 1
+    assert "record not found: run_missing" in missing_run.stderr
+
+
+@pytest.mark.parametrize("subject", ("threads", "runs", "term_missing runs"))
+def test_inspect_collections_require_execution_history(
+    tmp_path: Path,
+    subject: str,
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+
+    result = _invoke(root, "alice", "inspect", *subject.split())
+
+    assert result.exit_code == 1
+    assert "execution history not found: alice" in result.stderr
+
+
+def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    store = RunStore(AgentLayout.resident(root, "alice").run_store)
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_model_call",
+            thread_id="term_model_call",
+            origin="test",
+            input=Message.user("Call"),
+        )
+        call = ModelCall(
+            instructions="Diagnose the run.",
+            messages=[Message.assistant("Context"), Message.user("Question")],
+            cont={"provider_cursor": "next"},
+        )
+        store.begin_step(
+            path=StepPath(run.id, (0,)),
+            kind="model",
+            input=(),
+            given=ModelStepGiven(model="test/model", call=call),
+            state=ControlRef(run.id, 0),
+            started_at="2026-01-01T00:00:00Z",
+        )
+    finally:
+        store.close()
+
+    projected = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_model_call.0",
+        "model-call",
+        "--json",
+    )
+    references = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_model_call.0/given/call",
+        "--json",
+    )
+    human = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_model_call.0",
+        "model-call",
+    )
+    rejected = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_model_call",
+        "model-call",
+    )
+
+    assert projected.exit_code == 0, projected.stderr
+    assert json.loads(projected.stdout) == {
+        "instructions": "Diagnose the run.",
+        "messages": [
+            {
+                "role": "assistant",
+                "parts": [{"type": "text", "text": "Context"}],
+            },
+            {
+                "role": "user",
+                "parts": [{"type": "text", "text": "Question"}],
+            },
+        ],
+        "tools": [],
+        "cont": {"provider_cursor": "next"},
+    }
+    assert references.exit_code == 0, references.stderr
+    assert json.loads(references.stdout) != json.loads(projected.stdout)
+    assert human.exit_code == 0, human.stderr
+    assert "Diagnose the run." in human.stdout
+    assert "provider_cursor" in human.stdout
+    assert rejected.exit_code == 2
+    assert "does not support projector model-call" in rejected.stderr
+
+
+@pytest.mark.parametrize("projector", ("modelcall", "model_call"))
+def test_inspect_rejects_unregistered_model_call_spellings(
+    tmp_path: Path,
+    projector: str,
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    store = RunStore(AgentLayout.resident(root, "alice").run_store)
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_projector_spelling",
+            thread_id="term_projector_spelling",
+            origin="test",
+            input=Message.user("Call"),
+        )
+        project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(TextPart("value"),),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+    finally:
+        store.close()
+
+    spelling = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_projector_spelling.0",
+        projector,
+    )
+    non_model = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_projector_spelling.0",
+        "model-call",
+    )
+
+    assert spelling.exit_code == 2
+    compact_error = " ".join(spelling.stderr.replace("│", "").split())
+    assert "allowed: model-call" in compact_error
+    assert non_model.exit_code == 1
+    assert "step is not a model call: run_projector_spelling.0" in non_model.stderr
+
+
 def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
     tmp_path: Path,
     capsys,
@@ -371,6 +785,7 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
     help_code = cli.main(["--root", str(root), "alice", "inspect", "--help"])
     help_output = capsys.readouterr()
     help_text = strip_ansi(help_output.out)
+    compact_help = " ".join(help_text.replace("│", "").split())
 
     assert combined.exit_code == 2
     assert "mutually exclusive" in combined.stderr
@@ -380,8 +795,11 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
     assert "No such option: --limit" in strip_ansi(removed.stderr)
     assert help_code == 0
     assert "POINTER" in help_text
-    assert "Inspect runs." in help_text
-    assert "Pointer to inspect." in help_text
+    assert "Inspect execution subjects." in help_text
+    assert "Subject chain." in help_text
+    assert "THREAD runs" in compact_help
+    assert "RUN steps" in compact_help
+    assert "STEP model-call" in compact_help
     assert "Render human-readable output (default)." in help_text
     assert "--human" in help_text
     assert "--json" in help_text
