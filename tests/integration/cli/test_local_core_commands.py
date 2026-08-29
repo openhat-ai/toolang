@@ -746,7 +746,7 @@ def test_inspect_rejects_unregistered_model_call_spellings(
     )
 
     assert spelling.exit_code == 2
-    compact_error = " ".join(spelling.stderr.replace("│", "").split())
+    compact_error = " ".join(strip_ansi(spelling.stderr).replace("│", "").split())
     assert "allowed: model-call" in compact_error
     assert non_model.exit_code == 1
     assert "step is not a model call: run_projector_spelling.0" in non_model.stderr
