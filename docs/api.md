@@ -552,19 +552,22 @@ staging directory is cleaned manually.
 
 Docker uses the engine's default missing-image pull behavior. A supported Linux
 guest provides POSIX `/bin/sh`, a writable executable temporary filesystem, and
-either a capable uv or a way to fetch the pinned uv installer: `curl`, `wget`,
-or an existing Python HTTPS standard library. Fetching also requires CA
-certificates, DNS, and network access. The bootstrap does not detect
-distributions or invoke package managers. It reuses a system Python 3.11+ when
-available; otherwise uv installs and resolves the tested Python 3.13 release.
+either a capable uv, Python 3.8+ with pip, or `curl`/`wget` and the prerequisites
+of the pinned official uv installer. Fetching also requires CA certificates,
+DNS, and network access. The guest core does not detect distributions, invoke
+package managers, or implement a Python-based downloader. It reuses a system
+Python 3.11+ when available; otherwise uv installs and resolves the tested
+Python 3.13 release.
 
 The guest uses image-provided `TOOLANG_GUEST_RUNTIME`, falling back to
 `${TMPDIR:-/tmp}/toolang-runtime`. uv, managed Python, cache, tool environment,
 and installed executables use explicit directories beneath it, independent of
-`HOME`. The generated process chain is `/bin/sh start.sh -> bootstrap.py ->
-too`: Python loads the staged dotenv literally, waits for the full container
-ID, installs the selected package with `uv tool install --force`, validates
-`too serve`, and directly replaces itself with the installed executable.
+`HOME`. The process chain is `/bin/sh docker_guest.sh -> runtime Python helper
+-> too`. The fixed, packaged Linux guest core acquires uv and Python, then writes
+its embedded helper beneath the private runtime. Python loads the staged dotenv
+literally, waits for the full container ID, installs the selected package with
+`uv tool install --force`, validates `too serve`, and directly replaces itself
+with the installed executable.
 For a source-local roaming agent, Docker overlays linked `agent.too` and
 `config.toml` targets as explicit read-only guest files so host symlinks do not
 become broken paths in the container.

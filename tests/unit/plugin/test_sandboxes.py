@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import shutil
 import stat
@@ -27,6 +28,9 @@ from toolang.plugin.sandboxes.loading import create_sandbox
 
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
+_TRY_DOCKER_GUEST = (
+    Path(__file__).resolve().parents[3] / "scripts" / "try_docker_guest.sh"
+)
 
 
 def _request(
@@ -303,13 +307,26 @@ def test_docker_sandbox_prepares_and_launches(
     assert stat.S_IMODE(sandbox_instance_path.stat().st_mode) == 0o600
     assert diagnostic_path.is_file()
     assert stat.S_IMODE(diagnostic_path.stat().st_mode) == 0o600
-    start_script = (stage_dir / "start.sh").read_text(encoding="utf-8")
-    assert "/root/.toolang/agents/alice/.runtime/sandbox/instance" in start_script
-    assert (
-        "/root/.toolang/agents/alice/.runtime/sandbox/toolang-1.2.3-py3-none-any.whl"
-    ) in start_script
-    assert "bootstrap.py" in start_script
-    assert "too serve alice --port 8123" in start_script
+    guest_script = stage_dir / "docker_guest.sh"
+    assert guest_script.is_file()
+    assert stat.S_IMODE(guest_script.stat().st_mode) == 0o755
+    assert plan.command == (
+        "/bin/sh",
+        "/root/.toolang/agents/alice/.runtime/sandbox/docker_guest.sh",
+        "/root/.toolang/agents/alice/.env",
+        f"/root/.toolang/agents/alice/.runtime/sandbox-bootstrap-{stage_dir.name}.log",
+        str(diagnostic_path),
+        "/root/.toolang/agents/alice/.runtime/sandbox/instance",
+        "/root/.toolang/agents/alice/.runtime/sandbox/toolang-1.2.3-py3-none-any.whl",
+        "too",
+        "serve",
+        "alice",
+        "--port",
+        "8123",
+    )
+    assert plan.ready_timeout_sec == docker_sandbox.DOCKER_READY_TIMEOUT_SEC
+    assert not (stage_dir / "start.sh").exists()
+    assert not (stage_dir / "bootstrap.py").exists()
     assert not (stage_dir / "agent.sh").exists()
     assert not (stage_dir / "environment.json").exists()
     assert not any(stage_dir.glob("*.events"))
@@ -349,16 +366,15 @@ def test_docker_background_sandbox_uses_container_output_and_private_diagnostics
     assert log_path.is_file()
     assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
-    start_script = (stage_dir / "start.sh").read_text(encoding="utf-8")
+    guest_script = (stage_dir / "docker_guest.sh").read_text(encoding="utf-8")
     diagnostic_path = Path(cast(str, plan.meta["diagnostic_path"]))
-    assert str(log_path) not in start_script
-    assert str(diagnostic_path) in start_script
-    assert f"https://astral.sh/uv/{docker_guest.UV_BOOTSTRAP_VERSION}" in start_script
-    assert "UV_PYTHON_INSTALL_DIR" in start_script
-    assert "UV_TOOL_BIN_DIR" in start_script
-    bootstrap = (stage_dir / "bootstrap.py").read_text(encoding="utf-8")
-    assert '"tool",\n            "install"' in bootstrap
-    assert docker_guest.DOCKER_TOOLANG_COMPATIBILITY_ERROR in bootstrap
+    assert str(log_path) not in guest_script
+    assert str(diagnostic_path) not in guest_script
+    assert "https://astral.sh/uv/$UV_BOOTSTRAP_VERSION/install.sh" in guest_script
+    assert "UV_PYTHON_INSTALL_DIR" in guest_script
+    assert "UV_TOOL_BIN_DIR" in guest_script
+    assert '"tool",\n            "install"' in guest_script
+    assert "cannot start the required AgentServer" in guest_script
 
 
 def test_docker_sandbox_mounts_roaming_source_links_as_guest_files(
@@ -447,37 +463,115 @@ def test_docker_sandbox_requires_a_concrete_dev_wheel(tmp_path: Path) -> None:
         sandbox.prepare(None, _request(tmp_path, dev=dev))
 
 
-def test_docker_start_script_quotes_inputs_and_has_no_agent_shell(
+def test_docker_guest_core_is_fixed_posix_shell_without_legacy_aliases(
     tmp_path: Path,
 ) -> None:
-    script = tmp_path / "start.sh"
-
-    docker_guest.write_start_script(
-        script,
-        runtime_dir=Path("/runtime/staged files"),
-        guest_env_path=Path("/agent/.env"),
-        diagnostic_path=Path("/agent/diagnostic log"),
-        diagnostic_display_path=Path("/host/diagnostic log"),
-        command=("too", "serve", "alice"),
-        hosted_dev_artifact=Path("/runtime/dev wheels/toolang.whl"),
-        sandbox_instance_path=Path("/runtime/sandbox instance"),
-    )
+    script = tmp_path / "docker_guest.sh"
+    docker_guest.write_guest_script(script)
 
     source = script.read_text(encoding="utf-8")
-    assert f"https://astral.sh/uv/{docker_guest.UV_BOOTSTRAP_VERSION}" in source
-    assert "'/runtime/dev wheels/toolang.whl'" in source
-    assert "'/runtime/sandbox instance'" in source
-    assert "'/host/diagnostic log'" in source
-    assert "source " not in source
+    assert "UV_BOOTSTRAP_VERSION=0.12.7" in source
+    assert "https://astral.sh/uv/$UV_BOOTSTRAP_VERSION/install.sh" in source
+    assert "\nsource " not in source
     assert "agent.sh" not in source
+    assert "start.sh" not in source
+    assert stat.S_IMODE(script.stat().st_mode) == 0o755
     subprocess.run(("/bin/sh", "-n", str(script)), check=True)
+
+
+def test_try_docker_guest_forwards_paths_command_and_exit_code(
+    tmp_path: Path,
+) -> None:
+    wheel_dir = tmp_path / "wheel files"
+    wheel_dir.mkdir()
+    wheel = wheel_dir / "toolang-1.2.3-py3-none-any.whl"
+    wheel.write_bytes(b"wheel")
+
+    completed, calls, facts = _run_try_docker_guest(
+        tmp_path,
+        "python:3.13-slim",
+        "--dev",
+        str(wheel_dir),
+        "--",
+        "too",
+        "serve",
+        "agent with spaces",
+        exit_code=17,
+    )
+
+    assert completed.returncode == 17
+    assert completed.stdout == "guest output\n"
+    assert [call[0] for call in calls] == ["create", "start", "rm"]
+    create = calls[0]
+    stage = Path(cast(str, facts["stage"]))
+    assert not stage.exists()
+    assert facts["instance"] == _CONTAINER_ID + "\n"
+    assert facts["guest_core"] is True
+    assert f"{stage}:/toolang-bootstrap:ro" in create
+    assert f"{stage}/diagnostic.log:/toolang-bootstrap/diagnostic.log" in create
+    assert create[-11:] == [
+        "python:3.13-slim",
+        "/bin/sh",
+        "/toolang-bootstrap/docker_guest.sh",
+        "/toolang-bootstrap/guest.env",
+        "/toolang-bootstrap/diagnostic.log",
+        f"{stage}/diagnostic.log",
+        "/toolang-bootstrap/instance",
+        "/toolang-bootstrap/toolang-1.2.3-py3-none-any.whl",
+        "too",
+        "serve",
+    ] + ["agent with spaces"]
+    assert completed.stderr.splitlines() == [
+        "Creating container...",
+        f"Created container · {_CONTAINER_ID[:12]}",
+        "Starting container...",
+        "Container exited · status 17",
+        "Removing container...",
+        "Removed container",
+    ]
+
+
+def test_try_docker_guest_keeps_resources_and_uses_default_command(
+    tmp_path: Path,
+) -> None:
+    completed, calls, facts = _run_try_docker_guest(
+        tmp_path,
+        "debian:bookworm-slim",
+        "--keep",
+    )
+
+    stage = Path(cast(str, facts["stage"]))
+    try:
+        assert completed.returncode == 0
+        assert [call[0] for call in calls] == ["create", "start"]
+        assert calls[0][-2:] == ["too", "--version"]
+        assert stage.is_dir()
+        assert f"Container retained · {_CONTAINER_ID}" in completed.stderr
+        assert f"Staging retained · {stage}" in completed.stderr
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the wrapper runs on Windows via WSL2")
+def test_try_docker_guest_cleans_up_after_interrupt(tmp_path: Path) -> None:
+    completed, calls, facts = _run_try_docker_guest(
+        tmp_path,
+        "python:3.13-slim",
+        interrupt=True,
+    )
+
+    assert completed.returncode == 130
+    assert [call[0] for call in calls] == ["create", "start", "rm"]
+    assert not Path(cast(str, facts["stage"])).exists()
 
 
 def test_docker_bootstrap_reuses_uv_and_python_and_round_trips_dotenv(
     tmp_path: Path,
 ) -> None:
-    completed, diagnostic = _run_generated_bootstrap(
-        tmp_path,
+    guest_root = tmp_path / "guest files"
+    guest_root.mkdir()
+    completed, diagnostic = _run_docker_guest(
+        guest_root,
         install_uv=False,
         install_python=False,
     )
@@ -502,7 +596,7 @@ def test_docker_bootstrap_reuses_uv_and_python_and_round_trips_dotenv(
 def test_docker_bootstrap_installs_uv_and_managed_python_without_system_python(
     tmp_path: Path,
 ) -> None:
-    completed, diagnostic = _run_generated_bootstrap(
+    completed, diagnostic = _run_docker_guest(
         tmp_path,
         install_uv=True,
         install_python=True,
@@ -520,23 +614,23 @@ def test_docker_bootstrap_installs_uv_and_managed_python_without_system_python(
         "Starting agent...",
     ]
     details = diagnostic.read_text(encoding="utf-8")
-    assert f"uv/{docker_guest.UV_BOOTSTRAP_VERSION}/install.sh" in details
+    assert "uv/0.12.7/install.sh" in details
     assert "managed Python detail" in details
 
 
-def test_docker_bootstrap_can_use_existing_python_as_the_uv_downloader(
+def test_docker_bootstrap_can_install_uv_with_existing_python_and_pip(
     tmp_path: Path,
 ) -> None:
-    completed, diagnostic = _run_generated_bootstrap(
+    completed, diagnostic = _run_docker_guest(
         tmp_path,
         install_uv=True,
         install_python=False,
-        python_downloader=True,
+        install_uv_with_pip=True,
     )
 
     assert completed.returncode == 0
     assert completed.stderr.splitlines()[0] == "Installing uv..."
-    assert "python downloader detail" in diagnostic.read_text(encoding="utf-8")
+    assert "pip install detail" in diagnostic.read_text(encoding="utf-8")
 
 
 def test_docker_bootstrap_installs_a_staged_wheel_and_executes_its_tool(
@@ -545,7 +639,7 @@ def test_docker_bootstrap_installs_a_staged_wheel_and_executes_its_tool(
     wheel = tmp_path / "toolang-1.2.3-py3-none-any.whl"
     wheel.write_bytes(b"wheel")
 
-    completed, diagnostic = _run_generated_bootstrap(
+    completed, diagnostic = _run_docker_guest(
         tmp_path,
         install_uv=False,
         install_python=False,
@@ -560,7 +654,7 @@ def test_docker_bootstrap_installs_a_staged_wheel_and_executes_its_tool(
 def test_docker_bootstrap_reports_package_install_failure_with_a_fix(
     tmp_path: Path,
 ) -> None:
-    completed, diagnostic = _run_generated_bootstrap(
+    completed, diagnostic = _run_docker_guest(
         tmp_path,
         install_uv=False,
         install_python=False,
@@ -579,7 +673,7 @@ def test_docker_bootstrap_reports_package_install_failure_with_a_fix(
 def test_docker_bootstrap_reports_incompatible_tool_with_a_fix(
     tmp_path: Path,
 ) -> None:
-    completed, diagnostic = _run_generated_bootstrap(
+    completed, diagnostic = _run_docker_guest(
         tmp_path,
         install_uv=False,
         install_python=False,
@@ -589,7 +683,7 @@ def test_docker_bootstrap_reports_incompatible_tool_with_a_fix(
     assert completed.returncode == 1
     assert completed.stdout == ""
     assert completed.stderr.splitlines()[-3:] == [
-        docker_guest.DOCKER_TOOLANG_COMPATIBILITY_ERROR,
+        "The installed Toolang package cannot start the required AgentServer.",
         "Fix: Build a wheel with `uv build --wheel` and pass it with `--dev dist`.",
         f"Log: {diagnostic}",
     ]
@@ -600,29 +694,31 @@ def test_docker_bootstrap_reports_missing_uv_downloaders_without_chatter(
 ) -> None:
     stage = tmp_path / "stage"
     stage.mkdir()
-    docker_guest.write_bootstrap(stage / "bootstrap.py")
     diagnostic = tmp_path / "bootstrap.log"
     diagnostic.touch()
     env_path = tmp_path / "guest.env"
     docker_guest.write_guest_env(env_path, dotenv_envs={}, process_envs={})
     instance = _sandbox_instance(tmp_path)
-    script = stage / "start.sh"
-    docker_guest.write_start_script(
-        script,
-        runtime_dir=stage,
-        guest_env_path=env_path,
-        diagnostic_path=diagnostic,
-        diagnostic_display_path=diagnostic,
-        command=("too", "serve", "alice"),
-        hosted_dev_artifact=None,
-        sandbox_instance_path=instance,
-    )
+    script = stage / "docker_guest.sh"
+    docker_guest.write_guest_script(script)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    _link_commands(bin_dir, "chmod", "mkdir", "rm")
+    _link_commands(bin_dir, "cat", "chmod", "mkdir", "rm")
+    _write_executable(bin_dir / "uname", "#!/bin/sh\necho Linux\n")
 
     completed = subprocess.run(
-        ("/bin/sh", str(script)),
+        (
+            "/bin/sh",
+            str(script),
+            str(env_path),
+            str(diagnostic),
+            str(diagnostic),
+            str(instance),
+            "toolang",
+            "too",
+            "serve",
+            "alice",
+        ),
         check=False,
         capture_output=True,
         text=True,
@@ -635,8 +731,24 @@ def test_docker_bootstrap_reports_missing_uv_downloaders_without_chatter(
     assert completed.returncode == 127
     assert completed.stdout == ""
     assert completed.stderr.splitlines() == [
-        "Installing uv...",
-        "Could not install uv: curl, wget, or Python is required.",
+        "Docker guest image must provide uv, Python 3.8+ with pip, or curl/wget "
+        "with the uv installer prerequisites.",
+        f"Log: {diagnostic}",
+    ]
+
+
+def test_docker_guest_core_rejects_non_linux_guests(tmp_path: Path) -> None:
+    completed, diagnostic = _run_docker_guest(
+        tmp_path,
+        install_uv=False,
+        install_python=False,
+        guest_system="Darwin",
+    )
+
+    assert completed.returncode == 64
+    assert completed.stdout == ""
+    assert completed.stderr.splitlines() == [
+        "Docker guest bootstrap supports Linux containers only.",
         f"Log: {diagnostic}",
     ]
 
@@ -989,10 +1101,7 @@ def test_docker_foreground_sandbox_follows_container_logs(
     )
     sandbox = create_sandbox("docker", config={})
     plan = sandbox.prepare(None, _request(tmp_path, foreground=True))
-    stage_dir = Path(cast(str, plan.meta["stage_dir"]))
-    assert docker_guest.DOCKER_TOOLANG_COMPATIBILITY_ERROR in (
-        stage_dir / "bootstrap.py"
-    ).read_text(encoding="utf-8")
+    diagnostic_path = Path(cast(str, plan.meta["diagnostic_path"]))
 
     ref = asyncio.run(sandbox.launch(plan))
     assert calls == []
@@ -1006,6 +1115,53 @@ def test_docker_foreground_sandbox_follows_container_logs(
         ("log_wait", "container"),
         ("wait", ref.runtime_id),
     ]
+    assert not diagnostic_path.exists()
+
+
+def test_docker_foreground_interrupt_removes_successful_bootstrap_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    waiting = asyncio.Event()
+
+    class Follower:
+        returncode = None
+
+        async def wait(self) -> int:
+            waiting.set()
+            await asyncio.Event().wait()
+            raise AssertionError("cancelled follower returned")
+
+    monkeypatch.setattr(
+        docker_sandbox,
+        "docker_run_detached",
+        _async_value("container-123"),
+    )
+    monkeypatch.setattr(
+        docker_sandbox,
+        "docker_follow_container_logs",
+        lambda _name: _async_result(Follower()),
+    )
+    sandbox = create_sandbox("docker", config={})
+    plan = sandbox.prepare(None, _request(tmp_path, foreground=True))
+    diagnostic_path = Path(cast(str, plan.meta["diagnostic_path"]))
+    ref = asyncio.run(sandbox.launch(plan))
+
+    async def interrupt_wait() -> BaseException | None:
+        await sandbox.attach(plan, ref)
+        task = asyncio.create_task(sandbox.wait(ref))
+        await waiting.wait()
+        task.cancel()
+        try:
+            await task
+        except BaseException as exc:
+            return exc
+        return None
+
+    error = asyncio.run(interrupt_wait())
+
+    assert isinstance(error, asyncio.CancelledError)
+    assert not diagnostic_path.exists()
 
 
 def test_docker_background_sandbox_detaches_logs_after_readiness(
@@ -1120,7 +1276,7 @@ def test_docker_release_cleans_up_an_attached_log_follower(
     ]
 
 
-def _run_generated_bootstrap(
+def _run_docker_guest(
     root: Path,
     *,
     install_uv: bool,
@@ -1128,12 +1284,11 @@ def _run_generated_bootstrap(
     install_tool: bool = True,
     compatible_tool: bool = True,
     hosted_dev_artifact: Path | None = None,
-    python_downloader: bool = False,
+    install_uv_with_pip: bool = False,
+    guest_system: str = "Linux",
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     stage = root / "stage"
     stage.mkdir()
-    bootstrap = stage / "bootstrap.py"
-    docker_guest.write_bootstrap(bootstrap)
     diagnostic = root / "bootstrap.log"
     diagnostic.touch(mode=0o600)
     env_path = root / "guest.env"
@@ -1146,21 +1301,13 @@ def _run_generated_bootstrap(
         process_envs={},
     )
     instance = _sandbox_instance(root)
-    script = stage / "start.sh"
-    docker_guest.write_start_script(
-        script,
-        runtime_dir=stage,
-        guest_env_path=env_path,
-        diagnostic_path=diagnostic,
-        diagnostic_display_path=diagnostic,
-        command=("too", "serve", "alice"),
-        hosted_dev_artifact=hosted_dev_artifact,
-        sandbox_instance_path=instance,
-    )
+    script = stage / "docker_guest.sh"
+    docker_guest.write_guest_script(script)
 
     bin_dir = root / "bin"
     bin_dir.mkdir()
-    _link_commands(bin_dir, "chmod", "mkdir", "rm")
+    _link_commands(bin_dir, "cat", "chmod", "mkdir", "rm")
+    _write_executable(bin_dir / "uname", f"#!/bin/sh\necho {guest_system}\n")
     tool_source = root / "too-source"
     _write_executable(
         tool_source,
@@ -1174,7 +1321,8 @@ def _run_generated_bootstrap(
             if compatible_tool
             else "    raise SystemExit(2)\n"
         )
-        + "elif sys.argv[1:] == ['serve', 'alice']:\n"
+        + "elif sys.argv[1:] == "
+        "['--root', '/root with spaces', 'serve', 'alice']:\n"
         "    print(json.dumps({\n"
         "        'complex': os.environ['COMPLEX'],\n"
         "        'instance': os.environ['TOOLANG_SANDBOX_INSTANCE'],\n"
@@ -1231,12 +1379,23 @@ def _run_generated_bootstrap(
         '/bin/chmod 755 "$UV_UNMANAGED_INSTALL/uv"\n',
     )
     if install_uv:
-        if python_downloader:
+        if install_uv_with_pip:
             _write_executable(
                 bin_dir / "python3",
                 "#!/bin/sh\n"
-                'echo "python downloader detail"\n'
-                '/bin/cp "$TOOLANG_TEST_INSTALLER" "$4"\n',
+                'if [ "$1" = "-c" ]; then exit 0; fi\n'
+                'if [ "$1" = "-m" ] && [ "$2" = "pip" ] && '
+                '[ "$3" = "--version" ]; then exit 0; fi\n'
+                'if [ "$1" = "-m" ] && [ "$2" = "pip" ] && '
+                '[ "$3" = "install" ]; then\n'
+                '  echo "pip install detail"\n'
+                "  exit 0\n"
+                "fi\n"
+                'if [ "$1" = "-m" ] && [ "$2" = "uv" ]; then\n'
+                "  shift 2\n"
+                '  exec "$TOOLANG_TEST_UV_SOURCE" "$@"\n'
+                "fi\n"
+                "exit 2\n",
             )
         else:
             _write_executable(
@@ -1256,7 +1415,20 @@ def _run_generated_bootstrap(
         shutil.copy2(uv_source, bin_dir / "uv")
 
     completed = subprocess.run(
-        ("/bin/sh", str(script)),
+        (
+            "/bin/sh",
+            str(script),
+            str(env_path),
+            str(diagnostic),
+            str(diagnostic),
+            str(instance),
+            str(hosted_dev_artifact or "toolang"),
+            "too",
+            "--root",
+            "/root with spaces",
+            "serve",
+            "alice",
+        ),
         check=False,
         capture_output=True,
         text=True,
@@ -1273,6 +1445,87 @@ def _run_generated_bootstrap(
         },
     )
     return completed, diagnostic
+
+
+def _run_try_docker_guest(
+    root: Path,
+    *arguments: str,
+    exit_code: int = 0,
+    interrupt: bool = False,
+) -> tuple[subprocess.CompletedProcess[str], list[list[str]], dict[str, object]]:
+    fake_bin = root / "fake docker bin"
+    fake_bin.mkdir()
+    log_path = root / "docker-calls.jsonl"
+    facts_path = root / "docker-facts.json"
+    stage_path = root / "docker-stage.txt"
+    _write_executable(
+        fake_bin / "docker",
+        f"#!{sys.executable}\n"
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "import signal, sys, time\n"
+        "args = sys.argv[1:]\n"
+        "log = Path(os.environ['TOOLANG_TEST_DOCKER_LOG'])\n"
+        "with log.open('a', encoding='utf-8') as stream:\n"
+        "    stream.write(json.dumps(args) + '\\n')\n"
+        "stage_record = Path(os.environ['TOOLANG_TEST_DOCKER_STAGE'])\n"
+        "if args[0] == 'create':\n"
+        "    mount = next(\n"
+        "        args[index + 1] for index, value in enumerate(args)\n"
+        "        if value == '--volume'\n"
+        "        and args[index + 1].endswith(':/toolang-bootstrap:ro')\n"
+        "    )\n"
+        "    stage_record.write_text(\n"
+        "        mount.removesuffix(':/toolang-bootstrap:ro'),\n"
+        "        encoding='utf-8',\n"
+        "    )\n"
+        f"    print({_CONTAINER_ID!r})\n"
+        "elif args[0] == 'start':\n"
+        "    stage = Path(stage_record.read_text(encoding='utf-8'))\n"
+        "    facts = {\n"
+        "        'stage': str(stage),\n"
+        "        'instance': (stage / 'instance').read_text(encoding='utf-8'),\n"
+        "        'guest_core': (stage / 'docker_guest.sh').is_file(),\n"
+        "    }\n"
+        "    Path(os.environ['TOOLANG_TEST_DOCKER_FACTS']).write_text(\n"
+        "        json.dumps(facts), encoding='utf-8'\n"
+        "    )\n"
+        "    print('guest output')\n"
+        "    if os.environ.get('TOOLANG_TEST_DOCKER_INTERRUPT') == '1':\n"
+        "        os.kill(os.getppid(), signal.SIGINT)\n"
+        "        time.sleep(0.2)\n"
+        "        raise SystemExit(130)\n"
+        "    raise SystemExit(int(os.environ['TOOLANG_TEST_DOCKER_EXIT']))\n",
+    )
+    temporary = root / "temporary files"
+    temporary.mkdir()
+    environ = {
+        **os.environ,
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+        "TMPDIR": str(temporary),
+        "TOOLANG_TEST_DOCKER_EXIT": str(exit_code),
+        "TOOLANG_TEST_DOCKER_FACTS": str(facts_path),
+        "TOOLANG_TEST_DOCKER_INTERRUPT": "1" if interrupt else "0",
+        "TOOLANG_TEST_DOCKER_LOG": str(log_path),
+        "TOOLANG_TEST_DOCKER_STAGE": str(stage_path),
+    }
+    completed = subprocess.run(
+        ("/bin/sh", str(_TRY_DOCKER_GUEST), *arguments),
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environ,
+        timeout=10,
+    )
+    calls = [
+        cast(list[str], json.loads(line))
+        for line in log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    facts = cast(
+        dict[str, object],
+        json.loads(facts_path.read_text(encoding="utf-8")),
+    )
+    return completed, calls, facts
 
 
 def _link_commands(path: Path, *names: str) -> None:

@@ -99,11 +99,12 @@ the hosted workload and releases it on exit; `start` returns after readiness.
 One-shot scripts and the chat TUI continue to use the execution core directly.
 
 Docker treats the container as the output boundary. Its guest bootstrap needs
-only a POSIX shell initially, obtains uv and a supported Python when absent,
-loads the staged dotenv without shell evaluation, installs Toolang explicitly,
-and replaces itself with `too serve`. Bootstrap and AgentServer output remain
-one ordinary container stream: `run` follows it for the workload lifetime,
-while `start` follows it through readiness and then detaches.
+a POSIX shell plus a supported way to reuse or obtain uv, obtains a supported
+Python when absent, loads the staged dotenv without shell evaluation, installs
+Toolang explicitly, and replaces itself with `too serve`. Bootstrap and
+AgentServer output remain one ordinary container stream: `run` follows it for
+the workload lifetime, while `start` follows it through readiness and then
+detaches.
 
 
 ## Caps

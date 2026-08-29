@@ -57,39 +57,47 @@ def test_docker_background_start_detaches_and_preserves_logs(
     root = tmp_path / "root"
     layout = _create_agent(root)
     port = _available_port()
+    container_id: str | None = None
 
-    started = _run_cli(
-        root,
-        "start",
-        "alice",
-        "--sandbox",
-        "docker",
-        "--dev",
-        str(toolang_wheel),
-        "--port",
-        str(port),
-    )
+    try:
+        started = _run_cli(
+            root,
+            "start",
+            "alice",
+            "--sandbox",
+            "docker",
+            "--dev",
+            str(toolang_wheel),
+            "--port",
+            str(port),
+        )
 
-    assert started.returncode == 0, started.stderr
-    assert _ordered(
-        started.stderr,
-        "Preparing sandbox",
-        "Starting workload",
-        "Installing Toolang...",
-        "Installed Toolang ·",
-        "Starting agent...",
-        "Agent started",
-    )
-    state = SandboxState.load(layout.sandbox_state)
-    assert state is not None
-    assert _container_running(state.ref.runtime_id)
-    assert not tuple(layout.runtime.glob("sandbox-bootstrap-*.log"))
+        assert started.returncode == 0, started.stderr
+        assert _ordered(
+            started.stderr,
+            "Preparing sandbox",
+            "Starting workload",
+            "Installing Toolang...",
+            "Installed Toolang ·",
+            "Starting agent...",
+            "Agent started",
+        ), started.stderr
+        state = SandboxState.load(layout.sandbox_state)
+        assert state is not None
+        container_id = state.ref.runtime_id
+        assert _container_running(container_id)
+        assert not tuple(layout.runtime.glob("sandbox-bootstrap-*.log"))
 
-    stopped = _run_cli(root, "stop", "alice")
+        stopped = _run_cli(root, "stop", "alice")
+        assert stopped.returncode == 0, stopped.stderr
+    finally:
+        remaining = SandboxState.load(layout.sandbox_state)
+        if remaining is not None:
+            _run_cli(root, "stop", "alice", "--force")
 
-    assert stopped.returncode == 0, stopped.stderr
     assert SandboxState.load(layout.sandbox_state) is None
-    assert not _container_exists(state.ref.runtime_id)
+    assert container_id is not None
+    assert not _container_exists(container_id)
     assert "Starting agent..." in layout.runtime_log.read_text(encoding="utf-8")
 
 
@@ -112,12 +120,14 @@ def test_docker_foreground_interrupt_releases_the_container(
         "--port",
         str(port),
     )
+    container_id: str | None = None
     with output_path.open("w+b") as output:
         process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT)
         try:
-            _wait_for_output(process, output_path, "Running agent alice:", timeout=90)
+            _wait_for_output(process, output_path, "Running agent alice:", timeout=300)
             state = SandboxState.load(layout.sandbox_state)
             assert state is not None
+            container_id = state.ref.runtime_id
             process.send_signal(signal.SIGINT)
             assert process.wait(timeout=30) == 130
         finally:
@@ -129,7 +139,40 @@ def test_docker_foreground_interrupt_releases_the_container(
                 _run_cli(root, "stop", "alice", "--force")
 
     assert SandboxState.load(layout.sandbox_state) is None
-    assert not _container_exists(state.ref.runtime_id)
+    assert container_id is not None
+    assert not _container_exists(container_id)
+
+
+@pytest.mark.parametrize(
+    ("image", "expected"),
+    (
+        ("ghcr.io/astral-sh/uv:python3.13-bookworm-slim", "Using uv ·"),
+        ("python:3.13-slim", "Installed uv ·"),
+        ("buildpack-deps:bookworm-curl", "Installed Python ·"),
+    ),
+)
+def test_docker_guest_harness_acquires_its_runtime(
+    image: str,
+    expected: str,
+    toolang_wheel: Path,
+) -> None:
+    completed = subprocess.run(
+        (
+            str(Path("scripts/try_docker_guest.sh").resolve()),
+            image,
+            "--dev",
+            str(toolang_wheel),
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=360,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert expected in completed.stderr
+    assert "Installed Toolang ·" in completed.stderr
+    assert completed.stdout.startswith("toolang ")
 
 
 def _create_agent(root: Path) -> AgentLayout:
@@ -145,7 +188,7 @@ def _run_cli(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
         check=False,
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=360,
     )
 
 
@@ -167,7 +210,10 @@ def _available_port() -> int:
 
 
 def _ordered(text: str, *values: str) -> bool:
-    positions = tuple(text.index(value) for value in values)
+    try:
+        positions = tuple(text.index(value) for value in values)
+    except ValueError:
+        return False
     return positions == tuple(sorted(positions))
 
 

@@ -1,6 +1,6 @@
 # Docker Guest Harness
 
-Status: Proposed. Work type: feature definition.
+Status: Implemented on 2026-08-29. Work type: feature definition.
 
 This extends `docker-guest-bootstrap.md` and replaces its generated `start.sh`
 and `bootstrap.py` artifacts.

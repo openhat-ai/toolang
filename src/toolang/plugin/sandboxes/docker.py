@@ -43,13 +43,13 @@ from ._docker_guest import (
     remove_diagnostic_log,
     remove_stage_directory,
     validate_guest_environment,
-    write_bootstrap,
     write_guest_env,
+    write_guest_script,
     write_sandbox_instance,
-    write_start_script,
 )
 
 DEFAULT_IMAGE = "python:3.13-slim"
+DOCKER_READY_TIMEOUT_SEC = 300.0
 DEFAULT_ENVIRONMENT_ALLOW_PATTERN = (
     r"(?i)^(?:"
     r"TOOLANG_[A-Z0-9_]+|PY_LOG|"
@@ -190,6 +190,8 @@ class DockerSandbox:
         diagnostic_path: Path,
         hosted_diagnostic_path: Path,
     ) -> SandboxPlan:
+        if not request.command:
+            raise ValueError("docker sandbox requires a command")
         image = _image(spec, self._default_image)
         runtime_dir = request.hosted_home / ".runtime" / "sandbox"
         dotenv_envs, process_envs = self._guest_environment_sections(request)
@@ -210,17 +212,7 @@ class DockerSandbox:
                 shutil.copy2(artifact, staged)
             hosted_dev_artifact = runtime_dir / staged.name
 
-        write_bootstrap(stage_dir / "bootstrap.py")
-        write_start_script(
-            stage_dir / "start.sh",
-            runtime_dir=runtime_dir,
-            guest_env_path=request.hosted_home / ".env",
-            diagnostic_path=hosted_diagnostic_path,
-            diagnostic_display_path=diagnostic_path,
-            command=request.command,
-            hosted_dev_artifact=hosted_dev_artifact,
-            sandbox_instance_path=runtime_dir / sandbox_instance_path.name,
-        )
+        write_guest_script(stage_dir / "docker_guest.sh")
         guest_env_path = stage_dir / "guest.env"
         write_guest_env(
             guest_env_path,
@@ -262,11 +254,21 @@ class DockerSandbox:
         )
         return SandboxPlan(
             sandbox=f"{self.name}:{image}",
-            command=("/bin/sh", str(runtime_dir / "start.sh")),
+            command=(
+                "/bin/sh",
+                str(runtime_dir / "docker_guest.sh"),
+                str(request.hosted_home / ".env"),
+                str(hosted_diagnostic_path),
+                str(diagnostic_path),
+                str(runtime_dir / sandbox_instance_path.name),
+                str(hosted_dev_artifact or "toolang"),
+                *request.command,
+            ),
             working_directory=request.hosted_home,
             output=request.output,
             log_path=request.log_path,
             endpoint=request.endpoint,
+            ready_timeout_sec=DOCKER_READY_TIMEOUT_SEC,
             envs={
                 "TOOLANG_HOST_GATEWAY": DEFAULT_HOST_GATEWAY,
                 "TOOLANG_ROOT": str(request.hosted_root),
@@ -382,15 +384,10 @@ class DockerSandbox:
     async def detach(self, plan: SandboxPlan, ref: SandboxRef) -> None:
         """Finish startup attachment without stopping the container."""
 
-        if plan.output == "file":
-            await self._detach_follower(ref.runtime_id)
-        diagnostic_path = ref.meta.get("diagnostic_path")
-        if isinstance(diagnostic_path, str) and diagnostic_path:
-            await asyncio.to_thread(
-                remove_diagnostic_log,
-                diagnostic_path,
-                ignore_errors=True,
-            )
+        if plan.output != "file":
+            raise ValueError("only background docker output can be detached")
+        await self._detach_follower(ref.runtime_id)
+        await self._remove_diagnostic(ref)
 
     async def running(self, ref: SandboxRef) -> bool:
         follower = self._log_followers.get(ref.runtime_id)
@@ -399,12 +396,22 @@ class DockerSandbox:
         return await asyncio.to_thread(docker_container_running, ref.runtime_id)
 
     async def wait(self, ref: SandboxRef) -> int:
-        follower = self._log_followers.get(ref.runtime_id)
-        if follower is not None:
-            returncode = await follower.wait()
-            if returncode != 0:
-                raise RuntimeError("docker logs failed")
-        return await asyncio.to_thread(docker_wait_container, ref.runtime_id)
+        try:
+            follower = self._log_followers.get(ref.runtime_id)
+            if follower is not None:
+                returncode = await follower.wait()
+                if returncode != 0:
+                    raise RuntimeError("docker logs failed")
+            returncode = await asyncio.to_thread(
+                docker_wait_container,
+                ref.runtime_id,
+            )
+        except asyncio.CancelledError:
+            await asyncio.shield(self._remove_diagnostic(ref))
+            raise
+        if returncode == 0:
+            await self._remove_diagnostic(ref)
+        return returncode
 
     async def stop(self, ref: SandboxRef, *, force: bool = False) -> None:
         await asyncio.to_thread(
@@ -441,6 +448,15 @@ class DockerSandbox:
             await finish_process(follower)
         else:
             await terminate_process(follower)
+
+    async def _remove_diagnostic(self, ref: SandboxRef) -> None:
+        diagnostic_path = ref.meta.get("diagnostic_path")
+        if isinstance(diagnostic_path, str) and diagnostic_path:
+            await asyncio.to_thread(
+                remove_diagnostic_log,
+                diagnostic_path,
+                ignore_errors=True,
+            )
 
 
 def create_sandbox(config: Mapping[str, Any]) -> Sandbox:

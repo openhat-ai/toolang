@@ -464,7 +464,6 @@ def test_start_reports_guest_failure_stage_reason_and_log(
 
     monkeypatch.setattr(sandbox_runtime, "resolve_launch", resolve_launch)
     monkeypatch.setattr(sandbox_runtime, "launch", launch)
-    monkeypatch.setattr(runtime_commands, "development_source", lambda: (False, None))
     monkeypatch.setattr(
         agent_server_acquisition,
         "development_source",
@@ -511,7 +510,6 @@ def test_start_interruption_during_sandbox_launch_exits_130(
 
     monkeypatch.setattr(sandbox_runtime, "resolve_launch", resolve_launch)
     monkeypatch.setattr(sandbox_runtime, "launch", launch)
-    monkeypatch.setattr(runtime_commands, "development_source", lambda: (False, None))
     monkeypatch.setattr(
         agent_server_acquisition,
         "development_source",

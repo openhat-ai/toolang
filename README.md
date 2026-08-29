@@ -80,10 +80,10 @@ toolang run alice --sandbox docker --dev dist
 ```
 
 The image must provide POSIX `/bin/sh`, a writable executable temporary
-directory, and either compatible uv, `curl`/`wget`, or Python's HTTPS standard
-library with network and CA support. Foreground runs remain attached to
-container output; background starts show bootstrap output through readiness and
-then detach.
+directory, and either compatible uv, Python 3.8+ with pip, or `curl`/`wget` with
+the official uv installer's prerequisites. Fetching also requires network and
+CA support. Foreground runs remain attached to container output; background
+starts show bootstrap output through readiness and then detach.
 
 In either case, open the printed WebUI link to connect to the agent:
 

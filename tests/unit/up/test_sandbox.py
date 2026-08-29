@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ import pytest
 from toolang.base.errors import SandboxLaunchError
 from toolang.base.types.progress import ProgressEvent
 from toolang.base.types.sandbox import (
+    SandboxOutput,
     SandboxPlan,
     SandboxRef,
     SandboxRequest,
@@ -34,6 +36,7 @@ class FakeSandbox:
         self.release_error: Exception | None = None
         self.attach_error: Exception | None = None
         self.detach_error: Exception | None = None
+        self.ready_timeout_sec = 30.0
 
     def runtime_root(self, local_root: Path) -> Path:
         del local_root
@@ -52,6 +55,7 @@ class FakeSandbox:
             output=request.output,
             log_path=request.log_path,
             endpoint=request.endpoint,
+            ready_timeout_sec=self.ready_timeout_sec,
         )
 
     async def launch(self, plan: SandboxPlan) -> SandboxRef:
@@ -128,10 +132,14 @@ class RecoverableLaunchSandbox(FakeSandbox):
         raise SandboxLaunchError("launch cleanup failed", ref=ref)
 
 
-def _launch_spec(tmp_path: Path) -> sandbox.LaunchSpec:
+def _launch_spec(
+    tmp_path: Path,
+    *,
+    output: SandboxOutput = "inherit",
+) -> sandbox.LaunchSpec:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
-    return sandbox.LaunchSpec(
+    spec = sandbox.LaunchSpec(
         serve=ServeSpec(
             layout=layout,
             host="127.0.0.1",
@@ -142,6 +150,13 @@ def _launch_spec(tmp_path: Path) -> sandbox.LaunchSpec:
         config={},
         environ={},
     )
+    if output == "file":
+        return replace(
+            spec,
+            output="file",
+            log_path=layout.runtime / "agent.log",
+        )
+    return spec
 
 
 def test_resolve_selection_uses_explicit_home_root_host_precedence(
@@ -186,6 +201,20 @@ def test_sandbox_state_round_trips(tmp_path: Path) -> None:
 
     assert sandbox.SandboxState.load(path) == state
     assert '"version": 1' in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("timeout", (0.0, -1.0, float("inf"), float("nan")))
+def test_sandbox_plan_rejects_invalid_readiness_timeouts(timeout: float) -> None:
+    with pytest.raises(ValueError, match="ready timeout"):
+        SandboxPlan(
+            sandbox="fake",
+            command=("too",),
+            working_directory=Path("/runtime"),
+            output="inherit",
+            log_path=None,
+            endpoint="http://localhost:8123",
+            ready_timeout_sec=timeout,
+        )
 
 
 def test_sandbox_state_reads_version_one_reference_without_runtime_identity(
@@ -461,7 +490,7 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
         ("startup.launch", "running"),
         ("startup.launch", "ok"),
     ]
-    assert any(
+    assert not any(
         call[0] == "detach" for call in implementation.calls if isinstance(call, tuple)
     )
 
@@ -470,6 +499,36 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
     assert ("release", handle.state.ref) in implementation.calls
     assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
     assert configs == [{}, {"current": True}]
+
+
+def test_launch_uses_the_sandbox_plan_readiness_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    implementation = FakeSandbox()
+    implementation.ready_timeout_sec = 123.0
+    monkeypatch.setattr(
+        sandbox,
+        "create_sandbox",
+        lambda _name, config: implementation,
+    )
+    captured: list[float] = []
+
+    async def ready(
+        _implementation: object,
+        _ref: SandboxRef,
+        *,
+        timeout_sec: float,
+    ) -> None:
+        captured.append(timeout_sec)
+
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    spec = _launch_spec(tmp_path)
+
+    handle = asyncio.run(sandbox.launch(spec))
+
+    assert captured == [123.0]
+    asyncio.run(sandbox.stop_handle(spec.serve.layout, handle))
 
 
 def test_startup_renderer_failure_does_not_change_launch(
@@ -602,7 +661,7 @@ def test_detach_failure_stops_releases_and_clears_state(
         return None
 
     monkeypatch.setattr(sandbox, "_wait_ready", ready)
-    spec = _launch_spec(tmp_path)
+    spec = _launch_spec(tmp_path, output="file")
 
     with pytest.raises(RuntimeError, match="could not detach output"):
         asyncio.run(sandbox.launch(spec))

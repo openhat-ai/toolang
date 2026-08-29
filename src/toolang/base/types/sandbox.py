@@ -76,6 +76,7 @@ class SandboxPlan:
     output: SandboxOutput
     log_path: Path | None
     endpoint: str
+    ready_timeout_sec: float = 30.0
     envs: dict[str, str] = field(default_factory=dict)
     mounts: tuple[SandboxMount, ...] = ()
     ports: tuple[SandboxPort, ...] = ()
@@ -83,6 +84,8 @@ class SandboxPlan:
 
     def __post_init__(self) -> None:
         _validate_output(self.output, self.log_path)
+        if not math.isfinite(self.ready_timeout_sec) or self.ready_timeout_sec <= 0:
+            raise ValueError("sandbox ready timeout must be positive and finite")
 
 
 @dataclass(frozen=True, slots=True)

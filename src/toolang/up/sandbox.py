@@ -37,7 +37,6 @@ from toolang.up.mounts import prepare_root_mounts
 from toolang.up.records import SandboxState
 from toolang.up.server import ServeSpec, build_serve_argv, resolve_serve
 
-SANDBOX_READY_TIMEOUT_SEC = 30.0
 _TASK_LOCKS: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[Path, asyncio.Lock]] = (
     WeakKeyDictionary()
 )
@@ -258,9 +257,10 @@ async def _launch_locked(
         await _wait_ready(
             implementation,
             ref,
-            timeout_sec=SANDBOX_READY_TIMEOUT_SEC,
+            timeout_sec=plan.ready_timeout_sec,
         )
-        await implementation.detach(plan, ref)
+        if plan.output == "file":
+            await implementation.detach(plan, ref)
         return SandboxHandle(implementation, state)
     except BaseException as exc:
         _startup_progress(

@@ -37,7 +37,7 @@ class Sandbox(Protocol):
         """Attach workload output after the recovery reference is persisted."""
 
     async def detach(self, plan: SandboxPlan, ref: SandboxRef) -> None:
-        """Detach controller-side output without stopping the workload."""
+        """Detach background startup output without stopping the workload."""
 
     async def running(self, ref: SandboxRef) -> bool:
         """Return whether a launched workload is still running."""
