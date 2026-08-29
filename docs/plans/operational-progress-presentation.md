@@ -1,0 +1,612 @@
+# Define Operational Progress Presentation
+
+## Status
+
+Feature definition proposed for human confirmation. This document refines the
+presentation and terminal-handoff sections of
+[Unify Operational Progress](operational-progress-lifecycle.md). It does not
+change the approved `ProgressEvent` contract or the Run grammar. Pull request
+#375 is the current implementation under review and must be reconciled with this
+definition before the operational-progress feature is complete.
+
+## Verified Current Behavior
+
+- Run presentation has a terminal-independent projector, exact row and marker
+  grammar, committed-versus-live ownership, display-cell width rules, spacing,
+  error ownership, and matching Script and Chat tests.
+- Pull request #375 gives `prepare` a legacy item list and summary, while
+  `setup` and `runtime` use a separate current-activity line. Selection also
+  depends on ID and label prefixes such as `cap:` and `Prepare `.
+- Runtime commands close source progress and construct another presenter for
+  launch. Temporary execution constructs a third presenter for cleanup. This
+  resets elapsed time and can make a contiguous operation flicker.
+- Initial guest `setup.load` and `setup.discover` are currently observed before
+  `runtime.create` closes, although setup occurs after the AgentServer process
+  starts and belongs inside the approved `runtime.start` boundary.
+- Operational output does not use Run's 120-cell maximum, display-cell
+  measurement, or wrapping rules. Details are bounded by Python character
+  count instead.
+- Non-TTY cleanup can follow a root Run footer without a defined section gap.
+  Failure progress and the outer CLI diagnostic can also report the same cause
+  twice.
+- Current tests cover isolated activity lines, but not complete
+  prepare/setup/runtime transcripts, narrow output, segment handoffs, or the
+  equivalence of agent-first and command-first forms.
+- Some commands construct `ProgressEvent` values and hard-code prepare labels,
+  while other paths use `as_progress_sink()` or omit a sink. This makes command
+  orchestration responsible for domain vocabulary and progress lifetime.
+- `CliProgress.finish(details=...)` and prepare summary options let each command
+  choose different successful residue, so equivalent work can leave a list, a
+  summary, or nothing before the real command result.
+
+## Goal
+
+Give `prepare`, `setup`, and `runtime` one exact operational presentation that
+is visually compatible with Run output without pretending that environment
+work is execution. A complete command transcript must remain calm, ordered, and
+unambiguous when operational work precedes a Run, hands off to foreground logs,
+or resumes for cleanup.
+
+Success means:
+
+- all three kinds use one row grammar and one presenter state model;
+- TTY and non-TTY output preserve the same material activity ordering, subject
+  to the defined suppression of sub-threshold TTY work;
+- successful operational work reports natural action outcomes but leaves no
+  redundant aggregate summary before the command's actual result;
+- Run rows, operational rows, warnings, diagnostics, and logs never compete for
+  terminal ownership; and
+- full-transcript tests specify every seam.
+
+## Relationship to Run Progress
+
+Operational and Run progress share presentation principles, not events or
+projectors:
+
+| Concern | Operational progress | Run progress |
+| --- | --- | --- |
+| Source | `ProgressEvent` | `RunEvent` |
+| Meaning | environment work | agent execution |
+| Running form | verb-first sentence ending in `...` | `•` activity rows |
+| Successful form | simple-past verb-first sentence | committed output |
+| Segment closure | object-first command result or one failure block | `∎` root Run footer |
+| TTY mechanics | one transient Rich live region | committed blocks plus one live region |
+| Non-TTY mechanics | append-only action and outcome sentences | append-only committed blocks |
+
+There is no operational Run header or footer and no adapter between the two
+event families. `CliProgress` remains the only public operational presenter.
+Implementation may use private state, but must not add public presenter or
+projector concepts per kind.
+
+## Programming Model
+
+Progress is an invocation-scoped optional dependency. Every public core entry
+point that may perform visible blocking work accepts the same keyword-only
+parameter:
+
+```python
+progress: ProgressSink | None = None
+```
+
+This applies consistently to preparation, setup refresh, sandbox launch,
+runtime stop and destroy, and corresponding plugin entry points. A core object
+does not store a CLI presenter or sink in its constructor. Nested core calls
+forward the sink they received. Calls with `None` perform identical work
+without producing progress, and a sink failure remains advisory and cannot
+change the operation's result.
+
+The object that owns the work owns its events and complete verb-first text. A
+command never imports `ProgressEvent` or `emit_progress`, synthesizes lifecycle
+events around a core call, or hard-codes text such as `Loading setup...` or
+`Installing Toolang...`. A plugin emits the activities it performs; a core
+orchestrator emits only work it performs itself. Guest transport forwards the
+closed progress vocabulary without moving its text into command code.
+If a command currently performs progress-worthy domain work directly, such as
+copying an agent tree, that operation moves behind the owning core API instead
+of gaining a command-local progress wrapper.
+
+`CliProgress` is an independent presentation object. `make_cli_progress()`
+always returns one and accepts only presentation inputs such as the target
+stream and `enabled`. The presenter determines TTY mode from its stream. Its
+read-only `sink` property is a `ProgressSink` when enabled and `None` when
+disabled; this removes `as_progress_sink()` and prevents quiet commands from
+activating guest progress transport. Context exit closes it idempotently, so a
+command normally owns exactly one instance per operational segment. It has no
+successful retention, summary, or details option:
+
+```python
+watcher = SetupWatcher(layout)
+
+with make_cli_progress(enabled=not quiet) as ui:
+    state = prepare_agent_state(layout, progress=ui.sink)
+    setup = asyncio.run(watcher.refresh(progress=ui.sink))
+    handle = asyncio.run(runtime.launch(launch, progress=ui.sink))
+```
+
+The same `ui.sink` composes unrelated core operations without command-side
+translation. Leaving the context closes its live region before Run, logs, a
+prompt UI, or the final command result takes the terminal. Stop and destroy
+after that handoff use a new context and sink; a cleanup presenter is not
+created during launch.
+
+`SetupWatcher.current()` remains a synchronous, side-effect-free snapshot read
+and therefore accepts no progress. `refresh()` owns configuration loading and
+model discovery, returns the new snapshot, and accepts progress for that
+invocation. This lets an initial command refresh be visible while periodic
+`SetupWatcher.run()` refreshes remain silent. Other long-lived core objects use
+the same separation between pure reads and blocking mutations.
+
+## One Operational Segment
+
+One `CliProgress` instance owns each uninterrupted interval of operational
+terminal use. Prepare, setup, and launch runtime events before execution belong
+to the same segment even when their kinds change. The presenter closes only
+when control passes to a Run presenter, prompt UI, foreground logs, a stable
+command result, or an error diagnostic.
+
+Cleanup after a Run or foreground session is a new segment because another
+owner used the terminal in between. A segment has one Rich live region and one
+ordered non-TTY stream. Each activity owns its own monotonic timer; no segment
+total is rendered. Call sites must not close and recreate a presenter merely
+because the event kind changes.
+
+The presenter keeps one private record per `(kind, id)`: current stage, status,
+text, bounded detail, change order, and activity timer. This is the only item
+state model for prepare, setup, and runtime. IDs are opaque identity; the
+presenter never splits an ID, checks an ID or label prefix, or derives grammar
+from them.
+
+Events retain the approved lifecycle rules:
+
+- `pending` contributes only to aggregate facts and is never a visible row;
+- `running` starts or materially updates the visible activity; it normally uses
+  a present-participle sentence and may use a simple-past checkpoint when the
+  stage owns several actions;
+- `ok` closes it with a corresponding simple-past sentence;
+- `skipped` is silent when no work began, or uses one explicit verb-first
+  outcome when it closes visible work;
+- `failed` closes live state and transfers stable output to the single failure
+  block; and
+- cache hits that perform no visible work remain silent.
+
+For concurrent prepare, `pending` is reserved for cap work-set registration.
+The producer emits one pending event for every cap in the complete set before
+any worker emits `running`. The presenter counts unique registered IDs as `T`
+and IDs whose `materialize` stage reaches `ok` or `skipped` as `N`. `T` is the
+current scheduled set, not the installed catalog size. A failed item transfers
+immediately to the failure block. A new pending set after the previous set is
+terminal resets these private counts. Other prepare operations start at
+`running` or remain silent; direct single-item work has no aggregate facts.
+Commands never provide or correct totals.
+
+The most recently changed running item is the visible activity. When it closes,
+the most recently changed remaining running item becomes visible. Facts appear
+only for a prepare set with `T > 1`, so concurrency does not grow the live
+region vertically or add a redundant summary.
+
+## Sentence Grammar
+
+Progress is a natural short sentence whose first word is a verb. It never
+prefixes the sentence with an agent name, sandbox selector, kind, stage, or
+progress ID. Agent identity belongs to the final command result, where it is
+useful and stable.
+
+The running TTY row is:
+
+```text
+RUNNING_CLAUSE [(FACTS, ELAPSED)]...
+```
+
+The successful TTY row replaces it in the same live region:
+
+```text
+COMPLETED_CLAUSE [(FACTS, ELAPSED)]
+```
+
+Examples are successive live snapshots, not accumulated lines:
+
+```text
+Fetching skill browser (2/5 caps)...
+Fetching skill browser (2/5 caps, 1.2s)...
+Fetched skill browser (3/5 caps, 1.3s)
+Loading setup...
+Loaded setup
+Discovering models...
+Discovering models (1.1s)...
+Discovered 12 models from 5 providers (2.2s)
+Installing Toolang from the package index...
+Installing Toolang from the package index (1.1s)...
+Installed Toolang from the package index (8.8s)
+Waiting for the agent API at http://localhost:7001...
+Waiting for the agent API at http://localhost:7001 (1.1s)...
+Connected to the agent API at http://localhost:7001 (9.3s)
+```
+
+Non-TTY output removes elapsed time and commits both action and outcome
+sentences:
+
+```text
+Fetching skill browser (2/5 caps)...
+Fetched skill browser (3/5 caps)
+Installing Toolang from the package index...
+Installed Toolang from the package index
+```
+
+Exact duplicate events produce no output. A change to sentence, bounded detail,
+selected concurrent item, or aggregate facts is material and appends a new
+non-TTY line. On a TTY, a completed sentence replaces its running sentence and
+remains until the next material event or segment handoff; it is never separately
+committed to scrollback.
+
+The producer supplies the complete progress text; the presenter never
+conjugates verbs. A running activity normally uses the present participle and
+ends in `...`. A completed action uses simple past with no terminal punctuation.
+A stage that owns several actions may emit a past-tense checkpoint while the
+stage remains `running`, then begin its next action; only the final sentence
+uses the stage's terminal status. Failures use `Failed to VERB` with no terminal
+punctuation. Explicit skips use `Skipped VERB` or another unambiguous past-tense
+verb. Labels never contain an agent name.
+
+All supplemental context appears before the running ellipsis or at the end of
+the completed text. Producers fold an object, source, image, endpoint, or other
+useful detail into the natural sentence, for example
+`Installing Toolang from toolang-0.3.0-py3-none-any.whl...`. The presenter
+inserts generated facts and TTY elapsed time as one parenthetical suffix before
+`...` for running work and at the end of completed work. It never appends a
+field after `...` and never adds a period.
+
+### TTY Elapsed Time
+
+Elapsed time describes the current activity, not the operational segment or
+command. It is presentation state derived from a monotonic clock and does not
+alter `ProgressEvent`.
+
+- A TTY first renders an activity without elapsed time. Once that activity has
+  run for 1 second, its live row includes real-time elapsed time.
+- When an activity reaches a successful or explicit skipped outcome, or emits a
+  past-tense checkpoint, its TTY row retains final elapsed time only if that
+  activity reached the 1-second threshold. Fast activities never gain a
+  duration after the fact. Failures transfer to the stable failure block, which
+  omits elapsed time.
+- The first `running` event starts an activity timer. Facts and `detail` updates
+  do not restart it. After a terminal outcome or past-tense checkpoint, the next
+  present-participle running clause begins a new activity and timer. Producers
+  keep that clause stable for the duration of the activity; the presenter does
+  not infer activity identity by conjugating or comparing arbitrary prose.
+- In concurrent prepare work, selecting another active item does not restart
+  either item: each item retains its own start time and resumes with its own
+  continuously increasing elapsed time when selected again.
+- Facts may appear immediately and remain in the same parentheses as elapsed
+  time, as in `Fetching skill browser (2/5 caps)...` followed later by
+  `Fetching skill browser (2/5 caps, 1.2s)...`.
+- Non-TTY progress never includes elapsed time and never emits timer-only lines.
+  Stable object-first command results also omit operational elapsed time.
+
+Elapsed values below 10 seconds use one decimal place, values from 10 through
+59 seconds use whole seconds, and longer values use compact forms such as
+`1m 08s` and `1h 02m 14s`. After the threshold, a TTY may redraw at 100
+millisecond intervals below 10 seconds and once per second thereafter. These
+redraws update only the existing live row and are not material progress events.
+
+Use this vocabulary and tone:
+
+| Kind and stage | Running | Successful |
+| --- | --- | --- |
+| `prepare.resolve` | `Resolving agent`, `Resolving KIND` | `Resolved agent`, `Resolved KIND` |
+| `prepare.fetch` | `Fetching agent`, `Fetching KIND` | `Fetched agent`, `Fetched KIND` |
+| `prepare.materialize` | `Preparing agent`, `Updating KIND`, `Preparing caps` | `Prepared agent`, `Updated KIND`, `Prepared caps` |
+| `setup.load` | `Loading setup` | `Loaded setup` |
+| `setup.discover` | `Discovering models` | `Discovered models` |
+| `runtime.create` | `Preparing sandbox`, `Fetching image`, `Installing Toolang`, `Checking Toolang` | intermediate `Prepared sandbox`, `Fetched image`, `Installed Toolang`, `Checked Toolang`; terminal `Created runtime` |
+| `runtime.start` | `Starting agent`, `Waiting for the agent API` | intermediate `Started agent`; terminal `Connected to the agent API` |
+| `runtime.stop` | `Stopping agent` | `Stopped agent` |
+| `runtime.destroy` | `Removing runtime` | `Removed runtime` |
+
+The object or bounded detail completes the sentence naturally, as in
+`Fetching skill browser...`, `Fetching image python:3.13-slim...`, or
+`Waiting for the agent API at http://localhost:7001...`. Sandbox type may
+appear as the object of an action, such as `Preparing Docker sandbox...`, but is
+never repeated as a prefix on every line. Third-party implementations follow
+the same verb and line-ending rules. Installer commands, environment
+values, secrets, and raw logs are never labels or details. `detail` may retain
+bounded diagnostic context, but the presenter does not append it as a generic
+post-sentence field.
+
+Setup and runtime add no invented counts. Expected Ollama or llama.cpp absence,
+connection refusal, or timeout produces an offline provider snapshot and a
+successful aggregate discovery; it is not a red progress failure. An
+unexpected catalog exception fails `setup.discover`. The following inspection
+output remains authoritative for provider status and model counts.
+
+## Width, Wrapping, and Style
+
+Operational output uses the same available width as Run output:
+
+```text
+min(attached terminal width, TOOLANG_PROGRESS_MAX_WIDTH)
+```
+
+The configured maximum is used for non-TTY output. Measurement and wrapping use
+display cells. Sentences wrap at word boundaries with a two-cell hanging
+indent; a single overlong word folds by display cells. Natural details are
+whitespace normalized and bounded before sentence construction. Parenthetical
+facts remain intact when they fit and otherwise wrap with the sentence. The
+sentence and aggregate facts are not silently dropped. A logical progress
+sentence may wrap across physical lines. A running sentence ends in `...`; a
+completed or failed sentence has no terminal punctuation.
+
+The TTY live row is dim so it remains secondary to execution and command
+results. A stable failure sentence uses normal-intensity red; continuation
+labels are dim and the reason uses normal intensity. Success green is not used.
+Non-TTY output contains UTF-8 text but no ANSI, cursor movement,
+carriage-return rewriting, or in-place replacement. It writes every material
+sentence in event order, including `Fetching X...` followed later by
+`Fetched X`.
+
+TTY live presentation is delayed for 150 milliseconds to avoid flashing for
+cache hits and fast local work. It never delays the operation itself and has no
+minimum hold time. Non-TTY rows are emitted immediately. TTY redraws only for a
+material semantic event or a visible elapsed-time change after the 1-second
+elapsed threshold; there is no spinner, status glyph, or animation-only
+refresh.
+
+## Runtime and Setup Ordering
+
+The normal guest launch sequence is:
+
+```text
+runtime.create: prepare sandbox, fetch image, install and check Toolang -> ok
+runtime.start:  start AgentServer -> running
+  setup.load:       load initial setup -> terminal
+  setup.discover:   discover initial models -> terminal
+runtime.start:  wait for API and identity -> ok
+```
+
+Initial guest setup is the only permitted cross-kind nesting. While a setup
+stage is running, it is the visible leaf activity. When it closes, the still
+running `runtime.start` activity resumes. Setup does not open a second live
+region. Stages for one `(kind, id)` never overlap, and `runtime.create` must be
+terminal before `runtime.start` begins.
+
+Embedded execution has `prepare -> setup -> Run` and no synthetic host runtime
+stages. Attaching to an already running AgentServer has no operational segment.
+Stop and destroy are sequential stages in a cleanup segment after foreground
+or Run ownership ends.
+
+## Stable Failure Grammar
+
+One operational failure produces one block:
+
+```text
+Failed to install Toolang
+  Stage: runtime.create
+  Reason: Could not install Toolang from the package index
+  Fix: Check network access or use --dev PATH with a compatible wheel
+  Log: ~/.toolang/agents/eve/.runtime/agent.log
+```
+
+The first line remains a verb-first progress sentence and contains no agent
+name. Continuations use exactly the applicable fields above. `Stage` and
+`Reason` are mandatory; `Fix` and `Log` are conditional. The responsible
+command and presenter compose this block once. Typer, Click, sandbox logs, and
+outer exception handlers must not repeat the same cause as another top-level
+error. An error before any operational event continues through the normal CLI
+error path.
+
+Interruption is not a failed activity. It clears live state, transfers terminal
+ownership to cleanup, and preserves the command's existing exit-130 message
+policy. A cleanup failure uses the normal failure block and retains recovery
+identity.
+
+## Segment Handoffs
+
+Spacing is semantic and independent of TTY capability:
+
+| Handoff | Rule |
+| --- | --- |
+| prepare -> setup -> runtime | same segment; no blank row or presenter reset |
+| operational -> warning -> operational | warning is committed once; live state is suspended and redrawn; no surrounding blank row |
+| operational -> command result, table, or ready line | live clears; result follows immediately with no added blank row |
+| operational -> Run | live clears; the Run presenter owns exactly one leading blank row before its first committed block |
+| Run footer -> cleanup | cleanup starts only after the footer commits; non-TTY adds exactly one leading blank row, while successful TTY cleanup remains transient |
+| operational -> foreground logs | live clears, the ready line commits, then log following starts; no log may appear above or inside live progress |
+| operational -> Chat TUI | live clears before prompt_toolkit starts; no operational live state exists while the TUI owns the terminal |
+
+An operational presenter never prints a trailing blank row. The later owner is
+responsible for a required section gap. A stable warning or failure temporarily
+clears the live region before committing and never relies on Rich stdio
+redirection.
+
+### Complete Non-TTY Temporary Run
+
+```text
+Fetching skill browser (1/5 caps)...
+Fetched skill browser (2/5 caps)
+Preparing Docker sandbox...
+Prepared Docker sandbox
+Installing Toolang from the package index...
+Installed Toolang from the package index
+Checking Toolang...
+Checked Toolang
+Created runtime
+Starting agent...
+Started agent
+Loading setup...
+Loaded setup
+Discovering models...
+Discovered 12 models from 5 providers
+Waiting for the agent API at http://localhost:7001...
+Connected to the agent API at http://localhost:7001
+
+• Thinking...
+• Finished the report.
+
+∎ run_abc123 succeeded                                      9.4s · 1 model call
+
+Stopping agent...
+Stopped agent
+Removing runtime...
+Removed runtime
+```
+
+TTY displays the same activity sequence in one transient row, then leaves only
+the Run transcript. Successful cleanup is transient, so the Run footer remains
+the final stable line.
+
+## Successful Closure
+
+Successful operational progress never becomes stable TTY output. Closing a
+segment clears its live region completely, whether the segment prepared caps,
+loaded setup, started a runtime, or performed cleanup. `CliProgress` has no
+`retain`, `summary`, or `finish(details=...)` mode.
+
+Non-TTY output cannot be retracted, so its already emitted chronological action
+and outcome sentences remain. Closure adds no synthetic `Prepared N caps`,
+`Completed setup`, or elapsed summary in either mode. The next terminal owner
+starts immediately according to the handoff rules:
+
+```text
+too caps:     transient progress -> result table
+too chat:     transient progress -> banner and prompt
+too start:    transient progress -> Agent eve started: ...
+too script:   transient progress -> Run transcript
+```
+
+Warnings and failure blocks remain stable because they require action. If a
+future command explicitly makes preparation its result, that command may print
+an object-first result such as `Agent eve prepared: 5 caps`; it is not retained
+progress.
+
+## Command Results
+
+Operational progress does not replace stable command outcomes. A final result
+starts with its object, uses a stable state or past-tense action, includes
+stable identity, and may append extra information after `:`:
+
+```text
+Agent eve running: http://localhost:7001 (Ctrl+C to stop)
+Agent eve started: http://localhost:7001
+Agent eve stopped
+Agent brice cloned: ~/.toolang/agents/brice/agent.too
+Skill browser added: ~/.toolang/agents/eve/skills/browser/SKILL.md
+Skill browser removed
+```
+
+Inspection commands keep their result view and do not add a separate final
+sentence. Commands do not gain an aggregate `Prepared`, `Loaded`, or
+`Completed` summary after their action-level progress.
+
+## Implementation Touchpoints
+
+- `src/toolang/cli/common/progress.py`: replace the prepare-specific and
+  operational-specific render branches with one segment state model; use
+  shared display-cell width, wrapping, delayed live reveal, activity selection,
+  and failure rendering. Make `CliProgress` context-managed with idempotent
+  close and an optional `sink`; remove `as_progress_sink()` and domain-specific
+  factory options, `finish(details=...)`, and successful summary retention.
+  Treat IDs as opaque and derive prepare facts only from pending registration
+  and terminal materialize events.
+- Runtime, Script, Chat, clone, cap, and inspection command orchestration: pass
+  one presenter through contiguous pre-execution work, close it at the defined
+  handoff, and request a new segment only for cleanup. Remove command-authored
+  progress events, literal progress labels, prepare summary options, and
+  `set_prepare_total()`.
+- `src/toolang/up/sandbox.py` and launch-token observation: close
+  `runtime.create` before starting AgentServer, open `runtime.start` before
+  initial setup, and resume its readiness activity after setup.
+- Prepare, setup, runtime, and plugin producers: accept an invocation-scoped
+  optional sink, use stable IDs and stage semantics rather than label prefixes
+  to drive aggregation, and emit complete verb-first running, checkpoint,
+  terminal, and failure sentences from the activity vocabulary.
+- Cap preparation: register every member of one concurrent work set with
+  `pending` before starting its workers and close every registered successful or
+  cached item through `prepare.materialize`.
+- Setup and sandbox plugins: retain semantic events and bounded details; do not
+  preformat rows or failures.
+- Operational, command, integration, PTY, and live Docker tests: assert complete
+  transcripts and ownership seams rather than private renderer methods alone.
+- `docs/execution-presentation.md` and plugin documentation: add the normative
+  operational grammar and plugin label/detail constraints.
+
+No `RunEvent`, `ProgressProjector`, Script/Chat Run grammar, sandbox selection,
+readiness authority, environment exposure, or recovery-record change is in
+scope. Dotted progress phases and the removed presenter names receive no
+compatibility path.
+
+## Acceptance Tests
+
+1. Prepare, setup, and runtime events render through the same sentence grammar,
+   width logic, style rules, and presenter instance within one segment. TTY
+   progress begins directly with the verb and uses no spinner or status glyph.
+2. Commands create one `CliProgress` context per segment and pass its optional
+   sink unchanged to core entry points. Quiet mode produces a `None` sink, TTY
+   selection belongs to the presenter, and no command constructs a
+   `ProgressEvent`, calls `emit_progress`, or contains domain progress text.
+3. `SetupWatcher.current()` and other pure reads emit nothing; an explicitly
+   instrumented `refresh()` or blocking mutation emits its own events. The same
+   long-lived object supports a visible foreground call followed by silent
+   background calls without stored presenter state.
+4. Successful TTY closure always clears all operational live state and leaves
+   no summary or detail residue before a table, banner, command result, Run, or
+   foreground logs. Non-TTY closure retains only rows already emitted and adds
+   no synthetic completion summary.
+5. TTY cache hits and operations completing before 150 milliseconds leave no
+   live residue or artificial delay; slower work becomes visible by the
+   threshold.
+6. A TTY activity shows no elapsed time before 1 second, updates its own elapsed
+   time after the threshold, and retains the final value only when the threshold
+   was reached. A new activity starts a new timer; reselecting a concurrent
+   prepare item preserves that item's original timer.
+7. Non-TTY output is ordered, append-only, ANSI-free, never includes elapsed
+   time or timer-only rows, and never replaces a line; it emits and deduplicates
+   each material running sentence followed by its checkpoint or terminal
+   sentence, such as `Fetching X...` then `Fetched X`.
+8. Concurrent cap preparation emits its complete pending set before running
+   work. The generic presenter treats IDs as opaque, selects the most recently
+   changed active item, and derives accurate `N/T caps` from pending and terminal
+   materialize events without `set_prepare_total()` or multiple live rows.
+9. A later prepare set resets completed private counts. Direct single-item work
+   has no aggregate facts, and cached or skipped work leaves no pending or
+   running residue.
+10. Setup load and discover use the same grammar; expected Ollama and llama.cpp
+   offline or timeout results remain successful discovery, while unexpected
+   exceptions produce one `setup.discover` failure block.
+11. Runtime create closes before start; initial guest setup temporarily owns the
+   live leaf inside start; readiness resumes after setup without a second live
+   region.
+12. Wide, narrow, and Unicode sentences/details wrap by display cells within the
+   same configured maximum as Run output.
+13. One failure block contains the qualified stage and reason, conditional fix
+   and log, and no duplicated outer or workload error.
+14. Prepare-to-setup-to-runtime changes add no blank line, presenter reset, or
+    duplicate activity. Each new activity intentionally starts its own elapsed
+    timer; no segment-total clock appears.
+15. Operational-to-Run handoff has exactly one leading Run gap and no residual
+    live row; Run projection and footer output remain byte-for-byte unchanged.
+16. A root Run footer precedes cleanup. Non-TTY has exactly one intervening
+    blank row; successful TTY cleanup is transient and leaves the footer as the
+    final stable line.
+17. Ready lines precede all foreground logs, Ctrl+C stops log following before
+    cleanup presentation, and no log corrupts a live row.
+18. Progress sentences always begin with a verb and never display the agent
+    name; command results begin with the object and stable identity, as in
+    `Agent eve started: ...` or `Skill browser added: ...`, and never include
+    operational elapsed time.
+19. Agent-first and command-first forms, embedded host execution, attached
+    execution, temporary guest execution, Linux/macOS terminals, and Docker
+    controlled from Linux/macOS/WSL2 produce the defined semantics.
+20. Default verification and opt-in Docker transcript tests pass.
+
+## Risks and Open Questions
+
+- Delayed TTY reveal and per-activity elapsed updates need event-driven timers
+  that cannot outlive a closed presenter, survive under the wrong activity, or
+  delay command completion.
+- Cross-kind setup nesting requires explicit active-state restoration; choosing
+  only the last received event will leave a terminal setup row visible or hide
+  readiness.
+- Full transcript tests must normalize elapsed values without weakening
+  ordering, spacing, or ownership assertions.
+
+There are no open product questions. Human confirmation is required before
+implementation.

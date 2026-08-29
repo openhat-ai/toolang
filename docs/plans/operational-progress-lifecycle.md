@@ -8,6 +8,9 @@ supersedes the progress vocabulary, presenter split, and foreground output owner
 installation, compatibility, identity, recovery, and diagnostic requirements.
 [Execution Progress Projection](execution-progress-state-machine.md) remains
 authoritative for Run presentation.
+[Operational Progress Presentation](operational-progress-presentation.md)
+proposes the exact operational row grammar and terminal handoffs for this
+contract.
 
 ## Current Problem
 
