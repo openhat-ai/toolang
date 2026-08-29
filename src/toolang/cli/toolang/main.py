@@ -145,7 +145,6 @@ def callback(
         bool,
         typer.Option(
             "--version",
-            "-V",
             callback=_version_callback,
             help="Show current version and exit.",
             is_eager=True,

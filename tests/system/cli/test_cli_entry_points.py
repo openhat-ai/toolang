@@ -114,6 +114,21 @@ def test_cli_package_is_executable_as_a_module(module: str, prefix: str) -> None
 
 
 @pytest.mark.parametrize(
+    ("name", "app"), (("toolang", toolang_app), ("caps", caps_app))
+)
+def test_version_option_has_no_short_alias(name: str, app: typer.Typer) -> None:
+    runner = CliRunner()
+    help_result = runner.invoke(app, ["--help"], prog_name=name)
+    short_result = runner.invoke(app, ["-V"], prog_name=name)
+
+    assert help_result.exit_code == 0, help_result.output
+    assert "--version" in help_result.output
+    assert "-V" not in help_result.output
+    assert short_result.exit_code == 2
+    assert "No such option: -V" in short_result.output
+
+
+@pytest.mark.parametrize(
     ("name", "app", "path"),
     CLI_COMMANDS,
     ids=[f"{name} {' '.join(path)}" for name, _app, path in CLI_COMMANDS],
