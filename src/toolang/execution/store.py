@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import replace
 import hashlib
 import json
 from pathlib import Path
@@ -2676,6 +2677,59 @@ class RunStore:
                 (run_id, index),
             ).fetchone()
         return _control_from_row(row) if row is not None else None
+
+    def append_prompt_invocations(
+        self,
+        *,
+        run_id: str,
+        index: int,
+        invocations: Sequence[PromptInvocation],
+    ) -> tuple[PromptInvocation, ...]:
+        """Atomically append runtime prompt provenance to one preparation."""
+
+        if not all(isinstance(item, PromptInvocation) for item in invocations):
+            raise TypeError(
+                "runtime prompt provenance requires PromptInvocation values"
+            )
+        with self.write_transaction():
+            row = self._conn.execute(
+                "SELECT * FROM controls "
+                "WHERE scope = 'run' AND target = ? AND \"index\" = ?",
+                (run_id, index),
+            ).fetchone()
+            control = _control_from_row(row) if row is not None else None
+            if control is None or not isinstance(
+                control.payload, PreparationControlPayload
+            ):
+                raise ValueError(f"run preparation not found: {run_id}@{index}")
+            existing = control.payload.prompt_invocations
+            offset = len(existing)
+            appended = tuple(
+                replace(
+                    invocation,
+                    parent=(
+                        invocation.parent + offset
+                        if invocation.parent is not None
+                        else None
+                    ),
+                )
+                for invocation in invocations
+            )
+            updated = (*existing, *appended)
+            if not appended:
+                return updated
+            payload = replace(control.payload, prompt_invocations=updated)
+            self._conn.execute(
+                "UPDATE controls SET payload = ?, _revision = ? "
+                "WHERE scope = 'run' AND target = ? AND \"index\" = ?",
+                (
+                    _dump_json(control_payload_to_data(payload)),
+                    self._next_run_control_revision(),
+                    run_id,
+                    index,
+                ),
+            )
+        return updated
 
     def resolve_state_revision(self, ref: ControlRef) -> str:
         """Resolve one durable State control reference to its revision."""

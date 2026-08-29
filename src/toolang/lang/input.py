@@ -464,7 +464,11 @@ def _resolve_parts_body(
                 following_break = ""
             elif call.scope == "inline":
                 assert call.inline is not None
-                prompt_input = tuple(_text_parts(call.inline, slots))
+                prompt_input = _inline_prompt_input(
+                    call.inline,
+                    slots,
+                    prompt_name=prompt_name,
+                )
             elif call.scope == "fenced":
                 if not line_break or index + 1 >= len(lines):
                     raise ToolangError(
@@ -517,6 +521,24 @@ def _resolve_parts_body(
         _extend_parts(output, _text_parts(line, slots))
         index += 1
     return tuple(output)
+
+
+def _inline_prompt_input(
+    source: str,
+    slots: Sequence[Part],
+    *,
+    prompt_name: str,
+) -> tuple[Part, ...]:
+    parts = tuple(_text_parts(source, slots))
+    text_parts = tuple(part for part in parts if isinstance(part, TextPart))
+    if len(text_parts) != len(parts):
+        raise ToolangError(f"Inline prompt ${prompt_name} requires text-only input.")
+    text = "".join(part.text for part in text_parts)
+    if not text.strip():
+        raise ToolangError(
+            f"Inline prompt ${prompt_name} requires nonempty text input."
+        )
+    return (TextPart(text),)
 
 
 def _render_body(

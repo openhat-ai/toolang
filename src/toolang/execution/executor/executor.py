@@ -1483,6 +1483,21 @@ class _Execution:
     def store(self) -> RunStore:
         return self.executor.store
 
+    def record_prompt_invocations(
+        self,
+        binding: BoundRun,
+        invocations: Sequence[PromptInvocation],
+    ) -> None:
+        """Persist prompt expansions performed after one Run was accepted."""
+
+        if not invocations:
+            return
+        self.store.append_prompt_invocations(
+            run_id=binding.run_id,
+            index=binding.control_index,
+            invocations=invocations,
+        )
+
     @property
     def providers(self) -> Mapping[str, Provider]:
         return self.setup.providers

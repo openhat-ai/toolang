@@ -3,17 +3,22 @@
 import re
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from toolang.api.app import AgentCoreDep
 from toolang.api.schemas import RuntimeIdentityPayload, RuntimeSandboxPayload
 from toolang.common.errors import ToolangError
 from toolang.common.version import toolang_version
-from toolang.execution.runnables import runnable_binding_defaults
+from toolang.execution.runnables import (
+    parse_runnable_ref,
+    resolve_state_runnable,
+    runnable_binding_defaults,
+)
 from toolang.execution.schemas import ThreadInfo
 from toolang.execution.types import ModelStepNoted
 from toolang.execution.executor.resources import agent_model_targets
 from toolang.up import AgentCore, process as agents
+from toolang.state.state import state_program
 
 
 router = APIRouter(tags=["agent"])
@@ -71,6 +76,42 @@ async def flows(core: AgentCoreDep) -> dict[str, object]:
     return {
         "default": default,
         "items": [{"name": name} for name in state.flows],
+    }
+
+
+@router.get("/prompt-completions", summary="List Prompt Completions")
+async def prompt_completions(
+    core: AgentCoreDep,
+    runnable: str | None = Query(default=None),
+) -> dict[str, object]:
+    setup = core.setup.current()
+    state = await _fresh_state(core)
+    selected = runnable or setup.bindings.runnable
+    if selected is None:
+        default_agic, default_flow = _runnable_defaults(state, None)
+        if default_agic is not None:
+            selected = f"agic:{default_agic}"
+        elif default_flow is not None:  # pragma: no cover - exclusive fallback
+            selected = f"flow:{default_flow}"
+        else:  # pragma: no cover - runnable fallback invariant
+            raise HTTPException(status_code=500, detail="chat has no default runnable")
+    try:
+        name, kind = parse_runnable_ref(selected)
+        module, _declaration = resolve_state_runnable(state, name, kind=kind)
+    except (ToolangError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "items": [
+            {
+                "name": prompt.name,
+                "params": [
+                    {"name": parameter.name, "optional": parameter.optional}
+                    for parameter in prompt.params
+                ],
+            }
+            for prompt in state_program(state, module).caps
+            if prompt.kind == "prompt"
+        ]
     }
 
 

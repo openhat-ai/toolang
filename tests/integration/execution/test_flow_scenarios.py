@@ -126,6 +126,67 @@ flow relay(_: Part[]) -> Part[]:
     asyncio.run(scenario())
 
 
+def test_runtime_content_prompts_append_durable_provenance(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+prompt bracket:
+  [{{_}}]
+
+agic echo(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user:
+    $bracket -- {{_}}
+
+flow relay(_: Part[]) -> Part[]:
+  let note:
+    $bracket -- flow
+  run echo
+""",
+        responses=[ModelCallResult(message=Message.assistant("relayed"))],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="relay",
+                    primary=resolve_input_parts("hello"),
+                )
+            )
+
+            child = next(
+                run
+                for run in harness.store.list_runs(thread_id=thread, limit=None)
+                if run.parent is not None
+            )
+            root_control = harness.store.get_run_control(run_id=root.id, index=0)
+            child_control = harness.store.get_run_control(run_id=child.id, index=0)
+            assert root_control is not None
+            assert child_control is not None
+            assert isinstance(root_control.payload, RunControlPayload)
+            assert isinstance(child_control.payload, RunControlPayload)
+            assert [
+                invocation.name
+                for invocation in root_control.payload.prompt_invocations
+            ] == ["bracket"]
+            assert [
+                invocation.name
+                for invocation in child_control.payload.prompt_invocations
+            ] == ["bracket"]
+            assert root_control.payload.prompt_invocations[0].cap_ref
+            assert child_control.payload.prompt_invocations[0].cap_ref
+            assert harness.adapter.invocations[0].call.messages == [
+                Message.user("[hello]")
+            ]
+
+    asyncio.run(scenario())
+
+
 def test_discarded_step_keeps_output_without_updating_locals(tmp_path: Path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,

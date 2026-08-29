@@ -300,6 +300,37 @@ def test_inline_prompt_consumes_only_nonempty_current_line_text() -> None:
         resolve_input_parts("$wrap --   ", program=program)
 
 
+def test_inline_prompt_rejects_multimodal_template_slots() -> None:
+    from toolang.lang.ast import CapDecl, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="outer",
+                params=(),
+                body="$inner -- {{_}}",
+                span=Span(1),
+            ),
+            CapDecl(
+                kind="prompt",
+                name="inner",
+                params=(),
+                body="inner {{_}}",
+                span=Span(2),
+            ),
+        ),
+    )
+
+    with pytest.raises(ToolangError, match="requires text-only input"):
+        resolve_input_parts(
+            "$outer -\n@diagram.png",
+            program=program,
+            include=lambda _reference: ImagePart(file_id="image-1"),
+        )
+
+
 def test_prompt_resolution_records_ordered_nested_provenance() -> None:
     from toolang.lang.ast import CapDecl, Parameter, Program
 

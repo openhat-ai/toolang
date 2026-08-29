@@ -205,6 +205,19 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
             )
         if request.url.path == "/api/v1/flows":
             return httpx.Response(200, json={"default": None, "items": []})
+        if request.url.path == "/api/v1/prompt-completions":
+            assert request.url.params.get("runnable") == "agic:chat"
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "name": "review",
+                            "params": [{"name": "focus", "optional": False}],
+                        }
+                    ]
+                },
+            )
         if request.url.path == "/api/v1/threads" and request.method == "POST":
             return httpx.Response(201, json={"thread": _json(_thread())})
         if request.url.path == "/api/v1/runs/authored/validate":
@@ -235,6 +248,14 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
         assert session.list_runnables("runnable") == {
             "default": "agic:chat",
             "items": [{"kind": "agic", "name": "chat"}],
+        }
+        assert session.list_prompts("agic:chat") == {
+            "items": [
+                {
+                    "name": "review",
+                    "params": [{"name": "focus", "optional": False}],
+                }
+            ]
         }
         assert session.create_thread() == "term_remote"
         selects = session.apply_settings(

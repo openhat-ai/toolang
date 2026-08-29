@@ -96,6 +96,18 @@ agic selected(_: Part[], tone: Text) -> Part[]:
 
     try:
         with TestClient(app) as client:
+            prompt_completions = client.get(
+                "/api/v1/prompt-completions",
+                params={"runnable": "agic:selected"},
+            )
+            assert prompt_completions.json() == {
+                "items": [
+                    {
+                        "name": "review",
+                        "params": [{"name": "focus", "optional": False}],
+                    }
+                ]
+            }
             created = client.post("/api/v1/threads", json={"client": "tui"})
             thread_id = created.json()["thread"]["id"]
             fallback = client.post(
@@ -270,8 +282,8 @@ agic selected(_: Part[], tone: Text) -> Part[]:
             [Message.user("brief security included")],
             [Message.user("direct hello")],
         ]
-        assert setup.reads == 6
-        assert state.reads == 6
+        assert setup.reads == 7
+        assert state.reads == 7
         assert duplicate.status_code == 422
         assert duplicate.json()["detail"] == (
             "run control request already exists: selected_request"

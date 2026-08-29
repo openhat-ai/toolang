@@ -20,7 +20,11 @@ from toolang.execution.client import LocalRunClient, RunClient
 from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.executor import RunExecutor
 from toolang.execution.history import RunHistory
-from toolang.execution.runnables import runnable_binding_defaults
+from toolang.execution.runnables import (
+    parse_runnable_ref,
+    resolve_state_runnable,
+    runnable_binding_defaults,
+)
 from toolang.execution.executor.resources import (
     agent_model_targets,
     validate_agent_ceiling,
@@ -32,6 +36,7 @@ from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.plugin.sandboxes.host import host_sandbox_description
 from toolang.setup import SetupWatcher
 from toolang.state.watcher import StateWatcher
+from toolang.state.state import state_program
 from toolang.execution.values import parts_from_local
 from .base import ChatExecutorMetadata, ChatResult, ChatRunState, RunAccepted
 from .policy import apply_session_commands, commands_from_selects
@@ -152,6 +157,35 @@ class LocalChatSession:
                 ],
             }
         raise ValueError(f"unknown runnable kind: {kind}")
+
+    def list_prompts(self, runnable: str | None) -> Mapping[str, Any]:
+        setup = self.setup_watcher.current()
+        state = self._submit(self.state_watcher.refresh()).result()
+        selected = runnable or setup.bindings.runnable
+        if selected is None:
+            default_agic, _default_flow = runnable_binding_defaults(
+                state,
+                None,
+                fallback_agic="chat",
+            )
+            if default_agic is None:  # pragma: no cover - fallback invariant
+                raise RuntimeError("chat has no default runnable")
+            selected = f"agic:{default_agic}"
+        name, kind = parse_runnable_ref(selected)
+        module, _declaration = resolve_state_runnable(state, name, kind=kind)
+        return {
+            "items": [
+                {
+                    "name": prompt.name,
+                    "params": [
+                        {"name": parameter.name, "optional": parameter.optional}
+                        for parameter in prompt.params
+                    ],
+                }
+                for prompt in state_program(state, module).caps
+                if prompt.kind == "prompt"
+            ]
+        }
 
     def create_thread(self) -> str:
         return self.threads.create(prefix=ThreadPrefix.TERM)

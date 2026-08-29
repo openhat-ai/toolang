@@ -136,7 +136,7 @@ def resolve_spec(
     if input.named and (surface_named or surface_named_sources):
         raise ValueError("named inputs cannot be supplied by both source and surface")
     raw_named = input.named or surface_named_sources
-    definitions = _prompt_definitions(state, module=module, program=program)
+    definitions = prompt_definitions(state, module=module, program=program)
     invocations: list[PromptInvocation] = []
     if input.primary is not None:
         primary_resolution = resolve_input_parts_with_provenance(
@@ -281,7 +281,7 @@ def _resolve_named_sources(
     return result
 
 
-def _prompt_definitions(
+def prompt_definitions(
     state: AgentState,
     *,
     module: str,

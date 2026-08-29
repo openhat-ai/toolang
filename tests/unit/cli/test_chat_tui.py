@@ -10,6 +10,8 @@ from types import SimpleNamespace
 from typing import Any, Literal, cast
 
 from prompt_toolkit.application.current import set_app
+from prompt_toolkit.completion import CompleteEvent
+from prompt_toolkit.document import Document
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyPress
 from prompt_toolkit.layout import HSplit, VSplit, Window
@@ -34,6 +36,7 @@ from toolang.base.types.message import (
 from toolang.base.types.run import ModelCall, ToolCall
 from toolang.cli.toolang.commands.chat import (
     blocks,
+    completion,
     events,
     rendering,
     slashes,
@@ -1346,6 +1349,50 @@ def test_chat_prompt_submission_preserves_first_nonblank_line_indentation() -> N
     assert submitted == [ChatUIEvent("submit", "  $review")]
     assert prompt.history.get_strings() == ["  $review"]
     assert prompt.buffer.text == ""
+
+
+def test_chat_input_completion_keeps_namespaces_separate(tmp_path) -> None:
+    (tmp_path / "README.md").write_text("read me", encoding="utf-8")
+    completer = completion.ChatInputCompleter(resource_paths=lambda: [str(tmp_path)])
+    completer.set_prompts(
+        {
+            "items": [
+                {
+                    "name": "review",
+                    "params": [
+                        {"name": "focus", "optional": False},
+                        {"name": "tone", "optional": True},
+                    ],
+                }
+            ]
+        }
+    )
+    event = CompleteEvent(completion_requested=True)
+
+    def values(source: str) -> list[str]:
+        return [
+            item.text for item in completer.get_completions(Document(source), event)
+        ]
+
+    assert values("/mo") == ["/model MODEL"]
+    assert values("$rev") == ["$review focus= tone="]
+    assert values(":limit ti") == [":limit time="]
+    assert values("  $rev") == []
+    assert values("ordinary /mo") == []
+    assert values("first\n/mo") == []
+    assert values("@READ") == ["ME.md"]
+
+
+def test_chat_prompt_box_enables_completion_for_authored_source() -> None:
+    completer = completion.ChatInputCompleter()
+    prompt = widgets.PromptBox(
+        lambda _event: None,
+        lambda: None,
+        completer=completer,
+    )
+
+    assert prompt.buffer.completer is completer
+    assert prompt.buffer.complete_while_typing()
 
 
 def test_chat_prompt_grows_for_wrapped_input(
