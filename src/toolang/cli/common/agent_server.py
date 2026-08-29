@@ -1,4 +1,4 @@
-"""CLI ownership of one embedded or AgentServer execution runtime."""
+"""CLI acquisition of an AgentServer for run execution."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import sys
-from typing import Literal
 
 from toolang.base.errors import ToolangError
 from toolang.common.layout import AgentLayout
@@ -27,46 +26,35 @@ from .startup_progress import (
 )
 
 
-ExecutionMode = Literal["embedded", "remote"]
 DEVELOPMENT_WHEEL_HELP = (
     "Install Toolang in a new guest from a wheel; directories select the newest "
     "Toolang wheel recursively."
 )
 
 
-class ExecutionRuntimeError(RuntimeError):
-    """One execution-runtime selection or lifecycle failure."""
+class AgentServerAcquisitionError(RuntimeError):
+    """One AgentServer selection or lifecycle failure."""
 
 
 @dataclass(frozen=True, slots=True)
-class ExecutionRuntime:
-    """Resolved location and ownership of one command's executor."""
+class AgentServerRef:
+    """One acquired AgentServer endpoint and its sandbox identity."""
 
     sandbox: str
-    mode: ExecutionMode
-    endpoint: str | None = None
-    owned: bool = False
+    endpoint: str
 
     def __post_init__(self) -> None:
         sandbox = self.sandbox.strip()
         if not sandbox or sandbox != self.sandbox:
-            raise ValueError("execution runtime requires a canonical sandbox")
-        if self.mode == "embedded":
-            if self.endpoint is not None or self.owned:
-                raise ValueError("embedded execution cannot own a remote endpoint")
-            if sandbox != "host":
-                raise ValueError("embedded execution requires the host sandbox")
-            return
-        if self.mode != "remote":  # pragma: no cover - closed type at call sites
-            raise ValueError(f"unknown execution runtime mode: {self.mode}")
-        if self.endpoint is None or not self.endpoint.strip():
-            raise ValueError("remote execution requires an endpoint")
+            raise ValueError("agent server requires a canonical sandbox")
+        if not self.endpoint.strip():
+            raise ValueError("agent server requires an endpoint")
         if self.endpoint != self.endpoint.strip():
-            raise ValueError("remote execution requires a canonical endpoint")
+            raise ValueError("agent server requires a canonical endpoint")
 
 
 @contextmanager
-def open_execution_runtime(
+def acquire_agent_server(
     layout: AgentLayout,
     *,
     sandbox: str | None,
@@ -75,21 +63,21 @@ def open_execution_runtime(
     ui_base_url: str = "",
     base_environ: Mapping[str, str] | None = None,
     show_progress: bool = True,
-) -> Iterator[ExecutionRuntime]:
-    """Attach to, embed, or temporarily launch one execution runtime."""
+) -> Iterator[AgentServerRef | None]:
+    """Acquire an existing or temporary AgentServer, or select host embedding."""
 
     status = agents.AgentProcess(layout).status(ui_base_url=ui_base_url)
     if status is not None and status.status in {"preparing", "starting"}:
-        raise ExecutionRuntimeError(
+        raise AgentServerAcquisitionError(
             f"agent {layout.name} is {status.status}; wait for it to become ready"
         )
     if status is not None and status.status == "running":
         if dev is not None:
-            raise ExecutionRuntimeError(
+            raise AgentServerAcquisitionError(
                 f"--dev only applies when starting a new guest; agent {layout.name} "
                 "is already running. Stop it first or omit --dev."
             )
-        yield _attached_runtime(layout, status, requested=sandbox)
+        yield _attached_server(layout, status, requested=sandbox)
         return
 
     try:
@@ -102,10 +90,10 @@ def open_execution_runtime(
         TypeError,
         ValueError,
     ) as exc:
-        raise ExecutionRuntimeError(str(exc)) from exc
+        raise AgentServerAcquisitionError(str(exc)) from exc
     if selected == "host":
         if dev is not None:
-            raise ExecutionRuntimeError(
+            raise AgentServerAcquisitionError(
                 "--dev only applies to guest sandboxes; host uses the current "
                 "Toolang installation."
             )
@@ -119,8 +107,8 @@ def open_execution_runtime(
             TypeError,
             ValueError,
         ) as exc:
-            raise ExecutionRuntimeError(str(exc)) from exc
-        yield ExecutionRuntime(sandbox="host", mode="embedded")
+            raise AgentServerAcquisitionError(str(exc)) from exc
+        yield None
         return
 
     launch = _resolve_inactive_launch(
@@ -151,7 +139,7 @@ def open_execution_runtime(
         ValueError,
     ) as exc:
         progress.finish()
-        raise ExecutionRuntimeError(
+        raise AgentServerAcquisitionError(
             runtime_startup_failure_message(
                 layout.name,
                 launch.sandbox,
@@ -164,20 +152,18 @@ def open_execution_runtime(
         ) from exc
     progress.finish()
 
-    runtime: ExecutionRuntime | None = None
+    server: AgentServerRef | None = None
     body_error: BaseException | None = None
     try:
-        runtime = ExecutionRuntime(
+        server = AgentServerRef(
             sandbox=handle.state.sandbox,
-            mode="remote",
             endpoint=handle.state.ref.endpoint,
-            owned=True,
         )
-        yield runtime
+        yield server
     except BaseException as exc:
         body_error = exc
-        if runtime is None and isinstance(exc, ValueError):
-            raise ExecutionRuntimeError(str(exc)) from exc
+        if server is None and isinstance(exc, ValueError):
+            raise AgentServerAcquisitionError(str(exc)) from exc
         raise
     finally:
         shutdown_progress = make_runtime_shutdown_progress(
@@ -206,13 +192,13 @@ def open_execution_runtime(
             if body_error is not None:
                 print(message, file=sys.stderr)
             else:
-                raise ExecutionRuntimeError(message) from exc
+                raise AgentServerAcquisitionError(message) from exc
         finally:
             shutdown_progress.finish()
 
 
 def sandbox_matches(requested: str, running: str) -> bool:
-    """Return whether one explicit selector accepts a canonical runtime."""
+    """Return whether one explicit selector accepts a running AgentServer."""
 
     requested_name, separator, _requested_spec = requested.partition(":")
     running_name = running.partition(":")[0]
@@ -250,23 +236,22 @@ def warn_development_package_source(
     )
 
 
-def _attached_runtime(
+def _attached_server(
     layout: AgentLayout,
     status: agents.AgentStatus,
     *,
     requested: str | None,
-) -> ExecutionRuntime:
+) -> AgentServerRef:
     if status.endpoint is None or status.sandbox is None:
-        raise ExecutionRuntimeError(
+        raise AgentServerAcquisitionError(
             f"running agent {layout.name} has incomplete runtime status"
         )
     if requested is not None and not sandbox_matches(requested, status.sandbox):
-        raise ExecutionRuntimeError(
+        raise AgentServerAcquisitionError(
             f"--sandbox {requested} does not match running sandbox {status.sandbox}"
         )
-    return ExecutionRuntime(
+    return AgentServerRef(
         sandbox=status.sandbox,
-        mode="remote",
         endpoint=status.endpoint.strip(),
     )
 
@@ -312,4 +297,4 @@ def _resolve_inactive_launch(
         TypeError,
         ValueError,
     ) as exc:
-        raise ExecutionRuntimeError(str(exc)) from exc
+        raise AgentServerAcquisitionError(str(exc)) from exc

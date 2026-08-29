@@ -12,7 +12,7 @@ import click
 import pytest
 
 from toolang.base.types.message import TextPart
-from toolang.cli.common.execution_runtime import ExecutionRuntime
+from toolang.cli.common.agent_server import AgentServerRef
 from toolang.cli.common.output import shorten_home_path
 from toolang.cli.toolang.commands.chat import main as chat
 from toolang.cli.toolang.commands.chat.base import (
@@ -265,10 +265,10 @@ def test_chat_runtime_builds_process_local_execution_resources(
     monkeypatch.setattr(chat, "ui_base_url", lambda: "https://ui.test")
 
     @contextmanager
-    def execution_runtime(
+    def agent_server_context(
         selected: AgentLayout,
         **kwargs: object,
-    ) -> Iterator[ExecutionRuntime]:
+    ) -> Iterator[AgentServerRef | None]:
         assert selected == layout
         assert kwargs == {
             "sandbox": "host",
@@ -276,9 +276,9 @@ def test_chat_runtime_builds_process_local_execution_resources(
             "model_catalog": None,
             "ui_base_url": "https://ui.test",
         }
-        yield ExecutionRuntime(sandbox="host", mode="embedded")
+        yield None
 
-    monkeypatch.setattr(chat, "open_execution_runtime", execution_runtime)
+    monkeypatch.setattr(chat, "acquire_agent_server", agent_server_context)
     monkeypatch.setattr(
         chat,
         "load_runtime_environ",
@@ -328,10 +328,10 @@ def test_chat_runtime_uses_remote_execution_without_local_environment(
     captured: dict[str, object] = {}
 
     @contextmanager
-    def execution_runtime(
+    def agent_server_context(
         selected: AgentLayout,
         **kwargs: object,
-    ) -> Iterator[ExecutionRuntime]:
+    ) -> Iterator[AgentServerRef]:
         assert selected == layout
         assert kwargs == {
             "sandbox": "docker",
@@ -339,9 +339,8 @@ def test_chat_runtime_uses_remote_execution_without_local_environment(
             "model_catalog": None,
             "ui_base_url": "https://ui.test",
         }
-        yield ExecutionRuntime(
+        yield AgentServerRef(
             sandbox="docker:python:3.13-slim",
-            mode="remote",
             endpoint="http://127.0.0.1:7001",
         )
 
@@ -365,7 +364,7 @@ def test_chat_runtime_uses_remote_execution_without_local_environment(
 
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
     monkeypatch.setattr(chat, "ui_base_url", lambda: "https://ui.test")
-    monkeypatch.setattr(chat, "open_execution_runtime", execution_runtime)
+    monkeypatch.setattr(chat, "acquire_agent_server", agent_server_context)
     monkeypatch.setattr(chat, "RemoteChatSession", Session)
     monkeypatch.setattr(
         chat,
@@ -407,13 +406,12 @@ def test_chat_runtime_does_not_fall_back_after_remote_health_failure(
     layout = AgentLayout.resident(tmp_path, "alice")
 
     @contextmanager
-    def execution_runtime(
+    def agent_server_context(
         _layout: AgentLayout,
         **_kwargs: object,
-    ) -> Iterator[ExecutionRuntime]:
-        yield ExecutionRuntime(
+    ) -> Iterator[AgentServerRef]:
+        yield AgentServerRef(
             sandbox="host",
-            mode="remote",
             endpoint="http://127.0.0.1:7001",
         )
 
@@ -422,7 +420,7 @@ def test_chat_runtime_does_not_fall_back_after_remote_health_failure(
 
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
     monkeypatch.setattr(chat, "ui_base_url", lambda: "")
-    monkeypatch.setattr(chat, "open_execution_runtime", execution_runtime)
+    monkeypatch.setattr(chat, "acquire_agent_server", agent_server_context)
     monkeypatch.setattr(chat, "RemoteChatSession", failed_remote)
     monkeypatch.setattr(
         chat,
@@ -465,18 +463,16 @@ def test_chat_runtime_uses_a_temporary_remote_runtime(
     opened = False
 
     @contextmanager
-    def execution_runtime(
+    def agent_server_context(
         _layout: AgentLayout,
         **_kwargs: object,
-    ) -> Iterator[ExecutionRuntime]:
+    ) -> Iterator[AgentServerRef]:
         nonlocal opened
         assert _kwargs["dev"] == development
         opened = True
-        yield ExecutionRuntime(
+        yield AgentServerRef(
             sandbox="docker:python:3.13-slim",
-            mode="remote",
             endpoint="http://127.0.0.1:8123",
-            owned=True,
         )
 
     class Session(_Client):
@@ -490,7 +486,7 @@ def test_chat_runtime_uses_a_temporary_remote_runtime(
 
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
     monkeypatch.setattr(chat, "ui_base_url", lambda: "")
-    monkeypatch.setattr(chat, "open_execution_runtime", execution_runtime)
+    monkeypatch.setattr(chat, "acquire_agent_server", agent_server_context)
     monkeypatch.setattr(chat, "RemoteChatSession", Session)
 
     with chat._chat_runtime(
@@ -511,17 +507,15 @@ def test_chat_runtime_closes_temporary_runtime_after_remote_initialization_failu
     cleaned = False
 
     @contextmanager
-    def execution_runtime(
+    def agent_server_context(
         _layout: AgentLayout,
         **_kwargs: object,
-    ) -> Iterator[ExecutionRuntime]:
+    ) -> Iterator[AgentServerRef]:
         nonlocal cleaned
         try:
-            yield ExecutionRuntime(
+            yield AgentServerRef(
                 sandbox="docker:python:3.13-slim",
-                mode="remote",
                 endpoint="http://127.0.0.1:8123",
-                owned=True,
             )
         finally:
             cleaned = True
@@ -531,7 +525,7 @@ def test_chat_runtime_closes_temporary_runtime_after_remote_initialization_failu
 
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
     monkeypatch.setattr(chat, "ui_base_url", lambda: "")
-    monkeypatch.setattr(chat, "open_execution_runtime", execution_runtime)
+    monkeypatch.setattr(chat, "acquire_agent_server", agent_server_context)
     monkeypatch.setattr(chat, "RemoteChatSession", failed_remote)
 
     with pytest.raises(click.ClickException, match="initialization failed"):

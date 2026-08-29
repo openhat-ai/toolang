@@ -63,15 +63,15 @@ from ...common.context import (
     user_call,
 )
 from ...common.execution import ExecutionResources, open_execution
-from ...common.execution_runtime import (
+from ...common.agent_server import (
+    AgentServerAcquisitionError,
+    AgentServerRef,
     DEVELOPMENT_WHEEL_HELP,
-    ExecutionRuntime,
-    ExecutionRuntimeError,
-    open_execution_runtime,
+    acquire_agent_server,
 )
 from ...common.execution_progress.config import resolve_progress_max_width
 from ...common.output import echo_table
-from ...common.run_client import open_run_client
+from ...common.run_client import acquire_run_client
 from ...common.script_progress import ScriptRunPresenter
 
 
@@ -668,17 +668,17 @@ def _run_retry_or_rerun(
     model_catalog: Path | None = None,
 ) -> RunDetail:
     try:
-        with open_execution_runtime(
+        with acquire_agent_server(
             layout,
             sandbox=sandbox,
             dev=dev,
             model_catalog=model_catalog,
             show_progress=show_progress,
-        ) as runtime:
+        ) as server:
             return asyncio.run(
                 _execute_retry_or_rerun(
                     layout=layout,
-                    runtime=runtime,
+                    server=server,
                     kind=kind,
                     source=source,
                     anchor=anchor,
@@ -687,7 +687,7 @@ def _run_retry_or_rerun(
                     model_catalog=model_catalog,
                 )
             )
-    except ExecutionRuntimeError as exc:
+    except AgentServerAcquisitionError as exc:
         raise click.ClickException(str(exc)) from exc
     except (OSError, ToolangError, ValueError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -724,7 +724,7 @@ def _restart_commands(
 async def _execute_retry_or_rerun(
     *,
     layout: AgentLayout,
-    runtime: ExecutionRuntime,
+    server: AgentServerRef | None,
     kind: Literal["retry", "rerun"],
     source: str,
     anchor: StepPath | None,
@@ -744,9 +744,9 @@ async def _execute_retry_or_rerun(
         else None
     )
     try:
-        async with open_run_client(
+        async with acquire_run_client(
             layout,
-            runtime,
+            server,
             model_catalog=model_catalog,
         ) as client:
             request_id = f"term_{uuid4().hex}"

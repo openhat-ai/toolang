@@ -1,4 +1,4 @@
-"""Foreground and background agent runtime commands."""
+"""Foreground and background AgentServer commands."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ from ...common.context import (
     ui_base_url,
     user_call,
 )
-from ...common.execution_runtime import (
+from ...common.agent_server import (
     DEVELOPMENT_WHEEL_HELP,
     warn_development_package_source,
 )
