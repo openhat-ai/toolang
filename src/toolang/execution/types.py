@@ -239,72 +239,95 @@ def _resource_object(
 
 @dataclass(frozen=True, slots=True)
 class Pointer:
-    """Reference one immutable control, step, or run value."""
+    """Address one durable execution record or one of its JSON fields."""
 
     value: str
 
     def __post_init__(self) -> None:
         if not isinstance(self.value, str) or not self.value:
-            raise ValueError("value pointer must be non-empty text")
-        anchor, separator, pointer = self.value.partition("/")
-        if not anchor or any(character.isspace() for character in anchor):
-            raise ValueError(f"invalid value pointer: {self.value!r}")
+            raise ValueError("pointer must be non-empty text")
+        if ":" in self.value:
+            raise ValueError(f"invalid pointer: {self.value!r}")
+        record, separator, field = self.value.partition("/")
+        if not record or any(character.isspace() for character in record):
+            raise ValueError(f"invalid pointer: {self.value!r}")
         if separator:
-            if pointer.endswith("/"):
-                raise ValueError(f"non-canonical JSON pointer: {self.value!r}")
-            if pointer:
-                _validate_json_pointer(pointer, source=self.value)
-        if "^" in anchor:
-            target, marker, raw_index = anchor.partition("^")
+            _validate_json_pointer(field, source=self.value)
+        if "@" in record:
+            target, marker, raw_index = record.partition("@")
             if (
-                marker != "^"
-                or not valid_execution_id(target)
+                marker != "@"
+                or "@" in raw_index
+                or not (valid_run_id(target) or valid_thread_id(target))
                 or not _canonical_index(raw_index)
-                or not separator
-                or not pointer
             ):
-                raise ValueError(f"invalid control value pointer: {self.value!r}")
+                raise ValueError(f"invalid control pointer: {self.value!r}")
             return
-        target, *indices = anchor.split(".")
-        if not valid_execution_id(target) or any(
-            not _canonical_index(index) for index in indices
-        ):
-            raise ValueError(f"invalid value pointer: {self.value!r}")
+        target, *indices = record.split(".")
+        if target.startswith("run_"):
+            if not valid_run_id(target) or any(
+                not _canonical_index(index) for index in indices
+            ):
+                raise ValueError(f"invalid pointer: {self.value!r}")
+            return
+        if indices or not valid_thread_id(target):
+            raise ValueError(f"invalid pointer: {self.value!r}")
 
     @property
-    def anchor(self) -> str:
-        """Return the run, step, or control anchor."""
+    def record(self) -> str:
+        """Return the record portion of this Pointer."""
 
         return self.value.partition("/")[0]
 
     @property
-    def pointer(self) -> str | None:
-        """Return the RFC 6901 suffix without its leading slash."""
+    def field(self) -> str:
+        """Return the RFC 6901 field suffix, including its leading slash."""
 
-        _anchor, separator, pointer = self.value.partition("/")
-        return pointer if separator else None
+        _record, separator, field = self.value.partition("/")
+        return f"/{field}" if separator else ""
+
+    @property
+    def kind(self) -> Literal["thread", "control", "run", "step"]:
+        """Return the record kind identified by this Pointer."""
+
+        record = self.record
+        if "@" in record:
+            return "control"
+        if record.startswith("run_"):
+            return "step" if "." in record else "run"
+        return "thread"
+
+    @property
+    def tokens(self) -> tuple[str, ...]:
+        """Return decoded RFC 6901 field tokens."""
+
+        if not self.field:
+            return ()
+        return tuple(
+            token.replace("~1", "/").replace("~0", "~")
+            for token in self.field[1:].split("/")
+        )
 
     def __str__(self) -> str:
         return self.value
 
     def select(self, *path: str | int) -> Pointer:
-        """Return a pointer to a value nested below this pointer."""
+        """Return a Pointer to fields nested below the current selection."""
 
         if not path:
             return self
         suffix = _pointer_suffix(path)
-        separator = "" if self.value.endswith("/") else "/"
-        return Pointer(f"{self.value}{separator}{suffix}")
+        return Pointer(f"{self.value}/{suffix}")
 
     @classmethod
     def run(cls, run_id: RunId, *path: str | int) -> Pointer:
-        """Point to one run output or a value within it."""
+        """Point to one run record or a field within it."""
 
         return cls(_pointer_value(run_id, path))
 
     @classmethod
     def step(cls, step: StepPath, *path: str | int) -> Pointer:
-        """Point to one step output or a value within it."""
+        """Point to one step record or a field within it."""
 
         return cls(_pointer_value(str(step), path))
 
@@ -313,12 +336,11 @@ class Pointer:
         cls,
         target: str,
         index: int,
-        name: str,
         *path: str | int,
     ) -> Pointer:
-        """Point to one named local accepted by a run control."""
+        """Point to one control record or a field within it."""
 
-        return cls(_pointer_value(f"{target}^{index}", (name, *path)))
+        return cls(_pointer_value(f"{target}@{index}", path))
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -358,6 +380,18 @@ class TypedPointer:
         validate_type(self.type)
         if not isinstance(self.pointer, Pointer):
             raise TypeError("typed pointer requires a Pointer")
+
+    @classmethod
+    def parse(cls, value: str) -> TypedPointer:
+        """Parse the canonical POINTER:TYPE representation."""
+
+        if not isinstance(value, str) or value.count(":") != 1:
+            raise ValueError(f"invalid typed pointer: {value!r}")
+        pointer, type_name = value.split(":", 1)
+        return cls(type_name, Pointer(pointer))
+
+    def __str__(self) -> str:
+        return f"{self.pointer}:{self.type}"
 
 
 _PART_TYPES = (
@@ -455,9 +489,20 @@ class Local:
         _source_type: Any,
         _handler: Any,
     ) -> core_schema.CoreSchema:
+        protocol_schema = core_schema.typed_dict_schema(
+            {
+                "type": core_schema.typed_dict_field(core_schema.str_schema()),
+                "value": core_schema.typed_dict_field(core_schema.any_schema()),
+                "name": core_schema.typed_dict_field(
+                    core_schema.nullable_schema(core_schema.str_schema())
+                ),
+                "dim": core_schema.typed_dict_field(core_schema.literal_schema([0, 1])),
+            }
+        )
         return core_schema.json_or_python_schema(
-            json_schema=core_schema.no_info_plain_validator_function(
-                cls._validate_pydantic
+            json_schema=core_schema.no_info_after_validator_function(
+                cls._validate_pydantic,
+                protocol_schema,
             ),
             python_schema=core_schema.union_schema(
                 [
@@ -493,7 +538,7 @@ def local_from_protocol_data(payload: Mapping[str, object]) -> Local:
         raise ValueError("local name must be text or null")
     return Local.typed(
         type_name,
-        _protocol_value_from_data(payload.get("value"), type_name),
+        value_from_protocol_data(payload.get("value"), type_name),
         name=raw_name,
         dim=cast(Literal[0, 1], raw_dim),
     )
@@ -510,11 +555,16 @@ def local_to_protocol_data(local: Local) -> dict[str, object]:
     }
 
 
-def _protocol_value_from_data(data: object, type_name: str) -> Value | TypedPointer:
+def value_from_protocol_data(data: object, type_name: str) -> Value | TypedPointer:
+    """Parse one canonical protocol value at an explicit type boundary."""
+
     if isinstance(data, Mapping) and set(data) == {"?"}:
         raw_tag = cast(Mapping[str, object], data).get("?")
-        if isinstance(raw_tag, str) and raw_tag.startswith("@") and len(raw_tag) > 1:
-            return TypedPointer(type_name, Pointer(raw_tag[1:]))
+        if isinstance(raw_tag, str):
+            typed = TypedPointer.parse(raw_tag)
+            if not type_assignable(typed.type, type_name):
+                raise TypeError(f"protocol pointer is {typed.type}, not {type_name}")
+            return typed
     if type_name.endswith("[]"):
         if not isinstance(data, Sequence) or isinstance(data, (str, bytes, bytearray)):
             raise ValueError(f"protocol {type_name} requires an array")
@@ -522,7 +572,7 @@ def _protocol_value_from_data(data: object, type_name: str) -> Value | TypedPoin
             Value,
             Array(
                 type_name,
-                tuple(_protocol_value_from_data(item, type_name[:-2]) for item in data),
+                tuple(value_from_protocol_data(item, type_name[:-2]) for item in data),
             ),
         )
     if type_name in _PART_TYPES_BY_NAME:
@@ -564,7 +614,7 @@ def _protocol_json_value_from_data(data: object) -> object:
 
 def _protocol_value_to_data(value: object) -> object:
     if isinstance(value, TypedPointer):
-        return {"?": f"@{value.pointer}"}
+        return {"?": str(value)}
     if isinstance(value, _PART_TYPES):
         return value.to_data()
     if isinstance(value, Array):
@@ -740,7 +790,7 @@ class StepPath:
     indices: tuple[int, ...]
 
     def __post_init__(self) -> None:
-        if not valid_execution_id(self.run):
+        if not valid_run_id(self.run):
             raise ValueError(f"invalid step run id: {self.run!r}")
         if not self.indices or any(index < 0 for index in self.indices):
             raise ValueError("step path requires non-negative indices")
@@ -1379,6 +1429,18 @@ def valid_execution_id(value: object) -> bool:
     return isinstance(value, str) and _EXECUTION_ID_RE.fullmatch(value) is not None
 
 
+def valid_run_id(value: object) -> bool:
+    """Return whether a run id occupies the reserved run namespace."""
+
+    return valid_execution_id(value) and cast(str, value).startswith("run_")
+
+
+def valid_thread_id(value: object) -> bool:
+    """Return whether a thread id is disjoint from the run namespace."""
+
+    return valid_execution_id(value) and not cast(str, value).startswith("run_")
+
+
 def validate_execution_id(value: object, *, label: str) -> str:
     """Return one canonical run or thread id, or reject it before persistence."""
 
@@ -1394,6 +1456,8 @@ def _canonical_index(value: str) -> bool:
 
 
 def _validate_json_pointer(value: str, *, source: str) -> None:
+    if ":" in value:
+        raise ValueError(f"pointer field names cannot contain ':': {source!r}")
     index = 0
     while index < len(value):
         if value[index] != "~":

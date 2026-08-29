@@ -149,7 +149,9 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
         project_run_end(
             store,
             run_id=run.id,
-            output=Local.typed("Part", Pointer.step(step.path, 1), "_", 0),
+            output=Local.typed(
+                "Part", Pointer.step(step.path, "output", "value", 1), "_", 0
+            ),
         )
 
         history = RunHistory(store)
@@ -158,7 +160,9 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
 
         assert store.run_output(run_id=run.id) == (TextPart("result"),)
         assert detail is not None
-        expected = Local.typed("Part", Pointer.step(step.path, 1), "_", 0)
+        expected = Local.typed(
+            "Part", Pointer.step(step.path, "output", "value", 1), "_", 0
+        )
         assert detail.output == expected
         assert thread is not None
         assert thread.runs[0].output == expected
@@ -179,7 +183,7 @@ def test_run_history_resolves_pass_through_control_output(tmp_path: Path) -> Non
         project_run_end(
             store,
             run_id=run.id,
-            output=Pointer.control(run.id, 0, "_"),
+            output=Pointer.control(run.id, 0, "payload", "locals", 0, "value"),
         )
 
         stored = store.get_run(run_id=run.id)
@@ -188,12 +192,18 @@ def test_run_history_resolves_pass_through_control_output(tmp_path: Path) -> Non
         assert stored is not None
         assert stored.control == ControlRef(run.id, 0)
         assert stored.output == Local.typed(
-            "Part[]", Pointer.control(run.id, 0, "_"), "_", 0
+            "Part[]",
+            Pointer.control(run.id, 0, "payload", "locals", 0, "value"),
+            "_",
+            0,
         )
         assert store.run_output(run_id=run.id) == Message.user("unchanged").parts
         assert detail is not None
         assert detail.output == Local.typed(
-            "Part[]", Pointer.control(run.id, 0, "_"), "_", 0
+            "Part[]",
+            Pointer.control(run.id, 0, "payload", "locals", 0, "value"),
+            "_",
+            0,
         )
     finally:
         store.close()
@@ -214,7 +224,7 @@ def test_resolve_local_rejects_a_pointer_to_a_different_type(tmp_path: Path) -> 
             store.resolve_local(
                 Local.typed(
                     "Number",
-                    Pointer.control(run.id, 0, "_"),
+                    Pointer.control(run.id, 0, "payload", "locals", 0, "value"),
                     "_",
                     0,
                 )
@@ -230,24 +240,24 @@ def test_run_history_reads_thread_ejection_scope_from_the_control_record(
     try:
         first = project_run_start(
             store,
-            run_id="first",
-            thread_id="run_thread",
+            run_id="run_first",
+            thread_id="term_thread",
             origin="chat",
             input=Message.user("first"),
         )
         project_run_end(store, run_id=first.id)
         second = project_run_start(
             store,
-            run_id="second",
-            thread_id="run_thread",
+            run_id="run_second",
+            thread_id="term_thread",
             origin="chat",
             input=Message.user("second"),
         )
         project_run_end(store, run_id=second.id)
-        thread = store.get_thread(thread_id="run_thread")
+        thread = store.get_thread(thread_id="term_thread")
         assert thread is not None
         store.rewind_thread(
-            thread_id="run_thread",
+            thread_id="term_thread",
             anchor=first.id,
             request_id=None,
             expected_head=thread.head,
@@ -257,7 +267,7 @@ def test_run_history_reads_thread_ejection_scope_from_the_control_record(
         rewind_ejected = RunHistory(store).get_run(second.id)
         assert rewind_ejected is not None
         assert rewind_ejected.ejected == ThreadControlRefData(
-            thread="run_thread",
+            thread="term_thread",
             index=1,
         )
     finally:

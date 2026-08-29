@@ -107,7 +107,7 @@ toolang alice chat term_3nprht9x
 toolang alice chat --sandbox docker
 toolang alice threads
 toolang alice runs --thread term_3nprht9x
-toolang alice inspect run_ppkp9e94
+toolang alice inspect run_ppkp9e94.0/output/value
 toolang alice retry run_ppkp9e94 --limit tokens=200000 --limit time=900
 toolang alice rerun run_ppkp9e94 --default model=openai/gpt-5
 toolang alice steer run_ppkp9e94 "Use the smaller patch"
@@ -272,7 +272,7 @@ toolang SCRIPT run
 toolang SCRIPT chat [THREAD]
 toolang SCRIPT threads
 toolang SCRIPT runs [--thread THREAD]
-toolang SCRIPT inspect TARGET
+toolang SCRIPT inspect POINTER [--human | --json]
 toolang SCRIPT retry RUN [--anchor STEP]
 toolang SCRIPT rerun RUN
 ```
@@ -287,14 +287,44 @@ Visiting selectors support the same agent-self and execution-history commands:
 toolang brice/alice info
 toolang brice/alice run
 toolang brice/alice chat [THREAD]
-toolang brice/alice inspect TARGET
+toolang brice/alice inspect POINTER [--human | --json]
 toolang brice/alice retry RUN
 ```
 
 Commands that execute or inspect current program state (`info`, `run`, `chat`,
 `retry`, and `rerun`) resolve and materialize the remote program. History-only
-commands derive the stable visiting layout and read its existing `runs.db`
-without fetching the source.
+commands, including `inspect`, derive the stable visiting layout and read its
+existing `runs.db` without fetching the source.
+
+### Historical record inspection
+
+`inspect` accepts one Pointer to a durable Thread, Control, Run, or Step record,
+or to a field inside that record:
+
+```text
+term_ab12                         Thread record
+run_ab12                          Run record
+run_ab12.0                        Step record
+term_ab12@0                       Thread Control record
+run_ab12@1                        Run Control record
+run_ab12.0/output/value/0         nested field
+run_ab12@1/payload/locals/0/value nested Control field
+```
+
+`.` enters the Step hierarchy, `@` selects a Control index, and `/` enters a
+field using RFC 6901 escaping (`~0` for `~` and `~1` for `/`). Run ids occupy
+the `run_` namespace; thread ids cannot begin with `run_`.
+
+Human output is the default. Record and container tables use the CLI's
+horizontal-rule Rich style and list direct children as relative field suffixes
+with TYPE in the second column. Output ends with dim context naming the selected
+Pointer and displayed type plus, for a table, how to inspect a child. Strings
+have no JSON quotes, and nullable Human type labels use `T?`. Multiline Part
+content stays aligned inside the VALUE cell without a leading bullet. A
+separate `→` means the shown value was resolved from a Pointer-valued field.
+`--json` prints only the selected canonical JSON value. The two display modes
+are mutually exclusive, and `--type` is not an option. Inspection is read-only
+and historical; it does not prepare future model calls or load a runnable.
 
 ## File Request Runtime
 
@@ -1133,7 +1163,7 @@ Every payload retains its canonical `type` discriminator. A `part_begin`
 payload uses `part_type` for the message-part kind so it does not collide with
 the event discriminator.
 
-Run control acceptance and status are durable `RunControlRecord` truth, not
+Run control acceptance and status are durable `ControlRecord` truth, not
 synthetic stream events. A thread stream may additionally carry
 `thread_created`, `thread_forked`, and `thread_rewound`, and aggregates live run
 events belonging to that thread.

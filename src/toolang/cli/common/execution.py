@@ -57,15 +57,10 @@ def run_store_schema_error(error: RunStoreSchemaError, *, path: object) -> str:
 
     if error.version > error.current:
         advice = "Upgrade this CLI to a Toolang version that supports the newer schema."
-    elif error.version in error.supported:
-        advice = (
-            "Start this agent once with the current Toolang runtime to apply the "
-            "supported upgrade, then retry."
-        )
     else:
         advice = (
-            "Restore a compatible backup or migrate it with a Toolang version that "
-            f"supports schema {error.version}."
+            "This build does not migrate older execution history. Preserve or remove "
+            "the old store, then create new execution history."
         )
     return (
         f"execution history is incompatible with toolang {toolang_version()}: "

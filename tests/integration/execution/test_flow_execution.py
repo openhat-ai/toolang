@@ -147,7 +147,7 @@ def _model_setup() -> AgentSetup:
 
 
 def test_flow_item_transform_normalizes_a_list_result_to_dim_zero() -> None:
-    pointer = Pointer.run("run_child")
+    pointer = Pointer.run("run_child", "output", "value")
     evaluated = Local(
         ["one", "two"],
         "list",
@@ -970,7 +970,7 @@ def test_run_control_request_is_unique_across_runs(tmp_path: Path) -> None:
             created_at="2026-01-01T00:00:03Z",
         )
 
-    assert first.run == "run_test"
+    assert first.target == "run_test"
     store.close()
 
 
@@ -1342,7 +1342,9 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
                 step=StepPath.parse("run_root.0"),
                 kind="run",
                 given=RunStmt(span=Span(line=1), runnable="flow:test"),
-                input=(Pointer.control("run_root", 0, "_"),),
+                input=(
+                    Pointer.control("run_root", 0, "payload", "locals", 0, "value"),
+                ),
                 started_at="2026-01-01T00:00:02Z",
             )
         )
@@ -1733,7 +1735,7 @@ def test_private_event_projector_persists_run_and_step_records(
             step=StepPath.parse("run_test.0"),
             kind="value",
             given=LetStmt(span=Span(line=1), value="done"),
-            input=(Pointer.control("run_test", 0, "_"),),
+            input=(Pointer.control("run_test", 0, "payload", "locals", 0, "value"),),
             started_at="2026-01-01T00:00:02Z",
         )
     )
@@ -1751,7 +1753,10 @@ def test_private_event_projector_persists_run_and_step_records(
             run="run_test",
             status="succeeded",
             output=RecordLocal.typed(
-                "Part[]", Pointer.step(StepPath.parse("run_test.0")), "_", 0
+                "Part[]",
+                Pointer.step(StepPath.parse("run_test.0"), "output", "value"),
+                "_",
+                0,
             ),
             finished_at="2026-01-01T00:00:04Z",
         )

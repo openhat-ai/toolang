@@ -18,7 +18,7 @@ from toolang.base.types.message import (
 from toolang.base.types.policy import RunLimits
 from toolang.execution.records import (
     ExecuteControlPayload,
-    RunControlRecord,
+    ControlRecord,
     ReloadControlPayload,
     RetryControlPayload,
     RunControlPayload,
@@ -35,6 +35,7 @@ from toolang.execution.types import (
     Local,
     Pointer,
     StepPath,
+    TypedPointer,
     local_from_protocol_data,
     local_to_protocol_data,
 )
@@ -43,22 +44,31 @@ from toolang.lang.types import Array, Struct
 
 
 def test_pointer_accepts_run_step_control_and_json_paths() -> None:
-    assert str(Pointer("run_1")) == "run_1"
-    assert Pointer("run_1.0.2/key~1name/1").anchor == "run_1.0.2"
-    assert Pointer("run_1.0.2/key~1name/1").pointer == "key~1name/1"
-    assert Pointer("run_1^3/_/1").anchor == "run_1^3"
+    assert Pointer("term_1").kind == "thread"
+    assert Pointer("run_1").kind == "run"
+    assert Pointer("run_1.0.2/key~1name/1").kind == "step"
+    assert Pointer("run_1.0.2/key~1name/1").record == "run_1.0.2"
+    assert Pointer("run_1.0.2/key~1name/1").field == "/key~1name/1"
+    assert Pointer("run_1.0.2/key~1name/1").tokens == ("key/name", "1")
+    assert Pointer("run_1@3/payload/locals/1").kind == "control"
+    assert Pointer("term_1@0").kind == "control"
+    assert str(Pointer.step(StepPath("run_1", (0, 2)), "output", "value")) == (
+        "run_1.0.2/output/value"
+    )
 
 
 @pytest.mark.parametrize(
     "value",
     (
         "",
-        "run.01",
-        "run.0/key/",
-        "run.0/key~2name",
-        "run^0",
-        "run^x/_",
+        "run_1.01",
+        "run_1.0/key~2name",
+        "run_1^0",
+        "run_1@x/_",
+        "run_1@0@1",
         "run@file",
+        "term_1.0",
+        "run_1/field:name",
     ),
 )
 def test_pointer_rejects_noncanonical_values(value: str) -> None:
@@ -67,7 +77,19 @@ def test_pointer_rejects_noncanonical_values(value: str) -> None:
 
 
 def test_pointer_accepts_a_whole_value_slash() -> None:
-    assert Pointer("run/").pointer == ""
+    assert Pointer("term_1/").field == "/"
+    assert Pointer("term_1/").tokens == ("",)
+
+
+def test_typed_pointer_uses_pointer_then_type() -> None:
+    typed = TypedPointer.parse("run_1.0/output/value:Part[]")
+
+    assert typed == TypedPointer("Part[]", Pointer("run_1.0/output/value"))
+    assert str(typed) == "run_1.0/output/value:Part[]"
+    with pytest.raises(ValueError, match="invalid typed pointer"):
+        TypedPointer.parse("Part[]@run_1.0/output/value")
+    with pytest.raises(ValueError, match="invalid typed pointer"):
+        TypedPointer.parse("run_1/output/value:Part[]:Json")
 
 
 def test_local_keeps_complete_type_separate_from_execution_dimension() -> None:
@@ -79,13 +101,16 @@ def test_local_keeps_complete_type_separate_from_execution_dimension() -> None:
     )
     scattered = Local.typed(
         type_name="Part[]",
-        value=Pointer("run_1.0"),
+        value=Pointer("run_1.0/output/value"),
         name="_",
         dim=1,
     )
     batches = Local.typed(
         type_name="Part[][]",
-        value=(Pointer("run_a"), Pointer("run_b")),
+        value=(
+            Pointer("run_a/output/value"),
+            Pointer("run_b/output/value"),
+        ),
         name="_",
         dim=1,
     )
@@ -107,7 +132,7 @@ def test_local_codec_round_trips_mixed_concrete_and_pointer_items() -> None:
         type_name="Part[]",
         value=(
             TextPart("kept"),
-            Pointer("run_1.0/2"),
+            Pointer("run_1.0/output/value/2"),
             ToolCallPart(
                 tool_call_id="call_1",
                 tool_name="search",
@@ -274,7 +299,7 @@ def test_local_codec_reserves_the_pointer_marker() -> None:
 def test_local_storage_tags_do_not_leak_to_the_protocol_projection() -> None:
     local = Local.typed(
         "Part[]",
-        (TextPart("hello"), Pointer("run_1.0/2")),
+        (TextPart("hello"), Pointer("run_1.0/output/value/2")),
         "_",
         1,
     )
@@ -284,7 +309,7 @@ def test_local_storage_tags_do_not_leak_to_the_protocol_projection() -> None:
             "?": "Part[]!",
             "!": [
                 {"?": "TextPart", "text": "hello"},
-                {"?": "Part@run_1.0/2"},
+                {"?": "run_1.0/output/value/2:Part"},
             ],
         },
         "name": "_",
@@ -294,7 +319,7 @@ def test_local_storage_tags_do_not_leak_to_the_protocol_projection() -> None:
         "type": "Part[]",
         "value": [
             {"type": "text", "text": "hello"},
-            {"?": "@run_1.0/2"},
+            {"?": "run_1.0/output/value/2:Part"},
         ],
         "name": "_",
         "dim": 1,
@@ -459,7 +484,7 @@ def test_reload_payload_rejects_noncanonical_revisions(revision: str) -> None:
 
 
 def test_execute_payload_round_trips_source_pointing_locals() -> None:
-    source = Pointer.step(StepPath.parse("run_1.2"), 1)
+    source = Pointer.step(StepPath.parse("run_1.2"), "output", "value", 1)
     payload = ExecuteControlPayload(
         state="a" * 64,
         runnable="flow:deliver",
@@ -497,7 +522,7 @@ def test_control_protocol_uses_kind_to_restore_payload_variant(
     kind: Literal["steer", "cancel"],
     payload: SteerControlPayload | CancelControlPayload,
 ) -> None:
-    record = RunControlRecord(
+    record = ControlRecord(
         target="run_test",
         index=1,
         kind=kind,
@@ -516,8 +541,8 @@ def test_control_protocol_uses_kind_to_restore_payload_variant(
         finished_at=None,
     )
 
-    restored_record = TypeAdapter(RunControlRecord).validate_python(
-        TypeAdapter(RunControlRecord).dump_python(record, mode="json")
+    restored_record = TypeAdapter(ControlRecord).validate_python(
+        TypeAdapter(ControlRecord).dump_python(record, mode="json")
     )
     restored_info = TypeAdapter(ControlInfo).validate_python(
         TypeAdapter(ControlInfo).dump_python(info, mode="json")

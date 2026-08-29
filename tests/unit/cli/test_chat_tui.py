@@ -102,7 +102,7 @@ def _parts(*parts: Part) -> Local:
 
 
 def _output(step: StepPath) -> Local:
-    return Local.typed("Part[]", Pointer.step(step), "_", 0)
+    return Local.typed("Part[]", Pointer.step(step, "output", "value"), "_", 0)
 
 
 def _model_given(model: str = "test/model") -> ModelStepGiven:
@@ -402,7 +402,7 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
         RunEnd(
             run="run_child_0",
             status="failed",
-            error=Pointer.step(StepPath.parse("run_child_0.0")),
+            error=Pointer.step(StepPath.parse("run_child_0.0"), "error"),
         ),
         app,
     )

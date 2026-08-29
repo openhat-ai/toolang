@@ -231,7 +231,7 @@ agic answer(_: Part[]) -> Part[]:
             run_id = str(events[0][1]["run"])
             detail = client.get(f"/api/v1/runs/{run_id}").json()
 
-        error = f"{run_id}.0"
+        error = f"{run_id}.0/error"
         assert events[-1][1]["error"] == {"?": f"@{error}"}
         assert detail["error"] == {"?": f"@{error}"}
         assert detail["steps"][0]["error"] == "provider unavailable"
@@ -648,7 +648,7 @@ def test_child_run_stream_redirects_client_to_root_run(tmp_path: Path) -> None:
         step_index=0,
         kind="run",
         status="running",
-        input=(Pointer.control("run_root", 0, "_"),),
+        input=(Pointer.control("run_root", 0, "payload", "locals", 0, "value"),),
         output=(),
         started_at="2026-01-01T00:00:01Z",
         finished_at=None,

@@ -123,7 +123,7 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
                 status="succeeded",
                 output=Local.typed(
                     "Part[]",
-                    Pointer.step(StepPath.parse("run_one.0")),
+                    Pointer.step(StepPath.parse("run_one.0"), "output", "value"),
                     "_",
                     0,
                 ),
@@ -379,7 +379,7 @@ def test_step_error_and_ownerless_run_error_use_bullet_rows() -> None:
             RunEnd(
                 run="run_one",
                 status="failed",
-                error=Pointer.step(StepPath.parse("run_one.0")),
+                error=Pointer.step(StepPath.parse("run_one.0"), "error"),
             ),
         ]
     )

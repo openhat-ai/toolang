@@ -202,7 +202,9 @@ flow staged(_: Part[]) -> Part[]:
                 (0, "succeeded"),
                 (1, "failed"),
             ]
-            assert before[1].input == (Pointer.control(failed.id, 0, "_"),)
+            assert before[1].input == (
+                Pointer.control(failed.id, 0, "payload", "locals", 0, "value"),
+            )
             previous_child = next(
                 run
                 for run in harness.store.list_runs(thread_id=thread, limit=None)
@@ -541,7 +543,7 @@ flow twice(_: Part[]) -> Part[]:
             )
 
             assert run.status == "failed"
-            assert run.error == Pointer.step(StepPath(run.id, (1,)))
+            assert run.error == Pointer.step(StepPath(run.id, (1,)), "error")
             retry = harness.store.list_run_controls(run_id=run.id)[-1]
             assert isinstance(retry.payload, RetryControlPayload)
             assert retry.payload.limits == RunLimits(tokens=2)
@@ -607,10 +609,10 @@ flow parallel(_: Part[]):
             root_path = StepPath(root.id, (0,))
             root_step = harness.store.list_steps(run_id=root.id)[0]
             leaf_step = harness.store.list_steps(run_id=failed_child.id)[0]
-            assert root.error == Pointer.step(root_path)
+            assert root.error == Pointer.step(root_path, "error")
             boundary_error = "parallel step stopped because lane 0 (#0) failed"
             assert root_step.error == boundary_error
-            assert failed_child.error == Pointer.step(leaf_path)
+            assert failed_child.error == Pointer.step(leaf_path, "error")
             assert leaf_step.error == "worker failed"
             assert isinstance(root.error, Pointer)
             assert harness.store.resolve_error(root.error) == boundary_error
@@ -777,7 +779,7 @@ flow parent(_: Part[]) -> Number:
             assert isinstance(child.error, str)
             assert child.error.startswith("output is not valid Number")
             assert isinstance(parent_step.error, Pointer)
-            assert parent_step.error == Pointer.run(child.id)
+            assert parent_step.error == Pointer.run(child.id, "error")
             assert harness.store.resolve_error(parent_step.error) == child.error
 
     asyncio.run(scenario())
@@ -1589,7 +1591,7 @@ flow repeated(_: Text) -> Text:
                 if run.parent is not None
             ]
             assert root.status == "failed"
-            assert root.error == Pointer.step(StepPath(root.id, (0,)))
+            assert root.error == Pointer.step(StepPath(root.id, (0,)), "error")
             assert len(harness.adapter.invocations) == 2
             assert sorted(run.status for run in children) == ["failed", "succeeded"]
             root_run_control = harness.store.get_run_control(run_id=root.id, index=0)
@@ -1717,7 +1719,7 @@ flow invalid(_: Text) -> Text:
 
             error = f"{operation} requires current shape list, got item"
             assert root.status == "failed"
-            assert root.error == Pointer.step(StepPath(root.id, (0,)))
+            assert root.error == Pointer.step(StepPath(root.id, (0,)), "error")
             steps = [
                 step
                 for step in harness.store.list_steps(run_id=root.id)
@@ -1882,12 +1884,13 @@ flow relay(_: Text, suffix: Text) -> Text:
                 local for local in run_control.payload.locals if local.name == "suffix"
             )
             assert suffix.value == TypedPointer(
-                "Text", Pointer.control(root.id, 0, "suffix")
+                "Text",
+                Pointer.control(root.id, 0, "payload", "locals", 1, "value"),
             )
             parent_step = harness.store.list_steps(run_id=root.id)[0]
             assert parent_step.input == (
-                Pointer.control(root.id, 0, "_"),
-                Pointer.control(root.id, 0, "suffix"),
+                Pointer.control(root.id, 0, "payload", "locals", 0, "value"),
+                Pointer.control(root.id, 0, "payload", "locals", 1, "value"),
             )
             assert harness.store.run_output_text(run_id=root.id) == "hello!"
 

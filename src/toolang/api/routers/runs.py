@@ -33,7 +33,7 @@ from toolang.common.errors import ToolangError
 from toolang.execution.calls import validate_session_commands
 from toolang.execution.executor import LocalRunHandle, RunSpec
 from toolang.execution.records import (
-    RunControlRecord,
+    ControlRecord,
     RunRecord,
 )
 from toolang.execution.schemas import ControlInfo, RunDetail, RunInfo
@@ -509,7 +509,7 @@ def _terminal_root_or_409(core: AgentCore, run_id: str) -> RunRecord:
 def _control_result(
     core: AgentCore,
     run_id: str,
-    control: RunControlRecord,
+    control: ControlRecord,
 ) -> RunCommandResult:
     run = _run_or_404(core, run_id)
     detail = core.history.get_run(run_id)

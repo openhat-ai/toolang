@@ -133,9 +133,16 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
         )
         if event.output is not None and isinstance(event.output.value, TypedPointer):
             pointer = event.output.value.pointer
-            assert any(Pointer.step(step) == pointer for step in ended_steps), (
-                f"run output references an incomplete step at {where}"
-            )
+            if pointer.kind == "step":
+                assert any(
+                    Pointer.step(step, "output", "value") == pointer
+                    for step in ended_steps
+                ), f"run output references an incomplete step at {where}"
+            elif pointer.kind == "run":
+                assert pointer == Pointer.run(pointer.record, "output", "value")
+                assert pointer.record in ended_runs, (
+                    f"run output references an incomplete child run at {where}"
+                )
         active_runs.remove(event.run)
         ended_runs.add(event.run)
 

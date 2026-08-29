@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-import json
 import re
 from typing import Any
 
@@ -16,12 +15,12 @@ from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
-from toolang.base.types.message import Part, TextPart
+from toolang.base.types.message import Part
 from toolang.cli.common.output import toolang_logo, toolang_logo_text
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
 from toolang.execution.types import ExecutionError
 
-from toolang.cli.common.execution_progress import ProgressBlock, ProgressRow
+from toolang.cli.common.execution_progress import ProgressBlock
 from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
 from toolang.cli.common.execution_progress.formatting import (
     count,
@@ -39,6 +38,7 @@ from toolang.cli.common.execution_progress.rich_rendering import (
     terminal_status_style,
 )
 from toolang.cli.common.execution_progress.state import Metrics
+from toolang.cli.common.human_values import parts_response_text, response_renderable
 
 from .base import ChatExecutorMetadata, friendly_error
 from .rendering import (
@@ -360,7 +360,10 @@ class AssistantResponseBlock(MutableBlock):
 
     @classmethod
     def create(cls, event: StepEnd) -> AssistantResponseBlock:
-        return cls(text=_parts_text(output_parts(event)), shape=shape_label(event))
+        return cls(
+            text=parts_response_text(output_parts(event)),
+            shape=shape_label(event),
+        )
 
     @classmethod
     def from_parts(
@@ -369,35 +372,14 @@ class AssistantResponseBlock(MutableBlock):
         *,
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
     ) -> AssistantResponseBlock:
-        text = _parts_text(parts)
-        if not text and parts:
-            text = json.dumps(
-                [part.to_data() for part in parts],
-                ensure_ascii=False,
-                indent=2,
-            )
-        return cls(text=text, max_width=max_width)
+        return cls(text=parts_response_text(parts), max_width=max_width)
 
     def update(self, event: Any) -> None:
         del event
 
     def render(self) -> RenderableType | None:
         if self.text:
-            return progress_block_renderable(
-                ProgressBlock(
-                    "response",
-                    (
-                        ProgressRow(
-                            self.text,
-                            "normal",
-                            format="markdown",
-                            prefix="• ",
-                        ),
-                    ),
-                ),
-                live=False,
-                max_width=self.max_width,
-            )
+            return response_renderable(self.text, max_width=self.max_width)
         if self.shape:
             return Text.from_markup(f"[dim]• {escape(f'{self.shape} returned')}[/]")
         return None
@@ -650,7 +632,3 @@ class SlashBlock:
 
 def _split_columns(line: str) -> list[str]:
     return [part for part in re.split(r" {2,}", line.strip()) if part]
-
-
-def _parts_text(parts: Sequence[Part]) -> str:
-    return "".join(part.text for part in parts if isinstance(part, TextPart)).strip()

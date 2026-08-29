@@ -75,9 +75,22 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     source = state.tool_call_sources.get(call.tool_call_id)
     step_input: tuple[Pointer, ...]
     if source is not None:
-        step_input = (Pointer.step(StepPath(run.run_id, (source[0],)), source[1]),)
+        step_input = (
+            Pointer.step(
+                StepPath(run.run_id, (source[0],)),
+                "output",
+                "value",
+                source[1],
+            ),
+        )
     elif state.last_step is not None:
-        step_input = (Pointer.step(StepPath(run.run_id, (state.last_step,))),)
+        step_input = (
+            Pointer.step(
+                StepPath(run.run_id, (state.last_step,)),
+                "output",
+                "value",
+            ),
+        )
     else:
         step_input = state.initial_inputs
     _LOGGER.info(

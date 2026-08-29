@@ -21,7 +21,7 @@ from toolang.common.ids import IdIssuer
 from toolang.execution.executor import RunExecutor
 from toolang.execution.executor.common import BoundRun, Local
 from toolang.execution.executor.executor import _Execution
-from toolang.execution.records import RunControlPayload, RunControlRecord
+from toolang.execution.records import RunControlPayload, ControlRecord
 from toolang.execution.types import (
     ControlRef,
     ControlTiming,
@@ -141,7 +141,7 @@ def test_reload_orders_step_state_and_child_acceptance_at_one_boundary(
                 request_id="reload-state",
             )
             active = harness.executor._active[handle.run_id]
-            assert control.run == handle.run_id
+            assert control.target == handle.run_id
             await _wait_until_applied(harness, handle.run_id, control.index)
             assert control.index not in active.reload_states
             first_call.release()
@@ -217,7 +217,7 @@ def test_concurrent_reloads_apply_in_control_index_order(
         timing: ControlTiming = "immediate",
         request_id: str | None,
         created_at: str,
-    ) -> RunControlRecord:
+    ) -> ControlRecord:
         control = original_accept(
             run_id=run_id,
             state=state,

@@ -146,8 +146,10 @@ agic revise(_: Part[]) -> Part[]:
             assert stored_control.status == "applied"
             steps = harness.store.list_steps(run_id=record.id)
             assert steps[1].input == (
-                Pointer.step(StepPath.parse(f"{record.id}.0")),
-                Pointer.control(record.id, control.index, "_"),
+                Pointer.step(StepPath.parse(f"{record.id}.0"), "output", "value"),
+                Pointer.control(
+                    record.id, control.index, "payload", "locals", 0, "value"
+                ),
             )
             assert harness.store.run_output(run_id=record.id) == (TextPart("revised"),)
             assert_run_event_integrity(tracer.events)
@@ -220,8 +222,10 @@ agic calculate(_: Part[]) -> Part[]:
             assert messages[3] == Message.user("skip tools")
             second = harness.store.list_steps(run_id=record.id)[1]
             assert second.input == (
-                Pointer.step(StepPath.parse(f"{record.id}.0"), 0),
-                Pointer.control(record.id, control.index, "_"),
+                Pointer.step(StepPath.parse(f"{record.id}.0"), "output", "value", 0),
+                Pointer.control(
+                    record.id, control.index, "payload", "locals", 0, "value"
+                ),
             )
 
     asyncio.run(scenario())
@@ -497,10 +501,10 @@ agic revise(_: Text) -> Text:
             assert [control.index for control in controls] == [1, 2, 3]
             second_step = harness.store.list_steps(run_id=record.id)[1]
             assert second_step.input == (
-                Pointer.control(record.id, 0, "_"),
-                Pointer.control(record.id, 1, "_"),
-                Pointer.control(record.id, 2, "_"),
-                Pointer.control(record.id, 3, "_"),
+                Pointer.control(record.id, 0, "payload", "locals", 0, "value"),
+                Pointer.control(record.id, 1, "payload", "locals", 0, "value"),
+                Pointer.control(record.id, 2, "payload", "locals", 0, "value"),
+                Pointer.control(record.id, 3, "payload", "locals", 0, "value"),
             )
             stored_controls = [
                 harness.store.get_run_control(

@@ -9,7 +9,7 @@ from toolang.base.types.message import Message
 from toolang.execution.events import RunTracer
 from toolang.execution.executor import LocalRunHandle, RunExecutor
 from toolang.execution.history import RunHistory
-from toolang.execution.records import RunControlRecord
+from toolang.execution.records import ControlRecord
 from toolang.execution.schemas import (
     ControlInfo,
     RerunRequest,
@@ -189,7 +189,7 @@ class LocalRunClient:
     def _control_info(
         self,
         run_id: str,
-        control: RunControlRecord,
+        control: ControlRecord,
     ) -> ControlInfo:
         run = self._executor.store.get_run(run_id=run_id)
         if run is None:
