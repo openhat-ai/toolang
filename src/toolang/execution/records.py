@@ -60,6 +60,8 @@ from .types import (
     local_from_protocol_data,
     validate_occurrence,
     validate_runtime_value,
+    valid_run_id,
+    valid_thread_id,
     validate_step_given,
     validate_step_noted,
 )
@@ -92,6 +94,10 @@ class RunRecord:
     finished_at: str | None = None
 
     def __post_init__(self) -> None:
+        if not valid_run_id(self.id):
+            raise ValueError(f"invalid run id: {self.id!r}")
+        if not valid_thread_id(self.thread):
+            raise ValueError(f"invalid thread id: {self.thread!r}")
         validate_occurrence(self.occurrence)
 
 
@@ -313,14 +319,6 @@ ControlPayloadField = Annotated[
     ControlPayload,
     BeforeValidator(_control_payload_variant),
 ]
-RunScopedControlPayloadField = Annotated[
-    RunScopedControlPayload,
-    BeforeValidator(_control_payload_variant),
-]
-ThreadControlPayloadField = Annotated[
-    ThreadControlPayload,
-    BeforeValidator(_control_payload_variant),
-]
 
 
 @dataclass(frozen=True, slots=True)
@@ -334,6 +332,10 @@ class ThreadRecord:
     head: ControlRef
     created_at: str
     updated_at: str
+
+    def __post_init__(self) -> None:
+        if not valid_thread_id(self.thread_id):
+            raise ValueError(f"invalid thread id: {self.thread_id!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -419,8 +421,8 @@ class StepRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class ControlRecordBase:
-    """Fields shared by durable run and thread controls."""
+class ControlRecord:
+    """One durable control sent to a run or thread."""
 
     target: str
     index: int
@@ -434,37 +436,23 @@ class ControlRecordBase:
     finished_at: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.target:
-            raise ValueError("control target must be non-empty")
+        expected_scope = (
+            "thread" if self.kind in {"create", "fork", "rewind"} else "run"
+        )
+        valid_target = (
+            valid_thread_id(self.target)
+            if expected_scope == "thread"
+            else valid_run_id(self.target)
+        )
+        if not valid_target:
+            raise ValueError(
+                f"invalid {expected_scope} control target: {self.target!r}"
+            )
         if self.index < 0:
             raise ValueError("control index must be non-negative")
         expected = _CONTROL_PAYLOAD_TYPES[self.kind]
         if not isinstance(self.payload, expected):
             raise TypeError(f"{self.kind} control has an invalid payload")
-
-
-@dataclass(frozen=True, slots=True)
-class RunControlRecord(ControlRecordBase):
-    """One durable control sent to a run."""
-
-    kind: Literal["run", "rerun", "retry", "reload", "execute", "steer", "cancel"]
-    payload: RunScopedControlPayloadField
-
-    @property
-    def run(self) -> RunId:
-        return self.target
-
-
-@dataclass(frozen=True, slots=True)
-class ThreadControlRecord(ControlRecordBase):
-    """One durable mutation applied to a thread."""
-
-    kind: Literal["create", "fork", "rewind"]
-    payload: ThreadControlPayloadField
-
-    @property
-    def thread(self) -> str:
-        return self.target
 
 
 _PART_STORAGE_TYPES = {
@@ -522,12 +510,11 @@ def local_value_from_data(data: object) -> Value | TypedPointer:
             if set(mapping) != {"?", "!"}:
                 raise ValueError("boxed stored value requires only ? and ! fields")
             return _boxed_value_from_data(type_name, mapping.get("!"))
-        type_name, separator, raw_pointer = raw_tag.partition("@")
-        validate_type(type_name)
-        if separator:
-            if set(mapping) != {"?"} or not raw_pointer:
+        if ":" in raw_tag:
+            if set(mapping) != {"?"}:
                 raise ValueError("stored pointer requires only one typed ? tag")
-            return TypedPointer(type_name, Pointer(raw_pointer))
+            return TypedPointer.parse(raw_tag)
+        type_name = validate_type(raw_tag)
         fields = {name: item for name, item in mapping.items() if name != "?"}
         if "!" in fields:
             raise ValueError("inline stored value cannot contain !")
@@ -560,7 +547,7 @@ def local_value_to_data(value: Value | TypedPointer) -> object:
     """Serialize one self-describing stored value."""
 
     if isinstance(value, TypedPointer):
-        return {"?": f"{value.type}@{value.pointer}"}
+        return {"?": str(value)}
     if isinstance(
         value,
         (
@@ -1507,7 +1494,7 @@ def execution_error_message(
 ) -> str | None:
     """Resolve one execution error to a displayable message when possible."""
 
-    by_pointer = {Pointer(_step_pointer(step.path)): step for step in steps}
+    by_pointer = {Pointer.step(step.path, "error"): step for step in steps}
     seen: set[Pointer] = set()
     current = error
     while isinstance(current, Pointer):
@@ -1609,7 +1596,3 @@ def _validate_control_locals(locals: tuple[Local, ...]) -> None:
         raise ValueError("control locals must be named")
     if len(names) != len(set(names)):
         raise ValueError("control local names must be unique")
-
-
-def _step_pointer(path: StepPath) -> str:
-    return str(path)

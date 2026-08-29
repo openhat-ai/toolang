@@ -16,7 +16,7 @@ from toolang.execution.events import (
     StepEnd,
 )
 from toolang.execution.records import (
-    RunControlRecord,
+    ControlRecord,
     RunRecord,
     StepRecord,
 )
@@ -87,7 +87,7 @@ def accept_run(
     limits: RunLimits | None = None,
     resources: AgentResources | None = None,
     sandbox: str | None = None,
-) -> tuple[RunRecord, RunControlRecord]:
+) -> tuple[RunRecord, ControlRecord]:
     """Accept a run with explicit default preparation snapshots for store tests."""
 
     resolved_input = (
@@ -247,7 +247,7 @@ def project_run_control(
     context: Mapping[str, Any] | None = None,
     request_id: str | None = None,
     created_at: str | None = None,
-) -> RunControlRecord:
+) -> ControlRecord:
     """Project one accepted steer or cancel run control."""
 
     if kind == "run":

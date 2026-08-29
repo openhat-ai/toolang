@@ -37,7 +37,7 @@ from toolang.state.state import AgentState
 
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
 from ...records import (
-    RunControlRecord,
+    ControlRecord,
     SteerControlPayload,
 )
 from ...types import (
@@ -50,7 +50,7 @@ from ...types import (
     Pointer,
     StepPath,
 )
-from ..common import _StepFailed
+from ..common import _StepFailed, control_local_pointer
 from ..diagnostics import log_model_request, log_model_result, log_model_target
 from ..limits import _ModelAccounting
 
@@ -86,7 +86,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
     consumed_inputs = state.claimed_inputs or state.pending_inputs()
     step_input = (
         *_step_input(state),
-        *(Pointer.control(run.run_id, item.index, "_") for item in consumed_inputs),
+        *(control_local_pointer(item, "_") for item in consumed_inputs),
     )
     stream = _ModelStream(step=step_index)
     _LOGGER.info(
@@ -447,12 +447,18 @@ def _step_input(state: _AgicState) -> tuple[Pointer, ...]:
         return inputs
     if state.last_step is None:
         return state.initial_inputs
-    return (Pointer.step(StepPath(state.prepared.run.run_id, (state.last_step,))),)
+    return (
+        Pointer.step(
+            StepPath(state.prepared.run.run_id, (state.last_step,)),
+            "output",
+            "value",
+        ),
+    )
 
 
 def _messages_with_inputs(
     current: Sequence[Message],
-    inputs: Sequence[RunControlRecord],
+    inputs: Sequence[ControlRecord],
 ) -> list[Message]:
     messages = list(current)
     for input in inputs:

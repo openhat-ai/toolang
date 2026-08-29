@@ -39,7 +39,7 @@ from toolang.execution.records import (
 )
 from toolang.execution.store import RunStore
 from toolang.execution.schemas import RerunRequest, RetryRequest
-from toolang.execution.types import Local, StepPath, ThreadPrefix
+from toolang.execution.types import Local, Pointer, StepPath, ThreadPrefix
 from toolang.lang.input import resolve_input_parts
 from toolang.setup import AgentSetup
 from toolang.up import process as agents
@@ -68,11 +68,16 @@ def test_retry_anchor_accepts_only_dot_separated_step_paths(value: str) -> None:
 
 @pytest.mark.parametrize(
     "value",
-    ("run_root:2.3", "run_root/2/3", "run_root.01", "term_root.0"),
+    ("run_root:2.3", "run_root.01", "term_root.0", "run_root^0"),
 )
-def test_inspect_rejects_noncanonical_step_paths(value: str) -> None:
-    with pytest.raises(click.ClickException, match="invalid inspect path"):
-        thread_commands.parse_inspect_target(value)
+def test_inspect_rejects_invalid_pointers(tmp_path: Path, value: str) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+
+    result = _invoke(root, "alice", "inspect", value)
+
+    assert result.exit_code == 2
+    assert "invalid pointer" in result.stderr
 
 
 def test_read_only_thread_commands_do_not_create_execution_store(
@@ -88,7 +93,7 @@ def test_read_only_thread_commands_do_not_create_execution_store(
     assert not layout.run_store.exists()
 
 
-@pytest.mark.parametrize("schema_version", [11, 18, 24, 27])
+@pytest.mark.parametrize("schema_version", [11, 18, 24, 27, 31])
 def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     tmp_path: Path,
     schema_version: int,
@@ -111,8 +116,9 @@ def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     assert "Traceback" not in error_output
     assert "execution history is incompatible with toolang" in error_output
     assert f"uses schema {schema_version}" in error_output
-    assert "requires schema 31" in error_output
-    assert "backup" in error_output
+    assert "requires schema 32" in error_output
+    assert "does not migrate" in error_output
+    assert "preserve or remove" in error_output.lower()
     assert "database was not changed" in error_output.lower()
     connection = sqlite3.connect(layout.run_store)
     try:
@@ -228,7 +234,7 @@ Maintain the knowledge base.
     assert "model credits exhausted" in result.stdout
 
 
-def test_inspect_reads_typed_run_schema_and_step_path(tmp_path: Path) -> None:
+def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
     store = RunStore(AgentLayout.resident(root, "alice").run_store)
@@ -246,7 +252,7 @@ def test_inspect_reads_typed_run_schema_and_step_path(tmp_path: Path) -> None:
             step_index=0,
             kind="value",
             status="succeeded",
-            input=(),
+            input=(Pointer.control(run.id, 0, "payload", "locals", 0, "value"),),
             output=(TextPart(text="prepared"),),
             started_at="2026-07-25T01:00:00Z",
             finished_at="2026-07-25T01:00:01Z",
@@ -259,17 +265,203 @@ def test_inspect_reads_typed_run_schema_and_step_path(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     document = json.loads(result.stdout)
-    assert document["kind"] == "step"
-    assert document["target"] == "run_inspect.0"
-    assert document["run"]["id"] == "run_inspect"
-    assert document["step"]["path"] == "run_inspect.0"
-    assert document["step"]["kind"] == "value"
-    assert document["step"]["output"] == {
+    assert document["path"] == "run_inspect.0"
+    assert document["kind"] == "value"
+    assert document["output"] == {
         "type": "Part[]",
         "value": [{"text": "prepared", "type": "text"}],
         "name": "_",
         "dim": 0,
     }
+    assert "target" not in document
+    assert "run" not in document
+    assert "step" not in document
+
+    field = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_inspect.0/output/value/0",
+        "--json",
+    )
+    type_name = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_inspect.0/input",
+        "--type",
+    )
+    human = _invoke(root, "alice", "inspect", "run_inspect.0")
+    resolved = _invoke(root, "alice", "inspect", "run_inspect.0/input")
+    response = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_inspect.0/output/value",
+        "--human",
+    )
+
+    assert field.exit_code == 0
+    assert json.loads(field.stdout) == {"type": "text", "text": "prepared"}
+    assert type_name.exit_code == 0
+    assert type_name.stdout == "Pointer[]\n"
+    assert human.exit_code == 0
+    assert "run_inspect.0/path" in human.stdout
+    assert "run_inspect.0/output" in human.stdout
+    assert "StepRecord" not in human.stdout
+    assert resolved.exit_code == 0
+    assert "run_inspect.0/input/0 →" in resolved.stdout
+    assert "Inspect this" in resolved.stdout
+    assert response.exit_code == 0
+    assert "run_inspect.0/output/value" in response.stdout
+    assert "prepared" in response.stdout
+
+
+def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+
+    combined = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_missing",
+        "--json",
+        "--type",
+    )
+    removed = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_missing",
+        "--limit",
+        "1",
+    )
+    help_code = cli.main(["--root", str(root), "alice", "inspect", "--help"])
+    help_output = capsys.readouterr()
+
+    assert combined.exit_code == 2
+    assert "mutually exclusive" in combined.stderr
+    assert removed.exit_code == 2
+    assert "No such option: --limit" in removed.stderr
+    assert help_code == 0
+    assert "POINTER" in help_output.out
+    assert "--human" in help_output.out
+    assert "--json" in help_output.out
+    assert "--type" in help_output.out
+    assert "--focus" not in help_output.out
+
+
+def test_inspect_human_reports_pointer_resolution_errors(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    store = RunStore(AgentLayout.resident(root, "alice").run_store)
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_pointer_errors",
+            thread_id="term_pointer_errors",
+            origin="test",
+            input=Message.user("hello"),
+        )
+        first = StepPath(run.id, (0,))
+        second = StepPath(run.id, (1,))
+        project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=Local.typed("Text", Pointer.step(second, "output", "value"), "_"),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+        project_step(
+            store,
+            run_id=run.id,
+            step_index=1,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=Local.typed("Text", Pointer.step(first, "output", "value"), "_"),
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        project_step(
+            store,
+            run_id=run.id,
+            step_index=2,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=Local.typed(
+                "Text",
+                Pointer("run_missing/output/value"),
+                "_",
+            ),
+            started_at="2026-01-01T00:00:02Z",
+            finished_at="2026-01-01T00:00:03Z",
+        )
+        project_step(
+            store,
+            run_id=run.id,
+            step_index=3,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=Local.typed(
+                "Text",
+                Pointer.step(StepPath(run.id, (4,)), "output", "value", 0),
+                "_",
+            ),
+            started_at="2026-01-01T00:00:03Z",
+            finished_at="2026-01-01T00:00:04Z",
+        )
+        project_step(
+            store,
+            run_id=run.id,
+            step_index=4,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(TextPart("part, not text"),),
+            started_at="2026-01-01T00:00:04Z",
+            finished_at="2026-01-01T00:00:05Z",
+        )
+    finally:
+        store.close()
+
+    cycle = _invoke(
+        root,
+        "alice",
+        "inspect",
+        f"{first}/output/value",
+    )
+    missing = _invoke(
+        root,
+        "alice",
+        "inspect",
+        f"{run.id}.2/output/value",
+    )
+    mismatch = _invoke(
+        root,
+        "alice",
+        "inspect",
+        f"{run.id}.3/output/value",
+    )
+
+    assert cycle.exit_code == 1
+    assert "Pointer cycle" in cycle.stderr
+    assert f"{first}/output/value" in cycle.stderr
+    assert f"{second}/output/value" in cycle.stderr
+    assert missing.exit_code == 1
+    assert "record not found: run_missing" in missing.stderr
+    assert mismatch.exit_code == 1
+    assert "is not Text" in mismatch.stderr
 
 
 def test_inspect_step_path_does_not_cross_run_boundaries(tmp_path: Path) -> None:
@@ -323,9 +515,9 @@ def test_inspect_step_path_does_not_cross_run_boundaries(tmp_path: Path) -> None
     synthetic_result = _invoke(root, "alice", "inspect", "run_parent.0.0", "--json")
 
     assert child_result.exit_code == 0
-    assert json.loads(child_result.stdout)["step"]["path"] == "run_child.0"
+    assert json.loads(child_result.stdout)["path"] == "run_child.0"
     assert synthetic_result.exit_code == 1
-    assert "step not found: run_parent.0.0" in synthetic_result.stderr
+    assert "record not found: run_parent.0.0" in synthetic_result.stderr
 
 
 def test_roaming_source_reads_threads_runs_and_inspection(
@@ -373,9 +565,8 @@ def test_roaming_source_reads_threads_runs_and_inspection(
     assert "run_roaming" in runs_output.out
     assert inspect == 0
     document = json.loads(inspect_output.out)
-    assert document["kind"] == "step"
-    assert document["run"]["id"] == "run_roaming"
-    assert document["step"]["output"] == {
+    assert document["path"] == "run_roaming.0"
+    assert document["output"] == {
         "type": "Part[]",
         "value": [{"text": "ready", "type": "text"}],
         "name": "_",
@@ -429,9 +620,8 @@ def test_visiting_selector_reads_inspection_without_fetching(
 
     assert result == 0
     document = json.loads(output.out)
-    assert document["kind"] == "step"
-    assert document["run"]["id"] == "run_visiting"
-    assert document["step"]["output"] == {
+    assert document["path"] == "run_visiting.0"
+    assert document["output"] == {
         "type": "Part[]",
         "value": [{"text": "cached", "type": "text"}],
         "name": "_",

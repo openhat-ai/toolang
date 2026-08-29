@@ -9,7 +9,7 @@ from toolang.lang.ast import FlowStmt
 from toolang.state.state import AgentState
 
 from ...events import StepBegin
-from ...records import RunControlRecord, StepPath
+from ...records import ControlRecord, StepPath
 from ...types import ControlRef, Occurrence, Pointer
 from ..common import BoundRun
 from ..common import Local, StepBoundary, _RunRejected, execute_step
@@ -26,7 +26,7 @@ async def execute(
     path: StepPath,
     statement: FlowStmt,
     locals: Mapping[str, Local],
-    controls: Sequence[RunControlRecord],
+    controls: Sequence[ControlRecord],
     occurrence: Occurrence | None,
     runnable: str,
     validate: Callable[[], None] | None = None,

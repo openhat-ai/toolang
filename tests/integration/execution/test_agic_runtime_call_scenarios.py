@@ -85,7 +85,9 @@ agic child(_: Text) -> Text:
             dynamic = root_steps[1]
             assert isinstance(dynamic.given, RunStmt)
             assert dynamic.given.runnable == "agic:child"
-            assert dynamic.input == (Pointer.step(root_steps[0].path, 0),)
+            assert dynamic.input == (
+                Pointer.step(root_steps[0].path, "output", "value", 0),
+            )
             dynamic_output = dynamic.output
             assert dynamic_output is not None
             assert isinstance(dynamic_output.value, TypedPointer)
@@ -704,7 +706,7 @@ agic child(_: Text) -> Text:
                 if run.parent == dynamic.path
             )
             assert child.status == "failed"
-            assert dynamic.error == Pointer.run(child.id)
+            assert dynamic.error == Pointer.run(child.id, "error")
             result = harness.adapter.invocations[2].call.messages[-1].parts[0]
             assert isinstance(result, ToolResultPart)
             assert result.tool_call_id == "failed-child"
@@ -1040,7 +1042,7 @@ flow child(_: Text) -> Text:
                 ("model", "succeeded"),
                 ("run", "failed"),
             ]
-            assert root.error == Pointer.step(steps[1].path)
+            assert root.error == Pointer.step(steps[1].path, "error")
             assert steps[1].error == "child persistence failed"
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
             assert len(harness.adapter.invocations) == 1
@@ -1442,7 +1444,7 @@ agic target(_: Text) -> Text:
             execute = controls[0]
             assert execute.status == "applied"
             assert isinstance(execute.payload, ExecuteControlPayload)
-            source = Pointer.step(steps[0].path, 0)
+            source = Pointer.step(steps[0].path, "output", "value", 0)
             assert execute.payload.state == harness.state.revision
             assert execute.payload.runnable == "agic:target"
             assert execute.payload.module == "agent"

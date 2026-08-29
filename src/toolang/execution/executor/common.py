@@ -43,7 +43,7 @@ from toolang.state.state import AgentState, state_program
 from toolang.setup import AgentSetup
 
 from ..events import RunEvent, StepBegin, StepEnd
-from ..records import RunControlRecord, SteerControlPayload, CancelControlPayload
+from ..records import ControlRecord, SteerControlPayload, CancelControlPayload
 from ..runnables import resolve_runnable
 from ..types import (
     AgentResources,
@@ -83,7 +83,7 @@ class _StepFailed(_ExecutionFailed):
     """Carry one failed-step reference across enclosing execution layers."""
 
     def __init__(self, step: StepPath, cause: BaseException) -> None:
-        super().__init__(Pointer.step(step), cause)
+        super().__init__(Pointer.step(step, "error"), cause)
 
 
 class _RunRejected(Exception):
@@ -160,7 +160,7 @@ async def execute_step(
     binding: BoundRun,
     statement: FlowStmt,
     locals: Mapping[str, Local],
-    controls: Sequence[RunControlRecord],
+    controls: Sequence[ControlRecord],
     occurrence: Occurrence | None,
     evaluate: Callable[[], Awaitable[Local]],
     note: Callable[[StepStatus], StepNoted] | None = None,
@@ -178,7 +178,7 @@ async def execute_step(
         )
         step_inputs = _unique_step_inputs(
             (
-                *(Pointer.control(item.run, item.index, "_") for item in controls),
+                *(control_local_pointer(item, "_") for item in controls),
                 *(
                     inputs
                     if inputs is not None
@@ -274,7 +274,14 @@ async def execute_step(
             finished_at=utc_now(),
         )
     )
-    return replace(result, ref=Pointer.step(path)) if output is not None else result
+    return (
+        replace(
+            result,
+            ref=result.ref or Pointer.step(path, "output", "value"),
+        )
+        if output is not None
+        else result
+    )
 
 
 def _flow_step_noted(
@@ -354,6 +361,7 @@ def transform_flow_result(
         return Local(
             values,
             "list",
+            ref=evaluated.ref,
             type_name=output_type[:-2],
             record=(
                 replace(evaluated.record, dim=1)
@@ -493,14 +501,24 @@ def initial_locals(
     """Build the initial locals for one runnable run."""
 
     records = {
-        local.name: local for local in binding.control_locals if local.name is not None
+        local.name: (index, local)
+        for index, local in enumerate(binding.control_locals)
+        if local.name is not None
     }
     locals: dict[str, Local] = {}
     for name, value in binding.input.named.items():
-        record = records.get(name)
-        if record is None:
+        found = records.get(name)
+        if found is None:
             continue
-        pointer = Pointer.control(binding.run_id, binding.control_index, name)
+        index, record = found
+        pointer = Pointer.control(
+            binding.run_id,
+            binding.control_index,
+            "payload",
+            "locals",
+            index,
+            "value",
+        )
         locals[name] = Local(
             value,
             "item",
@@ -509,10 +527,18 @@ def initial_locals(
             RecordLocal.typed(record.type, pointer, name, record.dim),
         )
     if runnable.input is not None and binding.input.primary is not None:
-        record = records.get("_")
-        if record is None:
+        found = records.get("_")
+        if found is None:
             raise RuntimeError(f"run primary control local missing: {binding.run_id}")
-        pointer = Pointer.control(binding.run_id, binding.control_index, "_")
+        index, record = found
+        pointer = Pointer.control(
+            binding.run_id,
+            binding.control_index,
+            "payload",
+            "locals",
+            index,
+            "value",
+        )
         locals["_"] = Local(
             binding.input.primary,
             "item",
@@ -523,6 +549,32 @@ def initial_locals(
     else:
         locals.setdefault("_", Local())
     return locals
+
+
+def control_local_pointer(control: ControlRecord, name: str) -> Pointer:
+    """Point to one control payload local by its immutable list index."""
+
+    locals_value = getattr(control.payload, "locals", None)
+    if locals_value is None:
+        raise ValueError(
+            f"control locals are inherited: {control.target}@{control.index}"
+        )
+    index = next(
+        (index for index, local in enumerate(locals_value) if local.name == name),
+        None,
+    )
+    if index is None:
+        raise ValueError(
+            f"control local is missing: {control.target}@{control.index}/{name}"
+        )
+    return Pointer.control(
+        control.target,
+        control.index,
+        "payload",
+        "locals",
+        index,
+        "value",
+    )
 
 
 def bind_flow_result(
@@ -653,7 +705,7 @@ def value_text(value: Any) -> str:
     return str(value)
 
 
-def control_text(control: RunControlRecord | None) -> str:
+def control_text(control: ControlRecord | None) -> str:
     if control is None:
         return ""
     if not isinstance(control.payload, SteerControlPayload | CancelControlPayload):

@@ -19,7 +19,7 @@ from toolang.state.state import AgentState
 from toolang.state.state import state_program
 
 from ...events import StepBegin
-from ...records import RunControlPayload, RunControlRecord
+from ...records import RunControlPayload, ControlRecord
 from ...types import (
     ControlRef,
     Local as RecordLocal,
@@ -62,7 +62,7 @@ class _AgicState:
     prepared: _AgicFrame
     layout: AgentLayout
     emit: EventEmitter
-    pending_inputs: Callable[[], tuple[RunControlRecord, ...]]
+    pending_inputs: Callable[[], tuple[ControlRecord, ...]]
     steer_before_next_step: Callable[[], bool]
     immediate_steer: Callable[[], bool]
     before_call: Callable[[], None]
@@ -83,7 +83,7 @@ class _AgicState:
     tool_calls: int = 0
     tool_call_sources: dict[str, tuple[int, int]] = field(default_factory=dict)
     initial_inputs: tuple[Pointer, ...] = ()
-    claimed_inputs: tuple[RunControlRecord, ...] = ()
+    claimed_inputs: tuple[ControlRecord, ...] = ()
     repairing_output: bool = False
     begin_step: (
         Callable[
@@ -269,7 +269,11 @@ async def _execute(state: _AgicState) -> Message | None:
             raise
         if state.last_step is None:
             raise RuntimeError("model step did not record its index")
-        ref = Pointer.step(StepPath(state.prepared.run.run_id, (state.last_step,)))
+        ref = Pointer.step(
+            StepPath(state.prepared.run.run_id, (state.last_step,)),
+            "output",
+            "value",
+        )
         state.output = ref
         state.record_output(ref)
         if result.tool_calls:
@@ -390,7 +394,7 @@ async def _run(
             authorize=lambda target: _authorize_run(state, target),
         )
         part = _run_success_part(execution, call, result)
-        state.output = Pointer.step(path)
+        state.output = Pointer.step(path, "output", "value")
         state.record_output(state.output)
     except asyncio.CancelledError:
         raise
@@ -516,12 +520,13 @@ def _run_success_part(
     target = record.value if record is not None else None
     if (
         not isinstance(target, TypedPointer)
-        or target.pointer.value != target.pointer.anchor
+        or target.pointer.kind != "run"
+        or target.pointer.tokens != ("output", "value")
     ):
         raise RuntimeError("Run Step result is missing its child run reference")
-    child = execution.store.get_run(run_id=target.pointer.anchor)
+    child = execution.store.get_run(run_id=target.pointer.record)
     if child is None:
-        raise RuntimeError(f"child run not found: {target.pointer.anchor}")
+        raise RuntimeError(f"child run not found: {target.pointer.record}")
     control = execution.store.get_run_control(
         run_id=child.control.target,
         index=child.control.index,
@@ -562,6 +567,8 @@ def _run_call_inputs(state: _AgicState, call: ToolCall) -> tuple[Pointer, ...]:
         return (
             Pointer.step(
                 StepPath(state.prepared.run.run_id, (source[0],)),
+                "output",
+                "value",
                 source[1],
             ),
         )
@@ -569,6 +576,8 @@ def _run_call_inputs(state: _AgicState, call: ToolCall) -> tuple[Pointer, ...]:
         return (
             Pointer.step(
                 StepPath(state.prepared.run.run_id, (state.last_step,)),
+                "output",
+                "value",
             ),
         )
     return state.initial_inputs
@@ -582,6 +591,8 @@ def _runtime_call_source(state: _AgicState, call: ToolCall) -> Pointer:
         raise RuntimeError(f"runtime ToolCall source is missing: {call.tool_call_id}")
     return Pointer.step(
         StepPath(state.prepared.run.run_id, (source[0],)),
+        "output",
+        "value",
         source[1],
     )
 
@@ -595,6 +606,8 @@ def _append_canceled_tool_results(
     state.next_model_inputs = tuple(
         Pointer.step(
             StepPath(state.prepared.run.run_id, (source[0],)),
+            "output",
+            "value",
             source[1],
         )
         for call in calls

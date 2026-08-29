@@ -32,9 +32,9 @@ perform the final pure record-to-schema conversion.
 
 `runs.db` contains:
 
-- `ThreadRecord` and `ThreadControlRecord`;
-- `RunRecord` and `RunControlRecord`;
-- `StepRecord` and complete step outputs;
+- `ThreadRecord`, `RunRecord`, and `StepRecord`;
+- one `ControlRecord` model for run- and thread-scoped controls;
+- complete typed step outputs;
 - content-addressed model instructions, messages, and toolsets.
 
 Run events are transient facts emitted during execution. They are never stored
@@ -43,12 +43,9 @@ records and observes only new live events.
 
 Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
-process exits. Schema upgrades migrate supported versions in place and fail
-without deleting records when an unsupported or conflicting schema is found.
-A store never opens a newer schema by rebuilding it as an older one. Read-only
-inspection opens SQLite in read-only mode, requires the current schema, and
-never applies migrations; the agent runtime performs supported forward
-migrations when it opens the store for execution.
+process exits. Schema version 32 is an incompatible Pointer boundary: both
+read-only and writable opens reject every other version unchanged. This build
+does not migrate older stores.
 
 
 ## IDs And Indexes
@@ -59,9 +56,10 @@ and `RunStore` to `RunExecutor` and `ThreadManager`. Separate processes use
 separate objects over the same files. Allocation is serialized with an
 inter-process file lock. Unused IDs are allowed; duplicates are not.
 
-Run-control indexes are local to a run. Thread-control indexes are local to a
-thread. Both are allocated and inserted under `BEGIN IMMEDIATE` in `runs.db`.
-Index reservation is never a separate operation.
+Control indexes are local to their Run or Thread target. They are allocated and
+inserted under `BEGIN IMMEDIATE` in `runs.db`; index reservation is never a
+separate operation. Non-null request ids are globally unique in the unified
+Control table.
 
 Runs within one thread use their durable SQLite acceptance order for history,
 fork, and rewind boundaries. Wall-clock timestamps remain display metadata and
@@ -120,10 +118,10 @@ The process-local executor remains the execution engine:
 ```text
 start()                                             -> None
 run(RunSpec, run_id?, request_id?, tracer?)         -> LocalRunHandle
-cancel(run_id, timing, request_id?, reason?)         -> RunControlRecord
-steer(run_id, message, timing, request_id?)          -> RunControlRecord
-reload(run_id, state, request_id?)                   -> RunControlRecord
-cancel_control(run_id, index)                        -> RunControlRecord
+cancel(run_id, timing, request_id?, reason?)         -> ControlRecord
+steer(run_id, message, timing, request_id?)          -> ControlRecord
+reload(run_id, state, request_id?)                   -> ControlRecord
+cancel_control(run_id, index)                        -> ControlRecord
 stop()                                               -> None
 ```
 
@@ -169,7 +167,7 @@ For every `RunEvent`, ordering is:
 ```text
 runtime produces event
   -> one transaction projects RunRecord or StepRecord
-     and updates referenced RunControlRecord statuses
+     and updates referenced ControlRecord statuses
   -> optional RunTracer observes the event
 ```
 
@@ -274,7 +272,7 @@ optional run id; omission selects the last visible top-level run. Recursive
 child runs are never thread anchors. An empty thread has no implicit anchor and
 cannot be forked or rewound. Every selected anchor must be terminal.
 
-Every successful mutation has a durable `ThreadControlRecord` and produces one
+Every successful mutation has a durable `ControlRecord` and produces one
 success event:
 
 ```text

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from toolang.lang.ast import RepeatStmt
 
-from ...records import RunControlRecord, StepPath
+from ...records import ControlRecord, StepPath
 from ...types import IterationOccurrence, Occurrence
 from ..common import BoundRun
 from ..common import Local, boolean
@@ -23,7 +23,7 @@ async def execute(
     locals: dict[str, Local],
     path: StepPath,
     statement: RepeatStmt,
-    controls: Sequence[RunControlRecord],
+    controls: Sequence[ControlRecord],
     occurrence: Occurrence | None,
 ) -> Local:
     progress = loop_step.LoopProgress(total=statement.count)

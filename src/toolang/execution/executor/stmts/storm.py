@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from toolang.lang.ast import StormStmt
 
-from ...records import RunControlRecord, StepPath
+from ...records import ControlRecord, StepPath
 from ...types import Occurrence
 from ..common import BoundRun
 from ..common import Local, require_item
@@ -23,7 +23,7 @@ async def execute(
     locals: Mapping[str, Local],
     path: StepPath,
     statement: StormStmt,
-    controls: Sequence[RunControlRecord],
+    controls: Sequence[ControlRecord],
     occurrence: Occurrence | None,
 ) -> Local:
     async def evaluate() -> Local:

@@ -10,7 +10,7 @@ from toolang.base.types.message import Part
 from toolang.base.types.run import ModelCall
 from .records import (
     PreparationControlPayload,
-    RunControlRecord,
+    ControlRecord,
     RunRecord,
     StepRecord,
     StoredModelStepGiven,
@@ -229,7 +229,7 @@ class RunHistory:
     def _input_parts(
         self,
         run: RunRecord,
-        controls: Sequence[RunControlRecord],
+        controls: Sequence[ControlRecord],
     ) -> tuple[Part, ...]:
         for control in reversed(controls):
             if control.index > run.control.index or not isinstance(

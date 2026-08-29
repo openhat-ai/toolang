@@ -3,20 +3,28 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, fields, is_dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
 import sys
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Literal, cast
 from uuid import uuid4
 
 import click
 import typer
+from rich.cells import cell_len
+from rich.console import Console, RenderableType
+from rich.table import Table
+from rich.text import Text
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import Message
+from toolang.cli.common.human_values import (
+    human_scalar_text,
+    human_value_renderable,
+)
 from toolang.cli.common.policy import (
     resolve_binding_overrides,
     resolve_ceiling_overrides,
@@ -28,18 +36,22 @@ from toolang.execution.executor import RunExecutor
 from toolang.execution.history import RunHistory
 from toolang.execution.records import PreparationControlPayload
 from toolang.execution.schemas import (
+    RecordSelection,
     RerunRequest,
     RetryRequest,
     RunDetail,
-    StepData,
 )
 from toolang.execution.threads import ThreadManager
+from toolang.execution.store import RunStore
 from toolang.execution.types import (
     Local,
+    Pointer,
     RunOverride,
     RunStatus,
     StepPath,
+    TypedPointer,
     local_to_protocol_data,
+    validate_runtime_value,
 )
 
 from ...common.context import (
@@ -56,28 +68,9 @@ from ...common.execution_runtime import (
     open_execution_runtime,
 )
 from ...common.execution_progress.config import resolve_progress_max_width
-from ...common.output import echo_table, runnable_label, parse_utc_timestamp
+from ...common.output import echo_table
 from ...common.run_client import open_run_client
 from ...common.script_progress import ScriptRunPresenter
-
-
-InspectDocument = dict[str, Any]
-
-
-@dataclass(frozen=True, slots=True)
-class InspectTarget:
-    """One parsed thread, run, or step inspection target."""
-
-    kind: Literal["thread", "run"]
-    identifier: str
-    path: tuple[int, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class _StepNode:
-    run_id: str
-    step: StepData
-    children: tuple[_StepNode, ...] = ()
 
 
 def threads_command(
@@ -165,29 +158,182 @@ def runs_command(
 
 def inspect_command(
     ctx: typer.Context,
-    target: Annotated[
-        str, typer.Argument(help="Thread id, run id, or run step path to inspect.")
+    pointer: Annotated[
+        str, typer.Argument(help="Historical record or field Pointer to inspect.")
     ],
-    limit: Annotated[
-        int, typer.Option("--limit", help="Maximum thread runs to read.")
-    ] = 100,
+    human: Annotated[
+        bool, typer.Option("--human", help="Render a human-readable value.")
+    ] = False,
     json_view: Annotated[
-        bool, typer.Option("--json", help="Render inspection data as JSON.")
+        bool, typer.Option("--json", help="Render exact canonical JSON.")
+    ] = False,
+    type_view: Annotated[
+        bool, typer.Option("--type", help="Print the current declared type name.")
     ] = False,
 ) -> None:
-    """Inspect one thread, run, or run step path."""
+    """Inspect one historical execution record or field."""
 
-    if limit < 1:
-        raise click.ClickException("--limit must be at least 1")
-    parsed = parse_inspect_target(target)
+    if sum((human, json_view, type_view)) > 1:
+        raise click.UsageError("--human, --json, and --type are mutually exclusive")
+    try:
+        parsed = Pointer(pointer)
+    except (TypeError, ValueError) as exc:
+        raise click.UsageError(str(exc)) from exc
     with open_execution(ctx, required=True) as resources:
         if resources is None:  # pragma: no cover - required=True guarantees this
             raise RuntimeError("execution resources were not opened")
-        document = _inspect(resources, parsed, limit=limit)
-    if json_view:
-        typer.echo(json.dumps(document, ensure_ascii=False, indent=2))
+        try:
+            selected = resources.store.select_pointer(parsed)
+            if json_view:
+                typer.echo(json.dumps(selected.value, ensure_ascii=False, indent=2))
+            elif type_view:
+                typer.echo(selected.type_name)
+            else:
+                _render_pointer(resources.store, selected)
+        except (TypeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+
+
+@dataclass(frozen=True, slots=True)
+class _HumanValue:
+    data: object
+    runtime: object
+    render_type: str
+    resolved: bool
+
+
+def _render_pointer(store: RunStore, selected: RecordSelection) -> None:
+    console = Console(highlight=False)
+    root = _human_value(store, selected)
+    if _browse_children(selected, root):
+        _render_human_rows(console, _human_children(store, selected))
         return
-    _render_inspect(document)
+    _render_human_rows(console, ((selected, root),))
+
+
+def _browse_children(selected: RecordSelection, value: _HumanValue) -> bool:
+    if value.resolved or isinstance(selected.runtime, Local):
+        return False
+    if value.render_type in {"Part", "Part[]"}:
+        return False
+    return isinstance(selected.value, Mapping | list) and bool(selected.value)
+
+
+def _human_children(
+    store: RunStore,
+    selected: RecordSelection,
+) -> Iterable[tuple[RecordSelection, _HumanValue]]:
+    keys: Iterable[str | int]
+    if isinstance(selected.value, Mapping):
+        keys = (cast(str, key) for key in selected.value)
+    else:
+        keys = range(len(cast(Sequence[object], selected.value)))
+    for key in keys:
+        child = selected.child(key)
+        yield child, _human_value(store, child)
+
+
+def _human_value(store: RunStore, selected: RecordSelection) -> _HumanValue:
+    data = selected.value
+    runtime = selected.runtime
+    render_type = selected.render_type
+    resolved = False
+    expected: list[str] = []
+    visited: list[Pointer] = []
+
+    while True:
+        if isinstance(runtime, Local):
+            protocol = local_to_protocol_data(runtime)
+            local_type = runtime.type
+            data = protocol["value"]
+            runtime = runtime.value
+            render_type = local_type
+        if isinstance(runtime, TypedPointer):
+            expected.append(runtime.type)
+            pointer = runtime.pointer
+        elif isinstance(runtime, Pointer):
+            pointer = runtime
+        else:
+            break
+        if pointer in visited:
+            cycle = " -> ".join(str(item) for item in (*visited, pointer))
+            raise ValueError(f"Pointer cycle: {cycle}")
+        visited.append(pointer)
+        target = store.select_pointer(pointer)
+        data = target.value
+        runtime = target.runtime
+        render_type = target.render_type
+        resolved = True
+
+    for type_name in expected:
+        validate_runtime_value(runtime, type_name, path=f"Pointer {selected.pointer}")
+    return _HumanValue(data, runtime, render_type, resolved)
+
+
+def _render_human_rows(
+    console: Console,
+    rows: Iterable[tuple[RecordSelection, _HumanValue]],
+) -> None:
+    compact: list[tuple[str, str]] = []
+    for selected, value in rows:
+        label = f"{selected.pointer}{' →' if value.resolved else ''}"
+        block = _human_block(value)
+        if block is None:
+            compact.append((label, _human_summary(value)))
+            continue
+        _print_human_table(console, compact)
+        compact = []
+        console.print(Text(label))
+        console.print(block)
+    _print_human_table(console, compact)
+
+
+def _print_human_table(console: Console, rows: Sequence[tuple[str, str]]) -> None:
+    if not rows:
+        return
+    minimum_width = (
+        max(cell_len("POINTER"), *(cell_len(pointer) for pointer, _value in rows))
+        + 4
+        + cell_len("VALUE")
+    )
+    table = Table(
+        show_header=True,
+        show_edge=False,
+        box=None,
+        pad_edge=False,
+        padding=(0, 2),
+        width=minimum_width if minimum_width > console.width else None,
+    )
+    table.add_column("POINTER", no_wrap=True, overflow="ignore")
+    table.add_column("VALUE")
+    for pointer, value in rows:
+        table.add_row(pointer, value)
+    console.print(table, crop=False)
+
+
+def _human_block(value: _HumanValue) -> RenderableType | None:
+    return human_value_renderable(value.runtime, value.render_type)
+
+
+def _human_summary(value: _HumanValue) -> str:
+    data = value.data
+    natural = human_scalar_text(value.runtime, value.render_type)
+    if natural is not None:
+        return natural
+    if isinstance(data, Mapping):
+        items = [f"{key}: {_nested_summary(value)}" for key, value in data.items()]
+        return _truncate("{" + ", ".join(items) + "}", width=120)
+    if isinstance(data, list):
+        return "[]" if not data else f"[{len(data)} items]"
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+
+
+def _nested_summary(value: object) -> str:
+    if isinstance(value, Mapping):
+        return "{}" if not value else "{...}"
+    if isinstance(value, list):
+        return "[]" if not value else f"[{len(value)} items]"
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def steer_command(
@@ -422,305 +568,6 @@ def fork_command(
         _open_chat(ctx, forked_id)
 
 
-def parse_inspect_target(target: str) -> InspectTarget:
-    """Parse a CLI inspection target."""
-
-    value = target.strip()
-    if not value:
-        raise click.ClickException("inspect target is required")
-    if ":" in value or "/" in value:
-        raise click.ClickException(f"invalid inspect path: {value}")
-    if "." in value:
-        if not value.startswith("run_"):
-            raise click.ClickException(f"invalid inspect path: {value}")
-        try:
-            step = StepPath.parse(value)
-        except ValueError as exc:
-            raise click.ClickException(f"invalid inspect path: {value}") from exc
-        return InspectTarget(kind="run", identifier=step.run, path=step.indices)
-    return InspectTarget(
-        kind="run" if value.startswith("run_") else "thread",
-        identifier=value,
-    )
-
-
-def _inspect(
-    resources: ExecutionResources,
-    target: InspectTarget,
-    *,
-    limit: int,
-) -> InspectDocument:
-    history = RunHistory(resources.store)
-    if target.kind == "thread":
-        thread = history.get_thread(target.identifier, run_limit=limit)
-        if thread is None:
-            raise click.ClickException(f"thread not found: {target.identifier}")
-        return {
-            "kind": "thread",
-            "target": target.identifier,
-            "thread": _inspect_data(thread),
-        }
-
-    run = history.get_run(target.identifier)
-    if run is None:
-        raise click.ClickException(f"run not found: {target.identifier}")
-    thread = history.get_thread(run.thread_id, run_limit=None)
-    runs = thread.runs if thread is not None else [run]
-    run_by_id = {item.id: item for item in runs}
-    display_run = run_by_id.get(run.id, run)
-    nodes = _run_nodes(display_run, run_by_id=run_by_id)
-    if target.path:
-        step_path = StepPath(target.identifier, target.path)
-        node = _find_step_node(nodes, step_path)
-        if node is None:
-            raise click.ClickException(f"step not found: {step_path}")
-        return {
-            "kind": "step",
-            "target": str(step_path),
-            "run": _run_data(display_run, include_steps=False),
-            "step": _node_data(node),
-        }
-    return {
-        "kind": "run",
-        "target": target.identifier,
-        "run": _run_data(display_run, include_steps=False),
-        "steps": [_node_data(node) for node in nodes],
-    }
-
-
-def _run_nodes(
-    run: RunDetail,
-    *,
-    run_by_id: Mapping[str, RunDetail],
-    parent: StepPath | None = None,
-    visited_runs: frozenset[str] = frozenset(),
-) -> tuple[_StepNode, ...]:
-    if run.id in visited_runs:
-        return ()
-    visited = visited_runs | {run.id}
-    nodes: list[_StepNode] = []
-    for step in run.steps:
-        if step.path.parent != parent:
-            continue
-        step_path = step.path
-        children = list(
-            _run_nodes(
-                run,
-                run_by_id=run_by_id,
-                parent=step_path,
-                visited_runs=visited_runs,
-            )
-        )
-        for child_run in run_by_id.values():
-            if child_run.parent != step_path:
-                continue
-            children.extend(
-                _run_nodes(
-                    child_run,
-                    run_by_id=run_by_id,
-                    visited_runs=visited,
-                )
-            )
-        nodes.append(
-            _StepNode(
-                run_id=run.id,
-                step=step,
-                children=tuple(children),
-            )
-        )
-    return tuple(nodes)
-
-
-def _find_step_node(nodes: Sequence[_StepNode], path: StepPath) -> _StepNode | None:
-    for node in nodes:
-        if node.step.path == path:
-            return node
-        found = _find_step_node(node.children, path)
-        if found is not None:
-            return found
-    return None
-
-
-def _node_data(node: _StepNode) -> dict[str, Any]:
-    return _inspect_data(
-        {
-            "run_id": node.run_id,
-            **_record_data(node.step),
-            "children": [_node_data(child) for child in node.children],
-        }
-    )
-
-
-def _run_data(run: RunDetail, *, include_steps: bool) -> dict[str, Any]:
-    data = _record_data(run)
-    if not include_steps:
-        data.pop("steps", None)
-    return data
-
-
-def _inspect_data(value: Any) -> Any:
-    if isinstance(value, StepPath):
-        return str(value)
-    if isinstance(value, Local):
-        return local_to_protocol_data(value)
-    if is_dataclass(value) and not isinstance(value, type):
-        return _record_data(value)
-    if isinstance(value, dict):
-        return {key: _inspect_data(item) for key, item in value.items()}
-    if isinstance(value, list | tuple):
-        return [_inspect_data(item) for item in value]
-    return value
-
-
-def _record_data(value: Any) -> dict[str, Any]:
-    return {
-        field.name: _inspect_data(getattr(value, field.name)) for field in fields(value)
-    }
-
-
-def _render_inspect(document: Mapping[str, Any]) -> None:
-    kind = document.get("kind")
-    if kind == "thread":
-        _render_thread(_mapping(document.get("thread")))
-        return
-    if kind == "step":
-        _render_step(_mapping(document.get("step")))
-        return
-    _render_run(
-        _mapping(document.get("run")),
-        [_mapping(item) for item in _list(document.get("steps"))],
-    )
-
-
-def _render_thread(thread: Mapping[str, Any]) -> None:
-    _section("thread")
-    typer.echo(
-        "  ".join(
-            (
-                f"thread {thread.get('id', '-')}",
-                str(thread.get("status", "-")),
-                f"runs={thread.get('run_count', 0)}",
-            )
-        )
-    )
-    runs = [
-        _mapping(item)
-        for item in _list(thread.get("runs"))
-        if _mapping(item).get("parent") is None
-    ]
-    if not runs:
-        return
-    _section("runs")
-    for run in runs:
-        status = _display_status(run.get("status"))
-        target = runnable_label(
-            _text(run.get("runnable_kind")),
-            _text(run.get("runnable_name")),
-        )
-        summary = _text(run.get("input_text")) or _text(run.get("summary")) or ""
-        elapsed = _elapsed(
-            _text(run.get("started_at")),
-            _text(run.get("finished_at")),
-        )
-        typer.echo(
-            f"{_status_mark(status)} {run.get('id', '-')}  "
-            f"{elapsed or '-':>6}  {target:<16}  {_truncate(summary, width=72)}"
-        )
-
-
-def _render_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]]) -> None:
-    _section("run")
-    target = runnable_label(
-        _text(run.get("runnable_kind")),
-        _text(run.get("runnable_name")),
-    )
-    typer.echo(
-        "  ".join(
-            (
-                f"run {run.get('id', '-')}",
-                _display_status(run.get("status")),
-                f"target={target}",
-                f"thread={run.get('thread_id', '-')}",
-            )
-        )
-    )
-    if input_text := _text(run.get("input_text")):
-        _section("input")
-        typer.echo(input_text)
-    if error := _failure_text(run):
-        _section("output")
-        typer.echo(f"error: {error}")
-    elif summary := _text(run.get("summary")):
-        _section("output")
-        typer.echo(summary)
-    if steps:
-        _section("steps")
-        for step in steps:
-            _render_step_line(step)
-
-
-def _render_step(step: Mapping[str, Any]) -> None:
-    _section("step")
-    typer.echo(
-        "  ".join(
-            (
-                f"step {step.get('run_id', '-')}:{step.get('path', '-')}",
-                _display_status(step.get("status")),
-                f"kind={step.get('kind', 'step')}",
-            )
-        )
-    )
-    if error := _text(step.get("error")):
-        _section("error")
-        typer.echo(error)
-    for label in ("input", "given", "output", "noted"):
-        value = step.get(label)
-        if value in (None, [], {}):
-            continue
-        _section(label)
-        typer.echo(json.dumps(value, ensure_ascii=False, indent=2))
-    children = [_mapping(item) for item in _list(step.get("children"))]
-    if children:
-        _section("children")
-        for child in children:
-            _render_step_line(child)
-
-
-def _render_step_line(step: Mapping[str, Any], *, depth: int = 0) -> None:
-    status = _display_status(step.get("status"))
-    summary = _step_summary(step)
-    line = (
-        f"{'  ' * depth}{_status_mark(status)} "
-        f"{str(step.get('path', '-')):<5} {str(step.get('kind', 'step')):<7}"
-    )
-    if summary:
-        line = f"{line}  {_truncate(summary, width=100)}"
-    typer.echo(line)
-    for child in [_mapping(item) for item in _list(step.get("children"))]:
-        _render_step_line(child, depth=depth + 1)
-
-
-def _step_summary(step: Mapping[str, Any]) -> str:
-    parts = _list(step.get("output"))
-    summaries: list[str] = []
-    for raw in parts:
-        part = _mapping(raw)
-        part_type = _text(part.get("type"))
-        if part_type == "text" and (text := _text(part.get("text"))):
-            summaries.append(" ".join(text.split()))
-        elif part_type == "tool_call":
-            summaries.append(
-                f"{part.get('tool_name') or part.get('name') or 'tool'} call"
-            )
-        elif part_type == "tool_result":
-            summaries.append(
-                f"{part.get('tool_name') or part.get('name') or 'tool'} result"
-            )
-        elif part_type:
-            summaries.append(f"[{part_type}]")
-    return " ".join(summaries) or (_text(step.get("error")) or "")
-
-
 def _active_run_id(history: RunHistory, target: str) -> str:
     if target.startswith("run_"):
         run = history.get_run(target)
@@ -939,40 +786,8 @@ def _run_status(value: str | None) -> RunStatus | None:
     return cast(RunStatus, value)
 
 
-def _failure_text(run: Mapping[str, Any]) -> str:
-    error = run.get("error")
-    if isinstance(error, str):
-        return error
-    step = _text(_mapping(error).get("step"))
-    return f"step {step} failed" if step else ""
-
-
 def _display_status(value: object) -> str:
     return str(value or "")
-
-
-def _status_mark(status: str) -> str:
-    return {
-        "succeeded": "✓",
-        "failed": "✗",
-        "canceled": "-",
-        "running": "…",
-    }.get(status, "·")
-
-
-def _elapsed(started_at: str | None, finished_at: str | None) -> str:
-    if not started_at or not finished_at:
-        return ""
-    start = parse_utc_timestamp(started_at)
-    finish = parse_utc_timestamp(finished_at)
-    if start is None or finish is None:
-        return ""
-    seconds = max((finish - start).total_seconds(), 0)
-    if seconds < 1:
-        return f"{max(round(seconds * 1000), 1)}ms"
-    if seconds < 10:
-        return f"{seconds:.1f}s"
-    return f"{seconds:.0f}s"
 
 
 def _truncate(value: object, *, width: int) -> str:
@@ -982,22 +797,3 @@ def _truncate(value: object, *, width: int) -> str:
     if width <= 3:
         return text[:width]
     return f"{text[: width - 3].rstrip()}..."
-
-
-def _section(label: str) -> None:
-    click.secho(f"# {label}", dim=True)
-
-
-def _mapping(value: object) -> Mapping[str, Any]:
-    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
-
-
-def _list(value: object) -> list[Any]:
-    return value if isinstance(value, list) else []
-
-
-def _text(value: object) -> str | None:
-    if value is None:
-        return None
-    text = str(value)
-    return text or None
