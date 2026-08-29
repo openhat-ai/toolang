@@ -20,8 +20,8 @@ terminal operation applied only after the complete subject chain resolves.
 
 ## Success Criteria
 
-- `inspect threads` and `inspect runs` list records from the selected agent's
-  execution store.
+- `inspect threads` and `inspect runs` list all ordinarily visible records from
+  the selected agent's execution store.
 - `inspect THREAD_POINTER runs` lists Runs owned by that Thread.
 - `inspect RUN_POINTER steps` lists Steps owned by that Run.
 - Existing Thread, Control, Run, Step, and field Pointer inspection remains
@@ -30,7 +30,7 @@ terminal operation applied only after the complete subject chain resolves.
   `ModelCall` captured for that Step.
 - Exact static names take precedence over generic Pointer parsing.
 - One typed transition registry drives dispatch legality, allowed-value errors,
-  help, shell completion, and transition tests.
+  help, and transition tests.
 - Every form is local, offline, read-only, and supports human and canonical
   JSON output.
 
@@ -156,26 +156,34 @@ term_ab12 runs steps
 
 One closed registry owns the table. Dispatch resolves the head and then looks
 up each exact child token for the current subject kind. The same registry
-provides completion candidates, help, allowed-value errors, and parameterized
-transition tests. The command must not duplicate these relationships in
-target-specific conditionals.
+provides help, allowed-value errors, and parameterized transition tests. The
+command must not duplicate these relationships in target-specific
+conditionals. Shell completion is outside this feature.
 
 ## Collection Semantics And Presentation
 
 Collection subjects expose durable records, not aggregate documents:
 
-- `threads` keeps the current ordering and newest-50 bound.
-- `runs` keeps the current ordering, visibility, and newest-50 bound.
+- `threads` keeps the current ordering and returns every Thread.
+- `runs` keeps the current ordering and visibility and returns every matching
+  Run.
 - `THREAD runs` selects root and child Runs whose durable `thread` equals the
-  selected Thread ID. It uses the same visibility and newest-50 bound as
-  `runs`; it does not splice a fork source Thread's history prefix.
+  selected Thread ID. It uses the same visibility as `runs`, returns every
+  match, and does not splice a fork source Thread's history prefix.
 - `RUN steps` selects every ordinarily visible Step owned by the Run,
   including nested StepPaths, in numeric StepPath order.
 
-An empty collection succeeds with headings and no rows. A missing scoped
-Thread or Run fails before its relation is evaluated. Pagination, `--all`, and
-new collection filters are outside this feature; the top-level list commands
-retain their existing filters.
+Every inspect query requires an existing `runs.db`. When it is absent, the
+command fails with the existing `execution history not found: AGENT` error; it
+never silently treats a missing store as an empty collection. An existing
+store whose query matches no records succeeds with headings and no rows. A
+missing scoped Thread or Run fails before its relation is evaluated.
+
+Collection subjects are intentionally unbounded because inspection is
+primarily local and must make every historical object discoverable. Pagination,
+limits, `--all`, and new collection filters are outside this feature and may be
+added later. The top-level list commands retain their current bounds and
+filters.
 
 Human output reuses the compact list vocabulary of existing list commands.
 Every row begins with an unmodified Pointer that can be copied into another
@@ -230,8 +238,8 @@ current adapter behavior must not be presented as historical transport truth.
 
 This feature includes execution collection subjects, existing Pointer
 subjects, typed subject dispatch, the historical `model-call` projector,
-human and JSON presentation, help, completion, tests, and directly affected
-CLI documentation.
+human and JSON presentation, help, tests, and directly affected CLI
+documentation.
 
 It excludes:
 
@@ -303,10 +311,11 @@ allowed within implementation scope if their behavior remains compatible.
    non-`run_` Thread IDs remain supported.
 2. **Transition matrix:** every allowed transition succeeds; every disallowed
    subject pair reports only the children permitted by the shared registry.
-3. **Collections:** root collections preserve current bounds and ordering;
-   `THREAD runs` uses direct ownership and ordinary visibility; `RUN steps`
-   includes nested owned StepPaths in numeric order; empty scopes succeed and
-   missing scope records fail.
+3. **Collections:** root and related collections return every matching record
+   in their defined order; `THREAD runs` uses direct ownership and ordinary
+   visibility; `RUN steps` includes nested owned StepPaths in numeric order;
+   an existing empty store succeeds, while an absent `runs.db` and missing
+   scope records fail.
 4. **Reusable output:** every human Pointer selects the intended record in a
    follow-up invocation; JSON array items equal individual Pointer JSON.
 5. **Compatibility:** the existing Pointer inspection suite and top-level list
@@ -314,8 +323,8 @@ allowed within implementation scope if their behavior remains compatible.
 6. **Model call:** human and JSON output reconstruct a complete persisted call;
    `given/call` still shows references; invalid subject and non-model Step cases
    fail; projection creates no record, provider call, or accounting.
-7. **Shared registry:** completion, help, allowed-value errors, dispatch, and
-   transition tests consume the same transition declarations.
+7. **Shared registry:** help, allowed-value errors, dispatch, and transition
+   tests consume the same transition declarations.
 8. **Default verification:** Ruff check and format, ty, and the default pytest
    suite pass.
 
@@ -327,8 +336,10 @@ allowed within implementation scope if their behavior remains compatible.
   implementation must start from this definition and current `main` behavior.
 - Fork-aware history and direct Run ownership are different queries;
   `THREAD runs` deliberately uses direct ownership.
-- The transition registry will drift if any handler, help, completion, or test
-  bypasses it.
+- Unbounded collections may produce large local output. This is accepted for
+  complete discoverability; pagination is a separate future feature.
+- The transition registry will drift if any handler, help, or test bypasses
+  it.
 
 ## Open Questions
 
