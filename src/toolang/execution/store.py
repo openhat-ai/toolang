@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import replace
 import hashlib
 import json
 from pathlib import Path
@@ -19,6 +20,7 @@ from toolang.base.types.message import (
     message_text,
 )
 from toolang.base.types.run import ModelCall
+from toolang.lang.input import PromptInvocation, RunnableInputRaw
 from toolang.lang.types import Array, Struct, Value
 from toolang.base.types.tool import ToolDefinition
 from toolang.base.types.policy import RunLimits
@@ -78,6 +80,7 @@ from .types import (
     Occurrence,
     Pointer,
     TypedPointer,
+    RunOverride,
     validate_runtime_value,
     valid_run_id,
     valid_thread_id,
@@ -205,6 +208,10 @@ class RunStore:
         kind: Literal["run", "rerun"] = "run",
         source: str | None = None,
         state_ref: ControlRef | None = None,
+        authored_input: RunnableInputRaw | None = None,
+        authored_commands: tuple[RunOverride, ...] = (),
+        authored_session_commands: tuple[RunOverride, ...] = (),
+        prompt_invocations: tuple[PromptInvocation, ...] = (),
     ) -> tuple[RunRecord, ControlRecord]:
         """Atomically insert one new run and its entry control."""
 
@@ -337,6 +344,10 @@ class RunStore:
                         model=model,
                         locals=locals,
                         sandbox=sandbox,
+                        authored_input=authored_input,
+                        authored_commands=authored_commands,
+                        authored_session_commands=authored_session_commands,
+                        prompt_invocations=prompt_invocations,
                     )
                     if kind == "run"
                     else RerunControlPayload(
@@ -348,6 +359,10 @@ class RunStore:
                         locals=locals,
                         rerun_from=cast(str, source),
                         sandbox=sandbox,
+                        authored_input=authored_input,
+                        authored_commands=authored_commands,
+                        authored_session_commands=authored_session_commands,
+                        prompt_invocations=prompt_invocations,
                     )
                 )
                 self._insert_control(
@@ -672,6 +687,10 @@ class RunStore:
         sandbox: str,
         request_id: str | None,
         created_at: str,
+        authored_input: RunnableInputRaw | None = None,
+        authored_commands: tuple[RunOverride, ...] = (),
+        authored_session_commands: tuple[RunOverride, ...] = (),
+        prompt_invocations: tuple[PromptInvocation, ...] = (),
     ) -> tuple[RunRecord, ControlRecord, tuple[StepPath, ...]]:
         """Atomically cut one root run at a step and reopen it for execution."""
 
@@ -802,6 +821,10 @@ class RunStore:
                         locals=locals,
                         retry_from=resolved_anchor,
                         sandbox=sandbox,
+                        authored_input=authored_input,
+                        authored_commands=authored_commands,
+                        authored_session_commands=authored_session_commands,
+                        prompt_invocations=prompt_invocations,
                     ),
                     request=request_id,
                     status="applied",
@@ -2654,6 +2677,59 @@ class RunStore:
                 (run_id, index),
             ).fetchone()
         return _control_from_row(row) if row is not None else None
+
+    def append_prompt_invocations(
+        self,
+        *,
+        run_id: str,
+        index: int,
+        invocations: Sequence[PromptInvocation],
+    ) -> tuple[PromptInvocation, ...]:
+        """Atomically append runtime prompt provenance to one preparation."""
+
+        if not all(isinstance(item, PromptInvocation) for item in invocations):
+            raise TypeError(
+                "runtime prompt provenance requires PromptInvocation values"
+            )
+        with self.write_transaction():
+            row = self._conn.execute(
+                "SELECT * FROM controls "
+                "WHERE scope = 'run' AND target = ? AND \"index\" = ?",
+                (run_id, index),
+            ).fetchone()
+            control = _control_from_row(row) if row is not None else None
+            if control is None or not isinstance(
+                control.payload, PreparationControlPayload
+            ):
+                raise ValueError(f"run preparation not found: {run_id}@{index}")
+            existing = control.payload.prompt_invocations
+            offset = len(existing)
+            appended = tuple(
+                replace(
+                    invocation,
+                    parent=(
+                        invocation.parent + offset
+                        if invocation.parent is not None
+                        else None
+                    ),
+                )
+                for invocation in invocations
+            )
+            updated = (*existing, *appended)
+            if not appended:
+                return updated
+            payload = replace(control.payload, prompt_invocations=updated)
+            self._conn.execute(
+                "UPDATE controls SET payload = ?, _revision = ? "
+                "WHERE scope = 'run' AND target = ? AND \"index\" = ?",
+                (
+                    _dump_json(control_payload_to_data(payload)),
+                    self._next_run_control_revision(),
+                    run_id,
+                    index,
+                ),
+            )
+        return updated
 
     def resolve_state_revision(self, ref: ControlRef) -> str:
         """Resolve one durable State control reference to its revision."""

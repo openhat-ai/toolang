@@ -34,12 +34,14 @@ from toolang.execution.types import (
     AgentResources,
     Local,
     Pointer,
+    RunOverride,
     StepPath,
     TypedPointer,
     local_from_protocol_data,
     local_to_protocol_data,
 )
 from toolang.execution.values import parts_from_local
+from toolang.lang.input import PromptInvocation, RunnableInputRaw
 from toolang.lang.types import Array, Struct
 
 
@@ -375,6 +377,41 @@ def test_preparation_payload_round_trips_resolved_locals() -> None:
 
     data = control_payload_to_data(payload)
     assert data["sandbox"] == "docker:python:3.13-slim"
+    assert control_payload_from_data("run", data) == payload
+
+
+def test_preparation_payload_round_trips_authored_prompt_facts() -> None:
+    payload = RunControlPayload(
+        resources=AgentResources(models=("test/model",)),
+        limits=RunLimits(),
+        state="0" * 64,
+        runnable="agic:worker",
+        model="test/model",
+        locals=(Local.typed("Part[]", (TextPart("expanded"),), "_", 0),),
+        authored_input=RunnableInputRaw(
+            primary="$review focus=security -- inspect",
+            named=(("tone", "$brief"),),
+        ),
+        authored_commands=(RunOverride("limit", "time", 30),),
+        authored_session_commands=(RunOverride("default", "model", "test/model"),),
+        prompt_invocations=(
+            PromptInvocation(
+                name="review",
+                arguments=(("focus", "security"),),
+                input_scope="inline",
+                parent=None,
+                cap_ref="prompt:review",
+                content_hash="1" * 64,
+            ),
+        ),
+    )
+
+    data = control_payload_to_data(payload)
+
+    assert data["authored_input"] == {
+        "primary": "$review focus=security -- inspect",
+        "named": [{"name": "tone", "source": "$brief"}],
+    }
     assert control_payload_from_data("run", data) == payload
 
 

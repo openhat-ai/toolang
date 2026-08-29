@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import logging
 import re
@@ -28,7 +28,11 @@ from toolang.lang.ast import (
     Message as AstMessage,
     Program,
 )
-from toolang.lang.input import resolve_input_parts
+from toolang.lang.input import (
+    PromptDefinitionIdentity,
+    PromptInvocation,
+    resolve_input_parts_with_provenance,
+)
 from toolang.plugin.models.resolution import resolve_model
 from toolang.state import state as cap_store
 from toolang.state.state import (
@@ -39,6 +43,7 @@ from toolang.state.state import (
 )
 
 from . import prompts
+from ..calls import prompt_definitions
 from .common import BoundRun, value_parts, value_text
 from .resources import resource_caps, resource_tools
 from .resources import snapshot_model_selection
@@ -127,12 +132,19 @@ def prepare_agic(
             "has_services": bool(services),
         }
     )
-    rendered = _render_messages(
+    rendered, prompt_invocations = _render_messages(
         program,
         agic.messages,
         values=body_variables,
         types=body_types,
+        definitions=prompt_definitions(
+            run.state,
+            module=run.module,
+            program=program,
+        ),
     )
+    if prompt_invocations:
+        context.record_prompt_invocations(run, prompt_invocations)
     prompt_context = _render_context(program, agic, system_runtime)
     fallback = _run_message(
         agic=agic,
@@ -194,21 +206,35 @@ def _render_messages(
     *,
     values: Mapping[str, object],
     types: Mapping[str, str],
-) -> tuple[tuple[AstMessage, tuple[Part, ...]], ...]:
-    return tuple(
-        (
-            block,
-            _strip_parts(
-                resolve_input_parts(
-                    block.content,
-                    program=program,
-                    values=values,
-                    types=types,
-                )
-            ),
+    definitions: Mapping[str, PromptDefinitionIdentity],
+) -> tuple[
+    tuple[tuple[AstMessage, tuple[Part, ...]], ...],
+    tuple[PromptInvocation, ...],
+]:
+    rendered: list[tuple[AstMessage, tuple[Part, ...]]] = []
+    invocations: list[PromptInvocation] = []
+    for block in blocks:
+        resolution = resolve_input_parts_with_provenance(
+            block.content,
+            program=program,
+            values=values,
+            types=types,
+            prompt_definitions=definitions,
         )
-        for block in blocks
-    )
+        offset = len(invocations)
+        invocations.extend(
+            replace(
+                invocation,
+                parent=(
+                    invocation.parent + offset
+                    if invocation.parent is not None
+                    else None
+                ),
+            )
+            for invocation in resolution.prompts
+        )
+        rendered.append((block, _strip_parts(resolution.parts)))
+    return tuple(rendered), tuple(invocations)
 
 
 def _render_instructions(

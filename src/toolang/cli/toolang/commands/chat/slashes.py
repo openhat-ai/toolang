@@ -9,6 +9,8 @@ from typing import Any, cast
 import click
 
 from toolang.common.errors import ToolangError
+from toolang.execution.runnables import parse_runnable_ref
+from toolang.execution.types import RunOverride
 from .base import AppContext, ChatResult, as_text, friendly_error
 from .input import QuickCommand
 
@@ -35,7 +37,7 @@ class SlashCommand:
 
     @property
     def display_usage(self) -> str:
-        return self.usage or f":{self.primary}"
+        return self.usage or f"/{self.primary}"
 
 
 def handle(app: AppContext, quick: QuickCommand) -> SlashResult:
@@ -43,7 +45,7 @@ def handle(app: AppContext, quick: QuickCommand) -> SlashResult:
     argument = quick.tail or ""
     slash = _SLASH_BY_NAME.get(command)
     if slash is None:
-        app.set_status_error(f"Unknown command: :{command}")
+        app.set_status_error(f"Unknown command: /{command}")
         return SlashResult(True)
 
     try:
@@ -74,14 +76,33 @@ def _exit(app: AppContext, _command: str, _argument: str) -> None:
 
 def _model(app: AppContext, _command: str, argument: str) -> SlashOutput:
     client = app.get_client()
-    del argument
-    return ["Available Models", *_chat_model_list_lines(client.list_models())]
+    payload = client.list_models()
+    if not argument:
+        return ["Available Models", *_chat_model_list_lines(payload)]
+    tokens = argument.split()
+    if len(tokens) != 1:
+        raise ValueError("/model accepts at most one model selector.")
+    resolved = _chat_resolve_model_command(payload, tokens[0])
+    if resolved is None:
+        raise ValueError(f"Model selector is unknown or ambiguous: {tokens[0]}")
+    _apply_default(app, field="model", value=resolved[0])
+    return None
 
 
 def _runnable(app: AppContext, command: str, argument: str) -> SlashOutput:
     client = app.get_client()
     selects = app.get_selects()
-    del argument
+    kind = "runnable" if command == "runnable" else command
+    payload = client.list_runnables(kind)
+    if argument:
+        tokens = argument.split()
+        if len(tokens) != 1:
+            raise ValueError(f"/{command} accepts at most one runnable selector.")
+        resolved = _resolve_runnable_command(payload, tokens[0], kind=kind)
+        if resolved is None:
+            raise ValueError(f"Runnable selector is unknown or ambiguous: {tokens[0]}")
+        _apply_default(app, field="runnable", value=resolved)
+        return None
     selected = as_text(selects.get(command))
     if command == "runnable" and selected is None:
         for kind in ("agic", "flow"):
@@ -93,7 +114,7 @@ def _runnable(app: AppContext, command: str, argument: str) -> SlashOutput:
         if command == "runnable"
         else f"Available {command.title()}s",
         *_chat_runnable_list_lines(
-            client.list_runnables(command),
+            payload,
             selected=selected,
             show_kind=command == "runnable",
         ),
@@ -119,7 +140,7 @@ def _queue(app: AppContext, _command: str, argument: str) -> SlashOutput:
     elif action not in {"steer", "s", "delete", "d", "edit", "e"}:
         app.set_status_error(f"Unknown queue command: {tokens[0]}")
     elif index is None:
-        app.set_status_error(f":queue {tokens[0]} requires an item number.")
+        app.set_status_error(f"/queue {tokens[0]} requires an item number.")
     elif action in {"delete", "d"}:
         queue.pop(index)
     elif action in {"edit", "e"}:
@@ -134,7 +155,7 @@ def _queue(app: AppContext, _command: str, argument: str) -> SlashOutput:
 
 def _steer(app: AppContext, _command: str, argument: str) -> SlashOutput:
     if not argument:
-        app.set_status_error(":steer requires a message.")
+        app.set_status_error("/steer requires a message.")
         return None
     app.request_steer(argument)
     return None
@@ -143,7 +164,7 @@ def _steer(app: AppContext, _command: str, argument: str) -> SlashOutput:
 def _show(app: AppContext, _command: str, argument: str) -> SlashOutput:
     tokens = argument.split()
     if len(tokens) > 1:
-        app.set_status_error(":show accepts at most one run id.")
+        app.set_status_error("/show accepts at most one run id.")
         return None
     run_id = tokens[0] if tokens else None
     return app.get_client().get_result(
@@ -153,35 +174,40 @@ def _show(app: AppContext, _command: str, argument: str) -> SlashOutput:
 
 
 SLASHES: tuple[SlashCommand, ...] = (
-    SlashCommand(("help", "?"), "Show help.", _help, ":help, :?"),
+    SlashCommand(("help", "?"), "Show help.", _help, "/help, /?"),
     SlashCommand(
-        ("model", "models"),
+        ("model",),
         "List or switch models.",
         _model,
-        ":model, :models",
+        "/model [MODEL]",
     ),
-    SlashCommand(("agic",), "List agics.", _runnable, ":agic"),
-    SlashCommand(("flow",), "List flows.", _runnable, ":flow"),
-    SlashCommand(("runnable",), "List runnables.", _runnable, ":runnable"),
+    SlashCommand(("agic",), "List or switch agics.", _runnable, "/agic [AGIC]"),
+    SlashCommand(("flow",), "List or switch flows.", _runnable, "/flow [FLOW]"),
+    SlashCommand(
+        ("runnable",),
+        "List or switch runnables.",
+        _runnable,
+        "/runnable [RUNNABLE]",
+    ),
     SlashCommand(
         ("steer", "s"),
         "Steer the active run.",
         _steer,
-        ":steer <message>",
+        "/steer MESSAGE",
     ),
     SlashCommand(
         ("queue", "q"),
         "Inspect or edit queued submissions.",
         _queue,
-        ":queue <action>",
+        "/queue [ACTION]",
     ),
     SlashCommand(
         ("show",),
         "Show a durable run result.",
         _show,
-        ":show [run_id]",
+        "/show [RUN_ID]",
     ),
-    SlashCommand(("exit", "quit"), "Exit chat.", _exit, ":exit, :quit"),
+    SlashCommand(("exit", "quit"), "Exit chat.", _exit, "/exit, /quit"),
 )
 _SLASH_BY_NAME = {name: slash for slash in SLASHES for name in slash.names}
 
@@ -199,11 +225,47 @@ def _chat_queue_help_lines() -> list[str]:
     return [
         "Queue Commands",
         "",
-        ":queue steer N   Steer the active run with item #N.",
-        ":queue edit N    Edit item #N in the input box.",
-        ":queue delete N  Delete item #N.",
-        ":queue clear     Clear all items.",
+        "/queue steer N   Steer the active run with item #N.",
+        "/queue edit N    Edit item #N in the input box.",
+        "/queue delete N  Delete item #N.",
+        "/queue clear     Clear all items.",
     ]
+
+
+def _apply_default(app: AppContext, *, field: str, value: str) -> None:
+    updated = app.get_client().apply_settings(
+        (RunOverride("default", field, value),),
+        app.get_selects(),
+    )
+    selects = app.get_selects()
+    selects.clear()
+    selects.update(updated)
+    app.refresh_status()
+
+
+def _resolve_runnable_command(
+    payload: Mapping[str, Any],
+    selector: str,
+    *,
+    kind: str,
+) -> str | None:
+    requested_name, requested_kind = parse_runnable_ref(selector)
+    if kind in {"agic", "flow"}:
+        if requested_kind not in {None, kind}:
+            return None
+        requested_kind = kind
+    matches: list[str] = []
+    for item in _items(payload):
+        name = as_text(item.get("name"))
+        if name != requested_name:
+            continue
+        item_kind = as_text(item.get("kind")) or requested_kind
+        if item_kind not in {"agic", "flow"}:
+            continue
+        if requested_kind is not None and item_kind != requested_kind:
+            continue
+        matches.append(f"{item_kind}:{name}")
+    return matches[0] if len(matches) == 1 else None
 
 
 def _chat_resolve_model_command_labels(

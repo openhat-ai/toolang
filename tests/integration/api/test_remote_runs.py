@@ -57,6 +57,11 @@ def test_authored_run_stream_resolves_fallback_policy_and_server_include(
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
+prompt review:
+  params = focus
+
+  {{focus}} {{_}}
+
 agic chat(_: Part[], tone: Text) -> Part[]:
   recall = none
   context: none
@@ -91,6 +96,18 @@ agic selected(_: Part[], tone: Text) -> Part[]:
 
     try:
         with TestClient(app) as client:
+            prompt_completions = client.get(
+                "/api/v1/prompt-completions",
+                params={"runnable": "agic:selected"},
+            )
+            assert prompt_completions.json() == {
+                "items": [
+                    {
+                        "name": "review",
+                        "params": [{"name": "focus", "optional": False}],
+                    }
+                ]
+            }
             created = client.post("/api/v1/threads", json={"client": "tui"})
             thread_id = created.json()["thread"]["id"]
             fallback = client.post(
@@ -100,7 +117,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                     "thread": thread_id,
                     "request_id": "fallback_request",
                     "input": {
-                        "primary": "@note.txt",
+                        "primary": "$review focus=security -\n@note.txt",
                         "named": [{"name": "tone", "source": "brief"}],
                     },
                     "session_commands": [
@@ -233,7 +250,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         assert fallback_events[0][0] == "run_begin"
         assert fallback_events[-1][0] == "run_end"
         assert fallback_detail.runnable_name == "chat"
-        assert fallback_detail.input_text == "included"
+        assert fallback_detail.input_text == "$review focus=security - @note.txt"
         assert fallback_detail.controls[0].request_id == "fallback_request"
         assert (
             fallback_detail_response.json()["controls"][0]["payload"]["sandbox"]
@@ -243,6 +260,18 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         assert isinstance(fallback_control.payload, RunControlPayload)
         assert fallback_control.payload.limits.cost == Decimal("2.50")
         assert fallback_control.payload.sandbox == "host"
+        assert fallback_control.payload.authored_input == RunnableInputRaw(
+            primary="$review focus=security -\n@note.txt",
+            named=(("tone", "brief"),),
+        )
+        assert len(fallback_control.payload.prompt_invocations) == 1
+        prompt = fallback_control.payload.prompt_invocations[0]
+        assert prompt.name == "review"
+        assert prompt.arguments == (("focus", "security"),)
+        assert prompt.input_scope == "tail"
+        assert prompt.parent is None
+        assert prompt.cap_ref
+        assert len(prompt.content_hash) == 64
         assert selected.status_code == 200
         assert selected.headers["X-Toolang-Run-ID"] == selected_id
         assert selected_detail.runnable_name == "selected"
@@ -250,11 +279,11 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         assert [
             invocation.call.messages for invocation in harness.adapter.invocations
         ] == [
-            [Message.user("brief included")],
+            [Message.user("brief security included")],
             [Message.user("direct hello")],
         ]
-        assert setup.reads == 6
-        assert state.reads == 6
+        assert setup.reads == 7
+        assert state.reads == 7
         assert duplicate.status_code == 422
         assert duplicate.json()["detail"] == (
             "run control request already exists: selected_request"

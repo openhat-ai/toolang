@@ -515,15 +515,17 @@ Review {{path}} carefully.
 ```
 ````
 
-It is invoked with slash-prefixed content syntax:
+It is invoked with dollar-prefixed content syntax:
 
 ```text
-/review path=src/app.py focus="only errors"
+$review path=src/app.py focus="only errors"
 ```
 
-`PromptCall` empty, remaining, and fenced input forms, include references, and
-escaping are defined in [input-syntax.md](./input-syntax.md). A prompt call
-invokes one reusable prompt template during content evaluation.
+`PromptCall` empty, inline, remaining, and fenced input forms, include
+references, and escaping are defined in
+[input-syntax.md](./input-syntax.md). A dollar prompt call invokes one reusable
+prompt template during content evaluation. Slash is reserved for terminal Chat
+commands and does not invoke prompts.
 
 
 ## Service Caps

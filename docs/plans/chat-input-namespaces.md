@@ -1,6 +1,7 @@
 # Chat Input Namespaces
 
-Status: Approved for implementation on 2026-08-29.
+Status: Approved for implementation on 2026-08-29; legacy aliases were removed
+from the approved scope on 2026-08-29.
 
 ## Work Type
 
@@ -55,7 +56,7 @@ The change succeeds when:
 - durable provenance identifies every expanded prompt and immutable definition;
 - model-call inspection continues to reproduce the exact expanded request;
 - retry and rerun do not change when a prompt definition changes later;
-- legacy spellings have a bounded migration path; and
+- former colon quick commands and slash prompt calls are rejected; and
 - the complete default verification passes offline.
 
 ## Scope
@@ -69,7 +70,7 @@ In scope:
 - authored-input and prompt-invocation provenance in run preparation records;
 - transcript, history, retry, rerun, and model-call inspection projections;
 - local and remote authored-run protocol parity;
-- compatibility diagnostics, documentation, and focused tests.
+- canonical syntax documentation and focused tests.
 
 Out of scope:
 
@@ -174,8 +175,8 @@ with primary or named runnable input applies only to that run. Script, Task, and
 Chore continue to parse policy plus runnable input without terminal-chat
 commands.
 
-Colon policy syntax is durable and is not deprecated. Only colon spellings that
-currently perform immediate Chat actions are legacy aliases.
+Colon policy syntax is durable. Former colon spellings for immediate Chat
+actions are not aliases.
 
 ## Prompt Expansion
 
@@ -337,31 +338,20 @@ Submitting the authored source again is a new run and resolves against the new
 run's current immutable state. This is the existing way to opt into a changed
 prompt definition.
 
-## Compatibility And Rollout
+## Canonical Rollout
 
-Ship one compatibility minor release before removing legacy spellings, while
-the project remains pre-1.0.
+The namespace change has no legacy alias window:
 
-During the compatibility release:
-
-- slash is canonical for immediate Chat commands;
-- dollar is canonical for prompt calls;
-- existing colon quick commands remain accepted and emit one concise
-  deprecation diagnostic with the slash replacement;
-- legacy no-argument `:models` maps to `/model`, while `:models SELECTORS`
-  remains a durable policy directive;
-- existing `/prompt` calls remain accepted on all `Content` surfaces and emit a
-  deprecation diagnostic with the dollar replacement;
+- slash is the only spelling for immediate Chat commands;
+- dollar is the only spelling for prompt calls;
+- former colon quick commands are rejected, while colon policy directives stay
+  unchanged;
+- no-argument `:models` is invalid, while `:models SELECTORS` remains a durable
+  policy directive;
+- `/prompt` is ordinary text on non-Chat `Content` surfaces and an unknown Chat
+  command at the start of a Chat submission; and
 - help, completion, examples, generated guidance, and formatting emit only the
-  new canonical spellings; and
-- durable authored records retain exactly the spelling the caller submitted.
-
-In the following minor release, before 1.0:
-
-- remove colon quick-command aliases;
-- remove `/prompt` expansion;
-- keep all colon policy directives unchanged; and
-- treat unknown complete slash commands as Chat errors.
+  canonical spellings.
 
 Release notes must call out shell quoting: `$` is interpreted by common shells,
 so one-shot shell arguments use single quotes, for example
@@ -417,8 +407,8 @@ or external provider contract change is expected.
     prompt definition changes or disappears from current state.
 13. Retry and rerun remain unchanged after prompt mutation; explicitly
     resubmitting the authored source uses the new prompt definition.
-14. The compatibility release accepts legacy colon quick commands and
-    `/prompt` calls with diagnostics while emitting only canonical spellings.
+14. Former colon quick commands and Chat `/prompt` spellings are rejected, and
+    non-Chat `/prompt` text is not expanded.
 15. Shell-facing examples quote dollar prompt calls and do not accidentally
     expand environment variables.
 16. The complete default verification passes offline.
@@ -432,9 +422,5 @@ second shell-aware grammar layer.
 Persisting authored source and invocation provenance enlarges preparation
 records and requires an additive store migration. Keep effective model calls
 content-addressed and avoid duplicating prompt bodies per run.
-
-The compatibility parser temporarily recognizes both `/prompt` and `$prompt`.
-Keep the migration window to one minor release so slash can become an
-unambiguous Chat-only namespace before 1.0.
 
 There are no open product decisions.

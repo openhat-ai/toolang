@@ -27,7 +27,9 @@ from toolang.lang.ast import (
     RepeatStmt,
 )
 from toolang.lang.input import (
+    PromptInvocation,
     RunnableInput,
+    RunnableInputRaw,
     coerce_output,
     decode_json_input,
     resolve_runnable_input,
@@ -70,6 +72,7 @@ from ..types import (
     Occurrence,
     OccurrencePosition,
     TypedPointer,
+    RunOverride,
 )
 from ..runnables import (
     ResolvedRunnable,
@@ -171,6 +174,10 @@ class RunSpec:
     limits: RunLimits
     ceilings: tuple[AgentCeiling, ...] = ()
     input: RunnableInput = RunnableInput()
+    authored_input: RunnableInputRaw | None = None
+    authored_commands: tuple[RunOverride, ...] = ()
+    authored_session_commands: tuple[RunOverride, ...] = ()
+    prompt_invocations: tuple[PromptInvocation, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,6 +345,10 @@ class RunExecutor:
             occurrence=bound.occurrence,
             request_id=request_id,
             created_at=bound.created_at,
+            authored_input=spec.authored_input,
+            authored_commands=spec.authored_commands,
+            authored_session_commands=spec.authored_session_commands,
+            prompt_invocations=spec.prompt_invocations,
         )
         return self._launch(bound, runnable, loop=loop, tracer=tracer)
 
@@ -409,6 +420,10 @@ class RunExecutor:
             created_at=bound.created_at,
             kind="rerun",
             source=source,
+            authored_input=spec.authored_input,
+            authored_commands=spec.authored_commands,
+            authored_session_commands=spec.authored_session_commands,
+            prompt_invocations=spec.prompt_invocations,
         )
         return self._launch(bound, runnable, loop=loop, tracer=tracer)
 
@@ -479,6 +494,10 @@ class RunExecutor:
             sandbox=sandbox,
             request_id=request_id,
             created_at=bound.created_at,
+            authored_input=spec.authored_input,
+            authored_commands=spec.authored_commands,
+            authored_session_commands=spec.authored_session_commands,
+            prompt_invocations=spec.prompt_invocations,
         )
         bound = replace(bound, control_index=control.index)
         return self._launch(
@@ -582,6 +601,10 @@ class RunExecutor:
                     through=control.index,
                 ),
             ),
+            authored_input=control.payload.authored_input,
+            authored_commands=control.payload.authored_commands,
+            authored_session_commands=control.payload.authored_session_commands,
+            prompt_invocations=control.payload.prompt_invocations,
         )
 
     def _require_retry_compatible(
@@ -1459,6 +1482,21 @@ class _Execution:
     @property
     def store(self) -> RunStore:
         return self.executor.store
+
+    def record_prompt_invocations(
+        self,
+        binding: BoundRun,
+        invocations: Sequence[PromptInvocation],
+    ) -> None:
+        """Persist prompt expansions performed after one Run was accepted."""
+
+        if not invocations:
+            return
+        self.store.append_prompt_invocations(
+            run_id=binding.run_id,
+            index=binding.control_index,
+            invocations=invocations,
+        )
 
     @property
     def providers(self) -> Mapping[str, Provider]:

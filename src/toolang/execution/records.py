@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BeforeValidator, TypeAdapter, ValidationInfo
@@ -21,6 +22,7 @@ from toolang.base.types.message import (
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelCall, ModelContinuation, ToolCall
 from toolang.lang.ast import FlowStmt, flow_stmt_from_data, to_data as ast_to_data
+from toolang.lang.input import PromptInvocation, RunnableInputRaw, parse_input
 from toolang.lang.types import Array, Struct, Value, validate_type, value_type
 from .types import (
     CollectionStepNoted,
@@ -57,6 +59,7 @@ from .types import (
     ToolStepNoted,
     Pointer,
     TypedPointer,
+    RunOverride,
     local_from_protocol_data,
     validate_occurrence,
     validate_runtime_value,
@@ -146,10 +149,20 @@ class RunControlPayload:
     model: str
     locals: tuple[Local, ...]
     sandbox: str | None = None
+    authored_input: RunnableInputRaw | None = None
+    authored_commands: tuple[RunOverride, ...] = ()
+    authored_session_commands: tuple[RunOverride, ...] = ()
+    prompt_invocations: tuple[PromptInvocation, ...] = ()
 
     def __post_init__(self) -> None:
         _validate_preparation_payload(
             self.state, self.runnable, self.model, self.locals, self.sandbox
+        )
+        _validate_authored_facts(
+            self.authored_input,
+            self.authored_commands,
+            self.authored_session_commands,
+            self.prompt_invocations,
         )
 
 
@@ -165,6 +178,10 @@ class RerunControlPayload:
     locals: tuple[Local, ...]
     rerun_from: RunId
     sandbox: str | None = None
+    authored_input: RunnableInputRaw | None = None
+    authored_commands: tuple[RunOverride, ...] = ()
+    authored_session_commands: tuple[RunOverride, ...] = ()
+    prompt_invocations: tuple[PromptInvocation, ...] = ()
 
     def __post_init__(self) -> None:
         _validate_preparation_payload(
@@ -172,6 +189,12 @@ class RerunControlPayload:
         )
         if not self.rerun_from:
             raise ValueError("rerun payload requires rerun_from")
+        _validate_authored_facts(
+            self.authored_input,
+            self.authored_commands,
+            self.authored_session_commands,
+            self.prompt_invocations,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,10 +209,20 @@ class RetryControlPayload:
     locals: tuple[Local, ...] | None
     retry_from: StepPath | None
     sandbox: str | None = None
+    authored_input: RunnableInputRaw | None = None
+    authored_commands: tuple[RunOverride, ...] = ()
+    authored_session_commands: tuple[RunOverride, ...] = ()
+    prompt_invocations: tuple[PromptInvocation, ...] = ()
 
     def __post_init__(self) -> None:
         _validate_preparation_payload(
             self.state, self.runnable, self.model, self.locals, self.sandbox
+        )
+        _validate_authored_facts(
+            self.authored_input,
+            self.authored_commands,
+            self.authored_session_commands,
+            self.prompt_invocations,
         )
 
 
@@ -683,6 +716,18 @@ def _control_payload_from_data(
             raise ValueError(f"{kind} payload locals must be an array or null")
         if kind != "retry" and locals_value is None:
             raise ValueError(f"{kind} payload requires locals")
+        authored_input = _authored_input_from_data(payload.get("authored_input"))
+        authored_commands = _run_overrides_from_data(
+            payload.get("authored_commands", ()),
+            label="authored_commands",
+        )
+        authored_session_commands = _run_overrides_from_data(
+            payload.get("authored_session_commands", ()),
+            label="authored_session_commands",
+        )
+        prompt_invocations = _prompt_invocations_from_data(
+            payload.get("prompt_invocations", ())
+        )
         if kind == "run":
             return RunControlPayload(
                 resources=resources,
@@ -692,6 +737,10 @@ def _control_payload_from_data(
                 model=model,
                 locals=locals_value or (),
                 sandbox=sandbox,
+                authored_input=authored_input,
+                authored_commands=authored_commands,
+                authored_session_commands=authored_session_commands,
+                prompt_invocations=prompt_invocations,
             )
         if kind == "rerun":
             if state is None:
@@ -705,6 +754,10 @@ def _control_payload_from_data(
                 locals=locals_value or (),
                 rerun_from=_required_payload_text(payload, "rerun_from"),
                 sandbox=sandbox,
+                authored_input=authored_input,
+                authored_commands=authored_commands,
+                authored_session_commands=authored_session_commands,
+                prompt_invocations=prompt_invocations,
             )
         raw_retry_from = payload.get("retry_from")
         return RetryControlPayload(
@@ -720,6 +773,10 @@ def _control_payload_from_data(
                 else None
             ),
             sandbox=sandbox,
+            authored_input=authored_input,
+            authored_commands=authored_commands,
+            authored_session_commands=authored_session_commands,
+            prompt_invocations=prompt_invocations,
         )
     if kind == "reload":
         return ReloadControlPayload(
@@ -1554,7 +1611,154 @@ def _preparation_payload_data(
         data["state"] = payload.state
     if payload.sandbox is not None:
         data["sandbox"] = payload.sandbox
+    if payload.authored_input is not None:
+        data["authored_input"] = {
+            "primary": payload.authored_input.primary,
+            "named": [
+                {"name": name, "source": source}
+                for name, source in payload.authored_input.named
+            ],
+        }
+    if payload.authored_commands:
+        data["authored_commands"] = [
+            _run_override_to_data(command) for command in payload.authored_commands
+        ]
+    if payload.authored_session_commands:
+        data["authored_session_commands"] = [
+            _run_override_to_data(command)
+            for command in payload.authored_session_commands
+        ]
+    if payload.prompt_invocations:
+        data["prompt_invocations"] = [
+            _prompt_invocation_to_data(invocation)
+            for invocation in payload.prompt_invocations
+        ]
     return data
+
+
+def _authored_input_from_data(value: object) -> RunnableInputRaw | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("preparation authored_input must be an object or null")
+    payload = cast(Mapping[str, object], value)
+    primary = payload.get("primary")
+    if primary is not None and not isinstance(primary, str):
+        raise ValueError("preparation authored input primary must be text or null")
+    raw_named = payload.get("named", ())
+    if not isinstance(raw_named, Sequence) or isinstance(
+        raw_named, (str, bytes, bytearray)
+    ):
+        raise ValueError("preparation authored input named sources must be an array")
+    named: list[tuple[str, str]] = []
+    for item in raw_named:
+        if isinstance(item, Mapping):
+            source_item = cast(Mapping[str, object], item)
+            name = source_item.get("name")
+            source = source_item.get("source")
+        elif (
+            isinstance(item, Sequence)
+            and not isinstance(item, (str, bytes, bytearray))
+            and len(item) == 2
+        ):
+            name, source = item
+        else:
+            raise ValueError("preparation authored input contains an invalid source")
+        if not isinstance(name, str) or not isinstance(source, str):
+            raise ValueError("preparation authored input sources require text fields")
+        named.append((name, source))
+    return parse_input(primary, named=tuple(named))
+
+
+def _run_overrides_from_data(value: object, *, label: str) -> tuple[RunOverride, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise ValueError(f"preparation {label} must be an array")
+    result: list[RunOverride] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            raise ValueError(f"preparation {label} contains an invalid command")
+        command = cast(Mapping[str, object], item)
+        group = command.get("group")
+        field = command.get("field")
+        raw = command.get("value")
+        if group == "allow" and isinstance(raw, list):
+            raw = tuple(raw)
+        elif group == "limit" and field == "cost" and isinstance(raw, str):
+            raw = Decimal(raw)
+        result.append(RunOverride(cast(Any, group), cast(Any, field), cast(Any, raw)))
+    return tuple(result)
+
+
+def _run_override_to_data(command: RunOverride) -> dict[str, object]:
+    value = command.value
+    if isinstance(value, tuple):
+        encoded: object = list(value)
+    elif isinstance(value, Decimal):
+        encoded = str(value)
+    else:
+        encoded = value
+    return {"group": command.group, "field": command.field, "value": encoded}
+
+
+def _prompt_invocations_from_data(value: object) -> tuple[PromptInvocation, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise ValueError("preparation prompt_invocations must be an array")
+    result: list[PromptInvocation] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            raise ValueError("preparation contains an invalid prompt invocation")
+        invocation = cast(Mapping[str, object], item)
+        raw_arguments = invocation.get("arguments", ())
+        if not isinstance(raw_arguments, Sequence) or isinstance(
+            raw_arguments, (str, bytes, bytearray)
+        ):
+            raise ValueError("prompt invocation arguments must be an array")
+        arguments: list[tuple[str, str]] = []
+        for argument in raw_arguments:
+            if isinstance(argument, Mapping):
+                argument_item = cast(Mapping[str, object], argument)
+                name = argument_item.get("name")
+                argument_value = argument_item.get("value")
+            elif (
+                isinstance(argument, Sequence)
+                and not isinstance(argument, (str, bytes, bytearray))
+                and len(argument) == 2
+            ):
+                name, argument_value = argument
+            else:
+                raise ValueError("prompt invocation contains an invalid argument")
+            if not isinstance(name, str) or not isinstance(argument_value, str):
+                raise ValueError("prompt invocation arguments require text fields")
+            arguments.append((name, argument_value))
+        parent = invocation.get("parent")
+        if parent is not None and (
+            isinstance(parent, bool) or not isinstance(parent, int)
+        ):
+            raise ValueError("prompt invocation parent must be an integer or null")
+        result.append(
+            PromptInvocation(
+                name=str(invocation.get("name", "")),
+                arguments=tuple(arguments),
+                input_scope=cast(Any, invocation.get("input_scope")),
+                parent=parent,
+                cap_ref=str(invocation.get("cap_ref", "")),
+                content_hash=str(invocation.get("content_hash", "")),
+            )
+        )
+    return tuple(result)
+
+
+def _prompt_invocation_to_data(invocation: PromptInvocation) -> dict[str, object]:
+    return {
+        "name": invocation.name,
+        "arguments": [
+            {"name": name, "value": value} for name, value in invocation.arguments
+        ],
+        "input_scope": invocation.input_scope,
+        "parent": invocation.parent,
+        "cap_ref": invocation.cap_ref,
+        "content_hash": invocation.content_hash,
+    }
 
 
 def _validate_preparation_payload(
@@ -1576,6 +1780,33 @@ def _validate_preparation_payload(
         raise ValueError("preparation payload requires a canonical sandbox")
     if locals is not None:
         _validate_control_locals(locals)
+
+
+def _validate_authored_facts(
+    input: RunnableInputRaw | None,
+    commands: tuple[RunOverride, ...],
+    session_commands: tuple[RunOverride, ...],
+    invocations: tuple[PromptInvocation, ...],
+) -> None:
+    if input is not None and not isinstance(input, RunnableInputRaw):
+        raise TypeError("preparation authored input must be RunnableInputRaw or none")
+    for label, values in (
+        ("commands", commands),
+        ("session commands", session_commands),
+    ):
+        if not isinstance(values, tuple) or not all(
+            isinstance(command, RunOverride) for command in values
+        ):
+            raise TypeError(f"preparation authored {label} must be RunOverride values")
+    if not isinstance(invocations, tuple) or not all(
+        isinstance(invocation, PromptInvocation) for invocation in invocations
+    ):
+        raise TypeError(
+            "preparation prompt invocations must be PromptInvocation values"
+        )
+    for index, invocation in enumerate(invocations):
+        if invocation.parent is not None and invocation.parent >= index:
+            raise ValueError("prompt invocation parent must precede its child")
 
 
 def _validate_state_revision(state: object, *, label: str) -> str:

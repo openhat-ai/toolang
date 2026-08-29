@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import fields, replace
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -23,8 +24,10 @@ from toolang.execution.records import SteerControlPayload, CancelControlPayload
 from toolang.execution.schemas import RerunRequest, RetryRequest, RunRequest
 from toolang.execution.types import RunOverride, StepPath, ThreadPrefix
 from toolang.execution.values import parts_from_local
+from toolang.lang import Program
 from toolang.lang.input import RunnableInputRaw
 from toolang.setup import AgentSetup
+from toolang.state.state import agent_state_revision
 
 
 _CHAT_SOURCE = """
@@ -247,7 +250,7 @@ def test_local_client_resolves_fallback_input_and_policy_precedence(
             "succeeded",
             "succeeded",
         ]
-        assert fallback.input_text == "included"
+        assert fallback.input_text == "@note.md"
         assert fallback.controls[0].request_id == "fallback_request"
         assert harness.adapter.invocations[0].call.messages == [
             Message.user("included")
@@ -301,9 +304,22 @@ def test_local_client_rejects_preparation_without_persisting_a_run(
 def test_executor_retries_recorded_state_and_reruns_current_state(
     tmp_path: Path,
 ) -> None:
+    source_with_prompt = (
+        """
+prompt rewrite:
+  params = style
+
+  Old {{style}} {{_}}
+
+"""
+        + _CHAT_SOURCE
+    )
+    changed_source = source_with_prompt.replace(
+        "Old {{style}} {{_}}", "New {{style}} {{_}}"
+    )
     harness = ExecutionHarness.create(
         tmp_path,
-        source=_CHAT_SOURCE,
+        source=source_with_prompt,
         responses=[
             RuntimeError("temporary failure"),
             ModelCallResult(
@@ -311,7 +327,19 @@ def test_executor_retries_recorded_state_and_reruns_current_state(
                 usage=ModelUsage(input_tokens=1, output_tokens=1),
             ),
             ModelCallResult(message=Message.assistant("reran")),
+            ModelCallResult(message=Message.assistant("resubmitted")),
         ],
+    )
+    changed_home_revision = sha256(changed_source.encode("utf-8")).hexdigest()
+    changed_state = replace(
+        harness.state,
+        revision=agent_state_revision(
+            harness.state.root_revision,
+            changed_home_revision,
+        ),
+        home_revision=changed_home_revision,
+        modules={"agent": Program.from_source(changed_source)},
+        module_digests={"agent": changed_home_revision},
     )
     setup_reads = 0
     current_state_reads = 0
@@ -325,7 +353,7 @@ def test_executor_retries_recorded_state_and_reruns_current_state(
     def current_state():
         nonlocal current_state_reads
         current_state_reads += 1
-        return harness.state
+        return harness.state if current_state_reads == 1 else changed_state
 
     def load_state(revision: str):
         loaded_revisions.append(revision)
@@ -349,7 +377,11 @@ def test_executor_retries_recorded_state_and_reruns_current_state(
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
         source = await (
             await client.run(
-                _request(thread, request_id="source_request"),
+                _request(
+                    thread,
+                    input=RunnableInputRaw(primary="$rewrite style=brief -- hello"),
+                    request_id="source_request",
+                ),
             )
         ).wait()
         assert source.status == "failed"
@@ -375,14 +407,31 @@ def test_executor_retries_recorded_state_and_reruns_current_state(
         )
         rerun = await rerun_handle.wait()
         assert await rerun_handle.wait() == rerun
+        resubmitted = await (
+            await client.run(
+                _request(
+                    thread,
+                    input=RunnableInputRaw(primary="$rewrite style=brief -- hello"),
+                    request_id="resubmit_request",
+                )
+            )
+        ).wait()
 
         assert retry_handle.run_id == source.id == retried.id
         assert rerun_handle.run_id != source.id
         assert rerun.id == rerun_handle.run_id
-        assert retried.status == rerun.status == "succeeded"
-        assert setup_reads == 3
-        assert current_state_reads == 2
+        assert retried.status == rerun.status == resubmitted.status == "succeeded"
+        assert setup_reads == 4
+        assert current_state_reads == 3
         assert loaded_revisions == [harness.state.revision]
+        assert [
+            invocation.call.messages for invocation in harness.adapter.invocations
+        ] == [
+            [Message.user("Old brief hello")],
+            [Message.user("Old brief hello")],
+            [Message.user("Old brief hello")],
+            [Message.user("New brief hello")],
+        ]
         assert [event.type for event in retry_tracer.events][::5] == [
             "run_begin",
             "run_end",
@@ -392,12 +441,25 @@ def test_executor_retries_recorded_state_and_reruns_current_state(
             "run_end",
         ]
         retry_control = harness.store.list_run_controls(run_id=source.id)[-1]
+        source_control = harness.store.get_run_control(run_id=source.id, index=0)
         rerun_control = harness.store.get_run_control(run_id=rerun.id, index=0)
+        assert source_control is not None
         assert retry_control.request == "retry_request"
         assert retry_control.payload.limits.tokens == 10
         assert rerun_control is not None
         assert rerun_control.request == "rerun_request"
         assert rerun_control.payload.limits.time == 30
+        assert (
+            retry_control.payload.authored_input
+            == rerun_control.payload.authored_input
+            == source_control.payload.authored_input
+            == RunnableInputRaw(primary="$rewrite style=brief -- hello")
+        )
+        assert (
+            retry_control.payload.prompt_invocations
+            == rerun_control.payload.prompt_invocations
+            == source_control.payload.prompt_invocations
+        )
 
         await client.disconnect()
         with pytest.raises(RuntimeError, match="run client is disconnected"):

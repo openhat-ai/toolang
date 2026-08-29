@@ -33,6 +33,10 @@ def test_run_spec_has_minimal_execution_contract() -> None:
         "limits",
         "ceilings",
         "input",
+        "authored_input",
+        "authored_commands",
+        "authored_session_commands",
+        "prompt_invocations",
     )
 
 

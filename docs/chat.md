@@ -21,6 +21,12 @@ One terminal `ChatInput` resolves to one `QuickCommand`, one or more
 run in an existing thread. A client creates the thread explicitly before the
 first run.
 
+Terminal interactions use complete slash commands such as `/help`, `/model`,
+`/runnable`, `/show`, `/queue`, and `/steer`. Colon-prefixed lines remain the
+shared execution-policy prefix, while dollar-prefixed `Content` lines expand
+reusable prompts. See [input-syntax.md](./input-syntax.md) for the complete
+namespace contract.
+
 Thread ids use one underscore-delimited normalized form:
 
 ```text
@@ -80,9 +86,11 @@ User messages contain only `PerceptPart` values. Assistant messages may
 additionally contain `ToolCallPart` values, while tool messages contain only
 `ToolResultPart` values.
 
-The initial `run` control projects to the user message. Later `steer`
-controls project to additional user messages in the same run. Step output
-projects to assistant or tool messages.
+The initial `run` control keeps the authored input and the effective resolved
+locals. Transcript and input-history projections use authored source, including
+`$prompt` calls. Conversation recall uses resolved user-message parts. Later
+`steer` controls project to additional user messages in the same run. Step
+output projects to assistant or tool messages.
 
 
 ## Thread API
@@ -217,7 +225,7 @@ Remote acceptance records the root run id before the first event so cancel and
 steer remain addressable. If an accepted stream disconnects, the TUI keeps the
 queue paused and polls durable run detail after 500 ms, 1 s, 2 s, and then every
 5 s. Terminal durable truth finalizes the run without inventing missed events
-and directs the user to `:show RUN_ID` for the complete output. An ambiguous
+and directs the user to `/show RUN_ID` for the complete output. An ambiguous
 pre-acceptance failure, missing accepted run, or invalid recovery identity
 blocks further submissions until Chat restarts; read-only commands and exit
 remain available. Chat never retries a submission or falls back to embedded

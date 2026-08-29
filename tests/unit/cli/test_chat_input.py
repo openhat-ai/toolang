@@ -14,15 +14,15 @@ from toolang.lang.input import RunnableInputRaw
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
-        (":help", QuickCommand("help")),
-        (":show run_1", QuickCommand("show", "run_1")),
-        (":model", QuickCommand("model")),
-        (":models", QuickCommand("models")),
-        (":agic", QuickCommand("agic")),
-        (":flow", QuickCommand("flow")),
-        (":runnable", QuickCommand("runnable")),
-        (":queue edit 2", QuickCommand("queue", "edit 2")),
-        (":steer revise this", QuickCommand("steer", "revise this")),
+        ("/help", QuickCommand("help")),
+        ("/show run_1", QuickCommand("show", "run_1")),
+        ("/model", QuickCommand("model")),
+        ("/model openai/gpt-5", QuickCommand("model", "openai/gpt-5")),
+        ("/agic", QuickCommand("agic")),
+        ("/flow research", QuickCommand("flow", "research")),
+        ("/runnable", QuickCommand("runnable")),
+        ("/queue edit 2", QuickCommand("queue", "edit 2")),
+        ("/steer revise this", QuickCommand("steer", "revise this")),
     ],
 )
 def test_parse_single_quick_command(source: str, expected: QuickCommand) -> None:
@@ -82,12 +82,18 @@ def test_chat_normalization_preserves_first_indentation_and_internal_blanks() ->
     [
         ("", "empty"),
         (" \t\n", "empty"),
-        (":unknown", "unknown command"),
-        (":steer", "requires an argument"),
-        (":help unexpected", "does not accept an argument"),
-        (":help\nInput", "cannot be combined"),
+        ("/models", "unknown command"),
+        ("/review", "unknown command"),
+        (":help", "escape a leading colon"),
+        (":model", "escape a leading colon"),
+        (":models", "escape a leading colon"),
+        (":queue edit 2", "escape a leading colon"),
+        (":unknown", "escape a leading colon"),
+        ("/steer", "requires an argument"),
+        ("/help unexpected", "does not accept an argument"),
+        ("/help\nInput", "cannot be combined"),
         (":model one\n:model two", "duplicate default field"),
-        (":agic review\n:help", "cannot be combined"),
+        (":agic review\n/help", "cannot be combined"),
     ],
 )
 def test_invalid_chat_input_is_rejected(source: str, message: str) -> None:

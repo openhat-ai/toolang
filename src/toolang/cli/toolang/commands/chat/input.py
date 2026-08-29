@@ -25,24 +25,6 @@ ChatInput: TypeAlias = (
     | tuple[tuple[RunOverride, ...], RunnableInputRaw]
 )
 
-_POLICY_HEADS = frozenset(
-    {
-        "allow",
-        "default",
-        "limit",
-        "model",
-        "agic",
-        "flow",
-        "runnable",
-        "models",
-        "tools",
-        "caps",
-        "psyches",
-        "skills",
-        "services",
-        "prompts",
-    }
-)
 _QUICK_COMMANDS = frozenset(
     {
         "?",
@@ -51,18 +33,17 @@ _QUICK_COMMANDS = frozenset(
         "flow",
         "help",
         "model",
-        "models",
+        "q",
         "queue",
         "quit",
         "runnable",
+        "s",
         "show",
         "steer",
     }
 )
-_QUICK_WITHOUT_TAIL = frozenset(
-    {"?", "agic", "exit", "flow", "help", "model", "models", "quit", "runnable"}
-)
-_QUICK_REQUIRING_TAIL = frozenset({"steer"})
+_QUICK_WITHOUT_TAIL = frozenset({"?", "exit", "help", "quit"})
+_QUICK_REQUIRING_TAIL = frozenset({"s", "steer"})
 _LEADING_BLANK_LINES_RE = re.compile(r"\A(?:[ \t]*(?:\r\n|\n))+")
 _TRAILING_BLANK_LINES_RE = re.compile(r"(?:(?:\r\n|\n)[ \t]*)+\Z")
 
@@ -84,7 +65,7 @@ def parse_chat_input(chat_input: str) -> ChatInput:
 
     first, separator, rest = body.partition("\n")
     first = first.removesuffix("\r")
-    quick = _parse_quick(first)
+    quick = _parse_slash(first)
     if quick is not None:
         if separator and rest.strip(" \t\r\n"):
             raise ValueError("quick command cannot be combined with other input")
@@ -93,10 +74,10 @@ def parse_chat_input(chat_input: str) -> ChatInput:
     commands, named, primary_source = parse_policy_prefix(body)
     if commands and not named and not primary_source:
         return commands
-    if primary_source.startswith(":") and not primary_source.startswith("::"):
-        combined = _parse_quick(primary_source.splitlines()[0])
+    if primary_source.startswith("/") and not primary_source.startswith("//"):
+        combined = _parse_slash(primary_source.splitlines()[0])
         if combined is not None:
-            raise ValueError("quick command cannot be combined with other input")
+            raise ValueError("slash command cannot be combined with other input")
     runnable_input = parse_input(primary_source or None, named=named)
     if runnable_input.primary is None and not runnable_input.named:
         raise ValueError("chat input is empty")
@@ -126,37 +107,28 @@ def is_runnable_input(
     )
 
 
-def _parse_quick(line: str) -> QuickCommand | None:
-    if not line.startswith(":") or line.startswith("::"):
+def _parse_slash(line: str) -> QuickCommand | None:
+    if not line.startswith("/") or line.startswith("//"):
         return None
+    name, tail = _command_parts(line)
+    if name not in _QUICK_COMMANDS:
+        raise ValueError(f"unknown command: /{name}")
+    _validate_quick(name, tail)
+    return QuickCommand(name=name, tail=tail)
 
+
+def _command_parts(line: str) -> tuple[str, str | None]:
     head, separator, raw_tail = line.partition(" ")
     if not separator:
-        head, separator, raw_tail = line.partition("\t")
-    name = head[1:]
-    tail = raw_tail.strip(" \t") or None
+        head, _separator, raw_tail = line.partition("\t")
+    return head.removeprefix("/"), raw_tail.strip(" \t") or None
 
-    if name in _POLICY_HEADS and tail is not None:
-        return None
-    if name in {
-        "allow",
-        "default",
-        "limit",
-        "tools",
-        "caps",
-        "psyches",
-        "skills",
-        "services",
-        "prompts",
-    }:
-        return None
-    if name not in _QUICK_COMMANDS:
-        raise ValueError(f"unknown command: :{name}")
+
+def _validate_quick(name: str, tail: str | None) -> None:
     if name in _QUICK_WITHOUT_TAIL and tail is not None:
-        raise ValueError(f":{name} does not accept an argument")
+        raise ValueError(f"/{name} does not accept an argument")
     if name in _QUICK_REQUIRING_TAIL and tail is None:
-        raise ValueError(f":{name} requires an argument")
-    return QuickCommand(name=name, tail=tail)
+        raise ValueError(f"/{name} requires an argument")
 
 
 __all__ = [

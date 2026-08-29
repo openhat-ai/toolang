@@ -369,7 +369,7 @@ execution progress; later terminal errors belong to progress and its footer.
 
 ## Reopened Chat Result Divider
 
-The Chat TUI `:show` command introduces a durable result with a quiet divider:
+The Chat TUI `/show` command introduces a durable result with a quiet divider:
 
 ```text
 • run_ma8hccd9 result ────────────────────

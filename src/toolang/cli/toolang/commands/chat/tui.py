@@ -14,8 +14,9 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyProcessor
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import HSplit, Layout, Window
-from prompt_toolkit.layout.containers import DynamicContainer
+from prompt_toolkit.layout.containers import DynamicContainer, Float, FloatContainer
 from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
@@ -40,6 +41,7 @@ from . import events
 from . import rendering
 from . import slashes
 from . import widgets
+from .completion import ChatInputCompleter
 from .base import (
     AppContext,
     ChatClient,
@@ -80,7 +82,6 @@ _BLOCKED_READ_ONLY_COMMANDS = frozenset(
         "help",
         "?",
         "model",
-        "models",
         "agic",
         "flow",
         "runnable",
@@ -95,6 +96,16 @@ def _status_spinner_index(elapsed: float) -> int:
     return int(max(0.0, elapsed) / _STATUS_SPINNER_FRAME_DURATION) % len(
         widgets._STATUS_SPINNER_FRAMES
     )
+
+
+def _selected_runnable(selects: Mapping[str, object]) -> str | None:
+    if runnable := as_text(selects.get("runnable")):
+        return runnable
+    if flow := as_text(selects.get("flow")):
+        return f"flow:{flow}"
+    if agic := as_text(selects.get("agic")):
+        return f"agic:{agic}"
+    return None
 
 
 def _qualified_runnable_label(reference: str, payload: Mapping[str, object]) -> str:
@@ -173,6 +184,7 @@ class ChatTuiAppContext:
 
     def refresh_status(self) -> None:
         self._app.status_bar.set_status(*self._app._status_labels())
+        self._app._refresh_prompt_completions()
 
     def replace_input(self, text: str) -> None:
         self._app.prompt.replace_input(text)
@@ -194,6 +206,7 @@ class ChatTuiApp:
         input_history: ChatInputHistoryStore | None,
         client: ChatClient,
         progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
+        resource_paths: tuple[str, ...] = (),
     ) -> None:
         asyncio.run(
             ChatTuiApp(
@@ -203,6 +216,7 @@ class ChatTuiApp:
                 input_history=input_history,
                 client=client,
                 progress_max_width=progress_max_width,
+                resource_paths=resource_paths,
             ).run_loop()
         )
 
@@ -215,6 +229,7 @@ class ChatTuiApp:
         input_history: ChatInputHistoryStore | None,
         client: ChatClient,
         progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
+        resource_paths: tuple[str, ...] = (),
     ) -> None:
         self.thread_id = thread_id
         self.selects = selects
@@ -239,6 +254,9 @@ class ChatTuiApp:
         self._status_completed_elapsed_seconds: int | None = None
         self._status_stop_handle: asyncio.TimerHandle | None = None
         self.presenter = ChatRunPresenter(max_width=progress_max_width)
+        self.completer = ChatInputCompleter(
+            resource_paths=(lambda: list(resource_paths)) if resource_paths else None
+        )
 
         self.queue_panel = widgets.QueuePanel(
             lambda: [item.source for item in self.queue]
@@ -249,18 +267,33 @@ class ChatTuiApp:
             self._invalidate_ui,
             on_input=self._clear_status_error,
             history_store=self.input_history,
+            completer=self.completer,
         )
+        self._refresh_prompt_completions()
         keys = KeyBindings()
         self.prompt.bind(keys)
+        body = HSplit(
+            [
+                DynamicContainer(self._live_blocks_container),
+                self.queue_panel.container(),
+                self.prompt.container(),
+                self.status_bar.container(),
+            ]
+        )
         self.app = Application(
             layout=Layout(
-                HSplit(
-                    [
-                        DynamicContainer(self._live_blocks_container),
-                        self.queue_panel.container(),
-                        self.prompt.container(),
-                        self.status_bar.container(),
-                    ]
+                FloatContainer(
+                    content=body,
+                    floats=[
+                        Float(
+                            xcursor=True,
+                            ycursor=True,
+                            content=CompletionsMenu(
+                                max_height=8,
+                                display_arrows=True,
+                            ),
+                        )
+                    ],
                 ),
                 focused_element=self.prompt.buffer,
             ),
@@ -305,6 +338,17 @@ class ChatTuiApp:
 
     def _enqueue_ui_event(self, event: ChatUIEvent) -> None:
         self.ui_events.put_nowait(event)
+
+    def _refresh_prompt_completions(self) -> None:
+        try:
+            list_prompts = getattr(self.client, "list_prompts", None)
+            if not callable(list_prompts):
+                return
+            payload = list_prompts(_selected_runnable(self.selects))
+            if isinstance(payload, Mapping):
+                self.completer.set_prompts(payload)
+        except (OSError, RuntimeError, ToolangError, ValueError):
+            return
 
     def _enqueue_ui_event_from_thread(self, event: ChatUIEvent) -> None:
         if self.loop is not None:
@@ -595,6 +639,16 @@ class ChatTuiApp:
                 result = slash_result.result
                 rendering.write_renderables(
                     [
+                        *(
+                            [
+                                blocks.SlashBlock(
+                                    message,
+                                    slash_result.lines,
+                                ).render()
+                            ]
+                            if slash_result.lines is not None
+                            else []
+                        ),
                         blocks.SlashResultBlock(
                             message=message,
                             run_id=result.run_id,
@@ -620,6 +674,7 @@ class ChatTuiApp:
             self.selects.clear()
             self.selects.update(updated)
             self.status_bar.set_status(*self._status_labels())
+            self._refresh_prompt_completions()
             return
         if not is_runnable_input(chat_input):
             raise AssertionError("unknown chat input value")
@@ -779,4 +834,6 @@ def _blocked_input_allowed(value: object) -> bool:
         return False
     if value.name == "queue":
         return not (value.tail or "").strip()
+    if value.name in {"model", "agic", "flow", "runnable"}:
+        return value.tail is None
     return value.name in _BLOCKED_READ_ONLY_COMMANDS

@@ -10,6 +10,9 @@ from types import SimpleNamespace
 from typing import Any, Literal, cast
 
 from prompt_toolkit.application.current import set_app
+from prompt_toolkit.completion import CompleteEvent
+from prompt_toolkit.document import Document
+from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyPress
 from prompt_toolkit.layout import HSplit, VSplit, Window
 from prompt_toolkit.layout.controls import BufferControl
@@ -33,6 +36,7 @@ from toolang.base.types.message import (
 from toolang.base.types.run import ModelCall, ToolCall
 from toolang.cli.toolang.commands.chat import (
     blocks,
+    completion,
     events,
     rendering,
     slashes,
@@ -1332,6 +1336,65 @@ def test_chat_prompt_uses_the_run_control_accent_without_a_prompt_marker() -> No
     assert not placeholder.filter()
 
 
+def test_chat_prompt_submission_preserves_first_nonblank_line_indentation() -> None:
+    submitted: list[ChatUIEvent] = []
+    prompt = widgets.PromptBox(submitted.append, lambda: None)
+    keys = KeyBindings()
+    prompt.bind(keys)
+    prompt.buffer.text = "\n \t\n  $review\n\n"
+
+    binding = next(item for item in keys.bindings if item.keys == (Keys.ControlM,))
+    cast(Any, binding.handler)(None)
+
+    assert submitted == [ChatUIEvent("submit", "  $review")]
+    assert prompt.history.get_strings() == ["  $review"]
+    assert prompt.buffer.text == ""
+
+
+def test_chat_input_completion_keeps_namespaces_separate(tmp_path) -> None:
+    (tmp_path / "README.md").write_text("read me", encoding="utf-8")
+    completer = completion.ChatInputCompleter(resource_paths=lambda: [str(tmp_path)])
+    completer.set_prompts(
+        {
+            "items": [
+                {
+                    "name": "review",
+                    "params": [
+                        {"name": "focus", "optional": False},
+                        {"name": "tone", "optional": True},
+                    ],
+                }
+            ]
+        }
+    )
+    event = CompleteEvent(completion_requested=True)
+
+    def values(source: str) -> list[str]:
+        return [
+            item.text for item in completer.get_completions(Document(source), event)
+        ]
+
+    assert values("/mo") == ["/model MODEL"]
+    assert values("$rev") == ["$review focus= tone="]
+    assert values(":limit ti") == [":limit time="]
+    assert values("  $rev") == []
+    assert values("ordinary /mo") == []
+    assert values("first\n/mo") == []
+    assert values("@READ") == ["ME.md"]
+
+
+def test_chat_prompt_box_enables_completion_for_authored_source() -> None:
+    completer = completion.ChatInputCompleter()
+    prompt = widgets.PromptBox(
+        lambda _event: None,
+        lambda: None,
+        completer=completer,
+    )
+
+    assert prompt.buffer.completer is completer
+    assert prompt.buffer.complete_while_typing()
+
+
 def test_chat_prompt_grows_for_wrapped_input(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1540,12 +1603,12 @@ def test_chat_progress_marker_style_does_not_leak_to_active_text() -> None:
 
 def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     block = blocks.SlashBlock(
-        ":?",
+        "/?",
         [
             "Chat Commands",
             "",
-            ":help, :?                         Show help.",
-            ":model, :models                  List or switch models.",
+            "/help, /?                         Show help.",
+            "/model [MODEL]                    List or switch models.",
         ],
     )
     rendered = _render_text(block.render(), width=69)
@@ -1555,15 +1618,15 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
 
     assert "▌" not in rendered
     assert not rendered_lines[0].strip()
-    assert rendered_lines[1].startswith(f"{rendering.ACCENT_CELL} :?")
+    assert rendered_lines[1].startswith(f"{rendering.ACCENT_CELL} /?")
     assert ">" not in rendered_lines[1]
     assert not rendered_lines[2].strip()
     assert ": Chat Commands" in rendered
-    assert ":model, :models" in rendered
+    assert "/model [MODEL]" in rendered
     assert "List or switch models." in rendered
     assert rendered.endswith("\n")
-    command = next(segment for segment in segments if segment.text == ":model")
-    argument = next(segment for segment in segments if segment.text == ":models")
+    command = next(segment for segment in segments if segment.text == "/model")
+    argument = next(segment for segment in segments if segment.text == "[MODEL]")
     quick_accents = [
         segment
         for segment in all_segments
@@ -1590,7 +1653,8 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     assert command.style is not None
     assert command.style.color is not None
     assert argument.style is not None
-    assert argument.style.color is not None
+    assert argument.style.color is None
+    assert argument.style.dim is True
     assert all(segment.style is None or not segment.style.bold for segment in segments)
 
 
@@ -1948,7 +2012,7 @@ def test_chat_model_list_lines_render_as_columns() -> None:
         ],
     }
     block = blocks.SlashBlock(
-        ":model", ["Available Models", *slashes._chat_model_list_lines(payload)]
+        "/model", ["Available Models", *slashes._chat_model_list_lines(payload)]
     )
     rendered = _render_text(block.render(), width=120)
     model_lines = [line for line in rendered.splitlines() if "deepseek/" in line]
@@ -2528,7 +2592,7 @@ def test_chat_tui_creates_a_thread_only_for_the_first_submission(
     )
     monkeypatch.setattr(tui.rendering, "write_renderable", lambda *_args: None)
 
-    app.handle_submit(":help")
+    app.handle_submit("/help")
     assert client.created == 0
 
     app.handle_submit("hello")
@@ -2680,7 +2744,7 @@ def test_chat_tui_recovers_from_durable_terminal_truth(
 
     output = "\n".join(rendered)
     assert "inspect the durable result" in output
-    assert "with :show run_remote" in output
+    assert "with /show run_remote" in output
     assert "run_remote" in output
     assert not app.run_in_flight.is_set()
     assert app.active_run_id is None
@@ -2712,9 +2776,9 @@ def test_chat_tui_blocks_mutating_input_after_ambiguous_acceptance(
 
     app.handle_ui_event(ChatUIEvent("run_state", RunBlocked(None, message)))
     app.handle_submit("new call")
-    app.handle_submit(":model test/model")
-    app.handle_submit(":queue")
-    app.handle_submit(":show run_remote")
+    app.handle_submit("/model test/model")
+    app.handle_submit("/queue")
+    app.handle_submit("/show run_remote")
 
     assert app.submission_blocked == message
     assert [item.source for item in app.queue] == ["already queued"]
@@ -2738,7 +2802,7 @@ def test_chat_tui_reports_remote_read_failure_without_exiting() -> None:
         client=FailingRemoteClient(),
     )
 
-    app.handle_submit(":models")
+    app.handle_submit("/model")
 
     assert app.status_bar.error_message == "remote chat models transport failed"
 
@@ -2996,7 +3060,7 @@ def test_chat_tui_show_command_renders_durable_markdown(
         lambda renderables: written.extend(renderables),
     )
 
-    app.handle_submit(":show run_saved")
+    app.handle_submit("/show run_saved")
 
     assert len(written) == 1
     rendered = _render_text(written[0])
@@ -3035,7 +3099,7 @@ def test_chat_show_result_divider_truncates_without_wrapping(
 ) -> None:
     monkeypatch.setattr(rendering, "terminal_width", lambda: 24)
     block = blocks.SlashResultBlock(
-        message=":show run_saved_with_a_long_identifier",
+        message="/show run_saved_with_a_long_identifier",
         run_id="run_saved_with_a_long_identifier",
         parts=(TextPart("durable result"),),
         max_width=24,

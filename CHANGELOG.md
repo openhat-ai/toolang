@@ -12,6 +12,11 @@ and this project uses semantic versioning.
 
 - Script runnable commands no longer copy their persisted Run result to stdout
   by default. Use `--save -` for stdout or `--save PATH` for atomic file output.
+- Terminal Chat interactions now use slash commands, reusable prompt calls use
+  `$prompt`, colon remains the execution-policy prefix, and `@` remains resource
+  inclusion. Former colon quick commands and `/prompt` calls are not accepted as
+  aliases. Quote dollar prompt calls in shells, for example
+  `too run alice '$review focus=security'`.
 
 
 ## [0.3.0] - 2026-08-03

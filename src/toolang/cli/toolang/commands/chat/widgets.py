@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import shutil
 from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.completion import Completer
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
@@ -19,6 +20,7 @@ from toolang.cli.common.execution_progress.formatting import truncate
 
 from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
+from .input import normalize_chat_input
 from .rendering import (
     ACCENT_CELL,
     INPUT_BACKGROUND,
@@ -144,6 +146,7 @@ class PromptBox:
         *,
         on_input: Callable[[], None] | None = None,
         history_store: ChatInputHistoryStore | None = None,
+        completer: Completer | None = None,
     ) -> None:
         self.emit = emit
         self.invalidate = invalidate
@@ -152,7 +155,12 @@ class PromptBox:
         self.history_store = history_store
         for entry in history_store.load() if history_store is not None else ():
             self.history.append_string(entry)
-        self.buffer = Buffer(multiline=True, history=self.history)
+        self.buffer = Buffer(
+            multiline=True,
+            history=self.history,
+            completer=completer,
+            complete_while_typing=completer is not None,
+        )
         self.history_index: int | None = None
         self.history_draft = ""
         self.buffer.on_text_changed += self._handle_text_changed
@@ -224,7 +232,7 @@ class PromptBox:
         @keys.add("enter")
         def submit(_event) -> None:
             self._notify_input()
-            message = self.buffer.text.strip()
+            message = normalize_chat_input(self.buffer.text)
             if not message:
                 return
             self._record_history(message)

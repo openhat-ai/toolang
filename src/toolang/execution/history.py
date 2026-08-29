@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Literal
 
-from toolang.base.types.message import Part
+from toolang.base.types.message import Part, TextPart
 from toolang.base.types.run import ModelCall
 from .records import (
     PreparationControlPayload,
@@ -236,6 +236,9 @@ class RunHistory:
                 control.payload, PreparationControlPayload
             ):
                 continue
+            authored = control.payload.authored_input
+            if authored is not None and authored.primary is not None:
+                return (TextPart(authored.primary),)
             locals_value = control.payload.locals
             if locals_value is None:
                 continue

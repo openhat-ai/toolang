@@ -117,6 +117,12 @@ class RemoteChatSession:
             self._submit(self._list_runnables(kind)).result(),
         )
 
+    def list_prompts(self, runnable: str | None) -> Mapping[str, Any]:
+        return cast(
+            Mapping[str, Any],
+            self._submit(self._list_prompts(runnable)).result(),
+        )
+
     def create_thread(self) -> str:
         return cast(str, self._submit(self._create_thread()).result())
 
@@ -307,6 +313,15 @@ class RemoteChatSession:
                 ),
             ],
         }
+
+    async def _list_prompts(self, runnable: str | None) -> dict[str, object]:
+        payload = await self._request_json(
+            "GET",
+            "/api/v1/prompt-completions",
+            operation="prompt completions",
+            params={"runnable": runnable} if runnable is not None else None,
+        )
+        return _prompt_completion_payload(payload)
 
     async def _create_thread(self) -> str:
         payload = await self._request_json(
@@ -673,6 +688,41 @@ def _catalog_payload(
             )
         items.append(dict(item))
     return {"default": default, "items": items}
+
+
+def _prompt_completion_payload(payload: object) -> dict[str, object]:
+    body = _mapping(payload, operation="prompt completions")
+    if set(body) != {"items"} or not isinstance(body.get("items"), list):
+        raise _RemoteChatProtocolError(
+            "remote chat prompt completions returned invalid data"
+        )
+    items: list[dict[str, object]] = []
+    for raw_item in cast(list[object], body["items"]):
+        item = _mapping(raw_item, operation="prompt completion item")
+        if set(item) != {"name", "params"}:
+            raise _RemoteChatProtocolError(
+                "remote chat prompt completions returned invalid items"
+            )
+        name = item.get("name")
+        raw_params = item.get("params")
+        if not isinstance(name, str) or not name or not isinstance(raw_params, list):
+            raise _RemoteChatProtocolError(
+                "remote chat prompt completions returned invalid items"
+            )
+        params: list[dict[str, object]] = []
+        for raw_param in raw_params:
+            param = _mapping(raw_param, operation="prompt completion parameter")
+            if (
+                set(param) != {"name", "optional"}
+                or not isinstance(param.get("name"), str)
+                or not isinstance(param.get("optional"), bool)
+            ):
+                raise _RemoteChatProtocolError(
+                    "remote chat prompt completions returned invalid parameters"
+                )
+            params.append(dict(param))
+        items.append({"name": name, "params": params})
+    return {"items": items}
 
 
 def _mapping(payload: object, *, operation: str) -> Mapping[str, object]:

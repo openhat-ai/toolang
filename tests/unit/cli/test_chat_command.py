@@ -117,7 +117,7 @@ def test_scripted_chat_exit_does_not_create_an_empty_thread(
     monkeypatch: Any,
 ) -> None:
     client = _Client()
-    inputs = iter((":exit",))
+    inputs = iter(("/exit",))
     monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
 
     chat._chat_interactive_scripted_local(
@@ -133,7 +133,7 @@ def test_scripted_chat_help_does_not_create_an_empty_thread(
     monkeypatch: Any,
 ) -> None:
     client = _Client()
-    inputs = iter((":help", ":exit"))
+    inputs = iter(("/help", "/exit"))
     monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
 
     chat._chat_interactive_scripted_local(
@@ -149,7 +149,7 @@ def test_scripted_chat_creates_one_thread_for_the_first_submission(
     monkeypatch: Any,
 ) -> None:
     client = _Client()
-    inputs = iter(("hello", "again", ":exit"))
+    inputs = iter(("hello", "again", "/exit"))
     monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
 
     chat._chat_interactive_scripted_local(
@@ -170,7 +170,7 @@ def test_scripted_chat_reports_a_failed_run(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     client = _FailedRunClient()
-    inputs = iter(("hello", ":exit"))
+    inputs = iter(("hello", "/exit"))
     monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
 
     chat._chat_interactive_scripted_local(
