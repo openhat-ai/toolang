@@ -373,13 +373,14 @@ AgentServer process entrypoint. The sandbox implementation launches that
 entrypoint locally, in Docker, or in another environment; the server and
 executor do not branch on sandbox.
 
-Both commands report the same ordered startup stages on stderr: preparing the
-sandbox, starting its workload, and waiting for the Agent API. Docker adds
-Toolang installation, CLI validation, and AgentServer execution between those
-controller-owned stages. A TTY uses one transient line with the current stage
-and elapsed time. A non-TTY writes each active stage once as a stable plain-text
-line. The existing `Running agent ...` and `Started agent ...` result lines are
-written only after readiness succeeds.
+Both commands report the same controller-owned startup stages on stderr:
+preparing the sandbox and starting its workload. A TTY uses one transient line
+with the current stage and elapsed time. A non-TTY writes each active stage once
+as a stable plain-text line. The controller clears its live presentation before
+attaching child output, and Agent API readiness probing is silent. Docker then
+emits its own natural bootstrap progress in the same stream as AgentServer
+output. The existing `Running agent ...` and `Started agent ...` result lines
+are written only after readiness succeeds.
 
 Both commands accept repeatable `--allow DOMAIN=SELECTORS`,
 `--limit FIELD=VALUE`, and `--default FIELD=VALUE` options. The CLI parses these
@@ -475,9 +476,11 @@ interpret plugin-specific path settings.
 The host fixes the workload's runtime environment before sandbox preparation.
 Docker includes every name authored in the root or agent `.env`, then includes
 host-process names that match its default environment allow pattern.
-That pattern covers Toolang controls, proxy and certificate settings, Python
-bootstrap settings, and common model-provider variables. Override it with a
-full-match regular expression when another process variable is required:
+That pattern covers Toolang values, proxy and certificate settings, package
+installer settings, and common model-provider variables. Controller-owned
+sandbox and guest-runtime names are excluded even when they match. Override
+the default with a full-match regular expression when another process variable
+is required:
 
 ```toml
 [plugin.sandbox.docker]
@@ -497,6 +500,10 @@ mounted, and the original agent `.env` remains hidden behind the nested file
 mount. A small bootstrap reads this same generated dotenv into the guest process
 before package installation or plugin loading. Dotenv values are literal on
 both host and guest, so `${NAME}` is not expanded during either load.
+Because Python performs this load, uv and Python acquisition cannot use proxy,
+certificate, or index settings that exist only in the staged dotenv; restricted
+images must provide those through their image environment or preinstall uv and
+Python.
 Toolang passes only `TOOLANG_HOST_GATEWAY`, `TOOLANG_ROOT`, and
 `TOOLANG_SANDBOX` through Docker's environment arguments; Docker also maps
 `host.docker.internal` through the engine's `host-gateway`. The complete staging
@@ -522,16 +529,17 @@ Agent entrypoints also share one logging policy resolver:
 | attached or temporary `.too` script run | AgentServer output remains in its `agent_log`; Script progress and result output retain their stderr/stdout split |
 
 The lifecycle persists a versioned recovery reference immediately after the
-workload is created, then attaches process-local output observers and performs
-the readiness check. The Docker sandbox follows container output locally from
-container creation for foreground `run`. Background `start` instead creates the
-host `agent_log` with mode `0600` and writes Docker launch diagnostics,
-bootstrap errors, and AgentServer output there. Early container diagnostics are
-copied to that log before a failed or stopped workload is released, bounded to
-the final 2000 Docker log lines and streamed without buffering them in memory.
-Diagnostic write failures do not prevent container cleanup. Foreground
-interruption, ready-reporting errors, and wait failures stop and release the
-workload; cleanup failures preserve `SandboxState` for a later forced stop.
+workload is created, attaches its output, performs the readiness check, and
+detaches controller-side output for a successful background start. Docker
+follows container output through readiness for both modes. Foreground `run`
+keeps following for the workload lifetime; background `start` detaches without
+stopping the container, whose logging driver retains later output. Before a
+failed or stopped background workload is removed, Toolang streams the final
+2000 Docker log lines into the mode-`0600` host `agent_log` without buffering
+them in memory. Diagnostic write failures do not prevent container cleanup.
+Foreground interruption, ready-reporting errors, follower failures, and wait
+failures stop and release the workload; cleanup failures preserve
+`SandboxState` for a later forced stop.
 `SandboxState` is host-control data under `.sandbox/<agent>/state.json`, outside
 all guest mounts; only per-launch staging children are exposed to Docker.
 An older guest-writable `agents/<agent>/.runtime/sandbox.json` is never trusted
@@ -542,28 +550,30 @@ Likewise, per-launch staging without a matching control reference is preserved
 and blocks relaunch or removal until any associated workload is removed and the
 staging directory is cleaned manually.
 
-Docker uses the engine's default missing-image pull behavior. Its guest script
-quietly bootstraps uv and installs the selected package with `uv tool install`.
+Docker uses the engine's default missing-image pull behavior. A supported Linux
+guest provides POSIX `/bin/sh`, a writable executable temporary filesystem, and
+either a capable uv or a way to fetch the pinned uv installer: `curl`, `wget`,
+or an existing Python HTTPS standard library. Fetching also requires CA
+certificates, DNS, and network access. The bootstrap does not detect
+distributions or invoke package managers. It reuses a system Python 3.11+ when
+available; otherwise uv installs and resolves the tested Python 3.13 release.
+
+The guest uses image-provided `TOOLANG_GUEST_RUNTIME`, falling back to
+`${TMPDIR:-/tmp}/toolang-runtime`. uv, managed Python, cache, tool environment,
+and installed executables use explicit directories beneath it, independent of
+`HOME`. The generated process chain is `/bin/sh start.sh -> bootstrap.py ->
+too`: Python loads the staged dotenv literally, waits for the full container
+ID, installs the selected package with `uv tool install --force`, validates
+`too serve`, and directly replaces itself with the installed executable.
 For a source-local roaming agent, Docker overlays linked `agent.too` and
 `config.toml` targets as explicit read-only guest files so host symlinks do not
 become broken paths in the container.
-Successful installation suppresses ensurepip chatter, pip's container root-user
-warning, package lists, and uv progress bars; installer failure stderr remains
-available. Before execution, the guest checks that the installed CLI can start
-the required AgentServer. Structured startup errors identify whether package
-index or wheel installation failed and recommend a source-appropriate fix. A
-compatibility failure from a development CLI recommends `uv build --wheel` and
-`--dev dist`; a selected wheel instead recommends rebuilding or selecting a
-compatible wheel. Foreground output reports that diagnostic once; background
-output also retains the guest diagnostic in `agent_log`.
-
-Guest stage observation uses a unique mode-`0600`, append-only token file under
-the agent runtime directory. Tokens are a closed vocabulary for install,
-validation, and server-start transitions; they contain no commands, logs, or
-environment values. Guest writes are best-effort, and the host reads only a
-bounded, regular, non-symlink file. The file is presentation-only: unknown,
-duplicate, out-of-order, or stale values cannot affect readiness, recovery, or
-cleanup. The referenced file is removed with the sandbox resources.
+Bootstrap prints concise `Installing ...`/`Installed ...` or `Using ...`
+progress and suppresses raw installer output and progress bars. Raw output goes
+to a unique mode-`0600` per-launch diagnostic under the agent runtime. The file
+is removed after successful readiness and preserved after startup failure;
+failures print its host path and package-source-appropriate guidance. No guest
+status file or serialized progress transport participates in startup.
 
 An active `toolang info` uses the sandbox reference's structured workload
 identity. Host workloads show `PID`; Docker workloads show `Container` with the

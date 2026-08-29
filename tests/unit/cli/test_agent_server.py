@@ -456,6 +456,56 @@ def test_agent_server_startup_failure_uses_structured_package_guidance(
     assert fix in message
 
 
+def test_agent_server_startup_failure_preserves_the_guest_reason(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    _set_status(monkeypatch, layout, _status(value="stopped"))
+    monkeypatch.setattr(
+        agent_server.sandbox_runtime,
+        "resolve_selection",
+        lambda _layout, *, explicit: explicit or "docker",
+    )
+    monkeypatch.setattr(
+        agent_server,
+        "_resolve_inactive_launch",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            sandbox="docker",
+            dev_artifact=None,
+        ),
+    )
+    monkeypatch.setattr(agent_server, "development_source", lambda: (False, None))
+    progress = _Progress()
+    progress.current_stage = "Waiting for agent API"
+    progress.failure_phase = "startup.ready"
+    progress.failure_reason = "agent server exited before becoming ready"
+    monkeypatch.setattr(
+        agent_server,
+        "make_runtime_startup_progress",
+        lambda *_args, **_kwargs: progress,
+    )
+
+    async def fail_launch(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("startup failed")
+
+    monkeypatch.setattr(agent_server.sandbox_runtime, "launch", fail_launch)
+
+    with pytest.raises(agent_server.AgentServerAcquisitionError) as captured:
+        with agent_server.acquire_agent_server(
+            layout,
+            sandbox="docker",
+            ui_base_url="https://ui.test",
+        ):
+            raise AssertionError("a failed AgentServer must not be acquired")
+
+    message = str(captured.value)
+    assert "Stage: Waiting for agent API" in message
+    assert "Reason: agent server exited before becoming ready" in message
+    assert "Log:" in message
+    assert "Fix:" not in message
+
+
 def test_agent_server_cleanup_does_not_hide_a_body_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

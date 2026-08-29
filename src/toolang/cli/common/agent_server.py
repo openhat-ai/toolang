@@ -129,8 +129,6 @@ def acquire_agent_server(
                 progress,
                 exc,
                 log_path=layout.runtime_log,
-                dev_artifact=launch.dev_artifact,
-                development_build=development_source()[0],
             )
         ) from exc
     progress.finish()

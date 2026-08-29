@@ -69,6 +69,22 @@ Or start it in the background:
 toolang start alice
 ```
 
+Use `--sandbox docker` to run the AgentServer in a Linux container. Toolang
+reuses compatible uv and Python installations when present, or obtains them
+before installing Toolang explicitly in the guest. Build and select a local
+wheel when testing development source:
+
+```bash
+uv build --wheel
+toolang run alice --sandbox docker --dev dist
+```
+
+The image must provide POSIX `/bin/sh`, a writable executable temporary
+directory, and either compatible uv, `curl`/`wget`, or Python's HTTPS standard
+library with network and CA support. Foreground runs remain attached to
+container output; background starts show bootstrap output through readiness and
+then detach.
+
 In either case, open the printed WebUI link to connect to the agent:
 
 ```text

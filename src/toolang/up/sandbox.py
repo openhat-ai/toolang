@@ -38,7 +38,6 @@ from toolang.up.records import SandboxState
 from toolang.up.server import ServeSpec, build_serve_argv, resolve_serve
 
 SANDBOX_READY_TIMEOUT_SEC = 30.0
-SANDBOX_ATTACH_GRACE_SEC = 0.2
 _TASK_LOCKS: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[Path, asyncio.Lock]] = (
     WeakKeyDictionary()
 )
@@ -245,44 +244,6 @@ async def _launch_locked(
             raise
         state = SandboxState(sandbox=plan.sandbox, ref=ref)
         state.save(spec.serve.layout.sandbox_state)
-        attach_task = asyncio.create_task(
-            implementation.attach(plan, ref, progress=progress)
-        )
-        ready_task = asyncio.create_task(
-            _wait_ready(
-                implementation,
-                ref,
-                timeout_sec=SANDBOX_READY_TIMEOUT_SEC,
-            )
-        )
-        try:
-            done, _pending = await asyncio.wait(
-                (attach_task, ready_task),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if attach_task in done:
-                await attach_task
-            else:
-                try:
-                    await asyncio.wait_for(
-                        asyncio.shield(attach_task),
-                        timeout=SANDBOX_ATTACH_GRACE_SEC,
-                    )
-                except TimeoutError:
-                    attach_task.cancel()
-                    await asyncio.gather(attach_task, return_exceptions=True)
-            if (
-                ready_task.done()
-                and not ready_task.cancelled()
-                and ready_task.exception() is not None
-            ):
-                await ready_task
-        except BaseException:
-            for task in (attach_task, ready_task):
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(attach_task, ready_task, return_exceptions=True)
-            raise
         _startup_progress(
             progress,
             spec,
@@ -291,25 +252,15 @@ async def _launch_locked(
             status="ok",
             detail=ref.runtime_id,
         )
+        await implementation.attach(plan, ref)
         active_phase = "ready"
         active_label = "Waiting for agent API"
-        _startup_progress(
-            progress,
-            spec,
-            phase="ready",
-            label="Waiting for agent API",
-            status="running",
-            detail=ref.endpoint,
+        await _wait_ready(
+            implementation,
+            ref,
+            timeout_sec=SANDBOX_READY_TIMEOUT_SEC,
         )
-        await ready_task
-        _startup_progress(
-            progress,
-            spec,
-            phase="ready",
-            label="Waiting for agent API",
-            status="ok",
-            detail=ref.endpoint,
-        )
+        await implementation.detach(plan, ref)
         return SandboxHandle(implementation, state)
     except BaseException as exc:
         _startup_progress(

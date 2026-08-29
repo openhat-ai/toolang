@@ -10,7 +10,7 @@ from typing import Any, cast
 import pytest
 
 from toolang.base.errors import SandboxLaunchError
-from toolang.base.types.progress import ProgressEvent, ProgressSink
+from toolang.base.types.progress import ProgressEvent
 from toolang.base.types.sandbox import (
     SandboxPlan,
     SandboxRef,
@@ -33,6 +33,7 @@ class FakeSandbox:
         self.stop_error: Exception | None = None
         self.release_error: Exception | None = None
         self.attach_error: Exception | None = None
+        self.detach_error: Exception | None = None
 
     def runtime_root(self, local_root: Path) -> Path:
         del local_root
@@ -61,13 +62,15 @@ class FakeSandbox:
         self,
         plan: SandboxPlan,
         ref: SandboxRef,
-        *,
-        progress: ProgressSink | None = None,
     ) -> None:
-        del progress
         self.calls.append(("attach", plan, ref))
         if self.attach_error is not None:
             raise self.attach_error
+
+    async def detach(self, plan: SandboxPlan, ref: SandboxRef) -> None:
+        self.calls.append(("detach", plan, ref))
+        if self.detach_error is not None:
+            raise self.detach_error
 
     async def running(self, ref: SandboxRef) -> bool:
         self.calls.append(("running", ref))
@@ -123,41 +126,6 @@ class RecoverableLaunchSandbox(FakeSandbox):
         ref = SandboxRef("recoverable-workload", plan.endpoint)
         self.calls.append(("launch", plan))
         raise SandboxLaunchError("launch cleanup failed", ref=ref)
-
-
-class GuestFailureSandbox(FakeSandbox):
-    async def attach(
-        self,
-        plan: SandboxPlan,
-        ref: SandboxRef,
-        *,
-        progress: ProgressSink | None = None,
-    ) -> None:
-        self.calls.append(("attach", plan, ref))
-        if progress is None:
-            return
-        progress(
-            ProgressEvent(
-                id="startup:guest:install",
-                phase="startup.install",
-                label="Installing Toolang",
-                status="running",
-            )
-        )
-        await asyncio.sleep(0.01)
-        progress(
-            ProgressEvent(
-                id="startup:guest:validate",
-                phase="startup.validate",
-                label="Checking Toolang compatibility",
-                status="failed",
-                detail="incompatible CLI",
-            )
-        )
-
-    async def running(self, ref: SandboxRef) -> bool:
-        del ref
-        return False
 
 
 def _launch_spec(tmp_path: Path) -> sandbox.LaunchSpec:
@@ -492,9 +460,10 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
         ("startup.prepare", "ok"),
         ("startup.launch", "running"),
         ("startup.launch", "ok"),
-        ("startup.ready", "running"),
-        ("startup.ready", "ok"),
     ]
+    assert any(
+        call[0] == "detach" for call in implementation.calls if isinstance(call, tuple)
+    )
 
     assert asyncio.run(sandbox.stop(spec.serve.layout, force=True)) is True
     assert ("stop", handle.state.ref, True) in implementation.calls
@@ -581,27 +550,6 @@ def test_launch_failure_stops_releases_and_clears_state(
     assert events[-1].detail == "not ready"
 
 
-def test_guest_failure_progress_wins_the_early_exit_diagnostic_race(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    implementation = GuestFailureSandbox()
-    monkeypatch.setattr(
-        sandbox, "create_sandbox", lambda *_args, **_kwargs: implementation
-    )
-    spec = _launch_spec(tmp_path)
-    events: list[ProgressEvent] = []
-
-    with pytest.raises(RuntimeError, match="exited before becoming ready"):
-        asyncio.run(sandbox.launch(spec, progress=events.append))
-
-    phases = [(event.phase, event.status) for event in events]
-    assert ("startup.install", "running") in phases
-    assert ("startup.validate", "failed") in phases
-    assert ("startup.ready", "running") not in phases
-    assert phases[-1] == ("startup.launch", "failed")
-
-
 def test_readiness_cleanup_failure_preserves_sandbox_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -640,6 +588,29 @@ def test_attach_cleanup_failure_preserves_sandbox_state(
     state = sandbox.SandboxState.load(spec.serve.layout.sandbox_state)
     assert state is not None
     assert state.ref == SandboxRef("workload-1", spec.serve.endpoint)
+
+
+def test_detach_failure_stops_releases_and_clears_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    implementation = FakeSandbox()
+    implementation.detach_error = RuntimeError("could not detach output")
+    monkeypatch.setattr(sandbox, "create_sandbox", lambda _name, config: implementation)
+
+    async def ready(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    spec = _launch_spec(tmp_path)
+
+    with pytest.raises(RuntimeError, match="could not detach output"):
+        asyncio.run(sandbox.launch(spec))
+
+    ref = SandboxRef("workload-1", spec.serve.endpoint)
+    assert ("stop", ref, True) in implementation.calls
+    assert ("release", ref) in implementation.calls
+    assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
 
 
 def test_recoverable_launch_failure_persists_state_when_release_fails(

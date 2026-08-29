@@ -20,10 +20,7 @@ _MAX_DETAIL = 80
 _PHASE_ORDER = {
     "startup.prepare": 0,
     "startup.launch": 1,
-    "startup.install": 2,
-    "startup.validate": 3,
-    "startup.server": 4,
-    "startup.ready": 5,
+    "startup.ready": 2,
 }
 
 
@@ -118,7 +115,10 @@ class RuntimeStartupProgress:
             if not self._enabled:
                 return
             if self._live_enabled:
-                self._render_live()
+                if event.phase == "startup.launch" and event.status == "ok":
+                    self._stop_live()
+                else:
+                    self._render_live()
             elif event.status == "running" and event.phase not in self._printed_phases:
                 self._printed_phases.add(event.phase)
                 suffix = f": {self._current_detail}" if self._current_detail else ""
@@ -129,9 +129,7 @@ class RuntimeStartupProgress:
             if self._finished:
                 return
             self._finished = True
-            if self._display is not None:
-                self._display.stop()
-                self._display = None
+            self._stop_live()
             if self._enabled and self._console.is_terminal:
                 self._stream.write("\x1b[0m")
                 self._stream.flush()
@@ -152,6 +150,11 @@ class RuntimeStartupProgress:
             self._display.start(refresh=True)
             return
         self._display.refresh()
+
+    def _stop_live(self) -> None:
+        if self._display is not None:
+            self._display.stop()
+            self._display = None
 
     def _text(self) -> Text:
         with self._lock:
@@ -200,72 +203,21 @@ def runtime_startup_failure_message(
     error: BaseException,
     *,
     log_path: Path | None = None,
-    dev_artifact: Path | None = None,
-    development_build: bool = False,
 ) -> str:
     """Describe one failed AgentServer startup with its active stage."""
 
     fallback_reason = (
         progress.failure_reason or str(error).strip() or type(error).__name__
     )
-    reason, fix = _startup_failure_guidance(
-        progress.failure_phase,
-        fallback_reason=fallback_reason,
-        dev_artifact=dev_artifact,
-        development_build=development_build,
-    )
     stage = progress.current_stage or "Starting agent"
     lines = [
         f"Could not start agent {name} in {sandbox}",
         f"Stage: {stage}",
-        f"Reason: {reason}",
+        f"Reason: {fallback_reason}",
     ]
-    if fix is not None:
-        lines.append(f"Fix: {fix}")
     if log_path is not None:
         lines.append(f"Log: {log_path}")
     return "\n".join(lines)
-
-
-def _startup_failure_guidance(
-    phase: str | None,
-    *,
-    fallback_reason: str,
-    dev_artifact: Path | None,
-    development_build: bool,
-) -> tuple[str, str | None]:
-    if phase == "startup.install":
-        if dev_artifact is not None:
-            return (
-                f"Could not install Toolang from {dev_artifact.name}.",
-                "Rebuild the wheel and check the installation log.",
-            )
-        return (
-            "Could not install Toolang from the package index.",
-            "Check the log and network access, or run this command again with a "
-            "local wheel using `--dev PATH`.",
-        )
-    if phase == "startup.validate":
-        if dev_artifact is not None:
-            return (
-                "The selected Toolang wheel cannot start the required AgentServer.",
-                "Rebuild or select a compatible Toolang wheel, then run this command "
-                "again with `--dev PATH`.",
-            )
-        if development_build:
-            return (
-                "The Toolang package installed in the guest cannot start the required "
-                "AgentServer.",
-                "Build the current source with `uv build --wheel`, then run this "
-                "command again with `--dev dist`.",
-            )
-        return (
-            "The Toolang package installed in the guest cannot start the required "
-            "AgentServer.",
-            "Build or select a compatible Toolang wheel, then run this command again "
-            "with `--dev PATH`.",
-        )
-    return fallback_reason, None
 
 
 def _bounded_detail(detail: str | None) -> str | None:

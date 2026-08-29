@@ -39,7 +39,6 @@ from ...common.agent_server import (
     warn_development_package_source,
 )
 from ...common.output import active_agent_error, echo_error
-from toolang.common.version import development_source
 
 if TYPE_CHECKING:
     from toolang.up.sandbox import SandboxState, LaunchSpec
@@ -169,8 +168,6 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
                 startup_progress.sandbox,
                 startup_progress,
                 exc,
-                dev_artifact=startup.dev_artifact if startup is not None else None,
-                development_build=development_source()[0],
             )
         else:
             message = exc.message if isinstance(exc, click.ClickException) else str(exc)
@@ -390,8 +387,6 @@ def run(
                     startup_progress.sandbox,
                     startup_progress,
                     exc,
-                    dev_artifact=launch.startup.dev_artifact,
-                    development_build=development_source()[0],
                 )
             ) from exc
         raise click.ClickException(str(exc)) from exc
@@ -529,8 +524,6 @@ def start(
                 startup_progress,
                 exc,
                 log_path=launch.target.runtime_log,
-                dev_artifact=launch.startup.dev_artifact,
-                development_build=development_source()[0],
             )
         ) from exc
     startup_progress.finish()

@@ -144,7 +144,7 @@ async def docker_run_detached(
         try:
             stdout, _stderr = await process.communicate()
         except asyncio.CancelledError:
-            await asyncio.shield(_terminate_process(process))
+            await asyncio.shield(terminate_process(process))
             raise
     finally:
         if log_stream is not None:
@@ -165,10 +165,12 @@ async def finish_process(process: asyncio.subprocess.Process) -> None:
     try:
         await asyncio.wait_for(process.wait(), timeout=2.0)
     except TimeoutError:
-        await _terminate_process(process)
+        await terminate_process(process)
 
 
-async def _terminate_process(process: asyncio.subprocess.Process) -> None:
+async def terminate_process(process: asyncio.subprocess.Process) -> None:
+    """Terminate one controller-side Docker CLI process promptly."""
+
     if process.returncode is not None:
         return
     with suppress(ProcessLookupError):

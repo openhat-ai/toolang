@@ -383,7 +383,6 @@ def test_start_launches_in_background_and_reports_endpoint(
         for event in (
             _startup_event("prepare", "Preparing sandbox", "running", spec.sandbox),
             _startup_event("launch", "Starting workload", "running"),
-            _startup_event("ready", "Waiting for agent API", "running"),
         ):
             progress(event)
         return type(
@@ -425,7 +424,6 @@ def test_start_launches_in_background_and_reports_endpoint(
     assert result.stderr.strip().splitlines() == [
         "Preparing sandbox: docker",
         "Starting workload",
-        "Waiting for agent API",
     ]
     resolved = captured["resolve"]
     assert resolved["sandbox"] == "docker"
@@ -434,7 +432,7 @@ def test_start_launches_in_background_and_reports_endpoint(
     assert resolved["output"] == "file"
 
 
-def test_start_reports_guest_failure_stage_reason_hint_and_log(
+def test_start_reports_guest_failure_stage_reason_and_log(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -450,18 +448,10 @@ def test_start_reports_guest_failure_stage_reason_hint_and_log(
         progress: Any,
     ) -> object:
         for event in (
-            _startup_event("install", "Installing Toolang", "running", "package index"),
-            _startup_event(
-                "validate",
-                "Checking Toolang compatibility",
-                "running",
-            ),
-            _startup_event(
-                "validate",
-                "Checking Toolang compatibility",
-                "failed",
-                "The installed Toolang package cannot start the required AgentServer.",
-            ),
+            _startup_event("prepare", "Preparing sandbox", "running", "docker"),
+            _startup_event("prepare", "Preparing sandbox", "ok"),
+            _startup_event("launch", "Starting workload", "running"),
+            _startup_event("launch", "Starting workload", "ok"),
             _startup_event(
                 "ready",
                 "Waiting for agent API",
@@ -490,15 +480,12 @@ def test_start_reports_guest_failure_stage_reason_hint_and_log(
     assert result.exit_code == 1
     stderr = strip_ansi(result.stderr)
     normalized = " ".join(stderr.replace("│", " ").split())
-    assert "Installing Toolang: package index" in stderr
-    assert "Checking Toolang compatibility" in stderr
+    assert "Preparing sandbox: docker" in stderr
+    assert "Starting workload" in stderr
     assert "Could not start agent alice in docker" in normalized
-    assert "Stage: Checking Toolang compatibility" in normalized
-    assert (
-        "Reason: The Toolang package installed in the guest cannot start the "
-        "required AgentServer." in normalized
-    )
-    assert "Fix: Build or select a compatible Toolang wheel" in normalized
+    assert "Stage: Waiting for agent API" in normalized
+    assert "Reason: agent server exited before becoming ready" in normalized
+    assert "Fix:" not in normalized
     compact = "".join(stderr.replace("│", "").split())
     assert "Log:" in compact
     assert "toolang/agents/alice/.runtime/agent.log" in compact

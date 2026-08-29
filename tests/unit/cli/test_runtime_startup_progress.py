@@ -57,10 +57,10 @@ def test_startup_progress_can_track_without_rendering() -> None:
         enabled=False,
     )
 
-    progress(_event("server", "Starting server"))
+    progress(_event("launch", "Starting workload"))
     progress.finish()
 
-    assert progress.current_stage == "Starting server"
+    assert progress.current_stage == "Starting workload"
     assert stream.getvalue() == ""
 
 
@@ -73,15 +73,16 @@ def test_tty_startup_tracks_stage_and_clears_transient_line() -> None:
         live=True,
     )
 
-    progress(_event("install", "Installing Toolang", detail="package index"))
+    progress(_event("launch", "Starting workload", detail="docker"))
     output = progress._text().plain
+    progress(_event("launch", "Starting workload", status="ok"))
+    assert progress._display is None
     progress.finish()
 
     assert "Starting agent alice" in output
     assert "docker:python:3.13-slim" in output
-    assert "Installing Toolang" in output
-    assert "package index" in output
-    assert progress.current_stage == "Installing Toolang"
+    assert "Starting workload" in output
+    assert progress.current_stage == "Starting workload"
 
 
 def test_startup_failure_retains_full_reason_while_bounding_display() -> None:
@@ -94,15 +95,15 @@ def test_startup_failure_retains_full_reason_while_bounding_display() -> None:
 
     progress(
         _event(
-            "validate",
-            "Checking Toolang compatibility",
+            "ready",
+            "Waiting for agent API",
             status="failed",
             detail="x" * 200,
         )
     )
 
-    assert progress.current_stage == "Checking Toolang compatibility"
-    assert progress.failure_phase == "startup.validate"
+    assert progress.current_stage == "Waiting for agent API"
+    assert progress.failure_phase == "startup.ready"
     assert progress.failure_reason == "x" * 200
     displayed_detail = progress._text().plain.split(" · ")[-2]
     assert len(displayed_detail) == 80
@@ -117,8 +118,8 @@ def test_controller_failure_replaces_a_completed_guest_stage() -> None:
         live=False,
     )
 
-    progress(_event("install", "Installing Toolang"))
-    progress(_event("install", "Installing Toolang", status="ok"))
+    progress(_event("prepare", "Preparing sandbox"))
+    progress(_event("prepare", "Preparing sandbox", status="ok"))
     progress(
         _event(
             "launch",
@@ -142,8 +143,8 @@ def test_startup_failure_without_detail_keeps_its_structured_phase() -> None:
 
     progress(
         _event(
-            "install",
-            "Installing Toolang",
+            "launch",
+            "Starting workload",
             status="failed",
         )
     )
@@ -156,12 +157,12 @@ def test_startup_failure_without_detail_keeps_its_structured_phase() -> None:
         )
     )
 
-    assert progress.current_stage == "Installing Toolang"
-    assert progress.failure_phase == "startup.install"
+    assert progress.current_stage == "Starting workload"
+    assert progress.failure_phase == "startup.launch"
     assert progress.failure_reason is None
 
 
-def test_startup_install_failure_uses_the_resolved_package_source() -> None:
+def test_startup_failure_uses_the_guest_reason_and_diagnostic_log() -> None:
     progress = RuntimeStartupProgress(
         "alice",
         "docker",
@@ -170,49 +171,10 @@ def test_startup_install_failure_uses_the_resolved_package_source() -> None:
     )
     progress(
         _event(
-            "install",
-            "Installing Toolang",
+            "ready",
+            "Waiting for agent API",
             status="failed",
-            detail="installer exited",
-        )
-    )
-
-    package_index = runtime_startup_failure_message(
-        "alice",
-        "docker",
-        progress,
-        RuntimeError("startup failed"),
-    )
-    wheel = runtime_startup_failure_message(
-        "alice",
-        "docker",
-        progress,
-        RuntimeError("startup failed"),
-        dev_artifact=Path("dist/toolang-0.3.0-py3-none-any.whl"),
-    )
-
-    assert "Reason: Could not install Toolang from the package index." in package_index
-    assert "Fix: Check the log and network access" in package_index
-    assert (
-        "Reason: Could not install Toolang from toolang-0.3.0-py3-none-any.whl."
-        in wheel
-    )
-    assert "Fix: Rebuild the wheel and check the installation log." in wheel
-
-
-def test_startup_compatibility_failure_uses_development_source_guidance() -> None:
-    progress = RuntimeStartupProgress(
-        "alice",
-        "docker",
-        stream=StringIO(),
-        live=False,
-    )
-    progress(
-        _event(
-            "validate",
-            "Checking Toolang compatibility",
-            status="failed",
-            detail="compatibility check failed",
+            detail="agent server exited before becoming ready",
         )
     )
 
@@ -221,9 +183,10 @@ def test_startup_compatibility_failure_uses_development_source_guidance() -> Non
         "docker",
         progress,
         RuntimeError("startup failed"),
-        development_build=True,
+        log_path=Path("/tmp/agent.log"),
     )
 
-    assert "Reason: The Toolang package installed in the guest cannot start" in message
-    assert "Fix: Build the current source with `uv build --wheel`" in message
-    assert "again with `--dev dist`." in message
+    assert "Stage: Waiting for agent API" in message
+    assert "Reason: agent server exited before becoming ready" in message
+    assert "Log: /tmp/agent.log" in message
+    assert "Fix:" not in message
