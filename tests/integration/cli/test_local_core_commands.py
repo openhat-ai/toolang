@@ -718,7 +718,7 @@ def test_inspect_human_collection_uses_resolved_run_records(
     (
         (("custom_subject", "steps"), "runs"),
         (("run_subject", "runs"), "steps"),
-        (("run_subject.0", "steps"), "model-call"),
+        (("run_subject.0", "steps"), None),
         (("run_subject/status", "steps"), None),
     ),
 )
@@ -881,6 +881,13 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
         "run_model_call",
         "model-call",
     )
+    model_step_child = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_model_call.0",
+        "steps",
+    )
 
     assert projected.exit_code == 0, projected.stderr
     assert json.loads(projected.stdout) == {
@@ -946,6 +953,8 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
     )
     assert rejected.exit_code == 2
     assert "does not support projector model-call" in rejected.stderr
+    assert model_step_child.exit_code == 2
+    assert "allowed: model-call" in model_step_child.stderr
 
     connection = sqlite3.connect(AgentLayout.resident(root, "alice").run_store)
     try:
@@ -1056,7 +1065,8 @@ def test_inspect_rejects_unregistered_projector_spellings(
 
     assert spelling.exit_code == 2
     compact_error = " ".join(strip_ansi(spelling.stderr).replace("│", "").split())
-    assert "allowed: model-call" in compact_error
+    assert "does not accept a child subject" in compact_error
+    assert "allowed: model-call" not in compact_error
     assert non_model.exit_code == 1
     assert "step is not a model call: run_projector_spelling.0" in non_model.stderr
 

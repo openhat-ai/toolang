@@ -80,6 +80,7 @@ class _SubjectTransition:
 class _ProjectorTransition:
     source: _SubjectKind
     name: str
+    supports: Callable[[_InspectSubject], bool]
     project: Callable[[RunStore, _InspectSubject], object]
     render: Callable[[Console, _InspectSubject, object], None]
 
@@ -172,6 +173,14 @@ def _model_step_result_parts(
     return tuple(cast(Mapping[str, object], part) for part in value)
 
 
+def _supports_model_call(subject: _InspectSubject) -> bool:
+    return (
+        subject.selection is not None
+        and isinstance(subject.selection.record, StepRecord)
+        and subject.selection.record.kind == "model"
+    )
+
+
 INSPECT_SUBJECT_TRANSITIONS: tuple[_SubjectTransition, ...] = (
     _SubjectTransition("agent", "threads", "threads", _load_threads),
     _SubjectTransition("agent", "runs", "runs", _load_runs),
@@ -184,6 +193,7 @@ INSPECT_PROJECTORS: tuple[_ProjectorTransition, ...] = (
     _ProjectorTransition(
         "step",
         "model-call",
+        _supports_model_call,
         _project_model_call,
         _render_model_call,
     ),
@@ -333,6 +343,14 @@ def _allowed_projectors(source: _SubjectKind) -> tuple[str, ...]:
     )
 
 
+def _available_projectors(subject: _InspectSubject) -> tuple[str, ...]:
+    return tuple(
+        projector.name
+        for projector in INSPECT_PROJECTORS
+        if projector.source == subject.kind and projector.supports(subject)
+    )
+
+
 def _projector_transition(
     source: _SubjectKind,
     name: str,
@@ -348,7 +366,7 @@ def _projector_transition(
 
 
 def _invalid_child(subject: _InspectSubject, token: str) -> click.UsageError:
-    allowed = (*_allowed_transitions(subject.kind), *_allowed_projectors(subject.kind))
+    allowed = (*_allowed_transitions(subject.kind), *_available_projectors(subject))
     label = _inspect_subject_label(subject)
     if allowed:
         return click.UsageError(
