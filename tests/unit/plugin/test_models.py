@@ -47,8 +47,8 @@ from toolang.plugin.models.resolution import (
     apply_model_parameters,
     model_reasoning_efforts,
     resolve_model,
-    resolve_model_ref,
     resolve_model_request,
+    resolve_unique_model_query,
     select_model_queries,
     selectable_model_targets,
 )
@@ -237,7 +237,7 @@ def test_model_resolution_resolves_named_route(tmp_path: Path) -> None:
         model_environ={"OPENAI_API_KEY": "secret"},
     )
 
-    target = resolve_model(context, query="*[alias=fast]")
+    target = resolve_unique_model_query(context, query="*[alias=fast]")
 
     assert target.ref == "openai/gpt-5"
     assert target.provider == "openai"
@@ -270,8 +270,8 @@ def test_model_query_groups_route_aliases_and_retains_catalog_fields() -> None:
         model_environ={},
     )
 
-    fast = resolve_model(context, query="*[alias=fast]")
-    quick = resolve_model(context, query="*[alias=quick]")
+    fast = resolve_unique_model_query(context, query="*[alias=fast]")
+    quick = resolve_unique_model_query(context, query="*[alias=quick]")
     queries = select_model_queries(
         context,
         allowed_queries=("*[alias=quick;family=gpt-5;limit.context>=200000]",),
@@ -323,8 +323,11 @@ def test_model_query_keeps_aliases_with_distinct_adapters() -> None:
         "openai/gpt-5[alias=responses]",
         "openai/gpt-5[alias=chat]",
     )
-    assert resolve_model(context, query=queries[0]).adapter == "responses"
-    assert resolve_model(context, query=queries[1]).adapter == "chat_completions"
+    assert resolve_unique_model_query(context, query=queries[0]).adapter == "responses"
+    assert (
+        resolve_unique_model_query(context, query=queries[1]).adapter
+        == "chat_completions"
+    )
 
 
 def test_model_query_exact_queries_round_trip_distinct_alias_endpoints() -> None:
@@ -360,7 +363,8 @@ def test_model_query_exact_queries_round_trip_distinct_alias_endpoints() -> None
         "openai/gpt-5[alias=backup]",
     )
     assert tuple(
-        resolve_model(context, query=query).base_url for query, _target in candidates
+        resolve_unique_model_query(context, query=query).base_url
+        for query, _target in candidates
     ) == (
         "https://primary.example.test/v1",
         "https://backup.example.test/v1",
@@ -388,7 +392,7 @@ def test_model_resolution_resolves_explicit_provider_route() -> None:
         model_environ={},
     )
 
-    target = resolve_model(
+    target = resolve_unique_model_query(
         context,
         query="openai/gpt-5[route.provider=openrouter]",
     )
@@ -427,7 +431,7 @@ def test_model_reasoning_parameters_use_catalog_order_and_replace_defaults() -> 
         model_environ={},
     )
     target = replace(
-        resolve_model(context, query="openai/gpt-5"),
+        resolve_unique_model_query(context, query="openai/gpt-5"),
         reasoning={"enabled": True, "effort": "medium"},
     )
 
@@ -483,19 +487,46 @@ def test_model_resolution_rejects_ambiguous_query() -> None:
     )
 
     with pytest.raises(ToolangError, match="ambiguous"):
-        resolve_model(context, query="openai/gpt-5")
+        resolve_unique_model_query(context, query="openai/gpt-5")
     assert resolve_model_request(context, ref="openai/gpt-5").provider == "openai"
     assert (
         resolve_model_request(context, ref="openrouter/openai/gpt-5").provider
         == "openrouter"
     )
     assert (
-        resolve_model_ref(
-            context,
-            query="openai/gpt-5[route.provider=openrouter]",
-        )
-        == "openrouter/openai/gpt-5"
+        resolve_model(context, ref="openrouter/openai/gpt-5").provider == "openrouter"
     )
+
+
+def test_exact_model_resolution_accepts_a_configured_alias_name() -> None:
+    provider = _FakeModels(
+        name="openai",
+        models=(
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openai",
+                name="gpt-5",
+                model="gpt-5",
+                adapter="responses",
+            ),
+        ),
+    )
+    context = _SelectionContext(
+        model_providers={"openai": provider},
+        model_aliases={
+            "fast": ModelAlias(
+                name="fast",
+                ref="openai/gpt-5",
+                provider="openai",
+            )
+        },
+        default_models=(),
+        model_environ={},
+    )
+
+    assert resolve_model(context, ref="fast").ref == "openai/gpt-5"
+    with pytest.raises(ValueError, match="model request ref must be exact"):
+        resolve_model(context, ref="*[alias=fast]")
 
 
 def test_model_resolution_rejects_missing_provider_env_before_target_use() -> None:
@@ -521,7 +552,7 @@ def test_model_resolution_rejects_missing_provider_env_before_target_use() -> No
     )
 
     with pytest.raises(ToolangError, match="OPENAI_API_KEY"):
-        resolve_model(context, query="openai/gpt-5[route.provider=openai]")
+        resolve_unique_model_query(context, query="openai/gpt-5[route.provider=openai]")
 
 
 def test_model_resolution_skips_unconfigured_provider_when_configured_match_exists() -> (
@@ -562,12 +593,12 @@ def test_model_resolution_skips_unconfigured_provider_when_configured_match_exis
         model_environ={"OPENROUTER_API_KEY": "secret"},
     )
 
-    target = resolve_model(context, query="gpt-5")
+    target = resolve_unique_model_query(context, query="gpt-5")
 
     assert target.provider == "openrouter"
 
 
-def test_model_resolution_uses_first_allowed_query_as_default() -> None:
+def test_models_collection_uses_first_allowed_query_as_default() -> None:
     provider = _FakeModels(
         name="openrouter",
         models=(
@@ -596,14 +627,15 @@ def test_model_resolution_uses_first_allowed_query_as_default() -> None:
         model_environ={},
     )
 
-    target = resolve_model(
+    allowed = (
+        "gpt-5[route.provider=openrouter]",
+        "o3[route.provider=openrouter]",
+    )
+    selected = select_model_queries(context, allowed_queries=allowed)
+    target = resolve_unique_model_query(
         context,
-        query=None,
-        default_query="gpt-5[route.provider=openrouter]",
-        allowed_queries=(
-            "gpt-5[route.provider=openrouter]",
-            "o3[route.provider=openrouter]",
-        ),
+        query=selected[0],
+        allowed_queries=allowed,
     )
 
     assert target.ref == "openai/gpt-5"
@@ -639,10 +671,9 @@ def test_model_resolution_allows_query_within_allowed_set() -> None:
         model_environ={},
     )
 
-    target = resolve_model(
+    target = resolve_unique_model_query(
         context,
         query="o3[route.provider=openrouter]",
-        default_query="gpt-5[route.provider=openrouter]",
         allowed_queries=(
             "gpt-5[route.provider=openrouter]",
             "o3[route.provider=openrouter]",
@@ -683,10 +714,9 @@ def test_model_resolution_rejects_query_outside_allowed_set() -> None:
     )
 
     with pytest.raises(ToolangError, match="outside the current resources") as exc:
-        resolve_model(
+        resolve_unique_model_query(
             context,
             query="o3[route.provider=openrouter]",
-            default_query="gpt-5[route.provider=openrouter]",
             allowed_queries=("gpt-5[route.provider=openrouter]",),
         )
     message = str(exc.value)
@@ -715,7 +745,7 @@ def test_model_resolution_rejects_explicitly_empty_allowed_set() -> None:
     )
 
     with pytest.raises(ToolangError, match="outside the current resources"):
-        resolve_model(
+        resolve_unique_model_query(
             context,
             query="openai/gpt-5",
             allowed_queries=(),
@@ -747,7 +777,7 @@ def test_model_resolution_reports_no_matched_models_when_query_misses() -> None:
     )
 
     with pytest.raises(ToolangError, match="No matched models."):
-        resolve_model(context, query="anthropic/claude-sonnet-4.5")
+        resolve_unique_model_query(context, query="anthropic/claude-sonnet-4.5")
 
 
 def test_select_model_queries_preserve_base_order_for_intersection() -> None:
@@ -1090,7 +1120,7 @@ def test_model_resolution_only_reads_captured_model_snapshot() -> None:
         context,
         directive_queries=("anthropic/claude-4.5-sonnet-20250929",),
     )
-    target = resolve_model(context, query=queries[0])
+    target = resolve_unique_model_query(context, query=queries[0])
 
     assert queries == (
         "anthropic/claude-4.5-sonnet-20250929"
@@ -1174,7 +1204,7 @@ def test_model_route_can_override_provider_defaults(tmp_path: Path) -> None:
         model_environ={"GATEWAY_API_KEY": "secret"},
     )
 
-    target = resolve_model(context, query="*[alias=gateway]")
+    target = resolve_unique_model_query(context, query="*[alias=gateway]")
 
     assert target.ref == "openai/gpt-5"
     assert target.provider == "openai"
@@ -1205,7 +1235,7 @@ def test_model_alias_uses_provider_default_key_env(tmp_path: Path) -> None:
         model_environ={"OPENROUTER_API_KEY": "secret"},
     )
 
-    target = resolve_model(context, query="*[alias=qwen]")
+    target = resolve_unique_model_query(context, query="*[alias=qwen]")
 
     assert target.ref == "qwen/qwen3-coder"
     assert target.provider == "openrouter"
@@ -1240,7 +1270,7 @@ def test_model_alias_reports_missing_key_env(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ToolangError, match="model alias 'gateway'.*GATEWAY_API_KEY"):
-        resolve_model(context, query="*[alias=gateway]")
+        resolve_unique_model_query(context, query="*[alias=gateway]")
 
 
 def test_packaged_catalog_includes_mainstream_remote_providers() -> None:

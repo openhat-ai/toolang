@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+import toolang.state.collections as collections
+from toolang.state.collections import (
+    cap_kind_definition,
+    cap_table,
+    query_cap_views,
+)
+from toolang.state.state import CapSource, StateCap
+from toolang.state.types import EntryKind
+
+
+def _cap(kind: EntryKind, name: str) -> StateCap:
+    return StateCap(
+        kind=kind,
+        name=name,
+        shape="dir" if kind == "skill" else "file",
+        ref=f"root://{kind}s/{name}",
+        path=f"files/root/{kind}s/{name}",
+        source=CapSource(
+            origin="local",
+            form="authored",
+            path=f"{kind}s/{name}",
+            updated_at="2026-08-30T00:00:00Z",
+            fingerprint="0" * 64,
+        ),
+        meta={},
+    )
+
+
+def test_cap_query_fans_out_over_four_base_collections() -> None:
+    entries = (
+        _cap("psyche", "reviewer"),
+        _cap("skill", "reviewer"),
+        _cap("service", "github"),
+        _cap("prompt", "summary"),
+    )
+
+    qualified = query_cap_views(
+        entries,
+        agent_name="default",
+        queries=("skills/reviewer",),
+    )
+    unqualified = query_cap_views(
+        entries,
+        agent_name="default",
+        queries=("reviewer",),
+    )
+    predicate = query_cap_views(
+        entries,
+        agent_name="default",
+        queries=("*[scope=root]",),
+    )
+
+    assert [(item.kind, item.name) for item in qualified] == [("skill", "reviewer")]
+    assert [(item.kind, item.name) for item in unqualified] == [
+        ("psyche", "reviewer"),
+        ("skill", "reviewer"),
+    ]
+    assert [(item.kind, item.name) for item in predicate] == [
+        ("psyche", "reviewer"),
+        ("skill", "reviewer"),
+        ("service", "github"),
+        ("prompt", "summary"),
+    ]
+
+
+def test_caps_is_not_a_schema_and_existing_tables_stay_unchanged() -> None:
+    views = query_cap_views(
+        (_cap("skill", "reviewer"),),
+        agent_name="default",
+        queries=None,
+    )
+
+    assert not hasattr(collections, "CAP_SCHEMA")
+    assert cap_kind_definition("skill").schema.name == "skills"
+    assert cap_kind_definition("skill").schema.identity.bound == ("skills",)
+    assert cap_table(views) == (
+        ("KIND", "CAP", "ORIGIN", "FORM", "SCOPE", "SOURCE"),
+        (("skill", "reviewer", "local", "authored", "root", "skills/reviewer"),),
+    )
+    assert cap_table(views, kind="skill") == (
+        ("SKILL", "ORIGIN", "FORM", "SCOPE", "SOURCE"),
+        (("reviewer", "local", "authored", "root", "skills/reviewer"),),
+    )

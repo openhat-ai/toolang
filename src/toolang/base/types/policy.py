@@ -12,12 +12,20 @@ class AgentCeiling:
 
     models: tuple[str, ...] | None = None
     tools: tuple[str, ...] | None = None
-    caps: tuple[str, ...] | None = None
+    psyches: tuple[str, ...] | None = None
+    skills: tuple[str, ...] | None = None
+    services: tuple[str, ...] | None = None
+    prompts: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "models", _normalize_queries(self.models, "model"))
         object.__setattr__(self, "tools", _normalize_queries(self.tools, "tool"))
-        object.__setattr__(self, "caps", _normalize_queries(self.caps, "cap"))
+        for name in ("psyches", "skills", "services", "prompts"):
+            object.__setattr__(
+                self,
+                name,
+                _normalize_queries(getattr(self, name), name.rstrip("s")),
+            )
 
 
 @dataclass(frozen=True, slots=True)

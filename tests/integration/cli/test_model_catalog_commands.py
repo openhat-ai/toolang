@@ -66,8 +66,10 @@ def test_models_is_a_leaf_command_without_file_output_options() -> None:
     assert providers_result.exit_code == 0, providers_result.stderr
     models_help = unstyle(models_result.stdout)
     assert "--query" in models_help
-    assert "--query-help" in models_help
-    assert "--query-schema" in models_help
+    assert "--query-help" not in models_help
+    assert "--query-schema" not in models_help
+    assert "too query" in models_help
+    assert "models'." in models_help
     assert "--json" in models_help
     assert "--output" not in models_help
     assert "--force" not in models_help
@@ -432,40 +434,6 @@ def test_providers_lists_resolved_api_and_model_adapters(
     assert provider["api"] == "https://api.test/v1"
     assert provider["npm"] == "@ai-sdk/anthropic"
     assert "resolved" not in provider
-
-    missing_alt = runner.invoke(
-        cli.app,
-        [
-            "--root",
-            str(tmp_path / "root"),
-            "providers",
-            "--models",
-            str(catalog),
-            "--query",
-            "*[missing_env=TEST_ALT_API_KEY]",
-            "--json",
-        ],
-        env={"TEST_API_KEY": "configured"},
-    )
-    assert missing_alt.exit_code == 0, missing_alt.stderr
-    assert tuple(json.loads(missing_alt.stdout)) == ("test",)
-
-    configured_alt = runner.invoke(
-        cli.app,
-        [
-            "--root",
-            str(tmp_path / "root"),
-            "providers",
-            "--models",
-            str(catalog),
-            "--query",
-            "*[missing_env=TEST_API_KEY]",
-            "--json",
-        ],
-        env={"TEST_API_KEY": "configured"},
-    )
-    assert configured_alt.exit_code == 0, configured_alt.stderr
-    assert json.loads(configured_alt.stdout) == {}
 
 
 def _disable_local_discovery(monkeypatch) -> None:

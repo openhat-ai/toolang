@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import cast
 
 from toolang.common.query import (
     CollectionDefinition,
@@ -44,40 +45,31 @@ class CapQueryView:
     line: int | None
 
 
-CAP_SCHEMA = CollectionSchema.from_type(
-    "caps",
-    CapQueryView,
-    key=("kind", "name", "ref"),
-    identity=IdentitySpec(
-        paths=("kind", "name"),
-        labels=("kind", "cap"),
-        separator="/",
-    ),
-    exclude=("record",),
-    columns=(
-        ColumnSpec("KIND", ("kind",), "identity-component"),
-        ColumnSpec("CAP", ("name",), "identity-component"),
-        ColumnSpec("ORIGIN", ("origin",)),
-        ColumnSpec("FORM", ("form",)),
-        ColumnSpec("SCOPE", ("scope",)),
-        ColumnSpec("SOURCE", ("source",)),
-    ),
-)
-CAP_DEFINITION = CollectionDefinition(CAP_SCHEMA)
+_COLLECTION_BY_KIND: dict[EntryKind, str] = {
+    "psyche": "psyches",
+    "skill": "skills",
+    "service": "services",
+    "prompt": "prompts",
+}
 
 
 def cap_kind_definition(kind: EntryKind) -> CollectionDefinition[CapQueryView]:
-    """Return a kind-scoped definition with local cap identities."""
+    """Return one concrete cap-kind collection definition."""
 
     return CollectionDefinition(
         CollectionSchema.from_type(
             f"{kind}s",
             CapQueryView,
             key=("kind", "name", "ref"),
-            identity=IdentitySpec(paths=("name",), labels=(kind,)),
-            exclude=("record",),
+            identity=IdentitySpec(
+                paths=("name",),
+                labels=(_COLLECTION_BY_KIND[kind], kind),
+                separator="/",
+                bound=(_COLLECTION_BY_KIND[kind],),
+            ),
+            exclude=("record", "kind"),
             columns=(
-                ColumnSpec(kind.upper(), ("name",), "identity"),
+                ColumnSpec(kind.upper(), ("name",), "identity-component"),
                 ColumnSpec("ORIGIN", ("origin",)),
                 ColumnSpec("FORM", ("form",)),
                 ColumnSpec("SCOPE", ("scope",)),
@@ -91,17 +83,58 @@ def cap_dataset(
     entries: Sequence[StateCap],
     *,
     agent_name: str,
-    kind: EntryKind | None = None,
+    kind: EntryKind,
 ) -> QueryDataset[CapQueryView]:
-    """Materialize one resolved cap snapshot in combined or kind scope."""
+    """Materialize one resolved base-cap collection."""
 
-    definition = CAP_DEFINITION if kind is None else cap_kind_definition(kind)
+    definition = cap_kind_definition(kind)
     return definition.dataset(
         tuple(
             _cap_view(entry, agent_name=agent_name)
             for entry in entries
-            if kind is None or entry.kind == kind
+            if entry.kind == kind
         )
+    )
+
+
+def query_cap_views(
+    entries: Sequence[StateCap],
+    *,
+    agent_name: str,
+    queries: Sequence[str] | None,
+) -> tuple[CapQueryView, ...]:
+    """Query the stable union of the four concrete cap collections."""
+
+    selected: list[CapQueryView] = []
+    for kind in _COLLECTION_BY_KIND:
+        dataset = cap_dataset(entries, agent_name=agent_name, kind=kind)
+        selected.extend(dataset.query(queries))
+    return tuple(selected)
+
+
+def cap_table(
+    views: Sequence[CapQueryView],
+    *,
+    kind: EntryKind | None = None,
+) -> tuple[tuple[str, ...], tuple[tuple[str, ...], ...]]:
+    """Render the unchanged combined or kind-specific cap table."""
+
+    if kind is not None:
+        dataset = cap_kind_definition(kind).dataset(tuple(views))
+        return dataset.table()
+    return (
+        ("KIND", "CAP", "ORIGIN", "FORM", "SCOPE", "SOURCE"),
+        tuple(
+            (
+                cast(str, view.kind),
+                view.name,
+                cast(str, view.origin),
+                cast(str, view.form),
+                cast(str, view.scope),
+                view.source,
+            )
+            for view in views
+        ),
     )
 
 
@@ -125,9 +158,9 @@ def _cap_view(entry: StateCap, *, agent_name: str) -> CapQueryView:
 
 
 __all__ = [
-    "CAP_DEFINITION",
-    "CAP_SCHEMA",
     "CapQueryView",
+    "cap_table",
     "cap_dataset",
     "cap_kind_definition",
+    "query_cap_views",
 ]

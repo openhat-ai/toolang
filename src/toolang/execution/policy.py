@@ -8,18 +8,17 @@ from decimal import Decimal, InvalidOperation
 import shlex
 
 from toolang.base.errors import ToolangError
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.query import (
-    format_query,
-    prefix_query_identities,
     resolve_query_sentinels,
 )
 from toolang.lang.input import NamedInputSource, NamedInputSources
 from toolang.lang.runnable_query import RUNNABLE_SCHEMA
-from toolang.plugin.models.resolution import RUNTIME_MODEL_SCHEMA
+from toolang.plugin.models.collections import MODEL_SCHEMA
 from toolang.plugin.toolsets.collections import TOOL_SCHEMA
 from toolang.setup import AgentSetup
-from toolang.state.collections import CAP_SCHEMA, cap_kind_definition
+from toolang.state.collections import cap_kind_definition
 from toolang.state.types import EntryKind
 from typing import cast
 
@@ -260,13 +259,11 @@ def _allow_value(
     if normalized is None or not normalized:
         return normalized
     schema = (
-        RUNTIME_MODEL_SCHEMA
+        MODEL_SCHEMA
         if field == "models"
         else TOOL_SCHEMA
         if field == "tools"
         else cap_kind_definition(cast(EntryKind, _CAP_KIND_BY_FIELD[field])).schema
-        if field in _CAP_KIND_BY_FIELD
-        else CAP_SCHEMA
     )
     for query in normalized:
         schema.parse(query)
@@ -280,7 +277,7 @@ def _default_value(field: str, raw: str) -> str | None:
     if value.lower() == "none":
         return None
     if field == "model":
-        RUNTIME_MODEL_SCHEMA.parse(value)
+        ModelRequest(value)
     else:
         RUNNABLE_SCHEMA.parse(value)
     return value
@@ -396,24 +393,27 @@ def _command_agent_ceiling(
 
     models = fields.get("models") if "models" in present else None
     tools = fields.get("tools") if "tools" in present else None
-    cap_present = bool(present & {"caps", *_CAP_KIND_BY_FIELD})
-    caps: list[str] = list(fields.get("caps", ()))
-    for plural, kind in _CAP_KIND_BY_FIELD.items():
-        caps.extend(_qualify_cap_query(kind, value) for value in fields.get(plural, ()))
     ceiling = AgentCeiling(
         models=models,
         tools=tools,
-        caps=tuple(caps) if cap_present else None,
+        psyches=fields.get("psyches") if "psyches" in present else None,
+        skills=fields.get("skills") if "skills" in present else None,
+        services=fields.get("services") if "services" in present else None,
+        prompts=fields.get("prompts") if "prompts" in present else None,
     )
-    if ceiling.models is None and ceiling.tools is None and ceiling.caps is None:
+    if all(
+        value is None
+        for value in (
+            ceiling.models,
+            ceiling.tools,
+            ceiling.psyches,
+            ceiling.skills,
+            ceiling.services,
+            ceiling.prompts,
+        )
+    ):
         return None
     return ceiling
-
-
-def _qualify_cap_query(kind: str, value: str) -> str:
-    definition = cap_kind_definition(cast(EntryKind, kind))
-    parsed = definition.schema.parse(value)
-    return format_query(prefix_query_identities(parsed, prefix=kind, separator="/"))
 
 
 class _Line:

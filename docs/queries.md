@@ -1,27 +1,26 @@
 # Collection Queries
 
-Collection queries select an ordered subset of a typed collection. Models,
-providers, adapters, tools, caps, runnables, runtime policy, and authored
-resource directives use the same language.
+Collection queries select an ordered subset of one typed base collection.
 
 ## Terms
 
 | Term | Meaning |
 | --- | --- |
 | collection | Ordered items with unique stable keys. |
-| scope | Context that fixes the collection boundary before querying. |
 | identity | Canonical public item identifier. |
 | query field | Typed public attribute addressable by a dotted path. |
 | predicate | One typed condition on a query field. |
-| selector | Identity pattern plus zero or more predicates. |
-| query | One or more alternative selectors. |
-| singular query | Query required to match exactly one item. |
+| match | An optional identity pattern plus zero or more AND predicates. |
+| query | The stable, deduplicated union of one or more matches. |
+
+The parsed query value is a `MatchUnion`; its ordered members are `Match`
+values.
 
 ## Syntax
 
 ```text
-query      := selector ("," selector)*
-selector   := identity-pattern? ("[" predicate (";" predicate)* "]")?
+query      := match ("," match)*
+match      := identity-pattern? ("[" predicate (";" predicate)* "]")?
 predicate  := bool-field | "!" bool-field
             | field comparator literal
             | field ("in" | "not in") "(" literal ("," literal)* ")"
@@ -29,11 +28,11 @@ comparator := "=" | "!=" | "~=" | "!~=" | "<" | "<=" | ">" | ">="
 field      := identifier ("." identifier)*
 ```
 
-- A top-level comma means selector OR.
-- A selector's identity and predicates are ANDed.
-- A semicolon means predicate AND.
-- `in (...)` means value OR within one predicate.
-- Repeating a sequence predicate means “contains all”.
+- A top-level comma forms the union of matches.
+- A match intersects its identity pattern and predicates.
+- A semicolon intersects predicates.
+- `in (...)` accepts any listed value within one predicate.
+- Repeating a sequence predicate requires every specified element.
 - An omitted identity is `*`.
 
 ```text
@@ -59,82 +58,76 @@ Supported field types determine the operators:
 | Optional | Underlying operators plus `null` |
 | Scalar sequence | Element operators |
 
-## Identities and scope
+## Base Collections
 
-Common identities are:
+The queryable base collections and identities are:
 
 | Collection | Identity |
 | --- | --- |
-| Catalog or runtime model | `provider/model` |
-| Tool | `toolset/tool` |
-| Cap | `kind/cap` |
-| Runnable | `kind:runnable` |
-| Provider, plugin inventory, ID, URI, Pointer | One canonical component |
+| `models` | `provider/model` |
+| `tools` | `toolset/tool` |
+| `psyches` | `psyches/psyche` |
+| `skills` | `skills/skill` |
+| `services` | `services/service` |
+| `prompts` | `prompts/prompt` |
 
-An unqualified multi-component pattern matches the final component. A
-qualified pattern matches the complete identity. The final component may
-contain the separator. In a one-component identity, `/`, `:`, `.`, `@`, and
-`#` are ordinary data.
+An unqualified pattern matches the final identity component. A qualified
+pattern matches the complete identity. The final component may contain the
+separator.
 
-Kind-specific cap commands and directives bind the cap kind as scope, so their
-queries use local cap names:
+`caps` is an umbrella, not a base collection. `too caps --query QUERY` applies
+the query independently to the four cap collections and concatenates their
+results. Use `skills/reviewer` to select one kind or `reviewer` to match that
+name across kinds.
 
-```text
-reviewer[scope=home]
-*[form=authored]
-```
+## Ordering and Set Operations
 
-## Ordering and set operations
+Results retain base-collection order. Reordering matches or repeated `--query`
+options does not reorder results, and overlapping matches are deduplicated by
+stable item key.
 
-Query results always retain base-collection order. Reordering selectors or
-repeated `--query` options never changes result order, and overlapping
-alternatives are deduplicated by stable item key.
-
-Resource directives evaluate every query against the same immutable base:
+Resource directives evaluate against one immutable base:
 
 ```text
-=   active = active intersect matches   # restrict
-+=  active = active union matches       # include
--=  active = active difference matches  # exclude
+=   active = active intersect matches
++=  active = active union matches
+-=  active = active difference matches
 ```
 
-`include` cannot add an item outside the inherited resource base. Query order
-does not express model priority. `[models].default` is an ordered list of
-independent singular queries: zero matches advances, ambiguity fails, and the
-first unique match binds.
+An include cannot add an item outside the inherited resource base. Query order
+does not express model priority.
 
-## CLI and discovery
+## CLI Help
 
-Query-enabled list commands expose:
+Query-enabled lists expose repeatable `--query/-q`. The hidden `too query`
+command documents the language without loading collection data:
 
 ```text
---query QUERY, -q QUERY   Repeat to add alternatives.
---query-help             Show identity, fields, operators, and table columns.
---query-schema           Emit the same schema as deterministic JSON.
+too query --help
+too query models
+too query skills --json
 ```
 
-Current commands are `toolang models`, `providers`, `adapters`, `tools`, and
-the combined or kind-specific `caps ... list` commands. Selection occurs
-before presentation limits.
+The collection form shows its identity, fields, types, operators, and finite
+choices. Tables remain compact presentation views; their headers and composite
+cells do not define query fields. Providers and plugin inventories do not
+support queries.
 
-Each table column declares the public query fields that back it. Composite
-display cells, such as availability ratios or price pairs, are not themselves
-query fields.
+## Policy and Directives
 
-## Runtime policy and authored directives
-
-`[allow]`, `TOOLANG_ALLOW_*`, `--allow`, policy commands, model and runnable
-bindings, and authored resource directives accept collection queries.
+The six allow fields are `models`, `tools`, `psyches`, `skills`, `services`,
+and `prompts`. `[allow]`, `TOOLANG_ALLOW_*`, `--allow`, policy commands, and
+authored resource directives use collection queries. Singular `model` bindings
+instead accept one exact `ModelRequest` ref and never use this grammar.
 
 ```bash
 toolang run alice \
-  --allow 'models=*[streaming;tools]' \
-  --allow 'tools=filesystem/*'
+  --allow 'models=*[streaming;tool_call]' \
+  --allow 'tools=filesystem/*' \
+  --allow 'skills=reviewer'
 ```
 
 `all` and `none` are case-insensitive policy-layer sentinels only when they are
-the complete value. They cannot be mixed with a query. Use a JSON-quoted
-identity such as `"all"` to query an item literally named `all`.
-
-Legacy `--filter`, `--select`, colon predicates, comma-separated predicate
-blocks, and enum shorthand are invalid.
+the complete value. They cannot be mixed with a query. Legacy `--filter`,
+`--select`, colon predicates, empty matches, and empty predicate blocks are
+invalid.

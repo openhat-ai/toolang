@@ -3,26 +3,10 @@
 from __future__ import annotations
 
 import click
-import typer
 from typing import Any
 
 from toolang.common.errors import ToolangError
-from toolang.common.query import CollectionSchema, QueryDataset
-
-
-def emit_query_discovery(
-    schema: CollectionSchema[Any],
-    *,
-    query_help: bool,
-    query_schema: bool,
-) -> bool:
-    """Write requested query discovery and return whether command work is done."""
-
-    if query_help:
-        typer.echo(schema.help_text())
-    if query_schema:
-        typer.echo(schema.to_json())
-    return query_help or query_schema
+from toolang.common.query import QueryDataset
 
 
 def query_items(
@@ -37,4 +21,4 @@ def query_items(
         raise click.ClickException(str(error)) from error
 
 
-__all__ = ["emit_query_discovery", "query_items"]
+__all__ = ["query_items"]

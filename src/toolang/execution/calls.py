@@ -22,7 +22,7 @@ from toolang.lang.input import (
 from toolang.lang.ast import AgicDecl, Program
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState, state_module_caps
-from toolang.plugin.models.resolution import resolve_model_ref, resolve_model_request
+from toolang.plugin.models.resolution import resolve_model_request
 
 from .policy import parse_policy_prefix, resolve_commands
 from .runnables import (
@@ -200,15 +200,15 @@ def materialize_model_request(
     setup: AgentSetup,
     state: AgentState,
 ) -> ModelRequest:
-    """Resolve one model query-bearing value to an exact request ref."""
+    """Validate one exact model request against the current model snapshot."""
 
     from .executor.resources import snapshot_model_selection
 
-    ref = resolve_model_ref(
+    resolve_model_request(
         snapshot_model_selection(setup, state),
-        query=request.ref,
+        ref=request.ref,
     )
-    return request if ref == request.ref else replace(request, ref=ref)
+    return request
 
 
 def require_exact_model_request(
@@ -217,25 +217,11 @@ def require_exact_model_request(
     setup: AgentSetup,
     state: AgentState,
 ) -> ModelRequest | None:
-    """Reject non-exact queries at the materialized run-request boundary."""
+    """Validate an exact request at the materialized run-request boundary."""
 
     if request is None:
         return None
-    if "/" not in request.ref or any(
-        character in request.ref for character in "*?[],;"
-    ):
-        materialized = materialize_model_request(request, setup=setup, state=state)
-        raise ValueError(
-            f"run model ref must be exact: {request.ref!r} resolves to "
-            f"{materialized.ref!r}"
-        )
-    from .executor.resources import snapshot_model_selection
-
-    resolve_model_request(
-        snapshot_model_selection(setup, state),
-        ref=request.ref,
-    )
-    return request
+    return materialize_model_request(request, setup=setup, state=state)
 
 
 def _resolve_concrete_spec(
@@ -470,7 +456,7 @@ def _select_runnable_fallback(
             continue
         if len(matches) > 1:
             raise ValueError(f"runnable fallback query is ambiguous: {candidate}")
-        return dataset.schema.exact_selector_for(matches[0])
+        return dataset.schema.exact_match_for(matches[0])
     joined = ", ".join(candidates)
     raise ValueError(f"no runnable fallback is available: {joined}")
 

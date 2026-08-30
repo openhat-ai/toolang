@@ -246,7 +246,10 @@ def test_remote_client_runs_traces_and_waits_for_detail() -> None:
                         {
                             "models": ["openai/*"],
                             "tools": None,
-                            "caps": None,
+                            "psyches": None,
+                            "skills": None,
+                            "services": None,
+                            "prompts": None,
                         }
                     ],
                     "limits": {

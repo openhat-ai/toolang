@@ -40,7 +40,6 @@ def _setup() -> AgentSetup:
             RunOverride("allow", "models", ("openai/*,deepseek/*",)),
         ),
         (":allow tools=none", RunOverride("allow", "tools", ())),
-        (":allow caps=all", RunOverride("allow", "caps", None)),
         (":skills all", RunOverride("allow", "skills", None)),
         (
             ":default model=openai/gpt-5",
@@ -115,11 +114,13 @@ def test_repeated_allow_accumulates_but_scalar_fields_are_unique() -> None:
     [
         (":allow models", "field=value"),
         (":allow unknown=value", "unknown allow field"),
+        (":allow caps=all", "unknown allow field"),
         (":default other=value", "unknown default field"),
         (":limit other=1", "unknown run limit"),
         (":limit tokens=-1", "non-negative"),
         (":models all none", "cannot mix"),
         (":models all,openai/*", "cannot mix"),
+        (":model openai/*", "model request ref must be exact"),
         (":skills *[scope:root]", "invalid query field name"),
         (":agic review focus", "name=value"),
     ],
@@ -171,25 +172,21 @@ def test_resolve_commands_overlays_bindings_limits_and_ceilings() -> None:
     assert limits == RunLimits(tokens=80, cost=Decimal("5"), time=None)
     assert ceilings == (
         AgentCeiling(models=("session/*",)),
-        AgentCeiling(models=("run/*",), caps=("skill/reviewer",)),
+        AgentCeiling(models=("run/*",), skills=("reviewer",)),
     )
 
 
-def test_allow_all_removes_that_field_before_cap_kind_normalization() -> None:
+def test_allow_all_removes_that_collection_from_the_ceiling() -> None:
     unrestricted, _bindings, _limits = resolve_commands(
         _setup(),
         run=(RunOverride("allow", "skills", None),),
     )
     ceilings, _bindings, _limits = resolve_commands(
-        _setup(),
-        run=(
-            RunOverride("allow", "caps", None),
-            RunOverride("allow", "skills", ("reviewer",)),
-        ),
+        _setup(), run=(RunOverride("allow", "skills", ("reviewer",)),)
     )
 
     assert unrestricted == ()
-    assert ceilings == (AgentCeiling(caps=("skill/reviewer",)),)
+    assert ceilings == (AgentCeiling(skills=("reviewer",)),)
 
 
 def test_wire_policy_arrays_resolve_query_sentinels_consistently() -> None:

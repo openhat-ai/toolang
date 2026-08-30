@@ -2,8 +2,9 @@
 
 ## Status
 
-Approved by the human on 2026-08-30. Implementation may proceed in a separate
-change.
+Approved by the human on 2026-08-30 and implemented. Its collection boundaries,
+terminology, and discovery surface are superseded by
+`collection-query-discovery.md`.
 
 ## Goal
 

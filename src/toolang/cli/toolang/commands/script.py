@@ -420,7 +420,7 @@ def _materialize_script_runnable_commands(
             RunOverride(
                 "default",
                 "runnable",
-                dataset.schema.exact_selector_for(matches[0]),
+                dataset.schema.exact_match_for(matches[0]),
             )
         )
     return tuple(materialized)

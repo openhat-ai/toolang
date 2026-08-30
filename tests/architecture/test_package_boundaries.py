@@ -51,7 +51,7 @@ PACKAGE_IMPORT_RULES: dict[str, frozenset[str] | None] = {
     ),
     # lang uses the shared error type and immutable metadata containers.
     "lang": frozenset({"base", "common"}),
-    # common is currently needed only for shared selector parsing and matching.
+    # common is currently needed only for shared collection-query behavior.
     "plugin": frozenset({"base", "common"}),
     "setup": frozenset({"base", "common", "plugin"}),
     "state": None,  # TODO: Review the state package boundary.

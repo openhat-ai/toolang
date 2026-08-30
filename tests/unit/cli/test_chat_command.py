@@ -307,7 +307,7 @@ def test_chat_runtime_builds_process_local_execution_resources(
         allow_options=[
             "models=test/model",
             "tools=shell/*",
-            "caps=skill/reviewer",
+            "skills=reviewer",
         ],
         default_options=["model=test/model", "runnable=agic:chat"],
         limit_options=["tokens=1000", "time=60"],
@@ -324,7 +324,7 @@ def test_chat_runtime_builds_process_local_execution_resources(
     assert captured["commands"] == (
         RunOverride("allow", "models", ("test/model",)),
         RunOverride("allow", "tools", ("shell/*",)),
-        RunOverride("allow", "caps", ("skill/reviewer",)),
+        RunOverride("allow", "skills", ("reviewer",)),
         RunOverride("default", "model", "test/model"),
         RunOverride("default", "runnable", "agic:chat"),
         RunOverride("limit", "tokens", 1000),

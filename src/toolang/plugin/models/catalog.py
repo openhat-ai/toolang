@@ -283,7 +283,7 @@ def query_catalog_models(
         adapters=adapters,
     )
     selected = dataset.query(queries)
-    return tuple(item.record for item in selected)
+    return tuple(cast(Model, item.record) for item in selected)
 
 
 def model_info_from_catalog(

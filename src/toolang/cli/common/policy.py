@@ -11,7 +11,6 @@ from toolang.common.query import resolve_query_sentinels
 _ALLOW_FIELDS = (
     "models",
     "tools",
-    "caps",
     "psyches",
     "skills",
     "services",

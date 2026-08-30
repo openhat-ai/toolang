@@ -51,14 +51,14 @@ Supported fields are:
 
 | Group | Fields |
 | --- | --- |
-| `allow` | `models`, `tools`, `caps`, `psyches`, `skills`, `services`, `prompts` |
+| `allow` | `models`, `tools`, `psyches`, `skills`, `services`, `prompts` |
 | `default` | `model`, `runnable` |
 | `limit` | `agic_model_calls`, `agic_tool_calls`, `tokens`, `cost`, `time` |
 
 `allow` query values may use standalone `all` or `none`. `all` removes that
 field's restriction; `none` permits no value in the resulting collection. They
-cannot be mixed with a query. Cap-kind shortcuts bind the kind only after the
-complete policy layer is parsed, matching setup config and process overrides.
+cannot be mixed with a query. The four cap-kind fields remain separate through
+policy resolution, matching setup config and process overrides.
 `default ...=none` clears an explicit binding, while
 `limit ...=none` disables that limit. These values have group-specific meanings
 and are not accepted as ordinary names.
@@ -83,7 +83,7 @@ The allow shortcuts are:
 ```text
 :models QUERY       :psyches QUERY
 :tools QUERY        :skills QUERY
-:caps QUERY         :services QUERY
+                    :services QUERY
                     :prompts QUERY
 ```
 
@@ -131,7 +131,7 @@ internal runnable-input whitespace.
 
 Colon policy directives remain canonical. Former colon quick-command spellings
 are not aliases: use `/help`, `/model`, and the other slash interactions.
-`:models SELECTORS` remains an allow-policy shortcut, while no-argument
+`:models QUERY` remains an allow-policy shortcut, while no-argument
 `:models` is invalid.
 
 ## Runnable Input

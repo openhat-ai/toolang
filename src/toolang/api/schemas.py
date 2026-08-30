@@ -88,7 +88,18 @@ def _reject_materialized_run_unknowns(value: object, *, direct: bool) -> None:
         allow = policy_data.get("allow")
         if isinstance(allow, list | tuple):
             for item in allow:
-                _reject_keys(item, {"models", "tools", "caps"}, "allow ceiling")
+                _reject_keys(
+                    item,
+                    {
+                        "models",
+                        "tools",
+                        "psyches",
+                        "skills",
+                        "services",
+                        "prompts",
+                    },
+                    "allow ceiling",
+                )
         raw_limits = policy_data.get("limits")
         _reject_keys(
             raw_limits,

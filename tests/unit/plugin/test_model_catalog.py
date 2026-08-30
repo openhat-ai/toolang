@@ -33,6 +33,7 @@ from toolang.plugin.models.provider_resolver import resolve_provider
 from toolang.plugin.models.resolution import (
     ModelTargetResolver,
     resolve_catalog_adapter,
+    resolve_unique_model_query,
 )
 
 
@@ -273,7 +274,7 @@ def test_resolver_applies_advertised_mode_request_and_keeps_control_metadata() -
         envs={"TEST_API_KEY": "secret"},
     )
 
-    target = resolver.resolve("*[alias=fast-one]")
+    target = resolve_unique_model_query(resolver, query="*[alias=fast-one]")
 
     assert target.mode == "fast"
     assert target.reasoning == {"effort": "high"}

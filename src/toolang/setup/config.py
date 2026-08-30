@@ -11,15 +11,15 @@ import tomllib
 from typing import Any, cast
 
 from dotenv import dotenv_values
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.common.query import (
     CollectionSchema,
-    prefix_query_value,
     resolve_query_sentinels,
 )
-from toolang.plugin.models.resolution import RUNTIME_MODEL_SCHEMA
+from toolang.plugin.models.collections import MODEL_SCHEMA
 from toolang.plugin.toolsets.collections import TOOL_SCHEMA
 
 
@@ -29,7 +29,7 @@ _CAP_KIND_BY_FIELD = {
     "services": "service",
     "prompts": "prompt",
 }
-_ALLOW_FIELDS = frozenset({"models", "tools", "caps", *_CAP_KIND_BY_FIELD})
+_ALLOW_FIELDS = frozenset({"models", "tools", *_CAP_KIND_BY_FIELD})
 _BINDING_FIELDS = frozenset({"model", "runnable"})
 _LIMIT_FIELDS = frozenset(
     {
@@ -74,7 +74,7 @@ def resolve_agent_ceiling(
     configs: Sequence[Mapping[str, object]],
     *,
     overrides: Mapping[str, tuple[str, ...] | None] | None = None,
-    cap_query_schema: CollectionSchema[Any] | None = None,
+    cap_query_schemas: Mapping[str, CollectionSchema[Any]] | None = None,
 ) -> AgentCeiling:
     """Resolve layered ``[allow]`` configuration and frozen overrides."""
 
@@ -99,18 +99,15 @@ def resolve_agent_ceiling(
         else:
             fields[name] = normalized
 
-    caps_present = any(name in fields for name in {"caps", *_CAP_KIND_BY_FIELD})
-    cap_queries: list[str] = list(fields.get("caps", ()))
-    for plural, kind in _CAP_KIND_BY_FIELD.items():
-        cap_queries.extend(
-            _cap_kind_query(kind, query) for query in fields.get(plural, ())
-        )
     ceiling = AgentCeiling(
         models=fields.get("models"),
         tools=fields.get("tools"),
-        caps=tuple(cap_queries) if caps_present else None,
+        psyches=fields.get("psyches"),
+        skills=fields.get("skills"),
+        services=fields.get("services"),
+        prompts=fields.get("prompts"),
     )
-    _validate_agent_ceiling_syntax(ceiling, cap_query_schema=cap_query_schema)
+    _validate_agent_ceiling_syntax(ceiling, cap_query_schemas=cap_query_schemas)
     return ceiling
 
 
@@ -139,7 +136,7 @@ def resolve_run_bindings(
     fields.update(resolved_overrides)
     bindings = RunBindings(**fields)
     if bindings.model is not None:
-        RUNTIME_MODEL_SCHEMA.parse(bindings.model)
+        ModelRequest(bindings.model)
     if bindings.runnable is not None and runnable_query_schema is not None:
         runnable_query_schema.parse(bindings.runnable)
     return bindings
@@ -204,22 +201,20 @@ def _query_values(name: str, value: object) -> tuple[str, ...] | None:
         raise ValueError(str(error)) from error
 
 
-def _cap_kind_query(kind: str, value: str) -> str:
-    return prefix_query_value(value, prefix=kind, separator="/")
-
-
 def _validate_agent_ceiling_syntax(
     ceiling: AgentCeiling,
     *,
-    cap_query_schema: CollectionSchema[Any] | None,
+    cap_query_schemas: Mapping[str, CollectionSchema[Any]] | None,
 ) -> None:
     for query in ceiling.models or ():
-        RUNTIME_MODEL_SCHEMA.parse(query)
+        MODEL_SCHEMA.parse(query)
     for query in ceiling.tools or ():
         TOOL_SCHEMA.parse(query)
-    if cap_query_schema is not None:
-        for query in ceiling.caps or ():
-            cap_query_schema.parse(query)
+    if cap_query_schemas is not None:
+        for name in _CAP_KIND_BY_FIELD:
+            schema = cap_query_schemas[name]
+            for query in getattr(ceiling, name) or ():
+                schema.parse(query)
 
 
 def _binding_value(name: str, value: object) -> str | None:

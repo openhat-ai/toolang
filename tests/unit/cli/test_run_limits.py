@@ -34,6 +34,7 @@ def test_policy_options_overlay_environment_by_field() -> None:
 
 def test_policy_overrides_preserve_absent_empty_and_unrestricted() -> None:
     assert resolve_ceiling_overrides({}, ()) == {}
+    assert resolve_ceiling_overrides({"TOOLANG_ALLOW_CAPS": "review"}, ()) == {}
     assert resolve_ceiling_overrides({}, ("tools=none",)) == {"tools": ()}
     assert resolve_ceiling_overrides({}, ("tools=all",)) == {"tools": None}
     assert resolve_binding_overrides({}, ("model=none",)) == {"model": None}
@@ -44,6 +45,7 @@ def test_policy_overrides_preserve_absent_empty_and_unrestricted() -> None:
     ("resolver", "value", "message"),
     [
         (resolve_ceiling_overrides, "channels=web", "unknown allow field"),
+        (resolve_ceiling_overrides, "caps=review", "unknown allow field"),
         (resolve_ceiling_overrides, "models=none", "cannot combine"),
         (resolve_ceiling_overrides, "models=all,openai/*", "cannot mix"),
         (resolve_binding_overrides, "model=a", "duplicate default field"),

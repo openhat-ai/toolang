@@ -220,9 +220,9 @@ The public resources are:
 
 ```text
 too models [--query QUERY] [--json]
-too providers [--query QUERY] [--json]
+too providers [--json]
 too catalogs
-too adapters [--query QUERY] [--json]
+too adapters [--json]
 ```
 
 `too models` shows catalog knowledge plus a simple `AVAILABLE` yes/no column.
@@ -239,11 +239,11 @@ models.dev-compatible catalog containing only selected models. Local-only
 models cannot be exported. Provider and model JSON never includes `resolved`.
 
 Queries use `PATTERN[field=value;...]`. Exact identity is `provider/model_id`;
-model IDs may contain additional `/` characters. Catalog query fields expose
-models.dev fields such as `family`, `reasoning`, `tool_call`,
-`temperature`, `structured_output`, `modalities.input`, and `status`. Runtime
-views additionally expose `route.provider`, `route.adapter`, `route.scope`, and
-`available`. Use `--query-help` or `--query-schema` for the complete contract.
+model IDs may contain additional `/` characters. Catalog and runtime models
+share query fields, including `family`, `reasoning`, `tool_call`, `temperature`,
+`structured_output`, `modalities.input`, `status`, `route.provider`,
+`route.adapter`, `route.scope`, and `available`. Run `too query models` for the
+complete contract.
 Model-call parameters such as reasoning effort are structured request fields,
 not query syntax.
 
