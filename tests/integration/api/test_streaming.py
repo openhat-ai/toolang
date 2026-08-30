@@ -453,6 +453,13 @@ agic answer(_: Part[]) -> Part[]:
                 },
             )
             _wait_for_terminal(core, source_id)
+            selector_rerun = client.post(
+                f"/api/v1/runs/{source_id}/rerun",
+                json={
+                    "request_id": "selector-rerun-request",
+                    "model": {"ref": "scripted", "parameters": {}},
+                },
+            )
             rerun = client.post(
                 f"/api/v1/runs/{source_id}/rerun",
                 json={
@@ -469,6 +476,8 @@ agic answer(_: Part[]) -> Part[]:
         assert retry.json()["command"]["kind"] == "retry"
         assert retry.json()["command"]["request_id"] == "retry-request"
         assert retry.json()["command"]["payload"]["sandbox"] == "host"
+        assert selector_rerun.status_code == 409
+        assert "model ref must be exact" in selector_rerun.json()["detail"]
         assert rerun.status_code == 202
         assert rerun.json()["command"]["kind"] == "rerun"
         assert rerun.json()["command"]["payload"]["rerun_from"] == source_id

@@ -43,6 +43,20 @@ def _run_defaults() -> dict[str, object]:
     }
 
 
+def _models() -> dict[str, object]:
+    return {
+        "default": "test/model",
+        "items": [
+            {
+                "ref": "test/model",
+                "name": "test",
+                "provider": "test",
+                "parameters": {"reasoning": {"effort": []}},
+            }
+        ],
+    }
+
+
 class _Bytes(httpx.AsyncByteStream):
     def __init__(self, *chunks: bytes) -> None:
         self._chunks = chunks
@@ -489,6 +503,8 @@ def test_remote_chat_uses_remote_run_client_native_events() -> None:
             return httpx.Response(200, json=_profile())
         if request.url.path == "/api/v1/runs/defaults":
             return httpx.Response(200, json=_run_defaults())
+        if request.url.path == "/api/v1/models":
+            return httpx.Response(200, json=_models())
         if request.url.path == "/api/v1/runs/authored/stream":
             return _stream(_begin(), _end())
         if request.url.path == "/api/v1/runs/run_remote":
@@ -524,6 +540,7 @@ def test_remote_chat_uses_remote_run_client_native_events() -> None:
     assert [type(item) for item in events] == [RunBegin, RunEnd]
     assert states == [RunAccepted("run_remote")]
     assert errors == []
+    assert requests.count("/api/v1/models") == 1
     assert requests.count("/api/v1/runs/authored/stream") == 1
 
 
@@ -551,6 +568,8 @@ def test_remote_chat_recovers_without_replaying_or_retrying(
             return httpx.Response(200, json=_profile())
         if request.url.path == "/api/v1/runs/defaults":
             return httpx.Response(200, json=_run_defaults())
+        if request.url.path == "/api/v1/models":
+            return httpx.Response(200, json=_models())
         if request.url.path == "/api/v1/runs/authored/stream":
             submissions += 1
             return _stream(_begin())
@@ -601,6 +620,8 @@ def test_remote_chat_blocks_ambiguous_pre_acceptance_failure() -> None:
             return httpx.Response(200, json=_profile())
         if request.url.path == "/api/v1/runs/defaults":
             return httpx.Response(200, json=_run_defaults())
+        if request.url.path == "/api/v1/models":
+            return httpx.Response(200, json=_models())
         if request.url.path == "/api/v1/runs/authored/stream":
             submissions += 1
             raise httpx.ReadError("private transport detail", request=request)

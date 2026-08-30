@@ -155,7 +155,7 @@ agic chat(_: Part[]) -> Part[]:
     )
     setup = replace(
         harness.setup,
-        bindings=RunBindings(model="scripted", runnable="agic:chat"),
+        bindings=RunBindings(model="scripted", runnable="chat"),
     )
     try:
         defaults = local.LocalChatSession._current_run_defaults(
@@ -166,6 +166,7 @@ agic chat(_: Part[]) -> Part[]:
         harness.store.close()
 
     assert defaults.bindings.model == TEST_MODEL_REF
+    assert defaults.bindings.runnable == "agic:chat"
 
 
 def test_local_chat_owner_loop_control_does_not_wait_on_itself() -> None:

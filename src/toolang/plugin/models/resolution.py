@@ -203,6 +203,7 @@ def _resolve_model_candidate(
         aliases=context.model_aliases,
         envs=context.envs,
         provider_configs=provider_configs,
+        prefer_exact_route=True,
     )
     if not matches:
         raise ToolangError(
@@ -522,6 +523,7 @@ def _resolve_selector_targets(
     aliases: Mapping[str, ModelAlias],
     envs: Mapping[str, str],
     provider_configs: Mapping[str, ProviderConfig],
+    prefer_exact_route: bool = False,
 ) -> tuple[_Candidate, ...]:
     candidates = _discover_available_candidates(
         providers=providers,
@@ -560,7 +562,18 @@ def _resolve_selector_targets(
                 )
             continue
         selector = parse_model_selector(text)
-        matches = tuple(
+        exact_route_matches = (
+            tuple(
+                candidate
+                for candidate in candidates
+                if candidate.selector == selector.pattern
+            )
+            if prefer_exact_route
+            and _looks_exact_ref(selector)
+            and not selector.filters
+            else ()
+        )
+        matches = exact_route_matches or tuple(
             candidate
             for candidate in candidates
             if _candidate_matches(candidate, selector)

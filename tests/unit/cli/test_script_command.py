@@ -729,6 +729,22 @@ def test_remote_script_cancellation_cancels_the_accepted_run(
     monkeypatch.setattr(script, "_create_remote_script_thread", create_thread)
     monkeypatch.setattr(
         script,
+        "_remote_script_models",
+        lambda *_args, **_kwargs: asyncio.sleep(
+            0,
+            result={
+                "items": [
+                    {
+                        "ref": "test/scripted",
+                        "name": "scripted",
+                        "provider": "test",
+                    }
+                ]
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        script,
         "_remote_script_defaults",
         lambda *_args, **_kwargs: asyncio.sleep(
             0,

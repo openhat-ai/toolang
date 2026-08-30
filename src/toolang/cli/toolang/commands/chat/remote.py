@@ -19,7 +19,6 @@ from toolang.base.types.message import Message
 from toolang.base.types.policy import RunBindings, RunPolicy
 from toolang.cli.common.model_selection import (
     materialize_model_list_ref,
-    model_ref_is_exact_route,
 )
 from toolang.common.errors import ToolangError
 from toolang.cli.common.remote_runtime import (
@@ -430,9 +429,7 @@ class RemoteChatSession:
             resolve_model_ref=lambda selector: selector,
             resolve_runnable_ref=lambda selector: selector,
         )
-        if request.model is not None and not model_ref_is_exact_route(
-            request.model.ref
-        ):
+        if request.model is not None:
             models = await self._list_models()
             request = replace(
                 request,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from fnmatch import fnmatchcase
 from typing import Any, cast
 
 from toolang.common.selectors import (
@@ -20,9 +21,23 @@ def materialize_model_list_ref(
     """Resolve one selector to exactly one ref exposed by a model list."""
 
     parsed = parse_model_selector(selector)
+    items = _model_items(payload)
+    if _selector_is_exact_route(parsed):
+        exact_matches = tuple(
+            ref
+            for item in items
+            if (ref := _text(item.get("ref"))) is not None and ref == parsed.pattern
+        )
+        if len(exact_matches) == 1:
+            return exact_matches[0]
+        if len(exact_matches) > 1:
+            joined = ", ".join(exact_matches)
+            raise ValueError(
+                f"model selector is ambiguous: {selector} (matches {joined})"
+            )
     matches = tuple(
         ref
-        for item in _model_items(payload)
+        for item in items
         if (ref := _text(item.get("ref"))) is not None
         and _model_item_matches(item, ref=ref, selector=parsed)
     )
@@ -34,14 +49,11 @@ def materialize_model_list_ref(
     raise ValueError(f"model selector is ambiguous: {selector} (matches {joined})")
 
 
-def model_ref_is_exact_route(ref: str) -> bool:
-    """Return whether a ref is already an exact provider-qualified route."""
-
-    parsed = parse_model_selector(ref)
+def _selector_is_exact_route(selector: Selector) -> bool:
     return (
-        "/" in parsed.pattern
-        and not parsed.filters
-        and not any(char in parsed.pattern for char in "*?[")
+        "/" in selector.pattern
+        and not selector.filters
+        and not any(char in selector.pattern for char in "*?[")
     )
 
 
@@ -64,7 +76,9 @@ def _model_item_matches(
     prefix, separator, suffix = ref.partition("/")
     family = provider or prefix
     name = suffix if separator and prefix == family else ref
-    if not selector_identity_matches(
+    route_model = suffix if separator else ref
+    route_name = route_model.rpartition("/")[2]
+    identity_matches = selector_identity_matches(
         family=family,
         name=name,
         selector=selector,
@@ -75,10 +89,12 @@ def _model_item_matches(
                 _text(item.get("name")),
                 provider,
                 _text(item.get("model")),
+                route_name,
             )
             if value is not None
         ),
-    ):
+    ) or ("/" in selector.pattern and fnmatchcase(route_model, selector.pattern))
+    if not identity_matches:
         return False
     for key, allowed in selector.filters.items():
         actual = _model_filter_values(item, key=key, provider=provider)
@@ -97,15 +113,6 @@ def _model_filter_values(
 ) -> tuple[str, ...]:
     if key == "provider":
         return (provider,)
-    if key == "reasoning":
-        parameters = item.get("parameters")
-        reasoning = (
-            parameters.get("reasoning") if isinstance(parameters, Mapping) else None
-        )
-        efforts = reasoning.get("effort") if isinstance(reasoning, Mapping) else None
-        return (
-            "true" if isinstance(efforts, list | tuple) and bool(efforts) else "false",
-        )
     value = item.get(key)
     if isinstance(value, bool):
         return ("true" if value else "false",)

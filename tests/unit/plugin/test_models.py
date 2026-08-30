@@ -46,6 +46,7 @@ from toolang.plugin.models.resolution import (
     apply_model_parameters,
     model_reasoning_efforts,
     resolve_model,
+    resolve_model_ref,
     select_model_selectors,
 )
 from toolang.plugin.models.views import _format_decimal_unit
@@ -318,7 +319,7 @@ def test_model_reasoning_parameters_use_catalog_order_and_replace_defaults() -> 
         )
 
 
-def test_model_resolution_rejects_ambiguous_selector() -> None:
+def test_model_resolution_prefers_an_exact_route_over_target_identity() -> None:
     context = _SelectionContext(
         model_providers={
             "openai": _FakeModels(
@@ -353,8 +354,14 @@ def test_model_resolution_rejects_ambiguous_selector() -> None:
         model_environ={},
     )
 
+    assert resolve_model_ref(context, selector="openai/gpt-5") == "openai/gpt-5"
+    assert resolve_model(context, selector="openai/gpt-5").provider == "openai"
+    assert (
+        resolve_model_ref(context, selector="openai/gpt-5[openrouter]")
+        == "openrouter/openai/gpt-5"
+    )
     with pytest.raises(ToolangError, match="ambiguous"):
-        resolve_model(context, selector="openai/gpt-5")
+        resolve_model(context, selector="gpt-5")
 
 
 def test_model_resolution_rejects_missing_provider_env_before_target_use() -> None:

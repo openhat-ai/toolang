@@ -160,7 +160,12 @@ class RunControlPayload:
 
     def __post_init__(self) -> None:
         _validate_preparation_payload(
-            self.state, self.runnable, self.model, self.locals, self.sandbox
+            self.state,
+            self.runnable,
+            self.model,
+            self.model_request,
+            self.locals,
+            self.sandbox,
         )
         _validate_authored_facts(
             self.authored_input,
@@ -190,7 +195,12 @@ class RerunControlPayload:
 
     def __post_init__(self) -> None:
         _validate_preparation_payload(
-            self.state, self.runnable, self.model, self.locals, self.sandbox
+            self.state,
+            self.runnable,
+            self.model,
+            self.model_request,
+            self.locals,
+            self.sandbox,
         )
         if not self.rerun_from:
             raise ValueError("rerun payload requires rerun_from")
@@ -222,7 +232,12 @@ class RetryControlPayload:
 
     def __post_init__(self) -> None:
         _validate_preparation_payload(
-            self.state, self.runnable, self.model, self.locals, self.sandbox
+            self.state,
+            self.runnable,
+            self.model,
+            self.model_request,
+            self.locals,
+            self.sandbox,
         )
         _validate_authored_facts(
             self.authored_input,
@@ -710,7 +725,11 @@ def _control_payload_from_data(
         runnable = _required_payload_text(payload, "runnable")
         model = _required_payload_text(payload, "model")
         if "model_request" not in payload:
-            model_request = None if model == "none" else ModelRequest(model)
+            model_request = (
+                None
+                if model == "none" and model not in resources.models
+                else ModelRequest(model)
+            )
         else:
             raw_model_request = payload.get("model_request")
             model_request = (
@@ -1824,6 +1843,7 @@ def _validate_preparation_payload(
     state: str | None,
     runnable: str,
     model: str,
+    model_request: ModelRequest | None,
     locals: tuple[Local, ...] | None,
     sandbox: str | None,
 ) -> None:
@@ -1833,6 +1853,10 @@ def _validate_preparation_payload(
         raise ValueError("preparation payload requires runnable")
     if not model:
         raise ValueError("preparation payload requires model")
+    if model_request is not None and not isinstance(model_request, ModelRequest):
+        raise TypeError("preparation model request must be ModelRequest or none")
+    if model_request is not None and model_request.ref != model:
+        raise ValueError("preparation model request must match model")
     if sandbox is not None and (
         not isinstance(sandbox, str) or not sandbox or sandbox != sandbox.strip()
     ):

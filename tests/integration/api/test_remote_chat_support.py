@@ -57,7 +57,7 @@ agic chat(_: Part[]) -> Part[]:
     )
     setup = replace(
         harness.setup,
-        bindings=RunBindings(model="scripted", runnable="agic:chat"),
+        bindings=RunBindings(model="scripted", runnable="chat"),
     )
     harness.store.close()
     core = AgentCore(setup.layout)

@@ -1148,8 +1148,10 @@ accepts a user message whose parts may be empty. `retry` and `rerun` accept a
 terminal root run. Retry reopens that run from an optional canonical step-path
 `anchor`; omitting it selects the latest retryable step. Rerun starts a new root
 run from the source invocation and replaces the source in the visible thread
-projection. Both accept optional `request_id`, `model`, and partial `limits`,
-return `202 Accepted`, and execute on the server's owner event loop.
+projection. Both accept optional `request_id` and partial `limits`; only rerun
+accepts an optional exact `model` replacement, while retry preserves the
+persisted model request. Both return `202 Accepted` and execute on the server's
+owner event loop.
 
 Thread `rewind` and `fork` request bodies take an optional `run_id` anchor and
 `request_id`. An omitted run id selects the last visible run. Task and chore

@@ -30,7 +30,6 @@ from toolang.cli.common.policy import (
 )
 from toolang.cli.common.model_selection import (
     materialize_model_list_ref,
-    model_ref_is_exact_route,
 )
 from toolang.execution.calls import parse_call, resolve_spec
 from toolang.execution.policy import materialize_policy
@@ -656,7 +655,7 @@ async def _execute_remote(
                 run=_remote_script_commands(commands, runnable=runnable),
             )
             model_ref = bindings.model
-            if model_ref is not None and not model_ref_is_exact_route(model_ref):
+            if model_ref is not None:
                 models = await _remote_script_models(http, client.endpoint)
                 model_ref = materialize_model_list_ref(models, model_ref)
             thread = await _create_remote_script_thread(http, client.endpoint)

@@ -438,6 +438,38 @@ def test_preparation_payload_preserves_a_legacy_model_free_run() -> None:
     assert restored.model_request is None
 
 
+def test_preparation_payload_preserves_a_legacy_model_named_none() -> None:
+    payload = RunControlPayload(
+        resources=AgentResources(models=("none",)),
+        limits=RunLimits(),
+        state="0" * 64,
+        runnable="agic:worker",
+        model="none",
+        model_request=ModelRequest("none"),
+        locals=(),
+    )
+    data = control_payload_to_data(payload)
+    data.pop("model_request")
+
+    restored = control_payload_from_data("run", data)
+
+    assert isinstance(restored, RunControlPayload)
+    assert restored.model_request == ModelRequest("none")
+
+
+def test_preparation_payload_rejects_a_mismatched_model_request() -> None:
+    with pytest.raises(ValueError, match="model request must match model"):
+        RunControlPayload(
+            resources=AgentResources(models=("test/model",)),
+            limits=RunLimits(),
+            state="0" * 64,
+            runnable="agic:worker",
+            model="test/model",
+            model_request=ModelRequest("other/model"),
+            locals=(),
+        )
+
+
 def test_preparation_payload_round_trips_authored_prompt_facts() -> None:
     payload = RunControlPayload(
         resources=AgentResources(models=("test/model",)),

@@ -42,6 +42,7 @@ from toolang.lang.ast import AgicDecl
 from toolang.execution.runnables import (
     parse_runnable_ref,
     runnable_binding_defaults,
+    resolve_public_runnable,
     resolve_state_runnable,
 )
 from toolang.state.state import AgentState
@@ -321,6 +322,13 @@ async def run_defaults(core: AgentCoreDep) -> dict[str, object]:
             runnable = f"agic:{default_agic}"
         elif default_flow is not None:
             runnable = f"flow:{default_flow}"
+    if runnable is not None:
+        runnable_name, runnable_kind = parse_runnable_ref(runnable)
+        runnable = resolve_public_runnable(
+            state,
+            runnable_name,
+            kind=runnable_kind,
+        ).ref
     return {
         "model": model,
         "runnable": runnable,
@@ -465,11 +473,17 @@ async def rerun_run(
     request = payload or RunRerunRequest()
     setup = core.setup.current()
     try:
+        state = await _fresh_state(core)
+        model_request = require_exact_model_request(
+            request.model,
+            setup=setup,
+            state=state,
+        )
         handle = core.executor.rerun(
             source.id,
             setup=setup,
-            state=await _fresh_state(core),
-            model_request=request.model,
+            state=state,
+            model_request=model_request,
             limits=(
                 request.limits.to_limits(setup.limits)
                 if request.limits is not None

@@ -90,7 +90,7 @@ manager, result inspection, and event-loop thread. Other local execution owners
 continue to use `RunExecutor` directly.
 
 `RemoteRunClient` implements the same boundary over an agent runtime's absolute
-HTTP origin. It sends unresolved requests to
+HTTP origin. It sends self-contained, materialized requests to
 `POST /api/v1/runs/authored/stream`, consumes canonical `RunEvent` values from
 the accepted run's SSE response, and uses the existing run detail, cancel, and
 steer endpoints. The server owns setup/state snapshots, request validation,

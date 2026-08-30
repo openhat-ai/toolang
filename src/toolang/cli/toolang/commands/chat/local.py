@@ -350,6 +350,10 @@ class LocalChatSession:
                 runnable = f"agic:{default_agic}"
             elif default_flow is not None:
                 runnable = f"flow:{default_flow}"
+        if runnable is not None:
+            name, kind = parse_runnable_ref(runnable)
+            _module, resolved = resolve_state_runnable(state, name, kind=kind)
+            runnable = f"{resolved.kind}:{name}"
         return ChatRunDefaults(
             bindings=RunBindings(model=model, runnable=runnable),
             limits=setup.limits,
