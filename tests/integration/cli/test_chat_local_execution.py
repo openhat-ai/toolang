@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import os
 from pathlib import Path
 import threading
@@ -10,12 +11,15 @@ from typing import Any
 
 from anyio import to_process
 
-from tests.support.execution_harness import ExecutionHarness
+from tests.support.execution_harness import ExecutionHarness, TEST_MODEL_REF
 from toolang.base.types.message import Message, TextPart
+from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelCallResult
 from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.base import ChatExecutorMetadata
+from toolang.cli.toolang.commands.chat.policy import ChatRunDefaults
 from toolang.execution.events import RunEvent
+from toolang.execution.types import RunOverride
 from toolang.state.watcher import StateRefresh
 
 
@@ -97,7 +101,7 @@ def test_local_chat_close_cancels_watchers_without_waiting_for_polling() -> None
     asyncio.run(scenario())
 
 
-def test_local_chat_run_request_keeps_chat_fallback_agic_only() -> None:
+def test_local_chat_run_request_materializes_chat_runnable() -> None:
     requests = []
 
     class Handle:
@@ -115,13 +119,54 @@ def test_local_chat_run_request_keeps_chat_fallback_agic_only() -> None:
     async def scenario() -> None:
         session: Any = object.__new__(local.LocalChatSession)
         session.run_client = RunClient()
+        session._run_defaults = lambda: ChatRunDefaults(
+            bindings=RunBindings(model="test/scripted", runnable="agic:chat"),
+            limits=RunLimits(),
+        )
+        session._materialize_model_ref = lambda value: value
+        session._materialize_runnable_ref = lambda value: value
 
-        await session._run("term_test", "hello", {}, lambda _event: None)
+        await session._run(
+            "term_test",
+            "hello",
+            {"run_overrides": (RunOverride("allow", "models", ("test/*",)),)},
+            lambda _event: None,
+        )
 
     asyncio.run(scenario())
 
     assert len(requests) == 1
-    assert requests[0].runnable_fallbacks == ("agic:chat", "default")
+    assert requests[0].runnable.ref == "agic:chat"
+    assert requests[0].model.ref == "test/scripted"
+    assert requests[0].policy.allow == (AgentCeiling(models=("test/*",)),)
+
+
+def test_local_chat_defaults_materialize_configured_model(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic chat(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=(),
+    )
+    setup = replace(
+        harness.setup,
+        bindings=RunBindings(model="scripted", runnable="chat"),
+    )
+    try:
+        defaults = local.LocalChatSession._current_run_defaults(
+            setup=setup,
+            state=harness.state,
+        )
+    finally:
+        harness.store.close()
+
+    assert defaults.bindings.model == TEST_MODEL_REF
+    assert defaults.bindings.runnable == "agic:chat"
 
 
 def test_local_chat_owner_loop_control_does_not_wait_on_itself() -> None:

@@ -62,6 +62,47 @@ def _root_step_kinds(
     ]
 
 
+def test_model_free_flow_retry_preserves_an_absent_model_request(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+flow passthrough(_: Text) -> Text:
+  let note:
+    retained
+""",
+        responses=[],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="flow:passthrough",
+                    primary=resolve_input_parts("hello"),
+                )
+            )
+            original = harness.store.list_run_controls(run_id=root.id)[0]
+            assert isinstance(original.payload, RunControlPayload)
+            assert original.payload.model_request is None
+
+            retried = await harness.executor.retry(
+                root.id,
+                setup=harness.setup,
+                state=harness.state,
+            )
+
+            assert retried.status == "succeeded"
+            retry = harness.store.list_run_controls(run_id=root.id)[-1]
+            assert isinstance(retry.payload, RetryControlPayload)
+            assert retry.payload.model_request is None
+
+    asyncio.run(scenario())
+
+
 def test_flow_calls_an_agic_as_a_nested_run(tmp_path: Path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,

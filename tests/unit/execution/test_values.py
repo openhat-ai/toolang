@@ -15,6 +15,7 @@ from toolang.base.types.message import (
     ToolCallPart,
     ToolResultPart,
 )
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunLimits
 from toolang.execution.records import (
     ExecuteControlPayload,
@@ -41,7 +42,7 @@ from toolang.execution.types import (
     local_to_protocol_data,
 )
 from toolang.execution.values import parts_from_local
-from toolang.lang.input import PromptInvocation, RunnableInputRaw
+from toolang.lang.input import NamedInputSource, PromptInvocation, RunnableInputRaw
 from toolang.lang.types import Array, Struct
 
 
@@ -371,6 +372,7 @@ def test_preparation_payload_round_trips_resolved_locals() -> None:
         state="0" * 64,
         runnable="agic:worker",
         model="test/model",
+        model_request=ModelRequest("test/model"),
         locals=(Local.typed("Part[]", (TextPart("hello"),), "_", 0),),
         sandbox="docker:python:3.13-slim",
     )
@@ -380,6 +382,94 @@ def test_preparation_payload_round_trips_resolved_locals() -> None:
     assert control_payload_from_data("run", data) == payload
 
 
+def test_preparation_payload_preserves_an_absent_model_request() -> None:
+    payload = RunControlPayload(
+        resources=AgentResources(),
+        limits=RunLimits(),
+        state="0" * 64,
+        runnable="flow:worker",
+        model="none",
+        model_request=None,
+        locals=(),
+    )
+
+    data = control_payload_to_data(payload)
+    restored = control_payload_from_data("run", data)
+
+    assert data["model_request"] is None
+    assert restored == payload
+
+
+def test_preparation_payload_materializes_a_legacy_model_field() -> None:
+    payload = RunControlPayload(
+        resources=AgentResources(models=("test/model",)),
+        limits=RunLimits(),
+        state="0" * 64,
+        runnable="agic:worker",
+        model="test/model",
+        model_request=ModelRequest("test/model"),
+        locals=(),
+    )
+    data = control_payload_to_data(payload)
+    data.pop("model_request")
+
+    restored = control_payload_from_data("run", data)
+
+    assert isinstance(restored, RunControlPayload)
+    assert restored.model_request == ModelRequest("test/model")
+
+
+def test_preparation_payload_preserves_a_legacy_model_free_run() -> None:
+    payload = RunControlPayload(
+        resources=AgentResources(),
+        limits=RunLimits(),
+        state="0" * 64,
+        runnable="flow:worker",
+        model="none",
+        model_request=None,
+        locals=(),
+    )
+    data = control_payload_to_data(payload)
+    data.pop("model_request")
+
+    restored = control_payload_from_data("run", data)
+
+    assert isinstance(restored, RunControlPayload)
+    assert restored.model_request is None
+
+
+def test_preparation_payload_preserves_a_legacy_model_named_none() -> None:
+    payload = RunControlPayload(
+        resources=AgentResources(models=("none",)),
+        limits=RunLimits(),
+        state="0" * 64,
+        runnable="agic:worker",
+        model="none",
+        model_request=ModelRequest("none"),
+        locals=(),
+    )
+    data = control_payload_to_data(payload)
+    data.pop("model_request")
+
+    restored = control_payload_from_data("run", data)
+
+    assert isinstance(restored, RunControlPayload)
+    assert restored.model_request == ModelRequest("none")
+
+
+def test_preparation_payload_rejects_a_mismatched_model_request() -> None:
+    with pytest.raises(ValueError, match="model request must match model"):
+        RunControlPayload(
+            resources=AgentResources(models=("test/model",)),
+            limits=RunLimits(),
+            state="0" * 64,
+            runnable="agic:worker",
+            model="test/model",
+            model_request=ModelRequest("other/model"),
+            locals=(),
+        )
+
+
 def test_preparation_payload_round_trips_authored_prompt_facts() -> None:
     payload = RunControlPayload(
         resources=AgentResources(models=("test/model",)),
@@ -387,10 +477,11 @@ def test_preparation_payload_round_trips_authored_prompt_facts() -> None:
         state="0" * 64,
         runnable="agic:worker",
         model="test/model",
+        model_request=ModelRequest("test/model"),
         locals=(Local.typed("Part[]", (TextPart("expanded"),), "_", 0),),
         authored_input=RunnableInputRaw(
-            primary="$review focus=security -- inspect",
-            named=(("tone", "$brief"),),
+            _="$review focus=security -- inspect",
+            named=(NamedInputSource("tone", "$brief"),),
         ),
         authored_commands=(RunOverride("limit", "time", 30),),
         authored_session_commands=(RunOverride("default", "model", "test/model"),),
@@ -471,6 +562,7 @@ def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:
         state="0" * 64,
         runnable="flow:worker",
         model="test/model",
+        model_request=ModelRequest("test/model"),
         locals=None,
         retry_from=StepPath("run_1", (2,)),
     )
@@ -480,6 +572,7 @@ def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:
         state=inherited.state,
         runnable=inherited.runnable,
         model=inherited.model,
+        model_request=inherited.model_request,
         locals=(),
         retry_from=None,
     )
@@ -502,6 +595,7 @@ def test_reload_and_inherited_preparation_payloads_round_trip_without_revision_d
         state=None,
         runnable="agic:child",
         model="test/model",
+        model_request=ModelRequest("test/model"),
         locals=(),
     )
 

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import shutil
+from typing import Any, cast
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer
 from prompt_toolkit.filters import Condition
@@ -17,6 +18,7 @@ from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
 from prompt_toolkit.utils import get_cwidth
 
 from toolang.cli.common.execution_progress.formatting import truncate
+from toolang.base.types.model import ReasoningEffort
 
 from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
@@ -61,7 +63,284 @@ def _chat_ui_palette() -> dict[str, str]:
         "status.error.marker": "fg:ansired",
         "status.error": "fg:ansired",
         "dim": "fg:ansigray",
+        "picker": "fg:#f2f2f2 bg:#262626",
+        "picker.title": "bold fg:#ffffff bg:#262626",
+        "picker.selected": "fg:#ffffff bg:#444444",
+        "picker.secondary": "fg:#a8a8a8 bg:#262626",
+        "picker.badge": "fg:#d7d7d7 bg:#3a3a3a",
     }
+
+
+class ModelPicker:
+    """Searchable two-stage model and reasoning-effort picker."""
+
+    def __init__(
+        self,
+        *,
+        current: Callable[[], tuple[str | None, ReasoningEffort | None]],
+        commit: Callable[[str, ReasoningEffort | None], None],
+        close: Callable[[], None],
+        invalidate: Callable[[], None],
+    ) -> None:
+        self._current = current
+        self._commit = commit
+        self._close = close
+        self._invalidate = invalidate
+        self.visible = False
+        self.stage = "model"
+        self.items: list[Mapping[str, Any]] = []
+        self.default: str | None = None
+        self.index = 0
+        self.selected_model: Mapping[str, Any] | None = None
+        self.buffer = Buffer(multiline=False)
+        self.buffer.on_text_changed += lambda _buffer: self._query_changed()
+        self.view = FormattedTextControl(self._render)
+
+    def open(self, payload: Mapping[str, Any]) -> None:
+        raw_items = payload.get("items")
+        self.items = (
+            [
+                cast(Mapping[str, Any], item)
+                for item in raw_items
+                if isinstance(item, Mapping)
+            ]
+            if isinstance(raw_items, list)
+            else []
+        )
+        default = payload.get("default")
+        self.default = default if isinstance(default, str) else None
+        self.stage = "model"
+        self.selected_model = None
+        self.buffer.text = ""
+        current, _effort = self._current()
+        current = current or self.default
+        refs = [self._text(item.get("ref")) for item in self._filtered_items()]
+        self.index = refs.index(current) if current in refs else 0
+        self.visible = True
+        self._invalidate()
+
+    def container(self) -> ConditionalContainer:
+        search = VSplit(
+            [
+                Window(
+                    FormattedTextControl([("class:picker.secondary", " Search ")]),
+                    width=8,
+                    style="class:picker",
+                ),
+                Window(BufferControl(buffer=self.buffer), style="class:picker"),
+            ],
+            height=1,
+        )
+        return ConditionalContainer(
+            HSplit(
+                [
+                    Window(
+                        FormattedTextControl(self._title),
+                        height=1,
+                        style="class:picker.title",
+                    ),
+                    ConditionalContainer(
+                        search,
+                        filter=Condition(lambda: self.stage == "model"),
+                    ),
+                    Window(
+                        self.view,
+                        height=Dimension(min=3, max=10),
+                        wrap_lines=False,
+                        style="class:picker",
+                        always_hide_cursor=True,
+                    ),
+                    Window(
+                        FormattedTextControl(self._hint),
+                        height=1,
+                        style="class:picker.secondary",
+                    ),
+                ],
+                width=Dimension(min=48, max=76),
+                style="class:picker",
+            ),
+            filter=Condition(lambda: self.visible),
+        )
+
+    def bind(self, keys: KeyBindings) -> None:
+        active = Condition(lambda: self.visible)
+
+        @keys.add("up", filter=active, eager=True)
+        @keys.add("c-p", filter=active, eager=True)
+        def previous(_event) -> None:
+            self.index = max(0, self.index - 1)
+            self._invalidate()
+
+        @keys.add("down", filter=active, eager=True)
+        @keys.add("c-n", filter=active, eager=True)
+        def next_item(_event) -> None:
+            self.index = min(max(0, self._choice_count() - 1), self.index + 1)
+            self._invalidate()
+
+        @keys.add("enter", filter=active, eager=True)
+        def choose(_event) -> None:
+            if self.stage == "model":
+                items = self._filtered_items()
+                if not items:
+                    return
+                self.selected_model = items[min(self.index, len(items) - 1)]
+                efforts = self._efforts(self.selected_model)
+                if efforts:
+                    self.stage = "effort"
+                    current_model, current_effort = self._current()
+                    selected_ref = self._text(self.selected_model.get("ref"))
+                    choices: tuple[ReasoningEffort | None, ...] = (None, *efforts)
+                    self.index = (
+                        choices.index(current_effort)
+                        if selected_ref == current_model and current_effort in choices
+                        else 0
+                    )
+                    self._invalidate()
+                    return
+                self._finish(None)
+                return
+            efforts = self._efforts(self.selected_model or {})
+            choices = (None, *efforts)
+            self._finish(choices[min(self.index, len(choices) - 1)])
+
+        @keys.add("escape", filter=active, eager=True)
+        def cancel(_event) -> None:
+            if self.stage == "effort":
+                self.stage = "model"
+                selected_ref = self._text((self.selected_model or {}).get("ref"))
+                refs = [self._text(item.get("ref")) for item in self._filtered_items()]
+                self.index = refs.index(selected_ref) if selected_ref in refs else 0
+                self.selected_model = None
+                self._invalidate()
+                return
+            self.visible = False
+            self._close()
+            self._invalidate()
+
+    def _finish(self, effort: ReasoningEffort | None) -> None:
+        ref = self._text((self.selected_model or {}).get("ref"))
+        if ref is None:
+            return
+        self.visible = False
+        self._commit(ref, effort)
+        self._close()
+        self._invalidate()
+
+    def _query_changed(self) -> None:
+        self.index = 0
+        self._invalidate()
+
+    def _choice_count(self) -> int:
+        if self.stage == "model":
+            return len(self._filtered_items())
+        return 1 + len(self._efforts(self.selected_model or {}))
+
+    def _filtered_items(self) -> list[Mapping[str, Any]]:
+        query = self.buffer.text.strip().casefold()
+        if not query:
+            return self.items
+        return [
+            item
+            for item in self.items
+            if query
+            in " ".join(
+                filter(
+                    None,
+                    (
+                        self._text(item.get("name")),
+                        self._text(item.get("ref")),
+                        self._text(item.get("provider")),
+                    ),
+                )
+            ).casefold()
+        ]
+
+    def _title(self) -> list[tuple[str, str]]:
+        if self.stage == "effort":
+            name = self._text((self.selected_model or {}).get("name")) or "Model"
+            return [("class:picker.title", f" Reasoning effort — {name}")]
+        return [("class:picker.title", " Select model")]
+
+    def _hint(self) -> list[tuple[str, str]]:
+        hint = (
+            " ↑↓ Navigate   Enter Select   Esc Back"
+            if self.stage == "effort"
+            else " ↑↓ Navigate   Enter Select   Esc Cancel"
+        )
+        return [("class:picker.secondary", hint)]
+
+    def _render(self) -> list[tuple[str, str]]:
+        if self.stage == "effort":
+            efforts = self._efforts(self.selected_model or {})
+            return self._rows(
+                ["Auto", *(effort.title() for effort in efforts)],
+                secondary=(),
+            )
+        items = self._filtered_items()
+        if not items:
+            return [("class:picker.secondary", "  No matching models")]
+        current, _effort = self._current()
+        current = current or self.default
+        fragments: list[tuple[str, str]] = []
+        for row, item in enumerate(items):
+            ref = self._text(item.get("ref")) or ""
+            name = self._text(item.get("name")) or ref
+            style = "class:picker.selected" if row == self.index else "class:picker"
+            marker = "›" if row == self.index else " "
+            fragments.extend(
+                [(style, f" {marker} {name} "), ("class:picker.secondary", ref)]
+            )
+            if ref == current:
+                fragments.append(("class:picker.badge", " Current "))
+            if ref == self.default:
+                fragments.append(("class:picker.badge", " Default "))
+            if row < len(items) - 1:
+                fragments.append(("", "\n"))
+        return fragments
+
+    def _rows(
+        self, labels: Sequence[str], *, secondary: Sequence[str]
+    ) -> list[tuple[str, str]]:
+        del secondary
+        fragments: list[tuple[str, str]] = []
+        for row, label in enumerate(labels):
+            style = "class:picker.selected" if row == self.index else "class:picker"
+            marker = "›" if row == self.index else " "
+            fragments.append((style, f" {marker} {label}"))
+            if row < len(labels) - 1:
+                fragments.append(("", "\n"))
+        return fragments
+
+    @staticmethod
+    def _text(value: object) -> str | None:
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    @staticmethod
+    def _efforts(item: Mapping[str, Any]) -> tuple[ReasoningEffort, ...]:
+        parameters = item.get("parameters")
+        reasoning = (
+            parameters.get("reasoning") if isinstance(parameters, Mapping) else None
+        )
+        values = reasoning.get("effort") if isinstance(reasoning, Mapping) else None
+        recognized = {
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "default",
+        }
+        return (
+            tuple(
+                cast(ReasoningEffort, value)
+                for value in values
+                if isinstance(value, str) and value in recognized
+            )
+            if isinstance(values, list | tuple)
+            else ()
+        )
 
 
 def _format_elapsed_seconds(seconds: int) -> str:

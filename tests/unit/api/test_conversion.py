@@ -16,57 +16,72 @@ from toolang.api.schemas import (
     AuthoredRetryRequest,
     AuthoredRunRequest,
 )
-from toolang.execution.schemas import RerunRequest, RetryRequest, RunRequest
+from toolang.base.types.model import (
+    ModelParameters,
+    ModelRequest,
+    ReasoningParameters,
+)
+from toolang.base.types.policy import AgentCeiling, RunLimits, RunPolicy
+from toolang.execution.schemas import (
+    RerunRequest,
+    RetryRequest,
+    RunRequest,
+    RunnableRequest,
+)
 from toolang.execution.types import RunOverride, StepPath
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import NamedInputSource, RunnableInputRaw
 
 
 def test_parse_authored_run_round_trips_every_request_field() -> None:
     payload = AuthoredRunRequest.model_validate(
         {
-            "thread": "term_example",
+            "thread_id": "term_example",
             "request_id": "term_request",
-            "commands": [
-                {"group": "allow", "field": "models", "value": ["one", "two"]},
-                {"group": "allow", "field": "tools", "value": None},
-                {"group": "default", "field": "model", "value": "openai/test"},
-                {"group": "default", "field": "runnable", "value": None},
-            ],
-            "input": {
-                "primary": "hello",
-                "named": [
-                    {"name": "tone", "source": "brief"},
-                    {"name": "audience", "source": "maintainers"},
-                ],
+            "runnable": {
+                "ref": "agic:chat",
+                "input": {
+                    "_": "hello",
+                    "named": [
+                        {"name": "tone", "source": "brief"},
+                        {"name": "audience", "source": "maintainers"},
+                    ],
+                },
             },
-            "session_commands": [
-                {"group": "limit", "field": "tokens", "value": 4000},
-                {"group": "limit", "field": "time", "value": None},
-                {"group": "limit", "field": "cost", "value": "2.50"},
-            ],
-            "runnable_fallbacks": ["agic:chat", "default"],
+            "model": {
+                "ref": "openai/test",
+                "parameters": {"reasoning": {"effort": "high"}},
+            },
+            "policy": {
+                "allow": [{"models": ["one", "two"]}, {"tools": None}],
+                "limits": {"tokens": 4000, "cost": "2.50"},
+            },
         }
     )
 
     assert parse_authored_run(payload) == RunRequest(
-        thread="term_example",
+        thread_id="term_example",
         request_id="term_request",
-        commands=(
-            RunOverride("allow", "models", ("one", "two")),
-            RunOverride("allow", "tools", None),
-            RunOverride("default", "model", "openai/test"),
-            RunOverride("default", "runnable", None),
+        runnable=RunnableRequest(
+            "agic:chat",
+            RunnableInputRaw(
+                _="hello",
+                named=(
+                    NamedInputSource("tone", "brief"),
+                    NamedInputSource("audience", "maintainers"),
+                ),
+            ),
         ),
-        input=RunnableInputRaw(
-            primary="hello",
-            named=(("tone", "brief"), ("audience", "maintainers")),
+        model=ModelRequest(
+            "openai/test",
+            ModelParameters(ReasoningParameters("high")),
         ),
-        session_commands=(
-            RunOverride("limit", "tokens", 4000),
-            RunOverride("limit", "time", None),
-            RunOverride("limit", "cost", Decimal("2.50")),
+        policy=RunPolicy(
+            allow=(
+                AgentCeiling(models=("one", "two")),
+                AgentCeiling(tools=None),
+            ),
+            limits=RunLimits(tokens=4000, cost=Decimal("2.50")),
         ),
-        runnable_fallbacks=("agic:chat", "default"),
     )
 
 
@@ -103,6 +118,13 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
         AuthoredRetryRequest.model_validate(
             {"request_id": "retry_request", "unexpected": True}
         )
+    with pytest.raises(ValidationError):
+        AuthoredRetryRequest.model_validate(
+            {
+                "request_id": "retry_request",
+                "model": {"ref": "openai/test", "parameters": {}},
+            }
+        )
     with pytest.raises(HTTPException, match="cannot replace the persisted runnable"):
         parse_authored_rerun(
             "run_source",
@@ -122,84 +144,27 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
 
 
 @pytest.mark.parametrize(
-    ("change", "detail"),
-    [
-        (
-            {"commands": [{"group": "allow", "field": "models", "value": "all"}]},
-            "allow policy value must be selectors, all, or none",
-        ),
-        (
-            {"commands": [{"group": "default", "field": "model", "value": 1}]},
-            "default policy value must be a string or none",
-        ),
-        (
-            {"commands": [{"group": "limit", "field": "cost", "value": "02.50"}]},
-            "limit cost expects canonical non-negative decimal text",
-        ),
-        (
-            {"commands": [{"group": "limit", "field": "tokens", "value": -1}]},
-            "integer run limit value must be non-negative",
-        ),
-        (
-            {"commands": [{"group": "limit", "field": "unknown", "value": 1}]},
-            "unknown limit field: unknown",
-        ),
-        (
-            {
-                "input": {
-                    "primary": "hello",
-                    "named": [
-                        {"name": "tone", "source": "brief"},
-                        {"name": "tone", "source": "direct"},
-                    ],
-                }
-            },
-            "duplicate named input: tone",
-        ),
-        (
-            {"runnable_fallbacks": ["agic:chat", "agic:chat"]},
-            "run request runnable fallbacks must be unique",
-        ),
-    ],
-)
-def test_parse_authored_run_rejects_invalid_core_values(
-    change: dict[str, object],
-    detail: str,
-) -> None:
-    source: dict[str, object] = {
-        "thread": "term_example",
-        "request_id": "term_request",
-        "input": {"primary": "hello"},
-        "runnable_fallbacks": ["agic:chat", "default"],
-    }
-    source.update(change)
-    payload = AuthoredRunRequest.model_validate(source)
-
-    with pytest.raises(HTTPException) as caught:
-        parse_authored_run(payload)
-
-    assert caught.value.status_code == 422
-    assert caught.value.detail == detail
-
-
-@pytest.mark.parametrize(
     "change",
     [
         {"extra": True},
-        {"thread": 1},
-        {"commands": [{"group": "limit", "field": "tokens", "value": True}]},
-        {"commands": [{"group": "limit", "field": "cost", "value": 2.5}]},
-        {"runnable_fallbacks": []},
+        {"thread_id": 1},
+        {"runnable": {"ref": "chat", "input": {"_": None, "named": []}}},
+        {"runnable": {"ref": "agic:chat", "input": {"primary": "legacy"}}},
+        {"model": {"ref": "openai/test", "parameters": {"temperature": 1}}},
+        {"policy": {"allow": [], "limits": {"tokens": -1}}},
+        {"policy": {"allow": [], "limits": {"tokens": True}}},
+        {"policy": {"allow": [], "limits": {"tokens": "10"}}},
     ],
 )
 def test_authored_run_schema_rejects_extra_or_lossy_values(
     change: dict[str, object],
 ) -> None:
     source: dict[str, object] = {
-        "thread": "term_example",
+        "thread_id": "term_example",
         "request_id": "term_request",
-        "input": {"primary": None},
-        "runnable_fallbacks": ["default"],
+        "runnable": {"ref": "agic:chat", "input": {"_": None, "named": []}},
+        "model": None,
+        "policy": {"allow": [], "limits": {}},
     }
     source.update(change)
 

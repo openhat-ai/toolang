@@ -5,8 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
-from dataclasses import dataclass
-from decimal import Decimal
+from dataclasses import dataclass, replace
 import json
 import threading
 from typing import Any, cast
@@ -17,6 +16,10 @@ import httpx
 from pydantic import TypeAdapter, ValidationError
 
 from toolang.base.types.message import Message
+from toolang.base.types.policy import RunBindings, RunPolicy
+from toolang.cli.common.model_selection import (
+    materialize_model_list_ref,
+)
 from toolang.common.errors import ToolangError
 from toolang.cli.common.remote_runtime import (
     RemoteRuntimeIdentity as _RuntimeIdentity,
@@ -25,7 +28,8 @@ from toolang.cli.common.remote_runtime import (
 from toolang.execution.calls import parse_call
 from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
-from toolang.execution.schemas import RunDetail, RunRequest, ThreadInfo
+from toolang.execution.runnables import parse_runnable_ref
+from toolang.execution.schemas import RunDetail, ThreadInfo
 from toolang.execution.types import RunOverride
 from toolang.execution.values import parts_from_local
 from toolang.plugin.sandboxes.host import host_sandbox_description
@@ -39,11 +43,17 @@ from .base import (
     RunDisconnected,
     RunRecovered,
 )
-from .policy import apply_session_commands, commands_from_selects
+from .policy import (
+    ChatRunDefaults,
+    apply_session_commands,
+    build_run_request,
+    materialize_runnable_list_ref,
+)
 
 
 _RUN_DETAIL_ADAPTER = TypeAdapter(RunDetail)
 _THREAD_INFO_ADAPTER = TypeAdapter(ThreadInfo)
+_RUN_POLICY_ADAPTER = TypeAdapter(RunPolicy)
 _RECOVERY_DELAYS = (0.5, 1.0, 2.0)
 _RECOVERY_INTERVAL = 5.0
 
@@ -97,6 +107,7 @@ class RemoteChatSession:
         self._http: httpx.AsyncClient | None = None
         self.run_client: RemoteRunClient | None = None
         self.executor_metadata: ChatExecutorMetadata
+        self._defaults: ChatRunDefaults | None = None
         self._blocked_run_id: str | None = None
         self._blocked_message: str | None = None
         self._closed = False
@@ -251,6 +262,12 @@ class RemoteChatSession:
             endpoint=self.run_client.endpoint,
             version=identity.version,
         )
+        defaults = await self._request_json(
+            "GET",
+            "/api/v1/runs/defaults",
+            operation="run defaults",
+        )
+        self._defaults = _run_defaults(defaults)
 
     async def _list_models(self) -> dict[str, object]:
         payload = await self._request_json(
@@ -258,7 +275,9 @@ class RemoteChatSession:
             "/api/v1/models",
             operation="models",
         )
-        return _catalog_payload(payload, operation="models", item_kind="model")
+        result = _catalog_payload(payload, operation="models", item_kind="model")
+        result["default"] = self._session_defaults().bindings.model
+        return result
 
     async def _list_runnables(self, kind: str) -> dict[str, object]:
         if kind in {"agic", "flow"}:
@@ -267,11 +286,19 @@ class RemoteChatSession:
                 f"/api/v1/{kind}s",
                 operation=kind,
             )
-            return _catalog_payload(
+            result = _catalog_payload(
                 payload,
                 operation=kind,
                 item_kind="runnable",
             )
+            default_ref = self._session_defaults().bindings.runnable
+            default_name, default_kind = (
+                parse_runnable_ref(default_ref)
+                if default_ref is not None
+                else (None, None)
+            )
+            result["default"] = default_name if default_kind == kind else None
+            return result
         if kind != "runnable":
             raise ValueError(f"unknown runnable kind: {kind}")
         agics, flows = await asyncio.gather(
@@ -288,20 +315,8 @@ class RemoteChatSession:
             operation="flows",
             item_kind="runnable",
         )
-        defaults = [
-            f"{candidate_kind}:{default}"
-            for candidate_kind, default in (
-                ("agic", agic_payload["default"]),
-                ("flow", flow_payload["default"]),
-            )
-            if isinstance(default, str)
-        ]
-        if len(defaults) != 1:
-            raise _RemoteChatProtocolError(
-                "remote chat runnables returned invalid defaults"
-            )
         return {
-            "default": defaults[0],
+            "default": self._session_defaults().bindings.runnable,
             "items": [
                 *(
                     {"kind": "agic", **item}
@@ -315,11 +330,12 @@ class RemoteChatSession:
         }
 
     async def _list_prompts(self, runnable: str | None) -> dict[str, object]:
+        selected = runnable or self._session_defaults().bindings.runnable
         payload = await self._request_json(
             "GET",
             "/api/v1/prompt-completions",
             operation="prompt completions",
-            params={"runnable": runnable} if runnable is not None else None,
+            params={"runnable": selected} if selected is not None else None,
         )
         return _prompt_completion_payload(payload)
 
@@ -343,6 +359,11 @@ class RemoteChatSession:
             ) from exc
         return thread.id
 
+    def _session_defaults(self) -> ChatRunDefaults:
+        if self._defaults is None:
+            raise RuntimeError("remote chat run defaults are not initialized")
+        return self._defaults
+
     async def _apply_settings(
         self,
         commands: tuple[RunOverride, ...],
@@ -350,20 +371,7 @@ class RemoteChatSession:
     ) -> dict[str, object]:
         if self._blocked_message is not None:
             raise RemoteChatError(self._blocked_message)
-        candidate = apply_session_commands(selects, commands)
-        await self._request(
-            "POST",
-            "/api/v1/runs/authored/validate",
-            operation="validate settings",
-            json={
-                "session_commands": [
-                    _run_override_data(item)
-                    for item in commands_from_selects(candidate)
-                ],
-                "runnable_fallbacks": ["agic:chat", "default"],
-            },
-        )
-        return candidate
+        return apply_session_commands(selects, commands)
 
     async def _get_result(
         self,
@@ -411,14 +419,38 @@ class RemoteChatSession:
             )
             return
         commands, input_value = parse_call(message)
-        request = RunRequest(
-            thread=thread_id,
-            commands=commands,
-            input=input_value,
-            session_commands=commands_from_selects(selects),
-            runnable_fallbacks=("agic:chat", "default"),
+        request = build_run_request(
+            thread_id=thread_id,
             request_id=f"term_{uuid4().hex}",
+            input=input_value,
+            input_commands=commands,
+            selects=selects,
+            defaults=self._session_defaults(),
+            resolve_model_ref=lambda selector: selector,
+            resolve_runnable_ref=lambda selector: selector,
         )
+        if request.model is not None:
+            models = await self._list_models()
+            request = replace(
+                request,
+                model=replace(
+                    request.model,
+                    ref=materialize_model_list_ref(models, request.model.ref),
+                ),
+            )
+        _runnable_name, runnable_kind = parse_runnable_ref(request.runnable.ref)
+        if runnable_kind is None:
+            runnables = await self._list_runnables("runnable")
+            request = replace(
+                request,
+                runnable=replace(
+                    request.runnable,
+                    ref=materialize_runnable_list_ref(
+                        runnables,
+                        request.runnable.ref,
+                    ),
+                ),
+            )
         run_client = self._run_client()
         try:
             handle = await run_client.run(
@@ -681,7 +713,7 @@ def _catalog_payload(
     items: list[dict[str, object]] = []
     for raw in raw_items:
         item = _mapping(raw, operation=f"{operation} item")
-        required = "selector" if item_kind == "model" else "name"
+        required = "ref" if item_kind == "model" else "name"
         if not isinstance(item.get(required), str) or not cast(str, item[required]):
             raise _RemoteChatProtocolError(
                 f"remote chat {operation} returned invalid items"
@@ -731,19 +763,30 @@ def _mapping(payload: object, *, operation: str) -> Mapping[str, object]:
     return cast(Mapping[str, object], payload)
 
 
-def _run_override_data(command: RunOverride) -> dict[str, object]:
-    value = command.value
-    if isinstance(value, tuple):
-        encoded: object = list(value)
-    elif isinstance(value, Decimal):
-        encoded = str(value)
-    else:
-        encoded = value
-    return {
-        "group": command.group,
-        "field": command.field,
-        "value": encoded,
-    }
+def _run_defaults(payload: object) -> ChatRunDefaults:
+    body = _mapping(payload, operation="run defaults")
+    if set(body) != {"model", "runnable", "policy"}:
+        raise _RemoteChatProtocolError("remote chat run defaults returned invalid data")
+    model = body.get("model")
+    runnable = body.get("runnable")
+    if model is not None and (not isinstance(model, str) or not model):
+        raise _RemoteChatProtocolError(
+            "remote chat run defaults returned an invalid model"
+        )
+    if not isinstance(runnable, str) or not runnable:
+        raise _RemoteChatProtocolError(
+            "remote chat run defaults returned an invalid runnable"
+        )
+    try:
+        policy = _RUN_POLICY_ADAPTER.validate_python(body.get("policy"))
+    except ValidationError as exc:
+        raise _RemoteChatProtocolError(
+            "remote chat run defaults returned invalid policy"
+        ) from exc
+    return ChatRunDefaults(
+        bindings=RunBindings(model=model, runnable=runnable),
+        limits=policy.limits,
+    )
 
 
 def _http_error(response: httpx.Response, *, operation: str) -> RemoteChatError:

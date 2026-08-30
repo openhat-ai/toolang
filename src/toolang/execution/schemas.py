@@ -20,6 +20,8 @@ from typing import (
 from pydantic import BaseModel, TypeAdapter
 
 from toolang.base.types.message import Part, message_summary
+from toolang.base.types.model import ModelRequest
+from toolang.base.types.policy import RunPolicy
 from toolang.base.types.run import ModelCall
 from toolang.lang.input import RunnableInputRaw
 from toolang.lang.types import Array, Struct
@@ -356,48 +358,46 @@ StepInputData = Pointer
 
 
 @dataclass(frozen=True, slots=True)
-class RunRequest:
-    """One unresolved caller request for a new root run."""
+class RunnableRequest:
+    """One concrete runnable ref and its unresolved authored input."""
 
-    thread: str
-    commands: tuple[RunOverride, ...]
+    ref: str
     input: RunnableInputRaw
-    session_commands: tuple[RunOverride, ...]
-    runnable_fallbacks: tuple[str, ...]
-    request_id: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.thread, str):
-            raise TypeError("run request thread must be a string")
-        if not self.thread or self.thread != self.thread.strip():
-            raise ValueError("run request requires a canonical thread")
-        if not isinstance(self.commands, tuple) or not all(
-            isinstance(command, RunOverride) for command in self.commands
-        ):
-            raise TypeError("run request commands must be RunOverride objects")
+        if not isinstance(self.ref, str):
+            raise TypeError("runnable request ref must be a string")
+        if not self.ref or self.ref != self.ref.strip():
+            raise ValueError("runnable request requires a canonical ref")
         if not isinstance(self.input, RunnableInputRaw):
-            raise TypeError("run request input must be RunnableInputRaw")
-        if not isinstance(self.session_commands, tuple) or not all(
-            isinstance(command, RunOverride) for command in self.session_commands
-        ):
-            raise TypeError("run request session commands must be RunOverride objects")
-        if not isinstance(self.runnable_fallbacks, tuple) or not all(
-            isinstance(candidate, str) for candidate in self.runnable_fallbacks
-        ):
-            raise TypeError("run request runnable fallbacks must be strings")
-        if not self.runnable_fallbacks:
-            raise ValueError("run request requires at least one runnable fallback")
-        if any(
-            not candidate or candidate != candidate.strip()
-            for candidate in self.runnable_fallbacks
-        ):
-            raise ValueError("run request runnable fallbacks must be canonical strings")
-        if len(self.runnable_fallbacks) != len(set(self.runnable_fallbacks)):
-            raise ValueError("run request runnable fallbacks must be unique")
+            raise TypeError("runnable request input must be RunnableInputRaw")
+
+
+@dataclass(frozen=True, slots=True)
+class RunRequest:
+    """One self-contained caller request for a new root run."""
+
+    thread_id: str
+    request_id: str
+    runnable: RunnableRequest
+    model: ModelRequest | None
+    policy: RunPolicy
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.thread_id, str):
+            raise TypeError("run request thread ID must be a string")
+        if not self.thread_id or self.thread_id != self.thread_id.strip():
+            raise ValueError("run request requires a canonical thread")
         if not isinstance(self.request_id, str):
             raise TypeError("run request ID must be a string")
         if not self.request_id or self.request_id != self.request_id.strip():
             raise ValueError("run request requires a canonical request ID")
+        if not isinstance(self.runnable, RunnableRequest):
+            raise TypeError("run request runnable must be RunnableRequest")
+        if self.model is not None and not isinstance(self.model, ModelRequest):
+            raise TypeError("run request model must be ModelRequest or none")
+        if not isinstance(self.policy, RunPolicy):
+            raise TypeError("run request policy must be RunPolicy")
 
 
 @dataclass(frozen=True, slots=True)
@@ -415,6 +415,11 @@ class RetryRequest:
             commands=self.commands,
             request_id=self.request_id,
         )
+        if any(
+            command.group == "default" and command.field == "model"
+            for command in self.commands
+        ):
+            raise ValueError("retry request cannot replace the persisted model")
         if self.anchor is not None and not isinstance(self.anchor, StepPath):
             raise TypeError("retry request anchor must be a StepPath or none")
         if self.anchor is not None and self.anchor.run != self.source:
@@ -428,6 +433,7 @@ class RerunRequest:
     source: str
     commands: tuple[RunOverride, ...]
     request_id: str
+    model: ModelRequest | None = None
 
     def __post_init__(self) -> None:
         _validate_restart_request(
@@ -435,6 +441,8 @@ class RerunRequest:
             commands=self.commands,
             request_id=self.request_id,
         )
+        if self.model is not None and not isinstance(self.model, ModelRequest):
+            raise TypeError("rerun request model must be ModelRequest or none")
 
 
 def _validate_restart_request(

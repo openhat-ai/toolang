@@ -7,9 +7,62 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Self
+from typing import Any, Literal, Self, TypeAlias
 
 ResolvedEnv = tuple[str | tuple[str, ...], ...]
+ReasoningEffort: TypeAlias = Literal[
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "default",
+]
+_REASONING_EFFORTS = frozenset(
+    {"none", "minimal", "low", "medium", "high", "xhigh", "max", "default"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ReasoningParameters:
+    """Reasoning controls requested for one model selection."""
+
+    effort: ReasoningEffort | None = None
+
+    def __post_init__(self) -> None:
+        if self.effort is not None and self.effort not in _REASONING_EFFORTS:
+            raise ValueError(f"unknown reasoning effort: {self.effort!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelParameters:
+    """Typed call parameters attached to one model request."""
+
+    reasoning: ReasoningParameters | None = None
+
+    def __post_init__(self) -> None:
+        if self.reasoning is not None and not isinstance(
+            self.reasoning, ReasoningParameters
+        ):
+            raise TypeError("model reasoning parameters must be ReasoningParameters")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelRequest:
+    """One exact model ref and its typed call parameters."""
+
+    ref: str
+    parameters: ModelParameters = ModelParameters()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.ref, str):
+            raise TypeError("model request ref must be a string")
+        if not self.ref or self.ref != self.ref.strip():
+            raise ValueError("model request requires a canonical ref")
+        if not isinstance(self.parameters, ModelParameters):
+            raise TypeError("model request parameters must be ModelParameters")
 
 
 @dataclass(frozen=True, slots=True)

@@ -42,7 +42,28 @@ from toolang.lang.ast import LetStmt, RunStmt, Span
 from toolang.up import AgentCore
 from toolang.state.prepare import prepare_agent_state
 from tests.support.execution_fixtures import project_run_start, project_step
-from tests.support.execution_harness import ExecutionHarness
+from tests.support.execution_harness import ExecutionHarness, TEST_MODEL_REF
+
+
+def _direct_request(
+    thread_id: str,
+    runnable: str,
+    *,
+    input: list[dict[str, object]] | None = None,
+    request_id: str = "direct-request",
+    limits: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "thread_id": thread_id,
+        "request_id": request_id,
+        "runnable": {
+            "ref": runnable if ":" in runnable else f"agic:{runnable}",
+            "input": input or [],
+            "args": None,
+        },
+        "model": {"ref": TEST_MODEL_REF, "parameters": {}},
+        "policy": {"allow": [], "limits": limits or {}},
+    }
 
 
 class _Snapshot:
@@ -133,10 +154,10 @@ agic answer(_: Part[]) -> Part[]:
             thread_id = created.json()["thread"]["id"]
             response = client.post(
                 "/api/v1/runs/stream",
-                json={
-                    "thread": thread_id,
-                    "runnable": "answer",
-                    "input": [
+                json=_direct_request(
+                    thread_id,
+                    "answer",
+                    input=[
                         {"type": "text", "text": "hello"},
                         {
                             "type": "document",
@@ -144,7 +165,7 @@ agic answer(_: Part[]) -> Part[]:
                             "filename": "brief.pdf",
                         },
                     ],
-                },
+                ),
             )
         events = _sse_events(response.text)
         decoded = [run_event_from_data(data) for _event, data in events]
@@ -221,11 +242,11 @@ agic answer(_: Part[]) -> Part[]:
             created = client.post("/api/v1/threads", json={"client": "script"})
             response = client.post(
                 "/api/v1/runs/stream",
-                json={
-                    "thread": created.json()["thread"]["id"],
-                    "runnable": "answer",
-                    "input": [{"type": "text", "text": "hello"}],
-                },
+                json=_direct_request(
+                    created.json()["thread"]["id"],
+                    "answer",
+                    input=[{"type": "text", "text": "hello"}],
+                ),
             )
             events = _sse_events(response.text)
             run_id = str(events[0][1]["run"])
@@ -274,11 +295,11 @@ agic chat(_: Part[]) -> Part[]:
             thread_id = created.json()["thread"]["id"]
             response = client.post(
                 "/api/v1/runs/stream",
-                json={
-                    "thread": thread_id,
-                    "runnable": "chat",
-                    "input": [{"type": "text", "text": "hello"}],
-                },
+                json=_direct_request(
+                    thread_id,
+                    "chat",
+                    input=[{"type": "text", "text": "hello"}],
+                ),
             )
             events = _sse_events(response.text)
             run_id = str(events[0][1]["run"])
@@ -348,11 +369,11 @@ def test_stream_validation_fails_before_sse_headers(tmp_path: Path) -> None:
             thread_id = created.json()["thread"]["id"]
             response = client.post(
                 "/api/v1/runs/stream",
-                json={"thread": thread_id, "runnable": "missing"},
+                json=_direct_request(thread_id, "missing"),
             )
             missing_thread = client.post(
                 "/api/v1/runs/stream",
-                json={"runnable": "answer"},
+                json={"runnable": {"ref": "answer", "input": []}},
             )
 
         assert created.status_code == 201
@@ -409,19 +430,18 @@ agic answer(_: Part[]) -> Part[]:
             short_name = client.post(
                 "/api/v1/runs/stream",
                 json={
-                    "thread": thread_id,
+                    **_direct_request(thread_id, "answer"),
                     "request": "short-request",
-                    "runnable": "answer",
-                    "input": [{"type": "text", "text": "hello"}],
                 },
             )
             started = client.post(
                 "/api/v1/runs/stream",
-                json={
-                    "thread": thread_id,
-                    "runnable": "answer",
-                    "input": [{"type": "text", "text": "hello"}],
-                },
+                json=_direct_request(
+                    thread_id,
+                    "answer",
+                    input=[{"type": "text", "text": "hello"}],
+                    limits={"tokens": 100, "cost": "5"},
+                ),
             )
             source_id = str(_sse_events(started.text)[0][1]["run"])
 
@@ -433,6 +453,13 @@ agic answer(_: Part[]) -> Part[]:
                 },
             )
             _wait_for_terminal(core, source_id)
+            selector_rerun = client.post(
+                f"/api/v1/runs/{source_id}/rerun",
+                json={
+                    "request_id": "selector-rerun-request",
+                    "model": {"ref": "scripted", "parameters": {}},
+                },
+            )
             rerun = client.post(
                 f"/api/v1/runs/{source_id}/rerun",
                 json={
@@ -449,6 +476,8 @@ agic answer(_: Part[]) -> Part[]:
         assert retry.json()["command"]["kind"] == "retry"
         assert retry.json()["command"]["request_id"] == "retry-request"
         assert retry.json()["command"]["payload"]["sandbox"] == "host"
+        assert selector_rerun.status_code == 409
+        assert "model ref must be exact" in selector_rerun.json()["detail"]
         assert rerun.status_code == 202
         assert rerun.json()["command"]["kind"] == "rerun"
         assert rerun.json()["command"]["payload"]["rerun_from"] == source_id

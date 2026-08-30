@@ -19,6 +19,7 @@ from toolang.base.types.message import (
     ToolResultPart,
     message_text,
 )
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.run import ModelCall
 from toolang.lang.input import PromptInvocation, RunnableInputRaw
 from toolang.lang.types import Array, Struct, Value
@@ -200,6 +201,7 @@ class RunStore:
         state: str | None,
         runnable: str,
         model: str,
+        model_request: ModelRequest | None = None,
         locals: tuple[Local, ...],
         sandbox: str | None,
         occurrence: Occurrence | None,
@@ -342,6 +344,7 @@ class RunStore:
                         state=state,
                         runnable=runnable,
                         model=model,
+                        model_request=model_request,
                         locals=locals,
                         sandbox=sandbox,
                         authored_input=authored_input,
@@ -356,6 +359,7 @@ class RunStore:
                         state=cast(str, state),
                         runnable=runnable,
                         model=model,
+                        model_request=model_request,
                         locals=locals,
                         rerun_from=cast(str, source),
                         sandbox=sandbox,
@@ -683,6 +687,7 @@ class RunStore:
         state: str | None,
         runnable: str,
         model: str,
+        model_request: ModelRequest | None = None,
         locals: tuple[Local, ...] | None,
         sandbox: str,
         request_id: str | None,
@@ -818,6 +823,7 @@ class RunStore:
                         state=None,
                         runnable=runnable,
                         model=model,
+                        model_request=model_request,
                         locals=locals,
                         retry_from=resolved_anchor,
                         sandbox=sandbox,

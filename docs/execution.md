@@ -73,7 +73,7 @@ execution of a run tree.
 ## Run Execution
 
 `RunClient` is the transport-neutral caller boundary used by Terminal Chat. It
-accepts unresolved `RunRequest` values, exposes asynchronous connect, run,
+accepts self-contained `RunRequest` values, exposes asynchronous connect, run,
 cancel, steer, and disconnect operations, and returns a transport-neutral
 `RunHandle` plus
 caller-facing `RunDetail` and `ControlInfo` values. The boundary deliberately
@@ -82,19 +82,20 @@ local and remote execution preserve the same interaction shape. Clients are
 disconnected after construction and reject operations until `connect()`.
 
 `LocalRunClient` implements that boundary over a `RunExecutor`. It reads the
-current setup and state once for each run, selects the first explicit
-caller fallback that exists, resolves authored input through `resolve_spec()`,
-and converts terminal and control records through the existing caller-facing
-schemas. Terminal Chat still owns its watchers, store, thread manager, result
-inspection, and event-loop thread. Other local execution owners continue to use
-`RunExecutor` directly.
+current setup and state once for each run, validates the request's concrete
+runnable, model parameters, materialized policy, and authored input, and
+converts terminal and control records through the existing caller-facing
+schemas. Terminal Chat still owns its session defaults, watchers, store, thread
+manager, result inspection, and event-loop thread. Other local execution owners
+continue to use `RunExecutor` directly.
 
 `RemoteRunClient` implements the same boundary over an agent runtime's absolute
-HTTP origin. It sends unresolved requests to
+HTTP origin. It sends self-contained, materialized requests to
 `POST /api/v1/runs/authored/stream`, consumes canonical `RunEvent` values from
 the accepted run's SSE response, and uses the existing run detail, cancel, and
-steer endpoints. The server owns setup/state snapshots, fallback selection,
-policy and authored-input resolution, and file includes. The client never
+steer endpoints. The server owns setup/state snapshots, request validation,
+authored-input resolution, and file includes; mutable session defaults and
+fallback rules never cross the request boundary. The client never
 retries a run or reconnects an incomplete stream because the live event
 protocol has no replay cursor. Disconnecting the client detaches its readers and
 owned HTTP resources without canceling server runs or managing the server
@@ -105,8 +106,8 @@ compatible running AgentServer for any materialized layout, uses embedded host
 execution when no server is active and `host` is selected, or starts a
 command-owned temporary AgentServer for a non-host sandbox. Remote execution is
 used only after endpoint health and profile checks. Non-run HTTP operations
-remain in the Chat client: runtime/model/runnable inspection, thread creation,
-session validation, and result reads. A stream failure after acceptance is
+remain in the Chat client: runtime/model/runnable inspection, run-default
+adoption, thread creation, and result reads. A stream failure after acceptance is
 recovered from durable run detail without retrying the run or synthesizing
 missing `RunEvent` values. Closing Chat never stops an attached server and
 stops and releases only a temporary server created by that command.

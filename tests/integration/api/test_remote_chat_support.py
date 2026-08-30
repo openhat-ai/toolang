@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ from toolang.api.app import create_app
 from toolang.api.routers import agent as agent_router
 from toolang.api.routers.agent import profile
 from toolang.base.types.message import Message, TextPart
+from toolang.base.types.policy import RunBindings
 from toolang.base.types.run import ModelCallResult
 from toolang.catalog import CapsManager, JobsManager
 from toolang.common.layout import AgentLayout
@@ -36,7 +38,7 @@ _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090ab
 _HOST_DESCRIPTION = "macOS 27.0 arm64"
 
 
-def test_remote_chat_validation_and_latest_result_endpoints(
+def test_remote_chat_defaults_and_latest_result_endpoints(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -53,9 +55,13 @@ agic chat(_: Part[]) -> Part[]:
 """,
         responses=[ModelCallResult(message=Message.assistant("remote answer"))],
     )
+    setup = replace(
+        harness.setup,
+        bindings=RunBindings(model="scripted", runnable="chat"),
+    )
     harness.store.close()
-    core = AgentCore(harness.setup.layout)
-    core.setup = _Snapshot(harness.setup)
+    core = AgentCore(setup.layout)
+    core.setup = _Snapshot(setup)
     core.state = _Snapshot(harness.state)
     agents.write_runtime_state(
         core.layout,
@@ -74,28 +80,8 @@ agic chat(_: Part[]) -> Part[]:
     try:
         with TestClient(app) as client:
             runtime = client.get("/api/v1/profile").json()["runtime"]
-            valid = client.post(
-                "/api/v1/runs/authored/validate",
-                json={
-                    "session_commands": [
-                        {
-                            "group": "allow",
-                            "field": "models",
-                            "value": [TEST_MODEL_REF],
-                        },
-                        {"group": "default", "field": "model", "value": None},
-                        {"group": "limit", "field": "cost", "value": "2.50"},
-                    ],
-                    "runnable_fallbacks": ["agic:missing", "agic:chat", "default"],
-                },
-            )
-            invalid = client.post(
-                "/api/v1/runs/authored/validate",
-                json={
-                    "session_commands": [],
-                    "runnable_fallbacks": ["agic:missing", "flow:missing"],
-                },
-            )
+            models = client.get("/api/v1/models")
+            defaults = client.get("/api/v1/runs/defaults")
             created = client.post("/api/v1/threads", json={"client": "tui"})
             thread_id = created.json()["thread"]["id"]
             empty = client.get(f"/api/v1/threads/{thread_id}/result")
@@ -103,10 +89,14 @@ agic chat(_: Part[]) -> Part[]:
             executed = client.post(
                 "/api/v1/runs/authored/stream",
                 json={
-                    "thread": thread_id,
+                    "thread_id": thread_id,
                     "request_id": "term_remote_chat",
-                    "input": {"primary": "hello"},
-                    "runnable_fallbacks": ["agic:chat", "default"],
+                    "runnable": {
+                        "ref": "agic:chat",
+                        "input": {"_": "hello", "named": []},
+                    },
+                    "model": {"ref": TEST_MODEL_REF, "parameters": {}},
+                    "policy": {"allow": [], "limits": {}},
                 },
             )
             run_id = executed.headers["X-Toolang-Run-ID"]
@@ -125,11 +115,11 @@ agic chat(_: Part[]) -> Part[]:
                 "description": _HOST_DESCRIPTION,
             },
         }
-        assert valid.status_code == 204
-        assert invalid.status_code == 422
-        assert invalid.json()["detail"] == (
-            "no runnable fallback is available: agic:missing, flow:missing"
-        )
+        assert defaults.status_code == 200
+        assert defaults.json()["model"] == TEST_MODEL_REF
+        assert defaults.json()["runnable"] == "agic:chat"
+        assert models.status_code == 200
+        assert models.json()["default"] == TEST_MODEL_REF
         assert core.store.list_runs(limit=None) == [core.store.get_run(run_id=run_id)]
         assert empty.status_code == 404
         assert empty.json()["detail"] == f"thread has no result: {thread_id}"

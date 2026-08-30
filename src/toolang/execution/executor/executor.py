@@ -11,7 +11,7 @@ import threading
 import time
 from typing import Any, Literal, cast
 
-from toolang.base.types.model import ModelInfo, ModelTarget, Provider
+from toolang.base.types.model import ModelInfo, ModelRequest, ModelTarget, Provider
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
 from toolang.base.types.message import Message, TextPart
@@ -42,6 +42,7 @@ from toolang.plugin.models.config import (
     parse_default_models,
     parse_model_aliases,
 )
+from toolang.plugin.models.resolution import apply_model_parameters, resolve_model
 from toolang.state.state import AgentState, state_program
 from toolang.state.watcher import StateRefresh
 from toolang.state.cache import agent_revision_dir, validate_agent_revision
@@ -172,6 +173,7 @@ class RunSpec:
     thread: str
     bindings: RunBindings
     limits: RunLimits
+    model_request: ModelRequest | None = None
     ceilings: tuple[AgentCeiling, ...] = ()
     input: RunnableInput = RunnableInput()
     authored_input: RunnableInputRaw | None = None
@@ -340,6 +342,7 @@ class RunExecutor:
             state=bound.state.revision,
             runnable=_bound_runnable(bound),
             model=_bound_model(bound),
+            model_request=bound.model_request,
             locals=bound.control_locals,
             sandbox=sandbox,
             occurrence=bound.occurrence,
@@ -360,6 +363,7 @@ class RunExecutor:
         state: AgentState | None = None,
         ceiling: AgentCeiling = AgentCeiling(),
         model: str | None = None,
+        model_request: ModelRequest | None = None,
         limits: RunLimits | None = None,
         run_id: str | None = None,
         request_id: str | None = None,
@@ -369,7 +373,12 @@ class RunExecutor:
 
         self._require_available()
         if isinstance(source, RerunRequest):
-            if setup is not None or state is not None or request_id is not None:
+            if (
+                setup is not None
+                or state is not None
+                or model_request is not None
+                or request_id is not None
+            ):
                 raise ValueError(
                     "resolved rerun inputs cannot override a caller rerun request"
                 )
@@ -380,7 +389,8 @@ class RunExecutor:
             setup = resolved.setup
             state = resolved.state
             ceiling = resolved.ceiling
-            model = resolved.model
+            model_request = resolved.model
+            model = model_request.ref if model_request is not None else None
             limits = resolved.limits
             request_id = request.request_id
         if setup is None or state is None:
@@ -393,6 +403,7 @@ class RunExecutor:
             state=state,
             ceiling=ceiling,
             model=model,
+            model_request=model_request,
             limits=limits if limits is not None else setup.limits,
         )
         runnable, input, agent_resources, resources = _prepare_run_spec(spec)
@@ -413,6 +424,7 @@ class RunExecutor:
             state=bound.state.revision,
             runnable=_bound_runnable(bound),
             model=_bound_model(bound),
+            model_request=bound.model_request,
             locals=bound.control_locals,
             sandbox=sandbox,
             occurrence=bound.occurrence,
@@ -435,7 +447,6 @@ class RunExecutor:
         state: AgentState | None = None,
         anchor: StepPath | str | None = None,
         ceiling: AgentCeiling = AgentCeiling(),
-        model: str | None = None,
         limits: RunLimits | None = None,
         request_id: str | None = None,
         tracer: RunTracer | None = None,
@@ -443,6 +454,7 @@ class RunExecutor:
         """Reopen one terminal root run from a durable step boundary."""
 
         self._require_available()
+        model_request: ModelRequest | None = None
         if isinstance(run_id, RetryRequest):
             if setup is not None or state is not None or request_id is not None:
                 raise ValueError(
@@ -457,7 +469,7 @@ class RunExecutor:
             state = resolved.state
             anchor = request.anchor
             ceiling = resolved.ceiling
-            model = resolved.model
+            model_request = resolved.model
             limits = resolved.limits
             request_id = request.request_id
         if setup is None or state is None:
@@ -470,7 +482,8 @@ class RunExecutor:
             setup=setup,
             state=state,
             ceiling=ceiling,
-            model=model,
+            model=None,
+            model_request=model_request,
             limits=limits if limits is not None else setup.limits,
         )
         runnable, input, agent_resources, resources = _prepare_run_spec(spec)
@@ -490,6 +503,7 @@ class RunExecutor:
             state=bound.state.revision,
             runnable=_bound_runnable(bound),
             model=_bound_model(bound),
+            model_request=bound.model_request,
             locals=bound.control_locals,
             sandbox=sandbox,
             request_id=request_id,
@@ -556,6 +570,7 @@ class RunExecutor:
         state: AgentState,
         ceiling: AgentCeiling,
         model: str | None,
+        model_request: ModelRequest | None = None,
         limits: RunLimits,
     ) -> RunSpec:
         run = self.store.get_run(run_id=run_id)
@@ -572,14 +587,23 @@ class RunExecutor:
         if not runnable:
             raise ValueError(f"run runnable not found: {run_id}")
         _module, declaration = resolve_state_runnable(state, runnable)
+        persisted_model_request = control.payload.model_request
+        selected_model_request = model_request or (
+            ModelRequest(model) if model is not None else persisted_model_request
+        )
         return RunSpec(
             setup=setup,
             state=state,
             thread=run.thread,
             bindings=RunBindings(
                 runnable=f"{declaration.kind}:{runnable}",
-                model=model if model is not None else control.payload.model,
+                model=(
+                    selected_model_request.ref
+                    if selected_model_request is not None
+                    else None
+                ),
             ),
+            model_request=selected_model_request,
             limits=limits,
             ceilings=(
                 (ceiling,)
@@ -2162,6 +2186,7 @@ class _Execution:
                 model=parent.bindings.model,
                 runnable=f"{runnable.kind}:{name}",
             ),
+            model_request=parent.model_request,
             input=input,
             control_locals=_input_locals(input, runnable),
             state=state,
@@ -2255,6 +2280,7 @@ class _Execution:
                     state=None,
                     runnable=_bound_runnable(binding),
                     model=_bound_model(binding),
+                    model_request=binding.model_request,
                     locals=binding.control_locals,
                     sandbox=None,
                     occurrence=binding.occurrence,
@@ -2642,6 +2668,7 @@ def _child_binding(
             model=parent.bindings.model,
             runnable=f"{runnable.kind}:{effective_name}",
         ),
+        model_request=parent.model_request,
         input=input,
         control_locals=tuple(control_locals),
         state=state,
@@ -2700,6 +2727,7 @@ def _bind_run(
             model=spec.bindings.model
             or (resources.models[0] if resources.models else "none"),
         ),
+        model_request=spec.model_request,
         input=_runnable_input_from_values(control_locals),
         control_locals=control_locals,
         state=spec.state,
@@ -2776,6 +2804,15 @@ def _prepare_run_spec(
         resources=resources,
         model=spec.bindings.model,
     )
+    if spec.model_request is not None:
+        if spec.bindings.model != spec.model_request.ref:
+            raise ValueError("run model request does not match its model binding")
+        target = resolve_model(
+            selection,
+            selector=spec.model_request.ref,
+            allowed_selectors=resources.models,
+        )
+        apply_model_parameters(selection, target, spec.model_request.parameters)
     return runnable, input, agent_resources, resources
 
 

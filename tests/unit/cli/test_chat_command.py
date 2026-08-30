@@ -258,6 +258,15 @@ def test_chat_runtime_builds_process_local_execution_resources(
             captured["layout"] = layout
             captured["kwargs"] = kwargs
 
+        def apply_settings(
+            self,
+            commands: tuple[RunOverride, ...],
+            selects: Mapping[str, object],
+        ) -> Mapping[str, object]:
+            captured["commands"] = commands
+            captured["selects"] = dict(selects)
+            return {"session": True}
+
         def close(self) -> None:
             captured["closed"] = True
 
@@ -290,8 +299,10 @@ def test_chat_runtime_builds_process_local_execution_resources(
     )
     monkeypatch.setattr(chat, "LocalChatSession", Session)
 
+    selectors: dict[str, object] = {"model": "existing/model"}
     with chat._chat_runtime(
         object(),  # type: ignore[arg-type]
+        selector_payload=selectors,
         sandbox="host",
         allow_options=[
             "models=test/model",
@@ -306,17 +317,21 @@ def test_chat_runtime_builds_process_local_execution_resources(
     assert captured["layout"] == layout
     assert captured["kwargs"] == {
         "sandbox": "host",
-        "ceiling_overrides": {
-            "models": ("test/model",),
-            "tools": ("shell/*",),
-            "caps": ("skill/reviewer",),
-        },
-        "binding_overrides": {
-            "model": "test/model",
-            "runnable": "agic:chat",
-        },
-        "limit_overrides": {"tokens": 1000, "time": 60},
+        "ceiling_overrides": {"models": ("env/*",)},
+        "binding_overrides": {},
+        "limit_overrides": {"time": 30},
     }
+    assert captured["commands"] == (
+        RunOverride("allow", "models", ("test/model",)),
+        RunOverride("allow", "tools", ("shell/*",)),
+        RunOverride("allow", "caps", ("skill/reviewer",)),
+        RunOverride("default", "model", "test/model"),
+        RunOverride("default", "runnable", "agic:chat"),
+        RunOverride("limit", "tokens", 1000),
+        RunOverride("limit", "time", 60),
+    )
+    assert captured["selects"] == {"model": "existing/model"}
+    assert selectors == {"session": True}
     assert captured["closed"] is True
 
 

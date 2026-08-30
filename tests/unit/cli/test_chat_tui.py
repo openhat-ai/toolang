@@ -1374,7 +1374,7 @@ def test_chat_input_completion_keeps_namespaces_separate(tmp_path) -> None:
             item.text for item in completer.get_completions(Document(source), event)
         ]
 
-    assert values("/mo") == ["/model MODEL"]
+    assert values("/mo") == ["/model MODEL EFFORT|auto"]
     assert values("$rev") == ["$review focus= tone="]
     assert values(":limit ti") == [":limit time="]
     assert values("  $rev") == []
@@ -1972,42 +1972,49 @@ def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
 
 def test_chat_model_label_uses_default_or_selected_model() -> None:
     payload = {
-        "default": "openai/gpt-5[openai]",
+        "default": "openai/gpt-5",
         "items": [
             {
-                "selector": "openai/gpt-5[openai]",
                 "ref": "openai/gpt-5",
+                "name": "GPT-5",
                 "provider": "openai",
-                "model": "gpt-5",
+                "parameters": {"reasoning": {"effort": ["low", "high"]}},
             },
             {
-                "selector": "openai/o3[openai]",
                 "ref": "openai/o3",
+                "name": "o3",
                 "provider": "openai",
-                "model": "o3",
+                "parameters": {"reasoning": {"effort": ["high"]}},
             },
         ],
     }
 
-    assert slashes.chat_model_label(payload, {}) == "openai/gpt-5"
+    assert slashes.chat_model_label(payload, {}) == "GPT-5"
+    assert slashes.chat_model_label(payload, {"model": "openai/o3"}) == "o3"
     assert (
-        slashes.chat_model_label(payload, {"model": "openai/o3[openai]"}) == "openai/o3"
+        slashes.chat_model_label(
+            payload,
+            {"model": "openai/gpt-5", "reasoning_effort": "high"},
+        )
+        == "GPT-5 · High"
     )
 
 
 def test_chat_model_list_lines_render_as_columns() -> None:
     payload = {
-        "default": "deepseek/deepseek-v4-flash[deepseek]",
+        "default": "deepseek/deepseek-v4-flash",
         "items": [
             {
-                "selector": "deepseek/deepseek-v4-flash[deepseek]",
+                "ref": "deepseek/deepseek-v4-flash",
+                "name": "DeepSeek V4 Flash",
                 "provider": "deepseek",
-                "adapter": "chat_completions",
+                "parameters": {"reasoning": {"effort": ["low", "high"]}},
             },
             {
-                "selector": "deepseek/deepseek-v4-pro[deepseek]",
+                "ref": "deepseek/deepseek-v4-pro",
+                "name": "DeepSeek V4 Pro",
                 "provider": "deepseek",
-                "adapter": "chat_completions",
+                "parameters": {"reasoning": {"effort": []}},
             },
         ],
     }
@@ -2020,12 +2027,164 @@ def test_chat_model_list_lines_render_as_columns() -> None:
 
     assert ": Available Models" in rendered
     assert not rendered_lines[rendered_lines.index(": Available Models") + 1].strip()
-    assert "deepseek/deepseek-v4-flash[deepseek]" in rendered
+    assert "deepseek/deepseek-v4-flash" in rendered
     assert "default" in rendered
+    assert "reasoning: low, high" in rendered
     assert len(model_lines) == 2
-    assert model_lines[0].index("deepseek  chat_completions") == model_lines[1].index(
-        "deepseek  chat_completions"
+
+
+def test_model_picker_searches_and_commits_model_and_effort_atomically() -> None:
+    committed: list[tuple[str, object]] = []
+    closed: list[None] = []
+    picker = widgets.ModelPicker(
+        current=lambda: (None, None),
+        commit=lambda ref, effort: committed.append((ref, effort)),
+        close=lambda: closed.append(None),
+        invalidate=lambda: None,
     )
+    keys = KeyBindings()
+    picker.bind(keys)
+    payload = {
+        "default": "openai/gpt-5",
+        "items": [
+            {
+                "ref": "openai/gpt-5",
+                "name": "GPT-5",
+                "provider": "openai",
+                "parameters": {"reasoning": {"effort": ["low", "high"]}},
+            },
+            {
+                "ref": "anthropic/claude-sonnet-4.5",
+                "name": "Claude Sonnet 4.5",
+                "provider": "anthropic",
+                "parameters": {"reasoning": {"effort": []}},
+            },
+        ],
+    }
+
+    def press(key: Keys) -> None:
+        bindings = [
+            binding
+            for binding in keys.get_bindings_for_keys((key,))
+            if binding.filter()
+        ]
+        assert bindings
+        bindings[-1].handler(cast(Any, None))
+
+    picker.open(payload)
+    initial = "".join(text for _style, text in picker._render())
+    assert "GPT-5" in initial
+    assert "Current" in initial
+    assert "Default" in initial
+
+    picker.buffer.text = "gpt"
+    assert [item["ref"] for item in picker._filtered_items()] == ["openai/gpt-5"]
+    press(Keys.Enter)
+    assert picker.stage == "effort"
+    assert committed == []
+
+    press(Keys.Down)
+    press(Keys.Down)
+    press(Keys.Enter)
+    assert committed == [("openai/gpt-5", "high")]
+    assert closed == [None]
+    assert picker.visible is False
+
+
+def test_model_picker_escape_cancels_without_changing_session_state() -> None:
+    committed: list[tuple[str, object]] = []
+    closed: list[None] = []
+    picker = widgets.ModelPicker(
+        current=lambda: ("openai/gpt-5", "low"),
+        commit=lambda ref, effort: committed.append((ref, effort)),
+        close=lambda: closed.append(None),
+        invalidate=lambda: None,
+    )
+    keys = KeyBindings()
+    picker.bind(keys)
+    picker.open(
+        {
+            "default": "openai/gpt-5",
+            "items": [
+                {
+                    "ref": "openai/gpt-5",
+                    "name": "GPT-5",
+                    "provider": "openai",
+                    "parameters": {"reasoning": {"effort": ["low", "default"]}},
+                }
+            ],
+        }
+    )
+
+    def press(key: Keys) -> None:
+        bindings = [
+            binding
+            for binding in keys.get_bindings_for_keys((key,))
+            if binding.filter()
+        ]
+        assert bindings
+        bindings[-1].handler(cast(Any, None))
+
+    press(Keys.Enter)
+    assert picker.stage == "effort"
+    assert committed == []
+    press(Keys.Escape)
+    assert picker.stage == "model"
+    assert picker.visible is True
+    press(Keys.Escape)
+    assert picker.visible is False
+    assert committed == []
+    assert closed == [None]
+
+
+def test_model_picker_resets_effort_when_changing_models() -> None:
+    committed: list[tuple[str, object]] = []
+    picker = widgets.ModelPicker(
+        current=lambda: ("openai/gpt-5", "high"),
+        commit=lambda ref, effort: committed.append((ref, effort)),
+        close=lambda: None,
+        invalidate=lambda: None,
+    )
+    keys = KeyBindings()
+    picker.bind(keys)
+    picker.open(
+        {
+            "default": "openai/gpt-5",
+            "items": [
+                {
+                    "ref": "openai/gpt-5",
+                    "name": "GPT-5",
+                    "provider": "openai",
+                    "parameters": {"reasoning": {"effort": ["low", "high"]}},
+                },
+                {
+                    "ref": "anthropic/claude-sonnet-4.5",
+                    "name": "Claude Sonnet 4.5",
+                    "provider": "anthropic",
+                    "parameters": {"reasoning": {"effort": ["low", "high"]}},
+                },
+            ],
+        }
+    )
+
+    def press(key: Keys) -> None:
+        bindings = [
+            binding
+            for binding in keys.get_bindings_for_keys((key,))
+            if binding.filter()
+        ]
+        assert bindings
+        bindings[-1].handler(cast(Any, None))
+
+    press(Keys.Down)
+    press(Keys.Enter)
+
+    assert picker.stage == "effort"
+    assert picker.index == 0
+
+    press(Keys.Enter)
+
+    assert committed == [("anthropic/claude-sonnet-4.5", None)]
 
 
 def test_chat_status_bar_right_aligns_the_model_without_hotkeys(
@@ -2410,10 +2569,10 @@ def test_chat_tui_keeps_default_model_and_clears_status_error() -> None:
         client=FakeClient(),
     )
 
-    assert app.status_bar.model_label == "openai/gpt-5"
+    assert app.status_bar.model_label == "GPT-5"
     assert app.status_bar.runnable_label == "agic:chat"
     app.handle_run_event(_model_step_begin(model="deepseek/deepseek-chat"))
-    assert app.status_bar.model_label == "openai/gpt-5"
+    assert app.status_bar.model_label == "GPT-5"
 
     app.status_bar.set_error("Model selector matched no models")
     assert app.status_bar.error_message
@@ -2439,7 +2598,9 @@ def test_chat_tui_non_text_input_clears_status_error(key: Keys) -> None:
     bindings = key_bindings.get_bindings_for_keys((key,))
 
     assert bindings
-    bindings[-1].handler(cast(Any, None))
+    active = [binding for binding in bindings if binding.filter()]
+    assert active
+    active[-1].handler(cast(Any, None))
     assert app.status_bar.error_message == ""
 
 
@@ -2531,7 +2692,7 @@ def test_chat_tui_applies_default_settings_while_a_run_is_active() -> None:
     runnable_changed = "".join(text for _style, text in app.status_bar._render())
     assert app.status_bar.active_runnable_label == "agic:chat"
     assert app.status_bar.runnable_label == "flow:research"
-    assert runnable_changed.endswith("flow:research · openai/gpt-5")
+    assert runnable_changed.endswith("flow:research · GPT-5")
     assert app.queue == []
 
     app.handle_submit(":model custom/model")
@@ -3344,13 +3505,13 @@ class FakeClient(ChatClient):
 
     def list_models(self) -> dict[str, object]:
         return {
-            "default": "openai/gpt-5[openai]",
+            "default": "openai/gpt-5",
             "items": [
                 {
-                    "selector": "openai/gpt-5[openai]",
                     "ref": "openai/gpt-5",
+                    "name": "GPT-5",
                     "provider": "openai",
-                    "model": "gpt-5",
+                    "parameters": {"reasoning": {"effort": ["low", "high"]}},
                 }
             ],
         }

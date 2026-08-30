@@ -27,6 +27,12 @@ shared execution-policy prefix, while dollar-prefixed `Content` lines expand
 reusable prompts. See [input-syntax.md](./input-syntax.md) for the complete
 namespace contract.
 
+Chat owns mutable model, reasoning-effort, runnable, allow, and limit defaults.
+Each submission snapshots that state with input-local overrides into one
+self-contained `RunRequest`; queued submissions retain their snapshot when the
+visible session changes. `/model` opens a searchable two-stage picker in the
+TUI and supports `MODEL [EFFORT|auto]` in scripted Chat.
+
 Thread ids use one underscore-delimited normalized form:
 
 ```text
@@ -186,16 +192,17 @@ does not expose a separate `/chat` resource.
 A client starts a new conversation by calling:
 
 1. `POST /api/v1/threads` with `client` and an optional peer.
-2. `POST /api/v1/runs/authored/stream` with the returned thread id, authored
-   input, session commands, and ordered runnable fallbacks.
+2. `GET /api/v1/runs/defaults` once to adopt concrete session defaults.
+3. `POST /api/v1/runs/authored/stream` with the returned thread id, concrete
+   runnable and model requests, authored input, and materialized policy.
 
 Subsequent turns reuse the same thread id. The client explicitly selects the
 chat/default runnable. Persisted state is read through the normal thread and run
 detail endpoints.
 
-`GET /api/v1/models` returns model selectors inside the server's current
-`AgentSetup.ceiling` and reports `AgentSetup.bindings.model` when one is set.
-A run applies its selected runnable's `models` directive after it starts.
+`GET /api/v1/models` returns exact catalog route refs inside the server's
+current `AgentSetup.ceiling` and structured reasoning-effort metadata. A run
+applies its selected runnable's `models` directive after it starts.
 
 
 ## Streaming Rule

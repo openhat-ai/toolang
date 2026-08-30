@@ -9,7 +9,7 @@ import json
 import os
 from pathlib import Path
 import sys
-from typing import Any, TextIO
+from typing import Any, TextIO, cast
 from uuid import uuid4
 
 import click
@@ -18,7 +18,8 @@ from pydantic import TypeAdapter, ValidationError
 import typer
 from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 
-from toolang.base.types.policy import RunBindings
+from toolang.base.types.model import ModelRequest
+from toolang.base.types.policy import RunBindings, RunPolicy
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
@@ -27,17 +28,22 @@ from toolang.cli.common.policy import (
     resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
+from toolang.cli.common.model_selection import (
+    materialize_model_list_ref,
+)
 from toolang.execution.calls import parse_call, resolve_spec
+from toolang.execution.policy import materialize_policy
 from toolang.execution.executor import LocalRunHandle, RunExecutor
 from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.records import RunRecord
-from toolang.execution.schemas import RunRequest, ThreadInfo
+from toolang.execution.schemas import RunRequest, RunnableRequest, ThreadInfo
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program
 from toolang.lang.includes import resolve_file_include
-from toolang.lang.input import NamedInputSources, RunnableInputRaw
+from toolang.lang.input import NamedInputSource, NamedInputSources, RunnableInputRaw
+from toolang.lang.types import parse_public_runnable_ref
 from toolang.setup import SetupWatcher
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import AgentState
@@ -59,6 +65,7 @@ _LITERAL_ITEM_PREFIX = "\ue002"
 _UNPERSISTED_THREAD = "<unpersisted-script-thread>"
 _RUNNABLES_PANEL = "Runnables"
 _THREAD_INFO_ADAPTER = TypeAdapter(ThreadInfo)
+_RUN_POLICY_ADAPTER = TypeAdapter(RunPolicy)
 
 
 class _HelpArgument(TyperArgument):
@@ -192,9 +199,11 @@ def _runnable_command(
             items=items,
             stdin=stdin,
         )
+        commands = _materialize_script_runnable_commands(commands, program=program)
         return _run(
             source_path,
             runnable=runnable.name,
+            runnable_kind=runnable.kind,
             commands=commands,
             input=input,
             raw_named=raw_named,
@@ -375,10 +384,48 @@ def _collect_call(
         if (
             runnable.input is not None
             and not runnable.input.optional
-            and input.primary is None
+            and input._ is None
         ):
             raise _IncompleteRunnableInput
-    return commands, input, tuple(raw_args.items())
+    return (
+        commands,
+        input,
+        tuple(NamedInputSource(name, source) for name, source in raw_args.items()),
+    )
+
+
+def _materialize_script_runnable_commands(
+    commands: tuple[RunOverride, ...],
+    *,
+    program: Program,
+) -> tuple[RunOverride, ...]:
+    """Resolve input-local runnable selections against the authored program."""
+
+    materialized: list[RunOverride] = []
+    for command in commands:
+        if (
+            command.group != "default"
+            or command.field != "runnable"
+            or command.value is None
+        ):
+            materialized.append(command)
+            continue
+        if not isinstance(command.value, str):  # pragma: no cover - type invariant
+            raise TypeError("default runnable must be a string or none")
+        name, kind = parse_public_runnable_ref(command.value)
+        matches = tuple(
+            runnable
+            for runnable in _public_runnables(program)
+            if runnable.name == name and (kind is None or runnable.kind == kind)
+        )
+        if len(matches) != 1:
+            raise ValueError(
+                f"runnable selector is unknown or ambiguous: {command.value}"
+            )
+        materialized.append(
+            RunOverride("default", "runnable", f"{matches[0].kind}:{name}")
+        )
+    return tuple(materialized)
 
 
 def _input_source(items: list[str], *, stdin: TextIO) -> str | None:
@@ -425,6 +472,7 @@ def _run(
     source_path: Path,
     *,
     runnable: str,
+    runnable_kind: str,
     commands: tuple[RunOverride, ...],
     input: RunnableInputRaw,
     raw_named: NamedInputSources,
@@ -442,6 +490,7 @@ def _run(
     run_id: str | None = None
     log_path: Path | None = None
     accepted: list[str] = []
+    runnable_ref = f"{runnable_kind}:{runnable}"
     try:
         layout = agents.materialize_roaming_program(source_path)
         _reject_runnable_option(default_options)
@@ -475,7 +524,7 @@ def _run(
                         ids=ids,
                         run_id=run_id,
                         sandbox="host",
-                        runnable=runnable,
+                        runnable=runnable_ref,
                         commands=commands,
                         input=input,
                         raw_named=raw_named,
@@ -492,7 +541,7 @@ def _run(
                         layout=layout,
                         endpoint=server.endpoint,
                         sandbox=server.sandbox,
-                        runnable=runnable,
+                        runnable=runnable_ref,
                         commands=commands,
                         input=input,
                         raw_named=raw_named,
@@ -595,15 +644,30 @@ async def _execute_remote(
                 client.endpoint,
                 expected_sandbox=sandbox,
             )
+            default_bindings, default_limits = await _remote_script_defaults(
+                http,
+                client.endpoint,
+            )
+            ceilings, bindings, limits = materialize_policy(
+                replace(default_bindings, runnable=runnable),
+                default_limits.limits,
+                session=session_commands,
+                run=_remote_script_commands(commands, runnable=runnable),
+            )
+            model_ref = bindings.model
+            if model_ref is not None:
+                models = await _remote_script_models(http, client.endpoint)
+                model_ref = materialize_model_list_ref(models, model_ref)
             thread = await _create_remote_script_thread(http, client.endpoint)
             handle = await client.run(
                 RunRequest(
-                    thread=thread,
-                    commands=_remote_script_commands(commands, runnable=runnable),
-                    input=request_input,
-                    session_commands=session_commands,
-                    runnable_fallbacks=(runnable,),
+                    thread_id=thread,
                     request_id=f"term_{uuid4().hex}",
+                    runnable=RunnableRequest(
+                        bindings.runnable or runnable, request_input
+                    ),
+                    model=(ModelRequest(model_ref) if model_ref is not None else None),
+                    policy=RunPolicy(allow=ceilings, limits=limits),
                 ),
                 tracer=tracer,
             )
@@ -731,6 +795,62 @@ async def _create_remote_script_thread(
     if thread.origin != "script" or not thread.id.startswith("script_"):
         raise RuntimeError("remote script thread creation returned invalid identity")
     return thread.id
+
+
+async def _remote_script_defaults(
+    client: httpx.AsyncClient,
+    endpoint: str,
+) -> tuple[RunBindings, RunPolicy]:
+    try:
+        response = await client.get(f"{endpoint}/api/v1/runs/defaults")
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, Mapping) or set(payload) != {
+            "model",
+            "runnable",
+            "policy",
+        }:
+            raise ValueError
+        model = payload.get("model")
+        runnable = payload.get("runnable")
+        if model is not None and not isinstance(model, str):
+            raise ValueError
+        if not isinstance(runnable, str):
+            raise ValueError
+        policy = _RUN_POLICY_ADAPTER.validate_python(payload.get("policy"))
+        return RunBindings(model=model, runnable=runnable), policy
+    except (
+        httpx.HTTPError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        ValidationError,
+        ValueError,
+    ) as exc:
+        raise RuntimeError("remote script run defaults are invalid") from exc
+
+
+async def _remote_script_models(
+    client: httpx.AsyncClient,
+    endpoint: str,
+) -> Mapping[str, Any]:
+    """Load one effective model list for request-ref materialization."""
+
+    try:
+        response = await client.get(f"{endpoint}/api/v1/models")
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, Mapping) or not isinstance(
+            payload.get("items"), list
+        ):
+            raise ValueError
+        return cast(Mapping[str, Any], payload)
+    except (
+        httpx.HTTPError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        ValueError,
+    ) as exc:
+        raise RuntimeError("remote script model list is invalid") from exc
 
 
 async def _cancel_remote_script_run(

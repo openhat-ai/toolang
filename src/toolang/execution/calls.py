@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from toolang.base.types.message import Part
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.lang.input import (
     NamedInputSources,
@@ -18,9 +19,10 @@ from toolang.lang.input import (
     resolve_input_parts_with_provenance,
     resolve_runnable_input,
 )
-from toolang.lang.ast import Program
+from toolang.lang.ast import AgicDecl, Program
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState, state_module_caps
+from toolang.plugin.models.resolution import resolve_model_ref
 
 from .policy import parse_policy_prefix, resolve_commands
 from .runnables import (
@@ -43,7 +45,7 @@ class RestartSpec:
     setup: AgentSetup
     state: AgentState
     ceiling: AgentCeiling
-    model: str | None
+    model: ModelRequest | None
     limits: RunLimits
 
 
@@ -64,18 +66,29 @@ def resolve_run_request(
 ) -> RunSpec:
     """Resolve one caller request against one setup and state snapshot pair."""
 
-    return resolve_spec(
-        request.commands,
-        request.input,
+    model_request = require_exact_model_request(
+        request.model,
         setup=setup,
         state=state,
-        thread=request.thread,
-        default_runnable=_select_runnable_fallback(
-            state,
-            request.runnable_fallbacks,
+    )
+    _runnable_name, runnable_kind = parse_runnable_ref(request.runnable.ref)
+    if runnable_kind is None:
+        raise ValueError("run request requires a kind-qualified runnable ref")
+
+    return _resolve_concrete_spec(
+        request.runnable.input,
+        setup=setup,
+        state=state,
+        thread=request.thread_id,
+        bindings=RunBindings(
+            runnable=request.runnable.ref,
+            model=model_request.ref if model_request is not None else None,
         ),
-        session_commands=request.session_commands,
+        model_request=model_request,
+        ceilings=request.policy.allow,
+        limits=request.policy.limits,
         include=include,
+        require_model_request=True,
     )
 
 
@@ -90,13 +103,35 @@ def resolve_restart_request(
     ceilings, bindings, limits = resolve_commands(setup, run=request.commands)
     if len(ceilings) > 1:  # pragma: no cover - one request contributes one layer
         raise RuntimeError("restart request resolved multiple run ceilings")
+    model = _rerun_model_request(request, bindings)
+    if model is not None:
+        model = materialize_model_request(model, setup=setup, state=state)
     return RestartSpec(
         setup=setup,
         state=state,
         ceiling=ceilings[0] if ceilings else AgentCeiling(),
-        model=bindings.model,
+        model=model,
         limits=limits,
     )
+
+
+def _rerun_model_request(
+    request: RetryRequest | RerunRequest,
+    bindings: RunBindings,
+) -> ModelRequest | None:
+    """Return only an explicit rerun replacement, never a setup default."""
+
+    if not isinstance(request, RerunRequest):
+        return None
+    if request.model is not None:
+        return request.model
+    replaces_model = any(
+        command.group == "default" and command.field == "model"
+        for command in request.commands
+    )
+    if not replaces_model or bindings.model is None:
+        return None
+    return ModelRequest(bindings.model)
 
 
 def resolve_spec(
@@ -115,21 +150,116 @@ def resolve_spec(
 ) -> RunSpec:
     """Resolve structured caller input against current immutable snapshots."""
 
-    from .executor.executor import RunSpec
-
     ceilings, bindings, limits = resolve_commands(
         setup,
         surface=surface,
         session=session_commands,
         run=commands,
     )
-    runnable_ref = bindings.runnable or default_runnable
+    if bindings.runnable is None:
+        bindings = RunBindings(model=bindings.model, runnable=default_runnable)
+    model_request = (
+        materialize_model_request(
+            ModelRequest(bindings.model),
+            setup=setup,
+            state=state,
+        )
+        if bindings.model is not None
+        else None
+    )
+    bindings = replace(
+        bindings,
+        model=model_request.ref if model_request is not None else None,
+    )
+    return _resolve_concrete_spec(
+        input,
+        setup=setup,
+        state=state,
+        thread=thread,
+        bindings=bindings,
+        model_request=model_request,
+        ceilings=ceilings,
+        limits=limits,
+        surface_named=surface_named,
+        surface_named_sources=surface_named_sources,
+        include=include,
+        authored_commands=tuple(commands),
+        authored_session_commands=tuple(session_commands),
+    )
+
+
+def materialize_model_request(
+    request: ModelRequest,
+    *,
+    setup: AgentSetup,
+    state: AgentState,
+) -> ModelRequest:
+    """Resolve one model selector-bearing value to an exact request ref."""
+
+    from .executor.resources import snapshot_model_selection
+
+    ref = resolve_model_ref(
+        snapshot_model_selection(setup, state),
+        selector=request.ref,
+    )
+    return request if ref == request.ref else replace(request, ref=ref)
+
+
+def require_exact_model_request(
+    request: ModelRequest | None,
+    *,
+    setup: AgentSetup,
+    state: AgentState,
+) -> ModelRequest | None:
+    """Reject selector syntax at the materialized run-request boundary."""
+
+    if request is None:
+        return None
+    materialized = materialize_model_request(request, setup=setup, state=state)
+    if materialized.ref != request.ref:
+        raise ValueError(
+            f"run model ref must be exact: {request.ref!r} resolves to "
+            f"{materialized.ref!r}"
+        )
+    return request
+
+
+def _resolve_concrete_spec(
+    input: RunnableInputRaw,
+    *,
+    setup: AgentSetup,
+    state: AgentState,
+    thread: str,
+    bindings: RunBindings,
+    model_request: ModelRequest | None,
+    ceilings: tuple[AgentCeiling, ...],
+    limits: RunLimits,
+    surface_named: Mapping[str, object] | None = None,
+    surface_named_sources: NamedInputSources = (),
+    include: IncludeResolver | None = None,
+    authored_commands: tuple[RunOverride, ...] = (),
+    authored_session_commands: tuple[RunOverride, ...] = (),
+    require_model_request: bool = False,
+) -> RunSpec:
+    """Resolve one already-materialized request against runtime snapshots."""
+
+    from .executor.executor import RunSpec
+
+    runnable_ref = bindings.runnable
+    if runnable_ref is None:
+        raise ValueError("run request requires a concrete runnable ref")
     runnable_name, runnable_kind = parse_runnable_ref(runnable_ref)
     module, runnable = resolve_state_runnable(
         state,
         runnable_name,
         kind=runnable_kind,
     )
+    if (
+        require_model_request
+        and isinstance(runnable, AgicDecl)
+        and model_request is None
+    ):
+        raise ValueError("run request requires a model for an agic runnable")
     program = state.modules[module]
     if surface_named and surface_named_sources:
         raise ValueError("surface named inputs cannot be both bound and sourced")
@@ -138,9 +268,9 @@ def resolve_spec(
     raw_named = input.named or surface_named_sources
     definitions = prompt_definitions(state, module=module, program=program)
     invocations: list[PromptInvocation] = []
-    if input.primary is not None:
+    if input._ is not None:
         primary_resolution = resolve_input_parts_with_provenance(
-            input.primary,
+            input._,
             program=program,
             include=include,
             prompt_definitions=definitions,
@@ -167,6 +297,7 @@ def resolve_spec(
             model=bindings.model,
             runnable=f"{runnable.kind}:{runnable_name}",
         ),
+        model_request=model_request,
         limits=limits,
         ceilings=ceilings,
         input=resolve_runnable_input(
@@ -175,88 +306,10 @@ def resolve_spec(
             named=named,
             structs={struct.name: struct for struct in program.structs},
         ),
-        authored_input=RunnableInputRaw(primary=input.primary, named=raw_named),
-        authored_commands=tuple(commands),
-        authored_session_commands=tuple(session_commands),
+        authored_input=RunnableInputRaw(_=input._, named=raw_named),
+        authored_commands=authored_commands,
+        authored_session_commands=authored_session_commands,
         prompt_invocations=tuple(invocations),
-    )
-
-
-def validate_commands(
-    commands: Sequence[RunOverride],
-    *,
-    setup: AgentSetup,
-    state: AgentState,
-    default_runnable: str,
-    surface: RunBindings = RunBindings(),
-) -> None:
-    """Validate one prospective session policy without requiring run input."""
-
-    from .executor.resources import (
-        apply_agent_ceiling,
-        resolve_agent_resources,
-        resolve_runnable_resources,
-        snapshot_model_selection,
-        validate_model_binding,
-    )
-
-    ceilings, bindings, _limits = resolve_commands(
-        setup,
-        surface=surface,
-        session=commands,
-    )
-    runnable_name, runnable_kind = parse_runnable_ref(
-        bindings.runnable or default_runnable
-    )
-    module, runnable = resolve_state_runnable(
-        state,
-        runnable_name,
-        kind=runnable_kind,
-    )
-    resources = resolve_agent_resources(
-        setup,
-        state,
-        setup.ceiling,
-        module=module,
-    )
-    for ceiling in ceilings:
-        resources = apply_agent_ceiling(
-            setup,
-            state,
-            resources,
-            ceiling,
-            module=module,
-        )
-    resources = resolve_runnable_resources(
-        snapshot_model_selection(setup, state),
-        runnable=runnable,
-        base=resources,
-        setup=setup,
-        state=state,
-        module=module,
-    )
-    validate_model_binding(
-        snapshot_model_selection(setup, state),
-        runnable=runnable,
-        resources=resources,
-        model=bindings.model,
-    )
-
-
-def validate_session_commands(
-    commands: Sequence[RunOverride],
-    *,
-    setup: AgentSetup,
-    state: AgentState,
-    runnable_fallbacks: tuple[str, ...],
-) -> None:
-    """Validate session commands against the first available runnable fallback."""
-
-    validate_commands(
-        commands,
-        setup=setup,
-        state=state,
-        default_runnable=_select_runnable_fallback(state, runnable_fallbacks),
     )
 
 
@@ -269,14 +322,14 @@ def _resolve_named_sources(
     invocations: list[PromptInvocation],
 ) -> dict[str, object]:
     result: dict[str, object] = {}
-    for name, source in sources:
+    for item in sources:
         resolution = resolve_input_parts_with_provenance(
-            source,
+            item.source,
             program=program,
             include=include,
             prompt_definitions=prompt_definitions,
         )
-        result[name] = resolution.parts
+        result[item.name] = resolution.parts
         _extend_invocations(invocations, resolution.prompts)
     return result
 
@@ -316,19 +369,6 @@ def _extend_invocations(
         )
         for invocation in additions
     )
-
-
-def _select_runnable_fallback(
-    state: AgentState,
-    candidates: tuple[str, ...],
-) -> str:
-    for candidate in candidates:
-        name, kind = parse_runnable_ref(candidate)
-        entry = state.runnables.get(name)
-        if entry is not None and (kind is None or entry.kind == kind):
-            return candidate
-    joined = ", ".join(candidates)
-    raise ValueError(f"no runnable fallback is available: {joined}")
 
 
 def _strip_final_line_break(source: str) -> str:

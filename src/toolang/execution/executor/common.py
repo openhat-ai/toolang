@@ -15,6 +15,7 @@ from toolang.base.types.message import (
     TextPart,
     message_text,
 )
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.errors import ToolangError
 from toolang.common.time import utc_now
@@ -113,6 +114,7 @@ class BoundRun:
     state_ref: ControlRef
     setup: AgentSetup
     created_at: str
+    model_request: ModelRequest | None = None
     module: str = "agent"
     control_index: int = 0
     limits: RunLimits = RunLimits()

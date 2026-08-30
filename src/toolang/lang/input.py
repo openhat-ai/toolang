@@ -27,7 +27,6 @@ from .errors import ToolangOutputError
 from .types import Array, Struct, Value, validate_type
 
 IncludeResolver = Callable[[str], Part]
-NamedInputSources: TypeAlias = tuple[tuple[str, str], ...]
 _ARGUMENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PROMPT_NAME_RE = re.compile(r"^[A-Za-z_][\w-]*$")
 _PROMPT_CALL_RE = re.compile(r"^\$([A-Za-z_][\w-]*)(?:\s+(.*))?$")
@@ -40,11 +39,39 @@ _JSON_OUTPUT_FENCE_RE = re.compile(
 
 
 @dataclass(frozen=True, slots=True)
+class NamedInputSource:
+    """One unresolved named runnable-input source."""
+
+    name: str
+    source: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str) or not _ARGUMENT_NAME_RE.fullmatch(self.name):
+            raise ValueError("named input must use a canonical name")
+        if not isinstance(self.source, str):
+            raise TypeError("named input source must be a string")
+
+
+NamedInputSources: TypeAlias = tuple[NamedInputSource, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class RunnableInputRaw:
     """Structured primary and named source text awaiting input resolution."""
 
-    primary: str | None = None
+    _: str | None = None
     named: NamedInputSources = ()
+
+    def __post_init__(self) -> None:
+        if self._ is not None and not isinstance(self._, str):
+            raise TypeError("primary input source must be a string or none")
+        if not isinstance(self.named, tuple) or not all(
+            isinstance(item, NamedInputSource) for item in self.named
+        ):
+            raise TypeError("named input sources must be NamedInputSource values")
+        names = tuple(item.name for item in self.named)
+        if len(names) != len(set(names)):
+            raise ValueError("named input sources must be unique")
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,7 +203,7 @@ def resolve_runnable_input(
 def parse_input(
     source: str | None,
     *,
-    named: NamedInputSources = (),
+    named: Sequence[NamedInputSource | tuple[str, str]] = (),
 ) -> RunnableInputRaw:
     """Parse runnable input without resolving includes or declared types."""
 
@@ -186,21 +213,21 @@ def parse_input(
         if first.startswith(":") and not first.startswith("::"):
             raise ValueError("primary input must escape a leading colon as ::")
 
-    parsed_named: list[tuple[str, str]] = []
+    parsed_named: list[NamedInputSource] = []
     names: set[str] = set()
     for item in named:
-        if not isinstance(item, tuple) or len(item) != 2:
+        if isinstance(item, NamedInputSource):
+            name, value = item.name, item.source
+        elif isinstance(item, tuple) and len(item) == 2:
+            name, value = item
+        else:
             raise TypeError("named input sources must be name/source pairs")
-        name, value = item
-        if not isinstance(name, str) or not _ARGUMENT_NAME_RE.fullmatch(name):
-            raise ValueError("named input must use a canonical name")
-        if not isinstance(value, str):
-            raise TypeError("named input source must be a string")
+        parsed = NamedInputSource(name, value)
         if name in names:
             raise ValueError(f"duplicate named input: {name}")
         names.add(name)
-        parsed_named.append((name, value))
-    return RunnableInputRaw(primary=primary, named=tuple(parsed_named))
+        parsed_named.append(parsed)
+    return RunnableInputRaw(_=primary, named=tuple(parsed_named))
 
 
 def resolve_input_parts(

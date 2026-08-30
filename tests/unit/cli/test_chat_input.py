@@ -8,7 +8,7 @@ from toolang.cli.toolang.commands.chat.input import (
     parse_chat_input,
 )
 from toolang.execution.types import RunOverride
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import NamedInputSource, RunnableInputRaw
 
 
 @pytest.mark.parametrize(
@@ -45,8 +45,8 @@ def test_policy_and_primary_input_return_one_runnable_branch() -> None:
             RunOverride("default", "runnable", "agic:review"),
         ),
         RunnableInputRaw(
-            primary="Review this",
-            named=(("focus", "security"),),
+            _="Review this",
+            named=(NamedInputSource("focus", "security"),),
         ),
     )
 
@@ -54,7 +54,7 @@ def test_policy_and_primary_input_return_one_runnable_branch() -> None:
 def test_runnable_named_inputs_make_a_run_without_primary_input() -> None:
     assert parse_chat_input(":flow research topic=agents") == (
         (RunOverride("default", "runnable", "flow:research"),),
-        RunnableInputRaw(named=(("topic", "agents"),)),
+        RunnableInputRaw(named=(NamedInputSource("topic", "agents"),)),
     )
 
 
@@ -73,7 +73,7 @@ def test_chat_normalization_preserves_first_indentation_and_internal_blanks() ->
     assert normalize_chat_input(source) == "  first\n\nsecond"
     assert parse_chat_input(source) == (
         (),
-        RunnableInputRaw(primary="  first\n\nsecond"),
+        RunnableInputRaw(_="  first\n\nsecond"),
     )
 
 

@@ -811,14 +811,14 @@ run starts, not by this inspection endpoint. The response includes:
 
 - `default`
 - `items`
-  - `selector`
-  - `name`
   - `ref`
+  - `name`
   - `provider`
-  - `model`
-  - `adapter`
-  - `tools`
-  - `streaming`
+  - `parameters.reasoning.effort`
+
+`ref` is the exact catalog route identity, including nested model ids, and
+never includes a `[provider]` suffix. Reasoning efforts are distinct recognized
+catalog values in catalog order; an unsupported model returns an empty list.
 
 `GET /api/v1/agics` and `GET /api/v1/flows` list the agent's runnable
 definitions.
@@ -1115,7 +1115,7 @@ Delete is destructive and is available only through archived routes.
 
 - `POST /api/v1/runs/stream`
 - `POST /api/v1/runs/authored/stream`
-- `POST /api/v1/runs/authored/validate`
+- `GET /api/v1/runs/defaults`
 - `GET /api/v1/runs`
 - `GET /api/v1/runs/{run_id}`
 - `GET /api/v1/runs/{run_id}/stream`
@@ -1148,8 +1148,10 @@ accepts a user message whose parts may be empty. `retry` and `rerun` accept a
 terminal root run. Retry reopens that run from an optional canonical step-path
 `anchor`; omitting it selects the latest retryable step. Rerun starts a new root
 run from the source invocation and replaces the source in the visible thread
-projection. Both accept optional `request_id`, `model`, and partial `limits`,
-return `202 Accepted`, and execute on the server's owner event loop.
+projection. Both accept optional `request_id` and partial `limits`; only rerun
+accepts an optional exact `model` replacement, while retry preserves the
+persisted model request. Both return `202 Accepted` and execute on the server's
+owner event loop.
 
 Thread `rewind` and `fork` request bodies take an optional `run_id` anchor and
 `request_id`. An omitted run id selects the last visible run. Task and chore
@@ -1163,51 +1165,60 @@ these thread operations starts a follow-up run.
 
 `POST /api/v1/runs/stream` accepts:
 
-- `thread`: required existing thread id
-- `request_id`: optional globally unique caller-supplied control identifier
-- `runnable`: required unique agic or flow name
-- `input`: canonical percept-part array
-- `model`: optional model selector; omission uses the current setup binding
-- `args`: optional runnable argument mapping
-- `limits`: optional partial run-limit mapping
+- `thread_id`: required existing thread id
+- `request_id`: required globally unique caller-supplied control identifier
+- `runnable.ref`: required concrete agic or flow ref
+- `runnable.input`: canonical percept-part array
+- `runnable.args`: optional resolved runnable argument mapping
+- `model`: a concrete `ModelRequest`, or `null` for a model-free runnable
+- `policy`: materialized `allow` ceilings and complete `limits`
 
 HTTP limit fields are `agic_model_calls`, `agic_tool_calls`, `tokens`, `cost`,
-and `time`. Omitted fields inherit the latest valid setup snapshot; an explicit
-JSON `null` disables that field for the run.
+and `time`. The caller materializes omitted session values before submission;
+an explicit JSON `null` disables that field for the run.
 
-`POST /api/v1/runs/authored/stream` accepts the unresolved `RunRequest` wire
+`POST /api/v1/runs/authored/stream` accepts the authored `RunRequest` wire
 shape:
 
 ```json
 {
-  "thread": "term_example",
+  "thread_id": "term_example",
   "request_id": "term_request",
-  "commands": [
-    {"group": "limit", "field": "tokens", "value": 4000}
-  ],
-  "input": {
-    "primary": "Summarize\n@notes.md",
-    "named": [{"name": "audience", "source": "maintainers"}]
+  "runnable": {
+    "ref": "agic:chat",
+    "input": {
+      "_": "Summarize\n@notes.md",
+      "named": [{"name": "audience", "source": "maintainers"}]
+    }
   },
-  "session_commands": [
-    {"group": "default", "field": "model", "value": "openai/gpt-5"}
-  ],
-  "runnable_fallbacks": ["agic:chat", "default"]
+  "model": {
+    "ref": "openai/gpt-5",
+    "parameters": {"reasoning": {"effort": "high"}}
+  },
+  "policy": {
+    "allow": [],
+    "limits": {
+      "agic_model_calls": 200,
+      "agic_tool_calls": null,
+      "tokens": 4000,
+      "cost": null,
+      "time": null
+    }
+  }
 }
 ```
 
-The server reads setup and state once, selects the first available fallback,
-and resolves policy, input, prompts, named sources, and file includes before
-accepting the run. Command arrays preserve order. Allow values are selector
-arrays or `null`; default values are strings or `null`; integer limits are
-non-negative integers or `null`; and cost is canonical non-negative decimal
-text or `null`. Named input names and runnable fallbacks must be unique. Unknown
-fields and invalid combinations return `422`; a missing thread returns `404`.
+The server reads setup and state once and validates the concrete runnable,
+model parameters, policy, input, prompts, named sources, and file includes
+before accepting the run. Reasoning effort is validated against the selected
+catalog route and replaces that target's complete reasoning choice. Named input
+names must be unique. Unknown fields and invalid combinations return `422`; a
+missing thread returns `404`.
 
-`POST /api/v1/runs/authored/validate` accepts the complete ordered
-`session_commands` and `runnable_fallbacks` fields from that shape. It validates
-them against one current setup/state snapshot without creating a thread or run
-and returns `204` on success or `422` on invalid policy or fallback selection.
+`GET /api/v1/runs/defaults` returns one concrete `model`, `runnable`, and
+materialized `policy` for clients to adopt as session-owned defaults. Changing
+client session state does not call a validation endpoint; validation occurs on
+the next complete run submission.
 
 `GET /api/v1/threads/{thread_id}/result` returns the newest succeeded root
 `RunDetail` with a nonempty resolved output. An unknown thread and a known

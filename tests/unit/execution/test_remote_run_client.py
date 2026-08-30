@@ -13,6 +13,12 @@ import pytest
 from pydantic import TypeAdapter
 
 from toolang.base.types.message import Message
+from toolang.base.types.model import (
+    ModelParameters,
+    ModelRequest,
+    ReasoningParameters,
+)
+from toolang.base.types.policy import AgentCeiling, RunLimits, RunPolicy
 from toolang.execution.events import (
     RunBegin,
     RunEnd,
@@ -29,9 +35,10 @@ from toolang.execution.schemas import (
     RunControlRefData,
     RunDetail,
     RunRequest,
+    RunnableRequest,
 )
 from toolang.execution.types import ControlRef, Local, RunOverride, StepPath
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import NamedInputSource, RunnableInputRaw
 
 
 _DETAIL_ADAPTER = TypeAdapter(RunDetail)
@@ -75,18 +82,20 @@ class _Transport:
 
 def _request() -> RunRequest:
     return RunRequest(
-        thread="term_test",
-        commands=(RunOverride("limit", "cost", Decimal("2.50")),),
-        input=RunnableInputRaw(
-            primary="hello",
-            named=(("tone", "brief"),),
-        ),
-        session_commands=(
-            RunOverride("allow", "models", ("openai/*",)),
-            RunOverride("default", "runnable", "agic:chat"),
-        ),
-        runnable_fallbacks=("agic:chat", "default"),
+        thread_id="term_test",
         request_id="term_request",
+        runnable=RunnableRequest(
+            "agic:chat",
+            RunnableInputRaw(
+                _="hello",
+                named=(NamedInputSource("tone", "brief"),),
+            ),
+        ),
+        model=ModelRequest("openai/gpt-5"),
+        policy=RunPolicy(
+            allow=(AgentCeiling(models=("openai/*",)),),
+            limits=RunLimits(cost=Decimal("2.50")),
+        ),
     )
 
 
@@ -219,26 +228,35 @@ def test_remote_client_runs_traces_and_waits_for_detail() -> None:
             "POST",
             "http://runtime.test/api/v1/runs/authored/stream",
             {
-                "thread": "term_test",
+                "thread_id": "term_test",
                 "request_id": "term_request",
-                "commands": [{"group": "limit", "field": "cost", "value": "2.50"}],
-                "input": {
-                    "primary": "hello",
-                    "named": [{"name": "tone", "source": "brief"}],
+                "runnable": {
+                    "ref": "agic:chat",
+                    "input": {
+                        "_": "hello",
+                        "named": [{"name": "tone", "source": "brief"}],
+                    },
                 },
-                "session_commands": [
-                    {
-                        "group": "allow",
-                        "field": "models",
-                        "value": ["openai/*"],
+                "model": {
+                    "ref": "openai/gpt-5",
+                    "parameters": {"reasoning": None},
+                },
+                "policy": {
+                    "allow": [
+                        {
+                            "models": ["openai/*"],
+                            "tools": None,
+                            "caps": None,
+                        }
+                    ],
+                    "limits": {
+                        "agic_model_calls": 200,
+                        "agic_tool_calls": None,
+                        "tokens": None,
+                        "cost": "2.50",
+                        "time": None,
                     },
-                    {
-                        "group": "default",
-                        "field": "runnable",
-                        "value": "agic:chat",
-                    },
-                ],
-                "runnable_fallbacks": ["agic:chat", "default"],
+                },
             },
         )
 
@@ -288,6 +306,10 @@ def test_remote_client_reuses_the_run_stream_protocol_for_restarts(
                 source="run_source",
                 commands=(RunOverride("limit", "time", 30),),
                 request_id="rerun_request",
+                model=ModelRequest(
+                    "openai/gpt-5",
+                    ModelParameters(ReasoningParameters("high")),
+                ),
             )
         )
 
@@ -301,7 +323,7 @@ def test_remote_client_reuses_the_run_stream_protocol_for_restarts(
         detail = await handle.wait()
         assert await handle.wait() == detail
 
-        expected_payload = {
+        expected_payload: dict[str, object] = {
             "request_id": f"{operation}_request",
             "commands": [
                 {
@@ -313,6 +335,11 @@ def test_remote_client_reuses_the_run_stream_protocol_for_restarts(
         }
         if operation == "retry":
             expected_payload["anchor"] = "run_source.1.2"
+        else:
+            expected_payload["model"] = {
+                "ref": "openai/gpt-5",
+                "parameters": {"reasoning": {"effort": "high"}},
+            }
         assert handle.run_id == detail.id == accepted_id
         assert [event.type for event in tracer.events] == ["run_begin", "run_end"]
         assert detail_reads == 2

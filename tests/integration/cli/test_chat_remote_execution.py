@@ -69,7 +69,7 @@ agic chat(_: Part[]) -> Part[]:
     errors: list[str] = []
 
     try:
-        assert session.list_models()["default"] == "test/scripted[test]"
+        assert session.list_models()["default"] == "test/scripted"
         assert session.list_runnables("runnable")["default"] == "agic:chat"
         thread_id = session.create_thread()
         session.run(

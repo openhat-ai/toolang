@@ -7,11 +7,27 @@ import pytest
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import Message, TextPart
+from toolang.base.types.model import (
+    ModelParameters,
+    ModelRequest,
+    ReasoningParameters,
+)
 from toolang.base.types.run import ModelCallResult
-from toolang.base.types.policy import RunBindings
-from toolang.execution.calls import parse_call, resolve_spec
+from toolang.base.types.policy import RunBindings, RunPolicy
+from toolang.execution.calls import (
+    parse_call,
+    resolve_restart_request,
+    resolve_run_request,
+    resolve_spec,
+)
+from toolang.execution.schemas import (
+    RerunRequest,
+    RetryRequest,
+    RunRequest,
+    RunnableRequest,
+)
 from toolang.execution.types import RunOverride, ThreadPrefix
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import NamedInputSource, NamedInputSources, RunnableInputRaw
 from toolang.lang.types import Array
 from tests.support.execution_harness import ExecutionHarness
 
@@ -26,6 +42,114 @@ agic review(_: Part[], count: Number):
 agic bound(_: Part[]):
   {{_}}
 """
+
+
+def test_restart_resolution_preserves_model_unless_rerun_replaces_it(
+    tmp_path,
+) -> None:
+    harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
+    explicit = ModelRequest(
+        "test/scripted",
+        ModelParameters(ReasoningParameters("high")),
+    )
+    try:
+        preserved = resolve_restart_request(
+            RerunRequest("run_source", (), "rerun_preserved"),
+            setup=harness.setup,
+            state=harness.state,
+        )
+        replaced = resolve_restart_request(
+            RerunRequest("run_source", (), "rerun_replaced", model=explicit),
+            setup=harness.setup,
+            state=harness.state,
+        )
+        legacy = resolve_restart_request(
+            RerunRequest(
+                "run_source",
+                (RunOverride("default", "model", "test/scripted"),),
+                "rerun_legacy",
+            ),
+            setup=harness.setup,
+            state=harness.state,
+        )
+
+        assert preserved.model is None
+        assert replaced.model == explicit
+        assert legacy.model == ModelRequest("test/scripted")
+        with pytest.raises(ValueError, match="retry request cannot replace"):
+            RetryRequest(
+                "run_source",
+                (RunOverride("default", "model", "test/scripted"),),
+                "retry_replacement",
+            )
+    finally:
+        harness.store.close()
+
+
+def test_materialized_agic_request_requires_a_model(tmp_path) -> None:
+    harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
+    try:
+        with pytest.raises(ValueError, match="requires a model"):
+            resolve_run_request(
+                RunRequest(
+                    thread_id="term_test",
+                    request_id="request_without_model",
+                    runnable=RunnableRequest(
+                        "agic:default",
+                        RunnableInputRaw(_="hello"),
+                    ),
+                    model=None,
+                    policy=RunPolicy(),
+                ),
+                setup=harness.setup,
+                state=harness.state,
+            )
+    finally:
+        harness.store.close()
+
+
+def test_materialized_request_rejects_a_model_selector(tmp_path) -> None:
+    harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
+    try:
+        with pytest.raises(ValueError, match="model ref must be exact"):
+            resolve_run_request(
+                RunRequest(
+                    thread_id="term_test",
+                    request_id="request_with_selector",
+                    runnable=RunnableRequest(
+                        "agic:default",
+                        RunnableInputRaw(_="hello"),
+                    ),
+                    model=ModelRequest("scripted"),
+                    policy=RunPolicy(),
+                ),
+                setup=harness.setup,
+                state=harness.state,
+            )
+    finally:
+        harness.store.close()
+
+
+def test_materialized_request_rejects_an_unqualified_runnable(tmp_path) -> None:
+    harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
+    try:
+        with pytest.raises(ValueError, match="kind-qualified runnable"):
+            resolve_run_request(
+                RunRequest(
+                    thread_id="term_test",
+                    request_id="request_with_selector",
+                    runnable=RunnableRequest(
+                        "default",
+                        RunnableInputRaw(_="hello"),
+                    ),
+                    model=ModelRequest("test/scripted"),
+                    policy=RunPolicy(),
+                ),
+                setup=harness.setup,
+                state=harness.state,
+            )
+    finally:
+        harness.store.close()
 
 
 def test_root_runnable_selector_is_removed_from_current_model_input(tmp_path) -> None:
@@ -187,7 +311,7 @@ agic default(_: Part[]):
             "Part[]", (TextPart("security inspect this"),)
         )
         assert spec.authored_input == RunnableInputRaw(
-            primary="$review focus=security -- inspect this"
+            _="$review focus=security -- inspect this"
         )
         assert spec.authored_commands == (RunOverride("limit", "time", 30),)
         assert len(spec.prompt_invocations) == 1
@@ -239,7 +363,7 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
         *,
         surface: RunBindings = RunBindings(),
         session: tuple[RunOverride, ...] = (),
-        named: tuple[tuple[str, str], ...] = (),
+        named: NamedInputSources = (),
     ):
         commands, input = parse_call(source)
         return resolve_spec(
@@ -259,7 +383,7 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
         session = resolve(
             "Input",
             session=(RunOverride("default", "runnable", "agic:review"),),
-            named=(("count", "2"),),
+            named=(NamedInputSource("count", "2"),),
         )
         authored = resolve(
             ":agic default\nInput",
@@ -291,17 +415,15 @@ def test_invalid_explicit_model_is_rejected_before_run_persistence(tmp_path) -> 
     async def scenario() -> None:
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
         commands, input = parse_call(":model missing\nInput")
-        spec = resolve_spec(
-            commands,
-            input,
-            setup=harness.setup,
-            state=harness.state,
-            thread=thread,
-            default_runnable="default",
-        )
-
         with pytest.raises(ToolangError, match="model"):
-            harness.executor.run(spec)
+            resolve_spec(
+                commands,
+                input,
+                setup=harness.setup,
+                state=harness.state,
+                thread=thread,
+                default_runnable="default",
+            )
 
         assert not harness.store.list_runs(thread_id=thread, limit=None)
 
