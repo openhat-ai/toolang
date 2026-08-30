@@ -116,7 +116,10 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
         cont={"cursor": "next"},
     )
 
-    renderables = inspect_commands._model_call_renderables(model_call_to_data(call))
+    renderables = inspect_commands._model_call_renderables(
+        model_call_to_data(call),
+        section_width=64,
+    )
     by_text = {renderable.plain: renderable for renderable in renderables}
     output = "\n".join(renderable.plain for renderable in renderables)
     output_lines = output.splitlines()
@@ -136,7 +139,7 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
         "[0] inspect.run(run_id: string, include?: string[], limit?: integer | null)"
     )
     assert signature in output
-    assert "Continuation\n============\n\ncursor: next" in output
+    assert f"Continuation\n{'=' * 64}\n\ncursor: next" in output
     assert '"messages":' not in output
     assert by_text["[0] user"].style == "dim"
     assert by_text["[1] assistant"].style == "dim"
@@ -153,8 +156,8 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
             for index, renderable in enumerate(renderables)
             if renderable.plain == title
         )
-        assert renderables[title_index + 1].plain == "=" * len(title)
-        assert renderables[title_index + 1].style == "dim"
+        assert renderables[title_index + 1].plain == "=" * 64
+        assert renderables[title_index + 1].style == ""
     assert all(renderable.plain != "Model Call" for renderable in renderables)
     for line in (
         "[0] user",

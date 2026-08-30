@@ -126,7 +126,10 @@ def _project_model_call(store: RunStore, source: _InspectSubject) -> object:
 
 
 def _render_model_call(console: Console, value: object) -> None:
-    for renderable in _model_call_renderables(value):
+    for renderable in _model_call_renderables(
+        value,
+        section_width=max(1, console.width - 1),
+    ):
         console.print(renderable, soft_wrap=True)
 
 
@@ -436,13 +439,17 @@ def _render_projection(
     )
 
 
-def _model_call_renderables(value: object) -> tuple[Text, ...]:
+def _model_call_renderables(
+    value: object,
+    *,
+    section_width: int = 79,
+) -> tuple[Text, ...]:
     if not isinstance(value, Mapping):  # pragma: no cover - projector is canonical
         raise TypeError("model-call projector returned a non-object value")
     data = cast(Mapping[str, object], value)
 
     lines: list[Text] = []
-    _append_model_call_section(lines, "Instructions")
+    _append_model_call_section(lines, "Instructions", width=section_width)
     instructions = data.get("instructions")
     lines.append(
         Text(instructions)
@@ -455,6 +462,7 @@ def _model_call_renderables(value: object) -> tuple[Text, ...]:
     _append_model_call_section(
         lines,
         f"Conversation · {message_count} {_counted('message', message_count)}",
+        width=section_width,
     )
     if isinstance(messages, list) and messages:
         for index, message in enumerate(messages):
@@ -485,6 +493,7 @@ def _model_call_renderables(value: object) -> tuple[Text, ...]:
     _append_model_call_section(
         lines,
         f"Available Tools · {tool_count} {_counted('tool', tool_count)}",
+        width=section_width,
     )
     if isinstance(tools, list) and tools:
         for index, tool in enumerate(tools):
@@ -510,7 +519,7 @@ def _model_call_renderables(value: object) -> tuple[Text, ...]:
     else:
         lines.append(Text("No available tools.", style="dim italic"))
 
-    _append_model_call_section(lines, "Continuation")
+    _append_model_call_section(lines, "Continuation", width=section_width)
     continuation = data.get("cont")
     if continuation is None:
         lines.append(Text("No continuation data.", style="dim italic"))
@@ -519,13 +528,18 @@ def _model_call_renderables(value: object) -> tuple[Text, ...]:
     return tuple(lines)
 
 
-def _append_model_call_section(lines: list[Text], title: str) -> None:
+def _append_model_call_section(
+    lines: list[Text],
+    title: str,
+    *,
+    width: int,
+) -> None:
     if lines:
         lines.append(Text())
     lines.extend(
         (
             Text(title, style="bold"),
-            Text("=" * cell_len(title), style="dim"),
+            Text("=" * max(cell_len(title), width)),
             Text(),
         )
     )
