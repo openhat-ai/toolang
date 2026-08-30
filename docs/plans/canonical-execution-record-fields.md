@@ -1,5 +1,10 @@
 # Canonical Execution Record Fields
 
+## Status
+
+Approved for implementation on 2026-08-30. This pull request defines behavior
+only; implementation remains a separate change.
+
 ## Goal
 
 Make durable execution records use concise, uniform identity and occurrence
