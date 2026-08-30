@@ -60,6 +60,8 @@ def test_cli_command_registry_matches_the_typer_surface() -> None:
         ("retry", {"before"}, {"resident", "roaming", "visiting"}),
         ("task", {"before"}, {"resident"}),
         ("skill", {"none", "before"}, {"resident"}),
+        ("catalogs", {"none"}, set()),
+        ("toolsets", {"none"}, set()),
     ),
 )
 def test_cli_command_registry_declares_target_grammar(
@@ -185,14 +187,14 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "fork",
         ),
         "Inspection Commands": (
-            "threads",
-            "runs",
             "inspect",
             "caps",
             "models",
             "providers",
-            "adapters",
             "tools",
+            "catalogs",
+            "adapters",
+            "toolsets",
             "sandboxes",
         ),
     }
@@ -210,16 +212,25 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
         } == {panel}
 
 
-def test_cli_removes_singular_resources_and_hides_channels() -> None:
+def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
     group = typer.main.get_command(cli.app)
+    expected_help = {
+        "inspect": "Inspect execution subjects.",
+        "caps": "List caps.",
+        "models": "List models.",
+        "providers": "List model providers.",
+        "tools": "List tools.",
+        "catalogs": "List installed model catalogs.",
+        "adapters": "List installed model adapters.",
+        "toolsets": "List installed toolsets.",
+        "sandboxes": "List installed sandboxes.",
+    }
 
     assert isinstance(group, click.Group)
-    assert {"model", "tool", "sandbox"}.isdisjoint(group.commands)
-    assert {"models", "tools", "sandboxes", "caps"} <= set(group.commands)
-    assert group.commands["models"].help == "Inspect models."
-    assert group.commands["caps"].help == "Inspect caps."
-    assert group.commands["tools"].help == "Inspect installed tools."
-    assert group.commands["sandboxes"].help == "Inspect installed sandboxes."
+    removed = {"threads", "runs", "model", "tool", "catalog", "toolset", "sandbox"}
+    assert removed.isdisjoint(group.commands)
+    assert expected_help.keys() <= group.commands.keys()
+    assert {name: group.commands[name].help for name in expected_help} == expected_help
     assert group.commands["channel"].hidden
 
 
@@ -330,6 +341,11 @@ def test_cli_command_name_wins_without_explicit_agent_prefix() -> None:
             ),
         ),
         (["retry"], {"retry"}, None),
+        (
+            ["threads"],
+            {"threads"},
+            TargetHelp(selector="threads", label="threads", placement="resident"),
+        ),
         (["unknown"], set(), None),
     ),
 )
@@ -515,12 +531,14 @@ def test_cli_prefix_agent_context_is_isolated_between_threads(
     assert cli._PREFIX_AGENT.get() is None
 
 
+@pytest.mark.parametrize("runnable", ("demo", "threads", "runs"))
 def test_cli_routes_local_script_to_script_command(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    runnable: str,
 ) -> None:
     source = tmp_path / "demo.too"
-    source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
+    source.write_text(f"agic {runnable}:\n  Reply directly.\n", encoding="utf-8")
     captured: dict[str, object] = {}
 
     def fake_dispatch(
@@ -539,7 +557,7 @@ def test_cli_routes_local_script_to_script_command(
     monkeypatch.setattr(script, "dispatch", fake_dispatch)
 
     result = dispatch_roaming(
-        [str(source), "demo", "--help"],
+        [str(source), runnable, "--help"],
         prog_name="too",
         run_app=lambda *_args: pytest.fail("Typer app should not run"),
     )
@@ -547,7 +565,7 @@ def test_cli_routes_local_script_to_script_command(
     assert result == 7
     assert captured == {
         "global_args": [],
-        "argv": [str(source), "demo", "--help"],
+        "argv": [str(source), runnable, "--help"],
         "prog_name": "too",
     }
 
@@ -558,8 +576,6 @@ def test_cli_routes_local_script_to_script_command(
         ["info"],
         ["chat"],
         ["chat", "term_1"],
-        ["threads"],
-        ["runs", "--thread", "script_1"],
         ["inspect", "run_1"],
         ["steer", "run_1", "change direction"],
         ["retry", "run_1"],
@@ -805,6 +821,18 @@ def test_cli_routes_visiting_inspect_without_materialization(
         "args": ["inspect", "run_1"],
         "layout": layout,
     }
+
+
+@pytest.mark.parametrize("command", ("threads", "runs"))
+def test_cli_does_not_route_removed_history_commands_for_visiting(
+    command: str,
+) -> None:
+    result = dispatch_visiting(
+        ["brice/researcher", command],
+        run_app=lambda *_args: pytest.fail("removed command must not be routed"),
+    )
+
+    assert result is None
 
 
 def test_cli_routes_command_before_visiting_info_through_materialization(

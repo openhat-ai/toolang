@@ -75,14 +75,14 @@ _CONTROL_PANEL_COMMAND_ORDER = (
     "fork",
 )
 _INSPECTION_PANEL_COMMAND_ORDER = (
-    "threads",
-    "runs",
     "inspect",
     "caps",
     "models",
     "providers",
-    "adapters",
     "tools",
+    "catalogs",
+    "adapters",
+    "toolsets",
     "sandboxes",
 )
 _VISIBLE_COMMAND_ORDER = (
@@ -283,18 +283,6 @@ _registered_command(
     rich_help_panel=CONTROL_COMMAND_PANEL,
 )(chat_commands.chat_command)
 _registered_command(
-    "threads",
-    help="List threads.",
-    cls=RequiredPrefixAgentCommand,
-    rich_help_panel=INSPECTION_COMMAND_PANEL,
-)(thread_commands.threads_command)
-_registered_command(
-    "runs",
-    help="List runs.",
-    cls=RequiredPrefixAgentCommand,
-    rich_help_panel=INSPECTION_COMMAND_PANEL,
-)(thread_commands.runs_command)
-_registered_command(
     "inspect",
     help="Inspect execution subjects.",
     no_args_is_help=True,
@@ -346,19 +334,14 @@ _registered_command(
 
 _registered_command(
     "models",
-    help="Inspect models.",
+    help="List models.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )(model_catalog_commands.models_command)
 _registered_command(
     "providers",
-    help="Inspect model providers.",
+    help="List model providers.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )(model_catalog_commands.providers_command)
-_registered_command(
-    "adapters",
-    help="Inspect installed model adapters.",
-    rich_help_panel=INSPECTION_COMMAND_PANEL,
-)(model_catalog_commands.adapters_command)
 _registered_group(
     plugin_commands.channel_app,
     name="channel",
@@ -367,12 +350,27 @@ _registered_group(
 )
 _registered_command(
     "tools",
-    help="Inspect installed tools.",
+    help="List tools.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )(plugin_commands.list_tools)
 _registered_command(
+    "catalogs",
+    help="List installed model catalogs.",
+    rich_help_panel=INSPECTION_COMMAND_PANEL,
+)(plugin_commands.list_catalogs)
+_registered_command(
+    "adapters",
+    help="List installed model adapters.",
+    rich_help_panel=INSPECTION_COMMAND_PANEL,
+)(model_catalog_commands.adapters_command)
+_registered_command(
+    "toolsets",
+    help="List installed toolsets.",
+    rich_help_panel=INSPECTION_COMMAND_PANEL,
+)(plugin_commands.list_toolsets)
+_registered_command(
     "sandboxes",
-    help="Inspect installed sandboxes.",
+    help="List installed sandboxes.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )(plugin_commands.list_sandboxes)
 
@@ -403,7 +401,7 @@ _registered_group(
 )
 _registered_command(
     "caps",
-    help="Inspect caps.",
+    help="List caps.",
     cls=OptionalPrefixAgentListCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )(cap_commands.list_caps)

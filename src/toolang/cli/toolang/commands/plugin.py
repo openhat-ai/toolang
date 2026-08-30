@@ -1,4 +1,4 @@
-"""Tool, channel, and sandbox inspection commands."""
+"""Tool and installed-plugin listing commands."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from toolang.setup import AgentSetup, SetupWatcher
 from toolang.plugin.loading import list_plugin_infos
 
 channel_app = typer.Typer(
-    help="Inspect available channels.",
+    help="List available channels.",
     add_completion=False,
     no_args_is_help=True,
     pretty_exceptions_enable=False,
@@ -59,19 +59,43 @@ def list_tools(
 
 @channel_app.command("list", help="List installed channels.")
 def list_channels() -> None:
-    rows = plugin_info_rows("toolang.channel")
-    if not rows:
-        typer.echo("No channels found.")
-        return
-    echo_table(("CHANNEL", "SOURCE"), rows)
+    _list_plugins(
+        group="toolang.channel",
+        header="CHANNEL",
+        empty_message="No channels found.",
+    )
+
+
+def list_catalogs() -> None:
+    _list_plugins(
+        group="toolang.model_catalog",
+        header="CATALOG",
+        empty_message="No catalogs found.",
+    )
+
+
+def list_toolsets() -> None:
+    _list_plugins(
+        group="toolang.toolset",
+        header="TOOLSET",
+        empty_message="No toolsets found.",
+    )
 
 
 def list_sandboxes() -> None:
-    rows = plugin_info_rows("toolang.sandbox")
+    _list_plugins(
+        group="toolang.sandbox",
+        header="SANDBOX",
+        empty_message="No sandboxes found.",
+    )
+
+
+def _list_plugins(*, group: str, header: str, empty_message: str) -> None:
+    rows = plugin_info_rows(group)
     if not rows:
-        typer.echo("No sandboxes found.")
+        typer.echo(empty_message)
         return
-    echo_table(("SANDBOX", "SOURCE"), rows)
+    echo_table((header, "SOURCE"), rows)
 
 
 def model_rows(

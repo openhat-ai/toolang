@@ -94,8 +94,10 @@ toolang stop <agent>                 # Stop a running agent
 # Inspection
 toolang models                       # List model catalog entries and availability
 toolang providers                    # List catalog providers
+toolang tools                        # List tools
+toolang catalogs                     # List installed model catalogs
 toolang adapters                     # List installed model adapters
-toolang tools                        # List installed tools
+toolang toolsets                     # List installed toolsets
 toolang sandboxes                    # List installed sandboxes
 
 # Caps
