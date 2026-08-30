@@ -57,8 +57,8 @@ def _policy_candidates() -> tuple[_Candidate, ...]:
         *(
             _Candidate(
                 f":allow {field}=",
-                f":allow {field}=SELECTORS",
-                "Restrict one resource domain.",
+                f":allow {field}=QUERY",
+                "Restrict one resource collection.",
             )
             for field in sorted(ALLOW_POLICY_FIELDS)
         ),
@@ -80,7 +80,7 @@ def _policy_candidates() -> tuple[_Candidate, ...]:
         ),
     ]
     candidates.extend(
-        _Candidate(f":{field} ", f":{field} SELECTORS", "Restrict resources.")
+        _Candidate(f":{field} ", f":{field} QUERY", "Restrict resources.")
         for field in sorted(ALLOW_POLICY_FIELDS)
     )
     candidates.extend(

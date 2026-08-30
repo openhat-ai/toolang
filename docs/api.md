@@ -242,7 +242,7 @@ Behavior:
   directory selects its newest Toolang wheel recursively
 - `--default model=REF` supplies one exact invocation model binding
 - `--limit FIELD=VALUE` overrides one run-limit field; it may be repeated
-- `--allow DOMAIN=QUERY` sets one of `models`, `tools`, `psyches`, `skills`,
+- `--allow COLLECTION=QUERY` sets one of `models`, `tools`, `psyches`, `skills`,
   `services`, or `prompts` and may be repeated
 - host execution remains embedded when no AgentServer is active; a selected
   non-host sandbox starts a temporary AgentServer and cleans it up after the run
@@ -507,7 +507,7 @@ each action and outcome as an append-only plain-text line. The stable
 `Agent NAME running: ...` and `Agent NAME started: ...` result lines are written
 only after readiness succeeds.
 
-Both commands accept repeatable `--allow DOMAIN=QUERY`,
+Both commands accept repeatable `--allow COLLECTION=QUERY`,
 `--limit FIELD=VALUE`, and `--default FIELD=VALUE` options. The CLI parses these
 with `TOOLANG_ALLOW_*`, `TOOLANG_DEFAULT_*`, and `TOOLANG_LIMIT_*` into frozen
 field overrides passed to `SetupWatcher`.
@@ -985,7 +985,7 @@ that needs another presentation shape adapts these events client-side; the API
 does not maintain a second chat event vocabulary.
 
 The CLI command for interactive chat is `toolang <agent> chat [thread]
-[--sandbox <selector>] [--allow DOMAIN=QUERY] [--limit FIELD=VALUE]
+[--sandbox <selector>] [--allow COLLECTION=QUERY] [--limit FIELD=VALUE]
 [--default FIELD=VALUE]`.
 Without a thread id, the TUI creates a terminal chat thread on first input. With
 a thread id, it continues that thread. A stopped resident, roaming agent, or

@@ -240,6 +240,9 @@ def test_resolver_applies_advertised_mode_request_and_keeps_control_metadata() -
         name="One",
         reasoning=True,
         structured_output=True,
+        open_weights=False,
+        release_date="2026-01-01",
+        last_updated="2026-08-30",
         reasoning_options=({"type": "effort", "values": ["low", "high"]},),
         experimental={
             "modes": {
@@ -276,6 +279,9 @@ def test_resolver_applies_advertised_mode_request_and_keeps_control_metadata() -
 
     target = resolve_unique_model_query(resolver, query="*[alias=fast-one]")
 
+    assert info.metadata["open_weights"] is False
+    assert info.metadata["release_date"] == "2026-01-01"
+    assert info.metadata["last_updated"] == "2026-08-30"
     assert target.mode == "fast"
     assert target.reasoning == {"effort": "high"}
     assert target.structured_output is True

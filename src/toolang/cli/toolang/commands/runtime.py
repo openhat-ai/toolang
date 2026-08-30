@@ -277,7 +277,7 @@ def run(
     ] = None,
     allows: Annotated[
         list[str] | None,
-        typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
+        typer.Option("--allow", help="Set COLLECTION=QUERY. Repeat by collection."),
     ] = None,
     limits: Annotated[
         list[str] | None,
@@ -419,7 +419,7 @@ def start(
     ] = None,
     allows: Annotated[
         list[str] | None,
-        typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
+        typer.Option("--allow", help="Set COLLECTION=QUERY. Repeat by collection."),
     ] = None,
     limits: Annotated[
         list[str] | None,
@@ -572,7 +572,7 @@ def serve(
     port: Annotated[int, typer.Option(help="API bind port.")] = 7001,
     allows: Annotated[
         list[str] | None,
-        typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
+        typer.Option("--allow", help="Set COLLECTION=QUERY. Repeat by collection."),
     ] = None,
     limits: Annotated[
         list[str] | None,

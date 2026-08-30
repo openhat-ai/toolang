@@ -30,10 +30,10 @@ def _cap(kind: EntryKind, name: str) -> StateCap:
 
 def test_cap_query_fans_out_over_four_base_collections() -> None:
     entries = (
-        _cap("psyche", "reviewer"),
-        _cap("skill", "reviewer"),
-        _cap("service", "github"),
         _cap("prompt", "summary"),
+        _cap("psyche", "reviewer"),
+        _cap("service", "github"),
+        _cap("skill", "reviewer"),
     )
 
     qualified = query_cap_views(
@@ -58,10 +58,28 @@ def test_cap_query_fans_out_over_four_base_collections() -> None:
         ("skill", "reviewer"),
     ]
     assert [(item.kind, item.name) for item in predicate] == [
-        ("psyche", "reviewer"),
-        ("skill", "reviewer"),
-        ("service", "github"),
         ("prompt", "summary"),
+        ("psyche", "reviewer"),
+        ("service", "github"),
+        ("skill", "reviewer"),
+    ]
+
+
+def test_combined_caps_without_a_query_preserves_aggregate_order() -> None:
+    entries = (
+        _cap("prompt", "summary"),
+        _cap("psyche", "calm"),
+        _cap("service", "github"),
+        _cap("skill", "reviewer"),
+    )
+
+    views = query_cap_views(entries, agent_name="default", queries=None)
+
+    assert [(item.kind, item.name) for item in views] == [
+        ("prompt", "summary"),
+        ("psyche", "calm"),
+        ("service", "github"),
+        ("skill", "reviewer"),
     ]
 
 

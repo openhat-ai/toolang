@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from datetime import date
 from decimal import Decimal
 from typing import Protocol, cast
 
@@ -186,7 +187,8 @@ def resolve_unique_model_query(
     selected = matches[0]
     _require_allowed(
         selected.target,
-        query=query,
+        value=query,
+        label="models query",
         allowed=_resolve_allowed_targets(
             allowed_queries,
             providers=context.providers,
@@ -247,7 +249,8 @@ def resolve_model_request(
     target = matches[0].target
     _require_allowed(
         target,
-        query=ref,
+        value=ref,
+        label="model ref",
         allowed=_resolve_allowed_targets(
             allowed_queries,
             providers=context.providers,
@@ -457,7 +460,7 @@ def _resolve_first_unique_query(
             continue
         if len(matches) > 1:
             joined = ", ".join(item.exact_query for item in matches)
-            raise ToolangError(f"model query is ambiguous: {query} (matches {joined})")
+            raise ToolangError(f"models query is ambiguous: {query} (matches {joined})")
         return matches[0]
     return None
 
@@ -729,8 +732,8 @@ def _candidate_view(candidate: _Candidate) -> ModelQueryView:
         structured_output=target.structured_output,
         open_weights=_metadata_bool(metadata, "open_weights"),
         status=_metadata_text(metadata, "status"),
-        release_date=None,
-        last_updated=None,
+        release_date=_metadata_date(metadata, "release_date"),
+        last_updated=_metadata_date(metadata, "last_updated"),
         modalities=ModelModalitiesView(
             input=_string_values(input_modalities),
             output=_string_values(output_modalities),
@@ -1131,6 +1134,11 @@ def _metadata_bool(metadata: Mapping[str, object], key: str) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
+def _metadata_date(metadata: Mapping[str, object], key: str) -> date | None:
+    value = _metadata_text(metadata, key)
+    return date.fromisoformat(value) if value is not None else None
+
+
 def _validate_reasoning_request(
     request: Mapping[str, object],
     *,
@@ -1198,7 +1206,8 @@ def _validate_reasoning_request(
 def _require_allowed(
     target: ModelTarget,
     *,
-    query: str,
+    value: str,
+    label: str,
     allowed: Sequence[ModelTarget] | None,
 ) -> None:
     if allowed is None:
@@ -1209,8 +1218,7 @@ def _require_allowed(
         ", ".join(f"{item.ref}[{item.provider}]" for item in allowed) or "none"
     )
     raise ToolangError(
-        f"model query is outside the current resources: {query} "
-        f"(allowed: {allowed_text})"
+        f"{label} is outside the current resources: {value} (allowed: {allowed_text})"
     )
 
 

@@ -105,11 +105,18 @@ def query_cap_views(
 ) -> tuple[CapQueryView, ...]:
     """Query the stable union of the four concrete cap collections."""
 
-    selected: list[CapQueryView] = []
+    views = tuple(_cap_view(entry, agent_name=agent_name) for entry in entries)
+    selected_keys: set[tuple[EntryKind, str, str]] = set()
     for kind in _COLLECTION_BY_KIND:
-        dataset = cap_dataset(entries, agent_name=agent_name, kind=kind)
-        selected.extend(dataset.query(queries))
-    return tuple(selected)
+        dataset = cap_kind_definition(kind).dataset(
+            tuple(view for view in views if view.kind == kind)
+        )
+        selected_keys.update(
+            (view.kind, view.name, view.ref) for view in dataset.query(queries)
+        )
+    return tuple(
+        view for view in views if (view.kind, view.name, view.ref) in selected_keys
+    )
 
 
 def cap_table(

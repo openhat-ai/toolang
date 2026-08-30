@@ -37,7 +37,7 @@ def chat_command(
     ] = None,
     allows: Annotated[
         list[str] | None,
-        typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
+        typer.Option("--allow", help="Set COLLECTION=QUERY. Repeat by collection."),
     ] = None,
     limits: Annotated[
         list[str] | None,

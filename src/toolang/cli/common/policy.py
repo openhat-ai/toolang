@@ -32,9 +32,19 @@ def resolve_ceiling_overrides(
 ) -> dict[str, tuple[str, ...] | None]:
     """Resolve frozen environment and CLI allow-list overrides."""
 
+    environment_fields = {
+        f"TOOLANG_ALLOW_{name.upper()}": name for name in _ALLOW_FIELDS
+    }
+    unknown = sorted(
+        name.removeprefix("TOOLANG_ALLOW_").lower()
+        for name in environ
+        if name.startswith("TOOLANG_ALLOW_") and name not in environment_fields
+    )
+    if unknown:
+        raise ValueError(f"unknown allow field: {', '.join(unknown)}")
     resolved: dict[str, tuple[str, ...] | None] = {}
-    for name in _ALLOW_FIELDS:
-        raw = environ.get(f"TOOLANG_ALLOW_{name.upper()}")
+    for environment_name, name in environment_fields.items():
+        raw = environ.get(environment_name)
         if raw is not None:
             resolved[name] = _parse_allow_value(name, raw, source="environment")
     resolved.update(_parse_allow_options(options or ()))

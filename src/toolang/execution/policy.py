@@ -206,18 +206,18 @@ def _default_shortcut(
     name: str,
     values: list[str],
 ) -> tuple[RunOverride, NamedInputSources]:
-    selector = values[0]
+    target = values[0]
     if name == "model":
         if len(values) != 1:
             raise ValueError(":model accepts no named inputs")
-        value = None if selector == "default" else _default_value("model", selector)
+        value = None if target == "default" else _default_value("model", target)
         return RunOverride("default", "model", value), ()
 
-    if selector == "default":
+    if target == "default":
         if len(values) != 1:
             raise ValueError(f":{name} default accepts no named inputs")
         return RunOverride("default", "runnable", None), ()
-    runnable = f"{name}:{selector}" if name in {"agic", "flow"} else selector
+    runnable = f"{name}:{target}" if name in {"agic", "flow"} else target
     command = RunOverride(
         "default",
         "runnable",

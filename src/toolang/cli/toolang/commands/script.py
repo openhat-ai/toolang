@@ -223,7 +223,7 @@ def _runnable_command(
             type=str,
             multiple=True,
             default=(),
-            help="Set DOMAIN=SELECTORS. Repeat by domain.",
+            help="Set COLLECTION=QUERY. Repeat by collection.",
         ),
         TyperOption(
             param_decls=["--limit"],

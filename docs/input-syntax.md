@@ -42,7 +42,7 @@ constructs `RunSpec`.
 Canonical commands map directly to execution policy fields:
 
 ```text
-:allow DOMAIN=QUERIES
+:allow COLLECTION=QUERY
 :default FIELD=VALUE
 :limit FIELD=VALUE
 ```

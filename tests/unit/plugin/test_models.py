@@ -256,7 +256,12 @@ def test_model_query_groups_route_aliases_and_retains_catalog_fields() -> None:
                 model="gpt-5",
                 adapter="responses",
                 context_window=200_000,
-                metadata={"family": "gpt-5"},
+                metadata={
+                    "family": "gpt-5",
+                    "open_weights": False,
+                    "release_date": "2026-01-01",
+                    "last_updated": "2026-08-30",
+                },
             ),
         ),
     )
@@ -274,7 +279,11 @@ def test_model_query_groups_route_aliases_and_retains_catalog_fields() -> None:
     quick = resolve_unique_model_query(context, query="*[alias=quick]")
     queries = select_model_queries(
         context,
-        allowed_queries=("*[alias=quick;family=gpt-5;limit.context>=200000]",),
+        allowed_queries=(
+            "*[alias=quick;family=gpt-5;!open_weights;"
+            "release_date>=2026-01-01;last_updated=2026-08-30;"
+            "limit.context>=200000]",
+        ),
     )
 
     assert fast == quick
@@ -720,8 +729,16 @@ def test_model_resolution_rejects_query_outside_allowed_set() -> None:
             allowed_queries=("gpt-5[route.provider=openrouter]",),
         )
     message = str(exc.value)
+    assert message.startswith("models query is outside")
     assert "o3[route.provider=openrouter]" in message
     assert "allowed: openai/gpt-5[openrouter]" in message
+
+    with pytest.raises(ToolangError, match="model ref is outside"):
+        resolve_model_request(
+            context,
+            ref="openrouter/openai/o3",
+            allowed_queries=("gpt-5[route.provider=openrouter]",),
+        )
 
 
 def test_model_resolution_rejects_explicitly_empty_allowed_set() -> None:

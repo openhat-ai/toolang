@@ -34,11 +34,16 @@ def test_policy_options_overlay_environment_by_field() -> None:
 
 def test_policy_overrides_preserve_absent_empty_and_unrestricted() -> None:
     assert resolve_ceiling_overrides({}, ()) == {}
-    assert resolve_ceiling_overrides({"TOOLANG_ALLOW_CAPS": "review"}, ()) == {}
     assert resolve_ceiling_overrides({}, ("tools=none",)) == {"tools": ()}
     assert resolve_ceiling_overrides({}, ("tools=all",)) == {"tools": None}
     assert resolve_binding_overrides({}, ("model=none",)) == {"model": None}
     assert resolve_limit_overrides({}, ("time=none",)) == {"time": None}
+
+
+@pytest.mark.parametrize("field", ["CAPS", "CHANNELS"])
+def test_policy_overrides_reject_unknown_allow_environment_fields(field: str) -> None:
+    with pytest.raises(ValueError, match=f"unknown allow field: {field.lower()}"):
+        resolve_ceiling_overrides({f"TOOLANG_ALLOW_{field}": "*"}, ())
 
 
 @pytest.mark.parametrize(
