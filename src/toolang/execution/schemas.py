@@ -33,6 +33,7 @@ from .records import (
     ThreadPeer,
     ThreadRecord,
     stored_step_given_to_data,
+    step_noted_to_data,
     step_message_role,
 )
 from .types import (
@@ -123,6 +124,7 @@ def record_to_data(record: Record) -> dict[str, object]:
     )
     if isinstance(record, StepRecord):
         data["given"] = stored_step_given_to_data(record.kind, record.given)
+        data["noted"] = step_noted_to_data(record.kind, record.noted)
     if isinstance(record, RunRecord | StepRecord) and isinstance(record.error, Pointer):
         data["error"] = str(record.error)
     validate_field_names(data)

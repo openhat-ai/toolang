@@ -36,6 +36,10 @@ from toolang.base.types.run import (
 )
 from toolang.base.types.tool import ToolDefinition
 
+from ._structured_output import (
+    append_structured_output_directive,
+    openai_strict_object_schema,
+)
 from ._usage import billing_value, optional_int, reported_cost
 
 _ADAPTER_LOGGER = logging.getLogger(__name__)
@@ -287,6 +291,19 @@ def response_payload(
 ) -> dict[str, Any]:
     """Build one Responses API payload."""
 
+    native_schema = (
+        openai_strict_object_schema(request.structured_output)
+        if request.structured_output is not None
+        else None
+    )
+    instructions = (
+        append_structured_output_directive(
+            request.instructions,
+            request.structured_output,
+        )
+        if request.structured_output is not None and native_schema is None
+        else request.instructions
+    )
     continuation = dict(request.continuation or {})
     previous_response_id = (
         continuation.get("previous_response_id") if stateful else None
@@ -301,7 +318,7 @@ def response_payload(
     payload: dict[str, Any] = {
         "model": target.model,
         "input": response_input(
-            instructions=request.instructions,
+            instructions=instructions,
             messages=messages,
             include_instructions=not bool(previous_response_id),
             replay_tool_items=not stateful or bool(previous_response_id),
@@ -314,7 +331,11 @@ def response_payload(
     options = dict(target.options)
     if options:
         payload.update(options)
-    _apply_structured_output(payload, request.structured_output)
+    _apply_structured_output(
+        payload,
+        request.structured_output,
+        native_schema=native_schema,
+    )
     _apply_reasoning(payload, target.reasoning)
     return payload
 
@@ -322,6 +343,8 @@ def response_payload(
 def _apply_structured_output(
     payload: dict[str, Any],
     schema: dict[str, object] | None,
+    *,
+    native_schema: dict[str, object] | None,
 ) -> None:
     if schema is None:
         return
@@ -335,11 +358,13 @@ def _apply_structured_output(
         raise ToolangError(
             "Responses text format conflicts with normalized structured output"
         )
+    if native_schema is None:
+        return
     text["format"] = {
         "type": "json_schema",
         "name": "output",
         "strict": True,
-        "schema": dict(schema),
+        "schema": native_schema,
     }
     payload["text"] = text
 

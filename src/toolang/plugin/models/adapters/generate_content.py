@@ -36,6 +36,7 @@ from toolang.base.types.run import (
     ToolCall,
 )
 
+from ._structured_output import append_structured_output_directive
 from ._usage import billing_value, reported_cost
 
 
@@ -142,6 +143,21 @@ def generate_content_payload(
 ) -> dict[str, object]:
     """Encode one canonical request for Gemini Generate Content."""
 
+    native_schema = request.structured_output
+    if (
+        native_schema is not None
+        and request.tools
+        and not _supports_structured_output_with_tools(target.model)
+    ):
+        native_schema = None
+    instructions = (
+        append_structured_output_directive(
+            request.instructions,
+            request.structured_output,
+        )
+        if request.structured_output is not None and native_schema is None
+        else request.instructions
+    )
     options = dict(target.options)
     payload: dict[str, object] = {
         "contents": [
@@ -152,8 +168,8 @@ def generate_content_payload(
             for message in request.messages
         ],
     }
-    if request.instructions:
-        payload["systemInstruction"] = {"parts": [{"text": request.instructions}]}
+    if instructions:
+        payload["systemInstruction"] = {"parts": [{"text": instructions}]}
     if request.tools:
         payload["tools"] = [
             {
@@ -173,7 +189,11 @@ def generate_content_payload(
             payload["generationConfig"] = dict(generation)
         payload.update(options)
     _apply_reasoning(payload, target.reasoning)
-    _apply_structured_output(payload, request.structured_output)
+    _apply_structured_output(
+        payload,
+        request.structured_output,
+        native_schema=native_schema,
+    )
     return payload
 
 
@@ -482,6 +502,8 @@ def _merge_continuation(
 def _apply_structured_output(
     payload: dict[str, object],
     schema: dict[str, object] | None,
+    *,
+    native_schema: dict[str, object] | None,
 ) -> None:
     if schema is None:
         return
@@ -502,9 +524,16 @@ def _apply_structured_output(
         raise ToolangError(
             "Generate Content response format conflicts with normalized structured output"
         )
+    if native_schema is None:
+        return
     generation["responseMimeType"] = "application/json"
-    generation["responseJsonSchema"] = dict(schema)
+    generation["responseJsonSchema"] = dict(native_schema)
     payload["generationConfig"] = generation
+
+
+def _supports_structured_output_with_tools(model: str) -> bool:
+    model_name = model.rsplit("/", 1)[-1].lower()
+    return model_name.startswith("gemini-3")
 
 
 def _apply_reasoning(

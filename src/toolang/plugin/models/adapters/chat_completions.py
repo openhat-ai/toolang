@@ -36,6 +36,10 @@ from toolang.base.types.run import (
 )
 from toolang.base.types.tool import ToolDefinition
 
+from ._structured_output import (
+    append_structured_output_directive,
+    openai_strict_object_schema,
+)
 from ._usage import billing_value, optional_int, reported_cost
 
 _ADAPTER_LOGGER = logging.getLogger(__name__)
@@ -242,11 +246,24 @@ def chat_completion_payload(
 ) -> dict[str, Any]:
     """Build one Chat Completions API payload."""
 
+    native_schema = (
+        openai_strict_object_schema(request.structured_output)
+        if request.structured_output is not None
+        else None
+    )
+    instructions = (
+        append_structured_output_directive(
+            request.instructions,
+            request.structured_output,
+        )
+        if request.structured_output is not None and native_schema is None
+        else request.instructions
+    )
     payload: dict[str, Any] = {
         "model": target.model,
         "messages": chat_messages(
             target=target,
-            instructions=request.instructions,
+            instructions=instructions,
             messages=request.messages,
         ),
     }
@@ -255,7 +272,11 @@ def chat_completion_payload(
     options = dict(target.options)
     if options:
         payload.update(options)
-    _apply_structured_output(payload, request.structured_output)
+    _apply_structured_output(
+        payload,
+        request.structured_output,
+        native_schema=native_schema,
+    )
     _apply_reasoning(payload, target)
     payload["stream"] = stream
     if stream and "stream_options" not in payload:
@@ -266,6 +287,8 @@ def chat_completion_payload(
 def _apply_structured_output(
     payload: dict[str, Any],
     schema: dict[str, object] | None,
+    *,
+    native_schema: dict[str, object] | None,
 ) -> None:
     if schema is None:
         return
@@ -273,12 +296,14 @@ def _apply_structured_output(
         raise ToolangError(
             "Chat Completions response_format conflicts with normalized structured output"
         )
+    if native_schema is None:
+        return
     payload["response_format"] = {
         "type": "json_schema",
         "json_schema": {
             "name": "output",
             "strict": True,
-            "schema": dict(schema),
+            "schema": native_schema,
         },
     }
 

@@ -173,6 +173,42 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
         store.close()
 
 
+def test_model_step_record_serializes_compact_noted_cont_key(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_model_noted",
+            thread_id="term_model_noted",
+            origin="test",
+            input=Message.user("hello"),
+        )
+        step = project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="model",
+            status="succeeded",
+            input=(),
+            output=(TextPart("true"),),
+            detail={"cont": {"cursor": "next"}},
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+
+        noted = record_to_data(step)["noted"]
+
+        assert noted == {
+            "tokens": None,
+            "price": None,
+            "cost": None,
+            "accounting": None,
+            "cont": {"cursor": "next"},
+        }
+    finally:
+        store.close()
+
+
 def test_record_selection_matches_rfc6901_traversal(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
