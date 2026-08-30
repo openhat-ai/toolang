@@ -377,7 +377,8 @@ tokens. `model-call` remains the only explicit projector.
 
 `model-call` is the initial projector. It applies only to a whole model Step and
 reconstructs the complete normalized call persisted for that Step, including
-instructions, messages, tool definitions, and continuation data:
+instructions, messages, tool definitions, the structured-output schema, and
+continuation data:
 
 ```bash
 toolang alice inspect run_ab12.0 model-call
@@ -387,6 +388,12 @@ toolang alice inspect run_ab12.0 model-call --json
 This is distinct from `run_ab12.0/given/call`, which exposes compact persisted
 references. Projection is local and read-only: it does not prepare a call,
 select a model, construct a provider-native request, or send provider traffic.
+
+The human view presents `Instructions`, `Messages N`, `Tools N`,
+`Structured Output`, and `Continuation` as independent sections. Structured
+output is indented JSON; calls without a schema display `None`. The JSON view
+keeps the exact normalized `structured_output` value, including `null` for
+unstructured and historical calls.
 
 Human output is the default. Record and container tables use the CLI's
 horizontal-rule Rich style and list direct children as relative field suffixes
