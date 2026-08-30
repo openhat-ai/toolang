@@ -63,9 +63,9 @@ def cap_kind_definition(kind: EntryKind) -> CollectionDefinition[CapQueryView]:
             key=("kind", "name", "ref"),
             identity=IdentitySpec(
                 paths=("name",),
-                labels=(_COLLECTION_BY_KIND[kind], kind),
+                labels=(kind, kind),
                 separator="/",
-                bound=(_COLLECTION_BY_KIND[kind],),
+                bound=(kind,),
             ),
             exclude=("record", "kind"),
             columns=(

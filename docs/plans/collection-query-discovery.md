@@ -85,8 +85,8 @@ mirror composite columns or split existing display columns into operands.
 ## Combined Caps
 
 `caps` is an umbrella, not a base collection or schema. The four base schemas
-bind plural identity prefixes, producing identities such as
-`skills/reviewer`. Unqualified names still match the final component.
+bind singular cap-kind identity prefixes, producing identities such as
+`skill/reviewer`. Unqualified names still match the final component.
 
 `too caps --query QUERY` applies the query independently to `psyches`,
 `skills`, `services`, and `prompts`, then concatenates matches in established

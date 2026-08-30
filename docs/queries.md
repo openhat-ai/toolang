@@ -66,10 +66,10 @@ The queryable base collections and identities are:
 | --- | --- |
 | `models` | `provider/model` |
 | `tools` | `toolset/tool` |
-| `psyches` | `psyches/psyche` |
-| `skills` | `skills/skill` |
-| `services` | `services/service` |
-| `prompts` | `prompts/prompt` |
+| `psyches` | `psyche/psyche` |
+| `skills` | `skill/skill` |
+| `services` | `service/service` |
+| `prompts` | `prompt/prompt` |
 
 An unqualified pattern matches the final identity component. A qualified
 pattern matches the complete identity. The final component may contain the
@@ -77,7 +77,7 @@ separator.
 
 `caps` is an umbrella, not a base collection. `too caps --query QUERY` applies
 the query independently to the four cap collections and concatenates their
-results. Use `skills/reviewer` to select one kind or `reviewer` to match that
+results. Use `skill/reviewer` to select one kind or `reviewer` to match that
 name across kinds.
 
 ## Ordering and Set Operations

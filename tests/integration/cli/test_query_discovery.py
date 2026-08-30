@@ -36,10 +36,10 @@ def test_query_is_hidden_but_direct_help_explains_the_grammar() -> None:
     [
         ("models", "provider/model"),
         ("tools", "toolset/tool"),
-        ("psyches", "psyches/psyche"),
-        ("skills", "skills/skill"),
-        ("services", "services/service"),
-        ("prompts", "prompts/prompt"),
+        ("psyches", "psyche/psyche"),
+        ("skills", "skill/skill"),
+        ("services", "service/service"),
+        ("prompts", "prompt/prompt"),
     ],
 )
 def test_query_command_publishes_human_and_json_schema(

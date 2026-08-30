@@ -93,12 +93,12 @@ view:
 `FORM` uses the same values as the runtime source form. It is not remapped for
 display.
 
-Use repeatable `--query/-q` options. Combined lists use the prefixes `psyches`,
-`skills`, `services`, and `prompts`; kind-specific lists also accept
-unqualified cap names. Predicates use typed fields such as `scope`, `form`, and
-`origin`, for example `skills/*[scope=home;form=authored]`. Run `too query
-skills` to inspect the fields. There is no `caps` query schema: the combined
-command queries the four base collections independently.
+Use repeatable `--query/-q` options. Qualified cap identities use the singular
+kind prefixes `psyche`, `skill`, `service`, and `prompt`; kind-specific lists
+also accept unqualified cap names. Predicates use typed fields such as `scope`,
+`form`, and `origin`, for example `skill/*[scope=home;form=authored]`. Run
+`too query skills` to inspect the fields. There is no `caps` query schema: the
+combined command queries the four base collections independently.
 
 
 ## Refs

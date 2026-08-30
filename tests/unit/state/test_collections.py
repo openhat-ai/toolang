@@ -39,6 +39,11 @@ def test_cap_query_fans_out_over_four_base_collections() -> None:
     qualified = query_cap_views(
         entries,
         agent_name="default",
+        queries=("skill/reviewer",),
+    )
+    plural_collection_prefix = query_cap_views(
+        entries,
+        agent_name="default",
         queries=("skills/reviewer",),
     )
     unqualified = query_cap_views(
@@ -53,6 +58,7 @@ def test_cap_query_fans_out_over_four_base_collections() -> None:
     )
 
     assert [(item.kind, item.name) for item in qualified] == [("skill", "reviewer")]
+    assert plural_collection_prefix == ()
     assert [(item.kind, item.name) for item in unqualified] == [
         ("psyche", "reviewer"),
         ("skill", "reviewer"),
@@ -92,7 +98,7 @@ def test_caps_is_not_a_schema_and_existing_tables_stay_unchanged() -> None:
 
     assert not hasattr(collections, "CAP_SCHEMA")
     assert cap_kind_definition("skill").schema.name == "skills"
-    assert cap_kind_definition("skill").schema.identity.bound == ("skills",)
+    assert cap_kind_definition("skill").schema.identity.bound == ("skill",)
     assert cap_table(views) == (
         ("KIND", "CAP", "ORIGIN", "FORM", "SCOPE", "SOURCE"),
         (("skill", "reviewer", "local", "authored", "root", "skills/reviewer"),),
