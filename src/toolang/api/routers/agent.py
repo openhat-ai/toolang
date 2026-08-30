@@ -16,7 +16,11 @@ from toolang.execution.runnables import (
 )
 from toolang.execution.schemas import ThreadInfo
 from toolang.execution.types import ModelStepNoted
-from toolang.execution.executor.resources import agent_model_targets
+from toolang.execution.executor.resources import (
+    agent_model_targets,
+    snapshot_model_selection,
+)
+from toolang.plugin.models.resolution import model_reasoning_efforts
 from toolang.up import AgentCore, process as agents
 from toolang.state.state import state_program
 
@@ -46,12 +50,17 @@ def models(core: AgentCoreDep) -> dict[str, object]:
         setup = core.setup.current()
         state = core.state.current()
         resolved_default, targets = agent_model_targets(setup, state, setup.ceiling)
+        selection = snapshot_model_selection(setup, state)
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {
-        "default": setup.bindings.model or resolved_default,
+        "default": resolved_default,
         "items": [
-            _model_item(selector=selector, target=target)
+            _model_item(
+                ref=selector,
+                target=target,
+                efforts=model_reasoning_efforts(selection, target),
+            )
             for selector, target in targets
         ],
     }
@@ -273,16 +282,14 @@ def _runtime_sandbox_spec(runtime_state: dict[str, object]) -> str:
     return "host"
 
 
-def _model_item(*, selector: str, target: Any) -> dict[str, object]:
+def _model_item(
+    *, ref: str, target: Any, efforts: tuple[str, ...]
+) -> dict[str, object]:
     return {
-        "selector": selector,
+        "ref": ref,
         "name": target.name,
-        "ref": target.ref,
         "provider": target.provider,
-        "model": target.model,
-        "adapter": target.adapter,
-        "tools": target.tools,
-        "streaming": target.streaming,
+        "parameters": {"reasoning": {"effort": list(efforts)}},
     }
 
 

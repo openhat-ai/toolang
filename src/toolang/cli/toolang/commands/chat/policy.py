@@ -3,13 +3,106 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import cast
 
-from toolang.execution.policy import merge_commands
+from toolang.base.types.model import (
+    ModelParameters,
+    ModelRequest,
+    ReasoningEffort,
+    ReasoningParameters,
+)
+from toolang.base.types.policy import RunBindings, RunLimits, RunPolicy
+from toolang.execution.policy import materialize_policy, merge_commands
 from toolang.execution.runnables import parse_runnable_ref
+from toolang.execution.schemas import RunRequest, RunnableRequest
 from toolang.execution.types import RunOverride
+from toolang.lang.input import RunnableInputRaw
 
 _OVERRIDES_KEY = "run_overrides"
+_REASONING_EFFORT_KEY = "reasoning_effort"
+
+
+@dataclass(frozen=True, slots=True)
+class ChatRunDefaults:
+    """Concrete server defaults adopted by one Chat session."""
+
+    bindings: RunBindings
+    limits: RunLimits
+
+
+def build_run_request(
+    *,
+    thread_id: str,
+    request_id: str,
+    input: RunnableInputRaw,
+    input_commands: Sequence[RunOverride],
+    selects: Mapping[str, object],
+    defaults: ChatRunDefaults,
+) -> RunRequest:
+    """Snapshot Chat state and input-local overrides into one run request."""
+
+    ceilings, bindings, limits = materialize_policy(
+        defaults.bindings,
+        defaults.limits,
+        session=commands_from_selects(selects),
+        run=input_commands,
+    )
+    if bindings.runnable is None:
+        raise ValueError("chat session has no runnable")
+    selected_model = _text(selects.get("model"))
+    effort = (
+        reasoning_effort_from_selects(selects)
+        if bindings.model == selected_model
+        else None
+    )
+    model = (
+        ModelRequest(
+            bindings.model,
+            ModelParameters(
+                reasoning=(
+                    ReasoningParameters(effort=effort) if effort is not None else None
+                )
+            ),
+        )
+        if bindings.model is not None
+        else None
+    )
+    return RunRequest(
+        thread_id=thread_id,
+        request_id=request_id,
+        runnable=RunnableRequest(bindings.runnable, input),
+        model=model,
+        policy=RunPolicy(allow=ceilings, limits=limits),
+    )
+
+
+def reasoning_effort_from_selects(
+    selects: Mapping[str, object],
+) -> ReasoningEffort | None:
+    value = _text(selects.get(_REASONING_EFFORT_KEY))
+    if value in {"none", "minimal", "low", "medium", "high", "xhigh", "max", "default"}:
+        return cast(ReasoningEffort, value)
+    return None
+
+
+def apply_model_selection(
+    selects: Mapping[str, object],
+    *,
+    ref: str,
+    effort: ReasoningEffort | None,
+) -> dict[str, object]:
+    """Atomically update the session model and reasoning effort."""
+
+    result = apply_session_commands(
+        selects,
+        (RunOverride("default", "model", ref),),
+    )
+    if effort is None:
+        result.pop(_REASONING_EFFORT_KEY, None)
+    else:
+        result[_REASONING_EFFORT_KEY] = effort
+    return result
 
 
 def commands_from_selects(
@@ -45,6 +138,7 @@ def apply_session_commands(
 ) -> dict[str, object]:
     """Apply policy-only commands and retain chat presentation selectors."""
 
+    previous_model = _text(selects.get("model"))
     commands = merge_commands(commands_from_selects(selects), updates)
     result = dict(selects)
     if commands:
@@ -65,6 +159,8 @@ def apply_session_commands(
             continue
         name, kind = parse_runnable_ref(command.value)
         result[kind or "runnable"] = name
+    if _text(result.get("model")) != previous_model:
+        result.pop(_REASONING_EFFORT_KEY, None)
     return result
 
 

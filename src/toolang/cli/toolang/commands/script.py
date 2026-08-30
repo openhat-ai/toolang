@@ -18,7 +18,8 @@ from pydantic import TypeAdapter, ValidationError
 import typer
 from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 
-from toolang.base.types.policy import RunBindings
+from toolang.base.types.model import ModelRequest
+from toolang.base.types.policy import RunBindings, RunPolicy
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
@@ -28,16 +29,17 @@ from toolang.cli.common.policy import (
     resolve_limit_overrides,
 )
 from toolang.execution.calls import parse_call, resolve_spec
+from toolang.execution.policy import materialize_policy
 from toolang.execution.executor import LocalRunHandle, RunExecutor
 from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.records import RunRecord
-from toolang.execution.schemas import RunRequest, ThreadInfo
+from toolang.execution.schemas import RunRequest, RunnableRequest, ThreadInfo
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program
 from toolang.lang.includes import resolve_file_include
-from toolang.lang.input import NamedInputSources, RunnableInputRaw
+from toolang.lang.input import NamedInputSource, NamedInputSources, RunnableInputRaw
 from toolang.setup import SetupWatcher
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import AgentState
@@ -59,6 +61,7 @@ _LITERAL_ITEM_PREFIX = "\ue002"
 _UNPERSISTED_THREAD = "<unpersisted-script-thread>"
 _RUNNABLES_PANEL = "Runnables"
 _THREAD_INFO_ADAPTER = TypeAdapter(ThreadInfo)
+_RUN_POLICY_ADAPTER = TypeAdapter(RunPolicy)
 
 
 class _HelpArgument(TyperArgument):
@@ -375,10 +378,14 @@ def _collect_call(
         if (
             runnable.input is not None
             and not runnable.input.optional
-            and input.primary is None
+            and input._ is None
         ):
             raise _IncompleteRunnableInput
-    return commands, input, tuple(raw_args.items())
+    return (
+        commands,
+        input,
+        tuple(NamedInputSource(name, source) for name, source in raw_args.items()),
+    )
 
 
 def _input_source(items: list[str], *, stdin: TextIO) -> str | None:
@@ -595,15 +602,30 @@ async def _execute_remote(
                 client.endpoint,
                 expected_sandbox=sandbox,
             )
+            default_bindings, default_limits = await _remote_script_defaults(
+                http,
+                client.endpoint,
+            )
+            ceilings, bindings, limits = materialize_policy(
+                replace(default_bindings, runnable=runnable),
+                default_limits.limits,
+                session=session_commands,
+                run=_remote_script_commands(commands, runnable=runnable),
+            )
             thread = await _create_remote_script_thread(http, client.endpoint)
             handle = await client.run(
                 RunRequest(
-                    thread=thread,
-                    commands=_remote_script_commands(commands, runnable=runnable),
-                    input=request_input,
-                    session_commands=session_commands,
-                    runnable_fallbacks=(runnable,),
+                    thread_id=thread,
                     request_id=f"term_{uuid4().hex}",
+                    runnable=RunnableRequest(
+                        bindings.runnable or runnable, request_input
+                    ),
+                    model=(
+                        ModelRequest(bindings.model)
+                        if bindings.model is not None
+                        else None
+                    ),
+                    policy=RunPolicy(allow=ceilings, limits=limits),
                 ),
                 tracer=tracer,
             )
@@ -731,6 +753,38 @@ async def _create_remote_script_thread(
     if thread.origin != "script" or not thread.id.startswith("script_"):
         raise RuntimeError("remote script thread creation returned invalid identity")
     return thread.id
+
+
+async def _remote_script_defaults(
+    client: httpx.AsyncClient,
+    endpoint: str,
+) -> tuple[RunBindings, RunPolicy]:
+    try:
+        response = await client.get(f"{endpoint}/api/v1/runs/defaults")
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, Mapping) or set(payload) != {
+            "model",
+            "runnable",
+            "policy",
+        }:
+            raise ValueError
+        model = payload.get("model")
+        runnable = payload.get("runnable")
+        if model is not None and not isinstance(model, str):
+            raise ValueError
+        if not isinstance(runnable, str):
+            raise ValueError
+        policy = _RUN_POLICY_ADAPTER.validate_python(payload.get("policy"))
+        return RunBindings(model=model, runnable=runnable), policy
+    except (
+        httpx.HTTPError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        ValidationError,
+        ValueError,
+    ) as exc:
+        raise RuntimeError("remote script run defaults are invalid") from exc
 
 
 async def _cancel_remote_script_run(

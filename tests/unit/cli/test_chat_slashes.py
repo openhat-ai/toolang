@@ -15,13 +15,13 @@ from toolang.cli.toolang.commands.chat.presenter import ChatRunPresenter
 class _Client:
     def __init__(self) -> None:
         self.models: Mapping[str, Any] = {
-            "default": "[openai]",
+            "default": "openai/gpt-5",
             "items": [
                 {
-                    "selector": "[openai]",
                     "ref": "openai/gpt-5",
+                    "name": "GPT-5",
                     "provider": "openai",
-                    "model": "gpt-5",
+                    "parameters": {"reasoning": {"effort": ["low", "high", "default"]}},
                 }
             ],
         }
@@ -176,20 +176,33 @@ def test_quick_model_lists_models_without_changing_settings() -> None:
 
     listed = slashes.handle(app, QuickCommand("model"))
 
-    assert listed.lines == ["Available Models", "[openai]  default  openai"]
+    assert listed.lines == [
+        "Available Models",
+        "openai/gpt-5  default  reasoning: low, high, default",
+    ]
     assert app.selects == {}
     assert app.status_refreshes == 0
 
 
-def test_model_argument_updates_validated_session_default() -> None:
+def test_model_argument_updates_typed_session_selection() -> None:
     app = _App()
 
     result = slashes.handle(app, QuickCommand("model", "openai/gpt-5"))
 
     assert result.lines is None
-    assert app.client.applied == [(RunOverride("default", "model", "[openai]"),)]
-    assert app.selects == {"model": "[openai]"}
+    assert app.client.applied == []
+    assert app.selects["model"] == "openai/gpt-5"
+    assert app.selects["run_overrides"] == (
+        RunOverride("default", "model", "openai/gpt-5"),
+    )
     assert app.status_refreshes == 1
+
+    slashes.handle(app, QuickCommand("model", "openai/gpt-5 high"))
+    assert app.selects["model"] == "openai/gpt-5"
+    assert app.selects["reasoning_effort"] == "high"
+    slashes.handle(app, QuickCommand("model", "openai/gpt-5 auto"))
+    assert app.selects["model"] == "openai/gpt-5"
+    assert "reasoning_effort" not in app.selects
 
 
 def test_quick_runnable_lists_without_changing_settings() -> None:

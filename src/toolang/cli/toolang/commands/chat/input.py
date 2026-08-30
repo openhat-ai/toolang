@@ -79,7 +79,7 @@ def parse_chat_input(chat_input: str) -> ChatInput:
         if combined is not None:
             raise ValueError("slash command cannot be combined with other input")
     runnable_input = parse_input(primary_source or None, named=named)
-    if runnable_input.primary is None and not runnable_input.named:
+    if runnable_input._ is None and not runnable_input.named:
         raise ValueError("chat input is empty")
     return commands, runnable_input
 

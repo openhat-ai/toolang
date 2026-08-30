@@ -104,13 +104,16 @@ class RunSpec:
     thread: str
     bindings: RunBindings
     limits: RunLimits
+    model_request: ModelRequest | None = None
     ceilings: tuple[AgentCeiling, ...] = ()
     input: RunnableInput = RunnableInput()
 ```
 
 `bindings.runnable` is required and resolves to exactly one public agic or flow
 in the captured state's runnable catalog. Resolution also fixes the owner
-program module. `bindings.model` is the effective singular model choice.
+program module. `bindings.model` is the effective singular model choice and
+`model_request` retains its typed call parameters for validation, persistence,
+accounting, retry, and rerun.
 The spec does not carry an origin, run identity, request identity, or arbitrary
 transport context. Each item in `ceilings` is one independently applied
 selector-based restriction inside `setup.ceiling`; retaining separate session

@@ -10,7 +10,7 @@ import shlex
 from toolang.base.errors import ToolangError
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.selectors import parse_selector, split_selector_list
-from toolang.lang.input import NamedInputSources
+from toolang.lang.input import NamedInputSource, NamedInputSources
 from toolang.setup import AgentSetup
 
 from .types import (
@@ -51,7 +51,7 @@ def parse_policy_prefix(
 
     lines = _lines(source)
     commands: list[RunOverride] = []
-    named: list[tuple[str, str]] = []
+    named: list[NamedInputSource] = []
     index = 0
     while index < len(lines):
         line = lines[index]
@@ -108,9 +108,26 @@ def resolve_commands(
             else setup.bindings.runnable
         ),
     )
-    bindings = _apply_binding_commands(base, base, session)
-    bindings = _apply_binding_commands(bindings, base, run)
-    limits = _apply_limit_commands(setup.limits, session)
+    return materialize_policy(
+        base,
+        setup.limits,
+        session=session,
+        run=run,
+    )
+
+
+def materialize_policy(
+    defaults: RunBindings,
+    default_limits: RunLimits,
+    *,
+    session: Sequence[RunOverride] = (),
+    run: Sequence[RunOverride] = (),
+) -> tuple[tuple[AgentCeiling, ...], RunBindings, RunLimits]:
+    """Materialize session and input-local policy over concrete defaults."""
+
+    bindings = _apply_binding_commands(defaults, defaults, session)
+    bindings = _apply_binding_commands(bindings, defaults, run)
+    limits = _apply_limit_commands(default_limits, session)
     limits = _apply_limit_commands(limits, run)
     ceilings = tuple(
         ceiling
@@ -201,12 +218,12 @@ def _default_shortcut(
 
 
 def _named_inputs(values: Sequence[str]) -> NamedInputSources:
-    result: list[tuple[str, str]] = []
+    result: list[NamedInputSource] = []
     for token in values:
         name, separator, value = token.partition("=")
         if not separator:
             raise ValueError("named input must use name=value syntax")
-        result.append((name, value))
+        result.append(NamedInputSource(name, value))
     return tuple(result)
 
 

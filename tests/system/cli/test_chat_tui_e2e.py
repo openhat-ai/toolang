@@ -27,10 +27,14 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
             "embedded",
             "Ask or describe a task",
             "■ agic:chat",
-            "test/scripted",
+            "scripted",
         )
         session.send(b":flow research\r")
-        session.wait_for("Runnable not found: research")
+        session.wait_for("flowresearch")
+        session.send(b"\x1b\r")
+        session.wait_for("■ flow:research")
+        session.send(b":agic chat\r")
+        session.wait_for("■ agic:chat")
         session.send(b"hello from user")
         session.wait_for("hello from user")
         session.send(b"\r")
@@ -63,7 +67,7 @@ def test_chat_tui_runs_one_remote_exchange_in_a_pseudo_terminal(
             ":7001",
             "Ask or describe a task",
             "■ agic:chat",
-            "test/scripted",
+            "scripted",
         )
         assert "embedded" not in banner
 
@@ -93,7 +97,7 @@ def test_chat_tui_preserves_long_final_output_in_a_small_terminal(
         columns=80,
     )
     try:
-        session.wait_for("Toolang", "■ agic:chat", "test/scripted")
+        session.wait_for("Toolang", "■ agic:chat", "scripted")
         session.send(b"show long output\r")
         final_output = session.wait_for(
             "• terminal e2e line 000",
@@ -147,17 +151,17 @@ def test_chat_tui_updates_defaults_while_a_run_is_active(tmp_path: Path) -> None
         "status",
     )
     try:
-        session.wait_for("■ agic:chat", "test/scripted")
+        session.wait_for("■ agic:chat", "scripted")
         session.send(b"hold status\r")
         session.wait_for("◧ agic:chat running")
 
         session.send(b":flow relay\r")
-        running = session.wait_for("flow:relay · test/scripted")
+        running = session.wait_for("flow:relay · scripted")
 
         assert "agic:chat" in running
         assert "Traceback" not in running
 
-        session.wait_for("succeeded", "■ flow:relay", "test/scripted")
+        session.wait_for("succeeded", "■ flow:relay", "scripted")
         session.send(b"\x04")
         assert session.wait_for_exit() == 0, session.output
     finally:

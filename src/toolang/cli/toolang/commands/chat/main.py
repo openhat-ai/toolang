@@ -55,6 +55,7 @@ from .input import (
     parse_chat_input,
 )
 from .local import LocalChatSession
+from .policy import apply_model_selection
 from .remote import RemoteChatError, RemoteChatSession
 from .tui import ChatTuiApp
 
@@ -358,18 +359,15 @@ def _chat_handle_scripted_command(
         return True
     if chat_input.tail is not None:
         tokens = chat_input.tail.split()
-        resolved = (
-            chat_slashes._chat_resolve_model_command(payload, tokens[0])
-            if len(tokens) == 1
-            else None
-        )
+        resolved = chat_slashes._resolve_model_selection(payload, tokens)
         if resolved is None:
             typer.echo(f"Model selector is unknown or ambiguous: {chat_input.tail}")
             return True
         try:
-            updated = client.apply_settings(
-                (RunOverride("default", "model", resolved[0]),),
+            updated = apply_model_selection(
                 selector_payload,
+                ref=resolved[0],
+                effort=resolved[1],
             )
         except (click.ClickException, ToolangError, ValueError) as exc:
             message = exc.message if isinstance(exc, click.ClickException) else str(exc)

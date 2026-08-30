@@ -10,7 +10,6 @@ from toolang.api.app import AgentCoreDep, LiveEventRelayDep
 from toolang.api.common import RUN_ID_HEADER, EventSubscription, sse_stream
 from toolang.api.conversion import (
     parse_authored_rerun,
-    parse_authored_run_validation,
     parse_authored_run,
     parse_authored_retry,
     parse_parts,
@@ -18,7 +17,6 @@ from toolang.api.conversion import (
 )
 from toolang.api.schemas import (
     AuthoredRerunRequest,
-    AuthoredRunValidationRequest,
     AuthoredRunRequest,
     AuthoredRetryRequest,
     RunCancelRequest,
@@ -29,8 +27,8 @@ from toolang.api.schemas import (
     RunSteerRequest,
 )
 from toolang.base.types.policy import RunBindings
+from toolang.execution.executor.resources import agent_model_targets
 from toolang.common.errors import ToolangError
-from toolang.execution.calls import validate_session_commands
 from toolang.execution.executor import LocalRunHandle, RunSpec
 from toolang.execution.records import (
     ControlRecord,
@@ -39,8 +37,10 @@ from toolang.execution.records import (
 from toolang.execution.schemas import ControlInfo, RunDetail, RunInfo
 from toolang.execution.types import RunStatus
 from toolang.lang.input import resolve_runnable_input
+from toolang.lang.ast import AgicDecl
 from toolang.execution.runnables import (
     parse_runnable_ref,
+    runnable_binding_defaults,
     resolve_state_runnable,
 )
 from toolang.state.state import AgentState
@@ -55,39 +55,38 @@ async def _run_stream(
     live: LiveEventRelayDep,
     payload: RunCreateRequest,
 ) -> AsyncIterator[_AcceptedRunStream]:
-    thread_id = _run_thread(core, payload.thread)
+    thread_id = _run_thread(core, payload.thread_id)
     setup = core.setup.current()
-    limits = (
-        payload.limits.to_limits(setup.limits)
-        if payload.limits is not None
-        else setup.limits
-    )
     try:
         state = await _fresh_state(core)
-        runnable_name, runnable_kind = parse_runnable_ref(payload.runnable)
+        runnable_name, runnable_kind = parse_runnable_ref(payload.runnable.ref)
         module, runnable = resolve_state_runnable(
             state,
             runnable_name,
             kind=runnable_kind,
         )
+        if isinstance(runnable, AgicDecl) and payload.model is None:
+            raise ValueError("run request requires a model for an agic runnable")
         handle = core.executor.run(
             RunSpec(
                 setup=setup,
                 state=state,
                 thread=thread_id,
                 bindings=RunBindings(
-                    runnable=payload.runnable,
-                    model=(
-                        payload.model
-                        if payload.model is not None
-                        else setup.bindings.model
-                    ),
+                    runnable=payload.runnable.ref,
+                    model=payload.model.ref if payload.model is not None else None,
                 ),
-                limits=limits,
+                model_request=payload.model,
+                limits=payload.policy.limits,
+                ceilings=payload.policy.allow,
                 input=resolve_runnable_input(
                     runnable,
-                    primary=parse_parts(payload.input) if payload.input else None,
-                    named=payload.args,
+                    primary=(
+                        parse_parts(payload.runnable.input)
+                        if payload.runnable.input
+                        else None
+                    ),
+                    named=payload.runnable.args,
                     structs={item.name: item for item in state.modules[module].structs},
                 ),
             ),
@@ -109,7 +108,7 @@ async def _run_authored_stream(
     response: Response,
     payload: AuthoredRunRequest,
 ) -> AsyncIterator[_AcceptedRunStream]:
-    thread_id = _run_thread(core, payload.thread)
+    thread_id = _run_thread(core, payload.thread_id)
     run_request = parse_authored_run(payload)
     try:
         handle = core.executor.run(
@@ -298,28 +297,40 @@ async def rerun_authored_run_stream(
         yield event
 
 
-@router.post(
-    "/authored/validate",
-    summary="Validate Authored Run Session",
-    status_code=204,
-)
-async def validate_authored_run_session(
-    core: AgentCoreDep,
-    payload: AuthoredRunValidationRequest,
-) -> Response:
-    commands, fallbacks = parse_authored_run_validation(payload)
-    try:
-        setup = core.setup.current()
-        state = await _fresh_state(core)
-        validate_session_commands(
-            commands,
-            setup=setup,
-            state=state,
-            runnable_fallbacks=fallbacks,
+@router.get("/defaults", summary="Get Run Defaults")
+async def run_defaults(core: AgentCoreDep) -> dict[str, object]:
+    """Return concrete defaults for a client-owned run session."""
+
+    setup = core.setup.current()
+    state = await _fresh_state(core)
+    model, _targets = agent_model_targets(setup, state, setup.ceiling)
+    runnable = setup.bindings.runnable
+    if runnable is None:
+        default_agic, default_flow = runnable_binding_defaults(
+            state,
+            None,
+            fallback_agic="chat",
         )
-    except (ToolangError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return Response(status_code=204)
+        if default_agic is not None:
+            runnable = f"agic:{default_agic}"
+        elif default_flow is not None:
+            runnable = f"flow:{default_flow}"
+    return {
+        "model": model,
+        "runnable": runnable,
+        "policy": {
+            "allow": [],
+            "limits": {
+                "agic_model_calls": setup.limits.agic_model_calls,
+                "agic_tool_calls": setup.limits.agic_tool_calls,
+                "tokens": setup.limits.tokens,
+                "cost": (
+                    str(setup.limits.cost) if setup.limits.cost is not None else None
+                ),
+                "time": setup.limits.time,
+            },
+        },
+    }
 
 
 @router.get("/{run_id}", summary="Get Run", response_model=RunDetail)
@@ -418,9 +429,6 @@ async def retry_run(
             setup=setup,
             state=_recorded_state(core, source),
             anchor=request.anchor,
-            model=(
-                request.model if request.model is not None else setup.bindings.model
-            ),
             limits=(
                 request.limits.to_limits(setup.limits)
                 if request.limits is not None
@@ -455,9 +463,7 @@ async def rerun_run(
             source.id,
             setup=setup,
             state=await _fresh_state(core),
-            model=(
-                request.model if request.model is not None else setup.bindings.model
-            ),
+            model_request=request.model,
             limits=(
                 request.limits.to_limits(setup.limits)
                 if request.limits is not None

@@ -193,6 +193,9 @@ def chat_status_label(selects: Mapping[str, object]) -> str:
         if runnable_ref
         else ""
     )
+    effort = as_text(selects.get("reasoning_effort"))
+    if effort is not None:
+        model_label = f"{model_label} · {effort.title()}"
     return f"{model_label}  {runnable}" if runnable else model_label
 
 

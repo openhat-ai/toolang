@@ -18,6 +18,7 @@ from toolang.base.types.message import (
 from toolang.lang.ast import AgicDecl, Field, Parameter, Span, StructDecl
 from toolang.lang.errors import ToolangOutputError
 from toolang.lang.input import (
+    NamedInputSource,
     RunnableInput,
     RunnableInputRaw,
     coerce_input,
@@ -98,10 +99,16 @@ def test_runnable_input_rejects_unsupported_runtime_values() -> None:
 def test_parse_input_preserves_primary_and_validates_named_sources() -> None:
     assert parse_input(
         "  Review this.\n",
-        named=(("focus", "security"), ("count", "2")),
+        named=(
+            NamedInputSource("focus", "security"),
+            NamedInputSource("count", "2"),
+        ),
     ) == RunnableInputRaw(
-        primary="  Review this.\n",
-        named=(("focus", "security"), ("count", "2")),
+        _="  Review this.\n",
+        named=(
+            NamedInputSource("focus", "security"),
+            NamedInputSource("count", "2"),
+        ),
     )
     assert parse_input(" \t\n") == RunnableInputRaw()
 

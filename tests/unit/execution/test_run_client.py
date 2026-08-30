@@ -14,14 +14,23 @@ from tests.support.execution_harness import (
     ExecutionHarness,
     RecordingRunTracer,
     ScriptedModelTurn,
+    TEST_MODEL_REF,
 )
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import Message, TextPart
+from toolang.base.types.model import ModelRequest
+from toolang.base.types.policy import RunBindings, RunLimits, RunPolicy
 from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.execution.client import LocalRunClient, RunClient, RunHandle
 from toolang.execution.executor import LocalRunHandle, RunExecutor
+from toolang.execution.policy import materialize_policy
 from toolang.execution.records import SteerControlPayload, CancelControlPayload
-from toolang.execution.schemas import RerunRequest, RetryRequest, RunRequest
+from toolang.execution.schemas import (
+    RerunRequest,
+    RetryRequest,
+    RunRequest,
+    RunnableRequest,
+)
 from toolang.execution.types import RunOverride, StepPath, ThreadPrefix
 from toolang.execution.values import parts_from_local
 from toolang.lang import Program
@@ -56,52 +65,69 @@ def _request(
     *,
     commands: tuple[RunOverride, ...] = (),
     session_commands: tuple[RunOverride, ...] = (),
-    input: RunnableInputRaw = RunnableInputRaw(primary="hello"),
+    input: RunnableInputRaw = RunnableInputRaw(_="hello"),
     runnable_fallbacks: tuple[str, ...] = ("missing", "chat", "default"),
     request_id: str = "request_1",
 ) -> RunRequest:
+    runnable = next(
+        (
+            candidate
+            for candidate in runnable_fallbacks
+            if candidate
+            in {
+                "chat",
+                "agic:chat",
+                "session",
+                "agic:session",
+                "selected",
+                "agic:selected",
+            }
+        ),
+        runnable_fallbacks[0] if runnable_fallbacks else "agic:chat",
+    )
+    if ":" not in runnable:
+        runnable = f"agic:{runnable}"
+    ceilings, bindings, limits = materialize_policy(
+        RunBindings(model=TEST_MODEL_REF, runnable=runnable),
+        RunLimits(),
+        session=session_commands,
+        run=commands,
+    )
     return RunRequest(
-        thread=thread,
-        commands=commands,
-        input=input,
-        session_commands=session_commands,
-        runnable_fallbacks=runnable_fallbacks,
+        thread_id=thread,
         request_id=request_id,
+        runnable=RunnableRequest(bindings.runnable or runnable, input),
+        model=ModelRequest(bindings.model or TEST_MODEL_REF),
+        policy=RunPolicy(allow=ceilings, limits=limits),
     )
 
 
-def test_run_request_contains_only_unresolved_caller_values() -> None:
+def test_run_request_contains_only_materialized_caller_values() -> None:
     request = _request("term_test")
 
     assert request == RunRequest(
-        thread="term_test",
-        commands=(),
-        input=RunnableInputRaw(primary="hello"),
-        session_commands=(),
-        runnable_fallbacks=("missing", "chat", "default"),
+        thread_id="term_test",
         request_id="request_1",
+        runnable=RunnableRequest("agic:chat", RunnableInputRaw(_="hello")),
+        model=ModelRequest(TEST_MODEL_REF),
+        policy=RunPolicy(),
     )
     assert {item.name for item in fields(RunRequest)} == {
-        "thread",
-        "commands",
-        "input",
-        "session_commands",
-        "runnable_fallbacks",
+        "thread_id",
         "request_id",
+        "runnable",
+        "model",
+        "policy",
     }
 
 
 @pytest.mark.parametrize(
     ("changes", "error"),
     [
-        ({"thread": ""}, ValueError),
-        ({"commands": []}, TypeError),
-        ({"commands": ("invalid",)}, TypeError),
-        ({"input": "hello"}, TypeError),
-        ({"session_commands": []}, TypeError),
-        ({"runnable_fallbacks": ()}, ValueError),
-        ({"runnable_fallbacks": ("chat", "chat")}, ValueError),
-        ({"runnable_fallbacks": (" chat",)}, ValueError),
+        ({"thread_id": ""}, ValueError),
+        ({"runnable": "chat"}, TypeError),
+        ({"model": "test/scripted"}, TypeError),
+        ({"policy": "default"}, TypeError),
         ({"request_id": ""}, ValueError),
     ],
 )
@@ -110,12 +136,11 @@ def test_run_request_rejects_invalid_field_shapes(
     error: type[Exception],
 ) -> None:
     values: dict[str, object] = {
-        "thread": "term_test",
-        "commands": (),
-        "input": RunnableInputRaw(primary="hello"),
-        "session_commands": (),
-        "runnable_fallbacks": ("chat", "default"),
+        "thread_id": "term_test",
         "request_id": "request_1",
+        "runnable": RunnableRequest("agic:chat", RunnableInputRaw(_="hello")),
+        "model": ModelRequest(TEST_MODEL_REF),
+        "policy": RunPolicy(),
     }
 
     with pytest.raises(error):
@@ -145,6 +170,7 @@ def test_restart_requests_keep_retry_and_rerun_inputs_unambiguous() -> None:
         "source",
         "commands",
         "request_id",
+        "model",
     }
     assert retry.anchor == StepPath("run_source", (1,))
     assert rerun.source == retry.source
@@ -209,7 +235,7 @@ def test_local_client_resolves_fallback_input_and_policy_precedence(
         fallback_handle = await client.run(
             _request(
                 thread,
-                input=RunnableInputRaw(primary="@note.md"),
+                input=RunnableInputRaw(_="@note.md"),
                 request_id="fallback_request",
             ),
             tracer=tracer,
@@ -379,7 +405,7 @@ prompt rewrite:
             await client.run(
                 _request(
                     thread,
-                    input=RunnableInputRaw(primary="$rewrite style=brief -- hello"),
+                    input=RunnableInputRaw(_="$rewrite style=brief -- hello"),
                     request_id="source_request",
                 ),
             )
@@ -411,7 +437,7 @@ prompt rewrite:
             await client.run(
                 _request(
                     thread,
-                    input=RunnableInputRaw(primary="$rewrite style=brief -- hello"),
+                    input=RunnableInputRaw(_="$rewrite style=brief -- hello"),
                     request_id="resubmit_request",
                 )
             )
@@ -453,7 +479,7 @@ prompt rewrite:
             retry_control.payload.authored_input
             == rerun_control.payload.authored_input
             == source_control.payload.authored_input
-            == RunnableInputRaw(primary="$rewrite style=brief -- hello")
+            == RunnableInputRaw(_="$rewrite style=brief -- hello")
         )
         assert (
             retry_control.payload.prompt_invocations
@@ -623,7 +649,7 @@ flow chat(_: Part[]) -> Part[]:
         handle = await client.run(
             _request(
                 thread,
-                runnable_fallbacks=("agic:chat", "default"),
+                runnable_fallbacks=("agic:default",),
             )
         )
         detail = await handle.wait()

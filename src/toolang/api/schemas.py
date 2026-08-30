@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
 from decimal import Decimal
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal, Self, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE
-from toolang.base.types.policy import RunLimits
+from toolang.base.types.model import ModelRequest
+from toolang.base.types.policy import RunLimits, RunPolicy
 from toolang.execution.schemas import (
     ControlInfo,
+    RunnableRequest,
     RunDetail,
     ThreadInfo,
 )
@@ -21,6 +24,69 @@ from toolang.execution.types import StepPath
 NonNegativeInt = Annotated[int, Field(strict=True, ge=0)]
 StrictInt = Annotated[int, Field(strict=True)]
 StrictText = Annotated[str, Field(strict=True)]
+
+
+def _reject_keys(value: object, allowed: set[str], location: str) -> None:
+    if not isinstance(value, Mapping):
+        return
+    unknown = set(value) - allowed
+    if unknown:
+        joined = ", ".join(sorted(str(item) for item in unknown))
+        raise ValueError(f"unknown {location} fields: {joined}")
+
+
+def _reject_materialized_run_unknowns(value: object, *, direct: bool) -> None:
+    """Keep nested standard-dataclass request schemas closed at the HTTP edge."""
+
+    if not isinstance(value, Mapping):
+        return
+    data = cast(Mapping[str, object], value)
+    _reject_keys(
+        data,
+        {"thread_id", "request_id", "runnable", "model", "policy"},
+        "run request",
+    )
+    runnable = data.get("runnable")
+    _reject_keys(
+        runnable,
+        {"ref", "input", "args"} if direct else {"ref", "input"},
+        "runnable request",
+    )
+    if not direct and isinstance(runnable, Mapping):
+        runnable_data = cast(Mapping[str, object], runnable)
+        raw_input = runnable_data.get("input")
+        _reject_keys(raw_input, {"_", "named"}, "runnable input")
+        if isinstance(raw_input, Mapping):
+            named = cast(Mapping[str, object], raw_input).get("named")
+            if isinstance(named, list | tuple):
+                for item in named:
+                    _reject_keys(item, {"name", "source"}, "named input")
+    model = data.get("model")
+    _reject_keys(model, {"ref", "parameters"}, "model request")
+    if isinstance(model, Mapping):
+        model_data = cast(Mapping[str, object], model)
+        parameters = model_data.get("parameters")
+        _reject_keys(parameters, {"reasoning"}, "model parameters")
+        if isinstance(parameters, Mapping):
+            parameters_data = cast(Mapping[str, object], parameters)
+            _reject_keys(
+                parameters_data.get("reasoning"),
+                {"effort"},
+                "reasoning parameters",
+            )
+    policy = data.get("policy")
+    _reject_keys(policy, {"allow", "limits"}, "run policy")
+    if isinstance(policy, Mapping):
+        policy_data = cast(Mapping[str, object], policy)
+        allow = policy_data.get("allow")
+        if isinstance(allow, list | tuple):
+            for item in allow:
+                _reject_keys(item, {"models", "tools", "caps"}, "allow ceiling")
+        _reject_keys(
+            policy_data.get("limits"),
+            {"agic_model_calls", "agic_tool_calls", "tokens", "cost", "time"},
+            "run limits",
+        )
 
 
 class ApiRequest(BaseModel):
@@ -187,16 +253,28 @@ class RunLimitsPayload(ApiRequest):
         return replace(base, **self.model_dump(exclude_unset=True))
 
 
+class DirectRunnableRequest(ApiRequest):
+    """One direct runnable ref grouped with its resolved input representation."""
+
+    ref: str = Field(min_length=1)
+    input: list[InputPart] = Field(default_factory=list)
+    args: dict[str, object] | None = None
+
+
 class RunCreateRequest(ApiRequest):
     """One non-interactive agic or flow execution request."""
 
-    thread: str = Field(min_length=1)
-    request_id: str | None = Field(default=None, min_length=1)
-    runnable: str = Field(min_length=1)
-    input: list[InputPart] = Field(default_factory=list)
-    model: str | None = None
-    args: dict[str, object] | None = None
-    limits: RunLimitsPayload | None = None
+    thread_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
+    runnable: DirectRunnableRequest
+    model: ModelRequest | None
+    policy: RunPolicy
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_unknown_request_fields(cls, value: object) -> object:
+        _reject_materialized_run_unknowns(value, direct=True)
+        return value
 
 
 class RunOverridePayload(ApiRequest):
@@ -207,36 +285,20 @@ class RunOverridePayload(ApiRequest):
     value: list[StrictText] | StrictText | StrictInt | None
 
 
-class NamedInputSourcePayload(ApiRequest):
-    """One named authored input source."""
-
-    name: StrictText
-    source: StrictText
-
-
-class RunnableInputRawPayload(ApiRequest):
-    """Authored primary and named input awaiting server resolution."""
-
-    primary: StrictText | None = None
-    named: list[NamedInputSourcePayload] = Field(default_factory=list)
-
-
 class AuthoredRunRequest(ApiRequest):
-    """One unresolved run request for server-owned resolution."""
+    """One materialized authored run request."""
 
-    thread: StrictText
+    thread_id: StrictText
     request_id: StrictText
-    commands: list[RunOverridePayload] = Field(default_factory=list)
-    input: RunnableInputRawPayload
-    session_commands: list[RunOverridePayload] = Field(default_factory=list)
-    runnable_fallbacks: list[StrictText] = Field(min_length=1)
+    runnable: RunnableRequest
+    model: ModelRequest | None
+    policy: RunPolicy
 
-
-class AuthoredRunValidationRequest(ApiRequest):
-    """Complete session policy awaiting server-owned validation."""
-
-    session_commands: list[RunOverridePayload] = Field(default_factory=list)
-    runnable_fallbacks: list[StrictText] = Field(min_length=1)
+    @model_validator(mode="before")
+    @classmethod
+    def reject_unknown_request_fields(cls, value: object) -> object:
+        _reject_materialized_run_unknowns(value, direct=False)
+        return value
 
 
 class AuthoredRerunRequest(ApiRequest):
@@ -244,11 +306,14 @@ class AuthoredRerunRequest(ApiRequest):
 
     request_id: StrictText
     commands: list[RunOverridePayload] = Field(default_factory=list)
+    model: ModelRequest | None = None
 
 
-class AuthoredRetryRequest(AuthoredRerunRequest):
+class AuthoredRetryRequest(ApiRequest):
     """One unresolved retry request for server-owned resolution."""
 
+    request_id: StrictText
+    commands: list[RunOverridePayload] = Field(default_factory=list)
     anchor: StepPath | None = None
 
 
@@ -272,14 +337,16 @@ class RunRerunRequest(ApiRequest):
     """Request a new run from one source invocation."""
 
     request_id: str | None = Field(default=None, min_length=1)
-    model: str | None = None
+    model: ModelRequest | None = None
     limits: RunLimitsPayload | None = None
 
 
-class RunRetryRequest(RunRerunRequest):
+class RunRetryRequest(ApiRequest):
     """Request retry from one durable step boundary."""
 
+    request_id: str | None = Field(default=None, min_length=1)
     anchor: StepPath | None = None
+    limits: RunLimitsPayload | None = None
 
 
 class RunCancelRequest(ApiRequest):

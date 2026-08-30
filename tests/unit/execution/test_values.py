@@ -15,6 +15,7 @@ from toolang.base.types.message import (
     ToolCallPart,
     ToolResultPart,
 )
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunLimits
 from toolang.execution.records import (
     ExecuteControlPayload,
@@ -41,7 +42,7 @@ from toolang.execution.types import (
     local_to_protocol_data,
 )
 from toolang.execution.values import parts_from_local
-from toolang.lang.input import PromptInvocation, RunnableInputRaw
+from toolang.lang.input import NamedInputSource, PromptInvocation, RunnableInputRaw
 from toolang.lang.types import Array, Struct
 
 
@@ -371,6 +372,7 @@ def test_preparation_payload_round_trips_resolved_locals() -> None:
         state="0" * 64,
         runnable="agic:worker",
         model="test/model",
+        model_request=ModelRequest("test/model"),
         locals=(Local.typed("Part[]", (TextPart("hello"),), "_", 0),),
         sandbox="docker:python:3.13-slim",
     )
@@ -387,10 +389,11 @@ def test_preparation_payload_round_trips_authored_prompt_facts() -> None:
         state="0" * 64,
         runnable="agic:worker",
         model="test/model",
+        model_request=ModelRequest("test/model"),
         locals=(Local.typed("Part[]", (TextPart("expanded"),), "_", 0),),
         authored_input=RunnableInputRaw(
-            primary="$review focus=security -- inspect",
-            named=(("tone", "$brief"),),
+            _="$review focus=security -- inspect",
+            named=(NamedInputSource("tone", "$brief"),),
         ),
         authored_commands=(RunOverride("limit", "time", 30),),
         authored_session_commands=(RunOverride("default", "model", "test/model"),),
@@ -471,6 +474,7 @@ def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:
         state="0" * 64,
         runnable="flow:worker",
         model="test/model",
+        model_request=ModelRequest("test/model"),
         locals=None,
         retry_from=StepPath("run_1", (2,)),
     )
@@ -480,6 +484,7 @@ def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:
         state=inherited.state,
         runnable=inherited.runnable,
         model=inherited.model,
+        model_request=inherited.model_request,
         locals=(),
         retry_from=None,
     )
@@ -502,6 +507,7 @@ def test_reload_and_inherited_preparation_payloads_round_trip_without_revision_d
         state=None,
         runnable="agic:child",
         model="test/model",
+        model_request=ModelRequest("test/model"),
         locals=(),
     )
 

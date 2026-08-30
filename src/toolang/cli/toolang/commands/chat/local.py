@@ -13,9 +13,10 @@ from typing import Any
 from uuid import uuid4
 
 from toolang.base.types.message import Message
+from toolang.base.types.policy import RunBindings
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
-from toolang.execution.calls import parse_call, validate_session_commands
+from toolang.execution.calls import parse_call
 from toolang.execution.client import LocalRunClient, RunClient
 from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.executor import RunExecutor
@@ -27,19 +28,20 @@ from toolang.execution.runnables import (
 )
 from toolang.execution.executor.resources import (
     agent_model_targets,
+    snapshot_model_selection,
     validate_agent_ceiling,
 )
+from toolang.plugin.models.resolution import model_reasoning_efforts
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.schemas import RunRequest
 from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.plugin.sandboxes.host import host_sandbox_description
-from toolang.setup import SetupWatcher
+from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.watcher import StateWatcher
-from toolang.state.state import state_program
+from toolang.state.state import AgentState, state_program
 from toolang.execution.values import parts_from_local
 from .base import ChatExecutorMetadata, ChatResult, ChatRunState, RunAccepted
-from .policy import apply_session_commands, commands_from_selects
+from .policy import ChatRunDefaults, apply_session_commands, build_run_request
 
 
 @dataclass(slots=True)
@@ -92,6 +94,7 @@ class LocalChatSession:
             refresh_state=self.state_watcher.refresh_result,
         )
         self.run_client: RunClient = LocalRunClient(self.executor)
+        self._defaults: ChatRunDefaults | None = None
         self._loop = asyncio.new_event_loop()
         self._ready = threading.Event()
         self._stop_signal: asyncio.Event | None = None
@@ -109,48 +112,45 @@ class LocalChatSession:
     def list_models(self) -> Mapping[str, Any]:
         setup = self.setup_watcher.current()
         state = self.state_watcher.current()
-        default, targets = agent_model_targets(setup, state, setup.ceiling)
-        default = setup.bindings.model or default
+        _default, targets = agent_model_targets(setup, state, setup.ceiling)
+        selection = snapshot_model_selection(setup, state)
         return {
-            "default": default,
+            "default": self._run_defaults().bindings.model,
             "items": [
                 {
-                    "selector": selector,
+                    "ref": selector,
                     "name": target.name,
-                    "ref": target.ref,
                     "provider": target.provider,
-                    "model": target.model,
-                    "adapter": target.adapter,
-                    "tools": target.tools,
-                    "streaming": target.streaming,
+                    "parameters": {
+                        "reasoning": {
+                            "effort": list(model_reasoning_efforts(selection, target))
+                        }
+                    },
                 }
                 for selector, target in targets
             ],
         }
 
     def list_runnables(self, kind: str) -> Mapping[str, Any]:
-        setup = self.setup_watcher.current()
         state = self._submit(self.state_watcher.refresh()).result()
-        default_agic, default_flow = runnable_binding_defaults(
-            state,
-            setup.bindings.runnable,
-            fallback_agic="chat",
+        default_ref = self._run_defaults().bindings.runnable
+        default_name, default_kind = (
+            parse_runnable_ref(default_ref) if default_ref is not None else (None, None)
         )
         if kind == "agic":
             names = list(state.agics)
-            default = default_agic
             return {
-                "default": default,
+                "default": default_name if default_kind == "agic" else None,
                 "items": [{"name": name} for name in names],
             }
         if kind == "flow":
             return {
-                "default": default_flow,
+                "default": default_name if default_kind == "flow" else None,
                 "items": [{"name": name} for name in state.flows],
             }
         if kind == "runnable":
             return {
-                "default": setup.bindings.runnable or f"agic:{default_agic}",
+                "default": default_ref,
                 "items": [
                     {"kind": item.kind, "name": name}
                     for name, item in state.runnables.items()
@@ -159,18 +159,10 @@ class LocalChatSession:
         raise ValueError(f"unknown runnable kind: {kind}")
 
     def list_prompts(self, runnable: str | None) -> Mapping[str, Any]:
-        setup = self.setup_watcher.current()
         state = self._submit(self.state_watcher.refresh()).result()
-        selected = runnable or setup.bindings.runnable
-        if selected is None:
-            default_agic, _default_flow = runnable_binding_defaults(
-                state,
-                None,
-                fallback_agic="chat",
-            )
-            if default_agic is None:  # pragma: no cover - fallback invariant
-                raise RuntimeError("chat has no default runnable")
-            selected = f"agic:{default_agic}"
+        selected = runnable or self._run_defaults().bindings.runnable
+        if selected is None:  # pragma: no cover - initialization invariant
+            raise RuntimeError("chat has no default runnable")
         name, kind = parse_runnable_ref(selected)
         module, _declaration = resolve_state_runnable(state, name, kind=kind)
         return {
@@ -195,16 +187,7 @@ class LocalChatSession:
         commands: tuple[RunOverride, ...],
         selects: Mapping[str, object],
     ) -> Mapping[str, object]:
-        candidate = apply_session_commands(selects, commands)
-        state = self.state_watcher.current()
-        setup = self.setup_watcher.current()
-        validate_session_commands(
-            commands_from_selects(candidate),
-            setup=setup,
-            state=state,
-            runnable_fallbacks=("agic:chat", "default"),
-        )
-        return candidate
+        return apply_session_commands(selects, commands)
 
     def get_result(
         self,
@@ -291,6 +274,7 @@ class LocalChatSession:
         state = await self.state_watcher.refresh()
         setup = await self.setup_watcher.refresh()
         validate_agent_ceiling(setup, state, setup.ceiling)
+        self._defaults = self._current_run_defaults(setup=setup, state=state)
         if self._stop_signal is None:
             raise RuntimeError("local chat event loop was not initialized")
         self._watch_tasks = (
@@ -313,13 +297,13 @@ class LocalChatSession:
         on_state: Callable[[ChatRunState], None] | None = None,
     ) -> None:
         commands, input = parse_call(message)
-        request = RunRequest(
-            thread=thread_id,
-            commands=commands,
-            input=input,
-            session_commands=commands_from_selects(selects),
-            runnable_fallbacks=("agic:chat", "default"),
+        request = build_run_request(
+            thread_id=thread_id,
             request_id=f"term_{uuid4().hex}",
+            input=input,
+            input_commands=commands,
+            selects=selects,
+            defaults=self._run_defaults(),
         )
         handle = await self.run_client.run(
             request,
@@ -328,6 +312,32 @@ class LocalChatSession:
         if on_state is not None:
             on_state(RunAccepted(handle.run_id))
         await handle.wait()
+
+    def _run_defaults(self) -> ChatRunDefaults:
+        if self._defaults is None:
+            raise RuntimeError("local chat run defaults are not initialized")
+        return self._defaults
+
+    @staticmethod
+    def _current_run_defaults(
+        *, setup: AgentSetup, state: AgentState
+    ) -> ChatRunDefaults:
+        model, _targets = agent_model_targets(setup, state, setup.ceiling)
+        runnable = setup.bindings.runnable
+        if runnable is None:
+            default_agic, default_flow = runnable_binding_defaults(
+                state,
+                None,
+                fallback_agic="chat",
+            )
+            if default_agic is not None:
+                runnable = f"agic:{default_agic}"
+            elif default_flow is not None:
+                runnable = f"flow:{default_flow}"
+        return ChatRunDefaults(
+            bindings=RunBindings(model=model, runnable=runnable),
+            limits=setup.limits,
+        )
 
     async def _close(self) -> None:
         if self._stop_signal is not None:

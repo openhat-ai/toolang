@@ -35,6 +35,14 @@ _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090ab
 _HOST_DESCRIPTION = "macOS 27.0 arm64"
 
 
+def _run_defaults() -> dict[str, object]:
+    return {
+        "model": "test/model",
+        "runnable": "agic:chat",
+        "policy": {"allow": [], "limits": {}},
+    }
+
+
 class _Bytes(httpx.AsyncByteStream):
     def __init__(self, *chunks: bytes) -> None:
         self._chunks = chunks
@@ -190,12 +198,21 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
                     instance=_CONTAINER_ID[:12],
                 ),
             )
+        if request.url.path == "/api/v1/runs/defaults":
+            return httpx.Response(200, json=_run_defaults())
         if request.url.path == "/api/v1/models":
             return httpx.Response(
                 200,
                 json={
                     "default": "test/model",
-                    "items": [{"selector": "test/model", "name": "test"}],
+                    "items": [
+                        {
+                            "ref": "test/model",
+                            "name": "test",
+                            "provider": "test",
+                            "parameters": {"reasoning": {"effort": []}},
+                        }
+                    ],
                 },
             )
         if request.url.path == "/api/v1/agics":
@@ -220,8 +237,6 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
             )
         if request.url.path == "/api/v1/threads" and request.method == "POST":
             return httpx.Response(201, json={"thread": _json(_thread())})
-        if request.url.path == "/api/v1/runs/authored/validate":
-            return httpx.Response(204)
         if request.url.path in {
             "/api/v1/runs/run_remote",
             "/api/v1/threads/term_remote/result",
@@ -282,19 +297,7 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
     finally:
         session.close()
 
-    validation = next(
-        body
-        for method, path, body in requests
-        if method == "POST" and path == "/api/v1/runs/authored/validate"
-    )
-    assert validation == {
-        "session_commands": [
-            {"group": "allow", "field": "models", "value": ["test/*"]},
-            {"group": "default", "field": "model", "value": "test/model"},
-            {"group": "limit", "field": "cost", "value": "2.50"},
-        ],
-        "runnable_fallbacks": ["agic:chat", "default"],
-    }
+    assert not any(path.endswith("/validate") for _method, path, _body in requests)
 
 
 @pytest.mark.parametrize(
@@ -350,6 +353,8 @@ def test_remote_chat_rejects_invalid_runtime_identity(
             return httpx.Response(200, json={"ok": True})
         if request.url.path == "/api/v1/profile":
             return httpx.Response(200, json=profile_payload)
+        if request.url.path == "/api/v1/runs/defaults":
+            return httpx.Response(200, json=_run_defaults())
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
     with pytest.raises(remote.RemoteChatError, match=message):
@@ -452,6 +457,8 @@ def test_remote_chat_uses_local_host_description_when_profile_does_not_supply_it
             return httpx.Response(200, json={"ok": True})
         if request.url.path == "/api/v1/profile":
             return httpx.Response(200, json=profile_payload)
+        if request.url.path == "/api/v1/runs/defaults":
+            return httpx.Response(200, json=_run_defaults())
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
     session = remote.RemoteChatSession(
@@ -480,6 +487,8 @@ def test_remote_chat_uses_remote_run_client_native_events() -> None:
             return httpx.Response(200, json={"ok": True})
         if request.url.path == "/api/v1/profile":
             return httpx.Response(200, json=_profile())
+        if request.url.path == "/api/v1/runs/defaults":
+            return httpx.Response(200, json=_run_defaults())
         if request.url.path == "/api/v1/runs/authored/stream":
             return _stream(_begin(), _end())
         if request.url.path == "/api/v1/runs/run_remote":
@@ -540,6 +549,8 @@ def test_remote_chat_recovers_without_replaying_or_retrying(
             return httpx.Response(200, json={"ok": True})
         if request.url.path == "/api/v1/profile":
             return httpx.Response(200, json=_profile())
+        if request.url.path == "/api/v1/runs/defaults":
+            return httpx.Response(200, json=_run_defaults())
         if request.url.path == "/api/v1/runs/authored/stream":
             submissions += 1
             return _stream(_begin())
@@ -588,6 +599,8 @@ def test_remote_chat_blocks_ambiguous_pre_acceptance_failure() -> None:
             return httpx.Response(200, json={"ok": True})
         if request.url.path == "/api/v1/profile":
             return httpx.Response(200, json=_profile())
+        if request.url.path == "/api/v1/runs/defaults":
+            return httpx.Response(200, json=_run_defaults())
         if request.url.path == "/api/v1/runs/authored/stream":
             submissions += 1
             raise httpx.ReadError("private transport detail", request=request)

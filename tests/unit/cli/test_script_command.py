@@ -17,7 +17,7 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.calls import parse_call
 from toolang.execution.records import RunRecord
 from toolang.execution.types import ControlRef, RunOverride, RunStatus
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import NamedInputSource, RunnableInputRaw
 from toolang.up.types import AgentServerRef
 from tests.support.execution_harness import ExecutionHarness
 
@@ -103,10 +103,13 @@ def test_script_binds_options_arguments_and_primary_input(
         "cost=2.5",
         "time=60",
     )
-    assert captured["raw_named"] == (("count", "2.5"), ("enabled", "true"))
+    assert captured["raw_named"] == (
+        NamedInputSource("count", "2.5"),
+        NamedInputSource("enabled", "true"),
+    )
     input = captured["input"]
     assert isinstance(input, RunnableInputRaw)
-    assert input.primary == "hello world"
+    assert input._ == "hello world"
 
 
 def test_script_reads_primary_input_from_stdin(
@@ -132,7 +135,7 @@ def test_script_reads_primary_input_from_stdin(
     assert result == 0
     input = captured["input"]
     assert isinstance(input, RunnableInputRaw)
-    assert input.primary == "from stdin"
+    assert input._ == "from stdin"
 
 
 def test_script_stdin_can_override_the_cli_runnable(
@@ -170,7 +173,7 @@ agic alternate(_: Part[]):
     )
     input = captured["input"]
     assert isinstance(input, RunnableInputRaw)
-    assert input.primary == "from stdin"
+    assert input._ == "from stdin"
     assert captured["raw_named"] == ()
 
 
@@ -197,7 +200,7 @@ def test_script_supports_explicit_stdin_marker(
     assert result == 0
     input = captured["input"]
     assert isinstance(input, RunnableInputRaw)
-    assert input.primary == "from stdin"
+    assert input._ == "from stdin"
 
 
 def test_script_keeps_assignments_after_separator_as_input(
@@ -230,7 +233,7 @@ agic demo(_: Part[], count?: Number):
     assert captured["raw_named"] == ()
     input = captured["input"]
     assert isinstance(input, RunnableInputRaw)
-    assert input.primary == "count=2"
+    assert input._ == "count=2"
 
 
 def test_script_includes_an_image(
@@ -259,7 +262,7 @@ def test_script_includes_an_image(
     assert result == 0
     input = captured["input"]
     assert isinstance(input, RunnableInputRaw)
-    assert input.primary == "@sample.png"
+    assert input._ == "@sample.png"
 
 
 def test_script_shows_runnable_help_for_a_missing_required_parameter(
@@ -346,7 +349,7 @@ def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> Non
                     runnable="demo",
                     commands=commands,
                     input=input,
-                    raw_named=(("count", "1"),),
+                    raw_named=(NamedInputSource("count", "1"),),
                     allow_options=(),
                     default_options=(),
                     quiet=True,
@@ -593,8 +596,8 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
         source,
         runnable="demo",
         commands=(),
-        input=RunnableInputRaw(primary="hello"),
-        raw_named=(("count", "2"),),
+        input=RunnableInputRaw(_="hello"),
+        raw_named=(NamedInputSource("count", "2"),),
         allow_options=(),
         default_options=(),
         limit_options=(),
@@ -653,8 +656,8 @@ def test_embedded_script_prepare_failure_uses_the_operational_failure_block(
         source,
         runnable="demo",
         commands=(),
-        input=RunnableInputRaw(primary="hello"),
-        raw_named=(("count", "2"),),
+        input=RunnableInputRaw(_="hello"),
+        raw_named=(NamedInputSource("count", "2"),),
         allow_options=(),
         default_options=(),
         limit_options=(),
@@ -720,6 +723,17 @@ def test_remote_script_cancellation_cancels_the_accepted_run(
     monkeypatch.setattr(script, "RemoteRunClient", Client)
     monkeypatch.setattr(script, "inspect_remote_runtime", inspect)
     monkeypatch.setattr(script, "_create_remote_script_thread", create_thread)
+    monkeypatch.setattr(
+        script,
+        "_remote_script_defaults",
+        lambda *_args, **_kwargs: asyncio.sleep(
+            0,
+            result=(
+                script.RunBindings(model="test/scripted", runnable="agic:demo"),
+                script.RunPolicy(),
+            ),
+        ),
+    )
     monkeypatch.setattr(script, "load_runtime_environ", lambda *_args, **_kwargs: {})
 
     async def scenario() -> None:
@@ -730,8 +744,8 @@ def test_remote_script_cancellation_cancels_the_accepted_run(
                 sandbox="docker:python:3.13-slim",
                 runnable="demo",
                 commands=(),
-                input=RunnableInputRaw(primary="hello"),
-                raw_named=(("count", "2"),),
+                input=RunnableInputRaw(_="hello"),
+                raw_named=(NamedInputSource("count", "2"),),
                 allow_options=(),
                 default_options=(),
                 limit_options=(),
@@ -770,8 +784,8 @@ def test_remote_script_rejects_mixed_named_input_sources() -> None:
         match="named inputs cannot be supplied by both source and surface",
     ):
         script._remote_script_input(
-            RunnableInputRaw(named=(("count", "1"),)),
-            raw_named=(("enabled", "true"),),
+            RunnableInputRaw(named=(NamedInputSource("count", "1"),)),
+            raw_named=(NamedInputSource("enabled", "true"),),
         )
 
 

@@ -31,6 +31,7 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
+from toolang.base.types.model import ReasoningEffort
 from toolang.execution.runnables import parse_runnable_ref
 from toolang.common.errors import ToolangError
 from toolang.common.version import toolang_version
@@ -64,6 +65,7 @@ from .input import (
     parse_chat_input,
 )
 from .presenter import ChatRunPresenter
+from .policy import apply_model_selection, reasoning_effort_from_selects
 
 _RUN_EVENT_TYPES = (
     RunBegin,
@@ -143,6 +145,9 @@ class ChatTuiAppContext:
 
     def get_active_run(self) -> str | None:
         return self._app.active_run_id
+
+    def open_model_picker(self, payload: Mapping[str, object]) -> None:
+        self._app._open_model_picker(payload)
 
     def get_thread_id(self) -> str | None:
         return self._app.thread_id
@@ -269,8 +274,15 @@ class ChatTuiApp:
             history_store=self.input_history,
             completer=self.completer,
         )
+        self.model_picker = widgets.ModelPicker(
+            current=self._current_model_selection,
+            commit=self._commit_model_selection,
+            close=self._close_model_picker,
+            invalidate=self._invalidate_ui,
+        )
         self._refresh_prompt_completions()
         keys = KeyBindings()
+        self.model_picker.bind(keys)
         self.prompt.bind(keys)
         body = HSplit(
             [
@@ -292,7 +304,13 @@ class ChatTuiApp:
                                 max_height=8,
                                 display_arrows=True,
                             ),
-                        )
+                        ),
+                        Float(
+                            top=1,
+                            left=2,
+                            right=2,
+                            content=self.model_picker.container(),
+                        ),
                     ],
                 ),
                 focused_element=self.prompt.buffer,
@@ -306,6 +324,35 @@ class ChatTuiApp:
         )
         self.app.key_processor.after_key_press += self._clear_status_error_on_escape
         self.app_context: AppContext = ChatTuiAppContext(self)
+
+    def _current_model_selection(
+        self,
+    ) -> tuple[str | None, ReasoningEffort | None]:
+        return (
+            as_text(self.selects.get("model")),
+            reasoning_effort_from_selects(self.selects),
+        )
+
+    def _open_model_picker(self, payload: Mapping[str, object]) -> None:
+        self.model_picker.open(payload)
+        self.app.layout.focus(self.model_picker.buffer)
+
+    def _close_model_picker(self) -> None:
+        self.app.layout.focus(self.prompt.buffer)
+
+    def _commit_model_selection(
+        self,
+        ref: str,
+        effort: ReasoningEffort | None,
+    ) -> None:
+        updated = apply_model_selection(
+            self.selects,
+            ref=ref,
+            effort=effort,
+        )
+        self.selects.clear()
+        self.selects.update(updated)
+        self.status_bar.set_status(*self._status_labels())
 
     def _live_blocks_container(self) -> HSplit | Window:
         if not self.unfinalized_blocks:

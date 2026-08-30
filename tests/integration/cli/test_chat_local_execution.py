@@ -12,9 +12,11 @@ from anyio import to_process
 
 from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import Message, TextPart
+from toolang.base.types.policy import RunBindings, RunLimits
 from toolang.base.types.run import ModelCallResult
 from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.base import ChatExecutorMetadata
+from toolang.cli.toolang.commands.chat.policy import ChatRunDefaults
 from toolang.execution.events import RunEvent
 from toolang.state.watcher import StateRefresh
 
@@ -97,7 +99,7 @@ def test_local_chat_close_cancels_watchers_without_waiting_for_polling() -> None
     asyncio.run(scenario())
 
 
-def test_local_chat_run_request_keeps_chat_fallback_agic_only() -> None:
+def test_local_chat_run_request_materializes_chat_runnable() -> None:
     requests = []
 
     class Handle:
@@ -115,13 +117,18 @@ def test_local_chat_run_request_keeps_chat_fallback_agic_only() -> None:
     async def scenario() -> None:
         session: Any = object.__new__(local.LocalChatSession)
         session.run_client = RunClient()
+        session._run_defaults = lambda: ChatRunDefaults(
+            bindings=RunBindings(model="test/scripted", runnable="agic:chat"),
+            limits=RunLimits(),
+        )
 
         await session._run("term_test", "hello", {}, lambda _event: None)
 
     asyncio.run(scenario())
 
     assert len(requests) == 1
-    assert requests[0].runnable_fallbacks == ("agic:chat", "default")
+    assert requests[0].runnable.ref == "agic:chat"
+    assert requests[0].model.ref == "test/scripted"
 
 
 def test_local_chat_owner_loop_control_does_not_wait_on_itself() -> None:

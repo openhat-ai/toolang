@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
 from typing import Protocol, cast
 
 from toolang.base.errors import ToolangError
-from toolang.base.types.model import Model, ModelAlias, ModelInfo, ModelTarget, Provider
+from toolang.base.types.model import (
+    Model,
+    ModelAlias,
+    ModelInfo,
+    ModelParameters,
+    ModelTarget,
+    Provider,
+    ReasoningEffort,
+)
 from toolang.plugin.models.config import ProviderConfig
 from toolang.plugin.models.messages import (
     NO_AVAILABLE_MODELS_MESSAGE,
@@ -180,6 +188,69 @@ def resolve_model(
     target = matches[0].target
     _require_allowed(target, selector=effective_selector, allowed=resolved_allowed)
     return target
+
+
+def model_reasoning_efforts(
+    context: SupportsModelSelection,
+    target: ModelTarget,
+) -> tuple[ReasoningEffort, ...]:
+    """Return recognized catalog-advertised efforts in catalog order."""
+
+    info = _find_model_info_by_ref(
+        context.models,
+        provider=target.provider,
+        ref=target.ref,
+    )
+    if info is None:
+        return ()
+    raw_options = info.metadata.get("reasoning_options")
+    options = (
+        tuple(item for item in raw_options if isinstance(item, Mapping))
+        if isinstance(raw_options, list | tuple)
+        else ()
+    )
+    recognized = {
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "default",
+    }
+    result: list[ReasoningEffort] = []
+    for option in options:
+        if option.get("type") != "effort":
+            continue
+        values = option.get("values")
+        if not isinstance(values, list | tuple):
+            continue
+        for value in values:
+            if isinstance(value, str) and value in recognized and value not in result:
+                result.append(cast(ReasoningEffort, value))
+    return tuple(result)
+
+
+def apply_model_parameters(
+    context: SupportsModelSelection,
+    target: ModelTarget,
+    parameters: ModelParameters,
+) -> ModelTarget:
+    """Validate and apply one request's typed parameters to a resolved target."""
+
+    reasoning = parameters.reasoning
+    effort = reasoning.effort if reasoning is not None else None
+    if effort is None:
+        return target
+    allowed = model_reasoning_efforts(context, target)
+    if effort not in allowed:
+        joined = ", ".join(allowed) or "none"
+        raise ToolangError(
+            f"model {target.ref} does not advertise reasoning effort "
+            f"{effort!r} (allowed: {joined})"
+        )
+    return replace(target, reasoning={"effort": effort})
 
 
 def select_model_selectors(
@@ -393,7 +464,7 @@ def _discover_available_candidates(
         if identity in seen:
             continue
         seen.add(identity)
-        selector = f"{info.ref}[{_provider_id(provider)}]"
+        selector = _catalog_route_ref(info, provider)
         candidates.append(
             _Candidate(
                 selector=selector,
@@ -485,10 +556,10 @@ def _resolve_exact_ref(
 ) -> tuple[_Candidate, ...]:
     matches: list[_Candidate] = []
     for info in models:
-        if info.ref != ref:
-            continue
         provider = providers.get(info.provider)
         if provider is None or _provider_id(provider) == CUSTOM_MODEL_PROVIDER:
+            continue
+        if info.ref != ref and _catalog_route_ref(info, provider) != ref:
             continue
         if not _model_info_ready(info):
             continue
@@ -500,7 +571,7 @@ def _resolve_exact_ref(
         )
         matches.append(
             _Candidate(
-                selector=f"{target.ref}[{_provider_id(provider)}]",
+                selector=_catalog_route_ref(info, provider),
                 target=target,
                 match_values=_candidate_match_values(ref, target),
                 info=info,
@@ -531,7 +602,11 @@ def _resolve_exact_ref(
 
 
 def _candidate_matches(candidate: _Candidate, selector: ModelSelector) -> bool:
-    if _looks_exact_ref(selector) and candidate.target.ref != selector.pattern:
+    if (
+        _looks_exact_ref(selector)
+        and candidate.selector != selector.pattern
+        and candidate.target.ref != selector.pattern
+    ):
         return False
     if not _pattern_matches(candidate, selector.pattern):
         return False
@@ -616,6 +691,15 @@ def _bool_filter_value(value: bool) -> str:
 def _model_info_ready(info: ModelInfo) -> bool:
     value = info.metadata.get("resolved_ready")
     return value if isinstance(value, bool) else info.adapter != "unavailable"
+
+
+def _catalog_route_ref(info: ModelInfo, provider: Provider) -> str:
+    provider_id = _provider_id(provider)
+    return (
+        info.ref
+        if info.ref.partition("/")[0] == provider_id
+        else f"{provider_id}/{info.ref}"
+    )
 
 
 def _looks_exact_ref(selector: ModelSelector) -> bool:
@@ -1043,7 +1127,7 @@ def _require_allowed(
     allowed_identities = {_target_identity(item) for item in allowed}
     if _target_identity(target) in allowed_identities:
         return
-    allowed_text = ", ".join(f"{item.ref}[{item.provider}]" for item in allowed)
+    allowed_text = ", ".join(_target_route_ref(item) for item in allowed)
     raise ToolangError(
         f"model selector is outside the current resources: {selector} "
         f"(allowed: {allowed_text})"
@@ -1052,6 +1136,14 @@ def _require_allowed(
 
 def _target_identity(target: ModelTarget) -> tuple[str, str, str, str | None]:
     return (target.ref, target.provider, target.model, target.base_url)
+
+
+def _target_route_ref(target: ModelTarget) -> str:
+    return (
+        target.ref
+        if target.ref.partition("/")[0] == target.provider
+        else f"{target.provider}/{target.ref}"
+    )
 
 
 def _first_non_empty(*items: str | None) -> str:

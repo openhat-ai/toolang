@@ -71,7 +71,7 @@ def test_remote_script_uses_a_script_thread_and_native_progress(
                 sandbox="host",
                 runnable="echo",
                 commands=(),
-                input=RunnableInputRaw(primary="hello"),
+                input=RunnableInputRaw(_="hello"),
                 raw_named=(),
                 allow_options=(),
                 default_options=(),

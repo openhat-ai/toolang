@@ -131,11 +131,19 @@ def retry_command(
     ] = None,
     defaults: Annotated[
         list[str] | None,
-        typer.Option("--default", help="Set model=VALUE for retried work."),
+        typer.Option(
+            "--default",
+            help="Compatibility option; retry preserves the persisted model.",
+        ),
     ] = None,
 ) -> None:
     """Retry one terminal root run from a durable step boundary."""
 
+    if defaults:
+        raise click.BadParameter(
+            "retry preserves the persisted model",
+            param_hint="--default",
+        )
     layout = context_layout(ctx)
     with open_execution(ctx, required=True) as resources:
         if resources is None:  # pragma: no cover
@@ -154,8 +162,9 @@ def retry_command(
             _restart_commands,
             layout,
             allow_options=allows,
-            default_options=defaults,
+            default_options=None,
             limit_options=limit,
+            model_replacement=False,
         ),
         show_progress=show_progress,
         model_catalog=resolve_model_catalog_option(model_catalog),
@@ -222,6 +231,7 @@ def rerun_command(
             allow_options=allows,
             default_options=defaults,
             limit_options=limit,
+            model_replacement=True,
         ),
         show_progress=show_progress,
         model_catalog=resolve_model_catalog_option(model_catalog),
@@ -370,6 +380,7 @@ def _restart_commands(
     allow_options: list[str] | None,
     default_options: list[str] | None,
     limit_options: list[str] | None,
+    model_replacement: bool,
 ) -> tuple[RunOverride, ...]:
     environ = load_runtime_environ(layout, base_environ=os.environ)
     cli_bindings = resolve_binding_overrides({}, default_options)
@@ -380,6 +391,8 @@ def _restart_commands(
         **cli_bindings,
     }
     binding_overrides.pop("runnable", None)
+    if not model_replacement:
+        binding_overrides.pop("model", None)
     ceilings = resolve_ceiling_overrides(environ, allow_options or ())
     limits = resolve_limit_overrides(environ, limit_options or ())
     return (

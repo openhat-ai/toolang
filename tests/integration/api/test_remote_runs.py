@@ -21,6 +21,8 @@ from toolang.api.schemas import (
     RunSteerRequest,
 )
 from toolang.base.types.message import Message
+from toolang.base.types.model import ModelRequest
+from toolang.base.types.policy import RunPolicy
 from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.catalog import CapsManager, JobsManager
 from toolang.execution.calls import resolve_run_request
@@ -29,11 +31,11 @@ from toolang.execution.records import (
     RetryControlPayload,
     RunControlPayload,
 )
-from toolang.execution.schemas import RunDetail, RunRequest
+from toolang.execution.schemas import RunDetail, RunRequest, RunnableRequest
 from toolang.execution.types import ThreadPrefix
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import NamedInputSource, RunnableInputRaw
 from toolang.up import AgentCore
-from tests.support.execution_harness import ExecutionHarness
+from tests.support.execution_harness import ExecutionHarness, TEST_MODEL_REF
 
 
 class _Snapshot:
@@ -49,6 +51,38 @@ class _Snapshot:
         if getattr(self.value, "revision", None) != revision:
             raise ValueError(f"snapshot revision not found: {revision}")
         return self.value
+
+
+def _authored_request(
+    thread_id: str,
+    request_id: str,
+    *,
+    source: str = "hello",
+    runnable: str = "agic:chat",
+    named: list[dict[str, str]] | None = None,
+    allow: list[dict[str, object]] | None = None,
+    limits: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "thread_id": thread_id,
+        "request_id": request_id,
+        "runnable": {
+            "ref": runnable,
+            "input": {"_": source, "named": named or []},
+        },
+        "model": {"ref": TEST_MODEL_REF, "parameters": {}},
+        "policy": {"allow": allow or [], "limits": limits or {}},
+    }
+
+
+def _core_request(thread_id: str, request_id: str) -> RunRequest:
+    return RunRequest(
+        thread_id=thread_id,
+        request_id=request_id,
+        runnable=RunnableRequest("agic:chat", RunnableInputRaw(_="hello")),
+        model=ModelRequest(TEST_MODEL_REF),
+        policy=RunPolicy(),
+    )
 
 
 def test_authored_run_stream_resolves_fallback_policy_and_server_include(
@@ -113,126 +147,88 @@ agic selected(_: Part[], tone: Text) -> Part[]:
             fallback = client.post(
                 "/api/v1/runs/authored/stream",
                 headers={"origin": "https://ui.test"},
-                json={
-                    "thread": thread_id,
-                    "request_id": "fallback_request",
-                    "input": {
-                        "primary": "$review focus=security -\n@note.txt",
-                        "named": [{"name": "tone", "source": "brief"}],
-                    },
-                    "session_commands": [
-                        {"group": "limit", "field": "cost", "value": "2.50"}
-                    ],
-                    "runnable_fallbacks": ["agic:missing", "agic:chat", "default"],
-                },
+                json=_authored_request(
+                    thread_id,
+                    "fallback_request",
+                    source="$review focus=security -\n@note.txt",
+                    named=[{"name": "tone", "source": "brief"}],
+                    limits={"cost": "2.50"},
+                ),
             )
             fallback_events = _sse_events(fallback.text)
             fallback_id = str(fallback_events[0][1]["run"])
             fallback_detail_response = client.get(f"/api/v1/runs/{fallback_id}")
             selected = client.post(
                 "/api/v1/runs/authored/stream",
-                json={
-                    "thread": thread_id,
-                    "request_id": "selected_request",
-                    "commands": [
-                        {
-                            "group": "default",
-                            "field": "runnable",
-                            "value": "agic:selected",
-                        }
-                    ],
-                    "input": {
-                        "primary": "hello",
-                        "named": [{"name": "tone", "source": "direct"}],
-                    },
-                    "session_commands": [
-                        {
-                            "group": "default",
-                            "field": "runnable",
-                            "value": "agic:chat",
-                        }
-                    ],
-                    "runnable_fallbacks": ["agic:chat", "default"],
-                },
+                json=_authored_request(
+                    thread_id,
+                    "selected_request",
+                    runnable="agic:selected",
+                    named=[{"name": "tone", "source": "direct"}],
+                ),
             )
             selected_events = _sse_events(selected.text)
             selected_id = str(selected_events[0][1]["run"])
             selected_detail_response = client.get(f"/api/v1/runs/{selected_id}")
             duplicate = client.post(
                 "/api/v1/runs/authored/stream",
-                json={
-                    "thread": thread_id,
-                    "request_id": "selected_request",
-                    "input": {
-                        "primary": "duplicate",
-                        "named": [{"name": "tone", "source": "duplicate"}],
-                    },
-                    "runnable_fallbacks": ["agic:chat", "default"],
-                },
+                json=_authored_request(
+                    thread_id,
+                    "selected_request",
+                    source="duplicate",
+                    named=[{"name": "tone", "source": "duplicate"}],
+                ),
             )
             invalid_policy = client.post(
                 "/api/v1/runs/authored/stream",
-                json={
-                    "thread": thread_id,
-                    "request_id": "invalid_request",
-                    "commands": [{"group": "allow", "field": "models", "value": "all"}],
-                    "input": {"primary": "invalid"},
-                    "runnable_fallbacks": ["agic:chat", "default"],
-                },
+                json=_authored_request(
+                    thread_id,
+                    "invalid_request",
+                    source="invalid",
+                    allow=[{"models": "all"}],
+                ),
             )
             invalid_fallback = client.post(
                 "/api/v1/runs/authored/stream",
-                json={
-                    "thread": thread_id,
-                    "request_id": "invalid_fallback_request",
-                    "input": {"primary": "invalid"},
-                    "runnable_fallbacks": ["agic:missing", "flow:missing"],
-                },
+                json=_authored_request(
+                    thread_id,
+                    "invalid_fallback_request",
+                    source="invalid",
+                    runnable="agic:missing",
+                ),
             )
             invalid_input = client.post(
                 "/api/v1/runs/authored/stream",
-                json={
-                    "thread": thread_id,
-                    "request_id": "invalid_input_request",
-                    "input": {
-                        "primary": "invalid",
-                        "named": [{"name": "not-valid", "source": "value"}],
-                    },
-                    "runnable_fallbacks": ["agic:chat", "default"],
-                },
+                json=_authored_request(
+                    thread_id,
+                    "invalid_input_request",
+                    source="invalid",
+                    named=[{"name": "not-valid", "source": "value"}],
+                ),
             )
             invalid_include = client.post(
                 "/api/v1/runs/authored/stream",
-                json={
-                    "thread": thread_id,
-                    "request_id": "invalid_include_request",
-                    "input": {
-                        "primary": "@missing.txt",
-                        "named": [{"name": "tone", "source": "brief"}],
-                    },
-                    "runnable_fallbacks": ["agic:chat", "default"],
-                },
+                json=_authored_request(
+                    thread_id,
+                    "invalid_include_request",
+                    source="@missing.txt",
+                    named=[{"name": "tone", "source": "brief"}],
+                ),
             )
             invalid_home_include = client.post(
                 "/api/v1/runs/authored/stream",
-                json={
-                    "thread": thread_id,
-                    "request_id": "invalid_home_include_request",
-                    "input": {
-                        "primary": "@~toolang_user_that_does_not_exist/file.txt",
-                        "named": [{"name": "tone", "source": "brief"}],
-                    },
-                    "runnable_fallbacks": ["agic:chat", "default"],
-                },
+                json=_authored_request(
+                    thread_id,
+                    "invalid_home_include_request",
+                    source="@~toolang_user_that_does_not_exist/file.txt",
+                    named=[{"name": "tone", "source": "brief"}],
+                ),
             )
             missing_thread = client.post(
                 "/api/v1/runs/authored/stream",
-                json={
-                    "thread": "term_missing",
-                    "request_id": "missing_request",
-                    "input": {"primary": "missing"},
-                    "runnable_fallbacks": ["agic:chat", "default"],
-                },
+                json=_authored_request(
+                    "term_missing", "missing_request", source="missing"
+                ),
             )
 
         fallback_detail = TypeAdapter(RunDetail).validate_python(
@@ -261,8 +257,8 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         assert fallback_control.payload.limits.cost == Decimal("2.50")
         assert fallback_control.payload.sandbox == "host"
         assert fallback_control.payload.authored_input == RunnableInputRaw(
-            primary="$review focus=security -\n@note.txt",
-            named=(("tone", "brief"),),
+            _="$review focus=security -\n@note.txt",
+            named=(NamedInputSource("tone", "brief"),),
         )
         assert len(fallback_control.payload.prompt_invocations) == 1
         prompt = fallback_control.payload.prompt_invocations[0]
@@ -289,16 +285,15 @@ agic selected(_: Part[], tone: Text) -> Part[]:
             "run control request already exists: selected_request"
         )
         assert invalid_policy.status_code == 422
-        assert invalid_policy.json()["detail"] == (
-            "allow policy value must be selectors, all, or none"
+        assert invalid_policy.json()["detail"][0]["msg"] == (
+            "Input should be a valid tuple"
         )
         assert invalid_fallback.status_code == 422
-        assert invalid_fallback.json()["detail"] == (
-            "no runnable fallback is available: agic:missing, flow:missing"
-        )
+        assert invalid_fallback.json()["detail"] == "Runnable not found: missing"
         assert invalid_input.status_code == 422
-        assert invalid_input.json()["detail"] == (
+        assert (
             "named input must use a canonical name"
+            in (invalid_input.json()["detail"][0]["msg"])
         )
         assert invalid_include.status_code == 422
         assert "missing.txt" in invalid_include.json()["detail"]
@@ -353,12 +348,7 @@ agic chat(_: Part[]) -> Part[]:
             ).json()["thread"]["id"]
             source = client.post(
                 "/api/v1/runs/authored/stream",
-                json={
-                    "thread": thread_id,
-                    "request_id": "source_request",
-                    "input": {"primary": "hello"},
-                    "runnable_fallbacks": ["agic:chat", "default"],
-                },
+                json=_authored_request(thread_id, "source_request"),
             )
             source_id = source.headers["X-Toolang-Run-ID"]
 
@@ -438,14 +428,7 @@ agic chat(_: Part[]) -> Part[]:
 
     async def scenario() -> None:
         thread = core.threads.create(prefix=ThreadPrefix.TERM)
-        request = RunRequest(
-            thread=thread,
-            commands=(),
-            input=RunnableInputRaw(primary="hello"),
-            session_commands=(),
-            runnable_fallbacks=("agic:chat", "default"),
-            request_id="pending_request",
-        )
+        request = _core_request(thread, "pending_request")
         handle = core.executor.run(
             resolve_run_request(
                 request,
@@ -505,14 +488,7 @@ def test_http_controls_map_transaction_state_races_to_conflict(
         thread = core.threads.create(prefix=ThreadPrefix.TERM)
         handle = core.executor.run(
             resolve_run_request(
-                RunRequest(
-                    thread=thread,
-                    commands=(),
-                    input=RunnableInputRaw(primary="hello"),
-                    session_commands=(),
-                    runnable_fallbacks=("agic:chat", "default"),
-                    request_id="pending_race_request",
-                ),
+                _core_request(thread, "pending_race_request"),
                 setup=harness.setup,
                 state=harness.state,
             ),

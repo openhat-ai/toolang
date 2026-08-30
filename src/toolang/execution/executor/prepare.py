@@ -33,7 +33,7 @@ from toolang.lang.input import (
     PromptInvocation,
     resolve_input_parts_with_provenance,
 )
-from toolang.plugin.models.resolution import resolve_model
+from toolang.plugin.models.resolution import apply_model_parameters, resolve_model
 from toolang.state import state as cap_store
 from toolang.state.state import (
     AgentState,
@@ -104,6 +104,12 @@ def prepare_agic(
         or (model_selectors[0] if model_selectors else None),
         allowed_selectors=model_selectors,
     )
+    if run.model_request is not None:
+        model = apply_model_parameters(
+            selection,
+            model,
+            run.model_request.parameters,
+        )
     tools = dict(resource_tools(run.setup, resources))
     routes = resolve_agic_routes(run.state, agic)
     inner_tools = {} if agic.name.startswith("<agic:") else runtime_tools()

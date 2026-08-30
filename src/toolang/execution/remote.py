@@ -17,6 +17,7 @@ from httpx_sse import SSEError, ServerSentEvent, aconnect_sse
 from pydantic import TypeAdapter, ValidationError
 
 from toolang.base.types.message import Message
+from toolang.base.types.model import ModelRequest
 from toolang.execution.client import RunHandle
 from toolang.execution.events import RunBegin, RunEnd, RunTracer, run_event_from_data
 from toolang.execution.schemas import (
@@ -33,6 +34,8 @@ _LOGGER = logging.getLogger(__name__)
 _RUN_ID_HEADER = "X-Toolang-Run-ID"
 _RUN_DETAIL_ADAPTER = TypeAdapter(RunDetail)
 _CONTROL_INFO_ADAPTER = TypeAdapter(ControlInfo)
+_RUN_REQUEST_ADAPTER = TypeAdapter(RunRequest)
+_MODEL_REQUEST_ADAPTER = TypeAdapter(ModelRequest)
 
 
 class RemoteRunClientError(RuntimeError):
@@ -524,21 +527,10 @@ def _valid_endpoint_host(host: str) -> bool:
 
 
 def _run_request_data(request: RunRequest) -> dict[str, object]:
-    return {
-        "thread": request.thread,
-        "request_id": request.request_id,
-        "commands": [_run_override_data(item) for item in request.commands],
-        "input": {
-            "primary": request.input.primary,
-            "named": [
-                {"name": name, "source": source} for name, source in request.input.named
-            ],
-        },
-        "session_commands": [
-            _run_override_data(item) for item in request.session_commands
-        ],
-        "runnable_fallbacks": list(request.runnable_fallbacks),
-    }
+    return cast(
+        dict[str, object],
+        _RUN_REQUEST_ADAPTER.dump_python(request, mode="json"),
+    )
 
 
 def _restart_request_data(request: RetryRequest | RerunRequest) -> dict[str, object]:
@@ -548,6 +540,11 @@ def _restart_request_data(request: RetryRequest | RerunRequest) -> dict[str, obj
     }
     if isinstance(request, RetryRequest):
         payload["anchor"] = str(request.anchor) if request.anchor is not None else None
+    elif request.model is not None:
+        payload["model"] = _MODEL_REQUEST_ADAPTER.dump_python(
+            request.model,
+            mode="json",
+        )
     return payload
 
 

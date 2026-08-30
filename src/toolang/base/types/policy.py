@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 
@@ -72,6 +72,22 @@ class RunLimits:
                 raise TypeError("run limit cost must be a Decimal")
             if not self.cost.is_finite() or self.cost < 0:
                 raise ValueError("run limit cost must be finite and non-negative")
+
+
+@dataclass(frozen=True, slots=True)
+class RunPolicy:
+    """Materialized caller policy for one root run."""
+
+    allow: tuple[AgentCeiling, ...] = ()
+    limits: RunLimits = field(default_factory=RunLimits)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.allow, tuple) or not all(
+            isinstance(item, AgentCeiling) for item in self.allow
+        ):
+            raise TypeError("run policy allow must contain AgentCeiling values")
+        if not isinstance(self.limits, RunLimits):
+            raise TypeError("run policy limits must be RunLimits")
 
 
 def _normalize_selectors(

@@ -19,6 +19,7 @@ from toolang.base.types.message import (
     ToolResultPart,
     part_from_data,
 )
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelCall, ModelContinuation, ToolCall
 from toolang.lang.ast import FlowStmt, flow_stmt_from_data, to_data as ast_to_data
@@ -68,6 +69,8 @@ from .types import (
     validate_step_given,
     validate_step_noted,
 )
+
+_MODEL_REQUEST_ADAPTER = TypeAdapter(ModelRequest)
 
 
 _MODEL_CALL_ADAPTER = TypeAdapter(ModelCall)
@@ -148,6 +151,7 @@ class RunControlPayload:
     runnable: str
     model: str
     locals: tuple[Local, ...]
+    model_request: ModelRequest | None = None
     sandbox: str | None = None
     authored_input: RunnableInputRaw | None = None
     authored_commands: tuple[RunOverride, ...] = ()
@@ -177,6 +181,7 @@ class RerunControlPayload:
     model: str
     locals: tuple[Local, ...]
     rerun_from: RunId
+    model_request: ModelRequest | None = None
     sandbox: str | None = None
     authored_input: RunnableInputRaw | None = None
     authored_commands: tuple[RunOverride, ...] = ()
@@ -208,6 +213,7 @@ class RetryControlPayload:
     model: str
     locals: tuple[Local, ...] | None
     retry_from: StepPath | None
+    model_request: ModelRequest | None = None
     sandbox: str | None = None
     authored_input: RunnableInputRaw | None = None
     authored_commands: tuple[RunOverride, ...] = ()
@@ -703,6 +709,14 @@ def _control_payload_from_data(
         state = _optional_payload_text(payload, "state")
         runnable = _required_payload_text(payload, "runnable")
         model = _required_payload_text(payload, "model")
+        raw_model_request = payload.get("model_request")
+        model_request = (
+            ModelRequest(model)
+            if raw_model_request is None
+            else _MODEL_REQUEST_ADAPTER.validate_python(raw_model_request)
+        )
+        if model_request.ref != model:
+            raise ValueError("preparation model request must match model")
         sandbox = _optional_payload_text(payload, "sandbox")
         raw_locals = payload.get("locals")
         if raw_locals is None:
@@ -739,6 +753,7 @@ def _control_payload_from_data(
                 runnable=runnable,
                 model=model,
                 locals=locals_value or (),
+                model_request=model_request,
                 sandbox=sandbox,
                 authored_input=authored_input,
                 authored_commands=authored_commands,
@@ -756,6 +771,7 @@ def _control_payload_from_data(
                 model=model,
                 locals=locals_value or (),
                 rerun_from=_required_payload_text(payload, "rerun_from"),
+                model_request=model_request,
                 sandbox=sandbox,
                 authored_input=authored_input,
                 authored_commands=authored_commands,
@@ -775,6 +791,7 @@ def _control_payload_from_data(
                 if raw_retry_from is not None
                 else None
             ),
+            model_request=model_request,
             sandbox=sandbox,
             authored_input=authored_input,
             authored_commands=authored_commands,
@@ -1635,6 +1652,10 @@ def _preparation_payload_data(
         "limits": run_limits_to_data(payload.limits),
         "runnable": payload.runnable,
         "model": payload.model,
+        "model_request": _MODEL_REQUEST_ADAPTER.dump_python(
+            payload.model_request or ModelRequest(payload.model),
+            mode="json",
+        ),
         "locals": (
             [local_to_data(local) for local in payload.locals]
             if payload.locals is not None
@@ -1647,10 +1668,10 @@ def _preparation_payload_data(
         data["sandbox"] = payload.sandbox
     if payload.authored_input is not None:
         data["authored_input"] = {
-            "primary": payload.authored_input.primary,
+            "primary": payload.authored_input._,
             "named": [
-                {"name": name, "source": source}
-                for name, source in payload.authored_input.named
+                {"name": item.name, "source": item.source}
+                for item in payload.authored_input.named
             ],
         }
     if payload.authored_commands:

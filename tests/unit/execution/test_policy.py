@@ -14,6 +14,7 @@ from toolang.execution.policy import (
     resolve_commands,
 )
 from toolang.execution.types import RunOverride
+from toolang.lang.input import NamedInputSource
 from toolang.setup import AgentSetup
 
 
@@ -72,7 +73,10 @@ def test_runnable_shortcut_returns_named_input_sources() -> None:
     command, named = parse_run_override(':agic review focus="security review" count=2')
 
     assert command == RunOverride("default", "runnable", "agic:review")
-    assert named == (("focus", "security review"), ("count", "2"))
+    assert named == (
+        NamedInputSource("focus", "security review"),
+        NamedInputSource("count", "2"),
+    )
 
 
 def test_parse_prefix_allows_structural_blank_lines() -> None:
@@ -84,7 +88,7 @@ def test_parse_prefix_allows_structural_blank_lines() -> None:
         RunOverride("default", "model", "openai/gpt-5"),
         RunOverride("default", "runnable", "agic:review"),
     )
-    assert named == (("focus", "security"),)
+    assert named == (NamedInputSource("focus", "security"),)
     assert primary == "  Review this."
 
 

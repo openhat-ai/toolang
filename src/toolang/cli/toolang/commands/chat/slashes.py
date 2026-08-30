@@ -9,10 +9,12 @@ from typing import Any, cast
 import click
 
 from toolang.common.errors import ToolangError
+from toolang.base.types.model import ReasoningEffort
 from toolang.execution.runnables import parse_runnable_ref
 from toolang.execution.types import RunOverride
 from .base import AppContext, ChatResult, as_text, friendly_error
 from .input import QuickCommand
+from .policy import apply_model_selection, reasoning_effort_from_selects
 
 SlashOutput = str | Sequence[str] | ChatResult | None
 
@@ -78,14 +80,21 @@ def _model(app: AppContext, _command: str, argument: str) -> SlashOutput:
     client = app.get_client()
     payload = client.list_models()
     if not argument:
+        open_picker = getattr(app, "open_model_picker", None)
+        if callable(open_picker):
+            open_picker(payload)
+            return None
         return ["Available Models", *_chat_model_list_lines(payload)]
     tokens = argument.split()
-    if len(tokens) != 1:
-        raise ValueError("/model accepts at most one model selector.")
-    resolved = _chat_resolve_model_command(payload, tokens[0])
+    resolved = _resolve_model_selection(payload, tokens)
     if resolved is None:
-        raise ValueError(f"Model selector is unknown or ambiguous: {tokens[0]}")
-    _apply_default(app, field="model", value=resolved[0])
+        raise ValueError(f"Model or reasoning effort is unknown: {argument}")
+    ref, effort = resolved
+    updated = apply_model_selection(app.get_selects(), ref=ref, effort=effort)
+    selects = app.get_selects()
+    selects.clear()
+    selects.update(updated)
+    app.refresh_status()
     return None
 
 
@@ -179,7 +188,7 @@ SLASHES: tuple[SlashCommand, ...] = (
         ("model",),
         "List or switch models.",
         _model,
-        "/model [MODEL]",
+        "/model [MODEL [EFFORT|auto]]",
     ),
     SlashCommand(("agic",), "List or switch agics.", _runnable, "/agic [AGIC]"),
     SlashCommand(("flow",), "List or switch flows.", _runnable, "/flow [FLOW]"),
@@ -285,13 +294,13 @@ def _chat_resolve_model_command(
     selector: str,
 ) -> tuple[str, str] | None:
     items = [
-        item for item in _items(models_payload) if isinstance(item.get("selector"), str)
+        item for item in _items(models_payload) if isinstance(item.get("ref"), str)
     ]
     target = _model_command_value(selector)
     exact = [
         item
         for item in items
-        if _model_command_value(as_text(item.get("selector")) or "") == target
+        if _model_command_value(as_text(item.get("ref")) or "") == target
     ]
     if len(exact) == 1:
         return _resolved_model_command(exact[0])
@@ -305,7 +314,6 @@ def _chat_resolve_model_command(
             for value in (
                 as_text(item.get("ref")),
                 as_text(item.get("name")),
-                as_text(item.get("model")),
                 as_text(item.get("provider")),
             )
             if value is not None
@@ -317,7 +325,7 @@ def _chat_resolve_model_command(
 
 
 def _resolved_model_command(match: Mapping[str, Any]) -> tuple[str, str] | None:
-    canonical = as_text(match.get("selector"))
+    canonical = as_text(match.get("ref"))
     if canonical is None:
         return None
     return canonical, _model_label(match)
@@ -340,26 +348,27 @@ def chat_model_label(
         if default is None:
             return "default"
         labels = _chat_resolve_model_command_labels(models_payload, (default,))
-        return labels[0] if labels else default
+        label = labels[0] if labels else default
+        effort = reasoning_effort_from_selects(selects)
+        return f"{label} · {effort.title()}" if effort is not None else label
     labels = _chat_resolve_model_command_labels(models_payload, (model,))
-    return labels[0] if labels else model
+    label = labels[0] if labels else model
+    effort = reasoning_effort_from_selects(selects)
+    return f"{label} · {effort.title()}" if effort is not None else label
 
 
 def _chat_model_list_lines(payload: Mapping[str, Any]) -> list[str]:
     default = as_text(payload.get("default"))
     lines: list[str] = []
     for item in _items(payload):
-        selector = as_text(item.get("selector"))
-        if selector is None:
+        ref = as_text(item.get("ref"))
+        if ref is None:
             continue
+        efforts = _model_efforts(item)
         columns = [
-            selector,
-            *(["default"] if selector == default else []),
-            *[
-                text
-                for value in (item.get("provider"), item.get("adapter"))
-                if (text := as_text(value))
-            ],
+            ref,
+            *(["default"] if ref == default else []),
+            *(f"reasoning: {', '.join(efforts)}" for _ in (0,) if efforts),
         ]
         lines.append("  ".join(columns))
     return lines or ["No available chat models."]
@@ -401,11 +410,41 @@ def _items(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 
 
 def _model_label(item: Mapping[str, Any]) -> str:
-    ref = as_text(item.get("ref"))
-    provider = as_text(item.get("provider"))
-    model = as_text(item.get("model"))
-    if ref is not None:
-        return ref
-    if provider is not None and model is not None:
-        return f"{provider}/{model}"
-    return as_text(item.get("selector")) or as_text(item.get("name")) or "runtime model"
+    return as_text(item.get("name")) or as_text(item.get("ref")) or "runtime model"
+
+
+def _model_efforts(item: Mapping[str, Any]) -> tuple[ReasoningEffort, ...]:
+    parameters = item.get("parameters")
+    reasoning = parameters.get("reasoning") if isinstance(parameters, Mapping) else None
+    values = reasoning.get("effort") if isinstance(reasoning, Mapping) else None
+    recognized = {"none", "minimal", "low", "medium", "high", "xhigh", "max", "default"}
+    return (
+        tuple(
+            cast(ReasoningEffort, value)
+            for value in values
+            if isinstance(value, str) and value in recognized
+        )
+        if isinstance(values, list | tuple)
+        else ()
+    )
+
+
+def _resolve_model_selection(
+    payload: Mapping[str, Any], tokens: Sequence[str]
+) -> tuple[str, ReasoningEffort | None] | None:
+    if not 1 <= len(tokens) <= 2:
+        return None
+    resolved = _chat_resolve_model_command(payload, tokens[0])
+    if resolved is None:
+        return None
+    ref, _label = resolved
+    if len(tokens) == 1 or tokens[1].lower() == "auto":
+        return ref, None
+    item = next(
+        (item for item in _items(payload) if as_text(item.get("ref")) == ref),
+        None,
+    )
+    effort = tokens[1].lower()
+    if item is None or effort not in _model_efforts(item):
+        return None
+    return ref, cast(ReasoningEffort, effort)

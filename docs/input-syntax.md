@@ -110,14 +110,18 @@ normalized submission:
 ```text
 /help                     /show [RUN_ID]
 /?                        /queue [ACTION]
-/model [MODEL]            /steer MESSAGE
+/model [MODEL [EFFORT|auto]]
+/steer MESSAGE
 /agic [AGIC]              /quit
 /flow [FLOW]              /exit
 /runnable [RUNNABLE]
 ```
 
-`/model` without an argument lists models; `/model MODEL` validates and applies
-the session default. There is no `/models` command. The runnable commands use
+In the interactive TUI, `/model` opens a searchable model picker and, when
+supported, a second reasoning-effort picker. Scripted Chat lists models and
+their efforts instead. `/model MODEL` selects Auto effort, `/model MODEL
+EFFORT` selects one catalog-advertised effort, and `/model MODEL auto` clears
+it. There is no `/models` command. The runnable commands use
 the same no-argument listing and one-argument selection rule. A slash command
 cannot be combined with policy or runnable input. Chat removes leading and
 trailing blank lines, then removes horizontal whitespace from the end of the
@@ -131,7 +135,7 @@ are not aliases: use `/help`, `/model`, and the other slash interactions.
 
 ## Runnable Input
 
-`RunnableInputRaw.primary` is an optional `Content` source.
+`RunnableInputRaw._` is an optional `Content` source.
 `RunnableInputRaw.named` is an ordered set of unique `Name=Content` sources.
 Chat obtains named sources from runnable shortcuts; script obtains them from
 its generated CLI. Resolution evaluates each source and coerces it against the

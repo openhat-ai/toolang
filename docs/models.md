@@ -243,6 +243,10 @@ Selectors use `PATTERN[field:value,...]`. Exact identity is
 filters expose models.dev fields such as `family`, `reasoning`, `tool_call`,
 `temperature`, `structured_output`, `modalities.input`, and `status`. Runtime
 views additionally expose `provider`, `adapter`, `scope`, and `available`.
+Effective runtime model lists and run requests emit exact identities without a
+`[provider]` suffix. Provider filters remain accepted only as selector-list
+input; model-call parameters such as reasoning effort are structured request
+fields rather than selector syntax.
 
 ## Local Configuration and Aliases
 

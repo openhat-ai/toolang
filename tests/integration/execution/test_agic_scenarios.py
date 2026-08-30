@@ -19,6 +19,7 @@ from tests.support.execution_harness import (
     RecordingRunTracer,
     RecordingTool,
     ScriptedModelTurn,
+    TEST_MODEL_REF,
 )
 from toolang.base.types.message import (
     AudioPart,
@@ -29,6 +30,11 @@ from toolang.base.types.message import (
     ToolCallDelta,
     ToolCallPart,
     ToolResultPart,
+)
+from toolang.base.types.model import (
+    ModelParameters,
+    ModelRequest,
+    ReasoningParameters,
 )
 from toolang.base.types.run import (
     ModelCallResult,
@@ -41,7 +47,11 @@ from toolang.base.types.run import (
 from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd
 from toolang.execution.executor import RunLimits
-from toolang.execution.records import RunControlPayload
+from toolang.execution.records import (
+    RerunControlPayload,
+    RetryControlPayload,
+    RunControlPayload,
+)
 from toolang.execution.types import (
     ModelStepNoted,
     ModelTokenCount,
@@ -52,6 +62,7 @@ from toolang.execution.types import (
     Pointer,
 )
 from toolang.lang.input import resolve_input_parts
+from toolang.plugin.models.config import ProviderConfig
 
 
 def test_agic_executes_perceived_text_and_typed_arguments(
@@ -226,6 +237,171 @@ agic reply(_: Part[]) -> Part[]:
                 [Message.user("hello")],
                 [Message.user("hello")],
             ]
+
+    asyncio.run(scenario())
+
+
+def test_reasoning_effort_reaches_accounting_and_restart_persistence(
+    tmp_path: Path,
+) -> None:
+    responses = [
+        ModelCallResult(
+            message=Message.assistant(label),
+            usage=ModelUsage(input_tokens=1, output_tokens=1),
+        )
+        for label in ("source", "retry", "rerun", "replacement", "automatic")
+    ]
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic reply(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=responses,
+    )
+    harness.setup = replace(
+        harness.setup,
+        models=tuple(
+            replace(
+                model,
+                metadata={
+                    **model.metadata,
+                    "reasoning_options": [
+                        {"type": "toggle"},
+                        {
+                            "type": "effort",
+                            "values": ["medium", "high", "low"],
+                        },
+                    ],
+                },
+            )
+            for model in harness.setup.models
+        ),
+        provider_configs={
+            "test": ProviderConfig(
+                "test",
+                options={"reasoning": {"enabled": True, "effort": "medium"}},
+            )
+        },
+    )
+    high = ModelRequest(
+        TEST_MODEL_REF,
+        ModelParameters(ReasoningParameters("high")),
+    )
+    low = ModelRequest(
+        TEST_MODEL_REF,
+        ModelParameters(ReasoningParameters("low")),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            source_spec = replace(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    primary=resolve_input_parts("hello"),
+                    model=TEST_MODEL_REF,
+                ),
+                model_request=high,
+            )
+            source = await harness.executor.run(source_spec)
+            source_control = harness.store.get_run_control(
+                run_id=source.id,
+                index=0,
+            )
+            assert source_control is not None
+            assert isinstance(source_control.payload, RunControlPayload)
+            assert source_control.payload.model_request == high
+
+            retried = await harness.executor.retry(
+                source.id,
+                setup=harness.setup,
+                state=harness.state,
+            )
+            retry_control = harness.store.list_run_controls(run_id=retried.id)[-1]
+            assert isinstance(retry_control.payload, RetryControlPayload)
+            assert retry_control.payload.model_request == high
+
+            preserved = await harness.executor.rerun(
+                source.id,
+                setup=harness.setup,
+                state=harness.state,
+            )
+            preserved_control = harness.store.get_run_control(
+                run_id=preserved.id,
+                index=0,
+            )
+            assert preserved_control is not None
+            assert isinstance(preserved_control.payload, RerunControlPayload)
+            assert preserved_control.payload.model_request == high
+
+            replacement = await harness.executor.rerun(
+                source.id,
+                setup=harness.setup,
+                state=harness.state,
+                model_request=low,
+            )
+            replacement_control = harness.store.get_run_control(
+                run_id=replacement.id,
+                index=0,
+            )
+            assert replacement_control is not None
+            assert isinstance(replacement_control.payload, RerunControlPayload)
+            assert replacement_control.payload.model_request == low
+
+            automatic_spec = replace(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    primary=resolve_input_parts("automatic"),
+                    model=TEST_MODEL_REF,
+                ),
+                model_request=ModelRequest(TEST_MODEL_REF),
+            )
+            automatic = await harness.executor.run(automatic_spec)
+
+            assert source.status == retried.status == "succeeded"
+            assert (
+                preserved.status
+                == replacement.status
+                == automatic.status
+                == ("succeeded")
+            )
+            assert [
+                invocation.target.reasoning
+                for invocation in harness.adapter.invocations
+            ] == [
+                {"effort": "high"},
+                {"effort": "high"},
+                {"effort": "high"},
+                {"effort": "low"},
+                {"enabled": True, "effort": "medium"},
+            ]
+            for run, expected in (
+                (preserved, {"effort": "high"}),
+                (replacement, {"effort": "low"}),
+                (automatic, {"enabled": True, "effort": "medium"}),
+            ):
+                step = harness.store.list_steps(run_id=run.id)[0]
+                assert isinstance(step.noted, ModelStepNoted)
+                assert step.noted.accounting is not None
+                assert step.noted.accounting.reasoning.requested == expected
+
+            before = harness.store.list_runs(thread_id=thread, limit=None)
+            unsupported = replace(
+                source_spec,
+                model_request=ModelRequest(
+                    TEST_MODEL_REF,
+                    ModelParameters(ReasoningParameters("max")),
+                ),
+            )
+            with pytest.raises(ToolangError, match="allowed: medium, high, low"):
+                harness.executor.run(unsupported)
+            assert harness.store.list_runs(thread_id=thread, limit=None) == before
 
     asyncio.run(scenario())
 
