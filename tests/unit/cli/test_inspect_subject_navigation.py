@@ -76,7 +76,7 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
                     TextPart("I will inspect it."),
                     ToolCallPart(
                         tool_call_id="tool-1",
-                        tool_name="inspect_run",
+                        tool_name="inspect__run",
                         tool_family="inspect",
                         input={"run_id": "run_123"},
                         reasoning="The run record contains the failure.",
@@ -88,7 +88,7 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
                 parts=(
                     ToolResultPart(
                         tool_call_id="tool-1",
-                        tool_name="inspect_run",
+                        tool_name="inspect__run",
                         tool_family="inspect",
                         output={"status": "failed"},
                     ),
@@ -97,9 +97,20 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
         ],
         tools=(
             ToolDefinition(
-                name="inspect_run",
+                name="inspect__run",
                 description="Inspect one run.",
-                parameters={"type": "object"},
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "run_id": {"type": "string"},
+                        "include": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "limit": {"type": ["integer", "null"]},
+                    },
+                    "required": ["run_id"],
+                },
             ),
         ),
         cont={"cursor": "next"},
@@ -115,32 +126,47 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
     assert "[0] user" in output
     assert "[1] assistant" in output
     assert "[2] tool" in output
-    assert "Tool Call · inspect_run" in output
+    assert "Tool Call · inspect.run" in output
     assert "Reason\nThe run record contains the failure." in output
     assert "Input\nrun_id: run_123" in output
-    assert "Tool Result · inspect_run" in output
+    assert "Tool Result · inspect.run" in output
     assert "Output\nstatus: failed" in output
     assert "Available Tools · 1 tool" in output
-    assert "[0] inspect_run" in output
-    assert "Continuation\n\ncursor: next" in output
+    signature = (
+        "[0] inspect.run(run_id: string, include?: string[], limit?: integer | null)"
+    )
+    assert signature in output
+    assert "Continuation\n============\n\ncursor: next" in output
     assert '"messages":' not in output
     assert by_text["[0] user"].style == "dim"
     assert by_text["[1] assistant"].style == "dim"
     assert by_text["[2] tool"].style == "dim"
-    assert by_text["Parameters"].style == "dim"
-    assert by_text["type: object"].style == "dim"
+    assert by_text[signature].style == "dim"
+    for title in (
+        "Instructions",
+        "Conversation · 3 messages",
+        "Available Tools · 1 tool",
+        "Continuation",
+    ):
+        title_index = next(
+            index
+            for index, renderable in enumerate(renderables)
+            if renderable.plain == title
+        )
+        assert renderables[title_index + 1].plain == "=" * len(title)
+        assert renderables[title_index + 1].style == "dim"
+    assert all(renderable.plain != "Model Call" for renderable in renderables)
     for line in (
         "[0] user",
         '<context name="failure">What happened?</context>',
         "[1] assistant",
         "I will inspect it.",
-        "Tool Call · inspect_run",
+        "Tool Call · inspect.run",
         "run_id: run_123",
         "[2] tool",
-        "Tool Result · inspect_run",
+        "Tool Result · inspect.run",
         "status: failed",
-        "[0] inspect_run",
-        "type: object",
+        signature,
     ):
         assert line in output_lines
 
@@ -158,3 +184,10 @@ def test_structured_human_values_are_zero_based_and_keep_nested_shape() -> None:
         "    enabled: true",
     ]
     assert all(renderable.style == "dim" for renderable in renderables)
+
+
+def test_human_tool_name_replaces_only_the_toolset_separator() -> None:
+    assert (
+        inspect_commands._display_tool_name("browser__open__preview")
+        == "browser.open__preview"
+    )

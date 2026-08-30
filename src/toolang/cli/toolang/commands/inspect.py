@@ -441,7 +441,7 @@ def _model_call_renderables(value: object) -> tuple[Text, ...]:
         raise TypeError("model-call projector returned a non-object value")
     data = cast(Mapping[str, object], value)
 
-    lines = [Text("Model Call", style="bold")]
+    lines: list[Text] = []
     _append_model_call_section(lines, "Instructions")
     instructions = data.get("instructions")
     lines.append(
@@ -497,19 +497,14 @@ def _model_call_renderables(value: object) -> tuple[Text, ...]:
             description = tool_data.get("description")
             lines.extend(
                 (
-                    Text(f"[{index}] {name}", style="bold"),
+                    Text(
+                        f"[{index}] {_tool_signature(name, tool_data.get('parameters'))}",
+                        style="dim",
+                    ),
                     Text(),
                     Text(description)
                     if isinstance(description, str) and description
                     else Text("No description.", style="dim italic"),
-                    Text(),
-                    Text("Parameters", style="dim"),
-                )
-            )
-            lines.extend(
-                _structured_renderables(
-                    tool_data.get("parameters", {}),
-                    style="dim",
                 )
             )
     else:
@@ -525,11 +520,70 @@ def _model_call_renderables(value: object) -> tuple[Text, ...]:
 
 
 def _append_model_call_section(lines: list[Text], title: str) -> None:
-    lines.extend((Text(), Text(title, style="bold"), Text()))
+    if lines:
+        lines.append(Text())
+    lines.extend(
+        (
+            Text(title, style="bold"),
+            Text("=" * cell_len(title), style="dim"),
+            Text(),
+        )
+    )
 
 
 def _counted(noun: str, count: int) -> str:
     return noun if count == 1 else f"{noun}s"
+
+
+def _tool_signature(name: str, parameters: object) -> str:
+    display_name = _display_tool_name(name)
+    if not isinstance(parameters, Mapping):
+        return f"{display_name}()"
+    schema = cast(Mapping[str, object], parameters)
+    properties = schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return f"{display_name}()"
+    property_schemas = cast(Mapping[object, object], properties)
+    required_value = schema.get("required")
+    required = (
+        {str(item) for item in required_value}
+        if isinstance(required_value, list)
+        else set()
+    )
+    params = []
+    for key, value in property_schemas.items():
+        param_name = str(key)
+        optional = "" if param_name in required else "?"
+        params.append(f"{param_name}{optional}: {_schema_type(value)}")
+    return f"{display_name}({', '.join(params)})"
+
+
+def _display_tool_name(name: str) -> str:
+    return name.replace("__", ".", 1)
+
+
+def _schema_type(value: object) -> str:
+    if not isinstance(value, Mapping):
+        return "any"
+    schema = cast(Mapping[str, object], value)
+    enum = schema.get("enum")
+    if isinstance(enum, list) and enum:
+        return " | ".join(_structured_scalar(item) for item in enum)
+    for union_key in ("anyOf", "oneOf"):
+        variants = schema.get(union_key)
+        if isinstance(variants, list) and variants:
+            return " | ".join(_schema_type(item) for item in variants)
+    type_value = schema.get("type")
+    if isinstance(type_value, list):
+        return " | ".join(str(item) for item in type_value)
+    if type_value == "array":
+        return f"{_schema_type(schema.get('items'))}[]"
+    if isinstance(type_value, str):
+        return type_value
+    reference = schema.get("$ref")
+    if isinstance(reference, str) and reference:
+        return reference.rsplit("/", maxsplit=1)[-1]
+    return "any"
 
 
 def _message_part_renderables(part: Mapping[str, object]) -> tuple[Text, ...]:
@@ -553,7 +607,7 @@ def _tool_part_renderables(
     result: bool,
 ) -> tuple[Text, ...]:
     label = "Tool Result" if result else "Tool Call"
-    name = str(part.get("tool_name") or "unnamed")
+    name = _display_tool_name(str(part.get("tool_name") or "unnamed"))
     lines = [Text(f"{label} · {name}", style="bold")]
     for heading, key in (
         ("tool_call_id", "tool_call_id"),
