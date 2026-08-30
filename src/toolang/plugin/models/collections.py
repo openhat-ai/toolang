@@ -250,8 +250,8 @@ def _catalog_model_view(
         temperature=model.temperature,
         open_weights=model.open_weights,
         status=model.status,
-        release_date=_optional_date(model.release_date),
-        last_updated=_optional_date(model.last_updated),
+        release_date=parse_model_query_date(model.release_date),
+        last_updated=parse_model_query_date(model.last_updated),
         modalities=ModelModalitiesView(
             input=tuple(model.modalities.get("input", ())),
             output=tuple(model.modalities.get("output", ())),
@@ -282,8 +282,13 @@ def _reasoning_efforts(options: Sequence[Mapping[str, object]]) -> tuple[str, ..
     return tuple(dict.fromkeys(values))
 
 
-def _optional_date(value: str | None) -> date | None:
-    return date.fromisoformat(value) if value is not None else None
+def parse_model_query_date(value: str | None) -> date | None:
+    """Parse full or month-precision model metadata for typed queries."""
+
+    if value is None:
+        return None
+    normalized = f"{value}-01" if len(value) == 7 and value[4] == "-" else value
+    return date.fromisoformat(normalized)
 
 
 def _optional_decimal(value: object) -> Decimal | None:
@@ -307,4 +312,5 @@ __all__ = [
     "ModelRouteView",
     "catalog_model_dataset",
     "catalog_provider_views",
+    "parse_model_query_date",
 ]

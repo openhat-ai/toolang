@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import date
 from decimal import Decimal
 from typing import Protocol, cast
 
@@ -35,6 +34,7 @@ from toolang.plugin.models.collections import (
     ModelQueryView,
     ModelReasoningParametersView,
     ModelRouteView,
+    parse_model_query_date,
 )
 from toolang.plugin.models.config import ProviderConfig
 from toolang.plugin.models.messages import (
@@ -732,8 +732,8 @@ def _candidate_view(candidate: _Candidate) -> ModelQueryView:
         structured_output=target.structured_output,
         open_weights=_metadata_bool(metadata, "open_weights"),
         status=_metadata_text(metadata, "status"),
-        release_date=_metadata_date(metadata, "release_date"),
-        last_updated=_metadata_date(metadata, "last_updated"),
+        release_date=parse_model_query_date(_metadata_text(metadata, "release_date")),
+        last_updated=parse_model_query_date(_metadata_text(metadata, "last_updated")),
         modalities=ModelModalitiesView(
             input=_string_values(input_modalities),
             output=_string_values(output_modalities),
@@ -1132,11 +1132,6 @@ def _metadata_text(metadata: Mapping[str, object], key: str) -> str | None:
 def _metadata_bool(metadata: Mapping[str, object], key: str) -> bool | None:
     value = metadata.get(key)
     return value if isinstance(value, bool) else None
-
-
-def _metadata_date(metadata: Mapping[str, object], key: str) -> date | None:
-    value = _metadata_text(metadata, key)
-    return date.fromisoformat(value) if value is not None else None
 
 
 def _validate_reasoning_request(
