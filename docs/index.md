@@ -31,7 +31,7 @@ Use this directory for:
 | [layout.md](./layout.md) | Layout and storage, including Toolang root, agent home, and runtime room paths |
 | [agent-state.md](./agent-state.md) | Immutable Agent State layers, revisions, publication, loading, and watching |
 | [caps.md](./caps.md) | Capability model, including form, scope, origin, refs, precedence, and effective-cap rules |
-| [selectors.md](./selectors.md) | Shared selector-list syntax for filters, runtime allow lists, and runnable directives |
+| [queries.md](./queries.md) | Typed collection-query syntax, discovery, ordering, and set semantics |
 | [work.md](./work.md) | Task and chore scheduling, checkpoints, event-loop ownership, and recovery |
 | [tasks.md](./tasks.md) | Authored task and chore documents, stages, and caller-facing projections |
 | [webui-jobs.md](./webui-jobs.md) | Web UI job board integration guide |
@@ -40,7 +40,7 @@ Use this directory for:
 | [run-step-records.md](./run-step-records.md) | Durable run, step, thread, and control records plus source events |
 | [chat.md](./chat.md) | Chat and transcript model, including thread, run, message, and stream behavior |
 | [execution-presentation.md](./execution-presentation.md) | Shared script and chat TUI presentation language for runs, steps, streaming, and scrollback |
-| [models.md](./models.md) | Model integrations, including selectors, providers, routes, and built-in model providers |
+| [models.md](./models.md) | Model integrations, including queries, providers, routes, and built-in model providers |
 | [tools.md](./tools.md) | Tool runtime, including built-in tools and service-cap integration |
 | [plugins.md](./plugins.md) | Plugin model, including shared contracts, plugin families, and loading |
 | [api.md](./api.md) | Control surfaces, including the CLI and local agent HTTP API |

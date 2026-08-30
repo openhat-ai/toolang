@@ -45,6 +45,7 @@ def test_policy_overrides_preserve_absent_empty_and_unrestricted() -> None:
     [
         (resolve_ceiling_overrides, "channels=web", "unknown allow field"),
         (resolve_ceiling_overrides, "models=none", "cannot combine"),
+        (resolve_ceiling_overrides, "models=all,openai/*", "cannot mix"),
         (resolve_binding_overrides, "model=a", "duplicate default field"),
         (resolve_limit_overrides, "tokens=1", "duplicate run limit"),
         (resolve_limit_overrides, "unknown=1", "unknown run limit"),

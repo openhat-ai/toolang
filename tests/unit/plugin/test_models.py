@@ -22,6 +22,7 @@ from toolang.base.types.message import (
     ToolResultPart,
 )
 from toolang.base.types.model import (
+    ModelAlias,
     ModelInfo,
     ModelParameters,
     ModelTarget,
@@ -47,9 +48,11 @@ from toolang.plugin.models.resolution import (
     model_reasoning_efforts,
     resolve_model,
     resolve_model_ref,
-    select_model_selectors,
+    resolve_model_request,
+    select_model_queries,
+    selectable_model_targets,
 )
-from toolang.plugin.models.views import _format_decimal_unit
+from toolang.plugin.models.views import _format_decimal_unit, model_list_rows
 from toolang.setup import AgentSetup
 from toolang.plugin.models.catalog import (
     PACKAGED_MODEL_CATALOG,
@@ -206,7 +209,7 @@ def test_model_resolution_resolves_named_route(tmp_path: Path) -> None:
     (toolang_root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
     (toolang_root / "config.toml").write_text(
         "[models]\n"
-        'default = ["fast"]\n'
+        'default = ["*[alias=fast]"]\n'
         "\n"
         "[models.aliases.fast]\n"
         'ref = "openai/gpt-5"\n'
@@ -234,12 +237,134 @@ def test_model_resolution_resolves_named_route(tmp_path: Path) -> None:
         model_environ={"OPENAI_API_KEY": "secret"},
     )
 
-    target = resolve_model(context, selector="fast")
+    target = resolve_model(context, query="*[alias=fast]")
 
     assert target.ref == "openai/gpt-5"
     assert target.provider == "openai"
     assert target.model == "gpt-5"
     assert target.api_key == "secret"
+
+
+def test_model_query_groups_route_aliases_and_retains_catalog_fields() -> None:
+    provider = _FakeModels(
+        name="openai",
+        models=(
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openai",
+                name="gpt-5",
+                model="gpt-5",
+                adapter="responses",
+                context_window=200_000,
+                metadata={"family": "gpt-5"},
+            ),
+        ),
+    )
+    context = _SelectionContext(
+        model_providers={"openai": provider},
+        model_aliases={
+            name: ModelAlias(name=name, ref="openai/gpt-5", provider="openai")
+            for name in ("fast", "quick")
+        },
+        default_models=(),
+        model_environ={},
+    )
+
+    fast = resolve_model(context, query="*[alias=fast]")
+    quick = resolve_model(context, query="*[alias=quick]")
+    queries = select_model_queries(
+        context,
+        allowed_queries=("*[alias=quick;family=gpt-5;limit.context>=200000]",),
+    )
+
+    assert fast == quick
+    assert queries == ("openai/gpt-5[alias=fast]",)
+
+
+def test_model_query_keeps_aliases_with_distinct_adapters() -> None:
+    provider = _FakeModels(
+        name="openai",
+        models=(
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openai",
+                name="gpt-5",
+                model="gpt-5",
+                adapter="responses",
+            ),
+        ),
+    )
+    context = _SelectionContext(
+        model_providers={"openai": provider},
+        model_aliases={
+            "responses": ModelAlias(
+                name="responses",
+                ref="openai/gpt-5",
+                provider="openai",
+                adapter="responses",
+            ),
+            "chat": ModelAlias(
+                name="chat",
+                ref="openai/gpt-5",
+                provider="openai",
+                adapter="chat_completions",
+            ),
+        },
+        default_models=(),
+        model_environ={},
+    )
+
+    queries = select_model_queries(
+        context,
+        allowed_queries=("*[alias=responses]", "*[alias=chat]"),
+    )
+
+    assert queries == (
+        "openai/gpt-5[alias=responses]",
+        "openai/gpt-5[alias=chat]",
+    )
+    assert resolve_model(context, query=queries[0]).adapter == "responses"
+    assert resolve_model(context, query=queries[1]).adapter == "chat_completions"
+
+
+def test_model_query_exact_queries_round_trip_distinct_alias_endpoints() -> None:
+    provider = _FakeModels(name="openai", models=())
+    context = _SelectionContext(
+        model_providers={"openai": provider},
+        model_aliases={
+            name: ModelAlias(
+                name=name,
+                ref="openai/gpt-5",
+                provider="openai",
+                adapter="responses",
+                endpoint=endpoint,
+            )
+            for name, endpoint in (
+                ("primary", "https://primary.example.test/v1"),
+                ("backup", "https://backup.example.test/v1"),
+            )
+        },
+        default_models=(),
+        model_environ={},
+    )
+
+    candidates = selectable_model_targets(
+        providers=context.providers,
+        models=context.models,
+        aliases=context.model_aliases,
+        envs=context.envs,
+    )
+
+    assert tuple(query for query, _target in candidates) == (
+        "openai/gpt-5[alias=primary]",
+        "openai/gpt-5[alias=backup]",
+    )
+    assert tuple(
+        resolve_model(context, query=query).base_url for query, _target in candidates
+    ) == (
+        "https://primary.example.test/v1",
+        "https://backup.example.test/v1",
+    )
 
 
 def test_model_resolution_resolves_explicit_provider_route() -> None:
@@ -263,7 +388,10 @@ def test_model_resolution_resolves_explicit_provider_route() -> None:
         model_environ={},
     )
 
-    target = resolve_model(context, selector="openai/gpt-5[openrouter]")
+    target = resolve_model(
+        context,
+        query="openai/gpt-5[route.provider=openrouter]",
+    )
 
     assert target.provider == "openrouter"
     assert target.model == "openai/gpt-5"
@@ -299,7 +427,7 @@ def test_model_reasoning_parameters_use_catalog_order_and_replace_defaults() -> 
         model_environ={},
     )
     target = replace(
-        resolve_model(context, selector="openai/gpt-5"),
+        resolve_model(context, query="openai/gpt-5"),
         reasoning={"enabled": True, "effort": "medium"},
     )
 
@@ -319,7 +447,7 @@ def test_model_reasoning_parameters_use_catalog_order_and_replace_defaults() -> 
         )
 
 
-def test_model_resolution_prefers_an_exact_route_over_target_identity() -> None:
+def test_model_resolution_rejects_ambiguous_query() -> None:
     context = _SelectionContext(
         model_providers={
             "openai": _FakeModels(
@@ -354,14 +482,20 @@ def test_model_resolution_prefers_an_exact_route_over_target_identity() -> None:
         model_environ={},
     )
 
-    assert resolve_model_ref(context, selector="openai/gpt-5") == "openai/gpt-5"
-    assert resolve_model(context, selector="openai/gpt-5").provider == "openai"
+    with pytest.raises(ToolangError, match="ambiguous"):
+        resolve_model(context, query="openai/gpt-5")
+    assert resolve_model_request(context, ref="openai/gpt-5").provider == "openai"
     assert (
-        resolve_model_ref(context, selector="openai/gpt-5[openrouter]")
+        resolve_model_request(context, ref="openrouter/openai/gpt-5").provider
+        == "openrouter"
+    )
+    assert (
+        resolve_model_ref(
+            context,
+            query="openai/gpt-5[route.provider=openrouter]",
+        )
         == "openrouter/openai/gpt-5"
     )
-    with pytest.raises(ToolangError, match="ambiguous"):
-        resolve_model(context, selector="gpt-5")
 
 
 def test_model_resolution_rejects_missing_provider_env_before_target_use() -> None:
@@ -387,7 +521,7 @@ def test_model_resolution_rejects_missing_provider_env_before_target_use() -> No
     )
 
     with pytest.raises(ToolangError, match="OPENAI_API_KEY"):
-        resolve_model(context, selector="openai/gpt-5[openai]")
+        resolve_model(context, query="openai/gpt-5[route.provider=openai]")
 
 
 def test_model_resolution_skips_unconfigured_provider_when_configured_match_exists() -> (
@@ -428,12 +562,12 @@ def test_model_resolution_skips_unconfigured_provider_when_configured_match_exis
         model_environ={"OPENROUTER_API_KEY": "secret"},
     )
 
-    target = resolve_model(context, selector="gpt-5")
+    target = resolve_model(context, query="gpt-5")
 
     assert target.provider == "openrouter"
 
 
-def test_model_resolution_uses_first_allowed_selector_as_default() -> None:
+def test_model_resolution_uses_first_allowed_query_as_default() -> None:
     provider = _FakeModels(
         name="openrouter",
         models=(
@@ -464,16 +598,19 @@ def test_model_resolution_uses_first_allowed_selector_as_default() -> None:
 
     target = resolve_model(
         context,
-        selector=None,
-        default_selector="gpt-5[openrouter]",
-        allowed_selectors=("gpt-5[openrouter]", "o3[openrouter]"),
+        query=None,
+        default_query="gpt-5[route.provider=openrouter]",
+        allowed_queries=(
+            "gpt-5[route.provider=openrouter]",
+            "o3[route.provider=openrouter]",
+        ),
     )
 
     assert target.ref == "openai/gpt-5"
     assert target.model == "gpt-5"
 
 
-def test_model_resolution_allows_selector_within_allowed_set() -> None:
+def test_model_resolution_allows_query_within_allowed_set() -> None:
     provider = _FakeModels(
         name="openrouter",
         models=(
@@ -504,16 +641,19 @@ def test_model_resolution_allows_selector_within_allowed_set() -> None:
 
     target = resolve_model(
         context,
-        selector="o3[openrouter]",
-        default_selector="gpt-5[openrouter]",
-        allowed_selectors=("gpt-5[openrouter]", "o3[openrouter]"),
+        query="o3[route.provider=openrouter]",
+        default_query="gpt-5[route.provider=openrouter]",
+        allowed_queries=(
+            "gpt-5[route.provider=openrouter]",
+            "o3[route.provider=openrouter]",
+        ),
     )
 
     assert target.ref == "openai/o3"
     assert target.model == "o3"
 
 
-def test_model_resolution_rejects_selector_outside_allowed_set() -> None:
+def test_model_resolution_rejects_query_outside_allowed_set() -> None:
     provider = _FakeModels(
         name="openrouter",
         models=(
@@ -545,17 +685,46 @@ def test_model_resolution_rejects_selector_outside_allowed_set() -> None:
     with pytest.raises(ToolangError, match="outside the current resources") as exc:
         resolve_model(
             context,
-            selector="o3[openrouter]",
-            default_selector="gpt-5[openrouter]",
-            allowed_selectors=("gpt-5[openrouter]",),
+            query="o3[route.provider=openrouter]",
+            default_query="gpt-5[route.provider=openrouter]",
+            allowed_queries=("gpt-5[route.provider=openrouter]",),
         )
     message = str(exc.value)
-    assert "o3[openrouter]" in message
-    assert "allowed: openrouter/openai/gpt-5" in message
-    assert "[openrouter]" not in message.partition("(allowed: ")[2]
+    assert "o3[route.provider=openrouter]" in message
+    assert "allowed: openai/gpt-5[openrouter]" in message
 
 
-def test_model_resolution_reports_no_matched_models_when_selector_misses() -> None:
+def test_model_resolution_rejects_explicitly_empty_allowed_set() -> None:
+    provider = _FakeModels(
+        name="openrouter",
+        models=(
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openrouter",
+                name="gpt-5",
+                model="gpt-5",
+                adapter="responses",
+            ),
+        ),
+    )
+    context = _SelectionContext(
+        model_providers={"openrouter": provider},
+        model_aliases={},
+        default_models=(),
+        model_environ={},
+    )
+
+    with pytest.raises(ToolangError, match="outside the current resources"):
+        resolve_model(
+            context,
+            query="openai/gpt-5",
+            allowed_queries=(),
+        )
+
+    assert select_model_queries(context, allowed_queries=()) == ()
+
+
+def test_model_resolution_reports_no_matched_models_when_query_misses() -> None:
     provider = _FakeModels(
         name="openrouter",
         models=(
@@ -578,10 +747,10 @@ def test_model_resolution_reports_no_matched_models_when_selector_misses() -> No
     )
 
     with pytest.raises(ToolangError, match="No matched models."):
-        resolve_model(context, selector="anthropic/claude-sonnet-4.5")
+        resolve_model(context, query="anthropic/claude-sonnet-4.5")
 
 
-def test_select_model_selectors_preserves_allowed_order_for_intersection() -> None:
+def test_select_model_queries_preserve_base_order_for_intersection() -> None:
     provider = _FakeModels(
         name="openrouter",
         models=(
@@ -610,16 +779,22 @@ def test_select_model_selectors_preserves_allowed_order_for_intersection() -> No
         model_environ={},
     )
 
-    selectors = select_model_selectors(
+    queries = select_model_queries(
         context,
-        directive_selectors=("openai/gpt-5", "openai/o3"),
-        allowed_selectors=("openai/o3[openrouter]", "openai/gpt-5[openrouter]"),
+        directive_queries=("openai/gpt-5", "openai/o3"),
+        allowed_queries=(
+            "openai/o3[route.provider=openrouter]",
+            "openai/gpt-5[route.provider=openrouter]",
+        ),
     )
 
-    assert selectors == ("openrouter/openai/o3", "openrouter/openai/gpt-5")
+    assert queries == (
+        "openai/gpt-5[route.provider=openrouter;route.adapter=responses;alias=null]",
+        "openai/o3[route.provider=openrouter;route.adapter=responses;alias=null]",
+    )
 
 
-def test_select_model_selectors_supports_name_glob_without_matching_family() -> None:
+def test_select_model_queries_supports_name_glob_without_matching_family() -> None:
     provider = _FakeModels(
         name="openrouter",
         models=(
@@ -648,19 +823,17 @@ def test_select_model_selectors_supports_name_glob_without_matching_family() -> 
         model_environ={},
     )
 
-    assert select_model_selectors(context, allowed_selectors=("gpt-*",)) == (
-        "openrouter/openai/gpt-5",
+    assert select_model_queries(context, allowed_queries=("gpt-*",)) == (
+        "openai/gpt-5[route.provider=openrouter;route.adapter=responses;alias=null]",
     )
-    assert select_model_selectors(context, allowed_selectors=("openai/*",)) == (
-        "openrouter/openai/gpt-5",
+    assert select_model_queries(context, allowed_queries=("openai/*",)) == (
+        "openai/gpt-5[route.provider=openrouter;route.adapter=responses;alias=null]",
     )
     with pytest.raises(ToolangError, match="No matched models."):
-        select_model_selectors(context, allowed_selectors=("openai",))
+        select_model_queries(context, allowed_queries=("openai",))
 
 
-def test_select_model_selectors_expands_route_neutral_agic_refs_from_discovery() -> (
-    None
-):
+def test_select_model_queries_expands_route_neutral_agic_refs_from_discovery() -> None:
     openai = _FakeModels(
         name="openai",
         models=(
@@ -712,20 +885,20 @@ def test_select_model_selectors_expands_route_neutral_agic_refs_from_discovery()
         model_environ={"OPENAI_API_KEY": "secret", "OPENROUTER_API_KEY": "secret"},
     )
 
-    selectors = select_model_selectors(
+    queries = select_model_queries(
         context,
-        directive_selectors=("openai/o3", "openai/gpt-5"),
+        directive_queries=("openai/o3", "openai/gpt-5"),
     )
 
-    assert selectors == (
-        "openai/o3",
-        "openrouter/openai/o3",
-        "openai/gpt-5",
-        "openrouter/openai/gpt-5",
+    assert queries == (
+        "openai/gpt-5[route.provider=openai;route.adapter=responses;alias=null]",
+        "openai/o3[route.provider=openai;route.adapter=responses;alias=null]",
+        "openai/gpt-5[route.provider=openrouter;route.adapter=responses;alias=null]",
+        "openai/o3[route.provider=openrouter;route.adapter=responses;alias=null]",
     )
 
 
-def test_select_model_selectors_skips_providers_missing_required_env() -> None:
+def test_select_model_queries_skips_providers_missing_required_env() -> None:
     openai = _FakeModels(
         name="openai",
         models=(
@@ -760,15 +933,17 @@ def test_select_model_selectors_skips_providers_missing_required_env() -> None:
         default_models=(),
         model_environ={"OPENROUTER_API_KEY": "secret"},
     )
-    selectors = select_model_selectors(
+    queries = select_model_queries(
         context,
-        directive_selectors=("openai/gpt-5",),
+        directive_queries=("openai/gpt-5",),
     )
 
-    assert selectors == ("openrouter/openai/gpt-5",)
+    assert queries == (
+        "openai/gpt-5[route.provider=openrouter;route.adapter=responses;alias=null]",
+    )
 
 
-def test_select_model_selectors_prefers_exact_ref_over_version_aliases() -> None:
+def test_select_model_queries_prefers_exact_ref_over_version_aliases() -> None:
     openrouter = _FakeModels(
         name="openrouter",
         models=(
@@ -802,15 +977,17 @@ def test_select_model_selectors_prefers_exact_ref_over_version_aliases() -> None
         model_environ={"OPENROUTER_API_KEY": "secret"},
     )
 
-    selectors = select_model_selectors(
+    queries = select_model_queries(
         context,
-        directive_selectors=("openai/gpt-5",),
+        directive_queries=("openai/gpt-5",),
     )
 
-    assert selectors == ("openrouter/openai/gpt-5",)
+    assert queries == (
+        "openai/gpt-5[route.provider=openrouter;route.adapter=responses;alias=null]",
+    )
 
 
-def test_select_model_selectors_returns_all_discoverable_when_unrestricted() -> None:
+def test_select_model_queries_returns_all_discoverable_when_unrestricted() -> None:
     openai = _FakeModels(
         name="openai",
         models=(
@@ -858,18 +1035,29 @@ def test_select_model_selectors_returns_all_discoverable_when_unrestricted() -> 
     context = _SelectionContext(
         model_providers={"openai": openai, "openrouter": openrouter},
         model_aliases={},
-        default_models=(),
+        default_models=("gpt-5[route.provider=openai]",),
         model_environ={"OPENAI_API_KEY": "secret", "OPENROUTER_API_KEY": "secret"},
     )
 
-    selectors = select_model_selectors(context)
+    queries = select_model_queries(context)
 
-    assert selectors == (
-        "openai/gpt-5",
-        "openrouter/openai/gpt-5",
-        "openai/o3",
-        "openrouter/openai/o3",
+    assert queries == (
+        "openai/gpt-5[route.provider=openai;route.adapter=responses;alias=null]",
+        "openai/o3[route.provider=openai;route.adapter=responses;alias=null]",
+        "openai/gpt-5[route.provider=openrouter;route.adapter=responses;alias=null]",
+        "openai/o3[route.provider=openrouter;route.adapter=responses;alias=null]",
     )
+    assert model_list_rows(
+        providers=context.providers,
+        models=context.models,
+        aliases=context.model_aliases,
+        envs=context.envs,
+    ) == [
+        ("openai/gpt-5", "openai", "streaming=y, tools=y"),
+        ("openai/o3", "openai", "streaming=y, tools=y"),
+        ("openai/gpt-5", "openrouter", "streaming=y, tools=y"),
+        ("openai/o3", "openrouter", "streaming=y, tools=y"),
+    ]
 
 
 def test_model_resolution_only_reads_captured_model_snapshot() -> None:
@@ -898,13 +1086,16 @@ def test_model_resolution_only_reads_captured_model_snapshot() -> None:
     )
     discovery_calls = openrouter.list_models_calls
 
-    selectors = select_model_selectors(
+    queries = select_model_queries(
         context,
-        directive_selectors=("anthropic/claude-4.5-sonnet-20250929",),
+        directive_queries=("anthropic/claude-4.5-sonnet-20250929",),
     )
-    target = resolve_model(context, selector=selectors[0])
+    target = resolve_model(context, query=queries[0])
 
-    assert selectors == ("openrouter/anthropic/claude-4.5-sonnet-20250929",)
+    assert queries == (
+        "anthropic/claude-4.5-sonnet-20250929"
+        "[route.provider=openrouter;route.adapter=responses;alias=null]",
+    )
     assert target.ref == "anthropic/claude-4.5-sonnet-20250929"
     assert openrouter.list_models_calls == discovery_calls
 
@@ -946,11 +1137,14 @@ def test_model_selection_filters_the_complete_captured_snapshot() -> None:
     )
     discovery_calls = (openai.list_models_calls, openrouter.list_models_calls)
 
-    selectors = select_model_selectors(
-        context, allowed_selectors=("openai/gpt-5[openai]",)
+    queries = select_model_queries(
+        context,
+        allowed_queries=("openai/gpt-5[route.provider=openai]",),
     )
 
-    assert selectors == ("openai/gpt-5",)
+    assert queries == (
+        "openai/gpt-5[route.provider=openai;route.adapter=responses;alias=null]",
+    )
     assert (openai.list_models_calls, openrouter.list_models_calls) == discovery_calls
 
 
@@ -980,7 +1174,7 @@ def test_model_route_can_override_provider_defaults(tmp_path: Path) -> None:
         model_environ={"GATEWAY_API_KEY": "secret"},
     )
 
-    target = resolve_model(context, selector="gateway")
+    target = resolve_model(context, query="*[alias=gateway]")
 
     assert target.ref == "openai/gpt-5"
     assert target.provider == "openai"
@@ -1011,7 +1205,7 @@ def test_model_alias_uses_provider_default_key_env(tmp_path: Path) -> None:
         model_environ={"OPENROUTER_API_KEY": "secret"},
     )
 
-    target = resolve_model(context, selector="qwen")
+    target = resolve_model(context, query="*[alias=qwen]")
 
     assert target.ref == "qwen/qwen3-coder"
     assert target.provider == "openrouter"
@@ -1046,7 +1240,7 @@ def test_model_alias_reports_missing_key_env(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ToolangError, match="model alias 'gateway'.*GATEWAY_API_KEY"):
-        resolve_model(context, selector="gateway")
+        resolve_model(context, query="*[alias=gateway]")
 
 
 def test_packaged_catalog_includes_mainstream_remote_providers() -> None:

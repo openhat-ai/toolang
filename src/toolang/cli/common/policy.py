@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 
-from toolang.common.selectors import split_selector_list
-
+from toolang.common.errors import ToolangError
+from toolang.common.query import resolve_query_sentinels
 
 _ALLOW_FIELDS = (
     "models",
@@ -86,9 +86,7 @@ def _parse_allow_options(
             continue
         current = parsed[name]
         if not current or not value:
-            raise ValueError(
-                f"--allow {name} cannot combine selectors with all or none"
-            )
+            raise ValueError(f"--allow {name} cannot combine queries with all or none")
         if current is not None and value is not None:
             value = tuple(dict.fromkeys((*current, *value)))
         parsed[name] = value
@@ -139,14 +137,10 @@ def _parse_allow_value(
     text = value.strip()
     if not text:
         raise ValueError(f"{source} allow {name} must not be empty")
-    if text.lower() == "none":
-        return ()
-    if text.lower() == "all":
-        return None
-    selectors = split_selector_list((text,))
-    if not selectors or any(selector.lower() == "none" for selector in selectors):
-        raise ValueError(f"{source} allow {name} has an invalid selector list")
-    return tuple(dict.fromkeys(selectors))
+    try:
+        return resolve_query_sentinels((text,), label=f"{source} allow {name}")
+    except ToolangError as error:
+        raise ValueError(str(error)) from error
 
 
 def _parse_binding_value(name: str, value: str, *, source: str) -> str | None:

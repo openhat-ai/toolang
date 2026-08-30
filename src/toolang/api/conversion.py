@@ -100,7 +100,7 @@ def _parse_run_override(payload: RunOverridePayload) -> RunOverride:
     value = payload.value
     if payload.group == "allow":
         if value is not None and not isinstance(value, list):
-            raise TypeError("allow policy value must be selectors, all, or none")
+            raise TypeError("allow policy value must be queries, all, or none")
         return RunOverride(
             "allow",
             payload.field,

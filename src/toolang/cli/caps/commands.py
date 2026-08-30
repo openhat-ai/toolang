@@ -6,7 +6,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal
-from urllib.parse import quote
 
 import click
 import typer
@@ -14,8 +13,6 @@ from typer.core import TyperGroup
 
 from ...catalog import templates
 from ...catalog.errors import CatalogConflictError
-from ...common.errors import ToolangError
-from ...common.github import parse_github_ref
 from ...common.layout import AgentLayout
 from toolang.catalog import cap as cap_store
 from toolang.catalog import config as cap_config
@@ -24,6 +21,7 @@ from toolang.state import state as cap_state
 from toolang.state.prepare import prepare_agent_state
 from ..common.context import context_agent, context_root, user_call
 from ..common.output import echo_block, echo_table
+from ..common.query import emit_query_discovery, query_items
 from ..common.routing import (
     OptionalPrefixAgentCommand,
     OptionalPrefixAgentListCommand,
@@ -203,15 +201,31 @@ def create_cap_apps(
 
 def list_caps(
     ctx: typer.Context,
-    filter_: Annotated[
-        str | None,
+    query: Annotated[
+        list[str] | None,
         typer.Option(
-            "--filter",
-            "-f",
-            help="Filter caps with selector-list syntax.",
+            "--query",
+            "-q",
+            help="Query caps. Repeat values to add alternatives.",
         ),
     ] = None,
+    query_help: Annotated[
+        bool,
+        typer.Option("--query-help", help="Show cap query fields and operators."),
+    ] = False,
+    query_schema: Annotated[
+        bool,
+        typer.Option("--query-schema", help="Write the cap query schema as JSON."),
+    ] = False,
 ) -> None:
+    from toolang.state.collections import CAP_SCHEMA, cap_dataset
+
+    if emit_query_discovery(
+        CAP_SCHEMA,
+        query_help=query_help,
+        query_schema=query_schema,
+    ):
+        return
     selected_agent = context_agent(ctx)
     agent_name = selected_agent or "default"
     effective_scope = "all" if selected_agent else "root"
@@ -222,49 +236,44 @@ def list_caps(
         prepare=selected_agent is not None,
         kinds=set(CAP_KINDS),
     )
-    try:
-        selected_entries = cap_state.select_cap_entries(
-            entries,
-            _cap_filter_selectors(filter_, implicit_kind=None),
-            agent_name=agent_name,
-        )
-    except ToolangError as exc:
-        raise click.ClickException(str(exc)) from exc
-    rows = [
-        (
-            entry.kind,
-            entry.name,
-            _entry_source(entry, agent_name=agent_name),
-            _entry_form(entry),
-            _entry_scope_label(entry, agent_name=agent_name),
-        )
-        for entry in selected_entries
-    ]
+    dataset = cap_dataset(entries, agent_name=agent_name)
+    selected = query_items(dataset, query)
+    headers, rows = dataset.table(selected)
     if not rows:
-        typer.echo("No caps found.")
+        typer.echo("No caps matched query." if query else "No caps found.")
         return
-    kind_order = {kind: index for index, kind in enumerate(CAP_KINDS)}
-    rows.sort(
-        key=lambda item: (kind_order[item[0]], item[1], item[3], item[4], item[2])
-    )
-    echo_table(
-        ("KIND", "CAP", "SOURCE", "FORM", "SCOPE"),
-        rows,
-    )
+    echo_table(headers, rows)
 
 
 def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
     def list_caps(
         ctx: typer.Context,
-        filter_: Annotated[
-            str | None,
+        query: Annotated[
+            list[str] | None,
             typer.Option(
-                "--filter",
-                "-f",
-                help="Filter caps with selector-list syntax.",
+                "--query",
+                "-q",
+                help="Query caps. Repeat values to add alternatives.",
             ),
         ] = None,
+        query_help: Annotated[
+            bool,
+            typer.Option("--query-help", help="Show cap query fields and operators."),
+        ] = False,
+        query_schema: Annotated[
+            bool,
+            typer.Option("--query-schema", help="Write the cap query schema as JSON."),
+        ] = False,
     ) -> None:
+        from toolang.state.collections import cap_dataset, cap_kind_definition
+
+        definition = cap_kind_definition(kind)
+        if emit_query_discovery(
+            definition.schema,
+            query_help=query_help,
+            query_schema=query_schema,
+        ):
+            return
         selected_agent = context_agent(ctx)
         agent_name = selected_agent or "default"
         effective_scope = "all" if selected_agent else "root"
@@ -275,32 +284,13 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             prepare=selected_agent is not None,
             kinds={kind},
         )
-        try:
-            selected_entries = cap_state.select_cap_entries(
-                entries,
-                _cap_filter_selectors(filter_, implicit_kind=kind),
-                agent_name=agent_name,
-                implicit_kind=kind,
-            )
-        except ToolangError as exc:
-            raise click.ClickException(str(exc)) from exc
-        rows = [
-            (
-                entry.name,
-                _entry_source(entry, agent_name=agent_name),
-                _entry_form(entry),
-                _entry_scope_label(entry, agent_name=agent_name),
-            )
-            for entry in selected_entries
-        ]
+        dataset = cap_dataset(entries, agent_name=agent_name, kind=kind)
+        selected = query_items(dataset, query)
+        headers, rows = dataset.table(selected)
         if not rows:
-            typer.echo(f"No {kind}s found.")
+            typer.echo(f"No {kind}s matched query." if query else f"No {kind}s found.")
             return
-        rows.sort(key=lambda item: (item[0], item[2], item[3], item[1]))
-        echo_table(
-            (title.upper(), "SOURCE", "FORM", "SCOPE"),
-            rows,
-        )
+        echo_table(headers, rows)
 
     return list_caps
 
@@ -531,63 +521,12 @@ def _target_scope(ctx: typer.Context) -> tuple[MutableScope, str]:
     return "root", "default"
 
 
-def _entry_source(entry: StateCap, *, agent_name: str) -> str:
-    form = _entry_form(entry)
-    if form in {"referenced", "configured"}:
-        return _external_source_url(
-            cap_state.entry_ref(entry, agent_name=agent_name), entry=entry
-        )
-    source = cap_state.entry_definition_file(entry)
-    if form == "inline":
-        line = cap_state.entry_line(entry)
-        return f"{source}:{line}" if line is not None else source
-    return source
-
-
-def _external_source_url(ref: str, *, entry: StateCap) -> str:
-    if not ref.startswith("github://"):
-        return ref
-    try:
-        github = parse_github_ref(ref)
-    except ValueError:
-        return ref
-    view = "blob" if entry.shape == "file" else "tree"
-    return (
-        f"https://github.com/{quote(github.owner, safe='')}/{quote(github.repo, safe='')}"
-        f"/{view}/{quote(github.rev, safe='/')}/{quote(github.path, safe='/')}"
-    )
-
-
 def _entry_form(entry: StateCap) -> CapForm:
     return cap_state.entry_form(entry)
 
 
 def _entry_scope_label(entry: StateCap, *, agent_name: str) -> CapScope:
     return cap_state.entry_scope(entry, agent_name=agent_name)
-
-
-def _cap_filter_selectors(
-    value: str | None, *, implicit_kind: EntryKind | None
-) -> tuple[str, ...]:
-    if value is None:
-        return ()
-    items = cap_state.split_cap_selectors((value,))
-    if not items:
-        raise click.ClickException("--filter requires at least one value")
-    legacy_tokens = tuple(item.lower() for item in items)
-    legacy_values = {*CAP_KINDS, *CAP_FORMS, *CAP_SCOPES}
-    if all(token in legacy_values for token in legacy_tokens):
-        forms = [token for token in legacy_tokens if token in CAP_FORMS]
-        scopes = [token for token in legacy_tokens if token in CAP_SCOPES]
-        filters = ",".join((*forms, *scopes))
-        filter_suffix = f"[{filters}]" if filters else ""
-        kinds = [token for token in legacy_tokens if token in CAP_KINDS]
-        if implicit_kind is not None:
-            return (f"*{filter_suffix}",)
-        if kinds:
-            return tuple(f"{kind}/*{filter_suffix}" for kind in kinds)
-        return (f"*{filter_suffix}",)
-    return items
 
 
 def _all_cap_entries(

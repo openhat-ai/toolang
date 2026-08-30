@@ -24,8 +24,8 @@ from toolang.execution.executor import RunExecutor
 from toolang.execution.history import RunHistory
 from toolang.execution.runnables import (
     parse_runnable_ref,
-    resolve_state_runnable,
     runnable_binding_defaults,
+    resolve_public_runnable_query,
 )
 from toolang.execution.executor.resources import (
     agent_model_targets,
@@ -113,13 +113,13 @@ class LocalChatSession:
     def list_models(self) -> Mapping[str, Any]:
         setup = self.setup_watcher.current()
         state = self.state_watcher.current()
-        _default, targets = agent_model_targets(setup, state, setup.ceiling)
+        default, targets = agent_model_targets(setup, state, setup.ceiling)
         selection = snapshot_model_selection(setup, state)
         return {
-            "default": self._run_defaults().bindings.model,
+            "default": default,
             "items": [
                 {
-                    "ref": selector,
+                    "ref": ref,
                     "name": target.name,
                     "provider": target.provider,
                     "parameters": {
@@ -128,7 +128,7 @@ class LocalChatSession:
                         }
                     },
                 }
-                for selector, target in targets
+                for ref, target in targets
             ],
         }
 
@@ -164,8 +164,7 @@ class LocalChatSession:
         selected = runnable or self._run_defaults().bindings.runnable
         if selected is None:  # pragma: no cover - initialization invariant
             raise RuntimeError("chat has no default runnable")
-        name, kind = parse_runnable_ref(selected)
-        module, _declaration = resolve_state_runnable(state, name, kind=kind)
+        module = resolve_public_runnable_query(state, selected).module
         return {
             "items": [
                 {
@@ -321,18 +320,16 @@ class LocalChatSession:
             raise RuntimeError("local chat run defaults are not initialized")
         return self._defaults
 
-    def _materialize_model_ref(self, selector: str) -> str:
+    def _materialize_model_ref(self, query: str) -> str:
         return materialize_model_request(
-            ModelRequest(selector),
+            ModelRequest(query),
             setup=self.setup_watcher.current(),
             state=self.state_watcher.current(),
         ).ref
 
-    def _materialize_runnable_ref(self, selector: str) -> str:
+    def _materialize_runnable_ref(self, query: str) -> str:
         state = self.state_watcher.current()
-        name, kind = parse_runnable_ref(selector)
-        _module, runnable = resolve_state_runnable(state, name, kind=kind)
-        return f"{runnable.kind}:{name}"
+        return resolve_public_runnable_query(state, query).ref
 
     @staticmethod
     def _current_run_defaults(
@@ -351,9 +348,7 @@ class LocalChatSession:
             elif default_flow is not None:
                 runnable = f"flow:{default_flow}"
         if runnable is not None:
-            name, kind = parse_runnable_ref(runnable)
-            _module, resolved = resolve_state_runnable(state, name, kind=kind)
-            runnable = f"{resolved.kind}:{name}"
+            runnable = resolve_public_runnable_query(state, runnable).ref
         return ChatRunDefaults(
             bindings=RunBindings(model=model, runnable=runnable),
             limits=setup.limits,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from tree_sitter import Node, Tree
+from toolang.common.query import format_query_text
 
 from . import ast
 from .ast import _first_syntax_error, _parse_tree
@@ -16,7 +17,7 @@ _RUNNABLE_HEADER_RE = re.compile(
 )
 _STRUCT_HEADER_RE = re.compile(r"^struct(?P<rest>.*):(?P<suffix>[ \t]*(?:#.*)?)$")
 _DIRECTIVE_RE = re.compile(
-    r"^(?P<indent>[ \t]*)(?P<key>models|tools|skills|services|psyches|hands|handoffs|recall)"
+    r"^(?P<indent>[ \t]*)(?P<key>models|tools|skills|services|psyches|prompts|hands|handoffs|recall)"
     r"(?P<space>[ \t]*)(?P<op>=|\+=|-=)"
 )
 _TOP_LEVEL_RE = re.compile(
@@ -506,13 +507,17 @@ def _format_signature_params(raw: str) -> str:
 def _format_directive_line(stripped_line: str) -> str:
     body, comment = _split_inline_comment(stripped_line)
     match = re.fullmatch(
-        r"(?P<key>models|tools|skills|services|psyches|hands|handoffs|recall)"
+        r"(?P<key>models|tools|skills|services|psyches|prompts|hands|handoffs|recall)"
         r"[ \t]*(?P<op>=|\+=|-=)[ \t]*(?P<values>.*)",
         body,
     )
     if match is None:
         return stripped_line
-    values = _format_csv_values(match.group("values"))
+    values = (
+        _format_csv_values(match.group("values"))
+        if match.group("key") == "recall"
+        else format_query_text(match.group("values"))
+    )
     return f"{match.group('key')} {match.group('op')} {values}{comment}".rstrip()
 
 
@@ -895,11 +900,27 @@ def _raise_syntax_error(lines: list[str], node: Node) -> None:
 
 
 def _split_inline_comment(line: str) -> tuple[str, str]:
-    match = re.search(r"(?<!\S)#", line)
-    if match is None:
+    quoted = False
+    escaped = False
+    comment_start: int | None = None
+    for index, char in enumerate(line):
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+            continue
+        if char == '"':
+            quoted = True
+        elif char == "#" and (index == 0 or line[index - 1].isspace()):
+            comment_start = index
+            break
+    if comment_start is None:
         return line.rstrip(), ""
-    body = line[: match.start()].rstrip()
-    comment = line[match.start() :].strip()
+    body = line[:comment_start].rstrip()
+    comment = line[comment_start:].strip()
     return body, f"  {comment}" if body else comment
 
 

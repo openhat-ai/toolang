@@ -289,7 +289,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
             "Input should be a valid tuple"
         )
         assert invalid_fallback.status_code == 422
-        assert invalid_fallback.json()["detail"] == "Runnable not found: missing"
+        assert invalid_fallback.json()["detail"] == "runnable query matched no items"
         assert invalid_input.status_code == 422
         assert (
             "named input must use a canonical name"

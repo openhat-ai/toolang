@@ -56,8 +56,8 @@ Global options:
 
 Cap commands:
 
-- `caps [AGENT] list [--filter <csv>]`
-- `caps [AGENT] <kind> list [--filter <csv>]`
+- `caps [AGENT] list [--query QUERY]`
+- `caps [AGENT] <kind> list [--query QUERY]`
 - `caps [AGENT] <kind> new <name>`
 - `caps [AGENT] <kind> edit <name>`
 - `caps [AGENT] <kind> delete <name>`
@@ -72,9 +72,10 @@ List output uses:
 
 - `KIND`
 - `CAP`
-- `SOURCE`
+- `ORIGIN`
 - `FORM`
 - `SCOPE`
+- `SOURCE`
 
 Kind-specific list commands omit `KIND`.
 
@@ -82,10 +83,10 @@ Kind-specific list commands omit `KIND`.
 the Toolang root. Inline caps use `<path-to-agent.too>:<line>`. External GitHub
 sources are shown as directly accessible `https://github.com/...` URLs.
 
-`FORM` accepts `authored`, `inline`, `configured`, and `referenced`. `SCOPE` accepts
-`root`, `home`, and `here`. `--filter` accepts kind, form, and scope values for
-all-kind lists. Kind-specific lists accept only form and scope values. Values in
-one group are unioned; different groups are intersected.
+`FORM` accepts `authored`, `inline`, `configured`, and `referenced`. `SCOPE`
+accepts `root`, `home`, and `here`. Query predicates use typed fields such as
+`scope=home`, `form=authored`, and `origin=remote`. Combined lists use
+`kind/cap` identities; kind-specific lists use local cap names.
 
 Typical usage:
 
@@ -682,18 +683,19 @@ including:
 - current `AVAILABLE` value as `yes` or `no`
 - right-aligned context and maximum output sizes with underscore digit grouping
   for copyable numeric literals
-- input modalities and a comma-separated `CAPABILITY` list
+- input modalities and a comma-separated `CAPABILITIES` list
 - right-aligned base input/output prices formatted as `$input / $output` under
   `PRICE ($/1M)`, with every numeric rate shown to two decimal places
 - a compact total and per-catalog model counts
 
-Pass `--filter` to preview selector filtering, for example
-`toolang models --filter "[remote]"` or
-`toolang models --filter "openai/*[openrouter]"`.
+Pass repeatable `--query/-q` options to select models, for example
+`toolang models --query '*[scope=remote]'` or
+`toolang models --query 'openrouter/*[adapter=chat_completions]'`. Use `--query-help` for
+the exact identity, fields, operators, and output-column mapping.
 
 `toolang providers` shows catalog providers and runtime availability.
 `toolang adapters` lists installed model adapter names.
-`toolang models` is a leaf command with `--filter` and `--json`; it has no
+`toolang models` is a leaf command with `--query` and `--json`; it has no
 `inspect` or `update` subcommands and no `--output` or `--force` options.
 
 Discovered Ollama and llama.cpp records use reported context, output limits,
@@ -726,8 +728,8 @@ The provider table footer mirrors the model footer, for example
 ## Plugin Inventory Commands
 
 - `toolang catalogs`
-- `toolang adapters [--filter GLOB] [--json]`
-- `toolang tools [--filter SELECTOR]`
+- `toolang adapters [--query QUERY] [--json]`
+- `toolang tools [--query QUERY]`
 - `toolang toolsets`
 - `toolang sandboxes`
 
@@ -816,9 +818,9 @@ run starts, not by this inspection endpoint. The response includes:
   - `provider`
   - `parameters.reasoning.effort`
 
-`ref` is the exact catalog route identity, including nested model ids, and
-never includes a `[provider]` suffix. Reasoning efforts are distinct recognized
-catalog values in catalog order; an unsupported model returns an empty list.
+`ref` is the exact catalog route identity, including nested model ids, and does
+not include query predicates. Reasoning efforts are distinct recognized catalog
+values in catalog order; an unsupported model returns an empty list.
 
 `GET /api/v1/agics` and `GET /api/v1/flows` list the agent's runnable
 definitions.

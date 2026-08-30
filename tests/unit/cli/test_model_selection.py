@@ -1,11 +1,11 @@
-"""Client-side materialization of effective model-list refs."""
+"""Client-side materialization of effective model selections."""
 
 from __future__ import annotations
 
 import pytest
 
 from toolang.cli.common.model_selection import (
-    materialize_model_list_ref,
+    materialize_model_selection,
 )
 
 
@@ -28,11 +28,11 @@ _MODELS = {
 }
 
 
-def test_model_list_materializes_legacy_provider_filters() -> None:
-    assert materialize_model_list_ref(_MODELS, "gpt-5[openai]") == "openai/gpt-5"
+def test_model_list_materializes_a_unique_human_facing_value() -> None:
+    assert materialize_model_selection(_MODELS, "openai/gpt-5") == "openai/gpt-5"
 
 
-def test_model_list_prefers_exact_routes_and_accepts_nested_legacy_routes() -> None:
+def test_model_list_accepts_nested_concrete_route_refs() -> None:
     payload = {
         "items": [
             *_MODELS["items"],
@@ -45,17 +45,17 @@ def test_model_list_prefers_exact_routes_and_accepts_nested_legacy_routes() -> N
         ]
     }
 
-    assert materialize_model_list_ref(payload, "openai/gpt-5") == "openai/gpt-5"
-    assert (
-        materialize_model_list_ref(payload, "openai/gpt-5[openrouter]")
-        == "openrouter/openai/gpt-5"
-    )
-    assert (
-        materialize_model_list_ref(payload, "gpt-5[openrouter]")
-        == "openrouter/openai/gpt-5"
+    assert materialize_model_selection(payload, "openrouter/openai/gpt-5") == (
+        "openrouter/openai/gpt-5"
     )
 
 
-def test_model_list_rejects_an_ambiguous_selector() -> None:
+def test_model_list_rejects_an_ambiguous_selection() -> None:
+    payload = {
+        "items": [
+            {"ref": "openai/gpt-5", "name": "GPT-5", "provider": "openai"},
+            {"ref": "openai/o3", "name": "o3", "provider": "openai"},
+        ]
+    }
     with pytest.raises(ValueError, match="ambiguous"):
-        materialize_model_list_ref(_MODELS, "gpt-5")
+        materialize_model_selection(payload, "openai")

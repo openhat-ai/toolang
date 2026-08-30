@@ -108,7 +108,7 @@ def test_materialized_agic_request_requires_a_model(tmp_path) -> None:
         harness.store.close()
 
 
-def test_materialized_request_rejects_a_model_selector(tmp_path) -> None:
+def test_materialized_request_rejects_a_non_exact_model_query(tmp_path) -> None:
     harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
     try:
         with pytest.raises(ValueError, match="model ref must be exact"):
@@ -133,7 +133,7 @@ def test_materialized_request_rejects_a_model_selector(tmp_path) -> None:
 def test_materialized_request_rejects_an_unqualified_runnable(tmp_path) -> None:
     harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
     try:
-        with pytest.raises(ValueError, match="kind-qualified runnable"):
+        with pytest.raises(ValueError, match="runnable ref must be exact"):
             resolve_run_request(
                 RunRequest(
                     thread_id="term_test",
@@ -152,7 +152,7 @@ def test_materialized_request_rejects_an_unqualified_runnable(tmp_path) -> None:
         harness.store.close()
 
 
-def test_root_runnable_selector_is_removed_from_current_model_input(tmp_path) -> None:
+def test_root_runnable_query_is_removed_from_current_model_input(tmp_path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -190,7 +190,7 @@ flow hello_flow(_: Text) -> Text:
     asyncio.run(scenario())
 
 
-def test_root_runnable_selector_is_removed_from_recalled_history(tmp_path) -> None:
+def test_root_runnable_query_is_removed_from_recalled_history(tmp_path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""

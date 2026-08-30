@@ -65,7 +65,9 @@ def test_models_is_a_leaf_command_without_file_output_options() -> None:
     assert models_result.exit_code == 0, models_result.stderr
     assert providers_result.exit_code == 0, providers_result.stderr
     models_help = unstyle(models_result.stdout)
-    assert "--filter" in models_help
+    assert "--query" in models_help
+    assert "--query-help" in models_help
+    assert "--query-schema" in models_help
     assert "--json" in models_help
     assert "--output" not in models_help
     assert "--force" not in models_help
@@ -77,7 +79,7 @@ def test_models_is_a_leaf_command_without_file_output_options() -> None:
         assert "unexpected extra argument" in unstyle(result.stderr).lower()
 
 
-def test_models_filter_exports_a_valid_complete_catalog(
+def test_models_query_exports_a_valid_complete_catalog(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -93,8 +95,8 @@ def test_models_filter_exports_a_valid_complete_catalog(
             "models",
             "--models",
             str(catalog),
-            "--filter",
-            "test/two[reasoning:false]",
+            "--query",
+            "test/two[reasoning=false]",
             "--json",
         ],
         env={},
@@ -121,7 +123,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
             "models",
             "--models",
             str(catalog),
-            "--filter",
+            "--query",
             "test/one",
         ],
         env={},
@@ -138,7 +140,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
             "CONTEXT",
             "OUTPUT",
             "INPUT",
-            "CAPABILITY",
+            "CAPABILITIES",
             "PRICE ($/1M)",
         )
     )
@@ -148,7 +150,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
         "1_000_000",
         "100_000",
         "text,image",
-        "tool_call,reasoning,temperature,structured",
+        "tool_call,reasoning,temperature,structured_output",
         "$1.26 / $0.00",
     )
     assert [row.index(value) for value in values] == sorted(
@@ -218,19 +220,27 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
         )
 
     async def llama_snapshot(_source) -> ModelCatalogSnapshot:
+        model = Model(
+            provider_id="llama_cpp",
+            id="offline",
+            name="offline",
+            modalities={"input": ("text",), "output": ("text",)},
+            cost={"input": 0, "output": 0},
+            local=True,
+        )
         provider = Provider(
             id="llama_cpp",
             name="llama.cpp",
             env=(),
             npm="@ai-sdk/openai-compatible",
             api="http://llama.test/v1",
-            models={},
+            models={model.id: model},
             extra={"runtime": {"status": "offline"}},
             local=True,
         )
         return ModelCatalogSnapshot(
             providers={provider.id: provider},
-            models=(),
+            models=(model,),
             revision="runtime:llama_cpp",
         )
 
@@ -251,7 +261,8 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
 
     assert result.exit_code == 0, result.stderr
     stdout = unstyle(result.stdout)
-    assert "3 models from 3 catalogs: models.dev 2, ollama 1, llama_cpp 0" in stdout
+    assert "llama_cpp/offline" in stdout
+    assert "4 models from 3 catalogs: models.dev 2, ollama 1, llama_cpp 1" in stdout
 
     captured_headers: tuple[str, ...] = ()
     captured_rows: list[tuple[str | Text, ...]] = []
@@ -295,7 +306,7 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
     )
     by_provider = {str(row[0]): row for row in captured_rows}
     assert by_provider["ollama"][2] == "1/1"
-    assert by_provider["llama_cpp"][2] == "0"
+    assert by_provider["llama_cpp"][2] == "0/1"
     llama_adapters = by_provider["llama_cpp"][3]
     assert isinstance(llama_adapters, Text)
     assert llama_adapters.plain == "chat_completions"
@@ -353,8 +364,8 @@ def test_providers_lists_resolved_api_and_model_adapters(
             "models",
             "--models",
             str(catalog),
-            "--filter",
-            "*[adapter:messages]",
+            "--query",
+            "*[adapter=messages]",
             "--json",
         ],
         env={},
@@ -421,6 +432,40 @@ def test_providers_lists_resolved_api_and_model_adapters(
     assert provider["api"] == "https://api.test/v1"
     assert provider["npm"] == "@ai-sdk/anthropic"
     assert "resolved" not in provider
+
+    missing_alt = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "providers",
+            "--models",
+            str(catalog),
+            "--query",
+            "*[missing_env=TEST_ALT_API_KEY]",
+            "--json",
+        ],
+        env={"TEST_API_KEY": "configured"},
+    )
+    assert missing_alt.exit_code == 0, missing_alt.stderr
+    assert tuple(json.loads(missing_alt.stdout)) == ("test",)
+
+    configured_alt = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "providers",
+            "--models",
+            str(catalog),
+            "--query",
+            "*[missing_env=TEST_API_KEY]",
+            "--json",
+        ],
+        env={"TEST_API_KEY": "configured"},
+    )
+    assert configured_alt.exit_code == 0, configured_alt.stderr
+    assert json.loads(configured_alt.stdout) == {}
 
 
 def _disable_local_discovery(monkeypatch) -> None:

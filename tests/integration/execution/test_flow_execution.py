@@ -370,7 +370,7 @@ def test_run_executor_rejects_invalid_ceiling_before_acceptance(
     executor = _executor(tmp_path)
 
     async def scenario() -> None:
-        with pytest.raises(ValueError, match="tool selector matched no tools"):
+        with pytest.raises(ValueError, match="tool query matched no items"):
             executor.run(
                 _spec(
                     setup=_setup(),

@@ -219,10 +219,10 @@ passed into either catalog factory.
 The public resources are:
 
 ```text
-too models [--filter SELECTOR] [--json]
-too providers [--filter GLOB] [--json]
+too models [--query QUERY] [--json]
+too providers [--query QUERY] [--json]
 too catalogs
-too adapters [--filter GLOB] [--json]
+too adapters [--query QUERY] [--json]
 ```
 
 `too models` shows catalog knowledge plus a simple `AVAILABLE` yes/no column.
@@ -234,19 +234,18 @@ and `ENV` from `Provider.resolved`. Comma separates OR environment alternatives;
 `built-in` or `external` source. It does not load the plugins or describe the
 merged catalog snapshot; use `too models` for that view.
 
-`too models --filter ... --json` emits another complete, deterministic,
+`too models --query ... --json` emits another complete, deterministic,
 models.dev-compatible catalog containing only selected models. Local-only
 models cannot be exported. Provider and model JSON never includes `resolved`.
 
-Selectors use `PATTERN[field:value,...]`. Exact identity is
-`provider/model_id`; model IDs may contain additional `/` characters. Catalog
-filters expose models.dev fields such as `family`, `reasoning`, `tool_call`,
+Queries use `PATTERN[field=value;...]`. Exact identity is `provider/model_id`;
+model IDs may contain additional `/` characters. Catalog query fields expose
+models.dev fields such as `family`, `reasoning`, `tool_call`,
 `temperature`, `structured_output`, `modalities.input`, and `status`. Runtime
-views additionally expose `provider`, `adapter`, `scope`, and `available`.
-Effective runtime model lists and run requests emit exact identities without a
-`[provider]` suffix. Provider filters remain accepted only as selector-list
-input; model-call parameters such as reasoning effort are structured request
-fields rather than selector syntax.
+views additionally expose `route.provider`, `route.adapter`, `route.scope`, and
+`available`. Use `--query-help` or `--query-schema` for the complete contract.
+Model-call parameters such as reasoning effort are structured request fields,
+not query syntax.
 
 ## Local Configuration and Aliases
 
@@ -255,7 +254,7 @@ aliases:
 
 ```toml
 [models]
-default = ["gateway", "openai/gpt-5[openai]"]
+default = ["*[alias=gateway]", "openai/gpt-5[route.provider=openai]"]
 
 [models.providers.gateway]
 adapter = "responses"

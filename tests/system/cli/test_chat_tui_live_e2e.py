@@ -37,7 +37,7 @@ def deepseek_model(request: pytest.FixtureRequest) -> str:
         pytest.skip("pass --live-model to run real-provider chat tests")
     model = value.strip()
     if "deepseek" not in model.lower():
-        pytest.skip("chat TUI live E2E cases require a DeepSeek model selector")
+        pytest.skip("chat TUI live E2E cases require a DeepSeek model query")
     return model
 
 

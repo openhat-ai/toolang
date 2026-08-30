@@ -120,7 +120,7 @@ class _Tracer(RunTracer):
 
 def _resources(setup: AgentSetup) -> AgentResources:
     return AgentResources(
-        models=("default",),
+        models=("*[alias=default]",),
         tools=tuple(
             AgentToolResource(
                 model_name=name,
@@ -241,7 +241,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
                     adapter="test",
                 )
             },
-            default_models=("default",),
+            default_models=("*[alias=default]",),
             envs=setup.envs,
             date="2026-01-01",
             timezone="UTC",
@@ -343,7 +343,7 @@ def test_prepare_agic_keeps_declared_output_contract_out_of_instructions(
                     adapter="test",
                 )
             },
-            default_models=("default",),
+            default_models=("*[alias=default]",),
             providers=setup.providers,
             models=setup.models,
             envs=setup.envs,
@@ -434,7 +434,7 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
                     adapter="test",
                 )
             },
-            default_models=("default",),
+            default_models=("*[alias=default]",),
             providers=setup.providers,
             models=setup.models,
             envs=setup.envs,
@@ -512,7 +512,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
             root_config={},
             home_config={
                 "models": {
-                    "default": "default",
+                    "default": "*[alias=default]",
                     "aliases": {
                         "default": {
                             "ref": "test/model",

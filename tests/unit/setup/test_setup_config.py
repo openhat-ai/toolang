@@ -5,7 +5,9 @@ from pathlib import Path
 import pytest
 
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
+from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
+from toolang.lang.runnable_query import RUNNABLE_SCHEMA
 from toolang.setup.config import (
     load_agent_config,
     load_setup_config,
@@ -14,6 +16,7 @@ from toolang.setup.config import (
     resolve_run_bindings,
     resolve_run_limits,
 )
+from toolang.state.collections import CAP_SCHEMA
 
 
 def test_setup_config_reads_only_the_toolang_root(tmp_path: Path) -> None:
@@ -156,6 +159,28 @@ def test_setup_policy_rejects_unknown_and_invalid_fields() -> None:
         resolve_run_limits(({"limit": {"turns": 1}},))
     with pytest.raises(ValueError, match="cost must be non-negative"):
         resolve_run_limits(({"limit": {"cost": -1.0}},))
+    with pytest.raises(ValueError, match="cannot mix queries with all or none"):
+        resolve_agent_ceiling(({"allow": {"models": ["all,openai/*"]}},))
+
+
+def test_setup_policy_validates_owner_collection_queries_when_provided() -> None:
+    with pytest.raises(ToolangError, match="unknown caps query field"):
+        resolve_agent_ceiling(
+            ({"allow": {"caps": ["*[missing=value]"]}},),
+            cap_query_schema=CAP_SCHEMA,
+        )
+    with pytest.raises(ToolangError, match="unknown runnables query field"):
+        resolve_run_bindings(
+            ({"default": {"runnable": "*[missing=value]"}},),
+            runnable_query_schema=RUNNABLE_SCHEMA,
+        )
+
+
+def test_setup_policy_all_and_none_are_standalone_layer_values() -> None:
+    root = {"allow": {"models": ["openai/*"], "skills": ["review"]}}
+    agent = {"allow": {"models": ["all"], "skills": ["none"]}}
+
+    assert resolve_agent_ceiling((root, agent)) == AgentCeiling(caps=())
 
 
 def test_old_nested_run_limits_are_not_interpreted() -> None:

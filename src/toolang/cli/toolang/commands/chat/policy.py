@@ -91,11 +91,17 @@ def reasoning_effort_from_selects(
 
 def materialize_runnable_list_ref(
     payload: Mapping[str, object],
-    selector: str,
+    selection: str,
+    *,
+    kind: str | None = None,
 ) -> str:
-    """Resolve one runnable selector to a kind-qualified list ref."""
+    """Resolve one user-facing value to a kind-qualified runnable ref."""
 
-    requested_name, requested_kind = parse_runnable_ref(selector)
+    requested_name, requested_kind = parse_runnable_ref(selection)
+    if kind in {"agic", "flow"}:
+        if requested_kind not in {None, kind}:
+            raise ValueError(f"runnable selection has the wrong kind: {selection}")
+        requested_kind = kind
     raw_items = payload.get("items")
     items = raw_items if isinstance(raw_items, list | tuple) else ()
     matches: list[str] = []
@@ -104,18 +110,20 @@ def materialize_runnable_list_ref(
             continue
         item = cast(Mapping[str, object], raw)
         name = _text(item.get("name"))
-        kind = _text(item.get("kind"))
-        if name != requested_name or kind not in {"agic", "flow"}:
+        item_kind = _text(item.get("kind")) or requested_kind
+        if name != requested_name or item_kind not in {"agic", "flow"}:
             continue
-        if requested_kind is not None and requested_kind != kind:
+        if requested_kind is not None and requested_kind != item_kind:
             continue
-        matches.append(f"{kind}:{name}")
+        matches.append(f"{item_kind}:{name}")
     if len(matches) == 1:
         return matches[0]
     if not matches:
-        raise ValueError(f"runnable ref did not match an available route: {selector}")
+        raise ValueError(
+            f"runnable selection did not match an available route: {selection}"
+        )
     joined = ", ".join(matches)
-    raise ValueError(f"runnable ref is ambiguous: {selector} (matches {joined})")
+    raise ValueError(f"runnable selection is ambiguous: {selection} (matches {joined})")
 
 
 def apply_model_selection(
@@ -189,8 +197,12 @@ def apply_session_commands(
             continue
         if command.field != "runnable":
             continue
-        name, kind = parse_runnable_ref(command.value)
-        result[kind or "runnable"] = name
+        try:
+            name, kind = parse_runnable_ref(command.value)
+        except ValueError:
+            result["runnable"] = command.value
+        else:
+            result[kind or "runnable"] = name
     if _text(result.get("model")) != previous_model:
         result.pop(_REASONING_EFFORT_KEY, None)
     return result

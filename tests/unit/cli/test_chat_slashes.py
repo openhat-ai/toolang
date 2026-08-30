@@ -178,7 +178,7 @@ def test_quick_model_lists_models_without_changing_settings() -> None:
 
     assert listed.lines == [
         "Available Models",
-        "openai/gpt-5  default  reasoning: low, high, default",
+        "GPT-5  default  openai  reasoning: low, high, default",
     ]
     assert app.selects == {}
     assert app.status_refreshes == 0

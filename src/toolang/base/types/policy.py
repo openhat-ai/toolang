@@ -8,16 +8,16 @@ from decimal import Decimal
 
 @dataclass(frozen=True, slots=True)
 class AgentCeiling:
-    """Stable selector lists that can only narrow agent resources."""
+    """Stable queries that can only narrow agent resources."""
 
     models: tuple[str, ...] | None = None
     tools: tuple[str, ...] | None = None
     caps: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "models", _normalize_selectors(self.models, "model"))
-        object.__setattr__(self, "tools", _normalize_selectors(self.tools, "tool"))
-        object.__setattr__(self, "caps", _normalize_selectors(self.caps, "cap"))
+        object.__setattr__(self, "models", _normalize_queries(self.models, "model"))
+        object.__setattr__(self, "tools", _normalize_queries(self.tools, "tool"))
+        object.__setattr__(self, "caps", _normalize_queries(self.caps, "cap"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,21 +30,6 @@ class RunBindings:
     def __post_init__(self) -> None:
         object.__setattr__(self, "model", _normalize_optional(self.model, "model"))
         runnable = _normalize_optional(self.runnable, "runnable")
-        if runnable is not None:
-            kind, separator, name = runnable.partition(":")
-            generated_agic = (
-                kind == "agic"
-                and name.startswith("<agic:")
-                and name.endswith(">")
-                and name[6:-1].isdigit()
-            )
-            if separator and (
-                kind not in {"agic", "flow"}
-                or not name
-                or name != name.strip()
-                or (":" in name and not generated_agic)
-            ):
-                raise ValueError(f"invalid run binding runnable: {runnable}")
         object.__setattr__(
             self,
             "runnable",
@@ -90,7 +75,7 @@ class RunPolicy:
             raise TypeError("run policy limits must be RunLimits")
 
 
-def _normalize_selectors(
+def _normalize_queries(
     values: tuple[str, ...] | None,
     name: str,
 ) -> tuple[str, ...] | None:
@@ -99,10 +84,10 @@ def _normalize_selectors(
     normalized: list[str] = []
     for value in values:
         if not isinstance(value, str):
-            raise TypeError(f"{name} resource selectors must be strings")
+            raise TypeError(f"{name} resource queries must be strings")
         text = value.strip()
         if not text:
-            raise ValueError(f"{name} resource selectors must not be empty")
+            raise ValueError(f"{name} resource queries must not be empty")
         if text not in normalized:
             normalized.append(text)
     return tuple(normalized)

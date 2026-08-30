@@ -114,6 +114,57 @@ agic review( _:Part[],path?:Path)->Json:
     )
 
 
+def test_format_source_preserves_commas_inside_collection_queries() -> None:
+    source = """
+agic review:
+    tools=filesystem/*[description="read,exact"],shell/*[parameters in (command,timeout)]
+
+    Review the target.
+""".strip()
+
+    formatted = format_source(source)
+
+    assert formatted == (
+        "agic review:\n"
+        '  tools = filesystem/*[description="read,exact"], '
+        "shell/*[parameters in (command,timeout)]\n"
+        "\n"
+        "  Review the target.\n"
+    )
+    assert format_source(formatted) == formatted
+    Program.from_source(formatted)
+
+
+def test_format_source_does_not_remove_empty_query_alternatives() -> None:
+    source = "agic review:\n  tools = filesystem/*,,shell/*,\n\n  Review.\n"
+
+    assert format_source(source) == (
+        "agic review:\n  tools = filesystem/*, , shell/*,\n\n  Review.\n"
+    )
+
+
+def test_format_source_preserves_hashes_inside_collection_queries() -> None:
+    source = """agic review:
+    tools=filesystem/*[description="read # exact"],vendor/tool#v1 # keep
+
+    Review the target.
+""".strip()
+
+    formatted = format_source(source)
+    program = Program.from_source(formatted)
+
+    assert formatted == (
+        "agic review:\n"
+        '  tools = filesystem/*[description="read # exact"], vendor/tool#v1  # keep\n'
+        "\n"
+        "  Review the target.\n"
+    )
+    assert program.agics[0].directives[0].values == (
+        'filesystem/*[description="read # exact"], vendor/tool#v1',
+    )
+    assert format_source(formatted) == formatted
+
+
 def test_format_source_uses_configured_tab_size() -> None:
     source = """
 struct ReviewSummary:

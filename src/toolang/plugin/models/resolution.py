@@ -1,10 +1,9 @@
-"""Model selector and target resolution."""
+"""Model query and target resolution."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from fnmatch import fnmatchcase
 from typing import Protocol, cast
 
 from toolang.base.errors import ToolangError
@@ -17,6 +16,15 @@ from toolang.base.types.model import (
     Provider,
     ReasoningEffort,
 )
+from toolang.common.query import (
+    CollectionDefinition,
+    CollectionSchema,
+    IdentitySpec,
+    QueryDataset,
+    SetOperator,
+    format_identity,
+    format_literal,
+)
 from toolang.plugin.models.config import ProviderConfig
 from toolang.plugin.models.messages import (
     NO_AVAILABLE_MODELS_MESSAGE,
@@ -26,28 +34,9 @@ from toolang.plugin.models.provider_resolver import (
     env_is_ready,
     selected_credential_value,
 )
-from toolang.common.selectors import (
-    Selector as ModelSelector,
-    filter_value_matches,
-    parse_selector,
-    selector_identity_matches,
-    split_selector_list,
-)
 
-DEFAULT_MODEL_SELECTOR = "gpt-5"
+DEFAULT_MODEL_QUERY = "gpt-5"
 CUSTOM_MODEL_PROVIDER = "custom"
-
-
-def split_model_selectors(items: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
-    """Split repeated and CSV model selector inputs."""
-
-    return split_selector_list(items)
-
-
-def parse_model_selector(raw: str) -> ModelSelector:
-    """Parse one model selector."""
-
-    return parse_selector(raw, domain="model")
 
 
 def resolve_catalog_adapter(
@@ -81,7 +70,7 @@ def catalog_model_api(
 
 
 class SupportsModelSelection(Protocol):
-    """Minimal context shape needed to resolve model selectors."""
+    """Minimal context shape needed to resolve model queries."""
 
     providers: Mapping[str, Provider]
     models: tuple[ModelInfo, ...]
@@ -92,11 +81,102 @@ class SupportsModelSelection(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class _Candidate:
-    selector: str
+    exact_query: str
     target: ModelTarget
-    match_values: tuple[str, ...]
-    alias: ModelAlias | None = None
+    aliases: tuple[str, ...] = ()
     info: ModelInfo | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeModelRouteView:
+    """Public runtime route attributes for one selectable model."""
+
+    provider: str
+    adapter: str
+    scope: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeModelModalitiesView:
+    """Public runtime model modalities."""
+
+    input: tuple[str, ...]
+    output: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeModelLimitView:
+    """Public runtime model limits."""
+
+    context: int | None
+    output: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeModelCostView:
+    """Public runtime model token prices."""
+
+    input: float | None
+    output: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeReasoningParametersView:
+    """Public supported reasoning parameter values."""
+
+    effort: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeModelParametersView:
+    """Public supported model parameter values."""
+
+    reasoning: RuntimeReasoningParametersView
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeModelView:
+    """Explicitly public runtime-model route query representation."""
+
+    key_query: str
+    candidate: object
+    provider: str
+    model: str
+    name: str
+    alias: tuple[str, ...] | None
+    route: RuntimeModelRouteView
+    tags: tuple[str, ...]
+    tools: bool
+    streaming: bool
+    available: bool
+    family: str | None
+    reasoning: bool | None
+    temperature: bool | None
+    structured_output: bool | None
+    attachment: bool | None
+    open_weights: bool | None
+    status: str | None
+    modalities: RuntimeModelModalitiesView
+    limit: RuntimeModelLimitView
+    cost: RuntimeModelCostView
+    parameters: RuntimeModelParametersView
+
+
+RUNTIME_MODEL_SCHEMA = CollectionSchema.from_type(
+    "runtime models",
+    RuntimeModelView,
+    key="key_query",
+    identity=IdentitySpec(
+        paths=("provider", "model"),
+        labels=("provider", "model"),
+        separator="/",
+    ),
+    exclude=(
+        "key_query",
+        "candidate",
+    ),
+)
+RUNTIME_MODEL_DEFINITION = CollectionDefinition(RUNTIME_MODEL_SCHEMA)
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,21 +192,21 @@ class ModelTargetResolver:
 
     def resolve(
         self,
-        selector: str | None,
+        query: str | None,
         *,
-        default_selector: str | None = None,
-        allowed_selectors: Sequence[str] | None = None,
+        default_query: str | None = None,
+        allowed_queries: Sequence[str] | None = None,
     ) -> ModelTarget:
         return resolve_model(
             self,
-            selector=selector,
-            default_selector=default_selector,
-            allowed_selectors=allowed_selectors,
+            query=query,
+            default_query=default_query,
+            allowed_queries=allowed_queries,
         )
 
     def selectable(
         self,
-        selectors: Sequence[str] | None = None,
+        queries: Sequence[str] | None = None,
     ) -> tuple[tuple[str, ModelTarget], ...]:
         return selectable_model_targets(
             providers=self.providers,
@@ -134,76 +214,76 @@ class ModelTargetResolver:
             aliases=self.model_aliases,
             envs=self.envs,
             provider_configs=self.provider_configs,
-            selectors=selectors,
+            queries=queries,
         )
 
 
 def resolve_model(
     context: SupportsModelSelection,
     *,
-    selector: str | None,
-    default_selector: str | None = None,
-    allowed_selectors: Sequence[str] | None = None,
+    query: str | None,
+    default_query: str | None = None,
+    allowed_queries: Sequence[str] | None = None,
 ) -> ModelTarget:
-    """Resolve one model selector against one uptime context."""
+    """Resolve one singular model query against one uptime context."""
 
     return _resolve_model_candidate(
         context,
-        selector=selector,
-        default_selector=default_selector,
-        allowed_selectors=allowed_selectors,
+        query=query,
+        default_query=default_query,
+        allowed_queries=allowed_queries,
     ).target
 
 
 def resolve_model_ref(
     context: SupportsModelSelection,
     *,
-    selector: str | None,
-    default_selector: str | None = None,
-    allowed_selectors: Sequence[str] | None = None,
+    query: str | None,
+    default_query: str | None = None,
+    allowed_queries: Sequence[str] | None = None,
 ) -> str:
-    """Resolve one model selector to its exact selectable route ref."""
+    """Resolve one model query to its concrete selectable route ref."""
 
-    return _resolve_model_candidate(
-        context,
-        selector=selector,
-        default_selector=default_selector,
-        allowed_selectors=allowed_selectors,
-    ).selector
+    return model_target_ref(
+        _resolve_model_candidate(
+            context,
+            query=query,
+            default_query=default_query,
+            allowed_queries=allowed_queries,
+        ).target
+    )
 
 
-def _resolve_model_candidate(
+def model_target_ref(target: ModelTarget) -> str:
+    """Return the concrete public ref for one resolved model route."""
+
+    return (
+        target.ref
+        if target.ref.partition("/")[0] == target.provider
+        else f"{target.provider}/{target.ref}"
+    )
+
+
+def resolve_model_request(
     context: SupportsModelSelection,
     *,
-    selector: str | None,
-    default_selector: str | None,
-    allowed_selectors: Sequence[str] | None,
-) -> _Candidate:
-    """Resolve one effective selector to one selectable candidate."""
+    ref: str,
+    allowed_queries: Sequence[str] | None = None,
+) -> ModelTarget:
+    """Resolve one concrete model route ref against one uptime context."""
 
     provider_configs = _context_provider_configs(context)
-    resolved_allowed = _resolve_allowed_targets(
-        allowed_selectors,
+    candidates = _discover_available_candidates(
         providers=context.providers,
         models=context.models,
         aliases=context.model_aliases,
         envs=context.envs,
         provider_configs=provider_configs,
     )
-    effective_selector = _first_non_empty(
-        selector,
-        default_selector,
-        *context.default_models,
-        DEFAULT_MODEL_SELECTOR,
-    )
-    matches = _resolve_selector_targets(
-        (effective_selector,),
-        providers=context.providers,
-        models=context.models,
-        aliases=context.model_aliases,
-        envs=context.envs,
-        provider_configs=provider_configs,
-        prefer_exact_route=True,
+    matches = tuple(
+        candidate
+        for candidate in candidates
+        if model_target_ref(candidate.target) == ref
     )
     if not matches:
         raise ToolangError(
@@ -216,17 +296,88 @@ def _resolve_model_candidate(
             )
         )
     if len(matches) > 1:
-        joined = ", ".join(item.selector for item in matches)
-        raise ToolangError(
-            f"model selector is ambiguous: {effective_selector} (matches {joined})"
-        )
-    candidate = matches[0]
+        joined = ", ".join(candidate.exact_query for candidate in matches)
+        raise ToolangError(f"model ref is ambiguous: {ref} (matches {joined})")
+    target = matches[0].target
     _require_allowed(
-        candidate.target,
-        selector=effective_selector,
+        target,
+        query=ref,
+        allowed=_resolve_allowed_targets(
+            allowed_queries,
+            providers=context.providers,
+            models=context.models,
+            aliases=context.model_aliases,
+            envs=context.envs,
+            provider_configs=provider_configs,
+        ),
+    )
+    return target
+
+
+def _resolve_model_candidate(
+    context: SupportsModelSelection,
+    *,
+    query: str | None,
+    default_query: str | None,
+    allowed_queries: Sequence[str] | None,
+) -> _Candidate:
+    """Resolve one effective singular query to one selectable candidate."""
+
+    provider_configs = _context_provider_configs(context)
+    resolved_allowed = _resolve_allowed_targets(
+        allowed_queries,
+        providers=context.providers,
+        models=context.models,
+        aliases=context.model_aliases,
+        envs=context.envs,
+        provider_configs=provider_configs,
+    )
+    explicit = next(
+        (
+            value.strip()
+            for value in (query, default_query)
+            if value is not None and value.strip()
+        ),
+        None,
+    )
+    fallback_queries = (
+        (explicit,)
+        if explicit is not None
+        else tuple(context.default_models) or (DEFAULT_MODEL_QUERY,)
+    )
+    selected = _resolve_first_unique_query(
+        fallback_queries,
+        providers=context.providers,
+        models=context.models,
+        aliases=context.model_aliases,
+        envs=context.envs,
+        provider_configs=provider_configs,
+    )
+    if selected is None:
+        if explicit is not None:
+            _raise_unavailable_alias_query(
+                explicit,
+                providers=context.providers,
+                models=context.models,
+                aliases=context.model_aliases,
+                envs=context.envs,
+                provider_configs=provider_configs,
+            )
+        raise ToolangError(
+            _empty_model_selection_message(
+                providers=context.providers,
+                models=context.models,
+                aliases=context.model_aliases,
+                envs=context.envs,
+                provider_configs=provider_configs,
+            )
+        )
+    _require_allowed(
+        selected.target,
+        query=explicit or selected.exact_query,
         allowed=resolved_allowed,
     )
-    return candidate
+    return selected
 
 
 def model_reasoning_efforts(
@@ -292,33 +443,37 @@ def apply_model_parameters(
     return replace(target, reasoning={"effort": effort})
 
 
-def select_model_selectors(
+def select_model_queries(
     context: SupportsModelSelection,
     *,
-    directive_selectors: Sequence[str] = (),
-    allowed_selectors: Sequence[str] = (),
-    default_selector: str | None = None,
+    directive_queries: Sequence[str] | None = None,
+    allowed_queries: Sequence[str] | None = None,
+    default_query: str | None = None,
 ) -> tuple[str, ...]:
-    """Return the effective ordered model selectors for one run."""
+    """Return effective precise model queries for one run resource set."""
 
+    if directive_queries is not None and not directive_queries:
+        return ()
+    if allowed_queries is not None and not allowed_queries:
+        return ()
     provider_configs = _context_provider_configs(context)
-    directive_candidates = _resolve_selector_targets(
-        directive_selectors,
+    directive_candidates = _resolve_query_targets(
+        directive_queries,
         providers=context.providers,
         models=context.models,
         aliases=context.model_aliases,
         envs=context.envs,
         provider_configs=provider_configs,
     )
-    allowed_candidates = _resolve_selector_targets(
-        allowed_selectors,
+    allowed_candidates = _resolve_query_targets(
+        allowed_queries,
         providers=context.providers,
         models=context.models,
         aliases=context.model_aliases,
         envs=context.envs,
         provider_configs=provider_configs,
     )
-    if directive_selectors and not directive_candidates:
+    if directive_queries and not directive_candidates:
         raise ToolangError(
             _empty_model_selection_message(
                 providers=context.providers,
@@ -328,7 +483,7 @@ def select_model_selectors(
                 provider_configs=provider_configs,
             )
         )
-    if allowed_selectors and not allowed_candidates:
+    if allowed_queries and not allowed_candidates:
         raise ToolangError(
             _empty_model_selection_message(
                 providers=context.providers,
@@ -340,22 +495,22 @@ def select_model_selectors(
         )
     if directive_candidates and allowed_candidates:
         directive_identities = {
-            _target_identity(candidate.target) for candidate in directive_candidates
+            candidate.exact_query for candidate in directive_candidates
         }
         selected = tuple(
-            candidate.selector
+            candidate.exact_query
             for candidate in allowed_candidates
-            if _target_identity(candidate.target) in directive_identities
+            if candidate.exact_query in directive_identities
         )
         if selected:
             return selected
         raise ToolangError(NO_MATCHED_MODELS_MESSAGE)
 
     if allowed_candidates:
-        return _dedupe(candidate.selector for candidate in allowed_candidates)
+        return tuple(candidate.exact_query for candidate in allowed_candidates)
 
     if directive_candidates:
-        return _dedupe(candidate.selector for candidate in directive_candidates)
+        return tuple(candidate.exact_query for candidate in directive_candidates)
 
     available = _discover_available_candidates(
         providers=context.providers,
@@ -365,11 +520,11 @@ def select_model_selectors(
         provider_configs=provider_configs,
     )
     defaults = (
-        (default_selector,)
-        if default_selector and default_selector.strip()
+        (default_query,)
+        if default_query and default_query.strip()
         else tuple(context.default_models)
-    ) or (DEFAULT_MODEL_SELECTOR,)
-    preferred = _resolve_selector_targets(
+    ) or (DEFAULT_MODEL_QUERY,)
+    preferred = _resolve_first_unique_query(
         defaults,
         providers=context.providers,
         models=context.models,
@@ -379,11 +534,12 @@ def select_model_selectors(
     )
     ordered: list[str] = []
     seen: set[str] = set()
-    for candidate in (*preferred, *available):
-        if candidate.selector in seen:
+    preferred_values = (preferred,) if preferred is not None else ()
+    for candidate in (*preferred_values, *available):
+        if candidate.exact_query in seen:
             continue
-        seen.add(candidate.selector)
-        ordered.append(candidate.selector)
+        seen.add(candidate.exact_query)
+        ordered.append(candidate.exact_query)
     if ordered:
         return tuple(ordered)
     raise ToolangError(
@@ -397,6 +553,72 @@ def select_model_selectors(
     )
 
 
+def _resolve_first_unique_query(
+    queries: Sequence[str],
+    *,
+    providers: Mapping[str, Provider],
+    models: Sequence[ModelInfo],
+    aliases: Mapping[str, ModelAlias],
+    envs: Mapping[str, str],
+    provider_configs: Mapping[str, ProviderConfig],
+) -> _Candidate | None:
+    """Resolve ordered independent singular queries with fallback-on-zero."""
+
+    for query in queries:
+        matches = _resolve_query_targets(
+            (query,),
+            providers=providers,
+            models=models,
+            aliases=aliases,
+            envs=envs,
+            provider_configs=provider_configs,
+        )
+        if not matches:
+            continue
+        if len(matches) > 1:
+            joined = ", ".join(item.exact_query for item in matches)
+            raise ToolangError(f"model query is ambiguous: {query} (matches {joined})")
+        return matches[0]
+    return None
+
+
+def _raise_unavailable_alias_query(
+    query: str,
+    *,
+    providers: Mapping[str, Provider],
+    models: Sequence[ModelInfo],
+    aliases: Mapping[str, ModelAlias],
+    envs: Mapping[str, str],
+    provider_configs: Mapping[str, ProviderConfig],
+) -> None:
+    """Preserve route diagnostics for an explicit exact alias predicate."""
+
+    parsed = RUNTIME_MODEL_SCHEMA.parse(query)
+    alias_names = {
+        value
+        for selector in parsed.selectors
+        if selector.identity_pattern == "*"
+        for predicate in selector.predicates
+        if predicate.field.name == "alias" and predicate.operator == "="
+        for value in predicate.values
+        if isinstance(value, str)
+    }
+    if len(alias_names) != 1:
+        return
+    alias_name = next(iter(alias_names))
+    alias = aliases.get(alias_name)
+    if alias is None:
+        return
+    _target_from_alias(
+        alias,
+        providers=providers,
+        models=models,
+        envs=envs,
+        provider_configs=provider_configs,
+        strict=True,
+    )
+
+
 def selectable_model_targets(
     *,
     providers: Mapping[str, Provider],
@@ -404,15 +626,15 @@ def selectable_model_targets(
     aliases: Mapping[str, ModelAlias],
     envs: Mapping[str, str],
     provider_configs: Mapping[str, ProviderConfig] | None = None,
-    selectors: Sequence[str] | None = None,
+    queries: Sequence[str] | None = None,
 ) -> tuple[tuple[str, ModelTarget], ...]:
     """Return selectable model targets for CLI/API listing."""
 
-    if selectors:
+    if queries is not None:
         return tuple(
-            (candidate.selector, candidate.target)
-            for candidate in _resolve_selector_targets(
-                selectors,
+            (candidate.exact_query, candidate.target)
+            for candidate in _resolve_query_targets(
+                queries,
                 providers=providers,
                 models=models,
                 aliases=aliases,
@@ -421,7 +643,7 @@ def selectable_model_targets(
             )
         )
     return tuple(
-        (candidate.selector, candidate.target)
+        (candidate.exact_query, candidate.target)
         for candidate in _discover_available_candidates(
             providers=providers,
             models=models,
@@ -432,18 +654,41 @@ def selectable_model_targets(
     )
 
 
+def apply_model_query_operations(
+    context: SupportsModelSelection,
+    base_queries: Sequence[str],
+    operations: Sequence[tuple[SetOperator, tuple[str, ...]]],
+) -> tuple[str, ...]:
+    """Apply model resource directives against one immutable candidate base."""
+
+    provider_configs = _context_provider_configs(context)
+    candidates = _resolve_query_targets(
+        base_queries,
+        providers=context.providers,
+        models=context.models,
+        aliases=context.model_aliases,
+        envs=context.envs,
+        provider_configs=provider_configs,
+    )
+    dataset = _candidate_dataset(candidates)
+    selected = dataset.apply(operations)
+    return tuple(cast(_Candidate, item.candidate).exact_query for item in selected)
+
+
 def _resolve_allowed_targets(
-    selectors: Sequence[str] | None,
+    queries: Sequence[str] | None,
     *,
     providers: Mapping[str, Provider],
     models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     envs: Mapping[str, str],
     provider_configs: Mapping[str, ProviderConfig],
-) -> tuple[ModelTarget, ...]:
+) -> tuple[ModelTarget, ...] | None:
+    if queries is None:
+        return None
     targets: list[ModelTarget] = []
-    for candidate in _resolve_selector_targets(
-        selectors,
+    for candidate in _resolve_query_targets(
+        queries,
         providers=providers,
         models=models,
         aliases=aliases,
@@ -463,7 +708,6 @@ def _discover_available_candidates(
     provider_configs: Mapping[str, ProviderConfig],
 ) -> tuple[_Candidate, ...]:
     candidates: list[_Candidate] = []
-    seen: set[tuple[str, str, str, str | None]] = set()
     for name, alias in aliases.items():
         target = _target_from_alias(
             alias,
@@ -475,16 +719,19 @@ def _discover_available_candidates(
         )
         if target is None:
             continue
-        identity = _target_identity(target)
-        if identity in seen:
+        index = _candidate_target_index(candidates, target)
+        if index is not None:
+            candidate = candidates[index]
+            candidates[index] = replace(
+                candidate,
+                aliases=(*candidate.aliases, name),
+            )
             continue
-        seen.add(identity)
         candidates.append(
             _Candidate(
-                selector=name,
+                exact_query=_candidate_query(target, alias=name),
                 target=target,
-                match_values=_candidate_match_values(name, target),
-                alias=alias,
+                aliases=(name,),
             )
         )
     for info in models:
@@ -499,24 +746,41 @@ def _discover_available_candidates(
             envs=envs,
             provider_configs=provider_configs,
         )
-        identity = _target_identity(target)
-        if identity in seen:
+        for index, candidate in enumerate(candidates):
+            if candidate.target.provider == target.provider and (
+                candidate.target.ref == target.ref
+            ):
+                candidates[index] = replace(candidate, info=info)
+        index = _candidate_target_index(candidates, target)
+        if index is not None:
+            candidates[index] = replace(candidates[index], info=info)
             continue
-        seen.add(identity)
-        selector = _catalog_route_ref(info, provider)
         candidates.append(
             _Candidate(
-                selector=selector,
+                exact_query=_candidate_query(target),
                 target=target,
-                match_values=_candidate_match_values(selector, target, *info.selectors),
                 info=info,
             )
         )
     return tuple(candidates)
 
 
-def _resolve_selector_targets(
-    selectors: Sequence[str] | None,
+def _candidate_target_index(
+    candidates: Sequence[_Candidate],
+    target: ModelTarget,
+) -> int | None:
+    return next(
+        (
+            index
+            for index, candidate in enumerate(candidates)
+            if candidate.target == target
+        ),
+        None,
+    )
+
+
+def _resolve_query_targets(
+    queries: Sequence[str] | None,
     *,
     providers: Mapping[str, Provider],
     models: Sequence[ModelInfo],
@@ -532,230 +796,118 @@ def _resolve_selector_targets(
         envs=envs,
         provider_configs=provider_configs,
     )
-    selected: list[_Candidate] = []
-    seen: set[tuple[str, str, str, str | None]] = set()
-    for raw in selectors or ():
-        text = raw.strip()
-        if not text:
-            continue
-        if text in aliases:
-            target = _target_from_alias(
-                aliases[text],
-                providers=providers,
-                models=models,
-                envs=envs,
-                provider_configs=provider_configs,
-                strict=True,
-            )
-            if target is None:
-                continue
-            identity = _target_identity(target)
-            if identity not in seen:
-                seen.add(identity)
-                selected.append(
-                    _Candidate(
-                        selector=text,
-                        target=target,
-                        match_values=_candidate_match_values(text, target),
-                        alias=aliases[text],
-                    )
-                )
-            continue
-        selector = parse_model_selector(text)
-        exact_route_matches = (
-            tuple(
-                candidate
-                for candidate in candidates
-                if candidate.selector == selector.pattern
-            )
-            if prefer_exact_route
-            and _looks_exact_ref(selector)
-            and not selector.filters
-            else ()
-        )
-        matches = exact_route_matches or tuple(
-            candidate
-            for candidate in candidates
-            if _candidate_matches(candidate, selector)
-        )
-        if not matches and _looks_exact_ref(selector) and not selector.filters:
-            matches = _resolve_exact_ref(
-                selector.pattern,
-                providers=providers,
-                models=models,
-                aliases=aliases,
-                envs=envs,
-                provider_configs=provider_configs,
-            )
-        for candidate in matches:
-            identity = _target_identity(candidate.target)
-            if identity in seen:
-                continue
-            seen.add(identity)
-            selected.append(candidate)
-    return tuple(selected)
+    if not queries:
+        return ()
+    selected = _candidate_dataset(candidates).query(queries)
+    return tuple(cast(_Candidate, item.candidate) for item in selected)
 
 
-def _resolve_exact_ref(
-    ref: str,
-    *,
-    providers: Mapping[str, Provider],
-    models: Sequence[ModelInfo],
-    aliases: Mapping[str, ModelAlias],
-    envs: Mapping[str, str],
-    provider_configs: Mapping[str, ProviderConfig],
-) -> tuple[_Candidate, ...]:
-    matches: list[_Candidate] = []
-    for info in models:
-        provider = providers.get(info.provider)
-        if provider is None or _provider_id(provider) == CUSTOM_MODEL_PROVIDER:
-            continue
-        if info.ref != ref and _catalog_route_ref(info, provider) != ref:
-            continue
-        if not _model_info_ready(info):
-            continue
-        target = _target_from_info(
-            provider,
-            info,
-            envs=envs,
-            provider_configs=provider_configs,
-        )
-        matches.append(
-            _Candidate(
-                selector=_catalog_route_ref(info, provider),
-                target=target,
-                match_values=_candidate_match_values(ref, target),
-                info=info,
-            )
-        )
-    for name, alias in aliases.items():
-        if alias.ref != ref:
-            continue
-        target = _target_from_alias(
-            alias,
-            providers=providers,
-            models=models,
-            envs=envs,
-            provider_configs=provider_configs,
-            strict=False,
-        )
-        if target is None:
-            continue
-        matches.append(
-            _Candidate(
-                selector=name,
-                target=target,
-                match_values=_candidate_match_values(name, target),
-                alias=alias,
-            )
-        )
-    return tuple(matches)
-
-
-def _candidate_matches(candidate: _Candidate, selector: ModelSelector) -> bool:
-    if (
-        _looks_exact_ref(selector)
-        and candidate.selector != selector.pattern
-        and candidate.target.ref != selector.pattern
-    ):
-        return False
-    if not _pattern_matches(candidate, selector.pattern):
-        return False
-    for key, values in selector.filters.items():
-        actual_values = _candidate_filter_values(candidate, key)
-        if not actual_values or not any(
-            filter_value_matches(actual, values) for actual in actual_values
-        ):
-            return False
-    return True
-
-
-def _pattern_matches(candidate: _Candidate, pattern: str) -> bool:
-    text = pattern.strip() or "*"
-    if text == "*":
-        return True
-    if "/" in text:
-        family, _, name = candidate.target.ref.partition("/")
-        if selector_identity_matches(
-            family=family,
-            name=name or candidate.target.model,
-            selector=ModelSelector(raw=text, pattern=text),
-            extra_values=candidate.match_values,
-        ):
-            return True
-    return any(
-        value == text or fnmatchcase(value, text) for value in candidate.match_values
+def _candidate_dataset(
+    candidates: Sequence[_Candidate],
+) -> QueryDataset[RuntimeModelView]:
+    return RUNTIME_MODEL_DEFINITION.dataset(
+        tuple(_candidate_view(candidate) for candidate in candidates)
     )
 
 
-def _candidate_filter_values(candidate: _Candidate, key: str) -> tuple[str, ...]:
-    if key == "provider":
-        return (candidate.target.provider,)
-    if key == "scope":
-        return (candidate.target.scope,) if candidate.target.scope is not None else ()
-    if key == "adapter":
-        return (candidate.target.adapter,)
-    if key == "alias":
-        return (candidate.alias.name,) if candidate.alias is not None else ()
-    if key == "tag":
-        return tuple(candidate.target.tags)
-    if key == "streaming":
-        return (_bool_filter_value(candidate.target.streaming),)
-    if key in {"tools", "tool_call"}:
-        return (_bool_filter_value(candidate.target.tools),)
-    if key in {"available", "availability"}:
-        return ("true",)
+def _candidate_view(candidate: _Candidate) -> RuntimeModelView:
+    target = candidate.target
+    provider, model = _runtime_identity_components(target)
     info = candidate.info
-    if info is None:
+    metadata = info.metadata if info is not None else {}
+    modalities = metadata.get("modalities")
+    input_modalities = (
+        modalities.get("input") if isinstance(modalities, Mapping) else None
+    )
+    output_modalities = (
+        modalities.get("output") if isinstance(modalities, Mapping) else None
+    )
+    return RuntimeModelView(
+        key_query=candidate.exact_query,
+        candidate=candidate,
+        provider=provider,
+        model=model,
+        name=target.name,
+        alias=candidate.aliases or None,
+        route=RuntimeModelRouteView(
+            provider=target.provider,
+            adapter=target.adapter,
+            scope=target.scope,
+        ),
+        tags=tuple(target.tags),
+        tools=target.tools,
+        streaming=target.streaming,
+        available=True,
+        family=_metadata_text(metadata, "family"),
+        reasoning=_metadata_bool(metadata, "reasoning"),
+        temperature=_metadata_bool(metadata, "temperature"),
+        structured_output=target.structured_output,
+        attachment=_metadata_bool(metadata, "attachment"),
+        open_weights=_metadata_bool(metadata, "open_weights"),
+        status=_metadata_text(metadata, "status"),
+        modalities=RuntimeModelModalitiesView(
+            input=_string_values(input_modalities),
+            output=_string_values(output_modalities),
+        ),
+        limit=RuntimeModelLimitView(
+            context=info.context_window if info is not None else None,
+            output=info.max_output_tokens if info is not None else None,
+        ),
+        cost=RuntimeModelCostView(
+            input=info.input_price if info is not None else None,
+            output=info.output_price if info is not None else None,
+        ),
+        parameters=RuntimeModelParametersView(
+            reasoning=RuntimeReasoningParametersView(
+                effort=_reasoning_effort_values(metadata)
+            )
+        ),
+    )
+
+
+def _runtime_identity_components(target: ModelTarget) -> tuple[str, str]:
+    provider, separator, model = target.ref.partition("/")
+    if separator and provider and model:
+        return provider, model
+    return target.provider, target.model
+
+
+def _candidate_query(target: ModelTarget, *, alias: str | None = None) -> str:
+    provider, model = _runtime_identity_components(target)
+    identity = format_identity(f"{provider}/{model}", exact=True)
+    if alias is not None:
+        return f"{identity}[alias={format_literal(alias)}]"
+    return (
+        f"{identity}[route.provider={format_literal(target.provider)};"
+        f"route.adapter={format_literal(target.adapter)};alias=null]"
+    )
+
+
+def _string_values(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list | tuple):
         return ()
-    if key in {
-        "reasoning",
-        "temperature",
-        "structured_output",
-        "attachment",
-        "open_weights",
-    }:
-        value = info.metadata.get(key)
-        return (_bool_filter_value(value),) if isinstance(value, bool) else ()
-    if key in {"family", "status"}:
-        value = info.metadata.get(key)
-        return (value,) if isinstance(value, str) and value else ()
-    if key.startswith("modalities."):
-        modalities = info.metadata.get("modalities")
-        values = (
-            modalities.get(key.partition(".")[2])
-            if isinstance(modalities, Mapping)
-            else None
-        )
-        return (
-            tuple(item for item in values if isinstance(item, str))
-            if isinstance(values, list | tuple)
-            else ()
-        )
-    return ()
+    return tuple(item for item in value if isinstance(item, str))
 
 
-def _bool_filter_value(value: bool) -> str:
-    return "true" if value else "false"
+def _reasoning_effort_values(metadata: Mapping[str, object]) -> tuple[str, ...]:
+    raw_options = metadata.get("reasoning_options")
+    if not isinstance(raw_options, list | tuple):
+        return ()
+    values: list[str] = []
+    for raw_option in raw_options:
+        if not isinstance(raw_option, Mapping):
+            continue
+        option = cast(Mapping[str, object], raw_option)
+        raw_values = option.get("values", ())
+        if option.get("type") != "effort" or not isinstance(raw_values, list | tuple):
+            continue
+        values.extend(value for value in raw_values if isinstance(value, str))
+    return tuple(values)
 
 
 def _model_info_ready(info: ModelInfo) -> bool:
     value = info.metadata.get("resolved_ready")
     return value if isinstance(value, bool) else info.adapter != "unavailable"
-
-
-def _catalog_route_ref(info: ModelInfo, provider: Provider) -> str:
-    provider_id = _provider_id(provider)
-    return (
-        info.ref
-        if info.ref.partition("/")[0] == provider_id
-        else f"{provider_id}/{info.ref}"
-    )
-
-
-def _looks_exact_ref(selector: ModelSelector) -> bool:
-    pattern = selector.pattern.strip()
-    return "/" in pattern and not any(char in pattern for char in "*?[")
 
 
 def _target_from_alias(
@@ -1153,67 +1305,23 @@ def _validate_reasoning_request(
             )
 
 
-def _candidate_match_values(
-    selector: str, target: ModelTarget, *extra: str
-) -> tuple[str, ...]:
-    return _dedupe(
-        (
-            selector,
-            target.ref,
-            target.name,
-            target.model,
-            *extra,
-        )
-    )
-
-
 def _require_allowed(
     target: ModelTarget,
     *,
-    selector: str,
-    allowed: Sequence[ModelTarget],
+    query: str,
+    allowed: Sequence[ModelTarget] | None,
 ) -> None:
-    if not allowed:
+    if allowed is None:
         return
-    allowed_identities = {_target_identity(item) for item in allowed}
-    if _target_identity(target) in allowed_identities:
+    if any(target == item for item in allowed):
         return
-    allowed_text = ", ".join(_target_route_ref(item) for item in allowed)
+    allowed_text = (
+        ", ".join(f"{item.ref}[{item.provider}]" for item in allowed) or "none"
+    )
     raise ToolangError(
-        f"model selector is outside the current resources: {selector} "
+        f"model query is outside the current resources: {query} "
         f"(allowed: {allowed_text})"
     )
-
-
-def _target_identity(target: ModelTarget) -> tuple[str, str, str, str | None]:
-    return (target.ref, target.provider, target.model, target.base_url)
-
-
-def _target_route_ref(target: ModelTarget) -> str:
-    return (
-        target.ref
-        if target.ref.partition("/")[0] == target.provider
-        else f"{target.provider}/{target.ref}"
-    )
-
-
-def _first_non_empty(*items: str | None) -> str:
-    for item in items:
-        if item is not None and item.strip():
-            return item.strip()
-    return DEFAULT_MODEL_SELECTOR
-
-
-def _dedupe(items: Iterable[str]) -> tuple[str, ...]:
-    seen: set[str] = set()
-    values: list[str] = []
-    for item in items:
-        text = item.strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        values.append(text)
-    return tuple(values)
 
 
 def _empty_model_selection_message(

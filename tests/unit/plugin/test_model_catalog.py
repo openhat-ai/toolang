@@ -13,14 +13,15 @@ from toolang.base.types.model import (
     ModelCatalogSnapshot,
     Provider,
 )
+from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.catalog import (
     PACKAGED_MODEL_CATALOG,
     catalog_json_dumps,
-    filter_catalog_models,
     read_model_catalog_snapshot,
     model_info_from_catalog,
     parse_model_catalog_data,
+    query_catalog_models,
     resolve_model_catalog_path,
 )
 from toolang.plugin.models.adapters.chat_completions import (
@@ -128,7 +129,7 @@ def test_catalog_source_precedence_and_explicit_failure(tmp_path: Path) -> None:
         resolve_model_catalog_path(layout, explicit=tmp_path / "missing.json")
 
 
-def test_catalog_filter_handles_nested_identity_schema_fields_and_unknown_boolean() -> (
+def test_catalog_query_handles_nested_identity_schema_fields_and_nullable_boolean() -> (
     None
 ):
     provider = _provider(
@@ -149,24 +150,30 @@ def test_catalog_filter_handles_nested_identity_schema_fields_and_unknown_boolea
     )
     snapshot = _snapshot(provider)
 
-    assert [item.id for item in filter_catalog_models(snapshot, ("test/lab/*",))] == [
+    assert [item.id for item in query_catalog_models(snapshot, ("test/lab/*",))] == [
         "lab/model"
     ]
     assert [
-        item.id for item in filter_catalog_models(snapshot, ("*[reasoning:false]",))
+        item.id for item in query_catalog_models(snapshot, ("*[reasoning=false]",))
     ] == ["plain"]
     assert [
-        item.id for item in filter_catalog_models(snapshot, ("*[temperature:false]",))
+        item.id for item in query_catalog_models(snapshot, ("*[temperature=false]",))
     ] == ["plain"]
     assert [
-        item.id for item in filter_catalog_models(snapshot, ("*[family:family]",))
+        item.id for item in query_catalog_models(snapshot, ("*[family=family]",))
     ] == ["lab/model"]
+    assert [item.id for item in query_catalog_models(snapshot, None)] == [
+        "lab/model",
+        "plain",
+    ]
+    with pytest.raises(ToolangError, match="query cannot be empty"):
+        query_catalog_models(snapshot, ())
 
 
 def test_filtered_export_round_trips_deterministically() -> None:
     provider = _provider({"one": _model("one"), "two": _model("two")})
     snapshot = _snapshot(provider)
-    selected = filter_catalog_models(snapshot, ("test/two",), include_local=False)
+    selected = query_catalog_models(snapshot, ("test/two",), include_local=False)
 
     first = catalog_json_dumps(snapshot.to_data(models=selected))
     second = catalog_json_dumps(snapshot.to_data(models=selected))
@@ -266,7 +273,7 @@ def test_resolver_applies_advertised_mode_request_and_keeps_control_metadata() -
         envs={"TEST_API_KEY": "secret"},
     )
 
-    target = resolver.resolve("fast-one")
+    target = resolver.resolve("*[alias=fast-one]")
 
     assert target.mode == "fast"
     assert target.reasoning == {"effort": "high"}

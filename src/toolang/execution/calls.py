@@ -22,12 +22,11 @@ from toolang.lang.input import (
 from toolang.lang.ast import AgicDecl, Program
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState, state_module_caps
-from toolang.plugin.models.resolution import resolve_model_ref
+from toolang.plugin.models.resolution import resolve_model_ref, resolve_model_request
 
 from .policy import parse_policy_prefix, resolve_commands
 from .runnables import (
-    parse_runnable_ref,
-    resolve_state_runnable,
+    resolve_public_runnable_query,
 )
 from .schemas import RerunRequest, RetryRequest, RunRequest
 from .types import RunOverride
@@ -71,9 +70,12 @@ def resolve_run_request(
         setup=setup,
         state=state,
     )
-    _runnable_name, runnable_kind = parse_runnable_ref(request.runnable.ref)
-    if runnable_kind is None:
-        raise ValueError("run request requires a kind-qualified runnable ref")
+    resolved_runnable = resolve_public_runnable_query(state, request.runnable.ref)
+    if resolved_runnable.ref != request.runnable.ref:
+        raise ValueError(
+            f"run runnable ref must be exact: {request.runnable.ref!r} resolves to "
+            f"{resolved_runnable.ref!r}"
+        )
 
     return _resolve_concrete_spec(
         request.runnable.input,
@@ -105,7 +107,11 @@ def resolve_restart_request(
         raise RuntimeError("restart request resolved multiple run ceilings")
     model = _rerun_model_request(request, bindings)
     if model is not None:
-        model = materialize_model_request(model, setup=setup, state=state)
+        model = (
+            require_exact_model_request(model, setup=setup, state=state)
+            if isinstance(request, RerunRequest) and request.model is not None
+            else materialize_model_request(model, setup=setup, state=state)
+        )
     return RestartSpec(
         setup=setup,
         state=state,
@@ -194,13 +200,13 @@ def materialize_model_request(
     setup: AgentSetup,
     state: AgentState,
 ) -> ModelRequest:
-    """Resolve one model selector-bearing value to an exact request ref."""
+    """Resolve one model query-bearing value to an exact request ref."""
 
     from .executor.resources import snapshot_model_selection
 
     ref = resolve_model_ref(
         snapshot_model_selection(setup, state),
-        selector=request.ref,
+        query=request.ref,
     )
     return request if ref == request.ref else replace(request, ref=ref)
 
@@ -211,16 +217,24 @@ def require_exact_model_request(
     setup: AgentSetup,
     state: AgentState,
 ) -> ModelRequest | None:
-    """Reject selector syntax at the materialized run-request boundary."""
+    """Reject non-exact queries at the materialized run-request boundary."""
 
     if request is None:
         return None
-    materialized = materialize_model_request(request, setup=setup, state=state)
-    if materialized.ref != request.ref:
+    if "/" not in request.ref or any(
+        character in request.ref for character in "*?[],;"
+    ):
+        materialized = materialize_model_request(request, setup=setup, state=state)
         raise ValueError(
             f"run model ref must be exact: {request.ref!r} resolves to "
             f"{materialized.ref!r}"
         )
+    from .executor.resources import snapshot_model_selection
+
+    resolve_model_request(
+        snapshot_model_selection(setup, state),
+        ref=request.ref,
+    )
     return request
 
 
@@ -248,12 +262,9 @@ def _resolve_concrete_spec(
     runnable_ref = bindings.runnable
     if runnable_ref is None:
         raise ValueError("run request requires a concrete runnable ref")
-    runnable_name, runnable_kind = parse_runnable_ref(runnable_ref)
-    module, runnable = resolve_state_runnable(
-        state,
-        runnable_name,
-        kind=runnable_kind,
-    )
+    resolved_runnable = resolve_public_runnable_query(state, runnable_ref)
+    module = resolved_runnable.module
+    runnable = resolved_runnable.executable
     if (
         require_model_request
         and isinstance(runnable, AgicDecl)
@@ -295,7 +306,7 @@ def _resolve_concrete_spec(
         thread=thread,
         bindings=RunBindings(
             model=bindings.model,
-            runnable=f"{runnable.kind}:{runnable_name}",
+            runnable=resolved_runnable.ref,
         ),
         model_request=model_request,
         limits=limits,
@@ -310,6 +321,81 @@ def _resolve_concrete_spec(
         authored_commands=authored_commands,
         authored_session_commands=authored_session_commands,
         prompt_invocations=tuple(invocations),
+    )
+
+
+def validate_commands(
+    commands: Sequence[RunOverride],
+    *,
+    setup: AgentSetup,
+    state: AgentState,
+    default_runnable: str,
+    surface: RunBindings = RunBindings(),
+) -> None:
+    """Validate one prospective session policy without requiring run input."""
+
+    from .executor.resources import (
+        apply_agent_ceiling,
+        resolve_agent_resources,
+        resolve_runnable_resources,
+        snapshot_model_selection,
+        validate_model_binding,
+    )
+
+    ceilings, bindings, _limits = resolve_commands(
+        setup,
+        surface=surface,
+        session=commands,
+    )
+    resolved_runnable = resolve_public_runnable_query(
+        state, bindings.runnable or default_runnable
+    )
+    module = resolved_runnable.module
+    runnable = resolved_runnable.executable
+    resources = resolve_agent_resources(
+        setup,
+        state,
+        setup.ceiling,
+        module=module,
+    )
+    for ceiling in ceilings:
+        resources = apply_agent_ceiling(
+            setup,
+            state,
+            resources,
+            ceiling,
+            module=module,
+        )
+    resources = resolve_runnable_resources(
+        snapshot_model_selection(setup, state),
+        runnable=runnable,
+        base=resources,
+        setup=setup,
+        state=state,
+        module=module,
+    )
+    validate_model_binding(
+        snapshot_model_selection(setup, state),
+        runnable=runnable,
+        resources=resources,
+        model=bindings.model,
+    )
+
+
+def validate_session_commands(
+    commands: Sequence[RunOverride],
+    *,
+    setup: AgentSetup,
+    state: AgentState,
+    runnable_fallbacks: tuple[str, ...],
+) -> None:
+    """Validate session commands against the first available runnable fallback."""
+
+    validate_commands(
+        commands,
+        setup=setup,
+        state=state,
+        default_runnable=_select_runnable_fallback(state, runnable_fallbacks),
     )
 
 
@@ -369,6 +455,24 @@ def _extend_invocations(
         )
         for invocation in additions
     )
+
+
+def _select_runnable_fallback(
+    state: AgentState,
+    candidates: tuple[str, ...],
+) -> str:
+    from toolang.state.runnable_collections import runnable_dataset
+
+    dataset = runnable_dataset(state)
+    for candidate in candidates:
+        matches = dataset.query(candidate)
+        if not matches:
+            continue
+        if len(matches) > 1:
+            raise ValueError(f"runnable fallback query is ambiguous: {candidate}")
+        return dataset.schema.exact_selector_for(matches[0])
+    joined = ", ".join(candidates)
+    raise ValueError(f"no runnable fallback is available: {joined}")
 
 
 def _strip_final_line_break(source: str) -> str:

@@ -42,7 +42,10 @@ from toolang.plugin.models.config import (
     parse_default_models,
     parse_model_aliases,
 )
-from toolang.plugin.models.resolution import apply_model_parameters, resolve_model
+from toolang.plugin.models.resolution import (
+    apply_model_parameters,
+    resolve_model_request,
+)
 from toolang.state.state import AgentState, state_program
 from toolang.state.watcher import StateRefresh
 from toolang.state.cache import agent_revision_dir, validate_agent_revision
@@ -2798,19 +2801,20 @@ def _prepare_run_spec(
         state=spec.state,
         module=module,
     )
-    validate_model_binding(
-        selection,
-        runnable=runnable,
-        resources=resources,
-        model=spec.bindings.model,
-    )
-    if spec.model_request is not None:
+    if spec.model_request is None:
+        validate_model_binding(
+            selection,
+            runnable=runnable,
+            resources=resources,
+            model=spec.bindings.model,
+        )
+    else:
         if spec.bindings.model != spec.model_request.ref:
             raise ValueError("run model request does not match its model binding")
-        target = resolve_model(
+        target = resolve_model_request(
             selection,
-            selector=spec.model_request.ref,
-            allowed_selectors=resources.models,
+            ref=spec.model_request.ref,
+            allowed_queries=resources.models,
         )
         apply_model_parameters(selection, target, spec.model_request.parameters)
     return runnable, input, agent_resources, resources

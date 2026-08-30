@@ -626,8 +626,8 @@ class _Lowerer:
                 ),
                 ast.Directive(
                     name="tools",
-                    operator="=",
-                    values=("none",),
+                    operator="-=",
+                    values=("*",),
                     span=self._span(node),
                 ),
             )
@@ -722,11 +722,25 @@ class _Lowerer:
         return tuple(params)
 
     def _lower_directive(self, node: CstNode) -> ast.Directive:
+        name = self._required_text(node, "key").strip()
         raw = self._required_text(node, "value")
         return ast.Directive(
-            name=self._required_text(node, "key").strip(),
+            name=name,
             operator=self._required_text(node, "operator").strip(),
-            values=tuple(
+            values=(raw.strip(),)
+            if name
+            in {
+                "models",
+                "tools",
+                "psyches",
+                "skills",
+                "services",
+                "prompts",
+                "hands",
+                "handoffs",
+            }
+            and raw.strip()
+            else tuple(
                 item for item in (part.strip() for part in raw.split(",")) if item
             ),
             span=self._span(node),

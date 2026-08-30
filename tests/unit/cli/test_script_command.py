@@ -338,7 +338,7 @@ def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> Non
     monkeypatch.setattr(script.SetupWatcher, "refresh", current_setup)
     commands, input = parse_call(":agic missing\nInput")
     try:
-        with pytest.raises(ToolangError, match="Runnable not found: missing"):
+        with pytest.raises(ToolangError, match="runnable query matched no items"):
             asyncio.run(
                 script._execute(
                     layout=harness.setup.layout,
@@ -478,11 +478,11 @@ def test_script_formats_an_unknown_runnable_as_a_rich_error(
     assert "\nError: No such command" not in stderr
 
 
-@pytest.mark.parametrize("selector", ("agic:demo", "runnable:demo"))
-def test_script_accepts_explicit_runnable_selectors(
+@pytest.mark.parametrize("query", ("agic:demo", "runnable:demo"))
+def test_script_accepts_explicit_runnable_queries(
     tmp_path: Path,
     monkeypatch,
-    selector: str,
+    query: str,
 ) -> None:
     source = _write_source(tmp_path)
     captured: dict[str, object] = {}
@@ -500,7 +500,7 @@ def test_script_accepts_explicit_runnable_selectors(
 
     result = script.dispatch(
         [],
-        [str(source), selector, "count=2", "hello"],
+        [str(source), query, "count=2", "hello"],
         prog_name="toolang",
         stdin=StringIO(),
     )
@@ -801,6 +801,15 @@ def test_remote_script_default_returns_to_the_dynamic_runnable() -> None:
 def test_script_materializes_input_local_runnable_refs() -> None:
     commands = script._materialize_script_runnable_commands(
         (RunOverride("default", "runnable", "demo"),),
+        program=script.Program.from_source(_SOURCE),
+    )
+
+    assert commands == (RunOverride("default", "runnable", "agic:demo"),)
+
+
+def test_script_materializes_input_local_runnable_queries() -> None:
+    commands = script._materialize_script_runnable_commands(
+        (RunOverride("default", "runnable", "*[kind=agic;name=demo]"),),
         program=script.Program.from_source(_SOURCE),
     )
 

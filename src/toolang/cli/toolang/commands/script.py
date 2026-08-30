@@ -29,7 +29,7 @@ from toolang.cli.common.policy import (
     resolve_limit_overrides,
 )
 from toolang.cli.common.model_selection import (
-    materialize_model_list_ref,
+    materialize_model_selection,
 )
 from toolang.execution.calls import parse_call, resolve_spec
 from toolang.execution.policy import materialize_policy
@@ -43,7 +43,7 @@ from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program
 from toolang.lang.includes import resolve_file_include
 from toolang.lang.input import NamedInputSource, NamedInputSources, RunnableInputRaw
-from toolang.lang.types import parse_public_runnable_ref
+from toolang.state.runnable_collections import runnable_dataset
 from toolang.setup import SetupWatcher
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import AgentState
@@ -412,18 +412,16 @@ def _materialize_script_runnable_commands(
             continue
         if not isinstance(command.value, str):  # pragma: no cover - type invariant
             raise TypeError("default runnable must be a string or none")
-        name, kind = parse_public_runnable_ref(command.value)
-        matches = tuple(
-            runnable
-            for runnable in _public_runnables(program)
-            if runnable.name == name and (kind is None or runnable.kind == kind)
-        )
+        dataset = runnable_dataset(program)
+        matches = dataset.query(command.value)
         if len(matches) != 1:
-            raise ValueError(
-                f"runnable selector is unknown or ambiguous: {command.value}"
-            )
+            raise ValueError(f"runnable query is unknown or ambiguous: {command.value}")
         materialized.append(
-            RunOverride("default", "runnable", f"{matches[0].kind}:{name}")
+            RunOverride(
+                "default",
+                "runnable",
+                dataset.schema.exact_selector_for(matches[0]),
+            )
         )
     return tuple(materialized)
 
@@ -657,7 +655,7 @@ async def _execute_remote(
             model_ref = bindings.model
             if model_ref is not None:
                 models = await _remote_script_models(http, client.endpoint)
-                model_ref = materialize_model_list_ref(models, model_ref)
+                model_ref = materialize_model_selection(models, model_ref)
             thread = await _create_remote_script_thread(http, client.endpoint)
             handle = await client.run(
                 RunRequest(

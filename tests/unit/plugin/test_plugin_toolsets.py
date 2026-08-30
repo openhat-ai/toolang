@@ -14,6 +14,7 @@ from toolang.base.types.run import ModelCall, ModelCallResult
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.plugin.models.loading import load_model_adapters, load_model_catalogs
+from toolang.plugin.toolsets.collections import tool_dataset
 from toolang.plugin.toolsets.registry import ToolRef
 from toolang.plugin.loading import (
     PluginInfo,
@@ -24,7 +25,7 @@ from toolang.plugin.loading import (
 from toolang.plugin.toolsets.loading import (
     load_tools,
     load_toolsets,
-    validate_tool_selectors,
+    validate_tool_queries,
 )
 
 
@@ -261,18 +262,34 @@ def test_load_tools_uses_encoded_model_names(monkeypatch) -> None:
     )
 
 
-def test_canonical_tool_selectors_include_internal_toolset(monkeypatch) -> None:
+def test_canonical_tool_identities_include_internal_toolset(monkeypatch) -> None:
     _patch_tool_entry_points(monkeypatch)
     tools = load_tools()
 
-    selected = load_tools(selectors=("fs/read", "service/call_tool", "_me/*"))
+    selected = load_tools(queries=("fs/read", "service/call_tool", "_me/*"))
 
     assert "fs__read" in selected
     assert "service__call_tool" in selected
     assert "_me__create_task" in selected
-    validate_tool_selectors(tools, ("fs/*", "service/call_tool", "_me/*"))
-    with pytest.raises(ValueError, match="tool selector matched no tools"):
-        validate_tool_selectors(tools, ("filesystem/*",))
+    validate_tool_queries(tools, ("fs/*", "service/call_tool", "_me/*"))
+    with pytest.raises(ValueError, match="tool query matched no items"):
+        validate_tool_queries(tools, ("filesystem/*",))
+
+
+def test_tool_source_queries_use_loaded_plugin_metadata(monkeypatch) -> None:
+    _patch_tool_entry_points(monkeypatch)
+
+    built_in = load_tools(queries=("*[source=built-in]",))
+    external = load_tools(queries=("*[source=external]",))
+
+    assert built_in
+    assert external
+    assert all(
+        getattr(tool, "source", None) == "built-in" for tool in built_in.values()
+    )
+    assert all(
+        getattr(tool, "source", None) == "external" for tool in external.values()
+    )
 
 
 def test_load_tools_accepts_explicit_toolset_keys(monkeypatch) -> None:
@@ -314,6 +331,20 @@ def test_load_tools_accepts_explicit_toolset_keys(monkeypatch) -> None:
     assert getattr(tools["issues__search"], "ref") == ToolRef(
         plugin="tracker", toolset="issues", name="search"
     )
+
+
+def test_tool_query_parameters_are_json_schema_property_names() -> None:
+    @tool(name="read", description="Read a file.")
+    def read(path: str, limit: int = 10) -> str:
+        del limit
+        return path
+
+    dataset = tool_dataset({"filesystem__read": create_function_tool(read)})
+
+    assert "model_name" not in dataset.schema.fields
+    assert dataset.items[0].parameters == ("limit", "path")
+    assert dataset.query("*[parameters=path]") == dataset.items
+    assert dataset.query("*[parameters=properties]") == ()
 
 
 def test_toolang_distribution_can_register_an_internal_toolset(monkeypatch) -> None:

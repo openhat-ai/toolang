@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
-from decimal import Decimal
 import json
 from pathlib import Path
 from typing import Annotated, cast
@@ -20,15 +19,29 @@ from toolang.cli.common.context import (
     resolve_model_catalog_option,
 )
 from toolang.cli.common.output import echo_table
+from toolang.cli.common.query import emit_query_discovery, query_items
 from toolang.cli.config import load_config_layers
 from toolang.common.layout import AgentLayout
-from toolang.common.selectors import split_selector_list
 from toolang.plugin.loading import list_plugin_infos
 from toolang.plugin.models.catalog import (
     catalog_json_dumps,
-    filter_catalog_models,
+)
+from toolang.plugin.models.collections import (
+    ADAPTER_DEFINITION,
+    CATALOG_MODEL_SCHEMA,
+    CATALOG_PROVIDER_SCHEMA,
+    CatalogModelView,
+    CatalogProviderView,
+    catalog_model_dataset,
+    catalog_provider_dataset,
+    plugin_inventory_dataset,
 )
 from toolang.plugin.models.config import ProviderConfig, parse_model_aliases
+from toolang.plugin.models.discovery import (
+    absent_provider_env_vars,
+    provider_env_requirements,
+    required_provider_env_vars,
+)
 from toolang.plugin.models.resolution import ModelTargetResolver
 from toolang.setup import AgentSetup, SetupWatcher
 
@@ -36,14 +49,22 @@ from toolang.setup import AgentSetup, SetupWatcher
 def models_command(
     ctx: typer.Context,
     model_catalog: ModelCatalogOption = None,
-    filter_: Annotated[
+    query: Annotated[
         list[str] | None,
         typer.Option(
-            "--filter",
-            "-f",
-            help="Filter models with selector-list syntax. Pass CSV or repeat.",
+            "--query",
+            "-q",
+            help="Query models. Repeat values to add alternatives.",
         ),
     ] = None,
+    query_help: Annotated[
+        bool,
+        typer.Option("--query-help", help="Show model query fields and operators."),
+    ] = False,
+    query_schema: Annotated[
+        bool,
+        typer.Option("--query-schema", help="Write the model query schema as JSON."),
+    ] = False,
     json_: Annotated[
         bool,
         typer.Option("--json", help="Write a valid filtered models.json to stdout."),
@@ -51,66 +72,66 @@ def models_command(
 ) -> None:
     """List or export model catalog entries."""
 
+    if emit_query_discovery(
+        CATALOG_MODEL_SCHEMA,
+        query_help=query_help,
+        query_schema=query_schema,
+    ):
+        return
     setup = _setup(ctx, model_catalog=model_catalog)
     snapshot = _catalog(setup)
-    selectors = _selectors(filter_)
     available = _available_identities(ctx, setup)
     adapters = _adapter_by_identity(setup)
-    selected = filter_catalog_models(
+    dataset = catalog_model_dataset(
         snapshot,
-        selectors,
         available=available,
         adapters=adapters,
     )
+    selected_views = cast(tuple[CatalogModelView, ...], query_items(dataset, query))
+    selected = tuple(item.record for item in selected_views)
     if json_:
         exportable = tuple(model for model in selected if not model.local)
         if len(exportable) != len(selected):
             local = ", ".join(model.identity for model in selected if model.local)
             raise typer.BadParameter(
                 f"local-only models cannot be exported: {local}",
-                param_hint="--filter",
+                param_hint="--query",
             )
         content = catalog_json_dumps(snapshot.to_data(models=exportable))
         typer.echo(content, nl=False)
         return
-    displayed = tuple(
-        model for model in selected if not model.local or model.identity in available
-    )
-    rows = [
-        (
-            model.identity,
-            "yes" if model.identity in available else "no",
-            *_model_table_fields(model),
-        )
-        for model in displayed
-    ]
+    headers, rows = dataset.table(selected_views)
     if not rows:
-        typer.echo("No matched models.")
+        typer.echo("No models matched query." if query else "No models found.")
         return
     echo_table(
-        (
-            "MODEL",
-            "AVAILABLE",
-            "CONTEXT",
-            "OUTPUT",
-            "INPUT",
-            "CAPABILITY",
-            "PRICE ($/1M)",
-        ),
+        headers,
         rows,
         justify=(None, None, "right", "right", None, None, "right"),
     )
     typer.echo()
-    typer.echo(f" {_catalog_summary(snapshot, models=displayed)}")
+    typer.echo(f" {_catalog_summary(snapshot, models=selected)}")
 
 
 def providers_command(
     ctx: typer.Context,
     model_catalog: ModelCatalogOption = None,
-    filter_: Annotated[
+    query: Annotated[
         list[str] | None,
-        typer.Option("--filter", "-f", help="Filter provider IDs with globs."),
+        typer.Option(
+            "--query",
+            "-q",
+            help="Query providers. Repeat values to add alternatives.",
+        ),
     ] = None,
+    query_help: Annotated[
+        bool,
+        typer.Option("--query-help", help="Show provider query fields and operators."),
+    ] = False,
+    query_schema: Annotated[
+        bool,
+        typer.Option("--query-schema", help="Write the provider query schema as JSON."),
+    ] = False,
     json_: Annotated[
         bool,
         typer.Option("--json", help="Write catalog providers as JSON."),
@@ -118,18 +139,47 @@ def providers_command(
 ) -> None:
     """List catalog providers and runtime availability."""
 
-    from fnmatch import fnmatchcase
-
+    if emit_query_discovery(
+        CATALOG_PROVIDER_SCHEMA,
+        query_help=query_help,
+        query_schema=query_schema,
+    ):
+        return
     setup = _setup(ctx, model_catalog=model_catalog)
     snapshot = _catalog(setup)
-    patterns = _selectors(filter_) or ("*",)
-    providers = tuple(
+    base_providers = tuple(
         provider
         for provider_id, provider in sorted(snapshot.providers.items())
         if provider_id != "custom"
-        and any(fnmatchcase(provider_id, pattern) for pattern in patterns)
     )
     available = _available_identities(ctx, setup)
+    dataset = catalog_provider_dataset(
+        base_providers,
+        available=available,
+        adapters={
+            provider.id: _provider_adapters(provider) for provider in base_providers
+        },
+        apis={
+            provider.id: _provider_api(setup, provider) for provider in base_providers
+        },
+        env_requirements={
+            provider.id: provider_env_requirements(provider)
+            for provider in base_providers
+        },
+        required_env={
+            provider.id: required_provider_env_vars(provider)
+            for provider in base_providers
+        },
+        missing_env={
+            provider.id: absent_provider_env_vars(provider, environ=setup.envs)
+            for provider in base_providers
+        },
+    )
+    selected_views = cast(
+        tuple[CatalogProviderView, ...],
+        query_items(dataset, query),
+    )
+    providers = tuple(item.record for item in selected_views)
     if json_:
         typer.echo(
             catalog_json_dumps(
@@ -138,19 +188,22 @@ def providers_command(
             nl=False,
         )
         return
-    rows = [
-        (
-            provider.id,
-            provider.name,
-            _provider_availability(provider, available=available),
-            _provider_adapters_cell(setup, provider),
-            _provider_api_cell(setup, provider),
-            _provider_env_cell(setup, provider),
-        )
-        for provider in providers
-    ]
+    headers, base_rows = dataset.table(selected_views)
+    adapters_index = headers.index("ADAPTERS")
+    api_index = headers.index("API")
+    env_index = headers.index("ENV")
+    rows: list[tuple[str | Text, ...]] = []
+    for item, base_row in zip(selected_views, base_rows, strict=True):
+        row: list[str | Text] = list(base_row)
+        row[adapters_index] = _provider_adapters_cell(setup, item)
+        row[api_index] = _provider_api_cell(item)
+        row[env_index] = _provider_env_cell(item)
+        rows.append(tuple(row))
+    if not rows:
+        typer.echo("No providers matched query." if query else "No providers found.")
+        return
     echo_table(
-        ("PROVIDER", "NAME", "AVAILABLE", "ADAPTERS", "API", "ENV"),
+        headers,
         rows,
     )
     typer.echo()
@@ -158,10 +211,22 @@ def providers_command(
 
 
 def adapters_command(
-    filter_: Annotated[
+    query: Annotated[
         list[str] | None,
-        typer.Option("--filter", "-f", help="Filter adapter IDs with globs."),
+        typer.Option(
+            "--query",
+            "-q",
+            help="Query adapters. Repeat values to add alternatives.",
+        ),
     ] = None,
+    query_help: Annotated[
+        bool,
+        typer.Option("--query-help", help="Show adapter query fields and operators."),
+    ] = False,
+    query_schema: Annotated[
+        bool,
+        typer.Option("--query-schema", help="Write adapter query schema as JSON."),
+    ] = False,
     json_: Annotated[
         bool,
         typer.Option("--json", help="Write adapter metadata as JSON."),
@@ -169,14 +234,18 @@ def adapters_command(
 ) -> None:
     """List installed protocol adapters."""
 
-    from fnmatch import fnmatchcase
-
-    patterns = _selectors(filter_) or ("*",)
-    infos = tuple(
-        info
-        for info in list_plugin_infos(group="toolang.model_adapter")
-        if any(fnmatchcase(info.name, pattern) for pattern in patterns)
+    if emit_query_discovery(
+        ADAPTER_DEFINITION.schema,
+        query_help=query_help,
+        query_schema=query_schema,
+    ):
+        return
+    base_infos = tuple(list_plugin_infos(group="toolang.model_adapter"))
+    dataset = plugin_inventory_dataset(
+        ADAPTER_DEFINITION,
+        tuple((info.name, info.source) for info in base_infos),
     )
+    infos = query_items(dataset, query)
     if json_:
         typer.echo(
             json.dumps(
@@ -187,7 +256,11 @@ def adapters_command(
             )
         )
         return
-    echo_table(("ADAPTER", "SOURCE"), [(info.name, info.source) for info in infos])
+    if not infos:
+        typer.echo("No adapters matched query." if query else "No adapters found.")
+        return
+    headers, rows = dataset.table(infos)
+    echo_table(headers, rows)
 
 
 def _setup(
@@ -226,7 +299,7 @@ def _available_identities(ctx: typer.Context, setup: AgentSetup) -> set[str]:
             setup.provider_configs,
         ),
     ).selectable()
-    candidates = {target.ref for _selector, target in targets}
+    candidates = {target.ref for _query, target in targets}
     snapshot = _catalog(setup)
     return {
         model.identity
@@ -280,17 +353,11 @@ def _provider_adapters(provider: Provider) -> tuple[str, ...]:
     return tuple(sorted(adapters))
 
 
-def _provider_availability(provider: Provider, *, available: set[str]) -> str:
-    count = sum(
-        f"{provider.id}/{model_id}" in available for model_id in provider.models
-    )
-    if provider.local and _provider_offline(provider):
-        return "0"
-    return f"{count}/{len(provider.models)}"
-
-
-def _provider_adapters_cell(setup: AgentSetup, provider: Provider) -> Text:
-    adapters = _provider_adapters(provider)
+def _provider_adapters_cell(
+    setup: AgentSetup,
+    provider: CatalogProviderView,
+) -> Text:
+    adapters = provider.adapters
     if not adapters:
         return Text("-", style="dim")
     cell = Text()
@@ -301,35 +368,26 @@ def _provider_adapters_cell(setup: AgentSetup, provider: Provider) -> Text:
     return cell
 
 
-def _provider_api_cell(setup: AgentSetup, provider: Provider) -> Text:
-    api = _provider_api(setup, provider)
-    unavailable = api is None or (provider.local and _provider_offline(provider))
+def _provider_api_cell(provider: CatalogProviderView) -> Text:
+    api = provider.api
+    unavailable = api is None or (provider.local and provider.offline)
     return Text(api or "-", style="dim" if unavailable else "")
 
 
-def _provider_env_cell(setup: AgentSetup, provider: Provider) -> Text:
-    resolved = provider.resolved
-    if resolved is None or not resolved.env:
+def _provider_env_cell(provider: CatalogProviderView) -> Text:
+    if not provider.env_requirements:
         return Text("-")
+    missing = set(provider.missing_env)
     cell = Text()
-    for index, alternative in enumerate(resolved.env):
+    for index, requirement in enumerate(provider.env_requirements):
         if index:
             cell.append(", ")
-        names = (alternative,) if isinstance(alternative, str) else alternative
+        names = requirement.split(" + ")
         for group_index, name in enumerate(names):
             if group_index:
                 cell.append(" + ")
-            missing = not str(setup.envs.get(name, "")).strip()
-            cell.append(name, style="dim" if missing else None)
+            cell.append(name, style="dim" if name in missing else None)
     return cell
-
-
-def _provider_offline(provider: Provider) -> bool:
-    runtime = provider.extra.get("runtime")
-    return (
-        isinstance(runtime, Mapping)
-        and cast(Mapping[str, object], runtime).get("status") == "offline"
-    )
 
 
 def _provider_catalog_summary(
@@ -359,46 +417,3 @@ def _catalog_names(snapshot: ModelCatalogSnapshot) -> tuple[str, ...]:
     )
     priority = {"models.dev": 0, "ollama": 1, "llama_cpp": 2}
     return tuple(sorted(names, key=lambda name: (priority.get(name, 3), name)))
-
-
-def _model_table_fields(model: Model) -> tuple[str, str, str, str, str]:
-    capabilities = [
-        name
-        for name, value in (
-            ("tool_call", model.tool_call),
-            ("reasoning", model.reasoning),
-            ("temperature", model.temperature),
-            ("structured", model.structured_output),
-        )
-        if value is True
-    ]
-    return (
-        _format_limit(model, "context"),
-        _format_limit(model, "output"),
-        ",".join(model.modalities.get("input", ())) or "-",
-        ",".join(capabilities) or "-",
-        _price_pair(model),
-    )
-
-
-def _format_limit(model: Model, name: str) -> str:
-    value = model.limit.get(name)
-    return f"{value:_}" if value is not None else "-"
-
-
-def _price_pair(model: Model) -> str:
-    if not model.cost:
-        return "-"
-    return " / ".join(_price_rate(model.cost.get(name)) for name in ("input", "output"))
-
-
-def _price_rate(value: object | None) -> str:
-    if value is None:
-        return "-"
-    if isinstance(value, Decimal | int | float) and not isinstance(value, bool):
-        return f"${value:.2f}"
-    return f"${value}"
-
-
-def _selectors(values: Sequence[str] | None) -> tuple[str, ...]:
-    return split_selector_list(values)

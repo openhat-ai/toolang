@@ -1,4 +1,4 @@
-"""Models.dev-compatible catalog loading, snapshots, filtering, and export."""
+"""Models.dev-compatible catalog loading, snapshots, querying, and export."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from typing import cast
 from toolang.base.protocols.model import ModelCatalog
 from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelInfo, Provider
 from toolang.common.layout import AgentLayout
-from toolang.common.selectors import filter_value_matches, parse_selector
+from toolang.plugin.models.collections import catalog_model_dataset
 
 MODEL_CATALOG_ENV = "TOOLANG_MODEL_CATALOG"
 DEFAULT_MAX_CATALOG_BYTES = 32 * 1024 * 1024
@@ -266,36 +266,24 @@ def catalog_json_dumps(data: object, *, indent: int | None = 2) -> str:
     return encode(data, 0) + "\n"
 
 
-def filter_catalog_models(
+def query_catalog_models(
     snapshot: ModelCatalogSnapshot,
-    selectors: Sequence[str],
+    queries: Sequence[str] | None,
     *,
     include_local: bool = True,
     available: set[str] | None = None,
     adapters: Mapping[str, str] | None = None,
 ) -> tuple[Model, ...]:
-    """Filter catalog models with model selector syntax and OR repeated selectors."""
+    """Query catalog models through the shared typed collection implementation."""
 
-    if not selectors:
-        return tuple(
-            model for model in snapshot.models if include_local or not model.local
-        )
-    parsed = tuple(parse_selector(value, domain="model") for value in selectors)
-    return tuple(
-        model
-        for model in snapshot.models
-        if include_local or not model.local
-        if any(
-            _model_matches(
-                model,
-                selector.pattern,
-                selector.filters,
-                available=available,
-                adapter=(adapters or {}).get(model.identity),
-            )
-            for selector in parsed
-        )
+    dataset = catalog_model_dataset(
+        snapshot,
+        include_local=include_local,
+        available=available,
+        adapters=adapters,
     )
+    selected = dataset.query(queries)
+    return tuple(item.record for item in selected)
 
 
 def model_info_from_catalog(
@@ -493,72 +481,6 @@ def _parse_model(
         cost=cost,
         extra={key: value for key, value in data.items() if key not in _MODEL_FIELDS},
     )
-
-
-def _model_matches(
-    model: Model,
-    pattern: str,
-    filters: Mapping[str, tuple[str, ...]],
-    *,
-    available: set[str] | None,
-    adapter: str | None,
-) -> bool:
-    from fnmatch import fnmatchcase
-
-    identity = model.identity
-    text = pattern.strip() or "*"
-    if text != "*" and not any(
-        fnmatchcase(value, text)
-        for value in (identity, model.id, model.name, model.family or "")
-    ):
-        return False
-    for raw_key, expected in filters.items():
-        key = "tool_call" if raw_key == "tools" else raw_key
-        actual = _model_filter_values(
-            model,
-            key,
-            available=available,
-            adapter=adapter,
-        )
-        if not actual or not any(
-            filter_value_matches(value, expected) for value in actual
-        ):
-            return False
-    return True
-
-
-def _model_filter_values(
-    model: Model,
-    key: str,
-    *,
-    available: set[str] | None,
-    adapter: str | None,
-) -> tuple[str, ...]:
-    if key == "provider":
-        return (model.provider_id,)
-    if key == "family":
-        return (model.family,) if model.family is not None else ()
-    if key in {
-        "reasoning",
-        "tool_call",
-        "temperature",
-        "structured_output",
-        "attachment",
-        "open_weights",
-    }:
-        value = getattr(model, key)
-        return (("true" if value else "false"),) if isinstance(value, bool) else ()
-    if key == "status":
-        return (model.status,) if model.status is not None else ()
-    if key in {"available", "availability"} and available is not None:
-        return ("true" if model.identity in available else "false",)
-    if key == "adapter":
-        return (adapter,) if adapter is not None else ()
-    if key == "scope":
-        return ("local" if model.local else "remote",)
-    if key.startswith("modalities."):
-        return model.modalities.get(key.partition(".")[2], ())
-    return ()
 
 
 def _required_text(value: object, *, label: str) -> str:

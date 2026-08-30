@@ -171,7 +171,7 @@ agic answer(_: Part[]) -> Part[]:
         decoded = [run_event_from_data(data) for _event, data in events]
 
         assert created.status_code == 201
-        assert models.json()["default"] == "test/scripted"
+        assert models.json()["default"] == ("test/scripted")
         assert agics.json()["default"] == "answer"
         assert flows.json()["default"] is None
         assert thread_id.startswith("script_")
@@ -378,7 +378,7 @@ def test_stream_validation_fails_before_sse_headers(tmp_path: Path) -> None:
 
         assert created.status_code == 201
         assert response.status_code == 422
-        assert response.json()["detail"] == "Runnable not found: missing"
+        assert response.json()["detail"] == "runnable query matched no items"
         assert missing_thread.status_code == 422
         assert core.store.list_threads()[0].thread_id == thread_id
         assert len(core.store.list_threads()) == 1

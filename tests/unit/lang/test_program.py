@@ -271,7 +271,7 @@ flow evaluate:
             for directive in agic.directives
         ] == [
             ("recall", "=", ("none",)),
-            ("tools", "=", ("none",)),
+            ("tools", "-=", ("*",)),
         ]
 
 
@@ -317,7 +317,7 @@ agic configured:
     ]
 
 
-def test_agic_routing_directives_keep_exact_public_refs_in_authored_order() -> None:
+def test_agic_routing_directives_preserve_collection_queries() -> None:
     program = Program.from_source(
         """
 agic coordinate:
@@ -329,24 +329,49 @@ agic coordinate:
     )
 
     assert [(item.name, item.values) for item in program.agics[0].directives] == [
-        ("hands", ("research", "agic:review", "flow:verify")),
+        ("hands", ("research, agic:review, flow:verify",)),
         ("handoffs", ("flow:deliver",)),
     ]
+
+
+def test_model_directive_treats_at_as_identity_data() -> None:
+    program = Program.from_source(
+        "agic review:\n  models = vendor/model@v1\n\n  Review.\n"
+    )
+
+    assert program.agics[0].directives[0].values == ("vendor/model@v1",)
 
 
 @pytest.mark.parametrize(
     "directive",
     [
         "hands += research",
-        "hands = research, research",
-        "hands = flow:*",
-        "hands = team/research",
         "handoffs -= flow:deliver",
+        "hands = *[missing=value]",
     ],
 )
-def test_agic_routing_directives_reject_non_exact_routes(directive: str) -> None:
+def test_agic_routing_directives_reject_invalid_query_or_set_operation(
+    directive: str,
+) -> None:
     with pytest.raises(ToolangValidationError):
         Program.from_source(f"agic coordinate:\n  {directive}\n\n  Coordinate.\n")
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "research, research",
+        "flow:*",
+        "team/research",
+        "*[kind in (agic,flow);module=agent]",
+    ],
+)
+def test_agic_routing_directives_accept_collection_queries(query: str) -> None:
+    program = Program.from_source(
+        f"agic coordinate:\n  hands = {query}\n\n  Coordinate.\n"
+    )
+
+    assert program.agics[0].directives[0].values == (query,)
 
 
 @pytest.mark.parametrize("name", ["hands", "handoffs"])

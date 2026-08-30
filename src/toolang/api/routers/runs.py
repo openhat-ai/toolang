@@ -27,10 +27,10 @@ from toolang.api.schemas import (
     RunSteerRequest,
 )
 from toolang.base.types.policy import RunBindings
-from toolang.execution.calls import require_exact_model_request
-from toolang.execution.executor.resources import agent_model_targets
 from toolang.common.errors import ToolangError
+from toolang.execution.calls import require_exact_model_request
 from toolang.execution.executor import LocalRunHandle, RunSpec
+from toolang.execution.executor.resources import agent_model_targets
 from toolang.execution.records import (
     ControlRecord,
     RunRecord,
@@ -40,10 +40,8 @@ from toolang.execution.types import RunStatus
 from toolang.lang.input import resolve_runnable_input
 from toolang.lang.ast import AgicDecl
 from toolang.execution.runnables import (
-    parse_runnable_ref,
     runnable_binding_defaults,
-    resolve_public_runnable,
-    resolve_state_runnable,
+    resolve_public_runnable_query,
 )
 from toolang.state.state import AgentState
 from toolang.up import AgentCore
@@ -61,12 +59,9 @@ async def _run_stream(
     setup = core.setup.current()
     try:
         state = await _fresh_state(core)
-        runnable_name, runnable_kind = parse_runnable_ref(payload.runnable.ref)
-        module, runnable = resolve_state_runnable(
-            state,
-            runnable_name,
-            kind=runnable_kind,
-        )
+        resolved_runnable = resolve_public_runnable_query(state, payload.runnable.ref)
+        module = resolved_runnable.module
+        runnable = resolved_runnable.executable
         model_request = require_exact_model_request(
             payload.model,
             setup=setup,
@@ -80,7 +75,7 @@ async def _run_stream(
                 state=state,
                 thread=thread_id,
                 bindings=RunBindings(
-                    runnable=payload.runnable.ref,
+                    runnable=resolved_runnable.ref,
                     model=(model_request.ref if model_request is not None else None),
                 ),
                 model_request=model_request,
@@ -323,12 +318,7 @@ async def run_defaults(core: AgentCoreDep) -> dict[str, object]:
         elif default_flow is not None:
             runnable = f"flow:{default_flow}"
     if runnable is not None:
-        runnable_name, runnable_kind = parse_runnable_ref(runnable)
-        runnable = resolve_public_runnable(
-            state,
-            runnable_name,
-            kind=runnable_kind,
-        ).ref
+        runnable = resolve_public_runnable_query(state, runnable).ref
     return {
         "model": model,
         "runnable": runnable,
