@@ -370,6 +370,48 @@ def test_table_columns_read_the_same_public_values(
     assert rows == (("remote", "200_000 / 64_000"),)
 
 
+def test_table_formats_currency_pairs_and_env_requirements() -> None:
+    @dataclass(frozen=True)
+    class DisplayView:
+        key: str
+        input_cost: Decimal | None
+        output_cost: Decimal | None
+        requirements: tuple[str, ...]
+        missing: tuple[str, ...]
+
+    schema = CollectionSchema.from_type(
+        "display",
+        DisplayView,
+        key="key",
+        identity=IdentitySpec(paths=("key",), labels=("item",)),
+        columns=(
+            ColumnSpec(
+                "PRICE",
+                ("input_cost", "output_cost"),
+                "currency-pair",
+            ),
+            ColumnSpec("ENV", ("requirements", "missing"), "env"),
+        ),
+    )
+    dataset = QueryDataset(
+        schema,
+        (
+            DisplayView(
+                "one",
+                Decimal("1.256"),
+                Decimal("0"),
+                ("PRIMARY", "USER + TOKEN"),
+                ("TOKEN",),
+            ),
+        ),
+    )
+
+    assert dataset.table(dataset.items) == (
+        ("PRICE", "ENV"),
+        (("$1.26 / $0.00", "PRIMARY, USER + TOKEN (missing)"),),
+    )
+
+
 def test_exact_selector_quotes_glob_identity() -> None:
     item = ModelView(
         key="glob",

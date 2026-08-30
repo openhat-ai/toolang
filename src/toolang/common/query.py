@@ -40,6 +40,7 @@ ColumnFormatter = Literal[
     "identity-component",
     "bool-labels",
     "pair",
+    "currency-pair",
     "ratio",
     "env",
     "truncate",
@@ -153,6 +154,7 @@ class ColumnSpec:
             "identity-component",
             "bool-labels",
             "pair",
+            "currency-pair",
             "ratio",
             "env",
             "truncate",
@@ -669,12 +671,17 @@ class QueryDataset(Generic[_T]):
             return ",".join(labels) or "-"
         if formatter == "pair":
             return " / ".join(_format_display_scalar(value[0]) for value in values)
+        if formatter == "currency-pair":
+            return " / ".join(_format_currency(value[0]) for value in values)
         if formatter == "ratio":
             return f"{_format_display_scalar(values[0][0])}/{_format_display_scalar(values[1][0])}"
         if formatter == "env":
             missing = set(values[1])
             labels = [
-                f"{value} (missing)" if value in missing else str(value)
+                " + ".join(
+                    f"{name} (missing)" if name in missing else name
+                    for name in str(value).split(" + ")
+                )
                 for value in values[0]
             ]
             return ", ".join(labels) or "-"
@@ -797,6 +804,13 @@ def _validate_column(
     ):
         raise ToolangError(
             f"column {column.label!r} pair formatter requires scalar numeric or date fields"
+        )
+    if formatter == "currency-pair" and any(
+        spec.kind not in {"integer", "float", "decimal"} or spec.multiple
+        for spec in specs
+    ):
+        raise ToolangError(
+            f"column {column.label!r} currency-pair formatter requires scalar numeric fields"
         )
     if formatter == "ratio" and any(
         spec.kind not in {"integer", "float", "decimal"} or spec.multiple
@@ -1333,6 +1347,14 @@ def _format_display_scalar(value: ScalarValue) -> str:
     if isinstance(value, datetime | date):
         return value.isoformat()
     return str(value)
+
+
+def _format_currency(value: ScalarValue) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
+        raise ToolangError(f"currency table value must be numeric, got {value!r}")
+    return f"${value:.2f}"
 
 
 def _glob_matches(value: str, pattern: str) -> bool:

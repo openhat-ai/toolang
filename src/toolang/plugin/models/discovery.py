@@ -45,6 +45,31 @@ def missing_provider_env_vars(
     )
 
 
+def absent_provider_env_vars(
+    provider: Provider,
+    *,
+    environ: Mapping[str, str],
+) -> tuple[str, ...]:
+    """Return individually absent environment variables for presentation/querying."""
+
+    return tuple(
+        name
+        for name in required_provider_env_vars(provider)
+        if not str(environ.get(name, "")).strip()
+    )
+
+
+def provider_env_requirements(provider: Provider) -> tuple[str, ...]:
+    """Return displayable OR alternatives with AND groups joined by `` + ``."""
+
+    resolved = provider.resolved
+    values = resolved.env if resolved is not None else provider.env
+    return tuple(
+        alternative if isinstance(alternative, str) else " + ".join(alternative)
+        for alternative in values
+    )
+
+
 def default_provider_base_url(
     provider: Provider,
     *,

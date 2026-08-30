@@ -11,9 +11,9 @@ import typer
 
 from ...common.context import context_agent, context_root
 from ...common.output import echo_table
-from ...common.query import emit_query_discovery
+from ...common.query import emit_query_discovery, query_items
 from toolang.common.layout import AgentLayout
-from toolang.plugin.toolsets.collections import TOOL_SCHEMA
+from toolang.plugin.toolsets.collections import TOOL_SCHEMA, tool_dataset
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.plugin.loading import list_plugin_infos
 
@@ -131,13 +131,13 @@ def tool_rows(
     *,
     queries: Sequence[str] = (),
 ) -> list[tuple[str, str, str, str, str]]:
-    from toolang.plugin.toolsets.views import tool_list_rows
-
-    return tool_list_rows(
-        tools=setup.tools,
+    dataset = tool_dataset(
+        setup.tools,
         plugin_sources=plugin_sources("toolang.toolset"),
-        queries=queries,
     )
+    selected = query_items(dataset, tuple(queries) or None)
+    _headers, rows = dataset.table(selected)
+    return [(row[0], row[1], row[2], row[3], row[4]) for row in rows]
 
 
 def _setup(

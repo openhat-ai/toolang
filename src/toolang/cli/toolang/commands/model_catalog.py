@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
-from decimal import Decimal
 import json
 from pathlib import Path
 from typing import Annotated, cast
@@ -39,7 +38,8 @@ from toolang.plugin.models.collections import (
 )
 from toolang.plugin.models.config import ProviderConfig, parse_model_aliases
 from toolang.plugin.models.discovery import (
-    missing_provider_env_vars,
+    absent_provider_env_vars,
+    provider_env_requirements,
     required_provider_env_vars,
 )
 from toolang.plugin.models.resolution import ModelTargetResolver
@@ -100,30 +100,18 @@ def models_command(
         content = catalog_json_dumps(snapshot.to_data(models=exportable))
         typer.echo(content, nl=False)
         return
-    displayed = tuple(
-        model for model in selected if not model.local or model.identity in available
+    displayed_views = tuple(
+        item
+        for item in selected_views
+        if item.scope != "local" or item.key in available
     )
-    rows = [
-        (
-            model.identity,
-            "yes" if model.identity in available else "no",
-            *_model_table_fields(model),
-        )
-        for model in displayed
-    ]
+    displayed = tuple(item.record for item in displayed_views)
+    headers, rows = dataset.table(displayed_views)
     if not rows:
         typer.echo("No models matched query." if query else "No models found.")
         return
     echo_table(
-        (
-            "MODEL",
-            "AVAILABLE",
-            "CONTEXT",
-            "OUTPUT",
-            "INPUT",
-            "CAPABILITIES",
-            "PRICE ($/1M)",
-        ),
+        headers,
         rows,
         justify=(None, None, "right", "right", None, None, "right"),
     )
@@ -180,12 +168,16 @@ def providers_command(
         apis={
             provider.id: _provider_api(setup, provider) for provider in base_providers
         },
+        env_requirements={
+            provider.id: provider_env_requirements(provider)
+            for provider in base_providers
+        },
         required_env={
             provider.id: required_provider_env_vars(provider)
             for provider in base_providers
         },
         missing_env={
-            provider.id: missing_provider_env_vars(provider, environ=setup.envs)
+            provider.id: absent_provider_env_vars(provider, environ=setup.envs)
             for provider in base_providers
         },
     )
@@ -202,22 +194,22 @@ def providers_command(
             nl=False,
         )
         return
-    rows = [
-        (
-            item.id,
-            item.name,
-            f"{item.available_models}/{item.model_count}",
-            _provider_adapters_cell(setup, item.record),
-            _provider_api_cell(setup, item.record),
-            _provider_env_cell(setup, item.record),
-        )
-        for item in selected_views
-    ]
+    headers, base_rows = dataset.table(selected_views)
+    adapters_index = headers.index("ADAPTERS")
+    api_index = headers.index("API")
+    env_index = headers.index("ENV")
+    rows: list[tuple[str | Text, ...]] = []
+    for item, base_row in zip(selected_views, base_rows, strict=True):
+        row: list[str | Text] = list(base_row)
+        row[adapters_index] = _provider_adapters_cell(setup, item)
+        row[api_index] = _provider_api_cell(item)
+        row[env_index] = _provider_env_cell(item)
+        rows.append(tuple(row))
     if not rows:
         typer.echo("No providers matched query." if query else "No providers found.")
         return
     echo_table(
-        ("PROVIDER", "NAME", "AVAILABLE", "ADAPTERS", "API", "ENV"),
+        headers,
         rows,
     )
     typer.echo()
@@ -367,8 +359,11 @@ def _provider_adapters(provider: Provider) -> tuple[str, ...]:
     return tuple(sorted(adapters))
 
 
-def _provider_adapters_cell(setup: AgentSetup, provider: Provider) -> Text:
-    adapters = _provider_adapters(provider)
+def _provider_adapters_cell(
+    setup: AgentSetup,
+    provider: CatalogProviderView,
+) -> Text:
+    adapters = provider.adapters
     if not adapters:
         return Text("-", style="dim")
     cell = Text()
@@ -379,35 +374,26 @@ def _provider_adapters_cell(setup: AgentSetup, provider: Provider) -> Text:
     return cell
 
 
-def _provider_api_cell(setup: AgentSetup, provider: Provider) -> Text:
-    api = _provider_api(setup, provider)
-    unavailable = api is None or (provider.local and _provider_offline(provider))
+def _provider_api_cell(provider: CatalogProviderView) -> Text:
+    api = provider.api
+    unavailable = api is None or (provider.local and provider.offline)
     return Text(api or "-", style="dim" if unavailable else "")
 
 
-def _provider_env_cell(setup: AgentSetup, provider: Provider) -> Text:
-    resolved = provider.resolved
-    if resolved is None or not resolved.env:
+def _provider_env_cell(provider: CatalogProviderView) -> Text:
+    if not provider.env_requirements:
         return Text("-")
+    missing = set(provider.missing_env)
     cell = Text()
-    for index, alternative in enumerate(resolved.env):
+    for index, requirement in enumerate(provider.env_requirements):
         if index:
             cell.append(", ")
-        names = (alternative,) if isinstance(alternative, str) else alternative
+        names = requirement.split(" + ")
         for group_index, name in enumerate(names):
             if group_index:
                 cell.append(" + ")
-            missing = not str(setup.envs.get(name, "")).strip()
-            cell.append(name, style="dim" if missing else None)
+            cell.append(name, style="dim" if name in missing else None)
     return cell
-
-
-def _provider_offline(provider: Provider) -> bool:
-    runtime = provider.extra.get("runtime")
-    return (
-        isinstance(runtime, Mapping)
-        and cast(Mapping[str, object], runtime).get("status") == "offline"
-    )
 
 
 def _provider_catalog_summary(
@@ -437,42 +423,3 @@ def _catalog_names(snapshot: ModelCatalogSnapshot) -> tuple[str, ...]:
     )
     priority = {"models.dev": 0, "ollama": 1, "llama_cpp": 2}
     return tuple(sorted(names, key=lambda name: (priority.get(name, 3), name)))
-
-
-def _model_table_fields(model: Model) -> tuple[str, str, str, str, str]:
-    capabilities = [
-        name
-        for name, value in (
-            ("tool_call", model.tool_call),
-            ("reasoning", model.reasoning),
-            ("temperature", model.temperature),
-            ("structured", model.structured_output),
-        )
-        if value is True
-    ]
-    return (
-        _format_limit(model, "context"),
-        _format_limit(model, "output"),
-        ",".join(model.modalities.get("input", ())) or "-",
-        ",".join(capabilities) or "-",
-        _price_pair(model),
-    )
-
-
-def _format_limit(model: Model, name: str) -> str:
-    value = model.limit.get(name)
-    return f"{value:_}" if value is not None else "-"
-
-
-def _price_pair(model: Model) -> str:
-    if not model.cost:
-        return "-"
-    return " / ".join(_price_rate(model.cost.get(name)) for name in ("input", "output"))
-
-
-def _price_rate(value: object | None) -> str:
-    if value is None:
-        return "-"
-    if isinstance(value, Decimal | int | float) and not isinstance(value, bool):
-        return f"${value:.2f}"
-    return f"${value}"

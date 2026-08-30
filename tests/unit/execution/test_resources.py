@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -8,10 +9,12 @@ from typing import Any, cast
 import pytest
 
 from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.base.types.policy import RunBindings
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import AgentCeiling
 from toolang.execution.executor.resources import (
+    agent_model_targets,
     apply_agent_ceiling,
     resolve_agent_resources,
     resolve_runnable_resources,
@@ -120,6 +123,18 @@ def test_agent_resources_never_filter_setup_snapshot(tmp_path: Path) -> None:
     with pytest.raises(TypeError):
         cast(Any, alpha.tools)["beta__two"] = setup.tools["beta__two"]
     assert AgentResources.from_data(alpha.to_data()) == alpha
+
+
+def test_agent_model_default_is_the_selected_candidate_exact_query(
+    tmp_path: Path,
+) -> None:
+    setup, state, _selection = _snapshots(tmp_path)
+    setup = replace(setup, bindings=RunBindings(model="test/scripted"))
+
+    default, targets = agent_model_targets(setup, state, AgentCeiling())
+
+    assert default == targets[0][0]
+    assert default != setup.bindings.model
 
 
 def test_agent_resources_durable_data_round_trips_every_resource_kind() -> None:

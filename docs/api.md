@@ -690,7 +690,7 @@ including:
 
 Pass repeatable `--query/-q` options to select models, for example
 `toolang models --query '*[scope=remote]'` or
-`toolang models --query 'openai/*[adapter=openrouter]'`. Use `--query-help` for
+`toolang models --query 'openrouter/*[adapter=chat_completions]'`. Use `--query-help` for
 the exact identity, fields, operators, and output-column mapping.
 
 `toolang providers` shows catalog providers and runtime availability.

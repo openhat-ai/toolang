@@ -171,7 +171,9 @@ agic answer(_: Part[]) -> Part[]:
         decoded = [run_event_from_data(data) for _event, data in events]
 
         assert created.status_code == 201
-        assert models.json()["default"] == "test/scripted"
+        assert models.json()["default"] == (
+            "test/scripted[route.provider=test;route.adapter=scripted;alias=null]"
+        )
         assert agics.json()["default"] == "answer"
         assert flows.json()["default"] is None
         assert thread_id.startswith("script_")

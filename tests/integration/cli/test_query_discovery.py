@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from click import unstyle
 import pytest
@@ -64,3 +65,20 @@ def test_migrated_commands_reject_legacy_query_options(
 
     assert result.exit_code == 2
     assert f"No such option: {legacy_option}" in unstyle(result.stderr)
+
+
+def test_tools_reports_invalid_queries_without_a_traceback(tmp_path: Path) -> None:
+    result = runner.invoke(
+        toolang_app,
+        [
+            "--root",
+            str(tmp_path / "toolang"),
+            "tools",
+            "--query",
+            "*[unknown=value]",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "unknown tools query field 'unknown'" in unstyle(result.stderr)
+    assert "Traceback" not in result.stderr

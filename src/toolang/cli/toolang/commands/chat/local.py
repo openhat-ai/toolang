@@ -113,15 +113,20 @@ class LocalChatSession:
     def list_models(self) -> Mapping[str, Any]:
         setup = self.setup_watcher.current()
         state = self.state_watcher.current()
-        _default, targets = agent_model_targets(setup, state, setup.ceiling)
+        default, targets = agent_model_targets(setup, state, setup.ceiling)
         selection = snapshot_model_selection(setup, state)
         return {
-            "default": self._run_defaults().bindings.model,
+            "default": default,
             "items": [
                 {
-                    "ref": selector,
+                    "selector": selector,
                     "name": target.name,
+                    "ref": target.ref,
                     "provider": target.provider,
+                    "model": target.model,
+                    "adapter": target.adapter,
+                    "tools": target.tools,
+                    "streaming": target.streaming,
                     "parameters": {
                         "reasoning": {
                             "effort": list(model_reasoning_efforts(selection, target))

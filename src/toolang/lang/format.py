@@ -932,11 +932,27 @@ def _raise_syntax_error(lines: list[str], node: Node) -> None:
 
 
 def _split_inline_comment(line: str) -> tuple[str, str]:
-    match = re.search(r"(?<!\S)#", line)
-    if match is None:
+    quoted = False
+    escaped = False
+    comment_start: int | None = None
+    for index, char in enumerate(line):
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+            continue
+        if char == '"':
+            quoted = True
+        elif char == "#" and (index == 0 or line[index - 1].isspace()):
+            comment_start = index
+            break
+    if comment_start is None:
         return line.rstrip(), ""
-    body = line[: match.start()].rstrip()
-    comment = line[match.start() :].strip()
+    body = line[:comment_start].rstrip()
+    comment = line[comment_start:].strip()
     return body, f"  {comment}" if body else comment
 
 

@@ -276,6 +276,22 @@ def test_canonical_tool_identities_include_internal_toolset(monkeypatch) -> None
         validate_tool_queries(tools, ("filesystem/*",))
 
 
+def test_tool_source_queries_use_loaded_plugin_metadata(monkeypatch) -> None:
+    _patch_tool_entry_points(monkeypatch)
+
+    built_in = load_tools(queries=("*[source=built-in]",))
+    external = load_tools(queries=("*[source=external]",))
+
+    assert built_in
+    assert external
+    assert all(
+        getattr(tool, "source", None) == "built-in" for tool in built_in.values()
+    )
+    assert all(
+        getattr(tool, "source", None) == "external" for tool in external.values()
+    )
+
+
 def test_load_tools_accepts_explicit_toolset_keys(monkeypatch) -> None:
     @tool(name="search", description="Search issues.")
     def search() -> dict[str, object]:

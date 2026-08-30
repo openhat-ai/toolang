@@ -12,6 +12,9 @@ from toolang.common.layout import AgentLayout
 
 from ..common.progress import ProgressSink, emit_progress
 from ..lang.ast import Program
+from ..lang.runnable_query import RUNNABLE_SCHEMA
+from ..setup.config import resolve_agent_ceiling, resolve_run_bindings
+from .collections import CAP_SCHEMA
 from .state import (
     AgentState,
     KIND_BY_DIR_NAME,
@@ -99,6 +102,9 @@ def compose_layer_state(
 ) -> AgentState:
     """Compose runtime State from one exact root/home layer pair."""
 
+    configs = (root.config, home.config)
+    resolve_agent_ceiling(configs, cap_query_schema=CAP_SCHEMA)
+    resolve_run_bindings(configs, runnable_query_schema=RUNNABLE_SCHEMA)
     return compose_agent_state(
         root_revision=root.revision,
         home_revision=home.revision,

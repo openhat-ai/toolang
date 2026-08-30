@@ -48,15 +48,15 @@ def models(core: AgentCoreDep) -> dict[str, object]:
     try:
         setup = core.setup.current()
         state = core.state.current()
-        default, targets = agent_model_targets(setup, state, setup.ceiling)
+        resolved_default, targets = agent_model_targets(setup, state, setup.ceiling)
         selection = snapshot_model_selection(setup, state)
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {
-        "default": default,
+        "default": resolved_default,
         "items": [
             _model_item(
-                ref=selector,
+                selector=selector,
                 target=target,
                 efforts=model_reasoning_efforts(selection, target),
             )
@@ -281,12 +281,17 @@ def _runtime_sandbox_spec(runtime_state: dict[str, object]) -> str:
 
 
 def _model_item(
-    *, ref: str, target: Any, efforts: tuple[str, ...]
+    *, selector: str, target: Any, efforts: tuple[str, ...]
 ) -> dict[str, object]:
     return {
-        "ref": ref,
+        "selector": selector,
+        "ref": target.ref,
         "name": target.name,
         "provider": target.provider,
+        "model": target.model,
+        "adapter": target.adapter,
+        "tools": target.tools,
+        "streaming": target.streaming,
         "parameters": {"reasoning": {"effort": list(efforts)}},
     }
 

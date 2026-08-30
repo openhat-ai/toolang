@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, cast
 
 from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
 from toolang.common.query import (
@@ -92,7 +92,11 @@ CATALOG_MODEL_SCHEMA = CollectionSchema.from_type(
             ("tool_call", "reasoning", "temperature", "structured_output"),
             "bool-labels",
         ),
-        ColumnSpec("PRICE ($/1M)", ("cost.input", "cost.output"), "pair"),
+        ColumnSpec(
+            "PRICE ($/1M)",
+            ("cost.input", "cost.output"),
+            "currency-pair",
+        ),
     ),
 )
 CATALOG_MODEL_DEFINITION = CollectionDefinition(CATALOG_MODEL_SCHEMA)
@@ -107,11 +111,13 @@ class CatalogProviderView:
     name: str
     catalog: str | None
     local: bool
+    offline: bool
     ready: bool
     available_models: int
     model_count: int
     adapters: tuple[str, ...]
     api: str | None
+    env_requirements: tuple[str, ...]
     required_env: tuple[str, ...]
     missing_env: tuple[str, ...]
 
@@ -128,7 +134,7 @@ CATALOG_PROVIDER_SCHEMA = CollectionSchema.from_type(
         ColumnSpec("AVAILABLE", ("available_models", "model_count"), "ratio"),
         ColumnSpec("ADAPTERS", ("adapters",), "join"),
         ColumnSpec("API", ("api",)),
-        ColumnSpec("ENV", ("required_env", "missing_env"), "env"),
+        ColumnSpec("ENV", ("env_requirements", "missing_env"), "env"),
     ),
 )
 CATALOG_PROVIDER_DEFINITION = CollectionDefinition(CATALOG_PROVIDER_SCHEMA)
@@ -198,6 +204,7 @@ def catalog_provider_dataset(
     available: set[str],
     adapters: Mapping[str, Sequence[str]],
     apis: Mapping[str, str | None],
+    env_requirements: Mapping[str, Sequence[str]],
     required_env: Mapping[str, Sequence[str]],
     missing_env: Mapping[str, Sequence[str]],
 ) -> QueryDataset[CatalogProviderView]:
@@ -210,6 +217,7 @@ def catalog_provider_dataset(
             name=provider.name,
             catalog=provider.catalog,
             local=provider.local,
+            offline=_provider_offline(provider),
             ready=provider.resolved.ready if provider.resolved is not None else False,
             available_models=sum(
                 f"{provider.id}/{model_id}" in available for model_id in provider.models
@@ -217,12 +225,21 @@ def catalog_provider_dataset(
             model_count=len(provider.models),
             adapters=tuple(adapters.get(provider.id, ())),
             api=apis.get(provider.id),
+            env_requirements=tuple(env_requirements.get(provider.id, ())),
             required_env=tuple(required_env.get(provider.id, ())),
             missing_env=tuple(missing_env.get(provider.id, ())),
         )
         for provider in providers
     )
     return CATALOG_PROVIDER_DEFINITION.dataset(items)
+
+
+def _provider_offline(provider: Provider) -> bool:
+    runtime = provider.extra.get("runtime")
+    return (
+        isinstance(runtime, Mapping)
+        and cast(Mapping[str, object], runtime).get("status") == "offline"
+    )
 
 
 def plugin_inventory_dataset(

@@ -294,13 +294,13 @@ def _chat_resolve_model_command(
     selector: str,
 ) -> tuple[str, str] | None:
     items = [
-        item for item in _items(models_payload) if isinstance(item.get("ref"), str)
+        item for item in _items(models_payload) if isinstance(item.get("selector"), str)
     ]
     target = _model_command_value(selector)
     exact = [
         item
         for item in items
-        if _model_command_value(as_text(item.get("ref")) or "") == target
+        if _model_command_value(as_text(item.get("selector")) or "") == target
     ]
     if len(exact) == 1:
         return _resolved_model_command(exact[0])
@@ -314,6 +314,7 @@ def _chat_resolve_model_command(
             for value in (
                 as_text(item.get("ref")),
                 as_text(item.get("name")),
+                as_text(item.get("model")),
                 as_text(item.get("provider")),
             )
             if value is not None
@@ -325,7 +326,7 @@ def _chat_resolve_model_command(
 
 
 def _resolved_model_command(match: Mapping[str, Any]) -> tuple[str, str] | None:
-    canonical = as_text(match.get("ref"))
+    canonical = as_text(match.get("selector"))
     if canonical is None:
         return None
     return canonical, _model_label(match)
@@ -361,13 +362,18 @@ def _chat_model_list_lines(payload: Mapping[str, Any]) -> list[str]:
     default = as_text(payload.get("default"))
     lines: list[str] = []
     for item in _items(payload):
-        ref = as_text(item.get("ref"))
-        if ref is None:
+        selector = as_text(item.get("selector"))
+        if selector is None:
             continue
         efforts = _model_efforts(item)
         columns = [
-            ref,
-            *(["default"] if ref == default else []),
+            _model_label(item),
+            *(["default"] if selector == default else []),
+            *[
+                text
+                for value in (item.get("provider"), item.get("adapter"))
+                if (text := as_text(value))
+            ],
             *(f"reasoning: {', '.join(efforts)}" for _ in (0,) if efforts),
         ]
         lines.append("  ".join(columns))

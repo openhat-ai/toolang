@@ -135,6 +135,28 @@ agic review:
     Program.from_source(formatted)
 
 
+def test_format_source_preserves_hashes_inside_collection_queries() -> None:
+    source = """agic review:
+    tools=filesystem/*[description="read # exact"],vendor/tool#v1 # keep
+
+    Review the target.
+""".strip()
+
+    formatted = format_source(source)
+    program = Program.from_source(formatted)
+
+    assert formatted == (
+        "agic review:\n"
+        '  tools = filesystem/*[description="read # exact"], vendor/tool#v1  # keep\n'
+        "\n"
+        "  Review the target.\n"
+    )
+    assert program.agics[0].directives[0].values == (
+        'filesystem/*[description="read # exact"], vendor/tool#v1',
+    )
+    assert format_source(formatted) == formatted
+
+
 def test_format_source_uses_configured_tab_size() -> None:
     source = """
 struct ReviewSummary:

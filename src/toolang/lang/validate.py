@@ -207,11 +207,6 @@ def _validate_directives(
             raise ToolangValidationError(
                 f"{owner} must declare at least one model query."
             )
-        if routed := [selector for selector in directive.values if "@" in selector]:
-            raise ToolangValidationError(
-                f"{owner} must declare route-neutral model refs, not routed selectors: {', '.join(routed)}"
-            )
-
     for name in ("hands", "handoffs"):
         routes = [item for item in directives if item.name == name]
         if routes and not allow_routes:

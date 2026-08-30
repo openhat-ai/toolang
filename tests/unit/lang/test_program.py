@@ -334,6 +334,14 @@ agic coordinate:
     ]
 
 
+def test_model_directive_treats_at_as_identity_data() -> None:
+    program = Program.from_source(
+        "agic review:\n  models = vendor/model@v1\n\n  Review.\n"
+    )
+
+    assert program.agics[0].directives[0].values == ("vendor/model@v1",)
+
+
 @pytest.mark.parametrize(
     "directive",
     [

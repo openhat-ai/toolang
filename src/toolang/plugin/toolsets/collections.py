@@ -81,6 +81,12 @@ def _tool_view(
     if plugin == "-" and ref.toolset in plugin_sources:
         plugin = ref.toolset
     normalized = ToolRef(plugin=plugin, toolset=ref.toolset, name=ref.name)
+    tool_source = getattr(tool, "source", None)
+    source = (
+        tool_source
+        if isinstance(tool_source, str) and tool_source
+        else plugin_sources.get(normalized.plugin, "-")
+    )
     definition = tool.definition()
     properties = definition.parameters.get("properties")
     parameter_names = (
@@ -94,7 +100,7 @@ def _tool_view(
         toolset=normalized.toolset,
         name=normalized.name,
         plugin=normalized.plugin,
-        source=plugin_sources.get(normalized.plugin, "-"),
+        source=source,
         description=" ".join(definition.description.split()),
         parameters=parameter_names,
     )

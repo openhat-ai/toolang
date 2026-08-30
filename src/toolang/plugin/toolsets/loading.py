@@ -10,7 +10,7 @@ from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool, Toolset
 from toolang.base.types.tool import ToolContext, ToolDefinition
 
-from toolang.plugin.loading import LoadedPlugin, load_plugins_with_sources
+from toolang.plugin.loading import LoadedPlugin, PluginSource, load_plugins_with_sources
 from .registry import (
     ToolRef,
     parse_tool_registration_key,
@@ -23,6 +23,7 @@ class LoadedTool(AgentTool):
     """One model-facing tool loaded from a named toolset."""
 
     plugin_name: str
+    source: PluginSource
     ref: ToolRef
     leaf_tool: AgentTool
 
@@ -75,7 +76,7 @@ def load_tools(
 
     tools: dict[str, AgentTool] = {}
     toolsets = _load_toolsets_with_sources(config=toolset_config)
-    registrations: list[tuple[str, ToolRef, AgentTool]] = []
+    registrations: list[tuple[str, PluginSource, ToolRef, AgentTool]] = []
     model_names: set[str] = set()
     for plugin_name, loaded in toolsets.items():
         toolset = cast(Toolset, loaded.plugin)
@@ -90,11 +91,12 @@ def load_tools(
             if ref.model_name in model_names:
                 raise ValueError(f"duplicate tool name: {ref.identity}")
             model_names.add(ref.model_name)
-            registrations.append((plugin_name, ref, leaf_tool))
+            registrations.append((plugin_name, loaded.source, ref, leaf_tool))
 
-    for plugin_name, ref, leaf_tool in registrations:
+    for plugin_name, source, ref, leaf_tool in registrations:
         loaded = LoadedTool(
             plugin_name=plugin_name,
+            source=source,
             ref=ref,
             leaf_tool=leaf_tool,
         )

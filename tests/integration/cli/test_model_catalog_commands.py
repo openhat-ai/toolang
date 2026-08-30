@@ -150,7 +150,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
         "1_000_000",
         "100_000",
         "text,image",
-        "tool_call,reasoning,temperature,structured",
+        "tool_call,reasoning,temperature,structured_output",
         "$1.26 / $0.00",
     )
     assert [row.index(value) for value in values] == sorted(
@@ -423,6 +423,40 @@ def test_providers_lists_resolved_api_and_model_adapters(
     assert provider["api"] == "https://api.test/v1"
     assert provider["npm"] == "@ai-sdk/anthropic"
     assert "resolved" not in provider
+
+    missing_alt = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "providers",
+            "--models",
+            str(catalog),
+            "--query",
+            "*[missing_env=TEST_ALT_API_KEY]",
+            "--json",
+        ],
+        env={"TEST_API_KEY": "configured"},
+    )
+    assert missing_alt.exit_code == 0, missing_alt.stderr
+    assert tuple(json.loads(missing_alt.stdout)) == ("test",)
+
+    configured_alt = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "providers",
+            "--models",
+            str(catalog),
+            "--query",
+            "*[missing_env=TEST_API_KEY]",
+            "--json",
+        ],
+        env={"TEST_API_KEY": "configured"},
+    )
+    assert configured_alt.exit_code == 0, configured_alt.stderr
+    assert json.loads(configured_alt.stdout) == {}
 
 
 def _disable_local_discovery(monkeypatch) -> None:

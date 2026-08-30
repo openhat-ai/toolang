@@ -11,6 +11,7 @@ import time
 import pytest
 
 from toolang.base.types.progress import ProgressEvent
+from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.execution.runnables import (
     resolve_bound_runnable,
@@ -234,6 +235,31 @@ def test_prepare_does_not_create_missing_agent_source(tmp_path: Path) -> None:
 
     assert not (toolang_root / "agents" / "alice").exists()
     assert not (toolang_root / ".state").exists()
+
+
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        ('[allow]\ncaps = ["*[missing=value]"]\n', "unknown caps query field"),
+        (
+            '[default]\nrunnable = "*[missing=value]"\n',
+            "unknown runnables query field",
+        ),
+    ],
+)
+def test_prepare_rejects_invalid_state_owned_config_queries(
+    tmp_path: Path,
+    config: str,
+    message: str,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (toolang_root / "config.toml").write_text(config, encoding="utf-8")
+    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+
+    with pytest.raises(ToolangError, match=message):
+        prepare_agent_state(_layout(toolang_root))
 
 
 def test_prepare_does_not_create_missing_agent_program(tmp_path: Path) -> None:

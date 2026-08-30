@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields
 from collections.abc import Mapping
 from functools import lru_cache
+import re
 from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import Discriminator, Tag, TypeAdapter
@@ -18,6 +19,10 @@ JobKind = Literal["task", "chore"]
 Role = Literal["user", "assistant", "tool"]
 Position = Literal["first", "last"]
 Limit = Literal["top", "bottom"]
+_QUERY_DIRECTIVE_RE = re.compile(
+    rb"^[ \t]*(?:models|tools|skills|services|psyches|prompts|hands|handoffs)"
+    rb"[ \t]*(?:\+=|-=|=)"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,7 +362,43 @@ def _parse_source(source: str) -> _ParsedSource:
 
 
 def _parse_tree(source: bytes) -> Tree:
-    return Parser(_language()).parse(source)
+    return Parser(_language()).parse(_mask_query_hashes(source))
+
+
+def _mask_query_hashes(source: bytes) -> bytes:
+    """Mask query-data hashes while preserving byte offsets for the CST."""
+
+    lines: list[bytes] = []
+    for line in source.splitlines(keepends=True):
+        match = _QUERY_DIRECTIVE_RE.match(line)
+        if match is None:
+            lines.append(line)
+            continue
+        masked = bytearray(line)
+        quoted = False
+        escaped = False
+        for index in range(match.end(), len(masked)):
+            value = masked[index]
+            if quoted:
+                if escaped:
+                    escaped = False
+                elif value == ord("\\"):
+                    escaped = True
+                elif value == ord('"'):
+                    quoted = False
+                elif value == ord("#"):
+                    masked[index] = ord("x")
+                continue
+            if value == ord('"'):
+                quoted = True
+                continue
+            if value != ord("#"):
+                continue
+            if index > 0 and chr(masked[index - 1]).isspace():
+                break
+            masked[index] = ord("x")
+        lines.append(bytes(masked))
+    return b"".join(lines)
 
 
 def _first_syntax_error(node: TreeSitterNode) -> TreeSitterNode | None:

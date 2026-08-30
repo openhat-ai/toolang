@@ -8,13 +8,17 @@ from decimal import Decimal, InvalidOperation
 import os
 from pathlib import Path
 import tomllib
-from typing import cast
+from typing import Any, cast
 
 from dotenv import dotenv_values
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
-from toolang.common.query import prefix_query_value, resolve_query_sentinels
+from toolang.common.query import (
+    CollectionSchema,
+    prefix_query_value,
+    resolve_query_sentinels,
+)
 from toolang.plugin.models.resolution import RUNTIME_MODEL_SCHEMA
 from toolang.plugin.toolsets.collections import TOOL_SCHEMA
 
@@ -70,6 +74,7 @@ def resolve_agent_ceiling(
     configs: Sequence[Mapping[str, object]],
     *,
     overrides: Mapping[str, tuple[str, ...] | None] | None = None,
+    cap_query_schema: CollectionSchema[Any] | None = None,
 ) -> AgentCeiling:
     """Resolve layered ``[allow]`` configuration and frozen overrides."""
 
@@ -105,7 +110,7 @@ def resolve_agent_ceiling(
         tools=fields.get("tools"),
         caps=tuple(cap_queries) if caps_present else None,
     )
-    _validate_agent_ceiling_syntax(ceiling)
+    _validate_agent_ceiling_syntax(ceiling, cap_query_schema=cap_query_schema)
     return ceiling
 
 
@@ -113,6 +118,7 @@ def resolve_run_bindings(
     configs: Sequence[Mapping[str, object]],
     *,
     overrides: Mapping[str, str | None] | None = None,
+    runnable_query_schema: CollectionSchema[Any] | None = None,
 ) -> RunBindings:
     """Resolve layered ``[default]`` configuration and frozen overrides."""
 
@@ -134,6 +140,8 @@ def resolve_run_bindings(
     bindings = RunBindings(**fields)
     if bindings.model is not None:
         RUNTIME_MODEL_SCHEMA.parse(bindings.model)
+    if bindings.runnable is not None and runnable_query_schema is not None:
+        runnable_query_schema.parse(bindings.runnable)
     return bindings
 
 
@@ -200,11 +208,18 @@ def _cap_kind_query(kind: str, value: str) -> str:
     return prefix_query_value(value, prefix=kind, separator="/")
 
 
-def _validate_agent_ceiling_syntax(ceiling: AgentCeiling) -> None:
+def _validate_agent_ceiling_syntax(
+    ceiling: AgentCeiling,
+    *,
+    cap_query_schema: CollectionSchema[Any] | None,
+) -> None:
     for query in ceiling.models or ():
         RUNTIME_MODEL_SCHEMA.parse(query)
     for query in ceiling.tools or ():
         TOOL_SCHEMA.parse(query)
+    if cap_query_schema is not None:
+        for query in ceiling.caps or ():
+            cap_query_schema.parse(query)
 
 
 def _binding_value(name: str, value: object) -> str | None:
