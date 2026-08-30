@@ -6,7 +6,13 @@ from pathlib import Path
 
 from toolang.base.types.message import Message, TextPart
 from toolang.execution.store import RunStore
+from toolang.execution.types import (
+    IterationOccurrence,
+    Occurrence,
+    OccurrencePosition,
+)
 from tests.support.execution_fixtures import (
+    project_run_control,
     project_run_end,
     project_run_start,
     project_step,
@@ -176,3 +182,145 @@ def test_structural_snapshot_uses_one_transaction_without_rowid(tmp_path: Path) 
     assert sum(statement == "BEGIN" for statement in statements) == 1
     assert sum(statement == "COMMIT" for statement in statements) == 1
     assert not any("rowid" in statement.lower() for statement in statements)
+
+
+def test_run_inspection_reads_only_each_run_entry_control(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_entry_scope",
+            thread_id="term_entry_scope",
+            origin="test",
+            input=Message.user("Entry scope"),
+        )
+        unrelated = project_run_control(
+            store,
+            run_id=run.id,
+            kind="cancel",
+            input=Message.user("Cancel"),
+        )
+        with store.write_transaction():
+            store._conn.execute(
+                'UPDATE controls SET payload = ? WHERE target = ? AND "index" = ?',
+                ("{", unrelated.target, unrelated.index),
+            )
+
+        inspected = store.inspect_runs()
+        snapshot = store.load_execution_snapshot(root=run.id)
+    finally:
+        store.close()
+
+    assert [item.record.id for item in inspected] == [run.id]
+    assert inspected[0].runnable == "agic:test"
+    assert [(entry.target, entry.index) for entry in snapshot.entries] == [
+        (run.id, run.control.index)
+    ]
+
+
+def test_direct_child_run_order_keeps_semantic_coordinates_separate(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        root = project_run_start(
+            store,
+            run_id="run_relation_order",
+            thread_id="term_relation_order",
+            origin="test",
+            input=Message.user("Relation order"),
+        )
+        parallel = project_step(
+            store,
+            run_id=root.id,
+            step_index=0,
+            kind="par",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+        loop = project_step(
+            store,
+            run_id=root.id,
+            step_index=1,
+            kind="loop",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        parallel_later_id = project_run_start(
+            store,
+            run_id="run_z_parallel",
+            thread_id=root.thread,
+            origin="test",
+            input=Message.user("Z"),
+            parent=parallel.path,
+            created_at="2026-01-01T00:00:00Z",
+            context={
+                "occurrence": Occurrence(
+                    item=OccurrencePosition(index=0, count=1),
+                    lane=OccurrencePosition(index=0, count=1),
+                )
+            },
+        )
+        parallel_first_id = project_run_start(
+            store,
+            run_id="run_a_parallel",
+            thread_id=root.thread,
+            origin="test",
+            input=Message.user("A"),
+            parent=parallel.path,
+            created_at="2026-01-01T00:00:01Z",
+            context={
+                "occurrence": Occurrence(
+                    item=OccurrencePosition(index=0, count=1),
+                    lane=OccurrencePosition(index=0, count=1),
+                )
+            },
+        )
+        loop_body = project_run_start(
+            store,
+            run_id="run_loop_body",
+            thread_id=root.thread,
+            origin="test",
+            input=Message.user("Body"),
+            parent=loop.path,
+            context={
+                "occurrence": Occurrence(
+                    item=OccurrencePosition(index=1_000_001, count=1_000_002),
+                    iteration=IterationOccurrence(index=0, phase="body"),
+                )
+            },
+        )
+        loop_until = project_run_start(
+            store,
+            run_id="run_loop_until",
+            thread_id=root.thread,
+            origin="test",
+            input=Message.user("Until"),
+            parent=loop.path,
+            context={
+                "occurrence": Occurrence(
+                    item=OccurrencePosition(index=0, count=1),
+                    iteration=IterationOccurrence(index=0, phase="until"),
+                )
+            },
+        )
+
+        parallel_children = store.inspect_child_runs(parent=parallel)
+        loop_children = store.inspect_child_runs(parent=loop)
+    finally:
+        store.close()
+
+    assert [item.record.id for item in parallel_children] == [
+        parallel_first_id.id,
+        parallel_later_id.id,
+    ]
+    assert [item.record.id for item in loop_children] == [
+        loop_body.id,
+        loop_until.id,
+    ]

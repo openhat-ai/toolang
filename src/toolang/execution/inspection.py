@@ -88,7 +88,7 @@ def run_fallback_order(run: RunRecord) -> tuple[str, str]:
 def child_run_relation_order(
     parent: StepRecord,
     run: RunRecord,
-) -> tuple[int, int, int, str, str]:
+) -> tuple[int, int, int, int, str, str]:
     """Order direct child Runs while keeping incomplete records diagnosable."""
 
     occur = run.occur
@@ -98,15 +98,17 @@ def child_run_relation_order(
         and occur.item is not None
         and occur.lane is not None
     ):
-        return (0, occur.item.index, 0, run.created_at, run.id)
+        return (0, occur.item.index, 0, 0, run.id, "")
     if parent.kind == "loop" and occur is not None and occur.iteration is not None:
         phase = 0 if occur.iteration.phase == "body" else 1
         item = occur.item.index if occur.item is not None else 0
         return (
             0,
             occur.iteration.index,
-            phase * 1_000_000 + item,
+            phase,
+            item,
             run.created_at,
             run.id,
         )
-    return (1, 0, 0, run.created_at, run.id)
+    created_at, run_id = run_fallback_order(run)
+    return (1, 0, 0, 0, created_at, run_id)

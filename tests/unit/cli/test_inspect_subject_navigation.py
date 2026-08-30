@@ -93,6 +93,21 @@ def test_tree_activity_preserves_run_statement_operands_and_aligns_tags() -> Non
     )
 
 
+def test_execution_table_does_not_truncate_reusable_pointers(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pointer = f"run_{'x' * 4_200}.0"
+
+    inspect_commands._echo_execution_table(
+        ("RUN STEP", "STATUS"),
+        ((pointer, "succeeded"),),
+    )
+
+    output = capsys.readouterr().out
+    assert pointer in output
+    assert "…" not in output
+
+
 def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -> None:
     call = ModelCall(
         instructions="Review the run.\n<important>Preserve this tag.</important>",

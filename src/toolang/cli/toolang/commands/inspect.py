@@ -356,18 +356,33 @@ def _render_execution_tree(
                     "",
                 )
             )
-    headers = ("NODE", "ACTIVITY", "OCCUR", "STATUS", "DURATION", "METRICS")
-    columns = tuple(zip(*rows, strict=True))
+    _render_execution_table(
+        console,
+        ("NODE", "ACTIVITY", "OCCUR", "STATUS", "DURATION", "METRICS"),
+        rows,
+    )
+
+
+def _render_execution_table(
+    console: Console,
+    headers: Sequence[str],
+    rows: Sequence[Sequence[Text | str]],
+) -> None:
+    """Render execution pointers without terminal-width truncation."""
+
+    normalized = tuple(
+        tuple(cell if isinstance(cell, Text) else Text(cell) for cell in row)
+        for row in rows
+    )
     minimum_width = sum(
         max(
-            cell_len(header),
-            *(
-                cell_len(cell.plain if isinstance(cell, Text) else cell)
-                for cell in column
-            ),
+            (
+                cell_len(header),
+                *(cell_len(row[index].plain) for row in normalized),
+            )
         )
-        for header, column in zip(headers, columns, strict=True)
-    ) + 2 * (len(headers) - 1)
+        for index, header in enumerate(headers)
+    ) + 2 * len(headers)
 
     table = Table(
         box=box.HORIZONTALS,
@@ -377,15 +392,18 @@ def _render_execution_tree(
         collapse_padding=True,
         width=minimum_width if minimum_width > console.width else None,
     )
-    table.add_column("NODE", no_wrap=True, overflow="ignore")
-    table.add_column("ACTIVITY", no_wrap=True, overflow="ignore")
-    table.add_column("OCCUR", no_wrap=True, overflow="ignore")
-    table.add_column("STATUS", no_wrap=True)
-    table.add_column("DURATION", no_wrap=True)
-    table.add_column("METRICS", no_wrap=True, overflow="ignore")
-    for row in rows:
+    for header in headers:
+        table.add_column(header, no_wrap=True, overflow="ignore")
+    for row in normalized:
         table.add_row(*row)
     console.print(table, crop=False)
+
+
+def _echo_execution_table(
+    headers: Sequence[str],
+    rows: Sequence[Sequence[Text | str]],
+) -> None:
+    _render_execution_table(Console(highlight=False), headers, rows)
 
 
 def _tree_node_label(
@@ -871,7 +889,7 @@ def _render_collection(
                 )
                 for item in items
             ]
-            echo_table(
+            _echo_execution_table(
                 (
                     "PARENT STEP",
                     "RUN",
@@ -897,7 +915,7 @@ def _render_collection(
                 )
                 for item in items
             ]
-            echo_table(
+            _echo_execution_table(
                 (
                     "THREAD RUN",
                     "PARENT STEP",
@@ -923,7 +941,7 @@ def _render_collection(
             )
             for item in items
         ]
-        echo_table(
+        _echo_execution_table(
             (
                 "RUN",
                 "THREAD",
@@ -941,6 +959,24 @@ def _render_collection(
         items = tuple(
             item for item in subject.inspected if isinstance(item, InspectedStep)
         )
+        child_steps = subject.scope is not None and "." in subject.scope
+        if child_steps:
+            rows = [
+                (
+                    str(item.record.path),
+                    _tree_activity("step", item.record.kind, item.operation),
+                    _occurrence_label(item.record.occur),
+                    str(item.child_run_count),
+                    _display_status(item.record.status),
+                    item.record.created_at,
+                )
+                for item in items
+            ]
+            _echo_execution_table(
+                ("CHILD STEP", "ACTIVITY", "OCCUR", "RUNS", "STATUS", "CREATED"),
+                rows,
+            )
+            return
         rows = [
             (
                 str(item.record.path),
@@ -953,10 +989,9 @@ def _render_collection(
             )
             for item in items
         ]
-        heading = "CHILD STEP" if subject.scope and "." in subject.scope else "RUN STEP"
-        echo_table(
+        _echo_execution_table(
             (
-                heading,
+                "RUN STEP",
                 "PARENT STEP",
                 "ACTIVITY",
                 "OCCUR",

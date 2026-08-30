@@ -1362,12 +1362,18 @@ def test_inspect_empty_step_relations_and_container_call_succeed(
     )
     loop_runs = _invoke(root, "alice", "inspect", str(loop.path), "runs", "--json")
     loop_steps = _invoke(root, "alice", "inspect", str(loop.path), "steps", "--json")
+    loop_steps_human = _invoke(root, "alice", "inspect", str(loop.path), "steps")
     loop_call = _invoke(root, "alice", "inspect", str(loop.path), "call", "--json")
     invalid_steps = _invoke(root, "alice", "inspect", str(run_step.path), "steps")
 
     assert run_children.exit_code == 0 and json.loads(run_children.stdout) == []
     assert loop_runs.exit_code == 0 and json.loads(loop_runs.stdout) == []
     assert loop_steps.exit_code == 0 and json.loads(loop_steps.stdout) == []
+    assert loop_steps_human.exit_code == 0, loop_steps_human.stderr
+    assert "CHILD STEP ACTIVITY OCCUR RUNS STATUS CREATED" in " ".join(
+        loop_steps_human.stdout.split()
+    )
+    assert "PARENT STEP" not in loop_steps_human.stdout
     assert loop_call.exit_code == 0, loop_call.stderr
     assert [item["pointer"] for item in json.loads(loop_call.stdout)] == [
         str(loop.path)

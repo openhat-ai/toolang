@@ -2071,14 +2071,19 @@ class RunStore:
             return ()
         controls: dict[tuple[str, int], ControlRecord] = {}
         step_counts: dict[str, int] = {run.id: 0 for run in records}
-        run_ids = tuple(run.id for run in records)
-        for offset in range(0, len(run_ids), 400):
-            chunk = run_ids[offset : offset + 400]
-            placeholders = ", ".join("?" for _ in chunk)
+        for offset in range(0, len(records), 400):
+            record_chunk = records[offset : offset + 400]
+            run_ids = tuple(run.id for run in record_chunk)
+            placeholders = ", ".join("?" for _ in run_ids)
+            entry_clauses = " OR ".join(
+                '(target = ? AND "index" = ?)' for _ in record_chunk
+            )
+            entry_params = tuple(
+                value for run in record_chunk for value in (run.id, run.control.index)
+            )
             control_rows = self._conn.execute(
-                f"SELECT * FROM controls WHERE scope = 'run' "
-                f"AND target IN ({placeholders})",
-                chunk,
+                f"SELECT * FROM controls WHERE scope = 'run' AND ({entry_clauses})",
+                entry_params,
             ).fetchall()
             for row in control_rows:
                 control = _control_from_row(row)
@@ -2087,7 +2092,7 @@ class RunStore:
                 f"SELECT run, COUNT(*) AS count FROM steps "
                 f"WHERE run IN ({placeholders}) AND ejected_by_target IS NULL "
                 "GROUP BY run",
-                chunk,
+                run_ids,
             ).fetchall()
             for row in count_rows:
                 step_counts[str(row["run"])] = int(row["count"])
