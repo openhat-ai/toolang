@@ -144,7 +144,7 @@ def test_cli_no_args_still_shows_root_help(
 def test_cli_control_commands_have_consistent_order_and_descriptions() -> None:
     group = typer.main.get_command(cli.app)
     expected = {
-        "chat": "Start an interactive TUI",
+        "chat": "Start an interactive TUI.",
         "steer": "Steer an active run.",
         "cancel": "Cancel an active run.",
         "retry": "Retry a run from a failed step.",
