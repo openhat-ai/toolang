@@ -65,7 +65,7 @@ is checked for the reserved `:` before the value enters durable state.
 ## ThreadRecord
 
 ```text
-thread_id
+id
 origin
 peer
 created_by
@@ -127,7 +127,7 @@ thread
 control
 state
 output
-occurrence
+occur
 status
 error
 ejected_by
@@ -152,7 +152,7 @@ input
 given
 state
 output
-occurrence
+occur
 noted
 status
 error
@@ -219,6 +219,7 @@ processes.
 
 ## Compatibility
 
-The current RunStore schema is version 32. It intentionally rejects every
-older and newer version before reading or writing. There is no migration or
-legacy Pointer parser at this boundary; incompatible stores remain unchanged.
+The current RunStore schema is version 33. It intentionally rejects every
+older and newer version, including version 32, before reading or writing. There
+is no migration or legacy Pointer parser at this boundary; incompatible stores
+remain unchanged.

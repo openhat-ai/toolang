@@ -89,7 +89,7 @@ from .types import (
 from .schemas import Record, RecordSelection, select_record, validate_field_names
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 32
+_SCHEMA_VERSION = 33
 _SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -266,7 +266,7 @@ class RunStore:
                     )
                 if (
                     self._conn.execute(
-                        "SELECT 1 FROM threads WHERE thread_id = ?", (thread,)
+                        "SELECT 1 FROM threads WHERE id = ?", (thread,)
                     ).fetchone()
                     is None
                 ):
@@ -314,7 +314,7 @@ class RunStore:
                     INSERT INTO runs(
                         id, parent, thread, control_target, control_index,
                         state_target, state_index,
-                        output, occurrence, status, error,
+                        output, occur, status, error,
                         ejected_by_target, ejected_by_index,
                         created_at, started_at, finished_at
                     ) VALUES (
@@ -917,7 +917,7 @@ class RunStore:
         if (
             run.started_at != started_at
             or run.control != control
-            or run.occurrence != occurrence
+            or run.occur != occurrence
         ):
             raise ValueError(f"conflicting run_begin event: {run_id}")
         return run
@@ -1138,7 +1138,7 @@ class RunStore:
                         f"thread control request already exists: {request_id}"
                     )
                 existing_thread = self._conn.execute(
-                    "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
+                    "SELECT * FROM threads WHERE id = ?", (thread_id,)
                 ).fetchone()
                 if existing_thread is not None:
                     raise ValueError(f"thread already exists: {thread_id}")
@@ -1159,14 +1159,14 @@ class RunStore:
                 self._conn.execute(
                     """
                     INSERT INTO threads(
-                        thread_id, origin, peer, created_by_index, head_index,
+                        id, origin, peer, created_by_index, head_index,
                         created_at, updated_at
                     ) VALUES (?, ?, ?, 0, 0, ?, ?)
                     """,
                     (thread_id, origin, _dump_json(effective_peer.to_data()), now, now),
                 )
                 thread_row = self._conn.execute(
-                    "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
+                    "SELECT * FROM threads WHERE id = ?", (thread_id,)
                 ).fetchone()
                 control_row = self._conn.execute(
                     'SELECT * FROM controls WHERE target = ? AND "index" = 0',
@@ -1217,20 +1217,20 @@ class RunStore:
                         f"thread control request already exists: {request_id}"
                     )
                 source_row = self._conn.execute(
-                    "SELECT * FROM threads WHERE thread_id = ?",
+                    "SELECT * FROM threads WHERE id = ?",
                     (source,),
                 ).fetchone()
                 if source_row is None:
                     raise ValueError(f"thread not found: {source}")
                 source_record = _thread_from_row(source_row)
                 anchor_record = self._resolve_thread_anchor(
-                    thread_id=source_record.thread_id,
+                    thread_id=source_record.id,
                     run_id=anchor,
                     require_idle=False,
                 )
                 if (
                     self._conn.execute(
-                        "SELECT 1 FROM threads WHERE thread_id = ?", (thread_id,)
+                        "SELECT 1 FROM threads WHERE id = ?", (thread_id,)
                     ).fetchone()
                     is not None
                 ):
@@ -1242,7 +1242,7 @@ class RunStore:
                     kind="fork",
                     timing="immediate",
                     payload=ForkControlPayload(
-                        fork_from=source_record.thread_id,
+                        fork_from=source_record.id,
                         fork_at=anchor_record.id,
                     ),
                     request=request_id,
@@ -1255,7 +1255,7 @@ class RunStore:
                 self._conn.execute(
                     """
                     INSERT INTO threads(
-                        thread_id, origin, peer, created_by_index, head_index,
+                        id, origin, peer, created_by_index, head_index,
                         created_at, updated_at
                     ) VALUES (?, ?, ?, 0, 0, ?, ?)
                     """,
@@ -1268,7 +1268,7 @@ class RunStore:
                     ),
                 )
                 thread_row = self._conn.execute(
-                    "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
+                    "SELECT * FROM threads WHERE id = ?", (thread_id,)
                 ).fetchone()
                 control_row = self._conn.execute(
                     'SELECT * FROM controls WHERE target = ? AND "index" = 0',
@@ -1318,7 +1318,7 @@ class RunStore:
                         f"thread control request already exists: {request_id}"
                     )
                 thread_row = self._conn.execute(
-                    "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
+                    "SELECT * FROM threads WHERE id = ?", (thread_id,)
                 ).fetchone()
                 if thread_row is None:
                     raise ValueError(f"thread not found: {thread_id}")
@@ -1392,12 +1392,12 @@ class RunStore:
                 self._conn.execute(
                     """
                     UPDATE threads SET head_index = ?, updated_at = ?
-                    WHERE thread_id = ? AND head_index = ?
+                    WHERE id = ? AND head_index = ?
                     """,
                     (index, created_at, thread_id, expected_head.index),
                 )
                 updated_thread = self._conn.execute(
-                    "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
+                    "SELECT * FROM threads WHERE id = ?", (thread_id,)
                 ).fetchone()
                 control_row = self._conn.execute(
                     'SELECT * FROM controls WHERE target = ? AND "index" = ?',
@@ -1424,7 +1424,7 @@ class RunStore:
     def get_thread(self, *, thread_id: str) -> ThreadRecord | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM threads WHERE thread_id = ?",
+                "SELECT * FROM threads WHERE id = ?",
                 (thread_id,),
             ).fetchone()
         return _thread_from_row(row) if row is not None else None
@@ -1502,7 +1502,7 @@ class RunStore:
         now = updated_at or utc_now()
         with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM threads WHERE thread_id = ?",
+                "SELECT * FROM threads WHERE id = ?",
                 (thread_id,),
             ).fetchone()
             if row is None:
@@ -1511,12 +1511,12 @@ class RunStore:
                 """
                 UPDATE threads
                 SET peer = ?, updated_at = ?
-                WHERE thread_id = ?
+                WHERE id = ?
                 """,
                 (_dump_json(peer.to_data()), now, thread_id),
             )
             updated = self._conn.execute(
-                "SELECT * FROM threads WHERE thread_id = ?",
+                "SELECT * FROM threads WHERE id = ?",
                 (thread_id,),
             ).fetchone()
             self._conn.commit()
@@ -1652,7 +1652,7 @@ class RunStore:
         with self._lock:
             if pointer.kind == "thread":
                 row = self._conn.execute(
-                    "SELECT * FROM threads WHERE thread_id = ?",
+                    "SELECT * FROM threads WHERE id = ?",
                     (record,),
                 ).fetchone()
                 return _thread_from_row(row) if row is not None else None
@@ -1934,7 +1934,7 @@ class RunStore:
                     self._conn.rollback()
                 raise
         threads = {
-            record.thread_id: record
+            record.id: record
             for record in (_thread_from_row(row) for row in thread_rows)
         }
         controls_by_thread: dict[str, list[ControlRecord]] = {}
@@ -2327,7 +2327,7 @@ class RunStore:
                 """
                 INSERT INTO steps(
                     run, path, kind, input, state_target, state_index,
-                    output, occurrence, given, noted,
+                    output, occur, given, noted,
                     status, error, created_at, started_at, finished_at
                 ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 'null', 'running', NULL, ?, ?, NULL)
                 ON CONFLICT(run, path) DO NOTHING
@@ -2358,7 +2358,7 @@ class RunStore:
             step.kind != kind
             or step.input != tuple(input)
             or step.state != state
-            or step.occurrence != occurrence
+            or step.occur != occurrence
             or step.given != stored_given
             or step.started_at != started_at
         ):
@@ -2978,7 +2978,7 @@ class RunStore:
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS threads (
-                    thread_id TEXT PRIMARY KEY,
+                    id TEXT PRIMARY KEY,
                     origin TEXT NOT NULL,
                     peer TEXT NOT NULL,
                     created_by_index INTEGER NOT NULL,
@@ -2999,7 +2999,7 @@ class RunStore:
                     state_target TEXT NOT NULL,
                     state_index INTEGER NOT NULL,
                     output TEXT,
-                    occurrence TEXT,
+                    occur TEXT,
                     status TEXT NOT NULL,
                     error TEXT,
                     ejected_by_target TEXT,
@@ -3090,7 +3090,7 @@ def _create_steps_table(connection: sqlite3.Connection) -> None:
             state_target TEXT NOT NULL,
             state_index INTEGER NOT NULL,
             output TEXT,
-            occurrence TEXT,
+            occur TEXT,
             given TEXT NOT NULL,
             noted TEXT NOT NULL,
             status TEXT NOT NULL,
@@ -3265,7 +3265,7 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
         label="run output",
     )
     occurrence_data = _load_optional_stored_object(
-        row["occurrence"],
+        row["occur"],
         label="run occurrence",
     )
     return RunRecord(
@@ -3283,7 +3283,7 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
             index=int(row["state_index"]),
         ),
         output=(local_from_data(output_data) if output_data is not None else None),
-        occurrence=occurrence_from_data(occurrence_data),
+        occur=occurrence_from_data(occurrence_data),
         status=cast(RunStatus, row["status"]),
         error=_load_execution_error(row["error"]),
         ejected_by=(
@@ -3305,15 +3305,15 @@ def _thread_from_row(row: sqlite3.Row) -> ThreadRecord:
     raw = dict(row)
     peer_raw = _load_json(str(raw["peer"]))
     return ThreadRecord(
-        thread_id=str(raw["thread_id"]),
+        id=str(raw["id"]),
         origin=str(raw["origin"]),
         peer=ThreadPeer.from_data(peer_raw if isinstance(peer_raw, Mapping) else None),
         created_by=ControlRef(
-            target=str(raw["thread_id"]),
+            target=str(raw["id"]),
             index=int(cast(int | str, raw["created_by_index"])),
         ),
         head=ControlRef(
-            target=str(raw["thread_id"]),
+            target=str(raw["id"]),
             index=int(cast(int | str, raw["head_index"])),
         ),
         created_at=str(raw["created_at"]),
@@ -3330,7 +3330,7 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
         label="step output",
     )
     occurrence_data = _load_optional_stored_object(
-        raw["occurrence"],
+        raw["occur"],
         label="step occurrence",
     )
     given_data = _load_stored_object(raw["given"], label="step given")
@@ -3346,7 +3346,7 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
             index=int(cast(int | str, raw["state_index"])),
         ),
         output=(local_from_data(output_data) if output_data is not None else None),
-        occurrence=occurrence_from_data(occurrence_data),
+        occur=occurrence_from_data(occurrence_data),
         given=stored_step_given_from_data(kind, given_data),
         noted=step_noted_from_data(kind, noted_data),
         status=cast(StepStatus, raw["status"]),

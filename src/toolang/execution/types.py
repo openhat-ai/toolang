@@ -45,7 +45,6 @@ from toolang.lang.ast import (
 from toolang.lang.types import Array, Struct, Value, validate_type, value_type
 
 
-RunId = str
 _EXECUTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _LOCAL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PolicyGroup = Literal["allow", "default", "limit"]
@@ -320,7 +319,7 @@ class Pointer:
         return Pointer(f"{self.value}/{suffix}")
 
     @classmethod
-    def run(cls, run_id: RunId, *path: str | int) -> Pointer:
+    def run(cls, run_id: str, *path: str | int) -> Pointer:
         """Point to one run record or a field within it."""
 
         return cls(_pointer_value(run_id, path))
@@ -786,7 +785,7 @@ class ControlRef:
 class StepPath:
     """Globally address one step within its owning run."""
 
-    run: RunId
+    run: str
     indices: tuple[int, ...]
 
     def __post_init__(self) -> None:
@@ -815,7 +814,7 @@ class StepPath:
         return cls(run=run, indices=tuple(int(item) for item in raw_indices))
 
     @classmethod
-    def from_local(cls, run: RunId, path: str) -> StepPath:
+    def from_local(cls, run: str, path: str) -> StepPath:
         """Build one step path from separately stored run and local path."""
 
         return cls.parse(f"{run}.{path}")

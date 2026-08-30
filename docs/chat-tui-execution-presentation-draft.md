@@ -617,7 +617,7 @@ The shared CLI presentation state owns terminal-independent execution facts:
 
 ```text
 ExecutionProgress
-├── runs by RunId
+├── runs by run ID
 ├── statements by StepPath
 ├── atomic calls by StepPath
 ├── completed outcomes by StepPath

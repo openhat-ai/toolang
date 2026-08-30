@@ -337,7 +337,7 @@ agic chat(_: Part[]) -> Part[]:
         assert thread_detail.runs[0].output == run_detail.output
         threads = core.store.list_threads()
         assert len(threads) == 1
-        assert threads[0].thread_id == thread_id
+        assert threads[0].id == thread_id
         assert threads[0].origin == "chat"
     finally:
         asyncio.run(core.close())
@@ -380,7 +380,7 @@ def test_stream_validation_fails_before_sse_headers(tmp_path: Path) -> None:
         assert response.status_code == 422
         assert response.json()["detail"] == "runnable query matched no items"
         assert missing_thread.status_code == 422
-        assert core.store.list_threads()[0].thread_id == thread_id
+        assert core.store.list_threads()[0].id == thread_id
         assert len(core.store.list_threads()) == 1
     finally:
         asyncio.run(core.close())

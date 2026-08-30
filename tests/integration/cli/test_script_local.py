@@ -119,7 +119,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
     store = RunStore(layout.run_store)
     try:
         threads = store.list_threads()
-        runs = store.list_runs(thread_id=threads[0].thread_id, limit=None)
+        runs = store.list_runs(thread_id=threads[0].id, limit=None)
         control = store.get_run_control(run_id=runs[0].id, index=0)
         durable_output = store.run_output(run_id=runs[0].id)
     finally:
@@ -127,7 +127,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
         asyncio.run(harness.executor.stop())
         harness.store.close()
     assert len(threads) == 1
-    assert threads[0].thread_id.startswith("script_")
+    assert threads[0].id.startswith("script_")
     assert threads[0].origin == "script"
     assert len(runs) == 1
     assert runs[0].status == "succeeded"
