@@ -484,8 +484,8 @@ def _model_call_renderables(
     message_count = len(messages) if isinstance(messages, list) else 0
     _append_model_call_section(
         lines,
-        "Conversation",
-        fact=f"{message_count} {_counted('message', message_count)}",
+        "Messages",
+        fact=str(message_count),
         width=section_width,
     )
     if isinstance(messages, list) and messages:
@@ -518,8 +518,8 @@ def _model_call_renderables(
     tool_count = len(tools) if isinstance(tools, list) else 0
     _append_model_call_section(
         lines,
-        "Available Tools",
-        fact=f"{tool_count} {_counted('tool', tool_count)}",
+        "Tools",
+        fact=str(tool_count),
         width=section_width,
     )
     if isinstance(tools, list) and tools:
@@ -594,7 +594,7 @@ def _append_model_call_section(
     heading = Text()
     heading.append(title, style="bold")
     if fact is not None:
-        heading.append(f" · {fact}", style="dim")
+        heading.append(f" {fact}", style="dim")
     remaining = line_width - cell_len(heading.plain)
     if remaining > 0:
         fill = "░" * remaining
@@ -610,10 +610,6 @@ def _append_model_call_section(
             Text(),
         )
     )
-
-
-def _counted(noun: str, count: int) -> str:
-    return noun if count == 1 else f"{noun}s"
 
 
 def _tool_signature(name: str, parameters: object) -> str:

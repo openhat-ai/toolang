@@ -150,7 +150,7 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
     assert "message: Run inspection failed." in output
     assert "\nOutput\n" not in output
     assert output_lines.count("]]>") == 2
-    assert "Available Tools · 1 tool" in output
+    assert "Tools 1" in output
     signature = (
         "[0] inspect.run(run_id: string, include?: string[], limit?: integer | null)"
     )
@@ -181,8 +181,8 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
     assert by_text[signature].style == "dim"
     for title in (
         "Instructions",
-        "Conversation · 3 messages",
-        "Available Tools · 1 tool",
+        "Messages 3",
+        "Tools 1",
         "Continuation",
     ):
         title_index = next(
@@ -196,27 +196,25 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
         assert renderables[title_index - 1].style == "dim"
         assert renderables[title_index + 1].plain == section_boundary
         assert renderables[title_index + 1].style == "dim"
-    conversation_heading = next(
+    messages_heading = next(
         renderable
         for renderable in renderables
-        if renderable.plain.startswith("Conversation · 3 messages ")
+        if renderable.plain.startswith("Messages 3 ")
     )
-    conversation_title_end = len("Conversation")
-    conversation_fact_end = len("Conversation · 3 messages")
-    assert [
-        (span.start, span.end, span.style) for span in conversation_heading.spans
-    ] == [
-        (0, conversation_title_end, "bold"),
-        (conversation_title_end, conversation_fact_end, "dim"),
-        (conversation_fact_end, 80, "dim"),
+    messages_title_end = len("Messages")
+    messages_fact_end = len("Messages 3")
+    assert [(span.start, span.end, span.style) for span in messages_heading.spans] == [
+        (0, messages_title_end, "bold"),
+        (messages_title_end, messages_fact_end, "dim"),
+        (messages_fact_end, 80, "dim"),
     ]
     tools_heading = next(
         renderable
         for renderable in renderables
-        if renderable.plain.startswith("Available Tools · 1 tool ")
+        if renderable.plain.startswith("Tools 1 ")
     )
-    tools_title_end = len("Available Tools")
-    tools_fact_end = len("Available Tools · 1 tool")
+    tools_title_end = len("Tools")
+    tools_fact_end = len("Tools 1")
     assert [(span.start, span.end, span.style) for span in tools_heading.spans] == [
         (0, tools_title_end, "bold"),
         (tools_title_end, tools_fact_end, "dim"),
@@ -265,8 +263,7 @@ def test_model_call_messages_count_down_to_the_current_result() -> None:
     )
 
     assert any(
-        renderable.plain.startswith("Conversation · 10 messages ")
-        for renderable in renderables
+        renderable.plain.startswith("Messages 10 ") for renderable in renderables
     )
     assert [
         renderable.plain
