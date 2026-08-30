@@ -189,15 +189,13 @@ def messages_payload(
 ) -> dict[str, object]:
     """Encode one canonical request for Anthropic Messages."""
 
-    native_schema = (
-        request.structured_output if target.structured_output is True else None
-    )
+    native_schema = request.output_schema if target.structured_output is True else None
     instructions = (
         append_structured_output_directive(
             request.instructions,
-            request.structured_output,
+            request.output_schema,
         )
-        if request.structured_output is not None and native_schema is None
+        if request.output_schema is not None and native_schema is None
         else request.instructions
     )
     options = dict(target.options)
@@ -246,7 +244,7 @@ def messages_payload(
     _apply_structured_output(
         payload,
         options,
-        request.structured_output,
+        request.output_schema,
         native_schema=native_schema,
     )
     payload.update(options)

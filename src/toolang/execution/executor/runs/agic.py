@@ -62,7 +62,7 @@ class _OutputBinding:
 
     type_name: str | None = None
     structs: Mapping[str, StructDecl] = field(default_factory=dict)
-    structured_output: dict[str, object] | None = None
+    output_schema: dict[str, object] | None = None
 
 
 @dataclass(slots=True)
@@ -197,7 +197,7 @@ async def execute(
     output_binding = _OutputBinding(
         type_name=prepared.agic.output,
         structs=MappingProxyType(dict(output_structs)),
-        structured_output=output_json_schema(
+        output_schema=output_json_schema(
             prepared.agic.output,
             structs=output_structs,
         ),

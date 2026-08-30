@@ -640,7 +640,7 @@ def test_protocol_adapters_map_normalized_structured_output() -> None:
     request = ModelCall(
         instructions="Keep this logical instruction unchanged.",
         messages=[Message.user("Decide.")],
-        structured_output=schema,
+        output_schema=schema,
     )
 
     chat_payload = chat_completions.chat_completion_payload(
@@ -743,7 +743,7 @@ def test_openai_adapters_fall_back_for_non_strict_object_schemas(
     request = ModelCall(
         instructions="Keep this logical instruction unchanged.",
         messages=[Message.user("Decide.")],
-        structured_output=schema,
+        output_schema=schema,
     )
     target = ModelTarget(
         ref="openai/model",
@@ -794,7 +794,7 @@ def test_openai_adapters_inline_strict_root_struct_schema() -> None:
     request = ModelCall(
         instructions="",
         messages=[Message.user("Decide.")],
-        structured_output=schema,
+        output_schema=schema,
     )
     target = ModelTarget(
         ref="openai/model",
@@ -833,7 +833,7 @@ def test_generate_content_falls_back_for_tools_before_gemini_3() -> None:
         instructions="Keep this logical instruction unchanged.",
         messages=[Message.user("Decide.")],
         tools=(_tool(),),
-        structured_output=schema,
+        output_schema=schema,
     )
     target = ModelTarget(
         ref="google/gemini-2.5-flash",
@@ -860,7 +860,7 @@ def test_generate_content_uses_native_schema_with_tools_for_gemini_3() -> None:
         instructions="",
         messages=[Message.user("Decide.")],
         tools=(_tool(),),
-        structured_output=schema,
+        output_schema=schema,
     )
     target = ModelTarget(
         ref="google/gemini-3.1-pro-preview",
@@ -891,7 +891,7 @@ def test_chat_completions_falls_back_for_deepseek_json_output() -> None:
     request = ModelCall(
         instructions="Keep this logical instruction unchanged.",
         messages=[Message.user("Decide.")],
-        structured_output=schema,
+        output_schema=schema,
     )
     target = ModelTarget(
         ref="deepseek/deepseek-v4-pro",
@@ -922,7 +922,7 @@ def test_messages_falls_back_without_native_structured_output_capability(
     request = ModelCall(
         instructions="Keep this logical instruction unchanged.",
         messages=[Message.user("Decide.")],
-        structured_output=schema,
+        output_schema=schema,
     )
     target = ModelTarget(
         ref="anthropic/model",
@@ -952,7 +952,7 @@ def test_protocol_adapters_fall_back_without_advertised_model_capability() -> No
     request = ModelCall(
         instructions="Keep this logical instruction unchanged.",
         messages=[Message.user("Decide.")],
-        structured_output=schema,
+        output_schema=schema,
     )
     target = ModelTarget(
         ref="provider/model",
@@ -1056,7 +1056,7 @@ def test_protocol_adapters_reject_conflicting_structured_output_options(
     request = ModelCall(
         instructions="",
         messages=[Message.user("hello")],
-        structured_output={"type": "boolean"},
+        output_schema={"type": "boolean"},
     )
 
     with pytest.raises(ToolangError, match="conflicts with normalized structured"):

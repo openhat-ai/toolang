@@ -301,10 +301,10 @@ agic calculate(_: Text) -> Boolean:
             )
 
             assert record.status == "succeeded"
-            assert harness.adapter.invocations[0].call.structured_output == {
+            assert harness.adapter.invocations[0].call.output_schema == {
                 "type": "boolean"
             }
-            assert harness.adapter.invocations[1].call.structured_output == {
+            assert harness.adapter.invocations[1].call.output_schema == {
                 "type": "boolean"
             }
             assert harness.adapter.invocations[1].call.continuation == {
@@ -339,7 +339,7 @@ agic calculate(_: Text) -> Boolean:
         assert isinstance(model_steps[0].noted, ModelStepNoted)
         assert isinstance(model_steps[1].noted, ModelStepNoted)
         assert isinstance(model_steps[0].given, StoredModelStepGiven)
-        assert model_steps[0].given.call.structured_output == {"type": "boolean"}
+        assert model_steps[0].given.call.output_schema == {"type": "boolean"}
         assert model_steps[0].noted.continuation == {"cursor": "turn-1"}
         assert model_steps[1].noted.continuation == {"cursor": "turn-2"}
 
@@ -360,7 +360,7 @@ agic calculate(_: Text) -> Boolean:
         reopened.close()
 
 
-def test_legacy_stored_model_call_defaults_structured_output_to_none() -> None:
+def test_legacy_stored_model_call_schema_fields_remain_readable() -> None:
     legacy = stored_step_given_from_data(
         "model",
         {
@@ -375,15 +375,32 @@ def test_legacy_stored_model_call_defaults_structured_output_to_none() -> None:
     )
 
     assert isinstance(legacy, StoredModelStepGiven)
-    assert legacy.call.structured_output is None
+    assert legacy.call.output_schema is None
     assert legacy.call.continuation == {"cursor": "legacy"}
     assert stored_step_given_to_data("model", legacy)["call"] == {
         "instructions": "instruction-ref",
         "messages": [],
         "tools": None,
-        "structured_output": None,
+        "output_schema": None,
         "cont": {"cursor": "legacy"},
     }
+
+    structured_output_legacy = stored_step_given_from_data(
+        "model",
+        {
+            "model": "test/model",
+            "call": {
+                "instructions": "instruction-ref",
+                "messages": [],
+                "tools": None,
+                "structured_output": {"type": "boolean"},
+                "cont": None,
+            },
+        },
+    )
+
+    assert isinstance(structured_output_legacy, StoredModelStepGiven)
+    assert structured_output_legacy.call.output_schema == {"type": "boolean"}
 
 
 @pytest.mark.parametrize(

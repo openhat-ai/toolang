@@ -1534,8 +1534,8 @@ agic target(_: Text) -> Boolean:
             assert root.status == "succeeded", root.error
             assert root.output is not None
             assert harness.store.resolve_value(root.output.value) is True
-            assert harness.adapter.invocations[0].call.structured_output == {}
-            assert harness.adapter.invocations[1].call.structured_output == {
+            assert harness.adapter.invocations[0].call.output_schema == {}
+            assert harness.adapter.invocations[1].call.output_schema == {
                 "type": "boolean"
             }
 

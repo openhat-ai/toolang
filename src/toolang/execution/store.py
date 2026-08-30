@@ -2499,10 +2499,8 @@ class RunStore:
                 instructions=instruction_ref,
                 messages=tuple(message_refs),
                 tools=toolset_ref,
-                structured_output=(
-                    dict(call.structured_output)
-                    if call.structured_output is not None
-                    else None
+                output_schema=(
+                    dict(call.output_schema) if call.output_schema is not None else None
                 ),
                 continuation=(
                     dict(call.continuation) if call.continuation is not None else None
@@ -2542,10 +2540,8 @@ class RunStore:
             instruction_ref = call.instructions
             message_refs = call.messages
             toolset_ref = call.tools
-            structured_output = (
-                dict(call.structured_output)
-                if call.structured_output is not None
-                else None
+            output_schema = (
+                dict(call.output_schema) if call.output_schema is not None else None
             )
             continuation = (
                 dict(call.continuation) if call.continuation is not None else None
@@ -2554,7 +2550,7 @@ class RunStore:
                 instruction_ref,
                 message_refs,
                 toolset_ref,
-                structured_output,
+                output_schema,
                 continuation,
             )
             instruction_hashes.add(instruction_ref)
@@ -2570,7 +2566,7 @@ class RunStore:
             instruction_ref,
             message_refs,
             toolset_ref,
-            structured_output,
+            output_schema,
             continuation,
         ) in references.items():
             instructions = texts.get(instruction_ref)
@@ -2587,7 +2583,7 @@ class RunStore:
                 instructions=instructions,
                 messages=[messages[item] for item in message_refs],
                 tools=toolsets[toolset_ref] if toolset_ref is not None else (),
-                structured_output=structured_output,
+                output_schema=output_schema,
                 continuation=continuation,
             )
         return calls

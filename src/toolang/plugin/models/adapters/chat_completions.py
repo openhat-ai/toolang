@@ -247,8 +247,8 @@ def chat_completion_payload(
     """Build one Chat Completions API payload."""
 
     native_schema = (
-        openai_strict_object_schema(request.structured_output)
-        if request.structured_output is not None
+        openai_strict_object_schema(request.output_schema)
+        if request.output_schema is not None
         and target.structured_output is True
         and target.provider.lower() != "deepseek"
         else None
@@ -256,9 +256,9 @@ def chat_completion_payload(
     instructions = (
         append_structured_output_directive(
             request.instructions,
-            request.structured_output,
+            request.output_schema,
         )
-        if request.structured_output is not None and native_schema is None
+        if request.output_schema is not None and native_schema is None
         else request.instructions
     )
     payload: dict[str, Any] = {
@@ -276,7 +276,7 @@ def chat_completion_payload(
         payload.update(options)
     _apply_structured_output(
         payload,
-        request.structured_output,
+        request.output_schema,
         native_schema=native_schema,
     )
     _apply_reasoning(payload, target)

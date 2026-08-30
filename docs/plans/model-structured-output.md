@@ -2,7 +2,9 @@
 
 ## Status
 
-Approved by the human on 2026-08-30. Implementation is split into two changes.
+Approved by the human on 2026-08-30. A follow-up vocabulary and inspect-layout
+refinement was approved on the same date. Implementation is split into three
+changes.
 
 ## Goal
 
@@ -16,7 +18,7 @@ key in canonical and durable payloads.
 
 ## Success Criteria
 
-- `ModelCall.structured_output` is either the final value's normalized JSON
+- `ModelCall.output_schema` is either the final value's normalized JSON
   Schema or `None`; it has no wrapper or Agic/type-name identity.
 - The output contract is resolved once when an Agic invocation starts and is
   identical on every model call in that invocation.
@@ -30,7 +32,7 @@ key in canonical and durable payloads.
 - Every newly persisted model call records its exact structured-output schema;
   historical calls without the field remain readable.
 - The explicit `model-call` inspect projector presents the schema as an
-  independent `Structured Output` section in a separate implementation change.
+  independent `Output Contract` section before the selected Step output.
 - The default offline verification suite passes after each implementation
   change.
 
@@ -67,11 +69,11 @@ class ModelCall:
     instructions: str
     messages: list[Message]
     tools: tuple[ToolDefinition, ...] = ()
-    structured_output: dict[str, object] | None = None
+    output_schema: dict[str, object] | None = None
     continuation: ModelContinuation | None = None
 ```
 
-`structured_output` describes the expected final JSON value directly. There is
+`output_schema` describes the expected final JSON value directly. There is
 no `ModelStructuredOutput` type and no field for an Agic name, Toolang type
 name, schema name, or format label. Internal `$defs` names and `$ref` targets
 remain valid JSON Schema implementation details.
@@ -87,7 +89,7 @@ stable value `output`; it is not added to `ModelCall`.
 Execution derives the schema from the invocation's authored output type and the
 same `StructDecl` graph used by `coerce_output`:
 
-| Toolang output | `structured_output` |
+| Toolang output | `output_schema` |
 | --- | --- |
 | absent, `Part`, `Part[]`, or `Text` | `None` |
 | `Number` | `{"type": "number"}` |
@@ -132,13 +134,13 @@ starts its own invocation and resolves its own contract.
 The existing repair policy remains: `Part`, `Part[]`, and `Text` are not
 repaired; structured and scalar outputs may make one additional model call when
 the model-call limit permits it. Repair disables tools and retains the same
-`structured_output` value. The corrective user message may explain the prior
+`output_schema` value. The corrective user message may explain the prior
 validation failure, but the schema itself is not copied into logical
 instructions or messages.
 
 ## Adapter Boundary
 
-Each built-in adapter consumes `ModelCall.structured_output` when constructing
+Each built-in adapter consumes `ModelCall.output_schema` when constructing
 the actual provider request:
 
 - if the protocol has a native JSON Schema output control and the resolved model
@@ -160,7 +162,7 @@ the complete schema. Continuation never owns or implies the schema.
 
 Normalized structured output owns the provider fields used for output format.
 If `ModelTarget.options` also supplies the same adapter-owned field while
-`structured_output` is not `None`, request construction fails with a clear
+`output_schema` is not `None`, request construction fails with a clear
 conflict error rather than silently choosing one value. Options remain
 unchanged when no normalized schema is present.
 
@@ -180,7 +182,7 @@ contract.
 The authored runtime context may continue to expose `runnable.output` for
 general template compatibility, but built-in instructions do not use it as the
 model output contract. Custom prose that mentions an output type is ordinary
-authored instruction text and does not override `structured_output`.
+authored instruction text and does not override `output_schema`.
 
 ## Continuation Naming
 
@@ -217,54 +219,56 @@ New normalized model-call JSON has exactly these top-level fields:
   "instructions": "...",
   "messages": [],
   "tools": [],
-  "structured_output": null,
+  "output_schema": null,
   "cont": null
 }
 ```
 
-The compact stored model Step call adds the same `structured_output` field next
+The compact stored model Step call adds the same `output_schema` field next
 to its existing content references and `cont`. The schema is stored inline as
 canonical JSON-compatible data. It is expected to be materially smaller than
 message and toolset history, and this avoids a runs database schema change or a
 new content-address table. Repeated schemas may be deduplicated in a future
 storage-only change without altering normalized model calls.
 
-Readers accept both the legacy four-field stored call and the new five-field
-shape. A missing `structured_output` field decodes as `None`; readers never try
-to recover a schema from historical instruction text. Writers always emit the
-new field, including explicit `null`, so absence unambiguously identifies
-legacy data. Existing `cont` data is read and written unchanged, and no runs
-database migration is required.
+Readers accept the legacy four-field stored call, the briefly emitted
+`structured_output` field, and the final `output_schema` field. A missing schema
+field decodes as `None`; readers never try to recover a schema from historical
+instruction text. Writers emit only `output_schema`, including explicit `null`.
+Existing `cont` data is read and written unchanged, and no runs database
+migration is required.
 
 ## Inspect Presentation
 
-The second implementation change extends only the explicit `model-call`
-projector. Its human section order becomes:
+The explicit `model-call` projector uses this human section order:
 
 ```text
 Instructions
 Messages N
+Output Contract
+Output
 Tools N
-Structured Output
 Continuation
 ```
 
-`Structured Output` renders the recorded JSON Schema as indented JSON within
-the existing 80-column section treatment. `None` renders a concise dim `None`.
-The section is independent of Instructions and Messages; `[=] assistant`
-continues to represent the selected model Step's raw response. It is not the
-validated logical result.
+`Output Contract` renders the recorded JSON Schema as indented JSON within the
+existing 80-column section treatment. `None` renders a concise dim `None`.
+`Output` independently renders the selected model Step's raw response with the
+same Message and Part presentation used by `Messages`; `[=] assistant` remains
+its message heading. A missing response renders dim `No output.`. This response
+is not the validated logical result. Tools and continuation follow the output
+because they are lower-frequency review material.
 
-Canonical `--json` uses `model_call_to_data()` and includes
-`structured_output` without presentation transformation. Historical calls
-whose field was absent therefore project `structured_output: null`. Projector
-dispatch, subject grammar, message-part rendering, result attachment, and
-footer behavior defined by the existing inspect plans do not change.
+Canonical `--json` uses `model_call_to_data()` and includes `output_schema`
+without presentation transformation. Historical calls whose field was absent
+or named `structured_output` therefore project the final `output_schema` key.
+Projector dispatch, subject grammar, message-part rendering, result attachment,
+and footer behavior defined by the existing inspect plans do not change.
 
 ## Delivery Sequence And Scope
 
 After this definition PR is approved and merged, implementation is split into
-two ready pull requests.
+three ready pull requests.
 
 ### 1. Core Structured Output Chain
 
@@ -303,6 +307,26 @@ Excluded:
 - changes to other projectors or subject navigation; and
 - rendering the final parsed Toolang value.
 
+### 3. Output Schema Vocabulary And Review Layout
+
+Included:
+
+- rename the typed, canonical, and durable call-level schema field to
+  `output_schema` while retaining `structured_output` as the model capability;
+- read both the briefly emitted `structured_output` field and older calls with
+  no schema field, while writing only `output_schema`;
+- rename the human schema section to `Output Contract`;
+- place the selected Step response in an independent `Output` section using the
+  existing Message and Part renderer; and
+- order human sections as Instructions, Messages, Output Contract, Output,
+  Tools, and Continuation.
+
+Excluded:
+
+- changes to schema generation, provider request behavior, or output coercion;
+- a parsed logical-result section or projector; and
+- changes to subject navigation or other projectors.
+
 ## Design Touchpoints
 
 Core change:
@@ -333,6 +357,16 @@ Inspect change:
   structured, absent, and legacy schemas in human and JSON modes.
 - `docs/api.md`: document the new model-call field and human section.
 
+Vocabulary and layout follow-up:
+
+- `src/toolang/base/types/run.py`, execution persistence, and built-in adapters:
+  use `output_schema` for the call-level contract and keep compatibility at read
+  boundaries;
+- `src/toolang/cli/toolang/commands/inspect.py`: reorder sections and render the
+  selected Step response under `Output`; and
+- focused execution, adapter, and CLI tests: cover new writes, both legacy
+  shapes, exact JSON, absent output, and unchanged Message/Part rendering.
+
 Exact additional fixture and test files may change with the implementation,
 but each pull request remains confined to its concern.
 
@@ -358,22 +392,26 @@ but each pull request remains confined to its concern.
    byte-for-byte unchanged.
 7. Valid structured text still coerces to the existing Toolang runtime value;
    invalid text still follows the existing repair limit and error behavior.
-8. New model Steps round-trip `structured_output` exactly and keep the durable
+8. New model Steps round-trip `output_schema` exactly and keep the durable
    `cont` key; legacy stored calls without the schema rebuild with `None`.
 9. Public typed call, result, record, noted, executor, and adapter paths use
    `continuation`, with no remaining typed `.cont` access.
 10. The complete default verification passes.
 
-### Inspect Change
+### Final Inspect And Vocabulary Change
 
-1. Human `model-call` output places `Structured Output` between `Tools N` and
-   `Continuation` and preserves all existing message, tool-part, and `[=]`
-   rendering.
-2. Object, array, scalar, empty (`{}`), and absent schemas render without
+1. Typed model calls, adapters, diagnostics, and durable references use
+   `output_schema`; model capability metadata remains `structured_output`.
+2. Writers emit only `output_schema`; readers accept `output_schema`, the
+   briefly emitted `structured_output`, and an absent schema field.
+3. Human `model-call` output orders Instructions, Messages, Output Contract,
+   Output, Tools, and Continuation, preserving existing Message, Part, and `[=]`
+   rendering inside the relevant sections.
+4. Object, array, scalar, empty (`{}`), and absent schemas render without
    losing JSON Schema keys or values.
-3. `--json` contains the exact recorded schema and `structured_output: null`
+5. `--json` contains the exact recorded schema and `output_schema: null`
    for unstructured or legacy calls.
-4. Other subjects and projectors remain unchanged, and the complete default
+6. Other subjects and projectors remain unchanged, and the complete default
    verification passes.
 
 ## Risks And Open Questions
@@ -388,6 +426,11 @@ repair remain necessary.
 The typed `continuation` rename requires external adapter source updates. This
 is an intentional source-level break; retaining compact `cont` payloads avoids
 turning it into a durable-data migration.
+
+The typed `ModelCall.output_schema` rename is also a source-level adapter break;
+there is no Python `.structured_output` alias because that name is reserved for
+model capability metadata. Canonical and durable readers retain the old field
+only to keep runs written by the preceding implementation readable.
 
 Inline schema persistence duplicates a stable schema across model Steps. That
 bounded storage cost is accepted to keep the first implementation composable

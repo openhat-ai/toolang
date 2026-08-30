@@ -271,7 +271,7 @@ adapter, endpoint, key environment, headers, options, and scope.
 ## Runtime Calls and Accounting
 
 `ModelCall` contains provider-neutral instructions, messages, tools, an optional
-normalized JSON Schema in `structured_output`, and optional opaque
+normalized JSON Schema in `output_schema`, and optional opaque
 `continuation` data. Built-in adapters translate the schema and continuation to
 their provider request fields. Native schema controls are used only when the
 resolved model advertises structured-output support; other targets receive the

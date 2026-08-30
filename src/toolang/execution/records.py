@@ -378,7 +378,7 @@ class ModelCallRefs:
     instructions: str
     messages: tuple[str, ...]
     tools: str | None
-    structured_output: dict[str, object] | None
+    output_schema: dict[str, object] | None
     continuation: ModelContinuation | None
 
     def __post_init__(self) -> None:
@@ -390,10 +390,8 @@ class ModelCallRefs:
             not isinstance(self.tools, str) or not self.tools
         ):
             raise ValueError("stored model tools require a reference or None")
-        if self.structured_output is not None and not isinstance(
-            self.structured_output, dict
-        ):
-            raise TypeError("stored model structured output requires an object or None")
+        if self.output_schema is not None and not isinstance(self.output_schema, dict):
+            raise TypeError("stored model output schema requires an object or None")
         if self.continuation is not None and not isinstance(self.continuation, dict):
             raise TypeError("stored model continuation requires an object or None")
 
@@ -1053,17 +1051,18 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
     allowed_call_fields = {
         frozenset({"cont", "instructions", "messages", "tools"}),
         frozenset({"cont", "instructions", "messages", "structured_output", "tools"}),
+        frozenset({"cont", "instructions", "messages", "output_schema", "tools"}),
     }
     if not isinstance(raw_call, Mapping) or set(raw_call) not in allowed_call_fields:
         raise ValueError(
             "stored model call requires: cont, instructions, messages, tools, "
-            "and optional structured_output"
+            "and optional output_schema"
         )
     call = cast(Mapping[str, object], raw_call)
     instructions = call["instructions"]
     raw_messages = call["messages"]
     raw_tools = call["tools"]
-    raw_structured_output = call.get("structured_output")
+    raw_output_schema = call.get("output_schema", call.get("structured_output"))
     raw_cont = call["cont"]
     if not isinstance(instructions, str) or not instructions:
         raise ValueError("stored model instructions require a reference")
@@ -1075,10 +1074,8 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
         raise ValueError("stored model messages require references")
     if raw_tools is not None and not isinstance(raw_tools, str):
         raise ValueError("stored model tools must be a reference or null")
-    if raw_structured_output is not None and not isinstance(
-        raw_structured_output, Mapping
-    ):
-        raise ValueError("stored model structured output must be an object or null")
+    if raw_output_schema is not None and not isinstance(raw_output_schema, Mapping):
+        raise ValueError("stored model output schema must be an object or null")
     if raw_cont is not None and not isinstance(raw_cont, Mapping):
         raise ValueError("stored model cont must be an object or null")
     return StoredModelStepGiven(
@@ -1087,9 +1084,9 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
             instructions=instructions,
             messages=tuple(cast(Sequence[str], raw_messages)),
             tools=raw_tools,
-            structured_output=(
-                dict(cast(Mapping[str, object], raw_structured_output))
-                if isinstance(raw_structured_output, Mapping)
+            output_schema=(
+                dict(cast(Mapping[str, object], raw_output_schema))
+                if isinstance(raw_output_schema, Mapping)
                 else None
             ),
             continuation=(
@@ -1116,9 +1113,9 @@ def stored_step_given_to_data(
                 "instructions": given.call.instructions,
                 "messages": list(given.call.messages),
                 "tools": given.call.tools,
-                "structured_output": (
-                    dict(given.call.structured_output)
-                    if given.call.structured_output is not None
+                "output_schema": (
+                    dict(given.call.output_schema)
+                    if given.call.output_schema is not None
                     else None
                 ),
                 "cont": (
@@ -1524,6 +1521,12 @@ def _required_dict(value: object, *, label: str) -> dict[str, Any]:
 def model_call_from_data(data: object) -> ModelCall:
     """Parse one normalized model call from durable data."""
 
+    if isinstance(data, Mapping):
+        payload = dict(data)
+        if "output_schema" not in payload and "structured_output" in payload:
+            payload["output_schema"] = payload["structured_output"]
+        payload.pop("structured_output", None)
+        data = payload
     return _MODEL_CALL_ADAPTER.validate_python(data)
 
 
@@ -1534,8 +1537,8 @@ def model_call_to_data(call: ModelCall) -> dict[str, Any]:
         "instructions": call.instructions,
         "messages": [message.to_data() for message in call.messages],
         "tools": [tool.to_data() for tool in call.tools],
-        "structured_output": (
-            dict(call.structured_output) if call.structured_output is not None else None
+        "output_schema": (
+            dict(call.output_schema) if call.output_schema is not None else None
         ),
         "cont": (dict(call.continuation) if call.continuation is not None else None),
     }
