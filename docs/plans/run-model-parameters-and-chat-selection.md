@@ -12,8 +12,8 @@ structured model-call parameter.
 
 ## Success Criteria
 
-- Generated model selectors use `provider/model_id` without a redundant
-  `[provider]` suffix.
+- Generated model refs use `provider/model_id` without a redundant `[provider]`
+  suffix.
 - Model-list metadata and run requests use the same typed parameter grouping.
 - A run request is one self-contained submission, not a transport for mutable
   Chat session defaults or fallback rules.
@@ -26,7 +26,7 @@ structured model-call parameter.
 
 In scope:
 
-- effective model-list selectors and model parameter metadata;
+- effective model-list refs, parameter metadata, and selector compatibility;
 - the core, authored HTTP, direct HTTP, local, and remote run-request boundary;
 - Chat session-to-request construction and queued submission snapshots;
 - reasoning-effort selection, validation, persistence, retry, and rerun;
@@ -63,69 +63,95 @@ ReasoningEffort = Literal[
 
 
 @dataclass(frozen=True, slots=True)
-class ModelReasoningParameters:
+class ReasoningParameters:
     effort: ReasoningEffort | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class ModelCallParameters:
-    reasoning: ModelReasoningParameters | None = None
+class ModelParameters:
+    reasoning: ReasoningParameters | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ModelRequest:
-    selector: str
-    parameters: ModelCallParameters = ModelCallParameters()
+    ref: str
+    parameters: ModelParameters = ModelParameters()
 
 
 @dataclass(frozen=True, slots=True)
-class RunPolicyLayer:
-    commands: tuple[RunOverride, ...]
+class RunnableRequest:
+    ref: str
+    input: RunnableInputRaw
+
+
+@dataclass(frozen=True, slots=True)
+class RunPolicy:
+    allow: tuple[AgentCeiling, ...] = ()
+    limits: RunLimits = RunLimits()
 
 
 @dataclass(frozen=True, slots=True)
 class RunRequest:
-    thread: str
+    thread_id: str
     request_id: str
-    runnable: str
+    runnable: RunnableRequest
     model: ModelRequest | None
-    policy: tuple[RunPolicyLayer, ...]
-    input: RunnableInputRaw
+    policy: RunPolicy
 ```
 
-`runnable` is concrete. `model` is `None` only when the runnable requires no
-model. `RunPolicyLayer` contains only request-scoped allow and limit controls;
-ordered layers retain ceiling intersection and limit precedence. Default model
-and runnable commands are materialized before construction and never appear in
-`policy`.
+`thread_id` retains the existing record field name. `runnable.ref` is concrete,
+and its input is grouped with the runnable it invokes. `model` is `None` only
+when that runnable requires no model. Both request selections use `ref` because
+they identify one target; `selector` remains terminology for list-filter syntax,
+not a request field.
+
+`RunPolicy` exposes each policy concept as a typed field rather than carrying
+generic commands. `allow` retains ordered `AgentCeiling` values because separate
+session and input-local ceilings intersect and cannot always be flattened into
+one selector list. `limits` is the fully materialized session value after
+input-local overrides. These are the only request policy groups now; a future
+group must receive its own named field.
 
 The current `session_commands` and `runnable_fallbacks` fields are removed.
-Call sites select one runnable, snapshot the session model and parameters, apply
-input-local overrides to that copy, and build the request without mutating the
-session. Queued input retains this snapshot even if the UI changes later.
+Call sites select one runnable, snapshot the session model, parameters, allow
+ceilings, and limits, apply input-local overrides to that copy, and build the
+request without mutating the session. Default model and runnable commands are
+materialized into their request refs and never appear in `policy`. Queued input
+retains this snapshot even if the UI changes later.
 
 Authored and direct HTTP requests expose the same selection shape and differ
 only in their existing input representation:
 
 ```json
 {
-  "thread": "term_123",
+  "thread_id": "term_123",
   "request_id": "term_request_123",
-  "runnable": "agic:chat",
+  "runnable": {
+    "ref": "agic:chat",
+    "input": {"primary": "Hello", "named": []}
+  },
   "model": {
-    "selector": "openai/gpt-5",
+    "ref": "openai/gpt-5",
     "parameters": {
       "reasoning": {"effort": "high"}
     }
   },
-  "policy": [],
-  "input": {"primary": "Hello", "named": []}
+  "policy": {
+    "allow": [],
+    "limits": {
+      "agic_model_calls": 200,
+      "agic_tool_calls": null,
+      "tokens": null,
+      "cost": null,
+      "time": null
+    }
+  }
 }
 ```
 
 The parameter schema is closed; unknown fields fail. A future `temperature`
-field belongs directly under `ModelCallParameters`, while reasoning-owned
-fields remain grouped under `reasoning`. Provider wire options remain separate.
+field belongs directly under `ModelParameters`, while reasoning-owned fields
+remain grouped under `reasoning`. Provider wire options remain separate.
 
 ## Model List Contract
 
@@ -134,7 +160,7 @@ not duplicated models or selector filters:
 
 ```json
 {
-  "selector": "openai/gpt-5",
+  "ref": "openai/gpt-5",
   "name": "GPT-5",
   "provider": "openai",
   "parameters": {
@@ -150,13 +176,13 @@ Efforts are distinct non-empty values in catalog order from
 `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `default`. Missing
 support produces an empty effort list.
 
-Generated selectors use exact catalog identity. Existing authored provider
-filters remain accepted for one compatibility cycle, but lists and diagnostics
-do not generate `[provider]`.
+Generated refs use exact catalog identity. Existing authored provider filters
+remain accepted as selector-list input for one compatibility cycle, but lists,
+requests, and diagnostics do not generate `[provider]`.
 
 ## Resolution and Persistence
 
-Preparation resolves `model.selector`, then validates
+Preparation resolves `model.ref`, then validates
 `model.parameters.reasoning.effort` against the selected model metadata. An
 unsupported value fails before acceptance and reports the model and allowed
 values. Toolang never guesses a default or nearest effort.
@@ -216,25 +242,26 @@ same model-list payload and send the same materialized run request.
 ## Implementation Touchpoints
 
 - `src/toolang/base/types/model.py` for model request and parameter vocabulary;
+- `src/toolang/base/types/policy.py` for the explicit request policy fields;
 - `src/toolang/execution/schemas.py`, `calls.py`, policy resolution, preparation,
   and retry/rerun persistence;
 - `src/toolang/api/schemas.py`, conversion, model projection, and run routers;
-- `src/toolang/plugin/models/resolution.py` for clean selectors, parameter
-  metadata, and effort application;
+- `src/toolang/plugin/models/resolution.py` for clean refs, legacy selector
+  compatibility, parameter metadata, and effort application;
 - `src/toolang/cli/toolang/commands/chat/` for session state, submission
   construction, queue snapshots, commands, picker, and status;
 - model, API, Chat, and input-syntax documentation plus focused tests.
 
 ## Acceptance Tests
 
-1. Effective lists generate exact catalog selectors and structured parameter
-   metadata; legacy provider-filter input still resolves.
+1. Effective lists generate exact catalog refs and structured parameter
+   metadata; legacy provider-filter selector input still resolves.
 2. Core and HTTP requests round-trip the grouped model request, reject unknown
-   fields, require a concrete runnable, and contain no session or fallback
-   fields.
+   fields, preserve `thread_id`, group each runnable with its input, require a
+   concrete runnable ref, and contain no session or fallback fields.
 3. Submission building applies session and input-local choices without mutating
-   session state and preserves request policy layer semantics locally and
-   remotely.
+   session state and materializes named allow and limit policy fields locally
+   and remotely while retaining allow-ceiling intersection.
 4. Valid effort reaches the target, adapter, accounting, retry, and rerun;
    missing effort preserves defaults; unsupported effort fails before
    acceptance.
