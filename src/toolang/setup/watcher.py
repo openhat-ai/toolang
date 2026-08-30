@@ -73,6 +73,9 @@ class SetupWatcher:
         self._adapters: dict[str, ModelAdapter] = {}
         self._tools: dict[str, AgentTool] = {}
         self._static_catalog: ModelCatalogSnapshot | None = None
+        self._additional_catalogs: (
+            tuple[tuple[str, ModelCatalogSnapshot], ...] | None
+        ) = None
         self._catalog_identity: tuple[Path, int, int, int, int] | None = None
         self._setup: AgentSetup | None = None
         self._refresh_lock = asyncio.Lock()
@@ -159,10 +162,35 @@ class SetupWatcher:
                 for name in ("ollama", "llama_cpp")
                 if name in catalogs
             ) + tuple(catalogs[name] for name in sorted(catalogs))
+            additional_snapshots = tuple(
+                await asyncio.gather(
+                    *(catalog.snapshot() for catalog in ordered_catalogs)
+                )
+            )
+            additional_catalogs = tuple(
+                (catalog.name, snapshot)
+                for catalog, snapshot in zip(
+                    ordered_catalogs,
+                    additional_snapshots,
+                    strict=True,
+                )
+            )
+            if (
+                self._setup is not None
+                and not force
+                and not config_changed
+                and not envs_changed
+                and not catalog_changed
+                and additional_catalogs == self._additional_catalogs
+            ):
+                return self._setup
             merged = await MergedModelCatalog(
                 (
                     _SnapshotModelCatalog(static),
-                    *ordered_catalogs,
+                    *(
+                        _SnapshotModelCatalog(snapshot, name=name)
+                        for name, snapshot in additional_catalogs
+                    ),
                 )
             ).snapshot()
             providers = configure_catalog_providers(
@@ -202,6 +230,7 @@ class SetupWatcher:
                 limits=limits,
             )
             self._config = config_value
+            self._additional_catalogs = additional_catalogs
             self._catalog_identity = identity
             if self._setup is not None and not force and setup == self._setup:
                 return self._setup

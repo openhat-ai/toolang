@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from toolang.base.protocols.model import ModelCatalog
-from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
+from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelInfo, Provider
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.adapters.responses import ResponsesModelAdapter
 from toolang.plugin.models.catalog import ModelsDevModelCatalog
@@ -80,12 +80,19 @@ def test_setup_watcher_reuses_static_parse_and_reprobes_local_sources(
     _write_catalog(tmp_path / "models.json", ("one",))
     parse_calls = 0
     local_calls = 0
-    original = ModelsDevModelCatalog.snapshot
+    model_info_calls = 0
+    original_snapshot = ModelsDevModelCatalog.snapshot
+    original_model_info = watcher_module.model_info_from_catalog
 
     async def count_parse(self: ModelsDevModelCatalog) -> ModelCatalogSnapshot:
         nonlocal parse_calls
         parse_calls += 1
-        return await original(self)
+        return await original_snapshot(self)
+
+    def count_model_info(model: Model) -> ModelInfo:
+        nonlocal model_info_calls
+        model_info_calls += 1
+        return original_model_info(model)
 
     async def count_local(self: object) -> ModelCatalogSnapshot:
         nonlocal local_calls
@@ -98,6 +105,7 @@ def test_setup_watcher_reuses_static_parse_and_reprobes_local_sources(
     monkeypatch.setattr(ModelsDevModelCatalog, "snapshot", count_parse)
     monkeypatch.setattr(OllamaModelCatalog, "snapshot", count_local)
     monkeypatch.setattr(LlamaCppModelCatalog, "snapshot", count_local)
+    monkeypatch.setattr(watcher_module, "model_info_from_catalog", count_model_info)
     watcher = _watcher(
         monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"}, patch_local=False
     )
@@ -110,6 +118,7 @@ def test_setup_watcher_reuses_static_parse_and_reprobes_local_sources(
     assert forced is not first
     assert parse_calls == 1
     assert local_calls == 6
+    assert model_info_calls == 2
 
 
 def test_setup_watcher_detects_local_models_without_force(
