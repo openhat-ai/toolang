@@ -143,7 +143,9 @@ def generate_content_payload(
 ) -> dict[str, object]:
     """Encode one canonical request for Gemini Generate Content."""
 
-    native_schema = request.structured_output
+    native_schema = (
+        request.structured_output if target.structured_output is True else None
+    )
     if (
         native_schema is not None
         and request.tools

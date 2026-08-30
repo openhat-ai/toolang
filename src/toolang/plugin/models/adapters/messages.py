@@ -34,6 +34,7 @@ from toolang.base.types.run import (
     ToolCall,
 )
 
+from ._structured_output import append_structured_output_directive
 from ._usage import billing_value, reported_cost
 
 
@@ -188,6 +189,17 @@ def messages_payload(
 ) -> dict[str, object]:
     """Encode one canonical request for Anthropic Messages."""
 
+    native_schema = (
+        request.structured_output if target.structured_output is True else None
+    )
+    instructions = (
+        append_structured_output_directive(
+            request.instructions,
+            request.structured_output,
+        )
+        if request.structured_output is not None and native_schema is None
+        else request.instructions
+    )
     options = dict(target.options)
     explicit_max_tokens = "max_tokens" in options
     max_tokens = options.pop("max_tokens", 4096)
@@ -219,8 +231,8 @@ def messages_payload(
         ],
         "stream": stream,
     }
-    if request.instructions:
-        payload["system"] = request.instructions
+    if instructions:
+        payload["system"] = instructions
     if request.tools:
         payload["tools"] = [
             {
@@ -231,7 +243,12 @@ def messages_payload(
             for tool in request.tools
         ]
     _apply_reasoning(payload, target.reasoning)
-    _apply_structured_output(payload, options, request.structured_output)
+    _apply_structured_output(
+        payload,
+        options,
+        request.structured_output,
+        native_schema=native_schema,
+    )
     payload.update(options)
     return payload
 
@@ -388,6 +405,8 @@ def _apply_structured_output(
     payload: dict[str, object],
     options: dict[str, Any],
     schema: dict[str, object] | None,
+    *,
+    native_schema: dict[str, object] | None,
 ) -> None:
     if schema is None:
         return
@@ -410,11 +429,13 @@ def _apply_structured_output(
         else {}
     )
     current.update(option_config)
-    current["format"] = {
-        "type": "json_schema",
-        "schema": dict(schema),
-    }
-    payload["output_config"] = current
+    if native_schema is not None:
+        current["format"] = {
+            "type": "json_schema",
+            "schema": dict(native_schema),
+        }
+    if current:
+        payload["output_config"] = current
 
 
 def _encode_message(

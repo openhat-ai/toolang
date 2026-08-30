@@ -650,6 +650,7 @@ def test_protocol_adapters_map_normalized_structured_output() -> None:
             name="model",
             model="model",
             adapter="chat_completions",
+            structured_output=True,
         ),
         request,
         stream=False,
@@ -661,6 +662,7 @@ def test_protocol_adapters_map_normalized_structured_output() -> None:
             name="model",
             model="model",
             adapter="responses",
+            structured_output=True,
             options={"text": {"verbosity": "low"}},
         ),
         request,
@@ -673,6 +675,7 @@ def test_protocol_adapters_map_normalized_structured_output() -> None:
             name="model",
             model="model",
             adapter="messages",
+            structured_output=True,
             reasoning={"effort": "high"},
         ),
         request,
@@ -685,6 +688,7 @@ def test_protocol_adapters_map_normalized_structured_output() -> None:
             name="model",
             model="model",
             adapter="generate_content",
+            structured_output=True,
             options={"generationConfig": {"temperature": 0}},
         ),
         request,
@@ -747,6 +751,7 @@ def test_openai_adapters_fall_back_for_non_strict_object_schemas(
         name="model",
         model="model",
         adapter="chat_completions",
+        structured_output=True,
     )
 
     chat_payload = chat_completions.chat_completion_payload(
@@ -797,6 +802,7 @@ def test_openai_adapters_inline_strict_root_struct_schema() -> None:
         name="model",
         model="model",
         adapter="chat_completions",
+        structured_output=True,
     )
 
     chat_payload = chat_completions.chat_completion_payload(
@@ -835,6 +841,7 @@ def test_generate_content_falls_back_for_tools_before_gemini_3() -> None:
         name="gemini-2.5-flash",
         model="gemini-2.5-flash",
         adapter="generate_content",
+        structured_output=True,
     )
 
     payload = generate_content_payload(target, request)
@@ -861,6 +868,7 @@ def test_generate_content_uses_native_schema_with_tools_for_gemini_3() -> None:
         name="gemini-3.1-pro-preview",
         model="models/gemini-3.1-pro-preview",
         adapter="generate_content",
+        structured_output=True,
     )
 
     payload = generate_content_payload(target, request)
@@ -871,6 +879,121 @@ def test_generate_content_uses_native_schema_with_tools_for_gemini_3() -> None:
         "responseJsonSchema": schema,
     }
     assert "systemInstruction" not in payload
+
+
+def test_chat_completions_falls_back_for_deepseek_json_output() -> None:
+    schema: dict[str, object] = {
+        "additionalProperties": False,
+        "properties": {"answer": {"type": "boolean"}},
+        "required": ["answer"],
+        "type": "object",
+    }
+    request = ModelCall(
+        instructions="Keep this logical instruction unchanged.",
+        messages=[Message.user("Decide.")],
+        structured_output=schema,
+    )
+    target = ModelTarget(
+        ref="deepseek/deepseek-v4-pro",
+        provider="deepseek",
+        name="DeepSeek V4 Pro",
+        model="deepseek-v4-pro",
+        adapter="chat_completions",
+        structured_output=True,
+    )
+
+    payload = chat_completions.chat_completion_payload(
+        target,
+        request,
+        stream=False,
+    )
+
+    assert "response_format" not in payload
+    schema_text = json.dumps(schema, separators=(",", ":"), sort_keys=True)
+    assert schema_text in payload["messages"][0]["content"]
+    assert request.instructions == "Keep this logical instruction unchanged."
+
+
+@pytest.mark.parametrize("capability", (False, None))
+def test_messages_falls_back_without_native_structured_output_capability(
+    capability: bool | None,
+) -> None:
+    schema: dict[str, object] = {"type": "boolean"}
+    request = ModelCall(
+        instructions="Keep this logical instruction unchanged.",
+        messages=[Message.user("Decide.")],
+        structured_output=schema,
+    )
+    target = ModelTarget(
+        ref="anthropic/model",
+        provider="anthropic",
+        name="model",
+        model="model",
+        adapter="messages",
+        structured_output=capability,
+        options={"output_config": {"effort": "high"}},
+    )
+
+    payload = messages_payload(target, request, stream=False)
+
+    assert payload["output_config"] == {"effort": "high"}
+    schema_text = json.dumps(schema, separators=(",", ":"), sort_keys=True)
+    assert schema_text in cast(str, payload["system"])
+    assert request.instructions == "Keep this logical instruction unchanged."
+
+
+def test_protocol_adapters_fall_back_without_advertised_model_capability() -> None:
+    schema: dict[str, object] = {
+        "additionalProperties": False,
+        "properties": {"answer": {"type": "boolean"}},
+        "required": ["answer"],
+        "type": "object",
+    }
+    request = ModelCall(
+        instructions="Keep this logical instruction unchanged.",
+        messages=[Message.user("Decide.")],
+        structured_output=schema,
+    )
+    target = ModelTarget(
+        ref="provider/model",
+        provider="provider",
+        name="model",
+        model="model",
+        adapter="chat_completions",
+        structured_output=False,
+    )
+
+    chat_payload = chat_completions.chat_completion_payload(
+        target,
+        request,
+        stream=False,
+    )
+    response_payload = responses.response_payload(
+        replace(target, adapter="responses"),
+        request,
+        stateful=False,
+    )
+    message_payload = messages_payload(
+        replace(target, adapter="messages"),
+        request,
+        stream=False,
+    )
+    generate_payload = generate_content_payload(
+        replace(target, adapter="generate_content"),
+        request,
+    )
+
+    assert "response_format" not in chat_payload
+    assert "text" not in response_payload
+    assert "output_config" not in message_payload
+    assert "generationConfig" not in generate_payload
+    schema_text = json.dumps(schema, separators=(",", ":"), sort_keys=True)
+    assert schema_text in chat_payload["messages"][0]["content"]
+    assert schema_text in response_payload["input"][0]["content"][0]["text"]
+    assert schema_text in cast(str, message_payload["system"])
+    system_instruction = cast(dict[str, Any], generate_payload["systemInstruction"])
+    assert schema_text in system_instruction["parts"][0]["text"]
+    assert request.instructions == "Keep this logical instruction unchanged."
 
 
 @pytest.mark.parametrize(

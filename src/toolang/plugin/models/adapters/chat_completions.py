@@ -249,6 +249,8 @@ def chat_completion_payload(
     native_schema = (
         openai_strict_object_schema(request.structured_output)
         if request.structured_output is not None
+        and target.structured_output is True
+        and target.provider.lower() != "deepseek"
         else None
     )
     instructions = (

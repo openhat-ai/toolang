@@ -374,6 +374,7 @@ class ModelTarget:
     options: dict[str, Any] = field(default_factory=dict)
     tools: bool = True
     streaming: bool = True
+    structured_output: bool | None = None
     catalog: str | None = None
     catalog_revision: str | None = None
     reasoning: dict[str, Any] = field(default_factory=dict)

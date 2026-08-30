@@ -293,7 +293,7 @@ def response_payload(
 
     native_schema = (
         openai_strict_object_schema(request.structured_output)
-        if request.structured_output is not None
+        if request.structured_output is not None and target.structured_output is True
         else None
     )
     instructions = (

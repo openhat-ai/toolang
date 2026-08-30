@@ -747,6 +747,7 @@ def _target_from_info(
         streaming=alias.streaming
         if alias is not None and alias.streaming is not None
         else info.streaming,
+        structured_output=_metadata_bool(info.metadata, "structured_output"),
         catalog=_metadata_text(info.metadata, "catalog"),
         catalog_revision=_metadata_text(info.metadata, "catalog_revision"),
         reasoning=reasoning,
@@ -946,6 +947,11 @@ def _configured_scope(config: ProviderConfig | None) -> str | None:
 def _metadata_text(metadata: Mapping[str, object], key: str) -> str | None:
     value = metadata.get(key)
     return value if isinstance(value, str) and value else None
+
+
+def _metadata_bool(metadata: Mapping[str, object], key: str) -> bool | None:
+    value = metadata.get(key)
+    return value if isinstance(value, bool) else None
 
 
 def _validate_reasoning_request(

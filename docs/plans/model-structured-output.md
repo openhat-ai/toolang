@@ -141,9 +141,10 @@ instructions or messages.
 Each built-in adapter consumes `ModelCall.structured_output` when constructing
 the actual provider request:
 
-- if the protocol has a native JSON Schema output control, the adapter maps the
-  normalized schema to that control and supplies any provider-required fixed
-  wrapper values such as the name `output` and strict mode;
+- if the protocol has a native JSON Schema output control and the resolved model
+  advertises structured-output support, the adapter maps the normalized schema
+  to that control and supplies any provider-required fixed wrapper values such
+  as the name `output` and strict mode;
 - otherwise, the adapter adds a deterministic provider-request-only output
   directive that contains the schema and requests one unwrapped JSON value.
 

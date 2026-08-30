@@ -231,6 +231,7 @@ def test_resolver_applies_advertised_mode_request_and_keeps_control_metadata() -
         id="one",
         name="One",
         reasoning=True,
+        structured_output=True,
         reasoning_options=({"type": "effort", "values": ["low", "high"]},),
         experimental={
             "modes": {
@@ -269,6 +270,7 @@ def test_resolver_applies_advertised_mode_request_and_keeps_control_metadata() -
 
     assert target.mode == "fast"
     assert target.reasoning == {"effort": "high"}
+    assert target.structured_output is True
     assert target.options == {"service_tier": "priority"}
     assert target.headers == {"X-Mode": "fast"}
 
