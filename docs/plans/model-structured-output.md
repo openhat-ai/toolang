@@ -2,8 +2,7 @@
 
 ## Status
 
-Proposed. Implementation requires explicit human approval and is split into two
-changes after this definition is merged.
+Approved by the human on 2026-08-30. Implementation is split into two changes.
 
 ## Goal
 

@@ -60,7 +60,13 @@ class GenerateContentModelAdapter(ModelAdapter):
             )
             response.raise_for_status()
             result = parse_generate_content(_json_object(response.json()))
-            return replace(result, cont=_merge_cont(request.cont, result.cont))
+            return replace(
+                result,
+                continuation=_merge_continuation(
+                    request.continuation,
+                    result.continuation,
+                ),
+            )
 
     async def stream(
         self,
@@ -116,8 +122,8 @@ class GenerateContentModelAdapter(ModelAdapter):
             message=Message(role="assistant", parts=tuple(parts)),
             tool_calls=tuple(calls),
             usage=generate_content_usage(usage),
-            cont=_merge_cont(
-                request.cont,
+            continuation=_merge_continuation(
+                request.continuation,
                 {_THOUGHT_SIGNATURES: signatures} if signatures else None,
             ),
         )
@@ -141,7 +147,7 @@ def generate_content_payload(
         "contents": [
             _encode_message(
                 message,
-                signatures=_cont_signatures(request.cont),
+                signatures=_continuation_signatures(request.continuation),
             )
             for message in request.messages
         ],
@@ -167,6 +173,7 @@ def generate_content_payload(
             payload["generationConfig"] = dict(generation)
         payload.update(options)
     _apply_reasoning(payload, target.reasoning)
+    _apply_structured_output(payload, request.structured_output)
     return payload
 
 
@@ -192,7 +199,7 @@ def parse_generate_content(payload: Mapping[str, object]) -> ModelCallResult:
         message=Message(role="assistant", parts=tuple(parts)),
         tool_calls=tuple(calls),
         usage=generate_content_usage(_json_object(payload.get("usageMetadata"))),
-        cont={_THOUGHT_SIGNATURES: signatures} if signatures else None,
+        continuation={_THOUGHT_SIGNATURES: signatures} if signatures else None,
     )
 
 
@@ -443,10 +450,12 @@ def _int(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _cont_signatures(cont: Mapping[str, Any] | None) -> dict[str, str]:
-    if not isinstance(cont, Mapping):
+def _continuation_signatures(
+    continuation: Mapping[str, Any] | None,
+) -> dict[str, str]:
+    if not isinstance(continuation, Mapping):
         return {}
-    value = cont.get(_THOUGHT_SIGNATURES)
+    value = continuation.get(_THOUGHT_SIGNATURES)
     if not isinstance(value, Mapping):
         return {}
     return {
@@ -456,18 +465,46 @@ def _cont_signatures(cont: Mapping[str, Any] | None) -> dict[str, str]:
     }
 
 
-def _merge_cont(
+def _merge_continuation(
     previous: Mapping[str, Any] | None,
     current: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
     merged = dict(previous or {})
     current_values = dict(current or {})
-    signatures = _cont_signatures(previous)
-    signatures.update(_cont_signatures(current))
+    signatures = _continuation_signatures(previous)
+    signatures.update(_continuation_signatures(current))
     merged.update(current_values)
     if signatures:
         merged[_THOUGHT_SIGNATURES] = signatures
     return merged or None
+
+
+def _apply_structured_output(
+    payload: dict[str, object],
+    schema: dict[str, object] | None,
+) -> None:
+    if schema is None:
+        return
+    raw_generation = payload.get("generationConfig")
+    generation = (
+        dict(cast(Mapping[str, object], raw_generation))
+        if isinstance(raw_generation, Mapping)
+        else {}
+    )
+    output_fields = {
+        "_responseJsonSchema",
+        "responseFormat",
+        "responseJsonSchema",
+        "responseMimeType",
+        "responseSchema",
+    }
+    if output_fields & generation.keys():
+        raise ToolangError(
+            "Generate Content response format conflicts with normalized structured output"
+        )
+    generation["responseMimeType"] = "application/json"
+    generation["responseJsonSchema"] = dict(schema)
+    payload["generationConfig"] = generation
 
 
 def _apply_reasoning(

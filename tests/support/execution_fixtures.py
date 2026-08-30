@@ -414,7 +414,7 @@ def _step_noted(
         tokens=tokens,
         price=price,
         cost=_optional_text(facts.get("cost")),
-        cont=dict(raw_cont) if isinstance(raw_cont, Mapping) else None,
+        continuation=dict(raw_cont) if isinstance(raw_cont, Mapping) else None,
     )
 
 

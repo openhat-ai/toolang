@@ -2499,7 +2499,14 @@ class RunStore:
                 instructions=instruction_ref,
                 messages=tuple(message_refs),
                 tools=toolset_ref,
-                cont=dict(call.cont) if call.cont is not None else None,
+                structured_output=(
+                    dict(call.structured_output)
+                    if call.structured_output is not None
+                    else None
+                ),
+                continuation=(
+                    dict(call.continuation) if call.continuation is not None else None
+                ),
             ),
         )
 
@@ -2515,7 +2522,13 @@ class RunStore:
 
         references: dict[
             StepPath,
-            tuple[str, tuple[str, ...], str | None, dict[str, Any] | None],
+            tuple[
+                str,
+                tuple[str, ...],
+                str | None,
+                dict[str, object] | None,
+                dict[str, Any] | None,
+            ],
         ] = {}
         instruction_hashes: set[str] = set()
         message_hashes: set[str] = set()
@@ -2529,12 +2542,20 @@ class RunStore:
             instruction_ref = call.instructions
             message_refs = call.messages
             toolset_ref = call.tools
-            cont = dict(call.cont) if call.cont is not None else None
+            structured_output = (
+                dict(call.structured_output)
+                if call.structured_output is not None
+                else None
+            )
+            continuation = (
+                dict(call.continuation) if call.continuation is not None else None
+            )
             references[step.path] = (
                 instruction_ref,
                 message_refs,
                 toolset_ref,
-                cont,
+                structured_output,
+                continuation,
             )
             instruction_hashes.add(instruction_ref)
             message_hashes.update(message_refs)
@@ -2549,7 +2570,8 @@ class RunStore:
             instruction_ref,
             message_refs,
             toolset_ref,
-            cont,
+            structured_output,
+            continuation,
         ) in references.items():
             instructions = texts.get(instruction_ref)
             if instructions is None:
@@ -2565,7 +2587,8 @@ class RunStore:
                 instructions=instructions,
                 messages=[messages[item] for item in message_refs],
                 tools=toolsets[toolset_ref] if toolset_ref is not None else (),
-                cont=cont,
+                structured_output=structured_output,
+                continuation=continuation,
             )
         return calls
 

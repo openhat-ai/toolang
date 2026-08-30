@@ -145,7 +145,14 @@ class ModelCall:
     instructions: str
     messages: list[Message]
     tools: tuple[ToolDefinition, ...] = field(default_factory=tuple)
-    cont: ModelContinuation | None = None
+    structured_output: dict[str, object] | None = None
+    continuation: ModelContinuation | None = field(
+        default=None,
+        metadata={
+            "validation_alias": "cont",
+            "serialization_alias": "cont",
+        },
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,7 +162,13 @@ class ModelCallResult:
     message: Message | None = None
     tool_calls: tuple[ToolCall, ...] = field(default_factory=tuple)
     usage: ModelUsage | None = None
-    cont: ModelContinuation | None = None
+    continuation: ModelContinuation | None = field(
+        default=None,
+        metadata={
+            "validation_alias": "cont",
+            "serialization_alias": "cont",
+        },
+    )
 
 
 @dataclass(frozen=True, slots=True)

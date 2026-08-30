@@ -811,7 +811,7 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
         call = ModelCall(
             instructions="Diagnose the run.",
             messages=[Message.assistant("Context"), Message.user("Question")],
-            cont={"provider_cursor": "next"},
+            continuation={"provider_cursor": "next"},
         )
         store.begin_step(
             path=StepPath(run.id, (0,)),
@@ -883,6 +883,7 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
             },
         ],
         "tools": [],
+        "structured_output": None,
         "cont": {"provider_cursor": "next"},
     }
     assert references.exit_code == 0, references.stderr

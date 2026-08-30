@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -114,7 +115,8 @@ async def execute(state: _AgicState) -> ModelCallResult:
                 if prepared.model.tools and not state.repairing_output
                 else ()
             ),
-            cont=state.cont,
+            structured_output=deepcopy(state.output_binding.structured_output),
+            continuation=state.continuation,
         )
         return StepBegin(
             step=StepPath(run.run_id, (step_index,)),
@@ -260,7 +262,7 @@ async def _apply_response(
     output = tuple(part for _, part in sorted(output_parts, key=lambda item: item[0]))
     if output:
         state.messages.append(Message(role="assistant", parts=output))
-    state.cont = current.cont
+    state.continuation = current.continuation
     accounting = state.account_usage(current.usage)
     await state.emit(
         StepEnd(
@@ -268,7 +270,10 @@ async def _apply_response(
             kind="model",
             status="succeeded",
             output=Local.typed("Part[]", output, "_", 0),
-            noted=_model_step_noted(accounting, cont=current.cont),
+            noted=_model_step_noted(
+                accounting,
+                continuation=current.continuation,
+            ),
             finished_at=utc_now(),
         )
     )
@@ -563,7 +568,7 @@ def _partial_part(stream: _ModelStream, part_index: int) -> Part:
 def _model_step_noted(
     accounting: _ModelAccounting,
     *,
-    cont: ModelContinuation | None,
+    continuation: ModelContinuation | None,
 ) -> ModelStepNoted:
     usage = accounting.usage
     price = accounting.price
@@ -583,7 +588,7 @@ def _model_step_noted(
         ),
         cost=_decimal_text(accounting.cost),
         accounting=accounting.accounting,
-        cont=dict(cont) if cont is not None else None,
+        continuation=(dict(continuation) if continuation is not None else None),
     )
 
 

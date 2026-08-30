@@ -22,17 +22,6 @@ Work directly against the runnable contract and keep the response focused on the
 Do not call tools or inspect files just to explore the environment.
 Use tools only when they materially help with the invocation.
 
-{{#runnable.output}}
-<output-contract>
-type: {{runnable.output}}
-Return only the final value for this Toolang type.
-For Number, return exactly one JSON number such as 7.5.
-For Boolean, return exactly true or false.
-Use raw JSON for Json, array, and struct values.
-Do not explain the value, add a preface, or wrap structured output in Markdown code fences.
-</output-contract>
-{{/runnable.output}}
-
 <tool-result-reuse>
 - Before calling a tool, check the visible prior messages and context blocks for successful tool results that already answer the request or provide reusable IDs, schemas, configuration, or other stable inputs.
 - Reuse applicable prior tool results instead of repeating the same tool call.

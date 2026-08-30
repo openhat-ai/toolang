@@ -7,6 +7,7 @@ import pytest
 
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.policy import RunLimits
+from toolang.base.types.run import ModelCall
 from toolang.execution.records import (
     CancelControlPayload,
     ControlRecord,
@@ -19,6 +20,8 @@ from toolang.execution.records import (
     RewindControlPayload,
     RunControlPayload,
     SteerControlPayload,
+    model_call_from_data,
+    model_call_to_data,
 )
 from toolang.execution.schemas import record_to_data
 from toolang.execution.store import RunStore
@@ -28,6 +31,31 @@ from tests.support.execution_fixtures import (
     project_run_start,
     project_step,
 )
+
+
+def test_model_call_payload_uses_structured_output_and_compact_cont_key() -> None:
+    call = ModelCall(
+        instructions="Return the value.",
+        messages=[Message.user("Decide")],
+        structured_output={"type": "boolean"},
+        continuation={"cursor": "next"},
+    )
+
+    data = model_call_to_data(call)
+
+    assert data == {
+        "instructions": "Return the value.",
+        "messages": [
+            {
+                "role": "user",
+                "parts": [{"type": "text", "text": "Decide"}],
+            }
+        ],
+        "tools": [],
+        "structured_output": {"type": "boolean"},
+        "cont": {"cursor": "next"},
+    }
+    assert model_call_from_data(data) == call
 
 
 def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:

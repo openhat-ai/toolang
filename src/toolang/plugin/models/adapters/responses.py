@@ -287,9 +287,11 @@ def response_payload(
 ) -> dict[str, Any]:
     """Build one Responses API payload."""
 
-    cont = dict(request.cont or {})
-    previous_response_id = cont.get("previous_response_id") if stateful else None
-    baseline_count = cont.get("baseline_count") if stateful else None
+    continuation = dict(request.continuation or {})
+    previous_response_id = (
+        continuation.get("previous_response_id") if stateful else None
+    )
+    baseline_count = continuation.get("baseline_count") if stateful else None
     message_offset = (
         baseline_count if isinstance(baseline_count, int) and baseline_count >= 0 else 0
     )
@@ -312,8 +314,34 @@ def response_payload(
     options = dict(target.options)
     if options:
         payload.update(options)
+    _apply_structured_output(payload, request.structured_output)
     _apply_reasoning(payload, target.reasoning)
     return payload
+
+
+def _apply_structured_output(
+    payload: dict[str, Any],
+    schema: dict[str, object] | None,
+) -> None:
+    if schema is None:
+        return
+    raw_text = payload.get("text")
+    if raw_text is not None and not isinstance(raw_text, Mapping):
+        raise ToolangError(
+            "Responses text format conflicts with normalized structured output"
+        )
+    text = dict(cast(Mapping[str, object], raw_text)) if raw_text is not None else {}
+    if "format" in text:
+        raise ToolangError(
+            "Responses text format conflicts with normalized structured output"
+        )
+    text["format"] = {
+        "type": "json_schema",
+        "name": "output",
+        "strict": True,
+        "schema": dict(schema),
+    }
+    payload["text"] = text
 
 
 def _apply_reasoning(
@@ -359,7 +387,7 @@ def parse_response(
         message=message,
         tool_calls=tool_calls,
         usage=response_usage(response),
-        cont=response_cont(
+        continuation=response_continuation(
             response,
             request=request,
             emitted_message=message,
@@ -580,7 +608,7 @@ def _value_text(value: object, name: str) -> str:
     return raw if isinstance(raw, str) else ""
 
 
-def response_cont(
+def response_continuation(
     response: Any,
     *,
     request: ModelCall,

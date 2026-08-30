@@ -255,11 +255,32 @@ def chat_completion_payload(
     options = dict(target.options)
     if options:
         payload.update(options)
+    _apply_structured_output(payload, request.structured_output)
     _apply_reasoning(payload, target)
     payload["stream"] = stream
     if stream and "stream_options" not in payload:
         payload["stream_options"] = {"include_usage": True}
     return payload
+
+
+def _apply_structured_output(
+    payload: dict[str, Any],
+    schema: dict[str, object] | None,
+) -> None:
+    if schema is None:
+        return
+    if "response_format" in payload:
+        raise ToolangError(
+            "Chat Completions response_format conflicts with normalized structured output"
+        )
+    payload["response_format"] = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "output",
+            "strict": True,
+            "schema": dict(schema),
+        },
+    }
 
 
 def _apply_reasoning(payload: dict[str, Any], target: ModelTarget) -> None:

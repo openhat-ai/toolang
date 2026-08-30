@@ -1120,7 +1120,13 @@ class ModelStepNoted:
     price: ModelTokenPrice | None = None
     cost: str | None = None
     accounting: ModelAccounting | None = None
-    cont: ModelContinuation | None = None
+    continuation: ModelContinuation | None = field(
+        default=None,
+        metadata={
+            "validation_alias": "cont",
+            "serialization_alias": "cont",
+        },
+    )
 
     def __post_init__(self) -> None:
         if self.tokens is not None and not isinstance(self.tokens, ModelTokenCount):
@@ -1132,8 +1138,8 @@ class ModelStepNoted:
             self.accounting, ModelAccounting
         ):
             raise TypeError("model Step accounting requires ModelAccounting")
-        if self.cont is not None and not isinstance(self.cont, dict):
-            raise TypeError("model Step cont must be an object")
+        if self.continuation is not None and not isinstance(self.continuation, dict):
+            raise TypeError("model Step continuation must be an object")
 
 
 @dataclass(frozen=True, slots=True)

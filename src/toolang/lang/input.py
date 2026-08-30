@@ -24,7 +24,7 @@ from toolang.common.template import render_text_template
 
 from .ast import AgicDecl, CapDecl, FlowDecl, Parameter, Program, StructDecl, to_data
 from .errors import ToolangOutputError
-from .types import Array, Struct, Value
+from .types import Array, Struct, Value, validate_type
 
 IncludeResolver = Callable[[str], Part]
 NamedInputSources: TypeAlias = tuple[tuple[str, str], ...]
@@ -299,6 +299,84 @@ def coerce_output(
         )
     except ToolangError as exc:
         raise ToolangOutputError(str(exc)) from exc
+
+
+def output_json_schema(
+    type_name: str | None,
+    *,
+    structs: Mapping[str, StructDecl] | None = None,
+) -> dict[str, object] | None:
+    """Return the normalized JSON Schema for one runnable output."""
+
+    if type_name is None or type_name in {"Part", "Part[]", "Text"}:
+        return None
+    try:
+        validate_type(type_name)
+    except ValueError as exc:
+        raise ToolangError(str(exc)) from exc
+
+    declared = structs or {}
+    definitions: dict[str, dict[str, object]] = {}
+    building: set[str] = set()
+
+    def struct_schema(name: str) -> dict[str, object]:
+        if name not in definitions:
+            definition = declared.get(name)
+            if definition is None:
+                raise ToolangError(f"unknown Toolang output type: {name}")
+            definitions[name] = {}
+            if name not in building:
+                building.add(name)
+                properties = {
+                    field.name: value_schema(field.type_name)
+                    for field in sorted(definition.fields, key=lambda item: item.name)
+                }
+                required = sorted(
+                    field.name for field in definition.fields if not field.optional
+                )
+                body: dict[str, object] = {
+                    "additionalProperties": False,
+                    "properties": properties,
+                    "type": "object",
+                }
+                if required:
+                    body["required"] = required
+                definitions[name] = body
+                building.remove(name)
+        return {"$ref": f"#/$defs/{name}"}
+
+    def value_schema(name: str) -> dict[str, object]:
+        try:
+            validate_type(name)
+        except ValueError as exc:
+            raise ToolangError(str(exc)) from exc
+        if name.endswith("[]"):
+            return {"items": value_schema(name[:-2]), "type": "array"}
+        if name == "Text":
+            return {"type": "string"}
+        if name == "Number":
+            return {"type": "number"}
+        if name == "Boolean":
+            return {"type": "boolean"}
+        if name in {"Json", "Part"}:
+            return {}
+        return struct_schema(name)
+
+    schema = value_schema(type_name)
+    if definitions:
+        schema = {"$defs": definitions, **schema}
+    return cast(dict[str, object], _canonical_json_schema(schema))
+
+
+def _canonical_json_schema(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _canonical_json_schema(item)
+            for key, item in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+    if isinstance(value, list | tuple):
+        return [_canonical_json_schema(item) for item in value]
+    return value
 
 
 def validate_value(

@@ -1405,7 +1405,7 @@ agic target(_: Text) -> Text:
                         input={"runnable": "target", "input": {"_": "work"}},
                     ),
                 ),
-                cont={"id": "caller-cont"},
+                continuation={"id": "caller-cont"},
             ),
             ModelCallResult(
                 tool_calls=(
@@ -1481,9 +1481,63 @@ agic target(_: Text) -> Text:
             }
             assert len(web.calls) == 1
             assert web.calls[0][0] == {"query": "work"}
-            assert target_call.cont is None
+            assert target_call.continuation is None
             assert [message.role for message in target_call.messages] == ["user"]
             assert "Target work" in str(target_call.messages[0].parts[0])
+
+    asyncio.run(scenario())
+
+
+def test_execute_resolves_a_fresh_structured_output_contract(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic caller(_: Text) -> Json:
+  recall = none
+  handoffs = agic:target
+  context: none
+  instruct: none
+  user: Caller {{_}}
+
+agic target(_: Text) -> Boolean:
+  recall = none
+  context: none
+  instruct: none
+  user: Target {{_}}
+""",
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="handoff",
+                        call_id="provider-handoff",
+                        name="_too__execute",
+                        input={"runnable": "target", "input": {"_": "work"}},
+                    ),
+                ),
+            ),
+            ModelCallResult(message=Message.assistant("true")),
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="agic:caller",
+                    primary=resolve_input_parts("start"),
+                )
+            )
+
+            assert root.status == "succeeded", root.error
+            assert root.output is not None
+            assert harness.store.resolve_value(root.output.value) is True
+            assert harness.adapter.invocations[0].call.structured_output == {}
+            assert harness.adapter.invocations[1].call.structured_output == {
+                "type": "boolean"
+            }
 
     asyncio.run(scenario())
 
