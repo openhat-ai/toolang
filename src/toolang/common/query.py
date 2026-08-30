@@ -50,7 +50,7 @@ ScalarValue = str | bool | int | float | Decimal | date | datetime | None
 _T = TypeVar("_T")
 _FIELD_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
 _BARE_IDENTITY_RE = re.compile(r"^[^\s\[\],;()\"]+$")
-_BARE_LITERAL_RE = re.compile(r"^[^\s\[\],;()\"]+$")
+_BARE_LITERAL_RE = re.compile(r"^[^\s\[\],;()\"=!~<>]+$")
 _COMPARATORS = ("!~=", "<=", ">=", "!=", "~=", "=", "<", ">")
 _NEGATIVE_OPERATORS = frozenset({"!=", "!~=", "not in"})
 
@@ -78,6 +78,14 @@ class IdentitySpec:
             raise ToolangError("multi-component identity requires a separator")
         if self.separator == "":
             raise ToolangError("identity separator cannot be empty")
+        if any(not isinstance(value, str) or not value for value in bound):
+            raise ToolangError(
+                "collection identity bound components must contain non-empty text"
+            )
+        if self.separator and any(self.separator in value for value in bound):
+            raise ToolangError(
+                "collection identity bound components cannot contain its separator"
+            )
         object.__setattr__(self, "paths", paths)
         object.__setattr__(self, "labels", labels)
         object.__setattr__(self, "bound", bound)
@@ -354,6 +362,12 @@ class CollectionSchema(Generic[_T]):
                     "must contain non-empty text"
                 )
             values.append(value)
+        separator = self.identity.separator
+        if separator and any(separator in value for value in values[:-1]):
+            raise ToolangError(
+                f"collection {self.name!r} leading identity components "
+                f"cannot contain separator {separator!r}"
+            )
         return tuple(values)
 
     def identity_for(self, item: _T) -> str:
@@ -1066,7 +1080,14 @@ def _parse_predicate(raw: str, schema: CollectionSchema[Any]) -> QueryPredicate:
         raise ToolangError(
             f"query field {field.name!r} is {field.type_name}; flag syntax requires bool"
         )
-    return QueryPredicate(field, "=", (not negated,))
+    value = not negated
+    if field.choices and value not in field.choices:
+        expected = ", ".join(format_literal(choice) for choice in field.choices)
+        raise ToolangError(
+            f"invalid value {format_literal(value)!r} for query field "
+            f"{field.name!r}; expected one of {expected}"
+        )
+    return QueryPredicate(field, "=", (value,))
 
 
 def _require_field(schema: CollectionSchema[Any], name: str) -> QueryField:
@@ -1222,6 +1243,12 @@ def _coerce_literal(
             return int(value)
         if isinstance(sample, float):
             return float(value)
+        if isinstance(sample, Decimal):
+            return Decimal(value)
+        if isinstance(sample, datetime):
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if isinstance(sample, date):
+            return date.fromisoformat(value)
     raise ValueError
 
 
@@ -1255,7 +1282,8 @@ def _predicate_matches(
     operator = predicate.operator
     if operator in _NEGATIVE_OPERATORS:
         return bool(actual_values) and all(
-            not _positive_value_match(actual, predicate.values, operator)
+            actual is not None
+            and not _positive_value_match(actual, predicate.values, operator)
             for actual in actual_values
         )
     return any(
@@ -1559,6 +1587,41 @@ def format_query(query: CollectionQuery) -> str:
     return ",".join(selectors)
 
 
+def format_query_text(raw: str) -> str:
+    """Normalize top-level alternative spacing without repairing invalid syntax."""
+
+    parts: list[str] = []
+    start = 0
+    bracket_depth = 0
+    parenthesis_depth = 0
+    quoted = False
+    escaped = False
+    for index, character in enumerate(raw):
+        if quoted:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                quoted = False
+            continue
+        if character == '"':
+            quoted = True
+        elif character == "[":
+            bracket_depth += 1
+        elif character == "]" and bracket_depth:
+            bracket_depth -= 1
+        elif character == "(":
+            parenthesis_depth += 1
+        elif character == ")" and parenthesis_depth:
+            parenthesis_depth -= 1
+        elif character == "," and bracket_depth == 0 and parenthesis_depth == 0:
+            parts.append(raw[start:index].strip())
+            start = index + 1
+    parts.append(raw[start:].strip())
+    return ", ".join(parts).rstrip()
+
+
 def prefix_query_identities(
     query: CollectionQuery,
     *,
@@ -1692,6 +1755,7 @@ __all__ = [
     "format_identity",
     "format_literal",
     "format_query",
+    "format_query_text",
     "prefix_query_identities",
     "prefix_query_value",
     "resolve_query_sentinels",

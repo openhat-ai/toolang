@@ -268,7 +268,7 @@ def catalog_json_dumps(data: object, *, indent: int | None = 2) -> str:
 
 def query_catalog_models(
     snapshot: ModelCatalogSnapshot,
-    queries: Sequence[str],
+    queries: Sequence[str] | None,
     *,
     include_local: bool = True,
     available: set[str] | None = None,
@@ -282,7 +282,7 @@ def query_catalog_models(
         available=available,
         adapters=adapters,
     )
-    selected = dataset.query(queries or None)
+    selected = dataset.query(queries)
     return tuple(item.record for item in selected)
 
 

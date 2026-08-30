@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from enum import Enum
 from typing import Literal, TypedDict, cast
 
 import pytest
@@ -15,6 +16,7 @@ from toolang.common.query import (
     IdentitySpec,
     QueryDataset,
     format_query,
+    format_query_text,
     resolve_query_sentinels,
 )
 
@@ -111,6 +113,27 @@ ITEMS = (
 )
 
 
+class AmountChoice(Enum):
+    LOW = Decimal("1.5")
+
+
+class DayChoice(Enum):
+    FIRST = date(2026, 1, 1)
+
+
+class MomentChoice(Enum):
+    START = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+@dataclass(frozen=True)
+class ChoiceView:
+    key: str
+    enabled: Literal[True]
+    amount: AmountChoice
+    day: DayChoice
+    moment: MomentChoice
+
+
 @pytest.fixture
 def models() -> QueryDataset[ModelView]:
     return CollectionDefinition(MODEL_SCHEMA).dataset(
@@ -168,15 +191,49 @@ def test_typed_literals_and_operators(models: QueryDataset[ModelView]) -> None:
     ]
 
 
+def test_bool_literal_flags_and_scalar_enum_literals_are_validated() -> None:
+    schema = CollectionSchema.from_type(
+        "choices",
+        ChoiceView,
+        key="key",
+        identity=IdentitySpec(paths=("key",), labels=("choice",)),
+        exclude=("key",),
+    )
+    item = ChoiceView(
+        key="one",
+        enabled=True,
+        amount=AmountChoice.LOW,
+        day=DayChoice.FIRST,
+        moment=MomentChoice.START,
+    )
+    dataset = QueryDataset(schema, (item,))
+
+    assert dataset.query(
+        "*[enabled;amount=1.5;day=2026-01-01;moment=2026-01-01T00:00:00Z]"
+    ) == (item,)
+    with pytest.raises(ToolangError, match="invalid value 'false'"):
+        schema.parse("*[!enabled]")
+
+
 def test_quoted_text_literals_round_trip_and_globs_only_treat_star_question_special(
     models: QueryDataset[ModelView],
 ) -> None:
     assert identities(models, '*[family="true"]') == []
     assert identities(models, '*[family~="g[pt]"]') == []
     assert format_query(MODEL_SCHEMA.parse('*[family="true"]')) == '*[family="true"]'
+    with pytest.raises(ToolangError, match="use a JSON string"):
+        MODEL_SCHEMA.parse("*[family=gpt=5]")
+    assert format_query(MODEL_SCHEMA.parse('*[family="gpt=5"]')) == '*[family="gpt=5"]'
 
 
-def test_negative_sequence_predicate_requires_a_present_value(
+def test_raw_query_formatting_preserves_nested_and_empty_alternatives() -> None:
+    assert (
+        format_query_text('one[family in (a,b)],,two[name="x,y"],')
+        == 'one[family in (a,b)], , two[name="x,y"],'
+    )
+
+
+def test_negative_predicate_requires_a_present_value(
     models: QueryDataset[ModelView],
 ) -> None:
     empty = ModelView(
@@ -203,6 +260,39 @@ def test_negative_sequence_predicate_requires_a_present_value(
         },
     )
     assert empty not in dataset.query("*[modalities.input!=image]")
+    assert ITEMS[1] not in dataset.query("*[family!=gpt]")
+    assert identities(dataset, "*[family!=null]") == [
+        "openai/gpt-5",
+        "local/gpt-mini",
+    ]
+
+
+def test_multi_component_identity_rejects_ambiguous_leading_components() -> None:
+    ambiguous = ModelView(
+        key="ambiguous",
+        provider="open/router",
+        model="nested/model",
+        available=True,
+        scope="remote",
+        family=None,
+        score=1,
+        cost=Decimal("0"),
+        released=date(2020, 1, 1),
+        observed_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        limits=Limits(1, 1),
+        modalities=Modalities(("text",), ("text",)),
+    )
+
+    with pytest.raises(ToolangError, match="leading identity components"):
+        QueryDataset(MODEL_SCHEMA, (ambiguous,))
+
+    with pytest.raises(ToolangError, match="bound components"):
+        IdentitySpec(
+            paths=("model",),
+            labels=("provider", "model"),
+            separator="/",
+            bound=("open/router",),
+        )
 
 
 @pytest.mark.parametrize(

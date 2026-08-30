@@ -296,11 +296,11 @@ def _models_summary(
 
 
 def _tools_summary(setup: AgentSetup) -> str:
-    rows = plugin.tool_rows(setup)
-    set_count = len({toolset for toolset, *_details in rows})
+    dataset = plugin.setup_tool_dataset(setup)
+    set_count = len({item.toolset for item in dataset.items})
     return (
-        f"{len(rows)} {'tool' if len(rows) == 1 else 'tools'}, "
-        f"{set_count} {'set' if set_count == 1 else 'sets'}"
+        f"{len(dataset.items)} {'tool' if len(dataset.items) == 1 else 'tools'}, "
+        f"{set_count} {'toolset' if set_count == 1 else 'toolsets'}"
     )
 
 

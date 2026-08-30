@@ -13,6 +13,7 @@ from toolang.base.types.model import (
     ModelCatalogSnapshot,
     Provider,
 )
+from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.catalog import (
     PACKAGED_MODEL_CATALOG,
@@ -161,6 +162,12 @@ def test_catalog_query_handles_nested_identity_schema_fields_and_nullable_boolea
     assert [
         item.id for item in query_catalog_models(snapshot, ("*[family=family]",))
     ] == ["lab/model"]
+    assert [item.id for item in query_catalog_models(snapshot, None)] == [
+        "lab/model",
+        "plain",
+    ]
+    with pytest.raises(ToolangError, match="query cannot be empty"):
+        query_catalog_models(snapshot, ())
 
 
 def test_filtered_export_round_trips_deterministically() -> None:

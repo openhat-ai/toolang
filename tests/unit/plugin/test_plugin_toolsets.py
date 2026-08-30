@@ -341,6 +341,7 @@ def test_tool_query_parameters_are_json_schema_property_names() -> None:
 
     dataset = tool_dataset({"filesystem__read": create_function_tool(read)})
 
+    assert "model_name" not in dataset.schema.fields
     assert dataset.items[0].parameters == ("limit", "path")
     assert dataset.query("*[parameters=path]") == dataset.items
     assert dataset.query("*[parameters=properties]") == ()

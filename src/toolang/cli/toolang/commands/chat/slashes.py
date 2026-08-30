@@ -88,7 +88,9 @@ def _model(app: AppContext, _command: str, argument: str) -> SlashOutput:
     tokens = argument.split()
     resolved = _resolve_model_selection(payload, tokens)
     if resolved is None:
-        raise ValueError(f"Model or reasoning effort is unknown: {argument}")
+        raise ValueError(
+            f"Model selection or reasoning effort is unknown or ambiguous: {argument}"
+        )
     ref, effort = resolved
     updated = apply_model_selection(app.get_selects(), ref=ref, effort=effort)
     selects = app.get_selects()
@@ -109,7 +111,7 @@ def _runnable(app: AppContext, command: str, argument: str) -> SlashOutput:
             raise ValueError(f"/{command} accepts at most one runnable query.")
         resolved = _resolve_runnable_command(payload, tokens[0], kind=kind)
         if resolved is None:
-            raise ValueError(f"Runnable selector is unknown or ambiguous: {tokens[0]}")
+            raise ValueError(f"Runnable selection is unknown or ambiguous: {tokens[0]}")
         _apply_default(app, field="runnable", value=resolved)
         return None
     selected = as_text(selects.get(command))
@@ -447,7 +449,7 @@ def _resolve_model_selection(
     if len(tokens) == 1 or tokens[1].lower() == "auto":
         return ref, None
     item = next(
-        (item for item in _items(payload) if as_text(item.get("ref")) == ref),
+        (item for item in _items(payload) if as_text(item.get("selector")) == ref),
         None,
     )
     effort = tokens[1].lower()

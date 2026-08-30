@@ -40,7 +40,7 @@ TOOL_SCHEMA = CollectionSchema.from_type(
         labels=("toolset", "tool"),
         separator="/",
     ),
-    exclude=("record",),
+    exclude=("model_name", "record"),
     columns=(
         ColumnSpec("TOOLSET", ("toolset",), "identity-component"),
         ColumnSpec("TOOL", ("name",), "identity-component"),

@@ -31,7 +31,7 @@ Use this directory for:
 | [layout.md](./layout.md) | Layout and storage, including Toolang root, agent home, and runtime room paths |
 | [agent-state.md](./agent-state.md) | Immutable Agent State layers, revisions, publication, loading, and watching |
 | [caps.md](./caps.md) | Capability model, including form, scope, origin, refs, precedence, and effective-cap rules |
-| [selectors.md](./selectors.md) | Typed collection-query syntax, discovery, ordering, and set semantics |
+| [queries.md](./queries.md) | Typed collection-query syntax, discovery, ordering, and set semantics |
 | [work.md](./work.md) | Task and chore scheduling, checkpoints, event-loop ownership, and recovery |
 | [tasks.md](./tasks.md) | Authored task and chore documents, stages, and caller-facing projections |
 | [webui-jobs.md](./webui-jobs.md) | Web UI job board integration guide |

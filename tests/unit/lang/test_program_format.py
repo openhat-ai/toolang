@@ -135,6 +135,14 @@ agic review:
     Program.from_source(formatted)
 
 
+def test_format_source_does_not_remove_empty_query_alternatives() -> None:
+    source = "agic review:\n  tools = filesystem/*,,shell/*,\n\n  Review.\n"
+
+    assert format_source(source) == (
+        "agic review:\n  tools = filesystem/*, , shell/*,\n\n  Review.\n"
+    )
+
+
 def test_format_source_preserves_hashes_inside_collection_queries() -> None:
     source = """agic review:
     tools=filesystem/*[description="read # exact"],vendor/tool#v1 # keep

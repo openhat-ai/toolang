@@ -13,7 +13,12 @@ from ...common.context import context_agent, context_root
 from ...common.output import echo_table
 from ...common.query import emit_query_discovery, query_items
 from toolang.common.layout import AgentLayout
-from toolang.plugin.toolsets.collections import TOOL_SCHEMA, tool_dataset
+from toolang.common.query import QueryDataset
+from toolang.plugin.toolsets.collections import (
+    TOOL_SCHEMA,
+    ToolQueryView,
+    tool_dataset,
+)
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.plugin.loading import list_plugin_infos
 
@@ -52,15 +57,17 @@ def list_tools(
     ):
         return
     setup = _setup(_layout(ctx))
-    rows = tool_rows(setup, queries=tuple(query or ()))
-    if not rows:
+    dataset = setup_tool_dataset(setup)
+    selected = query_items(dataset, query)
+    if not selected:
         typer.echo("No tools matched query." if query else "No tools found.")
         return
-    echo_table(("TOOLSET", "TOOL", "PLUGIN", "SOURCE", "DESCRIPTION"), rows)
+    headers, rows = dataset.table(selected)
+    echo_table(headers, rows)
     typer.echo()
-    toolset_count = len({toolset for toolset, *_rest in rows})
+    toolset_count = len({item.toolset for item in selected})
     typer.echo(
-        f" {len(rows)} {'tool' if len(rows) == 1 else 'tools'}, "
+        f" {len(selected)} {'tool' if len(selected) == 1 else 'tools'}, "
         f"{toolset_count} {'toolset' if toolset_count == 1 else 'toolsets'}"
     )
 
@@ -126,18 +133,13 @@ def model_rows(
     )
 
 
-def tool_rows(
-    setup: AgentSetup,
-    *,
-    queries: Sequence[str] = (),
-) -> list[tuple[str, str, str, str, str]]:
-    dataset = tool_dataset(
+def setup_tool_dataset(setup: AgentSetup) -> QueryDataset[ToolQueryView]:
+    """Return the schema-owned tool query and display dataset for one setup."""
+
+    return tool_dataset(
         setup.tools,
         plugin_sources=plugin_sources("toolang.toolset"),
     )
-    selected = query_items(dataset, tuple(queries) or None)
-    _headers, rows = dataset.table(selected)
-    return [(row[0], row[1], row[2], row[3], row[4]) for row in rows]
 
 
 def _setup(

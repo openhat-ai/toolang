@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from tree_sitter import Node, Tree
+from toolang.common.query import format_query_text
 
 from . import ast
 from .ast import _first_syntax_error, _parse_tree
@@ -515,7 +516,7 @@ def _format_directive_line(stripped_line: str) -> str:
     values = (
         _format_csv_values(match.group("values"))
         if match.group("key") == "recall"
-        else _format_query_values(match.group("values"))
+        else format_query_text(match.group("values"))
     )
     return f"{match.group('key')} {match.group('op')} {values}{comment}".rstrip()
 
@@ -545,39 +546,6 @@ def _collapse_syntax_space(value: str) -> str:
 
 def _format_csv_values(raw: str) -> str:
     return ", ".join(item for item in (part.strip() for part in raw.split(",")) if item)
-
-
-def _format_query_values(raw: str) -> str:
-    parts: list[str] = []
-    start = 0
-    bracket_depth = 0
-    parenthesis_depth = 0
-    quoted = False
-    escaped = False
-    for index, character in enumerate(raw):
-        if quoted:
-            if escaped:
-                escaped = False
-            elif character == "\\":
-                escaped = True
-            elif character == '"':
-                quoted = False
-            continue
-        if character == '"':
-            quoted = True
-        elif character == "[":
-            bracket_depth += 1
-        elif character == "]" and bracket_depth:
-            bracket_depth -= 1
-        elif character == "(":
-            parenthesis_depth += 1
-        elif character == ")" and parenthesis_depth:
-            parenthesis_depth -= 1
-        elif character == "," and bracket_depth == 0 and parenthesis_depth == 0:
-            parts.append(raw[start:index].strip())
-            start = index + 1
-    parts.append(raw[start:].strip())
-    return ", ".join(part for part in parts if part)
 
 
 def _order_program_comments(lines: list[str]) -> list[str]:

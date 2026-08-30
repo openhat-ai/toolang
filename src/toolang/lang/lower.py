@@ -626,8 +626,8 @@ class _Lowerer:
                 ),
                 ast.Directive(
                     name="tools",
-                    operator="=",
-                    values=("none",),
+                    operator="-=",
+                    values=("*",),
                     span=self._span(node),
                 ),
             )

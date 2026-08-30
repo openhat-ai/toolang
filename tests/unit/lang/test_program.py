@@ -271,7 +271,7 @@ flow evaluate:
             for directive in agic.directives
         ] == [
             ("recall", "=", ("none",)),
-            ("tools", "=", ("none",)),
+            ("tools", "-=", ("*",)),
         ]
 
 

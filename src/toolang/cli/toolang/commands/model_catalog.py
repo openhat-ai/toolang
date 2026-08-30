@@ -100,13 +100,7 @@ def models_command(
         content = catalog_json_dumps(snapshot.to_data(models=exportable))
         typer.echo(content, nl=False)
         return
-    displayed_views = tuple(
-        item
-        for item in selected_views
-        if item.scope != "local" or item.key in available
-    )
-    displayed = tuple(item.record for item in displayed_views)
-    headers, rows = dataset.table(displayed_views)
+    headers, rows = dataset.table(selected_views)
     if not rows:
         typer.echo("No models matched query." if query else "No models found.")
         return
@@ -116,7 +110,7 @@ def models_command(
         justify=(None, None, "right", "right", None, None, "right"),
     )
     typer.echo()
-    typer.echo(f" {_catalog_summary(snapshot, models=displayed)}")
+    typer.echo(f" {_catalog_summary(snapshot, models=selected)}")
 
 
 def providers_command(

@@ -372,7 +372,7 @@ def _chat_handle_scripted_command(
         tokens = chat_input.tail.split()
         resolved = chat_slashes._resolve_model_selection(payload, tokens)
         if resolved is None:
-            typer.echo(f"Model selector is unknown or ambiguous: {chat_input.tail}")
+            typer.echo(f"Model selection is unknown or ambiguous: {chat_input.tail}")
             return True
         try:
             updated = apply_model_selection(
@@ -415,7 +415,7 @@ def _chat_handle_scripted_runnable_command(
             else None
         )
         if resolved is None:
-            typer.echo(f"Runnable selector is unknown or ambiguous: {argument}")
+            typer.echo(f"Runnable selection is unknown or ambiguous: {argument}")
             return True
         try:
             updated = client.apply_settings(

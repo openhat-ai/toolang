@@ -1,1 +1,1 @@
-"""Model config, discovery, selector resolution, display views, and built-ins."""
+"""Model config, discovery, query resolution, display views, and built-ins."""

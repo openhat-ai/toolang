@@ -220,19 +220,27 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
         )
 
     async def llama_snapshot(_source) -> ModelCatalogSnapshot:
+        model = Model(
+            provider_id="llama_cpp",
+            id="offline",
+            name="offline",
+            modalities={"input": ("text",), "output": ("text",)},
+            cost={"input": 0, "output": 0},
+            local=True,
+        )
         provider = Provider(
             id="llama_cpp",
             name="llama.cpp",
             env=(),
             npm="@ai-sdk/openai-compatible",
             api="http://llama.test/v1",
-            models={},
+            models={model.id: model},
             extra={"runtime": {"status": "offline"}},
             local=True,
         )
         return ModelCatalogSnapshot(
             providers={provider.id: provider},
-            models=(),
+            models=(model,),
             revision="runtime:llama_cpp",
         )
 
@@ -253,7 +261,8 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
 
     assert result.exit_code == 0, result.stderr
     stdout = unstyle(result.stdout)
-    assert "3 models from 3 catalogs: models.dev 2, ollama 1, llama_cpp 0" in stdout
+    assert "llama_cpp/offline" in stdout
+    assert "4 models from 3 catalogs: models.dev 2, ollama 1, llama_cpp 1" in stdout
 
     captured_headers: tuple[str, ...] = ()
     captured_rows: list[tuple[str | Text, ...]] = []
@@ -297,7 +306,7 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
     )
     by_provider = {str(row[0]): row for row in captured_rows}
     assert by_provider["ollama"][2] == "1/1"
-    assert by_provider["llama_cpp"][2] == "0/0"
+    assert by_provider["llama_cpp"][2] == "0/1"
     llama_adapters = by_provider["llama_cpp"][3]
     assert isinstance(llama_adapters, Text)
     assert llama_adapters.plain == "chat_completions"
