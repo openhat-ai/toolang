@@ -1430,6 +1430,37 @@ class RunStore:
             ).fetchall()
         return [_thread_from_row(row) for row in rows]
 
+    def list_controls(self) -> tuple[ControlRecord, ...]:
+        """Return every visible control in deterministic newest-first order."""
+
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT controls.*
+                FROM controls
+                LEFT JOIN runs
+                  ON controls.scope = 'run' AND runs.id = controls.target
+                WHERE controls.scope = 'thread'
+                   OR (
+                       controls.scope = 'run'
+                       AND runs.id IS NOT NULL
+                       AND runs.ejected_by_target IS NULL
+                       AND (
+                           runs.parent IS NULL
+                           OR runs.parent NOT IN (
+                               SELECT steps.run || '.' || steps.path
+                               FROM steps
+                               WHERE steps.ejected_by_target IS NOT NULL
+                           )
+                       )
+                   )
+                ORDER BY controls.created_at DESC,
+                         controls.target ASC,
+                         controls."index" DESC
+                """
+            ).fetchall()
+        return tuple(_control_from_row(row) for row in rows)
+
     def get_thread_control(self, *, thread_id: str, index: int) -> ControlRecord | None:
         with self._lock:
             row = self._conn.execute(

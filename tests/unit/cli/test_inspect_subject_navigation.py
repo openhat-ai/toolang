@@ -35,6 +35,7 @@ def test_subject_transition_registry_is_closed_and_unambiguous() -> None:
     assert registered == {
         ("agent", "threads"),
         ("agent", "runs"),
+        ("agent", "controls"),
         ("thread", "runs"),
         ("run", "steps"),
     }
