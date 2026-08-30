@@ -482,13 +482,10 @@ def _model_call_renderables(
 
     messages = data.get("messages")
     message_count = len(messages) if isinstance(messages, list) else 0
-    displayed_message_count = message_count + (result_parts is not None)
     _append_model_call_section(
         lines,
         "Conversation",
-        fact=(
-            f"{displayed_message_count} {_counted('message', displayed_message_count)}"
-        ),
+        fact=f"{message_count} {_counted('message', message_count)}",
         width=section_width,
     )
     if isinstance(messages, list) and messages:
@@ -512,7 +509,7 @@ def _model_call_renderables(
             lines.append(Text())
         _append_model_message(
             lines,
-            index=message_count,
+            index="=",
             role="assistant",
             parts=result_parts,
         )
@@ -561,14 +558,11 @@ def _model_call_renderables(
 def _append_model_message(
     lines: list[Text],
     *,
-    index: int,
+    index: int | Literal["="],
     role: str,
     parts: object,
-    fact: str | None = None,
 ) -> None:
     heading = Text(f"[{index}] {role}", style="dim")
-    if fact is not None:
-        heading.append(f" · {fact}", style="dim")
     lines.extend((heading, Text()))
     if not isinstance(parts, Sequence) or isinstance(parts, str) or not parts:
         lines.append(Text("No content.", style="dim italic"))
