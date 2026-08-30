@@ -189,13 +189,44 @@ array indexes, scalar traversal, and explicit `null` are distinct outcomes.
 
 `toolang AGENT inspect POINTER` opens the store read-only. Human output shows one
 structural level using the CLI's horizontal-rule Rich table, relative field
-suffixes, and TYPE in the second column. It ends with dim context containing the
-selected Pointer and displayed type plus, for a table, how to inspect a child.
-Nullable Human type labels use the compact `T?` form. Human strings have no JSON
-quotes, multiline Parts align within VALUE without a bullet, and resolved rows
-carry a separate `→` marker. `--json` never follows a stored Pointer, and
-`--type` is not an option. Ejected Runs and Steps remain hidden from ordinary
-inspection.
+suffixes, and TYPE in the second column. Nullable Human type labels use the
+compact `T?` form. Human strings have no JSON quotes, multiline Parts align
+within VALUE without a bullet, and resolved rows carry a presentation-only
+`*TYPE` marker. `--json` never follows a stored Pointer, and `--type` is not an
+option. Ejected Runs and Steps remain hidden from ordinary inspection.
+
+Ownership remains directly investigable without constructing an execution
+tree:
+
+```text
+THREAD runs
+  -> RUN steps
+       -> STEP runs
+       -> LOOP_STEP steps
+```
+
+`RUN steps` lists every visible Step physically owned by that Run, including
+nested same-Run Steps but excluding child-Run Steps. `STEP runs` lists only
+Runs whose `parent` equals the selected StepPath. `LOOP_STEP steps` lists only
+direct same-Run children whose `path.parent` equals the selected loop StepPath.
+Their JSON forms are bare canonical record arrays. Human Run rows expose the
+parent Step, stored runnable, occurrence, and physical Step count; Step rows
+expose their same-Run parent, durable activity, occurrence, and direct child-Run
+count.
+
+`inspect RUN tree` builds a transactionally consistent structural snapshot and
+renders the selected Run, its top-level Steps, direct same-Run nested Steps, and
+accepted child Runs in depth-first order. `inspect STEP call` dispatches by the
+durable Step kind: model and tool Steps expose their normalized stored calls;
+run, par, and loop Steps render the execution tree rooted at that Step. A
+container Step and its accepted child Run are always separate nodes. Agent,
+human, and value Steps have no `call`; Steps have no `tree`; Runs have no
+`call`; and `model-call` is not an alias.
+
+The structural projection combines durable records, timestamps, occurrence,
+errors, and accounting. It is not a persisted event journal, exact timeline,
+or live trace. Primitive fields and ownership relations do not import, validate,
+or aggregate the tree and remain usable independently.
 
 ## Projection Ownership
 

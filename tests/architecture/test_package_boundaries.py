@@ -187,3 +187,22 @@ def test_schema_modules_do_not_depend_on_runtime_services() -> None:
         "Schema modules must not import stores, watchers, or runtime services:\n"
         + "\n".join(violations)
     )
+
+
+def test_primitive_execution_inspection_does_not_depend_on_trees() -> None:
+    violations: list[str] = []
+    for name in ("inspection.py", "store.py"):
+        path = SOURCE_ROOT / "execution" / name
+        context = _module_context(path)
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                continue
+            for target in _import_targets(node, context):
+                if target == "toolang.execution.trees":
+                    violations.append(f"{name}:{node.lineno}")
+
+    assert not violations, (
+        "Primitive inspection must remain usable without tree projection: "
+        + ", ".join(violations)
+    )

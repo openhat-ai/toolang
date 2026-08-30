@@ -2,9 +2,8 @@
 
 ## Status
 
-Proposed for human approval. The canonical execution record fields prerequisite
-was implemented by pull request 415; this definition still ships no product
-code.
+Approved and merged by pull request 413. The canonical execution record fields
+prerequisite was implemented by pull request 415.
 
 ## Goal
 

@@ -117,7 +117,7 @@ toolang alice inspect runs
 toolang alice inspect term_3nprht9x runs
 toolang alice inspect run_ppkp9e94 steps
 toolang alice inspect run_ppkp9e94.0/output/value
-toolang alice inspect run_ppkp9e94.0 model-call
+toolang alice inspect run_ppkp9e94.0 call
 toolang alice retry run_ppkp9e94 --limit tokens=200000 --limit time=900
 toolang alice rerun run_ppkp9e94 --default model=openai/gpt-5
 toolang alice steer run_ppkp9e94 "Use the smaller patch"
@@ -328,8 +328,10 @@ The initial collection and relation subjects are:
 threads                 every visible Thread record
 runs                    every visible Run record
 controls                every visible Control record
-THREAD runs             every visible Run directly owned by THREAD
-RUN steps               every visible Step owned by RUN
+THREAD runs             every visible Run belonging to THREAD
+RUN steps               every visible Step physically owned by RUN
+STEP runs               every visible Run directly accepted by STEP
+LOOP_STEP steps         every direct same-Run Step owned by LOOP_STEP
 ```
 
 Collections are unbounded and preserve durable ordering. Their JSON form is a
@@ -360,9 +362,11 @@ the `run_` namespace; thread ids cannot begin with `run_`.
 
 Exact `threads`, `runs`, `controls`, and `steps` tokens are reserved by this
 grammar and take precedence over Thread Pointer parsing. The accepted
-transitions are Agent to `threads`, `runs`, or `controls`, Thread to `runs`, and
-Run to `steps`; collections, Controls, Steps, and fields do not accept relation
-subjects.
+transitions are Agent to `threads`, `runs`, or `controls`, Thread to `runs`, Run
+to `steps`, container Step to `runs`, and loop Step to `steps`. The Step
+relations are direct and return an empty canonical array when no child was
+created. Collections, Controls, non-container Steps, and fields do not accept
+relation subjects.
 
 Every successful query selects one projector after its subject resolves:
 
@@ -371,19 +375,22 @@ Every successful query selects one projector after its subject resolves:
 | `records` | collection subject | summarized record rows | canonical record array |
 | `fields` | browsable Pointer value | direct child fields | exact selected value |
 | `value` | scalar, empty, resolved, or specialized value | rendered value | exact selected value |
-| `model-call` | model Step with the explicit terminal name | structured model call | normalized model call |
+| `tree` | Run with the explicit terminal name | hierarchical durable execution | flat depth-first node array |
+| `call` | supported Step with the explicit terminal name | Step-owned historical call | normalized call or flat node array |
 
 `records`, `fields`, and `value` are implicit view kinds, not accepted command
-tokens. `model-call` remains the only explicit projector.
+tokens. `tree` is explicit only on a whole Run. `call` is explicit only on a
+whole model, tool, run, par, or loop Step. Run and Step subjects never expose
+equivalent projector names, and the removed `model-call` spelling is not an
+alias.
 
-`model-call` is the initial projector. It applies only to a whole model Step and
-reconstructs the complete normalized call persisted for that Step, including
-instructions, messages, tool definitions, the structured-output schema, and
-continuation data:
+`call` on a model Step reconstructs the complete normalized call persisted for
+that Step, including instructions, messages, tool definitions, the
+structured-output schema, and continuation data:
 
 ```bash
-toolang alice inspect run_ab12.0 model-call
-toolang alice inspect run_ab12.0 model-call --json
+toolang alice inspect run_ab12.0 call
+toolang alice inspect run_ab12.0 call --json
 ```
 
 This is distinct from `run_ab12.0/given/call`, which exposes compact persisted
@@ -397,6 +404,32 @@ uses the same Message and Part rendering as the input history and keeps the
 current response under `[=] assistant`; a missing response displays
 `No output.`. The JSON view keeps the exact normalized `output_schema` value,
 including `null` for unstructured and historical calls.
+
+`call` on a tool Step shows its persisted plugin, identifiers, normalized
+invocation, and stored tool result when present. Its JSON is the bare canonical
+`ToolCall` with exactly `tool_call_id`, `call_id`, `name`, and `input`; it does
+not add the result or an inspection envelope.
+
+`tree` on a Run and `call` on a run, par, or loop Step render the same durable
+structural model. A Run tree starts at that Run. A container-Step call starts at
+the selected Step, omits its owning Run and siblings, and retains each accepted
+child Run as a separate node:
+
+```text
+NODE                  ACTIVITY
+run_parent            <flow>  parent
+└─ run_parent.0       [run]   <agic>  child
+   └─ run_child       <agic>  child
+      └─ run_child.0  [model] openai/gpt-5
+```
+
+Human rows include the exact reusable pointer, operation, occurrence, status,
+own wall duration, and durable subtree metrics. JSON is a flat depth-first
+array with `pointer`, `record_kind`, `step_kind`, `parent`, `depth`, operation,
+status, occurrence, timestamps, canonical error, and metrics. This is a
+transactionally consistent structural snapshot, not event replay or a live
+trace; exact interleaving is unavailable because execution events are not
+persisted as a journal.
 
 Human output is the default. Record and container tables use the CLI's
 horizontal-rule Rich style and list direct children as relative field suffixes

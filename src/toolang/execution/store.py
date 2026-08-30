@@ -27,6 +27,12 @@ from toolang.base.types.tool import ToolDefinition
 from toolang.base.types.policy import RunLimits
 from toolang.common.time import utc_now
 from .errors import RunStoreSchemaError
+from .inspection import (
+    ExecutionSnapshot,
+    InspectedRun,
+    InspectedStep,
+    child_run_relation_order,
+)
 from .records import (
     CreateControlPayload,
     ControlPayload,
@@ -134,6 +140,24 @@ class RunStore:
             owner = not self._conn.in_transaction
             if owner:
                 self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield
+            except BaseException:
+                if owner:
+                    self._conn.rollback()
+                raise
+            else:
+                if owner:
+                    self._conn.commit()
+
+    @contextmanager
+    def _read_transaction(self) -> Iterator[None]:
+        """Read one consistent store snapshot, joining an existing transaction."""
+
+        with self._lock:
+            owner = not self._conn.in_transaction
+            if owner:
+                self._conn.execute("BEGIN")
             try:
                 yield
             except BaseException:
@@ -1851,6 +1875,254 @@ class RunStore:
         with self._lock:
             rows = self._conn.execute(query, tuple(params)).fetchall()
         return [_run_from_row(row) for row in rows]
+
+    def inspect_runs(self, *, thread_id: str | None = None) -> tuple[InspectedRun, ...]:
+        """Return one focused, consistent Run collection for inspection."""
+
+        clauses = [
+            "runs.ejected_by_target IS NULL",
+            "(runs.parent IS NULL OR runs.parent NOT IN ("
+            "SELECT steps.run || '.' || steps.path FROM steps "
+            "WHERE steps.ejected_by_target IS NOT NULL))",
+        ]
+        params: tuple[object, ...] = ()
+        if thread_id is not None:
+            clauses.append("runs.thread = ?")
+            params = (thread_id,)
+        with self._read_transaction():
+            rows = self._conn.execute(
+                f"SELECT runs.* FROM runs WHERE {' AND '.join(clauses)} "
+                "ORDER BY runs.created_at DESC, runs.id ASC",
+                params,
+            ).fetchall()
+            records = tuple(_run_from_row(row) for row in rows)
+            return self._inspect_runs_locked(records)
+
+    def inspect_steps(self, *, run_id: str) -> tuple[InspectedStep, ...]:
+        """Return all visible Steps physically owned by one Run."""
+
+        with self._read_transaction():
+            rows = self._conn.execute(
+                "SELECT * FROM steps WHERE run = ? AND ejected_by_target IS NULL",
+                (run_id,),
+            ).fetchall()
+            records = tuple(
+                sorted(
+                    (_step_from_row(row) for row in rows),
+                    key=lambda step: step.path.indices,
+                )
+            )
+            return self._inspect_steps_locked(records)
+
+    def inspect_child_runs(self, *, parent: StepRecord) -> tuple[InspectedRun, ...]:
+        """Return visible Runs directly accepted by one Step."""
+
+        with self._read_transaction():
+            rows = self._conn.execute(
+                "SELECT * FROM runs WHERE parent = ? "
+                "AND ejected_by_target IS NULL "
+                "AND parent NOT IN (SELECT steps.run || '.' || steps.path "
+                "FROM steps WHERE steps.ejected_by_target IS NOT NULL) "
+                "ORDER BY created_at ASC, id ASC",
+                (str(parent.path),),
+            ).fetchall()
+            records = tuple(_run_from_row(row) for row in rows)
+            inspected = self._inspect_runs_locked(records)
+        return tuple(
+            sorted(
+                inspected,
+                key=lambda item: child_run_relation_order(parent, item.record),
+            )
+        )
+
+    def inspect_child_steps(self, *, parent: StepRecord) -> tuple[InspectedStep, ...]:
+        """Return direct visible same-Run Steps owned by one loop Step."""
+
+        prefix = f"{parent.path.local}."
+        with self._read_transaction():
+            rows = self._conn.execute(
+                "SELECT * FROM steps WHERE run = ? "
+                "AND substr(path, 1, ?) = ? AND ejected_by_target IS NULL",
+                (parent.run_id, len(prefix), prefix),
+            ).fetchall()
+            records = tuple(
+                sorted(
+                    (
+                        step
+                        for step in (_step_from_row(row) for row in rows)
+                        if step.parent == parent.path
+                    ),
+                    key=lambda step: step.path.indices,
+                )
+            )
+            return self._inspect_steps_locked(records)
+
+    def load_execution_snapshot(
+        self,
+        *,
+        root: str | StepPath,
+    ) -> ExecutionSnapshot:
+        """Read one complete visible execution subtree in a single transaction."""
+
+        with self._read_transaction():
+            runs: dict[str, RunRecord] = {}
+            steps: dict[StepPath, StepRecord] = {}
+            pending_runs: list[str] = []
+            if isinstance(root, StepPath):
+                row = self._conn.execute(
+                    """
+                    SELECT steps.* FROM steps
+                    JOIN runs ON runs.id = steps.run
+                    WHERE steps.run = ? AND steps.path = ?
+                      AND steps.ejected_by_target IS NULL
+                      AND runs.ejected_by_target IS NULL
+                      AND (runs.parent IS NULL OR runs.parent NOT IN (
+                          SELECT hidden.run || '.' || hidden.path
+                          FROM steps AS hidden
+                          WHERE hidden.ejected_by_target IS NOT NULL
+                      ))
+                    """,
+                    (root.run, root.local),
+                ).fetchone()
+                if row is None:
+                    raise ValueError(f"record not found: {root}")
+                root_record: RunRecord | StepRecord = _step_from_row(row)
+                prefix = f"{root.local}."
+                rows = self._conn.execute(
+                    "SELECT * FROM steps WHERE run = ? "
+                    "AND (path = ? OR substr(path, 1, ?) = ?) "
+                    "AND ejected_by_target IS NULL",
+                    (root.run, root.local, len(prefix), prefix),
+                ).fetchall()
+                for step_row in rows:
+                    step = _step_from_row(step_row)
+                    steps[step.path] = step
+                child_rows = self._conn.execute(
+                    "SELECT * FROM runs WHERE ejected_by_target IS NULL "
+                    "AND parent NOT IN (SELECT steps.run || '.' || steps.path "
+                    "FROM steps WHERE steps.ejected_by_target IS NOT NULL) "
+                    "AND (parent = ? OR substr(parent, 1, ?) = ?)",
+                    (str(root), len(f"{root}."), f"{root}."),
+                ).fetchall()
+                for run_row in child_rows:
+                    run = _run_from_row(run_row)
+                    if run.id not in runs:
+                        runs[run.id] = run
+                        pending_runs.append(run.id)
+            else:
+                row = self._conn.execute(
+                    """
+                    SELECT * FROM runs WHERE id = ?
+                      AND ejected_by_target IS NULL
+                      AND (parent IS NULL OR parent NOT IN (
+                          SELECT steps.run || '.' || steps.path FROM steps
+                          WHERE steps.ejected_by_target IS NOT NULL
+                      ))
+                    """,
+                    (root,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError(f"record not found: {root}")
+                root_record = _run_from_row(row)
+                runs[root_record.id] = root_record
+                pending_runs.append(root_record.id)
+
+            loaded_runs: set[str] = set()
+            while pending_runs:
+                run_id = pending_runs.pop()
+                if run_id in loaded_runs:
+                    continue
+                loaded_runs.add(run_id)
+                step_rows = self._conn.execute(
+                    "SELECT * FROM steps WHERE run = ? AND ejected_by_target IS NULL",
+                    (run_id,),
+                ).fetchall()
+                for step_row in step_rows:
+                    step = _step_from_row(step_row)
+                    steps[step.path] = step
+                parent_prefix = f"{run_id}."
+                run_rows = self._conn.execute(
+                    "SELECT * FROM runs WHERE ejected_by_target IS NULL "
+                    "AND parent NOT IN (SELECT steps.run || '.' || steps.path "
+                    "FROM steps WHERE steps.ejected_by_target IS NOT NULL) "
+                    "AND substr(parent, 1, ?) = ?",
+                    (len(parent_prefix), parent_prefix),
+                ).fetchall()
+                for run_row in run_rows:
+                    run = _run_from_row(run_row)
+                    if run.id not in runs:
+                        runs[run.id] = run
+                        pending_runs.append(run.id)
+
+            records = tuple(runs.values())
+            entries = tuple(item.entry for item in self._inspect_runs_locked(records))
+            return ExecutionSnapshot(
+                root=root_record,
+                runs=tuple(sorted(records, key=lambda run: (run.created_at, run.id))),
+                steps=tuple(sorted(steps.values(), key=lambda step: step.path.indices)),
+                entries=entries,
+            )
+
+    def _inspect_runs_locked(
+        self,
+        records: Sequence[RunRecord],
+    ) -> tuple[InspectedRun, ...]:
+        if not records:
+            return ()
+        controls: dict[tuple[str, int], ControlRecord] = {}
+        step_counts: dict[str, int] = {run.id: 0 for run in records}
+        run_ids = tuple(run.id for run in records)
+        for offset in range(0, len(run_ids), 400):
+            chunk = run_ids[offset : offset + 400]
+            placeholders = ", ".join("?" for _ in chunk)
+            control_rows = self._conn.execute(
+                f"SELECT * FROM controls WHERE scope = 'run' "
+                f"AND target IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            for row in control_rows:
+                control = _control_from_row(row)
+                controls[(control.target, control.index)] = control
+            count_rows = self._conn.execute(
+                f"SELECT run, COUNT(*) AS count FROM steps "
+                f"WHERE run IN ({placeholders}) AND ejected_by_target IS NULL "
+                "GROUP BY run",
+                chunk,
+            ).fetchall()
+            for row in count_rows:
+                step_counts[str(row["run"])] = int(row["count"])
+        inspected = []
+        for run in records:
+            entry = controls.get((run.control.target, run.control.index))
+            if entry is None:
+                raise ValueError(
+                    f"run preparation control not found: {run.id}@{run.control.index}"
+                )
+            item = InspectedRun(run, entry, step_counts[run.id])
+            item.runnable
+            inspected.append(item)
+        return tuple(inspected)
+
+    def _inspect_steps_locked(
+        self,
+        records: Sequence[StepRecord],
+    ) -> tuple[InspectedStep, ...]:
+        if not records:
+            return ()
+        pointers = tuple(str(step.path) for step in records)
+        counts: dict[str, int] = {pointer: 0 for pointer in pointers}
+        for offset in range(0, len(pointers), 400):
+            chunk = pointers[offset : offset + 400]
+            placeholders = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                f"SELECT parent, COUNT(*) AS count FROM runs "
+                f"WHERE parent IN ({placeholders}) AND ejected_by_target IS NULL "
+                "GROUP BY parent",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                counts[str(row["parent"])] = int(row["count"])
+        return tuple(InspectedStep(step, counts[str(step.path)]) for step in records)
 
     def list_thread_runs_chronological(
         self,
