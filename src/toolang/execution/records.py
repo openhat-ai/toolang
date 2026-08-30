@@ -48,7 +48,6 @@ from .types import (
     Occurrence,
     OccurrencePosition,
     IterationOccurrence,
-    RunId,
     RunStatus,
     StepKind,
     StepGiven,
@@ -85,13 +84,13 @@ ThreadControlRef = ControlRef
 class RunRecord:
     """Durable run truth."""
 
-    id: RunId
+    id: str
     parent: StepPath | None
     thread: str
     control: ControlRef
     state: ControlRef
     output: Local | None
-    occurrence: Occurrence | None = None
+    occur: Occurrence | None = None
     status: RunStatus = "pending"
     error: ExecutionError | None = None
     ejected_by: ControlRef | None = None
@@ -104,7 +103,7 @@ class RunRecord:
             raise ValueError(f"invalid run id: {self.id!r}")
         if not valid_thread_id(self.thread):
             raise ValueError(f"invalid thread id: {self.thread!r}")
-        validate_occurrence(self.occurrence)
+        validate_occurrence(self.occur)
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,7 +184,7 @@ class RerunControlPayload:
     runnable: str
     model: str
     locals: tuple[Local, ...]
-    rerun_from: RunId
+    rerun_from: str
     model_request: ModelRequest | None = None
     sandbox: str | None = None
     authored_input: RunnableInputRaw | None = None
@@ -318,14 +317,14 @@ class ForkControlPayload:
     """Fork one thread at a visible run."""
 
     fork_from: str
-    fork_at: RunId
+    fork_at: str
 
 
 @dataclass(frozen=True, slots=True)
 class RewindControlPayload:
     """Rewind one thread with an optimistic head check."""
 
-    rewind_from: RunId
+    rewind_from: str
     rewind_if: int
 
 
@@ -379,7 +378,7 @@ ControlPayloadField = Annotated[
 class ThreadRecord:
     """Durable thread metadata."""
 
-    thread_id: str
+    id: str
     origin: str
     peer: ThreadPeer
     created_by: ControlRef
@@ -388,8 +387,8 @@ class ThreadRecord:
     updated_at: str
 
     def __post_init__(self) -> None:
-        if not valid_thread_id(self.thread_id):
-            raise ValueError(f"invalid thread id: {self.thread_id!r}")
+        if not valid_thread_id(self.id):
+            raise ValueError(f"invalid thread id: {self.id!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -444,7 +443,7 @@ class StepRecord:
     given: StoredStepGiven
     state: ControlRef
     output: Local | None
-    occurrence: Occurrence | None = None
+    occur: Occurrence | None = None
     noted: StepNoted = None
     status: StepStatus = "running"
     error: ExecutionError | None = None
@@ -454,7 +453,7 @@ class StepRecord:
     finished_at: str | None = None
 
     def __post_init__(self) -> None:
-        validate_occurrence(self.occurrence)
+        validate_occurrence(self.occur)
         if isinstance(self.given, StoredModelStepGiven):
             if self.kind != "model":
                 raise TypeError(f"{self.kind} Step cannot store model given facts")

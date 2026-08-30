@@ -63,14 +63,14 @@ class ThreadManager:
         )
         self._notify(
             ThreadCreated(
-                thread=thread.thread_id,
-                control=ControlRef(thread.thread_id, control.index),
+                thread=thread.id,
+                control=ControlRef(thread.id, control.index),
                 origin=thread.origin,
                 peer=thread.peer,
                 created_at=created_at,
             )
         )
-        return thread.thread_id
+        return thread.id
 
     def fork(
         self,
@@ -117,32 +117,30 @@ class ThreadManager:
     ) -> str:
         source = self._branchable_thread(thread_id)
         try:
-            prefix = ThreadPrefix(source.thread_id.split("_", 1)[0])
+            prefix = ThreadPrefix(source.id.split("_", 1)[0])
         except ValueError as exc:
-            raise ValueError(
-                f"thread has no issuable prefix: {source.thread_id}"
-            ) from exc
+            raise ValueError(f"thread has no issuable prefix: {source.id}") from exc
         result_thread_id = self.ids.issue_thread(prefix.value)
         created_at = utc_now()
         thread, control = self.store.fork_thread(
             thread_id=result_thread_id,
-            source=source.thread_id,
+            source=source.id,
             anchor=run_id,
             request_id=request_id,
             created_at=created_at,
         )
         if not isinstance(control.payload, ForkControlPayload):
-            raise RuntimeError(f"thread fork has no anchor: {thread.thread_id}")
+            raise RuntimeError(f"thread fork has no anchor: {thread.id}")
         self._notify(
             ThreadForked(
-                thread=thread.thread_id,
-                control=ControlRef(thread.thread_id, control.index),
-                source_thread=source.thread_id,
+                thread=thread.id,
+                control=ControlRef(thread.id, control.index),
+                source_thread=source.id,
                 anchor_run=control.payload.fork_at,
                 created_at=created_at,
             )
         )
-        return thread.thread_id
+        return thread.id
 
     def _rewind_locked(
         self,
@@ -154,18 +152,18 @@ class ThreadManager:
         thread = self._branchable_thread(thread_id)
         created_at = utc_now()
         updated, control, ejected = self.store.rewind_thread(
-            thread_id=thread.thread_id,
+            thread_id=thread.id,
             anchor=run_id,
             request_id=request_id,
             expected_head=thread.head,
             created_at=created_at,
         )
         if not isinstance(control.payload, RewindControlPayload):
-            raise RuntimeError(f"thread rewind has no anchor: {updated.thread_id}")
+            raise RuntimeError(f"thread rewind has no anchor: {updated.id}")
         self._notify(
             ThreadRewound(
-                thread=updated.thread_id,
-                control=ControlRef(updated.thread_id, control.index),
+                thread=updated.id,
+                control=ControlRef(updated.id, control.index),
                 anchor_run=control.payload.rewind_from,
                 ejected_runs=ejected,
                 created_at=created_at,
@@ -177,7 +175,7 @@ class ThreadManager:
         if thread is None:
             raise FileNotFoundError(f"thread not found: {thread_id}")
         if thread.origin != "chat":
-            raise ValueError(f"thread cannot be branched: {thread.thread_id}")
+            raise ValueError(f"thread cannot be branched: {thread.id}")
         return thread
 
     def _notify(self, event: ThreadEvent) -> None:

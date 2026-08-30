@@ -43,7 +43,7 @@ def test_implicit_pointer_projector_preserves_existing_browsing_rules(
     expected: str,
 ) -> None:
     record = ThreadRecord(
-        thread_id="term_render",
+        id="term_render",
         origin="test",
         peer=ThreadPeer(),
         created_by=ControlRef("term_render", 0),
@@ -89,7 +89,7 @@ def test_human_multiline_cell_never_wraps_its_pointer() -> None:
     console = Console(file=output, width=20, force_terminal=False)
     pointer = Pointer(f"term_{'x' * 80}/peer")
     record = ThreadRecord(
-        thread_id="term_render",
+        id="term_render",
         origin="test",
         peer=ThreadPeer(),
         created_by=ControlRef("term_render", 0),
@@ -123,7 +123,7 @@ def test_human_resolved_pointer_marks_the_type_not_the_field() -> None:
     base = Pointer("term_render")
     pointer = base.select("peer")
     record = ThreadRecord(
-        thread_id="term_render",
+        id="term_render",
         origin="test",
         peer=ThreadPeer(),
         created_by=ControlRef("term_render", 0),
@@ -160,7 +160,7 @@ def test_human_parts_align_in_the_value_cell_without_a_bullet() -> None:
     base = Pointer("term_render")
     pointer = base.select("peer")
     record = ThreadRecord(
-        thread_id="term_render",
+        id="term_render",
         origin="test",
         peer=ThreadPeer(),
         created_by=ControlRef("term_render", 0),

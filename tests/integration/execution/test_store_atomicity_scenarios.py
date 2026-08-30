@@ -92,7 +92,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             assert connection.execute(
                 "SELECT parent FROM runs WHERE id = 'run_dot_child'"
             ).fetchone() == ("run_dot_path.2.3",)
-            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 32
+            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 33
         finally:
             connection.close()
     finally:
@@ -204,7 +204,7 @@ def test_list_controls_excludes_controls_for_hidden_runs(tmp_path: Path) -> None
         thread = store.get_thread(thread_id=visible.thread)
         assert thread is not None
         _updated, rewind, _ejected = store.rewind_thread(
-            thread_id=thread.thread_id,
+            thread_id=thread.id,
             anchor=hidden.id,
             request_id=None,
             expected_head=thread.head,
@@ -239,10 +239,10 @@ def test_list_controls_excludes_controls_for_hidden_runs(tmp_path: Path) -> None
     ("table", "column", "invalid", "message"),
     (
         ("runs", "output", "[]", "stored run output must be an object"),
-        ("runs", "occurrence", "[]", "stored run occurrence must be an object"),
+        ("runs", "occur", "[]", "stored run occurrence must be an object"),
         ("steps", "input", "{}", "stored step input must be an array"),
         ("steps", "output", "[]", "stored step output must be an object"),
-        ("steps", "occurrence", "[]", "stored step occurrence must be an object"),
+        ("steps", "occur", "[]", "stored step occurrence must be an object"),
         ("steps", "given", "[]", "stored step given must be an object"),
         (
             "steps",

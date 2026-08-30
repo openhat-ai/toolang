@@ -57,7 +57,7 @@ class RunHistory:
         """Build summaries for a caller-selected sequence of Thread records."""
 
         runs_by_thread = self._store.list_thread_histories_chronological(
-            thread_ids=tuple(thread.thread_id for thread in threads)
+            thread_ids=tuple(thread.id for thread in threads)
         )
         run_ids = tuple(
             dict.fromkeys(run.id for runs in runs_by_thread.values() for run in runs)
@@ -67,7 +67,7 @@ class RunHistory:
         )
         items: list[ThreadInfo] = []
         for thread in threads:
-            runs = runs_by_thread.get(thread.thread_id, ())
+            runs = runs_by_thread.get(thread.id, ())
             items.append(
                 ThreadInfo.from_records(
                     thread,

@@ -107,7 +107,7 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
         step_data = record_to_data(stored_step)
 
         assert set(thread_data) == {
-            "thread_id",
+            "id",
             "origin",
             "peer",
             "created_by",
@@ -134,7 +134,7 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
             "control",
             "state",
             "output",
-            "occurrence",
+            "occur",
             "status",
             "error",
             "ejected_by",
@@ -149,7 +149,7 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
             "given",
             "state",
             "output",
-            "occurrence",
+            "occur",
             "noted",
             "status",
             "error",
@@ -305,7 +305,7 @@ def test_record_lookup_hides_steps_owned_by_an_ejected_run(tmp_path: Path) -> No
         thread = store.get_thread(thread_id=run.thread)
         assert thread is not None
         store.rewind_thread(
-            thread_id=thread.thread_id,
+            thread_id=thread.id,
             anchor=run.id,
             request_id=None,
             expected_head=thread.head,

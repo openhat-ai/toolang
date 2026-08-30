@@ -222,6 +222,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
             thread_id="term_inspect",
             origin="chat",
             input=Message.user("Inspect this"),
+            context={"occurrence": {"item": 0, "items": 2}},
         )
         project_step(
             store,
@@ -233,8 +234,16 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
             output=(TextPart(text="prepared"),),
             started_at="2026-07-25T01:00:00Z",
             finished_at="2026-07-25T01:00:01Z",
+            context={"occurrence": {"lane": 1, "lanes": 2}},
         )
         project_run_end(store, run_id=run.id)
+        detail = RunHistory(store).get_run(run.id)
+        assert detail is not None
+        assert detail.thread_id == "term_inspect"
+        assert detail.occurrence == run.occur
+        assert detail.steps[0].occurrence is not None
+        assert detail.steps[0].occurrence.lane is not None
+        assert detail.steps[0].occurrence.lane.index == 1
     finally:
         store.close()
 
@@ -244,6 +253,11 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     document = json.loads(result.stdout)
     assert document["path"] == "run_inspect.0"
     assert document["kind"] == "value"
+    assert document["occur"] == {
+        "item": None,
+        "lane": {"index": 1, "count": 2},
+        "iteration": None,
+    }
     assert document["output"] == {
         "type": "Part[]",
         "value": [{"text": "prepared", "type": "text"}],
@@ -272,6 +286,14 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     human_run = _invoke(root, "alice", "inspect", "run_inspect")
     human_control = _invoke(root, "alice", "inspect", "run_inspect@0")
     human = _invoke(root, "alice", "inspect", "run_inspect.0")
+    old_thread_field = _invoke(root, "alice", "inspect", "term_inspect/thread_id")
+    old_run_field = _invoke(root, "alice", "inspect", "run_inspect/occurrence")
+    old_step_field = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_inspect.0/occurrence",
+    )
     resolved = _invoke(root, "alice", "inspect", "run_inspect.0/input")
     resolved_value = _invoke(root, "alice", "inspect", "run_inspect.0/input/0")
     status = _invoke(root, "alice", "inspect", "run_inspect.0/status")
@@ -289,17 +311,25 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     assert raw_pointer.exit_code == 0, raw_pointer.stderr
     assert json.loads(raw_pointer.stdout) == document["input"][0]
     assert human_thread.exit_code == 0, human_thread.stderr
-    assert "THREAD FIELD TYPE VALUE" in " ".join(
-        strip_ansi(human_thread.stdout).split()
-    )
+    human_thread_text = " ".join(strip_ansi(human_thread.stdout).split())
+    assert "THREAD FIELD TYPE VALUE" in human_thread_text
+    assert "/id str term_inspect" in human_thread_text
     assert human_run.exit_code == 0, human_run.stderr
-    assert "RUN FIELD TYPE VALUE" in " ".join(strip_ansi(human_run.stdout).split())
+    human_run_text = " ".join(strip_ansi(human_run.stdout).split())
+    assert "RUN FIELD TYPE VALUE" in human_run_text
+    assert "/id str run_inspect" in human_run_text
+    assert "/occur Occurrence?" in human_run_text
     assert human_control.exit_code == 0, human_control.stderr
     assert "CONTROL FIELD TYPE VALUE" in " ".join(
         strip_ansi(human_control.stdout).split()
     )
     assert human.exit_code == 0
-    assert "STEP FIELD TYPE VALUE" in " ".join(strip_ansi(human.stdout).split())
+    human_step_text = " ".join(strip_ansi(human.stdout).split())
+    assert "STEP FIELD TYPE VALUE" in human_step_text
+    assert "/occur Occurrence?" in human_step_text
+    for old_field in (old_thread_field, old_run_field, old_step_field):
+        assert old_field.exit_code == 1
+        assert "field does not exist" in old_field.stderr
     assert "has type" not in human.stdout
     assert "append a FIELD" not in human.stdout
     assert "TYPE" in human.stdout
@@ -449,7 +479,7 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
     )
 
     assert threads.exit_code == 0, threads.stderr
-    assert [item["thread_id"] for item in json.loads(threads.stdout)] == [
+    assert [item["id"] for item in json.loads(threads.stdout)] == [
         "term_subject_other",
         "custom_subject",
         "threads",

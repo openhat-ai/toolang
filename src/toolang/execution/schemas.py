@@ -534,11 +534,11 @@ class ThreadInfo:
         if not runs:
             title = thread.peer.name if thread.peer.type == "agent" else thread.origin
             return cls(
-                id=thread.thread_id,
+                id=thread.id,
                 title=title,
                 created_at=thread.created_at,
                 origin=thread.origin,
-                channel=_thread_channel(thread.thread_id, thread.origin),
+                channel=_thread_channel(thread.id, thread.origin),
                 status="idle",
                 updated_at=thread.updated_at,
                 peer=ThreadPeerInfo.from_peer(thread.peer),
@@ -551,11 +551,11 @@ class ThreadInfo:
         last = runs[-1]
         active = next((run for run in reversed(runs) if run.status == "running"), None)
         return cls(
-            id=thread.thread_id,
+            id=thread.id,
             title=message_summary(input_parts) or thread.origin,
             created_at=thread.created_at,
             origin=thread.origin,
-            channel=_thread_channel(thread.thread_id, thread.origin),
+            channel=_thread_channel(thread.id, thread.origin),
             status="running" if active is not None else "idle",
             updated_at=max(last.finished_at or last.started_at, thread.updated_at),
             peer=ThreadPeerInfo.from_peer(thread.peer),
@@ -637,7 +637,7 @@ class RunInfo:
             runnable_name=name if separator else preparation.runnable,
             call_kind="top" if run.parent is None else "run",
             state=RunControlRefData.from_ref(run.state),
-            occurrence=run.occurrence,
+            occurrence=run.occur,
             input_text=input_text,
             summary=summary,
             status=run.status,
@@ -723,7 +723,7 @@ class StepData:
             kind=step.kind,
             input=list(step.input),
             output=step.output,
-            occurrence=step.occurrence,
+            occurrence=step.occur,
             given=given,
             state=RunControlRefData.from_ref(step.state),
             noted=step.noted,

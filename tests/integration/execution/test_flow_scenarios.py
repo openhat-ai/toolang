@@ -942,9 +942,9 @@ flow mapped(_: Text) -> Text[]:
                 if run.parent == StepPath.parse(f"{root.id}.1")
             ]
             assert sorted(
-                run.occurrence.item.index
+                run.occur.item.index
                 for run in children
-                if run.occurrence is not None and run.occurrence.item is not None
+                if run.occur is not None and run.occur.item is not None
             ) == [
                 0,
                 1,
@@ -1764,9 +1764,9 @@ flow repeated(_: Text) -> Text:
             until_runs = [
                 run
                 for run in harness.store.list_runs(thread_id=thread, limit=None)
-                if run.occurrence is not None
-                and run.occurrence.iteration is not None
-                and run.occurrence.iteration.phase == "until"
+                if run.occur is not None
+                and run.occur.iteration is not None
+                and run.occur.iteration.phase == "until"
             ]
             assert len(until_runs) == 2
             assert all(
