@@ -291,6 +291,16 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
         "run_inspect.0/output/value/0",
         "--json",
     )
+    raw_pointer = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_inspect.0/input/0",
+        "--json",
+    )
+    human_thread = _invoke(root, "alice", "inspect", "term_inspect")
+    human_run = _invoke(root, "alice", "inspect", "run_inspect")
+    human_control = _invoke(root, "alice", "inspect", "run_inspect@0")
     human = _invoke(root, "alice", "inspect", "run_inspect.0")
     resolved = _invoke(root, "alice", "inspect", "run_inspect.0/input")
     resolved_value = _invoke(root, "alice", "inspect", "run_inspect.0/input/0")
@@ -306,11 +316,22 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
 
     assert field.exit_code == 0
     assert json.loads(field.stdout) == {"type": "text", "text": "prepared"}
-    assert human.exit_code == 0
-    assert human.stdout.splitlines()[-1] == (
-        "run_inspect.0 has type StepRecord; append a FIELD to inspect a child."
+    assert raw_pointer.exit_code == 0, raw_pointer.stderr
+    assert json.loads(raw_pointer.stdout) == document["input"][0]
+    assert human_thread.exit_code == 0, human_thread.stderr
+    assert "THREAD FIELD TYPE VALUE" in " ".join(
+        strip_ansi(human_thread.stdout).split()
     )
-    assert "FIELD" in human.stdout
+    assert human_run.exit_code == 0, human_run.stderr
+    assert "RUN FIELD TYPE VALUE" in " ".join(strip_ansi(human_run.stdout).split())
+    assert human_control.exit_code == 0, human_control.stderr
+    assert "CONTROL FIELD TYPE VALUE" in " ".join(
+        strip_ansi(human_control.stdout).split()
+    )
+    assert human.exit_code == 0
+    assert "STEP FIELD TYPE VALUE" in " ".join(strip_ansi(human.stdout).split())
+    assert "has type" not in human.stdout
+    assert "append a FIELD" not in human.stdout
     assert "TYPE" in human.stdout
     assert "StepPath" in human.stdout
     assert "ControlRef?" in human.stdout
@@ -323,24 +344,25 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     assert "succeeded" in human.stdout
     assert "• prepared" not in human.stdout
     assert resolved.exit_code == 0
-    assert "/0 →" in resolved.stdout
+    resolved_lines = [
+        " ".join(line.split()) for line in strip_ansi(resolved.stdout).splitlines()
+    ]
+    assert "POINTER[] FIELD TYPE VALUE" in resolved_lines
+    resolved_row = next(line for line in resolved_lines if line.startswith("/0 "))
+    assert resolved_row.split()[:2] == ["/0", "*Part[]"]
+    assert "→" not in resolved.stdout
     assert "run_inspect.0/input/0" not in resolved.stdout
     assert "Inspect this" in resolved.stdout
     assert resolved_value.exit_code == 0
-    assert resolved_value.stdout.splitlines()[-1] == (
-        "run_inspect.0/input/0 resolves to Part[]."
-    )
+    assert "resolves to" not in resolved_value.stdout
+    assert "run_inspect.0/input/0" not in resolved_value.stdout
+    assert strip_ansi(resolved_value.stdout).strip() == "Inspect this"
     assert status.exit_code == 0
-    assert status.stdout == "succeeded\n\nrun_inspect.0/status has type StepStatus.\n"
+    assert status.stdout == "succeeded\n"
     assert ejected_by.exit_code == 0
-    assert ejected_by.stdout == (
-        "null\n\nrun_inspect.0/ejected_by has type ControlRef?.\n"
-    )
+    assert ejected_by.stdout == "null\n"
     assert response.exit_code == 0
-    assert response.stdout.splitlines()[-1] == (
-        "run_inspect.0/output/value has type Part[]."
-    )
-    assert response.stdout.count("run_inspect.0/output/value") == 1
+    assert "run_inspect.0/output/value" not in response.stdout
     assert "prepared" in response.stdout
     assert "• prepared" not in response.stdout
 
@@ -429,6 +451,7 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
         store.close()
 
     threads = _invoke(root, "alice", "inspect", "threads", "--json")
+    human_threads = _invoke(root, "alice", "inspect", "threads")
     runs = _invoke(root, "alice", "inspect", "runs", "--json")
     scoped_runs = _invoke(
         root,
@@ -461,6 +484,11 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
         "custom_subject",
         "threads",
     ]
+    assert human_threads.exit_code == 0, human_threads.stderr
+    human_thread_lines = [
+        " ".join(line.split()) for line in strip_ansi(human_threads.stdout).splitlines()
+    ]
+    assert "THREAD TITLE RUNS STATUS UPDATED" in human_thread_lines
     assert runs.exit_code == 0, runs.stderr
     assert [item["id"] for item in json.loads(runs.stdout)] == [
         "run_subject_other",
@@ -501,7 +529,7 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
         " ".join(line.split())
         for line in strip_ansi(human_scoped_runs.stdout).splitlines()
     ]
-    assert "RUN TITLE STEPS STATUS CREATED" in human_scoped_lines
+    assert "THREAD RUN TITLE STEPS STATUS CREATED" in human_scoped_lines
     scoped_first_line = next(
         line for line in human_scoped_lines if line.startswith("run_subject_first ")
     )
@@ -530,7 +558,10 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
 
     human = _invoke(root, "alice", "inspect", first.id, "steps")
     assert human.exit_code == 0, human.stderr
-    assert "STEP" in human.stdout
+    human_step_lines = [
+        " ".join(line.split()) for line in strip_ansi(human.stdout).splitlines()
+    ]
+    assert "RUN STEP KIND STATUS CREATED" in human_step_lines
     assert (
         human.stdout.index("run_subject_first.2")
         < human.stdout.index("run_subject_first.2.10")
@@ -840,12 +871,16 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
     assert "Continuation" in human_output
     assert "provider_cursor" in human_output
     assert '"instructions":' not in human_output
+    assert "projected as model-call" not in human_output
     assert rejected.exit_code == 2
     assert "does not support projector model-call" in rejected.stderr
 
 
-@pytest.mark.parametrize("projector", ("modelcall", "model_call"))
-def test_inspect_rejects_unregistered_model_call_spellings(
+@pytest.mark.parametrize(
+    "projector",
+    ("modelcall", "model_call", "records", "fields", "value"),
+)
+def test_inspect_rejects_unregistered_projector_spellings(
     tmp_path: Path,
     projector: str,
 ) -> None:

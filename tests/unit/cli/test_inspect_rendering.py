@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from io import StringIO
 
+import pytest
 from rich.console import Console
 
 from toolang.base.types.message import TextPart
 from toolang.cli.toolang.commands.inspect import (
     _HumanValue,
     _human_type_label,
+    _implicit_pointer_projector,
     _print_human_table,
     _render_human_rows,
 )
@@ -21,6 +23,45 @@ def test_human_type_labels_use_nullable_suffix() -> None:
     assert _human_type_label("StepPath | None") == "StepPath?"
     assert _human_type_label("str | int | None") == "(str | int)?"
     assert _human_type_label("RunRecord") == "RunRecord"
+
+
+@pytest.mark.parametrize(
+    ("value", "runtime", "render_type", "expected"),
+    (
+        ({"name": "user"}, {"name": "user"}, "ThreadPeer", "fields"),
+        (["value"], ["value"], "str[]", "fields"),
+        ({}, {}, "Json", "value"),
+        ([], [], "str[]", "value"),
+        ([{"type": "text"}], [TextPart("value")], "Part[]", "value"),
+        ("term_target", Pointer("term_target"), "ThreadRecord", "value"),
+    ),
+)
+def test_implicit_pointer_projector_preserves_existing_browsing_rules(
+    value: object,
+    runtime: object,
+    render_type: str,
+    expected: str,
+) -> None:
+    record = ThreadRecord(
+        thread_id="term_render",
+        origin="test",
+        peer=ThreadPeer(),
+        created_by=ControlRef("term_render", 0),
+        head=ControlRef("term_render", 0),
+        created_at="",
+        updated_at="",
+    )
+    selected = RecordSelection(
+        pointer=Pointer("term_render/peer"),
+        record=record,
+        value=value,
+        runtime=runtime,
+        annotation=object,
+        type_name=render_type,
+        render_type=render_type,
+    )
+
+    assert _implicit_pointer_projector(selected) == expected
 
 
 def test_human_table_never_truncates_a_pointer_in_a_narrow_terminal() -> None:
@@ -74,6 +115,43 @@ def test_human_multiline_cell_never_wraps_its_pointer() -> None:
     rendered = output.getvalue()
     assert str(pointer) in rendered
     assert "Text" in rendered
+
+
+def test_human_resolved_pointer_marks_the_type_not_the_field() -> None:
+    output = StringIO()
+    console = Console(file=output, width=80, force_terminal=False)
+    base = Pointer("term_render")
+    pointer = base.select("peer")
+    record = ThreadRecord(
+        thread_id="term_render",
+        origin="test",
+        peer=ThreadPeer(),
+        created_by=ControlRef("term_render", 0),
+        head=ControlRef("term_render", 0),
+        created_at="",
+        updated_at="",
+    )
+    selected = RecordSelection(
+        pointer=pointer,
+        record=record,
+        value="resolved",
+        runtime="resolved",
+        annotation=str,
+        type_name="Pointer",
+        render_type="Text",
+    )
+
+    _render_human_rows(
+        console,
+        ((selected, _HumanValue("resolved", "resolved", "Text", True)),),
+        base=base,
+    )
+
+    rendered = output.getvalue()
+    row = next(line for line in rendered.splitlines() if "/peer" in line)
+    assert "/peer" in row
+    assert "*Text" in row
+    assert "→" not in row
 
 
 def test_human_parts_align_in_the_value_cell_without_a_bullet() -> None:
