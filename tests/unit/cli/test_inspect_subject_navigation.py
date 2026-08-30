@@ -78,7 +78,10 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
                         tool_call_id="tool-1",
                         tool_name="inspect__run",
                         tool_family="inspect",
-                        input={"run_id": "run_123"},
+                        input={
+                            "run_id": "run_123",
+                            "include": ["steps", "errors"],
+                        },
                         reasoning="The run record contains the failure.",
                     ),
                 ),
@@ -129,10 +132,12 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
     assert "[0] user" in output
     assert "[1] assistant" in output
     assert "[2] tool" in output
-    assert "Tool Call · inspect.run" in output
+    assert "[0] text\n\nI will inspect it." in output
+    invocation = '[1] inspect.run(run_id: "run_123", include: ["steps", "errors"])'
+    assert invocation in output
     assert "Reason\nThe run record contains the failure." in output
-    assert "Input\nrun_id: run_123" in output
-    assert "Tool Result · inspect.run" in output
+    assert "\nInput\n" not in output
+    assert "inspect.run · result" in output
     assert "Output\nstatus: failed" in output
     assert "Available Tools · 1 tool" in output
     signature = (
@@ -144,6 +149,9 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
     assert by_text["[0] user"].style == "dim"
     assert by_text["[1] assistant"].style == "dim"
     assert by_text["[2] tool"].style == "dim"
+    assert by_text["[0] text"].style == "dim"
+    assert by_text[invocation].style == "dim"
+    assert by_text["inspect.run · result"].style == "dim"
     assert by_text[signature].style == "dim"
     for title in (
         "Instructions",
@@ -178,10 +186,10 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
         '<context name="failure">What happened?</context>',
         "[1] assistant",
         "I will inspect it.",
-        "Tool Call · inspect.run",
-        "run_id: run_123",
+        "[0] text",
+        invocation,
         "[2] tool",
-        "Tool Result · inspect.run",
+        "inspect.run · result",
         "status: failed",
         signature,
     ):

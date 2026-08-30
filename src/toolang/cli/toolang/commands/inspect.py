@@ -484,7 +484,10 @@ def _model_call_renderables(
                 if part_index:
                     lines.append(Text())
                 lines.extend(
-                    _message_part_renderables(cast(Mapping[str, object], part))
+                    _message_part_renderables(
+                        cast(Mapping[str, object], part),
+                        index=part_index if len(parts) > 1 else None,
+                    )
                 )
     else:
         lines.append(Text("No messages.", style="dim italic"))
@@ -609,29 +612,44 @@ def _schema_type(value: object) -> str:
     return "any"
 
 
-def _message_part_renderables(part: Mapping[str, object]) -> tuple[Text, ...]:
+def _message_part_renderables(
+    part: Mapping[str, object],
+    *,
+    index: int | None,
+) -> tuple[Text, ...]:
     part_type = str(part.get("type") or "part")
     if part_type == "text":
         text = part.get("text")
-        return (Text(text if isinstance(text, str) else ""),)
+        content = Text(text if isinstance(text, str) else "")
+        if index is None:
+            return (content,)
+        return (Text(f"[{index}] text", style="dim"), Text(), content)
     if part_type == "tool_call":
-        return _tool_part_renderables(part, result=False)
+        return _tool_part_renderables(part, result=False, index=index)
     if part_type == "tool_result":
-        return _tool_part_renderables(part, result=True)
+        return _tool_part_renderables(part, result=True, index=index)
     label = part_type.replace("_", " ").title()
     details = dict(part)
     details.pop("type", None)
-    return (Text(label, style="bold"), *_structured_renderables(details))
+    prefix = f"[{index}] " if index is not None else ""
+    return (
+        Text(f"{prefix}{label}", style="dim"),
+        *_structured_renderables(details),
+    )
 
 
 def _tool_part_renderables(
     part: Mapping[str, object],
     *,
     result: bool,
+    index: int | None,
 ) -> tuple[Text, ...]:
-    label = "Tool Result" if result else "Tool Call"
     name = _display_tool_name(str(part.get("tool_name") or "unnamed"))
-    lines = [Text(f"{label} · {name}", style="bold")]
+    prefix = f"[{index}] " if index is not None else ""
+    title = (
+        f"{name} · result" if result else _tool_invocation(name, part.get("input", {}))
+    )
+    lines = [Text(f"{prefix}{title}", style="dim")]
     for heading, key in (
         ("tool_call_id", "tool_call_id"),
         ("family", "tool_family"),
@@ -646,11 +664,24 @@ def _tool_part_renderables(
     error = part.get("error")
     if isinstance(error, str) and error:
         lines.extend((Text(), Text("Error", style="bold"), Text(error)))
-    payload_heading = "Output" if result else "Input"
-    payload_key = "output" if result else "input"
-    lines.extend((Text(), Text(payload_heading, style="bold")))
-    lines.extend(_structured_renderables(part.get(payload_key, {})))
+    if result:
+        lines.extend((Text(), Text("Output", style="bold")))
+        lines.extend(_structured_renderables(part.get("output", {})))
     return tuple(lines)
+
+
+def _tool_invocation(name: str, value: object) -> str:
+    if not isinstance(value, Mapping):
+        return f"{name}()"
+    arguments = cast(Mapping[object, object], value)
+    rendered = ", ".join(
+        f"{key}: {_argument_value(item)}" for key, item in arguments.items()
+    )
+    return f"{name}({rendered})"
+
+
+def _argument_value(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(", ", ": "))
 
 
 def _structured_renderables(
