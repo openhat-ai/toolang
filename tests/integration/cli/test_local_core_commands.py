@@ -438,6 +438,14 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
         "runs",
         "--json",
     )
+    human_runs = _invoke(root, "alice", "inspect", "runs")
+    human_scoped_runs = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "custom_subject",
+        "runs",
+    )
     steps = _invoke(
         root,
         "alice",
@@ -460,11 +468,47 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
         "run_subject_child",
         "run_subject_first",
     ]
+    assert all("steps" not in item for item in json.loads(runs.stdout))
     assert scoped_runs.exit_code == 0, scoped_runs.stderr
     assert [item["id"] for item in json.loads(scoped_runs.stdout)] == [
         "run_subject_second",
         "run_subject_child",
         "run_subject_first",
+    ]
+    assert human_runs.exit_code == 0, human_runs.stderr
+    human_run_lines = [
+        " ".join(line.split()) for line in strip_ansi(human_runs.stdout).splitlines()
+    ]
+    assert "RUN THREAD TITLE STEPS STATUS CREATED" in human_run_lines
+    first_run_line = next(
+        line for line in human_run_lines if line.startswith("run_subject_first ")
+    )
+    child_run_line = next(
+        line for line in human_run_lines if line.startswith("run_subject_child ")
+    )
+    assert first_run_line.split()[-3:] == [
+        "3",
+        "succeeded",
+        "2026-01-01T00:00:00Z",
+    ]
+    assert child_run_line.split()[-3:] == [
+        "0",
+        "succeeded",
+        "2026-01-01T12:00:00Z",
+    ]
+    assert human_scoped_runs.exit_code == 0, human_scoped_runs.stderr
+    human_scoped_lines = [
+        " ".join(line.split())
+        for line in strip_ansi(human_scoped_runs.stdout).splitlines()
+    ]
+    assert "RUN TITLE STEPS STATUS CREATED" in human_scoped_lines
+    scoped_first_line = next(
+        line for line in human_scoped_lines if line.startswith("run_subject_first ")
+    )
+    assert scoped_first_line.split()[-3:] == [
+        "3",
+        "succeeded",
+        "2026-01-01T00:00:00Z",
     ]
     assert steps.exit_code == 0, steps.stderr
     step_documents = json.loads(steps.stdout)
@@ -510,6 +554,7 @@ def test_inspect_collections_are_unbounded_and_empty_stores_succeed(
     assert json.loads(empty_threads.stdout) == []
     assert empty_runs.exit_code == 0, empty_runs.stderr
     assert "RUN" in empty_runs.stdout
+    assert "STEPS" in empty_runs.stdout
 
     store = RunStore(layout.run_store)
     try:
@@ -556,6 +601,8 @@ def test_inspect_human_collection_uses_resolved_run_records(
 
     original = RunStore.list_runs
     calls = 0
+    original_steps = RunStore.list_steps_for_runs
+    step_calls = 0
 
     def list_runs_once(instance: RunStore, **kwargs: Any):
         nonlocal calls
@@ -566,13 +613,24 @@ def test_inspect_human_collection_uses_resolved_run_records(
 
     monkeypatch.setattr(RunStore, "list_runs", list_runs_once)
 
+    def list_steps_once(instance: RunStore, **kwargs: Any):
+        nonlocal step_calls
+        step_calls += 1
+        if step_calls > 1:
+            raise AssertionError("inspect must load its Step counts only once")
+        return original_steps(instance, **kwargs)
+
+    monkeypatch.setattr(RunStore, "list_steps_for_runs", list_steps_once)
+
     result = _invoke(root, "alice", "inspect", "runs")
 
     assert result.exit_code == 0, result.stderr
     assert "run_single_query" in result.stdout
     assert calls == 1
+    assert step_calls == 1
 
     calls = 0
+    step_calls = 0
     monkeypatch.setattr(
         RunHistory,
         "describe_runs",
@@ -588,6 +646,7 @@ def test_inspect_human_collection_uses_resolved_run_records(
         "run_single_query"
     ]
     assert calls == 1
+    assert step_calls == 0
 
 
 @pytest.mark.parametrize(
