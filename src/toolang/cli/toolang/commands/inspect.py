@@ -489,16 +489,16 @@ def _model_call_renderables(
         width=section_width,
     )
     if isinstance(messages, list) and messages:
-        for index, message in enumerate(messages):
+        for offset, message in enumerate(messages):
             if not isinstance(message, Mapping):  # pragma: no cover - canonical data
                 continue
             message_data = cast(Mapping[str, object], message)
-            if index:
+            if offset:
                 lines.append(Text())
             role = str(message_data.get("role") or "message")
             _append_model_message(
                 lines,
-                index=index,
+                index=message_count - offset,
                 role=role,
                 parts=message_data.get("parts"),
             )

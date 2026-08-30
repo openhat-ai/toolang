@@ -768,12 +768,12 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
     assert "Instructions" in human_output
     assert "Diagnose the run." in human_output
     assert "Conversation · 2 messages" in human_output
-    assert "[0] assistant" in human_output
+    assert "[2] assistant" in human_output
     assert "Context" in human_output
     assert "[1] user" in human_output
     assert "Question" in human_output
     assert "[=] assistant" in human_output
-    assert "[2] assistant" not in human_output
+    assert "[0] assistant" not in human_output
     assert "assistant · result" not in human_output
     assert "Complete answer" in human_output
     assert "Available Tools · 0 tools" in human_output

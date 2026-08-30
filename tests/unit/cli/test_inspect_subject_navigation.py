@@ -132,9 +132,9 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
 
     assert "Review the run.\n<important>Preserve this tag.</important>" in output
     assert '<context name="failure">What happened?</context>' in output
-    assert "[0] user" in output
-    assert "[1] assistant" in output
-    assert "[2] tool" in output
+    assert "[3] user" in output
+    assert "[2] assistant" in output
+    assert "[1] tool" in output
     assert "[0] text" not in output
     assert "I will inspect it." in output
     call_boundary = "<[[ ToolCallPart(1), id=tool-1"
@@ -166,9 +166,9 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
         f"{section_boundary}\n\ncursor: next"
     ) in output
     assert '"messages":' not in output
-    assert by_text["[0] user"].style == "dim"
-    assert by_text["[1] assistant"].style == "dim"
-    assert by_text["[2] tool"].style == "dim"
+    assert by_text["[3] user"].style == "dim"
+    assert by_text["[2] assistant"].style == "dim"
+    assert by_text["[1] tool"].style == "dim"
     assert by_text[call_boundary].style == "dim"
     assert by_text[result_boundary].style == "dim"
     assert not by_text[invocation].style
@@ -224,12 +224,12 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
     ]
     assert all(renderable.plain != "Model Call" for renderable in renderables)
     for line in (
-        "[0] user",
+        "[3] user",
         '<context name="failure">What happened?</context>',
-        "[1] assistant",
+        "[2] assistant",
         "I will inspect it.",
         invocation,
-        "[2] tool",
+        "[1] tool",
         call_boundary,
         result_boundary,
         "message: Run inspection failed.",
@@ -251,6 +251,31 @@ def test_structured_human_values_are_zero_based_and_keep_nested_shape() -> None:
         "    enabled: true",
     ]
     assert all(renderable.style == "dim" for renderable in renderables)
+
+
+def test_model_call_messages_count_down_to_the_current_result() -> None:
+    call = ModelCall(
+        instructions="",
+        messages=[Message.user(str(index)) for index in range(10)],
+    )
+
+    renderables = inspect_commands._model_call_renderables(
+        model_call_to_data(call),
+        result_parts=({"type": "text", "text": "result"},),
+    )
+
+    assert any(
+        renderable.plain.startswith("Conversation · 10 messages ")
+        for renderable in renderables
+    )
+    assert [
+        renderable.plain
+        for renderable in renderables
+        if renderable.plain.endswith((" user", " assistant"))
+    ] == [
+        *(f"[{index}] user" for index in range(10, 0, -1)),
+        "[=] assistant",
+    ]
 
 
 def test_human_tool_name_replaces_only_the_toolset_separator() -> None:
