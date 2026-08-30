@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. Human confirmation is required before implementation.
+Approved for implementation on 2026-08-30.
 
 ## Goal
 

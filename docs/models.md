@@ -221,6 +221,7 @@ The public resources are:
 ```text
 too models [--filter SELECTOR] [--json]
 too providers [--filter GLOB] [--json]
+too catalogs
 too adapters [--filter GLOB] [--json]
 ```
 
@@ -228,6 +229,10 @@ too adapters [--filter GLOB] [--json]
 `too providers` owns readiness diagnostics and shows `ADAPTERS`, `API`,
 and `ENV` from `Provider.resolved`. Comma separates OR environment alternatives;
 ` + ` separates simultaneous requirements.
+
+`too catalogs` lists installed model-catalog plugin entry points and their
+`built-in` or `external` source. It does not load the plugins or describe the
+merged catalog snapshot; use `too models` for that view.
 
 `too models --filter ... --json` emits another complete, deterministic,
 models.dev-compatible catalog containing only selected models. Local-only

@@ -23,26 +23,31 @@ Top-level commands are:
 - `remove`
 - `list`
 - `info`
-- `chat`
-- `retry`
-- `rerun`
-- `steer`
-- `cancel`
-- `rewind`
-- `fork`
-- `threads`
-- `runs`
-- `inspect`
-- `model`
 - `run`
 - `start`
 - `stop`
-- `task`
 - `chore`
-- `skill`
+- `task`
 - `psyche`
+- `skill`
 - `service`
 - `prompt`
+- `chat`
+- `steer`
+- `cancel`
+- `retry`
+- `rerun`
+- `rewind`
+- `fork`
+- `inspect`
+- `caps`
+- `models`
+- `providers`
+- `tools`
+- `catalogs`
+- `adapters`
+- `toolsets`
+- `sandboxes`
 
 Global options:
 
@@ -105,9 +110,8 @@ toolang ./examples/deep_search.too info
 toolang alice chat
 toolang alice chat term_3nprht9x
 toolang alice chat --sandbox docker
-toolang alice threads
-toolang alice runs --thread term_3nprht9x
 toolang alice inspect threads
+toolang alice inspect runs
 toolang alice inspect term_3nprht9x runs
 toolang alice inspect run_ppkp9e94 steps
 toolang alice inspect run_ppkp9e94.0/output/value
@@ -119,6 +123,8 @@ toolang alice cancel term_3nprht9x
 toolang alice rewind run_ppkp9e94
 toolang alice fork run_ppkp9e94
 toolang models
+toolang catalogs
+toolang toolsets
 ```
 
 Top-level routing uses three command shapes:
@@ -126,8 +132,8 @@ Top-level routing uses three command shapes:
 - catalog commands are command-first only: `new`, `clone`, `list`, and
   `remove AGENT`
 - agent-self commands accept either order: `info`, `run`, `start`, and `stop`
-- commands for an agent's threads, runs, caps, tasks, or chores require the
-  target first, such as `toolang alice retry RUN` or
+- commands for an agent's execution history, caps, tasks, or chores require
+  the target first, such as `toolang alice retry RUN` or
   `toolang alice skill list`
 
 A command name wins whenever an unassigned token could be either a command or
@@ -144,14 +150,14 @@ explicit resident selectors and remote selectors are unambiguous. Showing
 remote target help does not resolve or fetch the agent. An incomplete selected
 command shows its own help before target existence or other runtime validation.
 
-Thread and run listing, inspection, retry, rerun, steering, cancellation,
-rewind, and fork open the selected agent's durable execution store directly.
-They do not start or call the agent HTTP server. A run id selects its owning
-thread; a thread id selects its active run for steering or cancellation and its
-latest terminal run for retry, rerun, rewind, or fork. Retry reopens the same
-root run and optionally starts at `--anchor`; rerun starts a new root run from
-the source invocation. Fork retains the anchor run, while rewind removes it and
-the following visible suffix.
+Thread and run inspection, retry, rerun, steering, cancellation, rewind, and
+fork open the selected agent's durable execution store directly. They do not
+start or call the agent HTTP server. A run id selects its owning thread; a
+thread id selects its active run for steering or cancellation and its latest
+terminal run for retry, rerun, rewind, or fork. Retry reopens the same root run
+and optionally starts at `--anchor`; rerun starts a new root run from the source
+invocation. Fork retains the anchor run, while rewind removes it and the
+following visible suffix.
 
 
 ## Agent Selectors
@@ -274,8 +280,6 @@ The same roaming source path can select agent commands:
 toolang SCRIPT info
 toolang SCRIPT run
 toolang SCRIPT chat [THREAD]
-toolang SCRIPT threads
-toolang SCRIPT runs [--thread THREAD]
 toolang SCRIPT inspect SUBJECT... [PROJECTOR] [--human | --json]
 toolang SCRIPT retry RUN [--anchor STEP]
 toolang SCRIPT rerun RUN
@@ -283,7 +287,9 @@ toolang SCRIPT rerun RUN
 
 It also supports `steer`, `cancel`, `rewind`, and `fork`. These command names
 immediately following the source are interpreted as agent commands. Prefix a
-same-named runnable with `agic:`, `flow:`, or `runnable:` to invoke it.
+same-named runnable with `agic:`, `flow:`, or `runnable:` to invoke it. The
+removed `threads` and `runs` command names are available to authored runnables
+without a typed prefix.
 
 Visiting selectors support the same agent-self and execution-history commands:
 
@@ -307,6 +313,12 @@ existing `runs.db` without fetching the source.
 ```text
 toolang AGENT inspect SUBJECT... [PROJECTOR] [--human | --json]
 ```
+
+The former top-level `threads` and `runs` commands have been removed. Replace
+them with `inspect threads`, `inspect runs`, or `inspect THREAD runs`. The old
+filters have no inspect equivalent; use `--json` and filter externally when
+needed. Inspect collections are unbounded rather than limited to 50 rows, and a
+missing `runs.db` is an error rather than an empty successful result.
 
 The initial collection and relation subjects are:
 
@@ -694,17 +706,19 @@ The provider table footer mirrors the model footer, for example
 `7 providers from 3 catalogs: models.dev 5, ollama 1, llama_cpp 1`.
 
 
-## Plugin Commands
+## Plugin Inventory Commands
 
-- `toolang plugin list`
+- `toolang catalogs`
+- `toolang adapters [--filter GLOB] [--json]`
+- `toolang tools [--filter SELECTOR]`
+- `toolang toolsets`
+- `toolang sandboxes`
 
-`toolang plugin list` shows installed plugins by family. Model catalog and
-adapter rows identify the installed runtime integrations; `toolang providers`
-owns provider readiness details such as:
-
-- readiness based on required environment variables
-- default API base URL when known
-- discovered model count
+`catalogs`, `adapters`, `toolsets`, and `sandboxes` list installed plugin entry
+points and their `built-in` or `external` source. `tools` instead lists the leaf
+tools assembled from installed toolsets. Catalog names identify integrations;
+`toolang models` and `toolang providers` own the merged catalog and provider
+availability views.
 
 
 ## Agent HTTP API

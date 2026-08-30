@@ -1,4 +1,4 @@
-"""Local thread and run inspection and control commands."""
+"""Local thread and run control commands."""
 
 from __future__ import annotations
 
@@ -34,7 +34,6 @@ from toolang.execution.schemas import (
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import (
     RunOverride,
-    RunStatus,
     StepPath,
 )
 from toolang.up.types import AgentServerRef
@@ -53,92 +52,8 @@ from ...common.agent_server import (
     acquire_agent_server,
 )
 from ...common.execution_progress.config import resolve_progress_max_width
-from ...common.output import echo_table
 from ...common.run_client import acquire_run_client
 from ...common.script_progress import ScriptRunPresenter
-
-
-def threads_command(
-    ctx: typer.Context,
-    origin: Annotated[
-        str | None, typer.Option("--origin", help="Filter by origin.")
-    ] = None,
-    channel: Annotated[
-        str | None, typer.Option("--channel", help="Filter by channel.")
-    ] = None,
-    status: Annotated[
-        str | None, typer.Option("--status", help="Filter by thread status.")
-    ] = None,
-) -> None:
-    """List threads from the selected agent's durable execution store."""
-
-    with open_execution(ctx) as resources:
-        items = (
-            []
-            if resources is None
-            else RunHistory(resources.store).list_threads(
-                origin=origin,
-                channel=channel,
-                status=status,
-            )
-        )
-    rows = [
-        (
-            item.id,
-            _truncate(item.title, width=48),
-            str(item.run_count),
-            item.status,
-            item.updated_at,
-        )
-        for item in items
-    ]
-    echo_table(("THREAD", "TITLE", "RUNS", "STATUS", "UPDATED"), rows)
-
-
-def runs_command(
-    ctx: typer.Context,
-    thread: Annotated[
-        str | None, typer.Option("--thread", help="Filter by thread id.")
-    ] = None,
-    status: Annotated[
-        str | None, typer.Option("--status", help="Filter by run status.")
-    ] = None,
-) -> None:
-    """List runs from the selected agent's durable execution store."""
-
-    run_status = _run_status(status)
-    with open_execution(ctx) as resources:
-        items = (
-            []
-            if resources is None
-            else RunHistory(resources.store).list_runs(
-                thread_id=thread,
-                status=run_status,
-            )
-        )
-    if thread is not None:
-        rows = [
-            (
-                item.id,
-                _truncate(item.summary or item.input_text, width=48),
-                _display_status(item.status),
-                item.created_at,
-            )
-            for item in items
-        ]
-        echo_table(("RUN", "TITLE", "STATUS", "CREATED"), rows)
-        return
-    rows = [
-        (
-            item.thread_id,
-            item.id,
-            _truncate(item.summary or item.input_text, width=48),
-            _display_status(item.status),
-            item.created_at,
-        )
-        for item in items
-    ]
-    echo_table(("THREAD", "RUN", "TITLE", "STATUS", "CREATED"), rows)
 
 
 def steer_command(
@@ -585,22 +500,5 @@ def _retry_anchor(run_id: str, value: str | None) -> StepPath | None:
     return StepPath.from_local(run_id, text)
 
 
-def _run_status(value: str | None) -> RunStatus | None:
-    if value is None:
-        return None
-    if value not in {"pending", "running", "succeeded", "failed", "canceled"}:
-        raise click.ClickException(f"unknown run status: {value}")
-    return cast(RunStatus, value)
-
-
 def _display_status(value: object) -> str:
     return str(value or "")
-
-
-def _truncate(value: object, *, width: int) -> str:
-    text = " ".join(str(value or "").split())
-    if len(text) <= width:
-        return text
-    if width <= 3:
-        return text[:width]
-    return f"{text[: width - 3].rstrip()}..."

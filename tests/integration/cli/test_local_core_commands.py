@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 from collections.abc import Mapping
-import sqlite3
 import sys
 from typing import Any, cast
 
@@ -87,60 +86,37 @@ def test_inspect_rejects_invalid_pointers(tmp_path: Path, value: str) -> None:
     assert "invalid pointer" in result.stderr
 
 
-def test_read_only_thread_commands_do_not_create_execution_store(
+def test_inspect_missing_history_does_not_create_execution_store(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
 
-    result = _invoke(root, "alice", "threads")
+    result = _invoke(root, "alice", "inspect", "threads")
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1
+    assert "execution history not found: alice" in result.stderr
     assert not layout.run_store.exists()
 
 
-@pytest.mark.parametrize("schema_version", [11, 18, 24, 27, 31])
-def test_read_only_thread_commands_do_not_migrate_incompatible_history(
+@pytest.mark.parametrize("command", ("threads", "runs"))
+def test_removed_history_commands_are_unavailable(
     tmp_path: Path,
-    schema_version: int,
+    command: str,
 ) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
-    layout.run_store.parent.mkdir(parents=True)
-    connection = sqlite3.connect(layout.run_store)
-    connection.execute("CREATE TABLE legacy_state (value TEXT NOT NULL)")
-    connection.execute("INSERT INTO legacy_state VALUES ('preserved')")
-    connection.execute(f"PRAGMA user_version={schema_version}")
-    connection.commit()
-    connection.close()
 
-    result = _invoke(root, "alice", "threads")
-    error_output = " ".join(click.unstyle(result.stderr).replace("│", " ").split())
+    result = _invoke(root, "alice", command)
 
-    assert result.exit_code == 1
-    assert "Traceback" not in error_output
-    assert "execution history is incompatible with toolang" in error_output
-    assert f"uses schema {schema_version}" in error_output
-    assert "requires schema 32" in error_output
-    assert "does not migrate" in error_output
-    assert "preserve or remove" in error_output.lower()
-    assert "database was not changed" in error_output.lower()
-    connection = sqlite3.connect(layout.run_store)
-    try:
-        assert (
-            int(connection.execute("PRAGMA user_version").fetchone()[0])
-            == schema_version
-        )
-        assert connection.execute("SELECT value FROM legacy_state").fetchone() == (
-            "preserved",
-        )
-    finally:
-        connection.close()
+    assert result.exit_code == 2
+    assert "No such command" in result.stderr
+    assert not layout.run_store.exists()
 
 
-def test_thread_and_run_lists_read_local_history(tmp_path: Path) -> None:
+def test_inspect_thread_and_run_collections_read_local_history(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
@@ -168,16 +144,8 @@ def test_thread_and_run_lists_read_local_history(tmp_path: Path) -> None:
     finally:
         store.close()
 
-    threads = _invoke(root, "alice", "threads")
-    runs = _invoke(
-        root,
-        "alice",
-        "runs",
-        "--thread",
-        "term_main",
-        "--status",
-        "succeeded",
-    )
+    threads = _invoke(root, "alice", "inspect", "threads")
+    runs = _invoke(root, "alice", "inspect", "term_main", "runs")
 
     assert threads.exit_code == 0
     assert "term_main" in threads.stdout
@@ -1151,7 +1119,7 @@ def test_inspect_step_path_does_not_cross_run_boundaries(tmp_path: Path) -> None
     assert "record not found: run_parent.0.0" in synthetic_result.stderr
 
 
-def test_roaming_source_reads_threads_runs_and_inspection(
+def test_roaming_source_reads_inspect_collections_and_records(
     tmp_path: Path,
     capsys,
 ) -> None:
@@ -1182,9 +1150,9 @@ def test_roaming_source_reads_threads_runs_and_inspection(
     finally:
         store.close()
 
-    threads = cli.main([str(source), "threads"])
+    threads = cli.main([str(source), "inspect", "threads"])
     threads_output = capsys.readouterr()
-    runs = cli.main([str(source), "runs", "--thread", "script_roaming"])
+    runs = cli.main([str(source), "inspect", "script_roaming", "runs"])
     runs_output = capsys.readouterr()
     inspect = cli.main([str(source), "inspect", "run_roaming.0", "--json"])
     inspect_output = capsys.readouterr()
@@ -1687,19 +1655,88 @@ def test_tools_uses_setup_snapshot(tmp_path: Path, monkeypatch) -> None:
     assert "Echo text." in result.stdout
 
 
-def test_sandboxes_lists_installed_plugins(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("command", "group", "header", "plugin_name", "empty_message"),
+    (
+        (
+            "catalogs",
+            "toolang.model_catalog",
+            "CATALOG",
+            "models_dev",
+            "No catalogs found.",
+        ),
+        (
+            "toolsets",
+            "toolang.toolset",
+            "TOOLSET",
+            "shell",
+            "No toolsets found.",
+        ),
+        (
+            "sandboxes",
+            "toolang.sandbox",
+            "SANDBOX",
+            "docker",
+            "No sandboxes found.",
+        ),
+    ),
+)
+def test_plugin_inventory_commands_list_entry_points_and_handle_empty_groups(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    group: str,
+    header: str,
+    plugin_name: str,
+    empty_message: str,
+) -> None:
     root = tmp_path / "toolang"
+    requested: list[str] = []
+
+    def plugin_rows(selected_group: str) -> list[tuple[str, str]]:
+        requested.append(selected_group)
+        return [(plugin_name, "external")]
+
     monkeypatch.setattr(
         plugin_commands,
         "plugin_info_rows",
-        lambda group: [("docker", "test")] if group == "toolang.sandbox" else [],
+        plugin_rows,
     )
 
-    result = _invoke(root, "sandboxes")
+    result = _invoke(root, command)
 
     assert result.exit_code == 0
-    assert "docker" in result.stdout
-    assert "test" in result.stdout
+    output = strip_ansi(result.stdout)
+    assert header in output
+    assert "SOURCE" in output
+    assert plugin_name in output
+    assert "external" in output
+    assert requested == [group]
+
+    monkeypatch.setattr(plugin_commands, "plugin_info_rows", lambda _group: [])
+    empty = _invoke(root, command)
+
+    assert empty.exit_code == 0
+    assert empty.stdout.strip() == empty_message
+
+
+@pytest.mark.parametrize("command", ("catalogs", "toolsets"))
+def test_plugin_inventory_commands_have_only_direct_plural_forms(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+
+    singular = _invoke(root, command[:-1])
+    nested = _invoke(root, command, "list")
+    targeted = _invoke(root, "alice", command)
+
+    assert singular.exit_code == 2
+    assert nested.exit_code == 2
+    assert "unexpected extra argument" in nested.stderr.lower()
+    assert targeted.exit_code == 2
+    assert f"{command} does not accept an agent target here" in targeted.stderr
 
 
 def test_agent_info_builds_state_and_setup_without_server(
