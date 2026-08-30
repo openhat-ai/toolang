@@ -14,6 +14,7 @@ from toolang.base.types.run import ModelCall, ModelCallResult
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.plugin.models.loading import load_model_adapters, load_model_catalogs
+from toolang.plugin.toolsets.collections import tool_dataset
 from toolang.plugin.toolsets.registry import ToolRef
 from toolang.plugin.loading import (
     PluginInfo,
@@ -314,6 +315,19 @@ def test_load_tools_accepts_explicit_toolset_keys(monkeypatch) -> None:
     assert getattr(tools["issues__search"], "ref") == ToolRef(
         plugin="tracker", toolset="issues", name="search"
     )
+
+
+def test_tool_query_parameters_are_json_schema_property_names() -> None:
+    @tool(name="read", description="Read a file.")
+    def read(path: str, limit: int = 10) -> str:
+        del limit
+        return path
+
+    dataset = tool_dataset({"filesystem__read": create_function_tool(read)})
+
+    assert dataset.items[0].parameters == ("limit", "path")
+    assert dataset.query("*[parameters=path]") == dataset.items
+    assert dataset.query("*[parameters=properties]") == ()
 
 
 def test_toolang_distribution_can_register_an_internal_toolset(monkeypatch) -> None:

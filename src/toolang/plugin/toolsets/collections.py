@@ -82,6 +82,12 @@ def _tool_view(
         plugin = ref.toolset
     normalized = ToolRef(plugin=plugin, toolset=ref.toolset, name=ref.name)
     definition = tool.definition()
+    properties = definition.parameters.get("properties")
+    parameter_names = (
+        tuple(sorted(str(name) for name in properties))
+        if isinstance(properties, Mapping)
+        else ()
+    )
     return ToolQueryView(
         model_name=model_name,
         record=tool,
@@ -90,7 +96,7 @@ def _tool_view(
         plugin=normalized.plugin,
         source=plugin_sources.get(normalized.plugin, "-"),
         description=" ".join(definition.description.split()),
-        parameters=tuple(sorted(str(name) for name in definition.parameters)),
+        parameters=parameter_names,
     )
 
 

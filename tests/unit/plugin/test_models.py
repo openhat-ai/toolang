@@ -48,8 +48,9 @@ from toolang.plugin.models.resolution import (
     model_reasoning_efforts,
     resolve_model,
     select_model_queries,
+    selectable_model_targets,
 )
-from toolang.plugin.models.views import _format_decimal_unit
+from toolang.plugin.models.views import _format_decimal_unit, model_list_rows
 from toolang.setup import AgentSetup
 from toolang.plugin.models.catalog import (
     PACKAGED_MODEL_CATALOG,
@@ -275,7 +276,93 @@ def test_model_query_groups_route_aliases_and_retains_catalog_fields() -> None:
     )
 
     assert fast == quick
-    assert queries == ("openai/gpt-5[route.provider=openai;route.adapter=responses]",)
+    assert queries == ("openai/gpt-5[alias=fast]",)
+
+
+def test_model_query_keeps_aliases_with_distinct_adapters() -> None:
+    provider = _FakeModels(
+        name="openai",
+        models=(
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openai",
+                name="gpt-5",
+                model="gpt-5",
+                adapter="responses",
+            ),
+        ),
+    )
+    context = _SelectionContext(
+        model_providers={"openai": provider},
+        model_aliases={
+            "responses": ModelAlias(
+                name="responses",
+                ref="openai/gpt-5",
+                provider="openai",
+                adapter="responses",
+            ),
+            "chat": ModelAlias(
+                name="chat",
+                ref="openai/gpt-5",
+                provider="openai",
+                adapter="chat_completions",
+            ),
+        },
+        default_models=(),
+        model_environ={},
+    )
+
+    queries = select_model_queries(
+        context,
+        allowed_queries=("*[alias=responses]", "*[alias=chat]"),
+    )
+
+    assert queries == (
+        "openai/gpt-5[alias=responses]",
+        "openai/gpt-5[alias=chat]",
+    )
+    assert resolve_model(context, query=queries[0]).adapter == "responses"
+    assert resolve_model(context, query=queries[1]).adapter == "chat_completions"
+
+
+def test_model_query_exact_queries_round_trip_distinct_alias_endpoints() -> None:
+    provider = _FakeModels(name="openai", models=())
+    context = _SelectionContext(
+        model_providers={"openai": provider},
+        model_aliases={
+            name: ModelAlias(
+                name=name,
+                ref="openai/gpt-5",
+                provider="openai",
+                adapter="responses",
+                endpoint=endpoint,
+            )
+            for name, endpoint in (
+                ("primary", "https://primary.example.test/v1"),
+                ("backup", "https://backup.example.test/v1"),
+            )
+        },
+        default_models=(),
+        model_environ={},
+    )
+
+    candidates = selectable_model_targets(
+        providers=context.providers,
+        models=context.models,
+        aliases=context.model_aliases,
+        envs=context.envs,
+    )
+
+    assert tuple(query for query, _target in candidates) == (
+        "openai/gpt-5[alias=primary]",
+        "openai/gpt-5[alias=backup]",
+    )
+    assert tuple(
+        resolve_model(context, query=query).base_url for query, _target in candidates
+    ) == (
+        "https://primary.example.test/v1",
+        "https://backup.example.test/v1",
+    )
 
 
 def test_model_resolution_resolves_explicit_provider_route() -> None:
@@ -689,8 +776,8 @@ def test_select_model_queries_preserve_base_order_for_intersection() -> None:
     )
 
     assert queries == (
-        "openai/gpt-5[route.provider=openrouter;route.adapter=responses]",
-        "openai/o3[route.provider=openrouter;route.adapter=responses]",
+        "openai/gpt-5[route.provider=openrouter;route.adapter=responses;alias=null]",
+        "openai/o3[route.provider=openrouter;route.adapter=responses;alias=null]",
     )
 
 
@@ -724,10 +811,10 @@ def test_select_model_queries_supports_name_glob_without_matching_family() -> No
     )
 
     assert select_model_queries(context, allowed_queries=("gpt-*",)) == (
-        "openai/gpt-5[route.provider=openrouter;route.adapter=responses]",
+        "openai/gpt-5[route.provider=openrouter;route.adapter=responses;alias=null]",
     )
     assert select_model_queries(context, allowed_queries=("openai/*",)) == (
-        "openai/gpt-5[route.provider=openrouter;route.adapter=responses]",
+        "openai/gpt-5[route.provider=openrouter;route.adapter=responses;alias=null]",
     )
     with pytest.raises(ToolangError, match="No matched models."):
         select_model_queries(context, allowed_queries=("openai",))
@@ -791,10 +878,10 @@ def test_select_model_queries_expands_route_neutral_agic_refs_from_discovery() -
     )
 
     assert queries == (
-        "openai/gpt-5[route.provider=openai;route.adapter=responses]",
-        "openai/o3[route.provider=openai;route.adapter=responses]",
-        "openai/gpt-5[route.provider=openrouter;route.adapter=responses]",
-        "openai/o3[route.provider=openrouter;route.adapter=responses]",
+        "openai/gpt-5[route.provider=openai;route.adapter=responses;alias=null]",
+        "openai/o3[route.provider=openai;route.adapter=responses;alias=null]",
+        "openai/gpt-5[route.provider=openrouter;route.adapter=responses;alias=null]",
+        "openai/o3[route.provider=openrouter;route.adapter=responses;alias=null]",
     )
 
 
@@ -839,7 +926,7 @@ def test_select_model_queries_skips_providers_missing_required_env() -> None:
     )
 
     assert queries == (
-        "openai/gpt-5[route.provider=openrouter;route.adapter=responses]",
+        "openai/gpt-5[route.provider=openrouter;route.adapter=responses;alias=null]",
     )
 
 
@@ -883,7 +970,7 @@ def test_select_model_queries_prefers_exact_ref_over_version_aliases() -> None:
     )
 
     assert queries == (
-        "openai/gpt-5[route.provider=openrouter;route.adapter=responses]",
+        "openai/gpt-5[route.provider=openrouter;route.adapter=responses;alias=null]",
     )
 
 
@@ -942,11 +1029,22 @@ def test_select_model_queries_returns_all_discoverable_when_unrestricted() -> No
     queries = select_model_queries(context)
 
     assert queries == (
-        "openai/gpt-5[route.provider=openai;route.adapter=responses]",
-        "openai/o3[route.provider=openai;route.adapter=responses]",
-        "openai/gpt-5[route.provider=openrouter;route.adapter=responses]",
-        "openai/o3[route.provider=openrouter;route.adapter=responses]",
+        "openai/gpt-5[route.provider=openai;route.adapter=responses;alias=null]",
+        "openai/o3[route.provider=openai;route.adapter=responses;alias=null]",
+        "openai/gpt-5[route.provider=openrouter;route.adapter=responses;alias=null]",
+        "openai/o3[route.provider=openrouter;route.adapter=responses;alias=null]",
     )
+    assert model_list_rows(
+        providers=context.providers,
+        models=context.models,
+        aliases=context.model_aliases,
+        envs=context.envs,
+    ) == [
+        ("openai/gpt-5", "openai", "streaming=y, tools=y"),
+        ("openai/o3", "openai", "streaming=y, tools=y"),
+        ("openai/gpt-5", "openrouter", "streaming=y, tools=y"),
+        ("openai/o3", "openrouter", "streaming=y, tools=y"),
+    ]
 
 
 def test_model_resolution_only_reads_captured_model_snapshot() -> None:
@@ -983,7 +1081,7 @@ def test_model_resolution_only_reads_captured_model_snapshot() -> None:
 
     assert queries == (
         "anthropic/claude-4.5-sonnet-20250929"
-        "[route.provider=openrouter;route.adapter=responses]",
+        "[route.provider=openrouter;route.adapter=responses;alias=null]",
     )
     assert target.ref == "anthropic/claude-4.5-sonnet-20250929"
     assert openrouter.list_models_calls == discovery_calls
@@ -1031,7 +1129,9 @@ def test_model_selection_filters_the_complete_captured_snapshot() -> None:
         allowed_queries=("openai/gpt-5[route.provider=openai]",),
     )
 
-    assert queries == ("openai/gpt-5[route.provider=openai;route.adapter=responses]",)
+    assert queries == (
+        "openai/gpt-5[route.provider=openai;route.adapter=responses;alias=null]",
+    )
     assert (openai.list_models_calls, openrouter.list_models_calls) == discovery_calls
 
 

@@ -110,7 +110,7 @@ def model_rows(
     setup: AgentSetup,
     *,
     config_layers: Sequence[Mapping[str, object]],
-    model_queries: Sequence[str] = (),
+    model_queries: Sequence[str] | None = None,
 ) -> list[tuple[str, str, str]]:
     from toolang.plugin.models.config import (
         parse_model_aliases,

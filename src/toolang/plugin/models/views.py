@@ -20,7 +20,7 @@ def model_list_rows(
     models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     envs: Mapping[str, str],
-    queries: Sequence[str] = (),
+    queries: Sequence[str] | None = None,
 ) -> list[tuple[str, str, str]]:
     """Return table rows for selectable model listings."""
 

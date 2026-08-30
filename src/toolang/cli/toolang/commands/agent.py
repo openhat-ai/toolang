@@ -286,7 +286,7 @@ def _models_summary(
     rows = plugin.model_rows(
         setup,
         config_layers=(state.root_config, state.home_config),
-        model_queries=queries,
+        model_queries=queries or None,
     )
     provider_count = len({provider for _model, provider, _detail in rows})
     return (

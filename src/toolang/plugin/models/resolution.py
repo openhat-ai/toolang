@@ -138,15 +138,12 @@ class RuntimeModelParametersView:
 class RuntimeModelView:
     """Explicitly public runtime-model route query representation."""
 
-    key_ref: str
-    key_provider: str
-    key_model: str
-    key_base_url: str | None
+    key_query: str
     candidate: object
     provider: str
     model: str
     name: str
-    alias: tuple[str, ...]
+    alias: tuple[str, ...] | None
     route: RuntimeModelRouteView
     tags: tuple[str, ...]
     tools: bool
@@ -168,17 +165,14 @@ class RuntimeModelView:
 RUNTIME_MODEL_SCHEMA = CollectionSchema.from_type(
     "runtime models",
     RuntimeModelView,
-    key=("key_ref", "key_provider", "key_model", "key_base_url"),
+    key="key_query",
     identity=IdentitySpec(
         paths=("provider", "model"),
         labels=("provider", "model"),
         separator="/",
     ),
     exclude=(
-        "key_ref",
-        "key_provider",
-        "key_model",
-        "key_base_url",
+        "key_query",
         "candidate",
     ),
 )
@@ -439,12 +433,12 @@ def select_model_queries(
         )
     if directive_candidates and allowed_candidates:
         directive_identities = {
-            _target_identity(candidate.target) for candidate in directive_candidates
+            candidate.exact_query for candidate in directive_candidates
         }
         selected = tuple(
             candidate.exact_query
             for candidate in allowed_candidates
-            if _target_identity(candidate.target) in directive_identities
+            if candidate.exact_query in directive_identities
         )
         if selected:
             return selected
@@ -652,7 +646,6 @@ def _discover_available_candidates(
     provider_configs: Mapping[str, ProviderConfig],
 ) -> tuple[_Candidate, ...]:
     candidates: list[_Candidate] = []
-    indexes: dict[tuple[str, str, str, str | None], int] = {}
     for name, alias in aliases.items():
         target = _target_from_alias(
             alias,
@@ -664,19 +657,17 @@ def _discover_available_candidates(
         )
         if target is None:
             continue
-        identity = _target_identity(target)
-        if identity in indexes:
-            index = indexes[identity]
+        index = _candidate_target_index(candidates, target)
+        if index is not None:
             candidate = candidates[index]
             candidates[index] = replace(
                 candidate,
                 aliases=(*candidate.aliases, name),
             )
             continue
-        indexes[identity] = len(candidates)
         candidates.append(
             _Candidate(
-                exact_query=_candidate_query(target),
+                exact_query=_candidate_query(target, alias=name),
                 target=target,
                 aliases=(name,),
             )
@@ -693,12 +684,15 @@ def _discover_available_candidates(
             envs=envs,
             provider_configs=provider_configs,
         )
-        identity = _target_identity(target)
-        if identity in indexes:
-            index = indexes[identity]
+        for index, candidate in enumerate(candidates):
+            if candidate.target.provider == target.provider and (
+                candidate.target.ref == target.ref
+            ):
+                candidates[index] = replace(candidate, info=info)
+        index = _candidate_target_index(candidates, target)
+        if index is not None:
             candidates[index] = replace(candidates[index], info=info)
             continue
-        indexes[identity] = len(candidates)
         candidates.append(
             _Candidate(
                 exact_query=_candidate_query(target),
@@ -707,6 +701,20 @@ def _discover_available_candidates(
             )
         )
     return tuple(candidates)
+
+
+def _candidate_target_index(
+    candidates: Sequence[_Candidate],
+    target: ModelTarget,
+) -> int | None:
+    return next(
+        (
+            index
+            for index, candidate in enumerate(candidates)
+            if candidate.target == target
+        ),
+        None,
+    )
 
 
 def _resolve_query_targets(
@@ -753,15 +761,12 @@ def _candidate_view(candidate: _Candidate) -> RuntimeModelView:
         modalities.get("output") if isinstance(modalities, Mapping) else None
     )
     return RuntimeModelView(
-        key_ref=target.ref,
-        key_provider=target.provider,
-        key_model=target.model,
-        key_base_url=target.base_url,
+        key_query=candidate.exact_query,
         candidate=candidate,
         provider=provider,
         model=model,
         name=target.name,
-        alias=candidate.aliases,
+        alias=candidate.aliases or None,
         route=RuntimeModelRouteView(
             provider=target.provider,
             adapter=target.adapter,
@@ -805,12 +810,14 @@ def _runtime_identity_components(target: ModelTarget) -> tuple[str, str]:
     return target.provider, target.model
 
 
-def _candidate_query(target: ModelTarget) -> str:
+def _candidate_query(target: ModelTarget, *, alias: str | None = None) -> str:
     provider, model = _runtime_identity_components(target)
     identity = format_identity(f"{provider}/{model}", exact=True)
+    if alias is not None:
+        return f"{identity}[alias={format_literal(alias)}]"
     return (
         f"{identity}[route.provider={format_literal(target.provider)};"
-        f"route.adapter={format_literal(target.adapter)}]"
+        f"route.adapter={format_literal(target.adapter)};alias=null]"
     )
 
 
@@ -1244,8 +1251,7 @@ def _require_allowed(
 ) -> None:
     if allowed is None:
         return
-    allowed_identities = {_target_identity(item) for item in allowed}
-    if _target_identity(target) in allowed_identities:
+    if any(target == item for item in allowed):
         return
     allowed_text = (
         ", ".join(f"{item.ref}[{item.provider}]" for item in allowed) or "none"
@@ -1254,10 +1260,6 @@ def _require_allowed(
         f"model query is outside the current resources: {query} "
         f"(allowed: {allowed_text})"
     )
-
-
-def _target_identity(target: ModelTarget) -> tuple[str, str, str, str | None]:
-    return (target.ref, target.provider, target.model, target.base_url)
 
 
 def _empty_model_selection_message(

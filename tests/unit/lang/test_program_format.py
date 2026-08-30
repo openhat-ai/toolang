@@ -114,6 +114,27 @@ agic review( _:Part[],path?:Path)->Json:
     )
 
 
+def test_format_source_preserves_commas_inside_collection_queries() -> None:
+    source = """
+agic review:
+    tools=filesystem/*[description="read,exact"],shell/*[parameters in (command,timeout)]
+
+    Review the target.
+""".strip()
+
+    formatted = format_source(source)
+
+    assert formatted == (
+        "agic review:\n"
+        '  tools = filesystem/*[description="read,exact"], '
+        "shell/*[parameters in (command,timeout)]\n"
+        "\n"
+        "  Review the target.\n"
+    )
+    assert format_source(formatted) == formatted
+    Program.from_source(formatted)
+
+
 def test_format_source_uses_configured_tab_size() -> None:
     source = """
 struct ReviewSummary:
