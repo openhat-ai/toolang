@@ -21,6 +21,7 @@ from toolang.cli.common.human_values import (
 )
 from toolang.execution.history import RunHistory
 from toolang.execution.records import (
+    ControlRecord,
     RunRecord,
     StepRecord,
     ThreadRecord,
@@ -51,6 +52,7 @@ _SubjectKind = Literal[
     "run",
     "step",
     "field",
+    "controls",
     "threads",
     "runs",
     "steps",
@@ -100,6 +102,13 @@ def _load_threads(store: RunStore, _source: _InspectSubject) -> _InspectSubject:
     return _InspectSubject(
         kind="threads",
         records=tuple(store.list_threads()),
+    )
+
+
+def _load_controls(store: RunStore, _source: _InspectSubject) -> _InspectSubject:
+    return _InspectSubject(
+        kind="controls",
+        records=store.list_controls(),
     )
 
 
@@ -166,6 +175,7 @@ def _model_step_result_parts(
 INSPECT_SUBJECT_TRANSITIONS: tuple[_SubjectTransition, ...] = (
     _SubjectTransition("agent", "threads", "threads", _load_threads),
     _SubjectTransition("agent", "runs", "runs", _load_runs),
+    _SubjectTransition("agent", "controls", "controls", _load_controls),
     _SubjectTransition("thread", "runs", "runs", _load_runs),
     _SubjectTransition("run", "steps", "steps", _load_steps),
 )
@@ -446,6 +456,19 @@ def _render_collection(
     subject: _InspectSubject,
 ) -> None:
     history = RunHistory(store)
+    if subject.kind == "controls":
+        controls = cast(tuple[ControlRecord, ...], subject.records)
+        rows = [
+            (
+                str(Pointer.control(control.target, control.index)),
+                control.kind,
+                _display_status(control.status),
+                control.created_at,
+            )
+            for control in controls
+        ]
+        echo_table(("CONTROL", "KIND", "STATUS", "CREATED"), rows)
+        return
     if subject.kind == "threads":
         records = cast(tuple[ThreadRecord, ...], subject.records)
         items = history.describe_threads(records)

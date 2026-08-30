@@ -110,6 +110,7 @@ toolang ./examples/deep_search.too info
 toolang alice chat
 toolang alice chat term_3nprht9x
 toolang alice chat --sandbox docker
+toolang alice inspect controls
 toolang alice inspect threads
 toolang alice inspect runs
 toolang alice inspect term_3nprht9x runs
@@ -325,6 +326,7 @@ The initial collection and relation subjects are:
 ```text
 threads                 every visible Thread record
 runs                    every visible Run record
+controls                every visible Control record
 THREAD runs             every visible Run directly owned by THREAD
 RUN steps               every visible Step owned by RUN
 ```
@@ -333,6 +335,10 @@ Collections are unbounded and preserve durable ordering. Their JSON form is a
 bare array of canonical record objects; every object is identical to inspecting
 its printed Pointer individually. A missing `runs.db` is an error, while an
 existing store with no matching records returns an empty collection.
+`controls` combines all Thread Controls with Controls belonging to visible Runs.
+It excludes a Run Control when its owning Run or parent Step is ejected and
+orders records by creation time descending, target ascending, then Control index
+descending.
 
 A Pointer still selects one durable Thread, Control, Run, or Step record, or a
 field inside that record:
@@ -351,10 +357,11 @@ run_ab12@1/payload/locals/0/value nested Control field
 field using RFC 6901 escaping (`~0` for `~` and `~1` for `/`). Run ids occupy
 the `run_` namespace; thread ids cannot begin with `run_`.
 
-Exact `threads`, `runs`, and `steps` tokens are reserved by this grammar and
-take precedence over Thread Pointer parsing. The accepted transitions are
-Agent to `threads` or `runs`, Thread to `runs`, and Run to `steps`; collections,
-Controls, Steps, and fields do not accept relation subjects.
+Exact `threads`, `runs`, `controls`, and `steps` tokens are reserved by this
+grammar and take precedence over Thread Pointer parsing. The accepted
+transitions are Agent to `threads`, `runs`, or `controls`, Thread to `runs`, and
+Run to `steps`; collections, Controls, Steps, and fields do not accept relation
+subjects.
 
 Every successful query selects one projector after its subject resolves:
 
@@ -383,8 +390,9 @@ select a model, construct a provider-native request, or send provider traffic.
 
 Human output is the default. Record and container tables use the CLI's
 horizontal-rule Rich style and list direct children as relative field suffixes
-with TYPE in the second column. Root collection headings remain `THREAD` and
-`RUN`; explicit relations and whole-record field projections use compound
+with TYPE in the second column. Root collection headings remain `THREAD`, `RUN`,
+and `CONTROL`; the Control collection summarizes `KIND`, `STATUS`, and
+`CREATED`. Explicit relations and whole-record field projections use compound
 headings such as `THREAD RUN`, `RUN STEP`, and `STEP FIELD`. A browsable nested
 field uses its uppercase displayed type, such as `POINTER[] FIELD`.
 

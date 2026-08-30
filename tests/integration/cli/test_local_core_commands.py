@@ -52,6 +52,7 @@ from toolang.up.types import AgentServerRef
 from toolang.work.state import load_ready_jobs
 from toolang.work.store import JobStore
 from tests.support.execution_fixtures import (
+    project_run_control,
     project_run_end,
     project_run_start,
     project_step,
@@ -537,6 +538,63 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
     )
 
 
+def test_inspect_lists_mixed_control_subjects(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    store = RunStore(AgentLayout.resident(root, "alice").run_store)
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_control_subject",
+            thread_id="term_control_subject",
+            origin="test",
+            input=Message.user("Control"),
+            created_at="2026-01-01T00:00:00Z",
+        )
+        project_run_control(
+            store,
+            run_id=run.id,
+            kind="steer",
+            input=Message.user("Continue"),
+            created_at="2026-01-01T01:00:00Z",
+        )
+        store.create_thread(
+            thread_id="controls",
+            origin="test",
+            created_at="2026-01-01T02:00:00Z",
+        )
+    finally:
+        store.close()
+
+    result = _invoke(root, "alice", "inspect", "controls", "--json")
+    human = _invoke(root, "alice", "inspect", "controls")
+    rejected = _invoke(root, "alice", "inspect", "controls", "runs")
+
+    assert result.exit_code == 0, result.stderr
+    documents = json.loads(result.stdout)
+    pointers = [f"{item['target']}@{item['index']}" for item in documents]
+    assert pointers == [
+        "controls@0",
+        "run_control_subject@1",
+        "run_control_subject@0",
+        "term_control_subject@0",
+    ]
+    assert all("scope" not in item for item in documents)
+    for pointer, document in zip(pointers, documents, strict=True):
+        selected = _invoke(root, "alice", "inspect", pointer, "--json")
+        assert selected.exit_code == 0, selected.stderr
+        assert json.loads(selected.stdout) == document
+
+    assert human.exit_code == 0, human.stderr
+    human_lines = [
+        " ".join(line.split()) for line in strip_ansi(human.stdout).splitlines()
+    ]
+    assert "CONTROL KIND STATUS CREATED" in human_lines
+    assert all(pointer in human.stdout for pointer in pointers)
+    assert rejected.exit_code == 2
+    assert "controls does not accept a child subject" in rejected.stderr
+
+
 def test_inspect_collections_are_unbounded_and_empty_stores_succeed(
     tmp_path: Path,
 ) -> None:
@@ -548,12 +606,15 @@ def test_inspect_collections_are_unbounded_and_empty_stores_succeed(
 
     empty_threads = _invoke(root, "alice", "inspect", "threads", "--json")
     empty_runs = _invoke(root, "alice", "inspect", "runs")
+    empty_controls = _invoke(root, "alice", "inspect", "controls", "--json")
 
     assert empty_threads.exit_code == 0, empty_threads.stderr
     assert json.loads(empty_threads.stdout) == []
     assert empty_runs.exit_code == 0, empty_runs.stderr
     assert "RUN" in empty_runs.stdout
     assert "STEPS" in empty_runs.stdout
+    assert empty_controls.exit_code == 0, empty_controls.stderr
+    assert json.loads(empty_controls.stdout) == []
 
     store = RunStore(layout.run_store)
     try:
@@ -572,11 +633,14 @@ def test_inspect_collections_are_unbounded_and_empty_stores_succeed(
 
     threads = _invoke(root, "alice", "inspect", "threads", "--json")
     runs = _invoke(root, "alice", "inspect", "runs", "--json")
+    controls = _invoke(root, "alice", "inspect", "controls", "--json")
 
     assert threads.exit_code == 0, threads.stderr
     assert len(json.loads(threads.stdout)) == 51
     assert runs.exit_code == 0, runs.stderr
     assert len(json.loads(runs.stdout)) == 51
+    assert controls.exit_code == 0, controls.stderr
+    assert len(json.loads(controls.stdout)) == 102
 
 
 def test_inspect_human_collection_uses_resolved_run_records(
@@ -709,14 +773,16 @@ def test_inspect_static_subjects_are_reserved_and_missing_scopes_fail(
     missing_run = _invoke(root, "alice", "inspect", "run_missing", "steps")
 
     assert reserved.exit_code == 2
-    assert "allowed: threads, runs" in reserved.stderr
+    assert "allowed: threads, runs, controls" in reserved.stderr
     assert missing_thread.exit_code == 1
     assert "record not found: custom_missing" in missing_thread.stderr
     assert missing_run.exit_code == 1
     assert "record not found: run_missing" in missing_run.stderr
 
 
-@pytest.mark.parametrize("subject", ("threads", "runs", "term_missing runs"))
+@pytest.mark.parametrize(
+    "subject", ("threads", "runs", "controls", "term_missing runs")
+)
 def test_inspect_collections_require_execution_history(
     tmp_path: Path,
     subject: str,
@@ -944,6 +1010,7 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
     assert "POINTER" in help_text
     assert "Inspect execution subjects." in help_text
     assert "Subject chain." in help_text
+    assert "Root subjects: threads, runs, controls" in compact_help
     assert "THREAD runs" in compact_help
     assert "RUN steps" in compact_help
     assert "STEP model-call" in compact_help

@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed. Human confirmation is required before implementation.
+Approved by the human on 2026-08-30. Implementation may proceed in a separate
+change.
 
 ## Goal
 

@@ -9,6 +9,7 @@ import pytest
 
 from tests.support.execution_fixtures import (
     accept_run,
+    project_run_control,
     project_run_end,
     project_run_start,
     project_step,
@@ -94,6 +95,142 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 32
         finally:
             connection.close()
+    finally:
+        store.close()
+
+
+def test_list_controls_orders_mixed_scopes_without_status_reordering(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_control_order",
+            thread_id="term_control_order",
+            origin="chat",
+            input=Message.user("order"),
+            created_at="2026-01-01T00:00:00Z",
+        )
+        steer = project_run_control(
+            store,
+            run_id=run.id,
+            kind="steer",
+            input=Message.user("continue"),
+            created_at="2026-01-01T00:00:00Z",
+        )
+        store.create_thread(
+            thread_id="term_control_new",
+            origin="chat",
+            created_at="2026-01-01T01:00:00Z",
+        )
+
+        before = store.list_controls()
+        pointers = tuple(
+            str(Pointer.control(control.target, control.index)) for control in before
+        )
+        assert pointers == (
+            "term_control_new@0",
+            "run_control_order@1",
+            "run_control_order@0",
+            "term_control_order@0",
+        )
+        assert next(
+            control for control in before if control.index == steer.index
+        ).status == ("pending")
+
+        store.finish_run_controls(
+            run_id=run.id,
+            indexes=(steer.index,),
+            finished_at="2026-01-01T02:00:00Z",
+        )
+
+        after = store.list_controls()
+        assert (
+            tuple(
+                str(Pointer.control(control.target, control.index)) for control in after
+            )
+            == pointers
+        )
+        assert next(
+            control for control in after if control.index == steer.index
+        ).status == ("applied")
+    finally:
+        store.close()
+
+
+def test_list_controls_excludes_controls_for_hidden_runs(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        visible = project_run_start(
+            store,
+            run_id="run_control_visible",
+            thread_id="term_control_visibility",
+            origin="chat",
+            input=Message.user("visible"),
+            created_at="2026-01-01T00:00:00Z",
+        )
+        parent = project_step(
+            store,
+            run_id=visible.id,
+            step_index=0,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        child = project_run_start(
+            store,
+            run_id="run_control_child",
+            thread_id=visible.thread,
+            origin="chat",
+            input=Message.user("child"),
+            parent=parent.path,
+            created_at="2026-01-01T00:01:00Z",
+        )
+        project_run_end(store, run_id=child.id)
+        project_run_end(store, run_id=visible.id)
+        hidden = project_run_start(
+            store,
+            run_id="run_control_hidden",
+            thread_id=visible.thread,
+            origin="chat",
+            input=Message.user("hidden"),
+            created_at="2026-01-01T00:02:00Z",
+        )
+        project_run_end(store, run_id=hidden.id)
+        thread = store.get_thread(thread_id=visible.thread)
+        assert thread is not None
+        _updated, rewind, _ejected = store.rewind_thread(
+            thread_id=thread.thread_id,
+            anchor=hidden.id,
+            request_id=None,
+            expected_head=thread.head,
+            created_at="2026-01-01T00:03:00Z",
+        )
+        _execute_sql(
+            store.db_path,
+            f"""
+            UPDATE steps
+            SET ejected_by_target = '{rewind.target}',
+                ejected_by_index = {rewind.index}
+            WHERE run = '{parent.path.run}' AND path = '{parent.path.local}';
+            """,
+        )
+
+        pointers = {
+            str(Pointer.control(control.target, control.index))
+            for control in store.list_controls()
+        }
+        assert pointers == {
+            "term_control_visibility@0",
+            f"term_control_visibility@{rewind.index}",
+            "run_control_visible@0",
+        }
+        assert store.get_record(Pointer.control(child.id, 0)) is None
+        assert store.get_record(Pointer.control(hidden.id, 0)) is None
     finally:
         store.close()
 
