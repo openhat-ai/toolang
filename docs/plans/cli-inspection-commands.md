@@ -1,4 +1,4 @@
-# Remove Threads And Runs Commands
+# Reshape CLI Inspection Commands
 
 ## Status
 
@@ -6,8 +6,11 @@ Proposed. Human confirmation is required before implementation.
 
 ## Goal
 
-Make `inspect` the only top-level CLI surface for listing durable Threads and
-Runs by removing the redundant `threads` and `runs` commands.
+Give the top-level `Inspection Commands` panel one clear vocabulary:
+
+- `inspect` is the sole interface for inspecting durable execution records;
+- list commands use the verb `List` in help;
+- installed plugin families have direct plural inventory commands.
 
 ## Success Criteria
 
@@ -16,11 +19,16 @@ Runs by removing the redundant `threads` and `runs` commands.
 - `inspect threads`, `inspect runs`, and `inspect THREAD runs` remain the
   supported Thread and Run collection queries for resident, roaming, and
   visiting Agents.
-- Normal help, target help, completion, and routing metadata no longer expose
-  the removed commands.
-- The removal has no compatibility aliases or deprecation-only hidden commands.
-- Execution history, `inspect` semantics, control commands, and HTTP APIs remain
-  unchanged.
+- New `catalogs` and `toolsets` commands list installed model-catalog and
+  toolset plugins, respectively.
+- The existing `tools` command and its filtering behavior remain public.
+- List-oriented help uses `List`; `Inspect` is reserved for `inspect`.
+- Normal help, target help, completion, and routing metadata expose the same
+  final command surface.
+- Removed commands receive no compatibility aliases or deprecation-only hidden
+  commands, and new commands receive no singular or nested-list aliases.
+- Execution history, inspect semantics, plugin loading, control commands, and
+  HTTP APIs remain unchanged.
 
 ## Current Behavior
 
@@ -39,7 +47,12 @@ resident, roaming, and visiting routing entries, and render human tables
 through `RunHistory`. The newer `inspect` collection subjects use the unified
 records projector and also support canonical JSON.
 
-The surfaces are not option-for-option equivalent:
+The same panel exposes installed model adapters and sandboxes but has no direct
+inventory for model-catalog or toolset plugins. It lists leaf tools through
+`tools`, although the command help currently describes those leaf resources as
+installed. Most list-oriented entries use `Inspect` in their help text.
+
+The two history surfaces are not option-for-option equivalent:
 
 | Removed form | Replacement | Intentional difference |
 | --- | --- | --- |
@@ -53,7 +66,33 @@ The old commands succeed with an empty table when `runs.db` does not exist.
 Inspect collections instead report `execution history not found: AGENT`. The
 replacement intentionally adopts the existing `inspect` behavior.
 
-## Command Removal
+## Final Command Surface
+
+After the change, `Inspection Commands` contains these commands in this exact
+order and with these exact help descriptions:
+
+```text
+inspect      Inspect execution subjects.
+caps         List caps.
+models       List models.
+providers    List model providers.
+tools        List tools.
+catalogs     List installed model catalogs.
+adapters     List installed model adapters.
+toolsets     List installed toolsets.
+sandboxes    List installed sandboxes.
+```
+
+`installed` describes discoverable plugin entry points only. It therefore
+applies to catalogs, adapters, toolsets, and sandboxes, but not to leaf tools
+assembled from toolsets. `models` and `providers` describe the merged model
+catalog view rather than installed plugins. `caps` retains its existing
+agent-aware behavior; only its help description changes.
+
+`inspect` remains in the panel even though it is not itself a list command. The
+removed `threads` and `runs` names do not leave empty positions in the order.
+
+## Thread And Run Command Removal
 
 Remove the public `threads` and `runs` commands directly. Do not retain aliases,
 hidden commands, forwarding shims, warnings, or a deprecation period. After the
@@ -96,7 +135,34 @@ without an `agic:`, `flow:`, or `runnable:` disambiguator. This does not change
 the exact `threads` and `runs` tokens reserved inside the `inspect` subject
 grammar.
 
-## Presentation And Data Semantics
+## Plugin Inventory Commands
+
+`too catalogs` lists the `toolang.model_catalog` entry-point group, sorted by
+entry-point name:
+
+```text
+CATALOG  SOURCE
+```
+
+`too toolsets` lists the `toolang.toolset` entry-point group, sorted by
+entry-point name:
+
+```text
+TOOLSET  SOURCE
+```
+
+Both commands show the existing `built-in` or `external` source provenance.
+They require no Agent target, options, configuration merge, plugin
+instantiation, or setup refresh. Empty groups print `No catalogs found.` and
+`No toolsets found.`, respectively, and exit successfully.
+
+`too adapters`, `too tools`, and `too sandboxes` retain their current output
+and options. In particular, adapters keep `--filter` and `--json`, tools keep
+`--filter`, and sandboxes remain a direct two-column plugin listing.
+
+Do not add `catalog`, `toolset`, `catalogs list`, or `toolsets list` aliases.
+
+## Inspect Presentation And Data Semantics
 
 No inspect output changes are part of this feature. The replacements retain
 their current behavior:
@@ -121,15 +187,21 @@ Included:
 - direct removal of the public `threads` and `runs` command functions;
 - removal of their command registration, help-panel ordering, and routing
   specifications;
-- cleanup of imports and private helpers made unused solely by that removal;
+- addition and no-target routing of `catalogs` and `toolsets`;
+- plugin entry-point inventory output for the two new commands;
+- the final inspection-panel ordering and exact help descriptions above;
+- cleanup of imports and private helpers made unused solely by the removal;
 - replacement examples and migration notes in current CLI documentation;
-- regression tests for the reduced command surface and retained inspect routes.
+- regression tests for the final command surface, retained inspect routes, and
+  plugin listings.
 
 Excluded:
 
 - changes to any `inspect` subject, projector, output, option, visibility, or
   missing-store behavior;
 - filters, limits, pagination, aliases, warnings, or deprecation machinery;
+- plugin installation, enablement, configuration, loading, or setup changes;
+- new options for catalogs, toolsets, or sandboxes;
 - changes to `RunStore`, `RunHistory`, persistence, schemas, or records;
 - changes to Thread/Run control commands such as `chat`, `retry`, `rerun`,
   `rewind`, or `fork`;
@@ -141,32 +213,35 @@ filtering or 50-row window. No stored data or Python execution API is removed.
 
 ## Design Touchpoints
 
-- `src/toolang/cli/toolang/main.py`: remove both command registrations and their
-  names from the inspection-panel order.
-- `src/toolang/cli/toolang/routing.py`: remove both placement-aware command
-  specifications so selector routing and target help no longer recognize them.
+- `src/toolang/cli/toolang/main.py`: remove the Thread and Run list
+  registrations, add both plugin inventory commands, and apply the final panel
+  order and help text.
+- `src/toolang/cli/toolang/routing.py`: remove the placement-aware Thread and
+  Run list specifications and add no-target specifications for `catalogs` and
+  `toolsets`.
 - `src/toolang/cli/toolang/commands/thread.py`: remove `threads_command()` and
-  `runs_command()` plus imports and helpers used only by those functions; retain
-  the remaining Thread and Run control commands.
-- `tests/unit/cli/test_cli_routing.py`: update the public command order and
-  placement grammar, and cover that the removed words are no longer static
-  roaming commands.
+  `runs_command()` plus imports and helpers used only by those functions;
+  retain the remaining Thread and Run control commands.
+- `src/toolang/cli/toolang/commands/plugin.py`: reuse the plugin-info listing
+  path for catalog and toolset entry-point groups.
+- `tests/unit/cli/test_cli_routing.py`: cover the final public order, help text,
+  placement grammar, and removal of the old static roaming commands.
 - `tests/integration/cli/test_local_core_commands.py`: replace legacy command
-  coverage with supported inspect forms and assert that old invocations and
-  flags are unavailable.
+  coverage with supported inspect forms, assert old invocations are
+  unavailable, and cover both new plugin inventories.
 - `tests/system/cli/test_cli_entry_points.py`: update command-surface assertions
   if affected by the registration change.
-- `docs/api.md`: remove legacy typical and roaming examples, document inspect as
-  the sole list surface, and record the intentional filter, limit, and
-  missing-store differences.
+- `docs/api.md`: remove legacy typical and roaming examples, document inspect
+  as the sole history-list surface, and include the final plugin inventory
+  commands where the public command surface is enumerated.
 
 Approved historical plans are not rewritten. No execution, database, or HTTP
 module requires a change.
 
 ## Acceptance Tests
 
-1. Root and target help omit `threads` and `runs`, while `inspect` remains under
-   `Inspection Commands` in the existing order.
+1. Root and target help omit `threads` and `runs`; root help renders the exact
+   final `Inspection Commands` order and descriptions defined above.
 2. The Typer registration set and routing registry contain neither removed
    command, including resident, roaming, and visiting placement routes.
 3. Legacy resident and visiting invocations are rejected without forwarding,
@@ -181,14 +256,26 @@ module requires a change.
    normal Click usage errors.
 7. An Agent without `runs.db` receives the existing inspect missing-history
    error rather than the removed commands' empty-table behavior.
-8. `chat`, `steer`, `cancel`, `retry`, `rerun`, `rewind`, and `fork` registration
-   and routing remain unchanged.
-9. The complete default verification passes.
+8. `too catalogs` and `too toolsets` list the correct entry-point groups with
+   source provenance, deterministic ordering, exact headers, and defined empty
+   messages without loading plugin factories.
+9. Existing adapter options, tool filtering, and sandbox listing behavior are
+   unchanged, apart from the top-level help descriptions.
+10. The new plural commands accept no Agent target and no singular or nested
+    aliases are registered.
+11. `chat`, `steer`, `cancel`, `retry`, `rerun`, `rewind`, and `fork`
+    registration and routing remain unchanged.
+12. The complete default verification passes.
 
 ## Risks And Open Questions
 
-Existing scripts that use the old names, filters, bounded output, or
+Existing scripts that use the old history names, filters, bounded output, or
 missing-store success will break immediately. This is accepted by the direct
 removal request and is documented with explicit replacements; preserving any
-of those behaviors would require a separately approved inspect feature. There
-are no open product questions in this definition.
+of those behaviors would require a separately approved inspect feature.
+
+Catalog names identify installed catalog plugins, not the merged model catalog
+snapshot used by `too models`. Toolset names identify installed plugin entry
+points, while `too tools` lists the leaf tools assembled from them. The exact
+help descriptions and table headers make both distinctions explicit. There are
+no open product questions in this definition.
