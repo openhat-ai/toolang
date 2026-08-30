@@ -150,12 +150,18 @@ class RunHistory:
         runs = self._store.list_runs(limit=limit, thread_id=thread_id, status=status)
         return self.describe_runs(runs)
 
-    def describe_runs(self, runs: Sequence[RunRecord]) -> list[RunInfo]:
-        """Build summaries for a caller-selected sequence of Run records."""
+    def describe_runs(
+        self,
+        runs: Sequence[RunRecord],
+        *,
+        steps_by_run: Mapping[str, Sequence[StepRecord]] | None = None,
+    ) -> list[RunInfo]:
+        """Build summaries, reusing caller-supplied visible Steps when present."""
 
-        steps_by_run = self._store.list_steps_for_runs(
-            run_ids=tuple(item.id for item in runs)
-        )
+        if steps_by_run is None:
+            steps_by_run = self._store.list_steps_for_runs(
+                run_ids=tuple(item.id for item in runs)
+            )
         controls_by_run = self._store.list_run_controls_for_runs(
             run_ids=tuple(item.id for item in runs)
         )

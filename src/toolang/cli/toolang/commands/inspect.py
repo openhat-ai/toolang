@@ -398,30 +398,38 @@ def _render_collection(
         return
     if subject.kind == "runs":
         records = cast(tuple[RunRecord, ...], subject.records)
-        items = history.describe_runs(records)
+        steps_by_run = store.list_steps_for_runs(
+            run_ids=tuple(record.id for record in records)
+        )
+        items = history.describe_runs(records, steps_by_run=steps_by_run)
         if subject.scope is not None:
             rows = [
                 (
                     item.id,
                     _truncate(item.summary or item.input_text, width=48),
+                    str(len(steps_by_run.get(item.id, ()))),
                     _display_status(item.status),
                     item.created_at,
                 )
                 for item in items
             ]
-            echo_table(("RUN", "TITLE", "STATUS", "CREATED"), rows)
+            echo_table(("RUN", "TITLE", "STEPS", "STATUS", "CREATED"), rows)
             return
         rows = [
             (
                 item.id,
                 item.thread_id,
                 _truncate(item.summary or item.input_text, width=48),
+                str(len(steps_by_run.get(item.id, ()))),
                 _display_status(item.status),
                 item.created_at,
             )
             for item in items
         ]
-        echo_table(("RUN", "THREAD", "TITLE", "STATUS", "CREATED"), rows)
+        echo_table(
+            ("RUN", "THREAD", "TITLE", "STEPS", "STATUS", "CREATED"),
+            rows,
+        )
         return
     if subject.kind == "steps":
         steps = cast(tuple[StepRecord, ...], subject.records)
