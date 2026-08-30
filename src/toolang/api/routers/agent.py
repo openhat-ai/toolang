@@ -10,8 +10,7 @@ from toolang.api.schemas import RuntimeIdentityPayload, RuntimeSandboxPayload
 from toolang.common.errors import ToolangError
 from toolang.common.version import toolang_version
 from toolang.execution.runnables import (
-    parse_runnable_ref,
-    resolve_state_runnable,
+    resolve_public_runnable_query,
     runnable_binding_defaults,
 )
 from toolang.execution.schemas import ThreadInfo
@@ -105,8 +104,7 @@ async def prompt_completions(
         else:  # pragma: no cover - runnable fallback invariant
             raise HTTPException(status_code=500, detail="chat has no default runnable")
     try:
-        name, kind = parse_runnable_ref(selected)
-        module, _declaration = resolve_state_runnable(state, name, kind=kind)
+        module = resolve_public_runnable_query(state, selected).module
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {

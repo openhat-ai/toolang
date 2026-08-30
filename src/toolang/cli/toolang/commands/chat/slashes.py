@@ -106,7 +106,7 @@ def _runnable(app: AppContext, command: str, argument: str) -> SlashOutput:
     if argument:
         tokens = argument.split()
         if len(tokens) != 1:
-            raise ValueError(f"/{command} accepts at most one runnable selector.")
+            raise ValueError(f"/{command} accepts at most one runnable query.")
         resolved = _resolve_runnable_command(payload, tokens[0], kind=kind)
         if resolved is None:
             raise ValueError(f"Runnable selector is unknown or ambiguous: {tokens[0]}")

@@ -94,7 +94,7 @@ def parse_provider_configs(
 def parse_default_models(
     config_layers: Sequence[Mapping[str, object]],
 ) -> tuple[str, ...]:
-    """Parse default model selectors from resolved config layers."""
+    """Parse default model queries from resolved config layers."""
 
     defaults: tuple[str, ...] = ()
     for payload in config_layers:

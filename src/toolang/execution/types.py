@@ -92,7 +92,7 @@ class RunOverride:
                 isinstance(self.value, tuple)
                 and all(isinstance(item, str) for item in self.value)
             ):
-                raise TypeError("allow policy value must be selectors, all, or none")
+                raise TypeError("allow policy value must be queries, all, or none")
             return
         if self.group == "default":
             if self.value is not None and not isinstance(self.value, str):
@@ -152,7 +152,7 @@ class AgentResources:
 
     def __post_init__(self) -> None:
         if not all(isinstance(item, str) and item for item in self.models):
-            raise ValueError("agent resource models must be non-empty selectors")
+            raise ValueError("agent resource models must be non-empty queries")
         if not all(isinstance(item, AgentToolResource) for item in self.tools):
             raise TypeError("agent resource tools must be AgentToolResource objects")
         if not all(isinstance(item, AgentCapResource) for item in self.caps):

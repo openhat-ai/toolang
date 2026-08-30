@@ -200,9 +200,11 @@ Subsequent turns reuse the same thread id. The client explicitly selects the
 chat/default runnable. Persisted state is read through the normal thread and run
 detail endpoints.
 
-`GET /api/v1/models` returns exact catalog route refs inside the server's
-current `AgentSetup.ceiling` and structured reasoning-effort metadata. A run
-applies its selected runnable's `models` directive after it starts.
+`GET /api/v1/models` returns opaque selectable model values inside the server's
+current `AgentSetup.ceiling` and structured reasoning-effort metadata; the
+picker displays the model name and ref rather than query syntax. A run resolves
+the submitted value with singular-query semantics, then applies its selected
+runnable's `models` directive.
 
 
 ## Streaming Rule

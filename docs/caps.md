@@ -93,8 +93,10 @@ view:
 `FORM` uses the same values as the runtime source form. It is not remapped for
 display.
 
-The `--filter` option accepts kind, form, and scope values. Values in
-the same group are unioned; conditions across groups are intersected.
+Use repeatable `--query/-q` options. Combined lists use `kind/cap` identities;
+kind-specific lists use local cap names. Predicates use typed fields such as
+`scope`, `form`, and `origin`, for example
+`skill/*[scope=home;form=authored]`. `--query-help` prints every field.
 
 
 ## Refs

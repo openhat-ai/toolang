@@ -24,8 +24,8 @@ from toolang.execution.executor import RunExecutor
 from toolang.execution.history import RunHistory
 from toolang.execution.runnables import (
     parse_runnable_ref,
-    resolve_state_runnable,
     runnable_binding_defaults,
+    resolve_public_runnable_query,
 )
 from toolang.execution.executor.resources import (
     agent_model_targets,
@@ -164,8 +164,7 @@ class LocalChatSession:
         selected = runnable or self._run_defaults().bindings.runnable
         if selected is None:  # pragma: no cover - initialization invariant
             raise RuntimeError("chat has no default runnable")
-        name, kind = parse_runnable_ref(selected)
-        module, _declaration = resolve_state_runnable(state, name, kind=kind)
+        module = resolve_public_runnable_query(state, selected).module
         return {
             "items": [
                 {
@@ -330,9 +329,7 @@ class LocalChatSession:
 
     def _materialize_runnable_ref(self, selector: str) -> str:
         state = self.state_watcher.current()
-        name, kind = parse_runnable_ref(selector)
-        _module, runnable = resolve_state_runnable(state, name, kind=kind)
-        return f"{runnable.kind}:{name}"
+        return resolve_public_runnable_query(state, selector).ref
 
     @staticmethod
     def _current_run_defaults(
@@ -351,9 +348,7 @@ class LocalChatSession:
             elif default_flow is not None:
                 runnable = f"flow:{default_flow}"
         if runnable is not None:
-            name, kind = parse_runnable_ref(runnable)
-            _module, resolved = resolve_state_runnable(state, name, kind=kind)
-            runnable = f"{resolved.kind}:{name}"
+            runnable = resolve_public_runnable_query(state, runnable).ref
         return ChatRunDefaults(
             bindings=RunBindings(model=model, runnable=runnable),
             limits=setup.limits,

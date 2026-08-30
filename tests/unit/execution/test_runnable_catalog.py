@@ -117,7 +117,7 @@ def test_catalog_requires_explicit_delegation_intent() -> None:
     )
 
     instruction = document["instruction"]
-    assert document["authorized"] == {"hands": {"refs": ["action"], "omitted": 0}}
+    assert document["authorized"] == {"hands": {"refs": ["agic:action"], "omitted": 0}}
     assert "merely because it is available" in instruction
     assert "future root Run naturally uses the latest valid State" in instruction
     assert "its result is required before the caller can continue" in instruction
@@ -131,6 +131,36 @@ def test_catalog_requires_explicit_delegation_intent() -> None:
     assert "After an input validation error, retry only" in instruction
     assert "a JSON string represents one text part" in instruction
     assert '"type":"text","text":"..."' in instruction
+
+
+def test_authored_runnable_query_filters_typed_fields() -> None:
+    state = _state(
+        """
+agic inspect(_: Text):
+  Inspect.
+
+flow verify:
+  pass
+
+agic caller:
+  hands = ins*[kind=agic;parameters=_], flow:*
+
+  Call.
+"""
+    )
+    caller = state.modules["agent"].find_agic("caller")
+    assert caller is not None
+
+    routes = resolve_agic_routes(state, caller)
+
+    assert [route.runnable.ref for route in routes.resolved] == [
+        "agic:inspect",
+        "flow:verify",
+    ]
+    document = _document(render_runnable_catalog(state, routes))
+    assert document["authorized"] == {
+        "hands": {"refs": ["agic:inspect", "flow:verify"], "omitted": 0}
+    }
 
 
 def test_runtime_instructions_omit_catalog_without_authored_routes() -> None:

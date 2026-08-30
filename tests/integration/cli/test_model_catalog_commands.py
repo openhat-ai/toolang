@@ -65,7 +65,9 @@ def test_models_is_a_leaf_command_without_file_output_options() -> None:
     assert models_result.exit_code == 0, models_result.stderr
     assert providers_result.exit_code == 0, providers_result.stderr
     models_help = unstyle(models_result.stdout)
-    assert "--filter" in models_help
+    assert "--query" in models_help
+    assert "--query-help" in models_help
+    assert "--query-schema" in models_help
     assert "--json" in models_help
     assert "--output" not in models_help
     assert "--force" not in models_help
@@ -77,7 +79,7 @@ def test_models_is_a_leaf_command_without_file_output_options() -> None:
         assert "unexpected extra argument" in unstyle(result.stderr).lower()
 
 
-def test_models_filter_exports_a_valid_complete_catalog(
+def test_models_query_exports_a_valid_complete_catalog(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -93,8 +95,8 @@ def test_models_filter_exports_a_valid_complete_catalog(
             "models",
             "--models",
             str(catalog),
-            "--filter",
-            "test/two[reasoning:false]",
+            "--query",
+            "test/two[reasoning=false]",
             "--json",
         ],
         env={},
@@ -121,7 +123,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
             "models",
             "--models",
             str(catalog),
-            "--filter",
+            "--query",
             "test/one",
         ],
         env={},
@@ -138,7 +140,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
             "CONTEXT",
             "OUTPUT",
             "INPUT",
-            "CAPABILITY",
+            "CAPABILITIES",
             "PRICE ($/1M)",
         )
     )
@@ -295,7 +297,7 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
     )
     by_provider = {str(row[0]): row for row in captured_rows}
     assert by_provider["ollama"][2] == "1/1"
-    assert by_provider["llama_cpp"][2] == "0"
+    assert by_provider["llama_cpp"][2] == "0/0"
     llama_adapters = by_provider["llama_cpp"][3]
     assert isinstance(llama_adapters, Text)
     assert llama_adapters.plain == "chat_completions"
@@ -353,8 +355,8 @@ def test_providers_lists_resolved_api_and_model_adapters(
             "models",
             "--models",
             str(catalog),
-            "--filter",
-            "*[adapter:messages]",
+            "--query",
+            "*[adapter=messages]",
             "--json",
         ],
         env={},

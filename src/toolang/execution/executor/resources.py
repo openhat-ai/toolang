@@ -10,7 +10,7 @@ from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget, Provider
 from toolang.base.types.policy import AgentCeiling
 from toolang.common.errors import ToolangError
-from toolang.common.selectors import SelectorOperator, apply_selector_operations
+from toolang.common.query import SetOperator
 from toolang.execution.types import (
     AgentCapResource,
     AgentResources,
@@ -24,23 +24,23 @@ from toolang.plugin.models.config import (
 )
 from toolang.plugin.models.messages import NO_AVAILABLE_MODELS_MESSAGE
 from toolang.plugin.models.resolution import (
+    apply_model_query_operations,
     resolve_model,
-    resolve_model_ref,
-    select_model_selectors,
+    select_model_queries,
     selectable_model_targets,
 )
-from toolang.plugin.toolsets.loading import select_tools, validate_tool_selectors
+from toolang.plugin.toolsets.loading import query_tools, validate_tool_queries
+from toolang.plugin.toolsets.collections import tool_dataset
 from toolang.plugin.toolsets.registry import (
-    selected_tool_names,
     tool_ref_for_model_tool,
 )
 from toolang.setup import AgentSetup
 from toolang.state.state import (
     AgentState,
     StateCap,
-    select_cap_entries,
     state_module_caps,
 )
+from toolang.state.collections import cap_dataset
 
 _Runnable = AgicDecl | FlowDecl
 
@@ -72,7 +72,7 @@ def agent_model_targets(
     """Return the default and selectable targets within one agent ceiling."""
 
     selection = _snapshot_model_selection(setup, state)
-    selectors = _select_agent_model_selectors(selection, ceiling)
+    queries = _select_agent_model_queries(selection, ceiling)
     targets = (
         selectable_model_targets(
             providers=setup.providers,
@@ -80,21 +80,26 @@ def agent_model_targets(
             aliases=selection.model_aliases,
             envs=setup.envs,
             provider_configs=selection.provider_configs,
-            selectors=selectors,
+            queries=queries,
         )
-        if selectors
+        if queries
         else ()
     )
-    default = (
-        resolve_model_ref(
-            selection,
-            selector=setup.bindings.model,
-            default_selector=selectors[0],
-            allowed_selectors=selectors,
-        )
-        if selectors
-        else None
+    if not queries:
+        return None, targets
+    if setup.bindings.model is None:
+        return queries[0], targets
+    default_target = resolve_model(
+        selection,
+        query=setup.bindings.model,
+        allowed_queries=queries,
     )
+    default = next(
+        (exact_query for exact_query, target in targets if target == default_target),
+        None,
+    )
+    if default is None:
+        raise ToolangError("default model is outside the selectable model collection")
     return default, targets
 
 
@@ -118,30 +123,17 @@ def resolve_agent_resources(
     """Build initial stable resources from complete immutable snapshots."""
 
     selection = _snapshot_model_selection(setup, state)
-    models = _select_agent_model_selectors(selection, ceiling)
+    models = _select_agent_model_queries(selection, ceiling)
 
-    validate_tool_selectors(dict(setup.tools), ceiling.tools)
-    tools = select_tools(dict(setup.tools), ceiling.tools)
+    validate_tool_queries(dict(setup.tools), ceiling.tools)
+    tools = query_tools(dict(setup.tools), ceiling.tools)
 
     caps = state_module_caps(state, module or "agent")
     if ceiling.caps is not None:
-        missing = [
-            selector
-            for selector in ceiling.caps
-            if not select_cap_entries(
-                caps,
-                (selector,),
-                agent_name=setup.layout.name,
-            )
-        ]
-        if missing:
-            raise ToolangError(f"cap selector matched no caps: {', '.join(missing)}")
+        dataset = cap_dataset(caps, agent_name=setup.layout.name)
+        dataset.require_each(ceiling.caps, label="cap")
         caps = (
-            select_cap_entries(
-                caps,
-                ceiling.caps,
-                agent_name=setup.layout.name,
-            )
+            tuple(cast(StateCap, item.record) for item in dataset.query(ceiling.caps))
             if ceiling.caps
             else ()
         )
@@ -166,37 +158,22 @@ def apply_agent_ceiling(
     elif not resources.models:
         raise ToolangError("model ceiling matched no available models")
     else:
-        models = select_model_selectors(
+        models = select_model_queries(
             selection,
-            directive_selectors=ceiling.models,
-            allowed_selectors=resources.models,
+            directive_queries=ceiling.models,
+            allowed_queries=resources.models,
         )
 
     available_tools = resource_tools(setup, resources)
-    validate_tool_selectors(dict(available_tools), ceiling.tools)
-    tools = select_tools(dict(available_tools), ceiling.tools)
+    validate_tool_queries(dict(available_tools), ceiling.tools)
+    tools = query_tools(dict(available_tools), ceiling.tools)
 
     caps = resource_caps(state, resources, module=module)
     if ceiling.caps is not None:
-        missing = [
-            selector
-            for selector in ceiling.caps
-            if not select_cap_entries(
-                caps,
-                (selector,),
-                agent_name=setup.layout.name,
-            )
-        ]
-        if missing:
-            raise ToolangError(
-                "cap ceiling matched no available caps: " + ", ".join(missing)
-            )
+        dataset = cap_dataset(caps, agent_name=setup.layout.name)
+        dataset.require_each(ceiling.caps, label="cap ceiling")
         caps = (
-            select_cap_entries(
-                caps,
-                ceiling.caps,
-                agent_name=setup.layout.name,
-            )
+            tuple(cast(StateCap, item.record) for item in dataset.query(ceiling.caps))
             if ceiling.caps
             else ()
         )
@@ -212,65 +189,47 @@ def resolve_runnable_resources(
     state: AgentState,
     module: str | None = None,
 ) -> AgentResources:
-    """Apply one runnable's authored selectors within a chosen resource base."""
+    """Apply one runnable's authored queries within a chosen resource base."""
 
     model_directives = _directives(runnable, "models")
     if model_directives:
         if not base.models:
             raise ToolangError("run resources include no models")
-        selected = tuple(
-            value
-            for directive in model_directives
-            for value in directive.values
-            if value
-        )
-        models = select_model_selectors(
+        models = apply_model_query_operations(
             selection,
-            directive_selectors=selected,
-            allowed_selectors=base.models,
+            base.models,
+            _query_operations(model_directives),
         )
     else:
         models = base.models
 
     available_tools = resource_tools(setup, base)
-    tool_names = apply_selector_operations(
-        tuple(available_tools),
-        _selector_operations(_directives(runnable, "tools")),
-        lambda values: selected_tool_names(
-            {
-                name: tool_ref_for_model_tool(name, available_tools[name])
-                for name in available_tools
-            },
-            values,
-        ),
+    selected_tools = tool_dataset(available_tools).apply(
+        _query_operations(_directives(runnable, "tools"))
     )
-    tools = {name: available_tools[name] for name in tool_names}
+    tools = {item.model_name: cast(AgentTool, item.record) for item in selected_tools}
 
     available_caps = resource_caps(state, base, module=module)
     selected_cap_ids: set[tuple[str, str, str]] = {
         (item.kind, item.name, item.ref)
         for item in available_caps
-        if item.kind not in {"psyche", "skill", "service"}
+        if item.kind not in {"psyche", "skill", "service", "prompt"}
     }
     for kind, directive_name in (
         ("psyche", "psyches"),
         ("skill", "skills"),
         ("service", "services"),
+        ("prompt", "prompts"),
     ):
         entries = tuple(item for item in available_caps if item.kind == kind)
+        selected = cap_dataset(
+            entries,
+            agent_name=setup.layout.name,
+            kind=kind,
+        ).apply(_query_operations(_directives(runnable, directive_name)))
         selected_cap_ids.update(
             (item.kind, item.name, item.ref)
-            for item in apply_selector_operations(
-                entries,
-                _selector_operations(_directives(runnable, directive_name)),
-                lambda values, entries=entries, kind=kind: select_cap_entries(
-                    entries,
-                    values,
-                    agent_name=setup.layout.name,
-                    implicit_kind=kind,
-                ),
-                identity=lambda item: (item.kind, item.name, item.ref),
-            )
+            for item in (cast(StateCap, view.record) for view in selected)
         )
     caps = tuple(
         item
@@ -292,9 +251,9 @@ def validate_model_binding(
     if model is not None or isinstance(runnable, AgicDecl):
         resolve_model(
             selection,
-            selector=model,
-            default_selector=resources.models[0] if resources.models else None,
-            allowed_selectors=resources.models,
+            query=model,
+            default_query=resources.models[0] if resources.models else None,
+            allowed_queries=resources.models,
         )
 
 
@@ -384,12 +343,12 @@ def _directives(
     return tuple(item for item in runnable.directives if item.name == name)
 
 
-def _selector_operations(
+def _query_operations(
     directives: tuple[Directive, ...],
-) -> tuple[tuple[SelectorOperator, tuple[str, ...]], ...]:
+) -> tuple[tuple[SetOperator, tuple[str, ...]], ...]:
     return tuple(
         (
-            cast(SelectorOperator, directive.operator),
+            cast(SetOperator, directive.operator),
             tuple(value for value in directive.values if value),
         )
         for directive in directives
@@ -414,7 +373,7 @@ def _snapshot_model_selection(
     )
 
 
-def _select_agent_model_selectors(
+def _select_agent_model_queries(
     selection: _ModelSelection,
     ceiling: AgentCeiling,
 ) -> tuple[str, ...]:
@@ -422,17 +381,17 @@ def _select_agent_model_selectors(
         return ()
     if ceiling.models is None:
         try:
-            return select_model_selectors(selection)
+            return select_model_queries(selection)
         except ToolangError as exc:
             if str(exc) == NO_AVAILABLE_MODELS_MESSAGE:
                 return ()
             raise
-    for selector in ceiling.models:
-        select_model_selectors(
+    for query in ceiling.models:
+        select_model_queries(
             selection,
-            allowed_selectors=(selector,),
+            allowed_queries=(query,),
         )
-    return select_model_selectors(
+    return select_model_queries(
         selection,
-        allowed_selectors=ceiling.models,
+        allowed_queries=ceiling.models,
     )

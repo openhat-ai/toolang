@@ -117,7 +117,7 @@ accounting, retry, and rerun.
 The spec does not carry an origin, run identity, request identity, or arbitrary
 transport context. Each item in `ceilings` is one independently applied
 selector-based restriction inside `setup.ceiling`; retaining separate session
-and run restrictions preserves intersection semantics when selector lists use
+and run restrictions preserves intersection semantics when queries use
 OR matching. `input.primary` is the primary multimodal input;
 `input.named` contains typed values for the runnable's declared `params`.
 The executor validates both before
@@ -238,11 +238,11 @@ the authored routes and resolved union as model hints only when `hands` or
 target is authorized and omit the catalog. Authorization always checks the
 captured authored route list.
 
-`AgentSetup.ceiling` contains stable selector lists, not resolved resources. At
+`AgentSetup.ceiling` contains stable queries, not resolved resources. At
 `run()`, the executor resolves it against the captured `AgentSetup` and
 `AgentState`, intersects every `RunSpec.ceilings` restriction, and creates
 the tree-level `AgentResources`. A ceiling cannot expand the preceding resource
-set. Invalid selectors are rejected before the run is durably accepted.
+set. Invalid queries are rejected before the run is durably accepted.
 Every flow invocation starts from the tree-level agent resources and applies
 its own directives, whether or not the flow declares any. Agics start from the
 nearest containing flow resources, or directly from the agent resources at the

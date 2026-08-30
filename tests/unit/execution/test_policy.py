@@ -37,7 +37,7 @@ def _setup() -> AgentSetup:
     [
         (
             ":allow models=openai/*,deepseek/*",
-            RunOverride("allow", "models", ("openai/*", "deepseek/*")),
+            RunOverride("allow", "models", ("openai/*,deepseek/*",)),
         ),
         (":allow tools=none", RunOverride("allow", "tools", ())),
         (":allow caps=all", RunOverride("allow", "caps", None)),
@@ -106,7 +106,7 @@ def test_repeated_allow_accumulates_but_scalar_fields_are_unique() -> None:
 
     with pytest.raises(ValueError, match="duplicate default field"):
         parse_policy_prefix(":model one\n:model two\nInput")
-    with pytest.raises(ValueError, match="cannot combine selectors with all"):
+    with pytest.raises(ValueError, match="cannot combine queries with all"):
         parse_policy_prefix(":models one\n:models all\nInput")
 
 
@@ -119,7 +119,8 @@ def test_repeated_allow_accumulates_but_scalar_fields_are_unique() -> None:
         (":limit other=1", "unknown run limit"),
         (":limit tokens=-1", "non-negative"),
         (":models all none", "cannot mix"),
-        (":skills skill/reviewer", "must not include a family"),
+        (":models all,openai/*", "cannot mix"),
+        (":skills *[scope:root]", "invalid query field name"),
         (":agic review focus", "name=value"),
     ],
 )
@@ -189,3 +190,22 @@ def test_allow_all_removes_that_field_before_cap_kind_normalization() -> None:
 
     assert unrestricted == ()
     assert ceilings == (AgentCeiling(caps=("skill/reviewer",)),)
+
+
+def test_wire_policy_arrays_resolve_query_sentinels_consistently() -> None:
+    unrestricted, _bindings, _limits = resolve_commands(
+        _setup(),
+        run=(RunOverride("allow", "models", ("all",)),),
+    )
+    empty, _bindings, _limits = resolve_commands(
+        _setup(),
+        run=(RunOverride("allow", "models", ("none",)),),
+    )
+
+    assert unrestricted == ()
+    assert empty == (AgentCeiling(models=()),)
+    with pytest.raises(ValueError, match="cannot mix queries with all or none"):
+        resolve_commands(
+            _setup(),
+            run=(RunOverride("allow", "models", ("all,openai/*",)),),
+        )

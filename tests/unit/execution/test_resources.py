@@ -184,7 +184,7 @@ def test_agent_resources_rejects_noncanonical_durable_data(
         AgentResources.from_data(payload)
 
 
-def test_agent_ceiling_normalizes_stable_selector_lists() -> None:
+def test_agent_ceiling_normalizes_stable_queries() -> None:
     spec = AgentCeiling(
         models=(" openai/gpt-5 ", "openai/gpt-5"),
         tools=None,

@@ -10,5 +10,5 @@ NO_AVAILABLE_MODELS_MESSAGE = (
 )
 
 NO_MATCHED_MODELS_MESSAGE = (
-    "No matched models.\n\nRun `toolang model list --filter <selector>` to try filters."
+    "No matched models.\n\nRun `toolang model list --query <query>` to try queries."
 )

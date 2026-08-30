@@ -435,7 +435,7 @@ Cancellation does not invent `statement failed`; a failed statement uses its
 actual diagnostic when one is available.
 
 A canceled model step uses the semantic activity name rather than repeating
-its model selector; the selector remains available in the facts line:
+its model query; the resolved model remains available in the facts line:
 
 ```text
 ! model call canceled

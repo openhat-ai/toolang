@@ -9,9 +9,19 @@ import shlex
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
-from toolang.common.selectors import parse_selector, split_selector_list
+from toolang.common.query import (
+    format_query,
+    prefix_query_identities,
+    resolve_query_sentinels,
+)
 from toolang.lang.input import NamedInputSource, NamedInputSources
+from toolang.lang.runnable_query import RUNNABLE_SCHEMA
+from toolang.plugin.models.resolution import RUNTIME_MODEL_SCHEMA
+from toolang.plugin.toolsets.collections import TOOL_SCHEMA
 from toolang.setup import AgentSetup
+from toolang.state.collections import CAP_SCHEMA, cap_kind_definition
+from toolang.state.types import EntryKind
+from typing import cast
 
 from .types import (
     ALLOW_POLICY_FIELDS,
@@ -162,7 +172,7 @@ def _try_parse_command(
         if len(tokens) == 1:
             if name == "models":
                 return None
-            raise ValueError(f":{name} requires selectors, all, or none")
+            raise ValueError(f":{name} requires queries, all, or none")
         return _canonical_command("allow", name, tuple(tokens[1:])), ()
     return None
 
@@ -240,21 +250,26 @@ def _allow_value(
     field: str,
     raw_values: Sequence[str],
 ) -> tuple[str, ...] | None:
-    values = split_selector_list(raw_values)
+    values = tuple(value.strip() for value in raw_values if value.strip())
     if not values:
-        raise ValueError(f"allow {field} requires selectors, all, or none")
-    lowered = tuple(value.lower() for value in values)
-    if lowered == ("all",):
-        return None
-    if lowered == ("none",):
-        return ()
-    if any(value in {"all", "none"} for value in lowered):
-        raise ValueError(f"allow {field} cannot mix selectors with all or none")
-    normalized = tuple(dict.fromkeys(values))
-    domain = "model" if field == "models" else "tool" if field == "tools" else "cap"
-    implicit_family = _CAP_KIND_BY_FIELD.get(field)
-    for selector in normalized:
-        parse_selector(selector, domain=domain, implicit_family=implicit_family)
+        raise ValueError(f"allow {field} requires queries, all, or none")
+    try:
+        normalized = resolve_query_sentinels(values, label=f"allow {field}")
+    except ToolangError as error:
+        raise ValueError(str(error)) from error
+    if normalized is None or not normalized:
+        return normalized
+    schema = (
+        RUNTIME_MODEL_SCHEMA
+        if field == "models"
+        else TOOL_SCHEMA
+        if field == "tools"
+        else cap_kind_definition(cast(EntryKind, _CAP_KIND_BY_FIELD[field])).schema
+        if field in _CAP_KIND_BY_FIELD
+        else CAP_SCHEMA
+    )
+    for query in normalized:
+        schema.parse(query)
     return normalized
 
 
@@ -265,9 +280,9 @@ def _default_value(field: str, raw: str) -> str | None:
     if value.lower() == "none":
         return None
     if field == "model":
-        parse_selector(value, domain="model")
+        RUNTIME_MODEL_SCHEMA.parse(value)
     else:
-        RunBindings(runnable=value)
+        RUNNABLE_SCHEMA.parse(value)
     return value
 
 
@@ -312,11 +327,9 @@ def _normalize_commands(
         if not isinstance(previous.value, tuple) or not isinstance(
             command.value, tuple
         ):
-            raise ValueError(f"allow {command.field} cannot combine selectors with all")
+            raise ValueError(f"allow {command.field} cannot combine queries with all")
         if not previous.value or not command.value:
-            raise ValueError(
-                f"allow {command.field} cannot combine selectors with none"
-            )
+            raise ValueError(f"allow {command.field} cannot combine queries with none")
         result[position] = RunOverride(
             "allow",
             command.field,
@@ -367,19 +380,26 @@ def _command_agent_ceiling(
         if value is None:
             continue
         elif isinstance(value, tuple):
+            try:
+                normalized = resolve_query_sentinels(
+                    value,
+                    label=f"allow {command.field}",
+                )
+            except ToolangError as error:
+                raise ValueError(str(error)) from error
+            if normalized is None:
+                continue
             present.add(command.field)
-            fields[command.field] = value
+            fields[command.field] = normalized
         else:
-            raise TypeError(f"allow {command.field} must be selectors, all, or none")
+            raise TypeError(f"allow {command.field} must be queries, all, or none")
 
     models = fields.get("models") if "models" in present else None
     tools = fields.get("tools") if "tools" in present else None
     cap_present = bool(present & {"caps", *_CAP_KIND_BY_FIELD})
     caps: list[str] = list(fields.get("caps", ()))
     for plural, kind in _CAP_KIND_BY_FIELD.items():
-        caps.extend(
-            _qualify_cap_selector(kind, value) for value in fields.get(plural, ())
-        )
+        caps.extend(_qualify_cap_query(kind, value) for value in fields.get(plural, ()))
     ceiling = AgentCeiling(
         models=models,
         tools=tools,
@@ -390,11 +410,10 @@ def _command_agent_ceiling(
     return ceiling
 
 
-def _qualify_cap_selector(kind: str, value: str) -> str:
-    parsed = parse_selector(value, domain="cap", implicit_family=kind)
-    text = value.strip()
-    suffix = text[text.find("[") :] if "[" in text else ""
-    return f"{kind}/{parsed.pattern}{suffix}"
+def _qualify_cap_query(kind: str, value: str) -> str:
+    definition = cap_kind_definition(cast(EntryKind, kind))
+    parsed = definition.schema.parse(value)
+    return format_query(prefix_query_identities(parsed, prefix=kind, separator="/"))
 
 
 class _Line:

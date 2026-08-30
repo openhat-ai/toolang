@@ -44,13 +44,6 @@ from ..lang.ast import (
     Span,
     to_data,
 )
-from toolang.common.selectors import (
-    Selector,
-    filter_value_matches,
-    parse_selector,
-    split_selector_list,
-    selector_identity_matches,
-)
 from toolang.common.github import (
     GitHubRef,
     github_raw_url,
@@ -1132,91 +1125,34 @@ def entry_definition_file(entry: StateCap) -> str:
     return entry.source.path
 
 
+def entry_source(entry: StateCap, *, agent_name: str) -> str:
+    """Return the human-facing source location for one capability."""
+
+    form = entry_form(entry)
+    if form in {"referenced", "configured"}:
+        ref = entry_ref(entry, agent_name=agent_name)
+        if not ref.startswith("github://"):
+            return ref
+        try:
+            github = parse_github_ref(ref)
+        except ValueError:
+            return ref
+        view = "blob" if entry.shape == "file" else "tree"
+        return (
+            f"https://github.com/{quote(github.owner, safe='')}/"
+            f"{quote(github.repo, safe='')}/{view}/{quote(github.rev, safe='/')}/"
+            f"{quote(github.path, safe='/')}"
+        )
+    source = entry_definition_file(entry)
+    if form == "inline" and entry.source.line is not None:
+        return f"{source}:{entry.source.line}"
+    return source
+
+
 def entry_line(entry: StateCap) -> int | None:
     """Return the authored source line for one State capability when known."""
 
     return entry.source.line
-
-
-def split_cap_selectors(items: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
-    """Split repeated and CSV cap selector inputs."""
-
-    return split_selector_list(items)
-
-
-def cap_entry_matches_selector(
-    entry: StateCap,
-    selector: str | Selector,
-    *,
-    agent_name: str,
-    implicit_kind: EntryKind | None = None,
-) -> bool:
-    """Return whether one cap entry matches a cap selector."""
-
-    parsed = (
-        selector
-        if isinstance(selector, Selector)
-        else parse_selector(selector, domain="cap", implicit_family=implicit_kind)
-    )
-    if implicit_kind is not None and entry.kind != implicit_kind:
-        return False
-    if not selector_identity_matches(
-        family=entry.kind, name=entry.name, selector=parsed
-    ):
-        return False
-    for key, values in parsed.filters.items():
-        actual = _entry_selector_filter_value(entry, key, agent_name=agent_name)
-        if actual is None or not filter_value_matches(actual, values):
-            return False
-    return True
-
-
-def select_cap_entries(
-    entries: tuple[StateCap, ...],
-    selectors: list[str] | tuple[str, ...] | None,
-    *,
-    agent_name: str,
-    implicit_kind: EntryKind | None = None,
-) -> tuple[StateCap, ...]:
-    """Return entries selected by a selector list."""
-
-    parsed = tuple(
-        parse_selector(raw, domain="cap", implicit_family=implicit_kind)
-        for raw in split_cap_selectors(selectors)
-    )
-    if not parsed:
-        return entries
-    selected: list[StateCap] = []
-    seen: set[tuple[str, str, str]] = set()
-    for selector in parsed:
-        for entry in entries:
-            identity = (entry.kind, entry.name, entry.ref)
-            if identity in seen:
-                continue
-            if cap_entry_matches_selector(
-                entry,
-                selector,
-                agent_name=agent_name,
-                implicit_kind=implicit_kind,
-            ):
-                selected.append(entry)
-                seen.add(identity)
-    return tuple(selected)
-
-
-def _entry_selector_filter_value(
-    entry: StateCap,
-    key: str,
-    *,
-    agent_name: str,
-) -> str | None:
-    if key == "scope":
-        return entry_scope(entry, agent_name=agent_name)
-    if key == "form":
-        return entry_form(entry)
-    if key == "origin":
-        return entry_origin(entry)
-    return None
 
 
 def collect_local_entries(

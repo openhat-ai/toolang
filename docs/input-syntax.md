@@ -42,7 +42,7 @@ constructs `RunSpec`.
 Canonical commands map directly to execution policy fields:
 
 ```text
-:allow DOMAIN=SELECTORS
+:allow DOMAIN=QUERIES
 :default FIELD=VALUE
 :limit FIELD=VALUE
 ```
@@ -55,10 +55,11 @@ Supported fields are:
 | `default` | `model`, `runnable` |
 | `limit` | `agic_model_calls`, `agic_tool_calls`, `tokens`, `cost`, `time` |
 
-`allow` selector lists may use `all` or `none`. `all` removes that field's
-restriction; `none` permits no value in the resulting domain. Cap-kind
-shortcuts normalize to cap selectors only after the complete policy layer is
-parsed, matching setup config and process overrides. `default ...=none` clears an explicit binding, while
+`allow` query values may use standalone `all` or `none`. `all` removes that
+field's restriction; `none` permits no value in the resulting collection. They
+cannot be mixed with a query. Cap-kind shortcuts bind the kind only after the
+complete policy layer is parsed, matching setup config and process overrides.
+`default ...=none` clears an explicit binding, while
 `limit ...=none` disables that limit. These values have group-specific meanings
 and are not accepted as ordinary names.
 
@@ -80,15 +81,15 @@ is no primary input.
 The allow shortcuts are:
 
 ```text
-:models SELECTORS       :psyches SELECTORS
-:tools SELECTORS        :skills SELECTORS
-:caps SELECTORS         :services SELECTORS
-                        :prompts SELECTORS
+:models QUERY       :psyches QUERY
+:tools QUERY        :skills QUERY
+:caps QUERY         :services QUERY
+                    :prompts QUERY
 ```
 
 Each command occupies one complete line and uses POSIX shell word quoting and
 backslash escaping without expansion, substitution, or globbing. Repeated
-`allow` commands for one field accumulate and deduplicate selectors. Repeated
+`allow` commands for one field accumulate and deduplicate queries. Repeated
 `default` or `limit` fields in one input are invalid. Blank lines may appear
 between policy commands and between the policy prefix and primary input; they
 are structural and are not part of the primary source.

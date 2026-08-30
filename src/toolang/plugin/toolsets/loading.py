@@ -15,8 +15,6 @@ from .registry import (
     ToolRef,
     parse_tool_registration_key,
     require_toolset_plugin_name,
-    selected_tool_names,
-    tool_ref_for_model_tool,
 )
 
 
@@ -38,7 +36,7 @@ class LoadedTool(AgentTool):
 
     @property
     def public_name(self) -> str:
-        return self.ref.selector
+        return self.ref.identity
 
     def definition(self) -> ToolDefinition:
         definition = self.leaf_tool.definition()
@@ -71,9 +69,9 @@ def load_toolsets(
 def load_tools(
     *,
     toolset_config: Mapping[str, Mapping[str, Any]] | None = None,
-    selectors: Sequence[str] | None = None,
+    queries: Sequence[str] | None = None,
 ) -> dict[str, AgentTool]:
-    """Load leaf tools from installed toolsets and apply selectors."""
+    """Load leaf tools from installed toolsets and apply collection queries."""
 
     tools: dict[str, AgentTool] = {}
     toolsets = _load_toolsets_with_sources(config=toolset_config)
@@ -90,7 +88,7 @@ def load_tools(
                 source=loaded.source,
             )
             if ref.model_name in model_names:
-                raise ValueError(f"duplicate tool name: {ref.selector}")
+                raise ValueError(f"duplicate tool name: {ref.identity}")
             model_names.add(ref.model_name)
             registrations.append((plugin_name, ref, leaf_tool))
 
@@ -101,7 +99,7 @@ def load_tools(
             leaf_tool=leaf_tool,
         )
         tools[loaded.name] = loaded
-    return select_tools(tools, selectors)
+    return query_tools(tools, queries)
 
 
 def _load_toolsets_with_sources(
@@ -134,31 +132,31 @@ def _load_toolsets_with_sources(
     return toolsets
 
 
-def select_tools(
+def query_tools(
     tools: dict[str, AgentTool],
-    selectors: Sequence[str] | None,
+    queries: Sequence[str] | None,
 ) -> dict[str, AgentTool]:
-    if selectors is None:
+    from .collections import tool_dataset
+
+    if queries is None:
         return tools
-    if not selectors:
+    if not queries:
         return {}
-    refs = {name: tool_ref_for_model_tool(name, tool) for name, tool in tools.items()}
     return {
-        name: tools[name]
-        for name in selected_tool_names(refs, selectors)
-        if name in tools
+        item.model_name: cast(AgentTool, item.record)
+        for item in tool_dataset(tools).query(queries)
     }
 
 
-def validate_tool_selectors(
+def validate_tool_queries(
     tools: dict[str, AgentTool],
-    selectors: Sequence[str] | None,
+    queries: Sequence[str] | None,
 ) -> None:
-    if not selectors:
+    from .collections import tool_dataset
+
+    if not queries:
         return
-    refs = {name: tool_ref_for_model_tool(name, tool) for name, tool in tools.items()}
-    missing = [
-        selector for selector in selectors if not selected_tool_names(refs, (selector,))
-    ]
-    if missing:
-        raise ValueError(f"tool selector matched no tools: {', '.join(missing)}")
+    try:
+        tool_dataset(tools).require_each(queries, label="tool")
+    except ToolangError as error:
+        raise ValueError(str(error)) from error

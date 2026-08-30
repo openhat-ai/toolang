@@ -6,9 +6,12 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from toolang.common.errors import ToolangError
+
 from . import ast
 from .errors import ToolangValidationError
-from .types import parse_public_runnable_ref, validate_struct_type
+from .runnable_query import RUNNABLE_SCHEMA
+from .types import validate_struct_type
 
 _SERVICE_FIELDS = frozenset(
     {"description", "transport", "protocol", "target", "headers", "env"}
@@ -199,19 +202,10 @@ def _validate_directives(
     allow_routes: bool,
 ) -> None:
     models = [item for item in directives if item.name == "models"]
-    if len(models) > 1:
-        raise ToolangValidationError(
-            f"{owner} may declare at most one models directive."
-        )
-    if models:
-        directive = models[0]
-        if directive.operator != "=":
-            raise ToolangValidationError(
-                f"{owner} must use '=' for its models directive."
-            )
+    for directive in models:
         if not directive.values:
             raise ToolangValidationError(
-                f"{owner} must declare at least one model selector."
+                f"{owner} must declare at least one model query."
             )
         if routed := [selector for selector in directive.values if "@" in selector]:
             raise ToolangValidationError(
@@ -239,19 +233,13 @@ def _validate_directives(
             raise ToolangValidationError(
                 f"{owner} must declare at least one public runnable in its {name} directive."
             )
-        seen: set[str] = set()
         for value in directive.values:
             try:
-                parse_public_runnable_ref(value)
-            except ValueError as exc:
+                RUNNABLE_SCHEMA.parse(value)
+            except ToolangError as exc:
                 raise ToolangValidationError(
-                    f"{owner} declares invalid public runnable ref {value!r} in its {name} directive."
+                    f"{owner} declares invalid runnable query {value!r} in its {name} directive."
                 ) from exc
-            if value in seen:
-                raise ToolangValidationError(
-                    f"{owner} declares duplicate public runnable ref {value!r} in its {name} directive."
-                )
-            seen.add(value)
 
     for directive in (item for item in directives if item.name == "tools"):
         internal = [

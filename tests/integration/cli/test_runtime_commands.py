@@ -256,7 +256,7 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
             "--port",
             "8123",
             "--allow",
-            "models=openai/gpt-5[openai],o3",
+            "models=openai/gpt-5[route.provider=openai],o3",
             "--allow",
             "tools=fs,shell",
             "--allow",
@@ -284,8 +284,8 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
     assert resolved["dev"] == dev
     assert resolved["environ"]["TOOLANG_MODEL_CATALOG"] == str(model_catalog)
     assert resolved["ceiling_overrides"] == {
-        "models": ("openai/gpt-5[openai]", "o3"),
-        "tools": ("fs", "shell"),
+        "models": ("openai/gpt-5[route.provider=openai],o3",),
+        "tools": ("fs,shell",),
         "caps": ("skill/reviewer",),
     }
     assert resolved["binding_overrides"] == {"model": "openai/gpt-5"}

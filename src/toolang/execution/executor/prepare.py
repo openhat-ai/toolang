@@ -90,8 +90,8 @@ def prepare_agic(
     resources = run.resources
     if resources is None:
         raise RuntimeError(f"run resources missing: {run.run_id}")
-    model_selectors = resources.models
-    if not model_selectors:
+    model_queries = resources.models
+    if not model_queries:
         raise ToolangError(f"run resources include no models: {agic.name}")
     selection = (
         snapshot_model_selection(run.setup, run.state)
@@ -100,9 +100,8 @@ def prepare_agic(
     )
     model = resolve_model(
         selection,
-        selector=run.bindings.model
-        or (model_selectors[0] if model_selectors else None),
-        allowed_selectors=model_selectors,
+        query=run.bindings.model or (model_queries[0] if model_queries else None),
+        allowed_queries=model_queries,
     )
     if run.model_request is not None:
         model = apply_model_parameters(

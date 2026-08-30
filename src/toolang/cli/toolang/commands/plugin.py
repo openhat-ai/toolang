@@ -11,7 +11,9 @@ import typer
 
 from ...common.context import context_agent, context_root
 from ...common.output import echo_table
+from ...common.query import emit_query_discovery
 from toolang.common.layout import AgentLayout
+from toolang.plugin.toolsets.collections import TOOL_SCHEMA
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.plugin.loading import list_plugin_infos
 
@@ -26,31 +28,37 @@ channel_app = typer.Typer(
 
 def list_tools(
     ctx: typer.Context,
-    filter_: Annotated[
+    query: Annotated[
         list[str] | None,
         typer.Option(
-            "--filter",
-            "-f",
-            "--select",
-            help="Filter tools with selector-list syntax. Pass CSV or repeat.",
+            "--query",
+            "-q",
+            help="Query tools. Repeat values to add alternatives.",
         ),
     ] = None,
+    query_help: Annotated[
+        bool,
+        typer.Option("--query-help", help="Show tool query fields and operators."),
+    ] = False,
+    query_schema: Annotated[
+        bool,
+        typer.Option("--query-schema", help="Write the tool query schema as JSON."),
+    ] = False,
 ) -> None:
-    from toolang.plugin.toolsets.registry import split_tool_selectors
-
-    setup = _setup(_layout(ctx))
-    selectors = split_tool_selectors(tuple(filter_ or ()))
-    rows = tool_rows(setup, tool_selectors=selectors)
-    if not rows:
-        if selectors and tool_rows(setup):
-            typer.echo("No matched tools.")
-            typer.echo("Try: toolang tools --filter <selector>")
-        else:
-            typer.echo("No tools found.")
+    if emit_query_discovery(
+        TOOL_SCHEMA,
+        query_help=query_help,
+        query_schema=query_schema,
+    ):
         return
-    echo_table(("SET", "TOOL", "DESCRIPTION"), rows)
+    setup = _setup(_layout(ctx))
+    rows = tool_rows(setup, queries=tuple(query or ()))
+    if not rows:
+        typer.echo("No tools matched query." if query else "No tools found.")
+        return
+    echo_table(("TOOLSET", "TOOL", "PLUGIN", "SOURCE", "DESCRIPTION"), rows)
     typer.echo()
-    toolset_count = len({toolset for toolset, _tool, _description in rows})
+    toolset_count = len({toolset for toolset, *_rest in rows})
     typer.echo(
         f" {len(rows)} {'tool' if len(rows) == 1 else 'tools'}, "
         f"{toolset_count} {'toolset' if toolset_count == 1 else 'toolsets'}"
@@ -102,7 +110,7 @@ def model_rows(
     setup: AgentSetup,
     *,
     config_layers: Sequence[Mapping[str, object]],
-    model_selectors: Sequence[str] = (),
+    model_queries: Sequence[str] = (),
 ) -> list[tuple[str, str, str]]:
     from toolang.plugin.models.config import (
         parse_model_aliases,
@@ -114,21 +122,21 @@ def model_rows(
         models=setup.models,
         aliases=parse_model_aliases(config_layers),
         envs=setup.envs,
-        selectors=model_selectors,
+        queries=model_queries,
     )
 
 
 def tool_rows(
     setup: AgentSetup,
     *,
-    tool_selectors: Sequence[str] = (),
-) -> list[tuple[str, str, str]]:
+    queries: Sequence[str] = (),
+) -> list[tuple[str, str, str, str, str]]:
     from toolang.plugin.toolsets.views import tool_list_rows
 
     return tool_list_rows(
         tools=setup.tools,
         plugin_sources=plugin_sources("toolang.toolset"),
-        selectors=tool_selectors,
+        queries=queries,
     )
 
 

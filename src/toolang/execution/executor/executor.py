@@ -2809,8 +2809,8 @@ def _prepare_run_spec(
             raise ValueError("run model request does not match its model binding")
         target = resolve_model(
             selection,
-            selector=spec.model_request.ref,
-            allowed_selectors=resources.models,
+            query=spec.model_request.ref,
+            allowed_queries=resources.models,
         )
         apply_model_parameters(selection, target, spec.model_request.parameters)
     return runnable, input, agent_resources, resources

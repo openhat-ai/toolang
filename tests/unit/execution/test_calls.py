@@ -152,7 +152,7 @@ def test_materialized_request_rejects_an_unqualified_runnable(tmp_path) -> None:
         harness.store.close()
 
 
-def test_root_runnable_selector_is_removed_from_current_model_input(tmp_path) -> None:
+def test_root_runnable_query_is_removed_from_current_model_input(tmp_path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -190,7 +190,7 @@ flow hello_flow(_: Text) -> Text:
     asyncio.run(scenario())
 
 
-def test_root_runnable_selector_is_removed_from_recalled_history(tmp_path) -> None:
+def test_root_runnable_query_is_removed_from_recalled_history(tmp_path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""

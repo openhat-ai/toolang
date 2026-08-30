@@ -210,7 +210,7 @@ items = operand   => current_set = current_set intersect operand
 
 All operands are evaluated inside the base resources, so `+=` cannot grant
 resources outside the agent resources. `-=` and `=` operands may use arbitrary
-selectors, for example a selector that removes all local
+queries, for example a query that removes all local
 models. `=` is a keep-only filter, not a traditional assignment.
 
 

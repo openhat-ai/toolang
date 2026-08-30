@@ -271,22 +271,22 @@ def _models_summary(
 ) -> str:
     from toolang.plugin.models.config import parse_default_models
 
-    selectors: Sequence[str] = ()
+    queries: Sequence[str] = ()
     raw_models = runtime_state.get("models")
     if running and isinstance(raw_models, list):
-        selectors = tuple(
+        queries = tuple(
             value.strip()
             for item in raw_models
             if isinstance(item, str) and (value := item.strip())
         )
-    if not selectors:
-        selectors = parse_default_models(
+    if not queries:
+        queries = parse_default_models(
             (state.root_config, state.home_config),
         )
     rows = plugin.model_rows(
         setup,
         config_layers=(state.root_config, state.home_config),
-        model_selectors=selectors,
+        model_queries=queries,
     )
     provider_count = len({provider for _model, provider, _detail in rows})
     return (
@@ -297,7 +297,7 @@ def _models_summary(
 
 def _tools_summary(setup: AgentSetup) -> str:
     rows = plugin.tool_rows(setup)
-    set_count = len({toolset for toolset, _tool, _description in rows})
+    set_count = len({toolset for toolset, *_details in rows})
     return (
         f"{len(rows)} {'tool' if len(rows) == 1 else 'tools'}, "
         f"{set_count} {'set' if set_count == 1 else 'sets'}"

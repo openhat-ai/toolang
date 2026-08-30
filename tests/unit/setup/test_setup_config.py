@@ -156,6 +156,15 @@ def test_setup_policy_rejects_unknown_and_invalid_fields() -> None:
         resolve_run_limits(({"limit": {"turns": 1}},))
     with pytest.raises(ValueError, match="cost must be non-negative"):
         resolve_run_limits(({"limit": {"cost": -1.0}},))
+    with pytest.raises(ValueError, match="cannot mix queries with all or none"):
+        resolve_agent_ceiling(({"allow": {"models": ["all,openai/*"]}},))
+
+
+def test_setup_policy_all_and_none_are_standalone_layer_values() -> None:
+    root = {"allow": {"models": ["openai/*"], "skills": ["review"]}}
+    agent = {"allow": {"models": ["all"], "skills": ["none"]}}
+
+    assert resolve_agent_ceiling((root, agent)) == AgentCeiling(caps=())
 
 
 def test_old_nested_run_limits_are_not_interpreted() -> None:

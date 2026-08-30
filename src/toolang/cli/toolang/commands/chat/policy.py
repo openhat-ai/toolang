@@ -189,8 +189,12 @@ def apply_session_commands(
             continue
         if command.field != "runnable":
             continue
-        name, kind = parse_runnable_ref(command.value)
-        result[kind or "runnable"] = name
+        try:
+            name, kind = parse_runnable_ref(command.value)
+        except ValueError:
+            result["runnable"] = command.value
+        else:
+            result[kind or "runnable"] = name
     if _text(result.get("model")) != previous_model:
         result.pop(_REASONING_EFFORT_KEY, None)
     return result

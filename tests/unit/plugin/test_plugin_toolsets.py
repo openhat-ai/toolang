@@ -24,7 +24,7 @@ from toolang.plugin.loading import (
 from toolang.plugin.toolsets.loading import (
     load_tools,
     load_toolsets,
-    validate_tool_selectors,
+    validate_tool_queries,
 )
 
 
@@ -261,18 +261,18 @@ def test_load_tools_uses_encoded_model_names(monkeypatch) -> None:
     )
 
 
-def test_canonical_tool_selectors_include_internal_toolset(monkeypatch) -> None:
+def test_canonical_tool_identities_include_internal_toolset(monkeypatch) -> None:
     _patch_tool_entry_points(monkeypatch)
     tools = load_tools()
 
-    selected = load_tools(selectors=("fs/read", "service/call_tool", "_me/*"))
+    selected = load_tools(queries=("fs/read", "service/call_tool", "_me/*"))
 
     assert "fs__read" in selected
     assert "service__call_tool" in selected
     assert "_me__create_task" in selected
-    validate_tool_selectors(tools, ("fs/*", "service/call_tool", "_me/*"))
-    with pytest.raises(ValueError, match="tool selector matched no tools"):
-        validate_tool_selectors(tools, ("filesystem/*",))
+    validate_tool_queries(tools, ("fs/*", "service/call_tool", "_me/*"))
+    with pytest.raises(ValueError, match="tool query matched no items"):
+        validate_tool_queries(tools, ("filesystem/*",))
 
 
 def test_load_tools_accepts_explicit_toolset_keys(monkeypatch) -> None:

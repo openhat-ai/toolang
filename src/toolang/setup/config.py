@@ -12,8 +12,11 @@ from typing import cast
 
 from dotenv import dotenv_values
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
+from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
-from toolang.common.selectors import parse_selector
+from toolang.common.query import prefix_query_value, resolve_query_sentinels
+from toolang.plugin.models.resolution import RUNTIME_MODEL_SCHEMA
+from toolang.plugin.toolsets.collections import TOOL_SCHEMA
 
 
 _CAP_KIND_BY_FIELD = {
@@ -77,25 +80,30 @@ def resolve_agent_ceiling(
             continue
         _reject_unknown(raw_allow, _ALLOW_FIELDS, "allow field")
         for name, value in raw_allow.items():
-            fields[str(name)] = _selector_values(str(name), value)
+            normalized = _query_values(str(name), value)
+            if normalized is None:
+                fields.pop(str(name), None)
+            else:
+                fields[str(name)] = normalized
     resolved_overrides = overrides or {}
     _reject_unknown(resolved_overrides, _ALLOW_FIELDS, "allow field")
     for name, value in resolved_overrides.items():
-        if value is None:
+        normalized = None if value is None else _query_values(name, value)
+        if normalized is None:
             fields.pop(name, None)
         else:
-            fields[name] = tuple(value)
+            fields[name] = normalized
 
     caps_present = any(name in fields for name in {"caps", *_CAP_KIND_BY_FIELD})
-    cap_selectors: list[str] = list(fields.get("caps", ()))
+    cap_queries: list[str] = list(fields.get("caps", ()))
     for plural, kind in _CAP_KIND_BY_FIELD.items():
-        cap_selectors.extend(
-            _cap_kind_selector(kind, selector) for selector in fields.get(plural, ())
+        cap_queries.extend(
+            _cap_kind_query(kind, query) for query in fields.get(plural, ())
         )
     ceiling = AgentCeiling(
         models=fields.get("models"),
         tools=fields.get("tools"),
-        caps=tuple(cap_selectors) if caps_present else None,
+        caps=tuple(cap_queries) if caps_present else None,
     )
     _validate_agent_ceiling_syntax(ceiling)
     return ceiling
@@ -125,7 +133,7 @@ def resolve_run_bindings(
     fields.update(resolved_overrides)
     bindings = RunBindings(**fields)
     if bindings.model is not None:
-        parse_selector(bindings.model, domain="model")
+        RUNTIME_MODEL_SCHEMA.parse(bindings.model)
     return bindings
 
 
@@ -176,35 +184,27 @@ def _reject_unknown(
         raise ValueError(f"unknown {label}: {', '.join(unknown)}")
 
 
-def _selector_values(name: str, value: object) -> tuple[str, ...]:
+def _query_values(name: str, value: object) -> tuple[str, ...] | None:
     if not isinstance(value, Sequence) or isinstance(value, str | bytes | bytearray):
-        raise TypeError(f"allow {name} must be an array of selectors")
-    result: list[str] = []
-    for raw in value:
-        if not isinstance(raw, str):
-            raise TypeError(f"allow {name} selectors must be strings")
-        selector = raw.strip()
-        if not selector:
-            raise ValueError(f"allow {name} selectors must not be empty")
-        if selector not in result:
-            result.append(selector)
-    return tuple(result)
+        raise TypeError(f"allow {name} must be an array of queries")
+    try:
+        return resolve_query_sentinels(
+            cast(Sequence[str], value),
+            label=f"allow {name}",
+        )
+    except ToolangError as error:
+        raise ValueError(str(error)) from error
 
 
-def _cap_kind_selector(kind: str, value: str) -> str:
-    parsed = parse_selector(value, domain="cap", implicit_family=kind)
-    text = value.strip()
-    suffix = text[text.find("[") :] if "[" in text else ""
-    return f"{kind}/{parsed.pattern}{suffix}"
+def _cap_kind_query(kind: str, value: str) -> str:
+    return prefix_query_value(value, prefix=kind, separator="/")
 
 
 def _validate_agent_ceiling_syntax(ceiling: AgentCeiling) -> None:
-    for selector in ceiling.models or ():
-        parse_selector(selector, domain="model")
-    for selector in ceiling.tools or ():
-        parse_selector(selector, domain="tool")
-    for selector in ceiling.caps or ():
-        parse_selector(selector, domain="cap")
+    for query in ceiling.models or ():
+        RUNTIME_MODEL_SCHEMA.parse(query)
+    for query in ceiling.tools or ():
+        TOOL_SCHEMA.parse(query)
 
 
 def _binding_value(name: str, value: object) -> str | None:
