@@ -77,9 +77,9 @@ _CONTROL_PANEL_COMMAND_ORDER = (
 _INSPECTION_PANEL_COMMAND_ORDER = (
     "inspect",
     "caps",
+    "tools",
     "models",
     "providers",
-    "tools",
     "catalogs",
     "adapters",
     "toolsets",
@@ -278,7 +278,7 @@ _registered_group(
 
 _registered_command(
     "chat",
-    help="Start a run in a terminal chat.",
+    help="Start an interactive TUI",
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
 )(chat_commands.chat_command)
@@ -312,7 +312,7 @@ _registered_command(
 )(thread_commands.retry_command)
 _registered_command(
     "rerun",
-    help="Start a new run from a prior invocation.",
+    help="Rerun an earlier run as a new one.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
