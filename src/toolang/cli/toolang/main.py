@@ -278,7 +278,7 @@ _registered_group(
 
 _registered_command(
     "chat",
-    help="Start an interactive TUI",
+    help="Start an interactive TUI.",
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
 )(chat_commands.chat_command)
