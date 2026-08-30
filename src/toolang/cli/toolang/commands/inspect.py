@@ -12,7 +12,6 @@ import typer
 from rich import box
 from rich.cells import cell_len
 from rich.console import Console, RenderableType
-from rich.markdown import Markdown
 from rich.table import Table
 from rich.text import Text
 
@@ -127,7 +126,8 @@ def _project_model_call(store: RunStore, source: _InspectSubject) -> object:
 
 
 def _render_model_call(console: Console, value: object) -> None:
-    console.print(Markdown(_model_call_markdown(value)))
+    for renderable in _model_call_renderables(value):
+        console.print(renderable, soft_wrap=True)
 
 
 INSPECT_SUBJECT_TRANSITIONS: tuple[_SubjectTransition, ...] = (
@@ -436,152 +436,203 @@ def _render_projection(
     )
 
 
-def _model_call_markdown(value: object) -> str:
+def _model_call_renderables(value: object) -> tuple[Text, ...]:
     if not isinstance(value, Mapping):  # pragma: no cover - projector is canonical
         raise TypeError("model-call projector returned a non-object value")
     data = cast(Mapping[str, object], value)
 
-    lines = ["# Model Call", "", "## Instructions", ""]
+    lines = [Text("Model Call", style="bold")]
+    _append_model_call_section(lines, "Instructions")
     instructions = data.get("instructions")
     lines.append(
-        instructions
+        Text(instructions)
         if isinstance(instructions, str) and instructions
-        else "_No instructions._"
+        else Text("No instructions.", style="dim italic")
     )
 
-    lines.extend(("", "## Messages", ""))
     messages = data.get("messages")
+    message_count = len(messages) if isinstance(messages, list) else 0
+    _append_model_call_section(
+        lines,
+        f"Conversation · {message_count} {_counted('message', message_count)}",
+    )
     if isinstance(messages, list) and messages:
-        for index, message in enumerate(messages, start=1):
+        for index, message in enumerate(messages):
             if not isinstance(message, Mapping):  # pragma: no cover - canonical data
                 continue
             message_data = cast(Mapping[str, object], message)
-            role = str(message_data.get("role") or "message").replace("_", " ").title()
-            lines.extend((f"### {index}. {role}", ""))
+            if index:
+                lines.append(Text())
+            role = str(message_data.get("role") or "message")
+            lines.extend((Text(f"[{index}] {role}", style="dim"), Text()))
             parts = message_data.get("parts")
             if not isinstance(parts, list) or not parts:
-                lines.extend(("_No content._", ""))
+                lines.append(Text("No content.", style="dim italic"))
                 continue
-            for part in parts:
+            for part_index, part in enumerate(parts):
                 if not isinstance(part, Mapping):  # pragma: no cover - canonical data
                     continue
+                if part_index:
+                    lines.append(Text())
                 lines.extend(
-                    (*_message_part_markdown(cast(Mapping[str, object], part)), "")
+                    _message_part_renderables(cast(Mapping[str, object], part))
                 )
     else:
-        lines.extend(("_No messages._", ""))
+        lines.append(Text("No messages.", style="dim italic"))
 
-    lines.extend(("## Tools", ""))
     tools = data.get("tools")
+    tool_count = len(tools) if isinstance(tools, list) else 0
+    _append_model_call_section(
+        lines,
+        f"Available Tools · {tool_count} {_counted('tool', tool_count)}",
+    )
     if isinstance(tools, list) and tools:
-        for tool in tools:
+        for index, tool in enumerate(tools):
             if not isinstance(tool, Mapping):  # pragma: no cover - canonical data
                 continue
             tool_data = cast(Mapping[str, object], tool)
+            if index:
+                lines.append(Text())
             name = str(tool_data.get("name") or "unnamed")
             description = tool_data.get("description")
             lines.extend(
                 (
-                    f"### {_markdown_code_span(name)}",
-                    "",
-                    description
+                    Text(f"[{index}] {name}", style="bold"),
+                    Text(),
+                    Text(description)
                     if isinstance(description, str) and description
-                    else "_No description._",
-                    "",
-                    "**Parameters**",
-                    "",
-                    _markdown_json_block(tool_data.get("parameters", {})),
-                    "",
+                    else Text("No description.", style="dim italic"),
+                    Text(),
+                    Text("Parameters", style="dim"),
+                )
+            )
+            lines.extend(
+                _structured_renderables(
+                    tool_data.get("parameters", {}),
+                    style="dim",
                 )
             )
     else:
-        lines.extend(("_No tools._", ""))
+        lines.append(Text("No available tools.", style="dim italic"))
 
-    lines.extend(("## Continuation", ""))
+    _append_model_call_section(lines, "Continuation")
     continuation = data.get("cont")
-    lines.append(
-        _markdown_json_block(continuation)
-        if continuation is not None
-        else "_No continuation data._"
-    )
-    return "\n".join(lines)
-
-
-def _message_part_markdown(part: Mapping[str, object]) -> tuple[str, ...]:
-    part_type = str(part.get("type") or "part")
-    if part_type == "text":
-        text = part.get("text")
-        return (_markdown_quote(text if isinstance(text, str) else ""),)
-    if part_type == "tool_call":
-        return _tool_part_markdown(part, result=False)
-    if part_type == "tool_result":
-        return _tool_part_markdown(part, result=True)
-    label = part_type.replace("_", " ").title()
-    return (f"#### {label}", "", _markdown_json_block(dict(part)))
-
-
-def _tool_part_markdown(
-    part: Mapping[str, object],
-    *,
-    result: bool,
-) -> tuple[str, ...]:
-    label = "Tool Result" if result else "Tool Call"
-    name = str(part.get("tool_name") or "unnamed")
-    lines = [f"#### {label}: {_markdown_code_span(name)}", ""]
-    for heading, key in (
-        ("Tool call ID", "tool_call_id"),
-        ("Family", "tool_family"),
-        ("Provider call ID", "call_id"),
-    ):
-        item = part.get(key)
-        if item is not None:
-            lines.append(f"- {heading}: {_markdown_code_span(str(item))}")
-    reasoning = part.get("reasoning")
-    if isinstance(reasoning, str) and reasoning:
-        lines.extend(("", "**Reasoning**", "", _markdown_quote(reasoning)))
-    error = part.get("error")
-    if isinstance(error, str) and error:
-        lines.extend(("", "**Error**", "", _markdown_quote(error)))
-    payload_heading = "Output" if result else "Input"
-    payload_key = "output" if result else "input"
-    lines.extend(
-        (
-            "",
-            f"**{payload_heading}**",
-            "",
-            _markdown_json_block(part.get(payload_key, {})),
-        )
-    )
+    if continuation is None:
+        lines.append(Text("No continuation data.", style="dim italic"))
+    else:
+        lines.extend(_structured_renderables(continuation))
     return tuple(lines)
 
 
-def _markdown_quote(value: str) -> str:
-    lines = value.splitlines() or [""]
-    return "\n".join(f"> {line}" if line else ">" for line in lines)
+def _append_model_call_section(lines: list[Text], title: str) -> None:
+    lines.extend((Text(), Text(title, style="bold"), Text()))
 
 
-def _markdown_json_block(value: object) -> str:
-    body = json.dumps(value, ensure_ascii=False, indent=2)
-    fence = _backtick_fence(body, minimum=3)
-    return f"{fence}json\n{body}\n{fence}"
+def _counted(noun: str, count: int) -> str:
+    return noun if count == 1 else f"{noun}s"
 
 
-def _markdown_code_span(value: str) -> str:
-    fence = _backtick_fence(value, minimum=1)
-    padding = " " if value.startswith("`") or value.endswith("`") else ""
-    return f"{fence}{padding}{value}{padding}{fence}"
+def _message_part_renderables(part: Mapping[str, object]) -> tuple[Text, ...]:
+    part_type = str(part.get("type") or "part")
+    if part_type == "text":
+        text = part.get("text")
+        return (Text(text if isinstance(text, str) else ""),)
+    if part_type == "tool_call":
+        return _tool_part_renderables(part, result=False)
+    if part_type == "tool_result":
+        return _tool_part_renderables(part, result=True)
+    label = part_type.replace("_", " ").title()
+    details = dict(part)
+    details.pop("type", None)
+    return (Text(label, style="bold"), *_structured_renderables(details))
 
 
-def _backtick_fence(value: str, *, minimum: int) -> str:
-    longest = 0
-    current = 0
-    for character in value:
-        if character == "`":
-            current += 1
-            longest = max(longest, current)
-        else:
-            current = 0
-    return "`" * max(minimum, longest + 1)
+def _tool_part_renderables(
+    part: Mapping[str, object],
+    *,
+    result: bool,
+) -> tuple[Text, ...]:
+    label = "Tool Result" if result else "Tool Call"
+    name = str(part.get("tool_name") or "unnamed")
+    lines = [Text(f"{label} · {name}", style="bold")]
+    for heading, key in (
+        ("tool_call_id", "tool_call_id"),
+        ("family", "tool_family"),
+        ("provider_call_id", "call_id"),
+    ):
+        item = part.get(key)
+        if item is not None:
+            lines.append(Text(f"{heading}: {item}", style="dim"))
+    reasoning = part.get("reasoning")
+    if isinstance(reasoning, str) and reasoning:
+        lines.extend((Text(), Text("Reason", style="bold"), Text(reasoning)))
+    error = part.get("error")
+    if isinstance(error, str) and error:
+        lines.extend((Text(), Text("Error", style="bold"), Text(error)))
+    payload_heading = "Output" if result else "Input"
+    payload_key = "output" if result else "input"
+    lines.extend((Text(), Text(payload_heading, style="bold")))
+    lines.extend(_structured_renderables(part.get(payload_key, {})))
+    return tuple(lines)
+
+
+def _structured_renderables(
+    value: object,
+    *,
+    style: str = "",
+) -> tuple[Text, ...]:
+    return tuple(Text(line, style=style) for line in _structured_text_lines(value))
+
+
+def _structured_text_lines(value: object, *, indent: int = 0) -> tuple[str, ...]:
+    prefix = " " * indent
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[object, object], value)
+        if not mapping:
+            return (f"{prefix}{{}}",)
+        lines: list[str] = []
+        for key, item in mapping.items():
+            lines.extend(_structured_item_lines(str(key), item, indent=indent))
+        return tuple(lines)
+    if isinstance(value, list):
+        items = cast(list[object], value)
+        if not items:
+            return (f"{prefix}[]",)
+        lines = []
+        for index, item in enumerate(items):
+            lines.extend(_structured_item_lines(f"[{index}]", item, indent=indent))
+        return tuple(lines)
+    if isinstance(value, str) and "\n" in value:
+        return tuple(f"{prefix}{line}" for line in value.splitlines())
+    return (f"{prefix}{_structured_scalar(value)}",)
+
+
+def _structured_item_lines(
+    label: str,
+    value: object,
+    *,
+    indent: int,
+) -> tuple[str, ...]:
+    prefix = " " * indent
+    if isinstance(value, str) and "\n" in value:
+        body = tuple(f"{' ' * (indent + 2)}{line}" for line in value.splitlines())
+        return (f"{prefix}{label}:", *body)
+    if isinstance(value, Mapping | list):
+        return (
+            f"{prefix}{label}:",
+            *_structured_text_lines(value, indent=indent + 2),
+        )
+    return (f"{prefix}{label}: {_structured_scalar(value)}",)
+
+
+def _structured_scalar(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return str(value).lower()
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 @dataclass(frozen=True, slots=True)

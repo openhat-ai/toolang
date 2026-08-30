@@ -65,11 +65,11 @@ def test_inspect_help_is_derived_from_registered_transitions() -> None:
         assert projector.name in help_text
 
 
-def test_model_call_markdown_presents_messages_as_a_reviewable_dialogue() -> None:
+def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -> None:
     call = ModelCall(
-        instructions="Review the run.",
+        instructions="Review the run.\n<important>Preserve this tag.</important>",
         messages=[
-            Message.user("What happened?"),
+            Message.user('<context name="failure">What happened?</context>'),
             Message(
                 role="assistant",
                 parts=(
@@ -105,24 +105,56 @@ def test_model_call_markdown_presents_messages_as_a_reviewable_dialogue() -> Non
         cont={"cursor": "next"},
     )
 
-    markdown = inspect_commands._model_call_markdown(model_call_to_data(call))
+    renderables = inspect_commands._model_call_renderables(model_call_to_data(call))
+    by_text = {renderable.plain: renderable for renderable in renderables}
+    output = "\n".join(renderable.plain for renderable in renderables)
+    output_lines = output.splitlines()
 
-    assert "## Instructions\n\nReview the run." in markdown
-    assert "### 1. User\n\n> What happened?" in markdown
-    assert "### 2. Assistant\n\n> I will inspect it." in markdown
-    assert "#### Tool Call: `inspect_run`" in markdown
-    assert "**Reasoning**\n\n> The run record contains the failure." in markdown
-    assert '**Input**\n\n```json\n{\n  "run_id": "run_123"\n}\n```' in markdown
-    assert "### 3. Tool" in markdown
-    assert "#### Tool Result: `inspect_run`" in markdown
-    assert '**Output**\n\n```json\n{\n  "status": "failed"\n}\n```' in markdown
-    assert "## Tools\n\n### `inspect_run`" in markdown
-    assert "## Continuation" in markdown
-    assert '"messages":' not in markdown
+    assert "Review the run.\n<important>Preserve this tag.</important>" in output
+    assert '<context name="failure">What happened?</context>' in output
+    assert "[0] user" in output
+    assert "[1] assistant" in output
+    assert "[2] tool" in output
+    assert "Tool Call · inspect_run" in output
+    assert "Reason\nThe run record contains the failure." in output
+    assert "Input\nrun_id: run_123" in output
+    assert "Tool Result · inspect_run" in output
+    assert "Output\nstatus: failed" in output
+    assert "Available Tools · 1 tool" in output
+    assert "[0] inspect_run" in output
+    assert "Continuation\n\ncursor: next" in output
+    assert '"messages":' not in output
+    assert by_text["[0] user"].style == "dim"
+    assert by_text["[1] assistant"].style == "dim"
+    assert by_text["[2] tool"].style == "dim"
+    assert by_text["Parameters"].style == "dim"
+    assert by_text["type: object"].style == "dim"
+    for line in (
+        "[0] user",
+        '<context name="failure">What happened?</context>',
+        "[1] assistant",
+        "I will inspect it.",
+        "Tool Call · inspect_run",
+        "run_id: run_123",
+        "[2] tool",
+        "Tool Result · inspect_run",
+        "status: failed",
+        "[0] inspect_run",
+        "type: object",
+    ):
+        assert line in output_lines
 
 
-def test_model_call_markdown_uses_safe_fences_for_backticks() -> None:
-    assert inspect_commands._markdown_json_block({"value": "```"}) == (
-        '````json\n{\n  "value": "```"\n}\n````'
+def test_structured_human_values_are_zero_based_and_keep_nested_shape() -> None:
+    renderables = inspect_commands._structured_renderables(
+        {"items": ["first", {"enabled": True}]},
+        style="dim",
     )
-    assert inspect_commands._markdown_code_span("`tool`") == "`` `tool` ``"
+
+    assert [renderable.plain for renderable in renderables] == [
+        "items:",
+        "  [0]: first",
+        "  [1]:",
+        "    enabled: true",
+    ]
+    assert all(renderable.style == "dim" for renderable in renderables)

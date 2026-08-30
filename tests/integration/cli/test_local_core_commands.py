@@ -753,13 +753,13 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
     human_output = strip_ansi(human.stdout)
     assert "Instructions" in human_output
     assert "Diagnose the run." in human_output
-    assert "Messages" in human_output
-    assert "1. Assistant" in human_output
+    assert "Conversation · 2 messages" in human_output
+    assert "[0] assistant" in human_output
     assert "Context" in human_output
-    assert "2. User" in human_output
+    assert "[1] user" in human_output
     assert "Question" in human_output
-    assert "Tools" in human_output
-    assert "No tools." in human_output
+    assert "Available Tools · 0 tools" in human_output
+    assert "No available tools." in human_output
     assert "Continuation" in human_output
     assert "provider_cursor" in human_output
     assert '"instructions":' not in human_output
