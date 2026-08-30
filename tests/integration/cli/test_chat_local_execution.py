@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import os
 from pathlib import Path
 import threading
@@ -10,7 +11,7 @@ from typing import Any
 
 from anyio import to_process
 
-from tests.support.execution_harness import ExecutionHarness
+from tests.support.execution_harness import ExecutionHarness, TEST_MODEL_REF
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.policy import RunBindings, RunLimits
 from toolang.base.types.run import ModelCallResult
@@ -129,6 +130,42 @@ def test_local_chat_run_request_materializes_chat_runnable() -> None:
     assert len(requests) == 1
     assert requests[0].runnable.ref == "agic:chat"
     assert requests[0].model.ref == "test/scripted"
+
+
+def test_local_chat_defaults_prefer_configured_model(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic chat(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=(),
+    )
+    setup = replace(
+        harness.setup,
+        bindings=RunBindings(model=TEST_MODEL_REF, runnable="agic:chat"),
+    )
+    monkeypatch.setattr(
+        local,
+        "agent_model_targets",
+        lambda *_args: ("catalog/inferred", ()),
+    )
+
+    try:
+        defaults = local.LocalChatSession._current_run_defaults(
+            setup=setup,
+            state=harness.state,
+        )
+    finally:
+        harness.store.close()
+
+    assert defaults.bindings.model == TEST_MODEL_REF
 
 
 def test_local_chat_owner_loop_control_does_not_wait_on_itself() -> None:

@@ -322,7 +322,8 @@ class LocalChatSession:
     def _current_run_defaults(
         *, setup: AgentSetup, state: AgentState
     ) -> ChatRunDefaults:
-        model, _targets = agent_model_targets(setup, state, setup.ceiling)
+        inferred_model, _targets = agent_model_targets(setup, state, setup.ceiling)
+        model = setup.bindings.model or inferred_model
         runnable = setup.bindings.runnable
         if runnable is None:
             default_agic, default_flow = runnable_binding_defaults(
