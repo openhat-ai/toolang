@@ -40,6 +40,8 @@ def test_subject_transition_registry_is_closed_and_unambiguous() -> None:
         ("agent", "controls"),
         ("thread", "runs"),
         ("run", "steps"),
+        ("step", "runs"),
+        ("step", "steps"),
     }
     assert len(registered) == len(inspect_commands.INSPECT_SUBJECT_TRANSITIONS)
 
@@ -66,6 +68,44 @@ def test_inspect_help_is_derived_from_registered_transitions() -> None:
         assert transition.name in help_text
     for projector in inspect_commands.INSPECT_PROJECTORS:
         assert projector.name in help_text
+
+
+def test_projector_registry_uses_distinct_run_and_step_vocabulary() -> None:
+    assert {
+        (item.source, item.name) for item in inspect_commands.INSPECT_PROJECTORS
+    } == {
+        ("run", "tree"),
+        ("step", "call"),
+    }
+    assert "model-call" not in inspect_commands._PROJECTOR_NAMES
+
+
+def test_tree_activity_preserves_run_statement_operands_and_aligns_tags() -> None:
+    assert inspect_commands._tree_activity("run", None, "flow:parent") == (
+        "<flow>  parent"
+    )
+    assert inspect_commands._tree_activity("step", "model", "openai/gpt-5") == (
+        "[model] openai/gpt-5"
+    )
+    assert (
+        inspect_commands._tree_activity("step", "run", "scatter 6 agic:expand_queries")
+        == "[run]   scatter 6 <agic>  expand_queries"
+    )
+
+
+def test_execution_table_does_not_truncate_reusable_pointers(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pointer = f"run_{'x' * 4_200}.0"
+
+    inspect_commands._echo_execution_table(
+        ("RUN STEP", "STATUS"),
+        ((pointer, "succeeded"),),
+    )
+
+    output = capsys.readouterr().out
+    assert pointer in output
+    assert "…" not in output
 
 
 def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -> None:

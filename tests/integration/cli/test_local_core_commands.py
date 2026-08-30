@@ -16,8 +16,8 @@ from click.utils import strip_ansi
 import pytest
 from click.testing import CliRunner
 
-from toolang.base.types.message import Message, TextPart
-from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage
+from toolang.base.types.message import Message, TextPart, ToolResultPart
+from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.catalog import templates
 from toolang.catalog.agent import LocalAgents
@@ -45,6 +45,7 @@ from toolang.execution.types import (
     Pointer,
     StepPath,
     ThreadPrefix,
+    ToolStepGiven,
 )
 from toolang.lang.input import resolve_input_parts
 from toolang.setup import AgentSetup
@@ -154,7 +155,9 @@ def test_inspect_thread_and_run_collections_read_local_history(tmp_path: Path) -
     assert "Review the repository" in threads.stdout
     assert runs.exit_code == 0
     assert "run_first" in runs.stdout
-    assert "The repository looks good." in runs.stdout
+    assert "THREAD RUN" in runs.stdout
+    assert "RUNNABLE" in runs.stdout
+    assert "<agic>  test" in runs.stdout
     assert "succeeded" in runs.stdout
 
 
@@ -507,7 +510,9 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
     human_run_lines = [
         " ".join(line.split()) for line in strip_ansi(human_runs.stdout).splitlines()
     ]
-    assert "RUN THREAD TITLE STEPS STATUS CREATED" in human_run_lines
+    assert (
+        "RUN THREAD PARENT STEP RUNNABLE OCCUR STEPS STATUS CREATED" in human_run_lines
+    )
     first_run_line = next(
         line for line in human_run_lines if line.startswith("run_subject_first ")
     )
@@ -529,7 +534,10 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
         " ".join(line.split())
         for line in strip_ansi(human_scoped_runs.stdout).splitlines()
     ]
-    assert "THREAD RUN TITLE STEPS STATUS CREATED" in human_scoped_lines
+    assert (
+        "THREAD RUN PARENT STEP RUNNABLE OCCUR STEPS STATUS CREATED"
+        in human_scoped_lines
+    )
     scoped_first_line = next(
         line for line in human_scoped_lines if line.startswith("run_subject_first ")
     )
@@ -561,7 +569,7 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
     human_step_lines = [
         " ".join(line.split()) for line in strip_ansi(human.stdout).splitlines()
     ]
-    assert "RUN STEP KIND STATUS CREATED" in human_step_lines
+    assert "RUN STEP PARENT STEP ACTIVITY OCCUR RUNS STATUS CREATED" in human_step_lines
     assert (
         human.stdout.index("run_subject_first.2")
         < human.stdout.index("run_subject_first.2.10")
@@ -674,7 +682,7 @@ def test_inspect_collections_are_unbounded_and_empty_stores_succeed(
     assert len(json.loads(controls.stdout)) == 102
 
 
-def test_inspect_human_collection_uses_resolved_run_records(
+def test_inspect_human_collection_uses_one_focused_run_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -693,45 +701,33 @@ def test_inspect_human_collection_uses_resolved_run_records(
     finally:
         store.close()
 
-    original = RunStore.list_runs
+    original = RunStore.inspect_runs
     calls = 0
-    original_steps = RunStore.list_steps_for_runs
-    step_calls = 0
 
-    def list_runs_once(instance: RunStore, **kwargs: Any):
+    def inspect_runs_once(instance: RunStore, **kwargs: Any):
         nonlocal calls
         calls += 1
         if calls > 1:
             raise AssertionError("inspect must not re-query its Run collection")
         return original(instance, **kwargs)
 
-    monkeypatch.setattr(RunStore, "list_runs", list_runs_once)
-
-    def list_steps_once(instance: RunStore, **kwargs: Any):
-        nonlocal step_calls
-        step_calls += 1
-        if step_calls > 1:
-            raise AssertionError("inspect must load its Step counts only once")
-        return original_steps(instance, **kwargs)
-
-    monkeypatch.setattr(RunStore, "list_steps_for_runs", list_steps_once)
+    monkeypatch.setattr(RunStore, "inspect_runs", inspect_runs_once)
+    monkeypatch.setattr(
+        RunHistory,
+        "describe_runs",
+        lambda *_args, **_kwargs: pytest.fail(
+            "focused Run inspection must not build history summaries"
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "toolang.execution.trees", None)
 
     result = _invoke(root, "alice", "inspect", "runs")
 
     assert result.exit_code == 0, result.stderr
     assert "run_single_query" in result.stdout
     assert calls == 1
-    assert step_calls == 1
 
     calls = 0
-    step_calls = 0
-    monkeypatch.setattr(
-        RunHistory,
-        "describe_runs",
-        lambda *_args, **_kwargs: pytest.fail(
-            "JSON collection output must not build human summaries"
-        ),
-    )
 
     json_result = _invoke(root, "alice", "inspect", "runs", "--json")
 
@@ -740,7 +736,6 @@ def test_inspect_human_collection_uses_resolved_run_records(
         "run_single_query"
     ]
     assert calls == 1
-    assert step_calls == 0
 
 
 @pytest.mark.parametrize(
@@ -748,7 +743,7 @@ def test_inspect_human_collection_uses_resolved_run_records(
     (
         (("custom_subject", "steps"), "runs"),
         (("run_subject", "runs"), "steps"),
-        (("run_subject.0", "steps"), "model-call"),
+        (("run_subject.0", "steps"), None),
         (("run_subject/status", "steps"), None),
     ),
 )
@@ -827,7 +822,10 @@ def test_inspect_collections_require_execution_history(
     assert "execution history not found: alice" in result.stderr
 
 
-def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
+def test_inspect_projects_complete_persisted_model_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
     store = RunStore(AgentLayout.resident(root, "alice").run_store)
@@ -881,12 +879,21 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
     finally:
         store.close()
 
+    monkeypatch.setattr(
+        RunStore,
+        "load_execution_snapshot",
+        lambda *_args, **_kwargs: pytest.fail(
+            "model call projection must not load a structural snapshot"
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "toolang.execution.trees", None)
+
     projected = _invoke(
         root,
         "alice",
         "inspect",
         "run_model_call.0",
-        "model-call",
+        "call",
         "--json",
     )
     references = _invoke(
@@ -901,7 +908,7 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
         "alice",
         "inspect",
         "run_model_call.0",
-        "model-call",
+        "call",
         "--human",
     )
     rejected = _invoke(
@@ -909,7 +916,7 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
         "alice",
         "inspect",
         "run_model_call",
-        "model-call",
+        "call",
     )
 
     assert projected.exit_code == 0, projected.stderr
@@ -952,7 +959,7 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
     assert "Continuation" in human_output
     assert "provider_cursor" in human_output
     assert '"instructions":' not in human_output
-    assert "projected as model-call" not in human_output
+    assert "projected as call" not in human_output
     assert [
         human_output.index(title)
         for title in (
@@ -975,7 +982,7 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
         )
     )
     assert rejected.exit_code == 2
-    assert "does not support projector model-call" in rejected.stderr
+    assert "allowed: steps, tree" in rejected.stderr
 
     connection = sqlite3.connect(AgentLayout.resident(root, "alice").run_store)
     try:
@@ -999,7 +1006,7 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
         "alice",
         "inspect",
         "run_model_call.0",
-        "model-call",
+        "call",
         "--json",
     )
 
@@ -1028,12 +1035,353 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
         "alice",
         "inspect",
         "run_model_call.0",
-        "model-call",
+        "call",
         "--json",
     )
 
     assert schema_absent_legacy.exit_code == 0, schema_absent_legacy.stderr
     assert json.loads(schema_absent_legacy.stdout)["output_schema"] is None
+
+
+def test_inspect_projects_run_tree_and_container_step_call(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    store = RunStore(AgentLayout.resident(root, "alice").run_store)
+    try:
+        parent = project_run_start(
+            store,
+            run_id="run_tree_parent",
+            thread_id="term_tree",
+            origin="test",
+            input=Message.user("Tree"),
+            runnable_kind="flow",
+            runnable_name="parent",
+            started_at="2026-01-01T00:00:00Z",
+        )
+        run_step = project_step(
+            store,
+            run_id=parent.id,
+            step_index=0,
+            kind="run",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:04Z",
+        )
+        child = project_run_start(
+            store,
+            run_id="run_tree_child",
+            thread_id=parent.thread,
+            origin="test",
+            input=Message.user("Child"),
+            runnable_kind="agic",
+            runnable_name="child",
+            parent=run_step.path,
+            started_at="2026-01-01T00:00:01Z",
+        )
+        project_step(
+            store,
+            run_id=child.id,
+            step_index=0,
+            kind="model",
+            status="succeeded",
+            input=(),
+            output=(TextPart("Done"),),
+            detail={"tokens": {"input": 12, "output": 3}, "cost": "0.01"},
+            context={"model": "openai/gpt-5"},
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:03Z",
+        )
+        project_run_end(
+            store,
+            run_id=child.id,
+            finished_at="2026-01-01T00:00:04Z",
+        )
+        project_run_end(
+            store,
+            run_id=parent.id,
+            finished_at="2026-01-01T00:00:05Z",
+        )
+    finally:
+        store.close()
+
+    tree = _invoke(root, "alice", "inspect", parent.id, "tree", "--json")
+    call = _invoke(root, "alice", "inspect", str(run_step.path), "call", "--json")
+    human = _invoke(root, "alice", "inspect", parent.id, "tree")
+    child_runs = _invoke(root, "alice", "inspect", str(run_step.path), "runs", "--json")
+
+    assert tree.exit_code == 0, tree.stderr
+    tree_data = json.loads(tree.stdout)
+    assert list(tree_data[0]) == [
+        "pointer",
+        "record_kind",
+        "step_kind",
+        "parent",
+        "depth",
+        "operation",
+        "status",
+        "occur",
+        "started_at",
+        "finished_at",
+        "error",
+        "metrics",
+    ]
+    assert [node["pointer"] for node in tree_data] == [
+        parent.id,
+        str(run_step.path),
+        child.id,
+        f"{child.id}.0",
+    ]
+    assert [node["parent"] for node in tree_data] == [
+        None,
+        parent.id,
+        str(run_step.path),
+        child.id,
+    ]
+    assert tree_data[0]["metrics"] == {
+        "runs": 1,
+        "model_calls": 1,
+        "tool_calls": 0,
+        "input_tokens": 12,
+        "output_tokens": 3,
+        "usage_complete": True,
+        "cost_usd": "0.01",
+        "cost_complete": True,
+        "cost_approximate": True,
+    }
+    assert call.exit_code == 0, call.stderr
+    assert [node["pointer"] for node in json.loads(call.stdout)] == [
+        str(run_step.path),
+        child.id,
+        f"{child.id}.0",
+    ]
+    assert human.exit_code == 0, human.stderr
+    assert "<flow>  parent" in human.stdout
+    assert "[run]   <agic>  test" in human.stdout
+    assert "<agic>  child" in human.stdout
+    assert "[model] openai/gpt-5" in human.stdout
+    assert child_runs.exit_code == 0, child_runs.stderr
+    assert [item["id"] for item in json.loads(child_runs.stdout)] == [child.id]
+
+
+def test_inspect_projects_exact_tool_call_and_persisted_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    store = RunStore(AgentLayout.resident(root, "alice").run_store)
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_tool_call",
+            thread_id="term_tool_call",
+            origin="test",
+            input=Message.user("Tool"),
+        )
+        path = StepPath(run.id, (0,))
+        call = ToolCall(
+            tool_call_id="provider-tool-1",
+            call_id="local-call-1",
+            name="search",
+            input={"query": "toolang"},
+        )
+        store.begin_step(
+            path=path,
+            kind="tool",
+            input=(),
+            given=ToolStepGiven(plugin="web", call=call),
+            state=ControlRef(run.id, 0),
+            started_at="2026-01-01T00:00:00Z",
+        )
+        store.finish_step(
+            path=path,
+            kind="tool",
+            status="succeeded",
+            output=Local.typed(
+                "Part",
+                ToolResultPart(
+                    tool_call_id=call.tool_call_id,
+                    call_id=call.call_id,
+                    tool_name=call.name,
+                    tool_family="web",
+                    output={"status": "ok", "results": 3},
+                ),
+                "_",
+                0,
+            ),
+            noted=None,
+            error=None,
+            finished_at="2026-01-01T00:00:01Z",
+        )
+    finally:
+        store.close()
+
+    monkeypatch.setattr(
+        RunStore,
+        "load_execution_snapshot",
+        lambda *_args, **_kwargs: pytest.fail(
+            "tool call projection must not load a structural snapshot"
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "toolang.execution.trees", None)
+
+    projected = _invoke(root, "alice", "inspect", str(path), "call", "--json")
+    human = _invoke(root, "alice", "inspect", str(path), "call")
+
+    assert projected.exit_code == 0, projected.stderr
+    assert json.loads(projected.stdout) == {
+        "tool_call_id": "provider-tool-1",
+        "call_id": "local-call-1",
+        "name": "search",
+        "input": {"query": "toolang"},
+    }
+    assert human.exit_code == 0, human.stderr
+    assert "Plugin       web" in human.stdout
+    assert "Call ID      local-call-1" in human.stdout
+    assert "Tool-call ID provider-tool-1" in human.stdout
+    assert 'search(query: "toolang")' in human.stdout
+    assert "results: 3" in human.stdout
+
+
+def test_inspect_structural_projection_handles_empty_and_bounded_errors(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    store = RunStore(AgentLayout.resident(root, "alice").run_store)
+    try:
+        empty = project_run_start(
+            store,
+            run_id="run_empty_tree",
+            thread_id="term_empty_tree",
+            origin="test",
+            input=Message.user("Empty"),
+        )
+        project_run_end(store, run_id=empty.id)
+        failed = project_run_start(
+            store,
+            run_id="run_failed_tree",
+            thread_id="term_failed_tree",
+            origin="test",
+            input=Message.user("Failed"),
+        )
+        error = "failure " + "x" * 300
+        step = project_step(
+            store,
+            run_id=failed.id,
+            step_index=0,
+            kind="value",
+            status="failed",
+            input=(),
+            output=None,
+            error=error,
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+        project_run_end(store, run_id=failed.id, status="failed", error=error)
+    finally:
+        store.close()
+
+    empty_tree = _invoke(root, "alice", "inspect", empty.id, "tree", "--json")
+    failed_json = _invoke(root, "alice", "inspect", failed.id, "tree", "--json")
+    failed_human = _invoke(root, "alice", "inspect", failed.id, "tree")
+
+    assert empty_tree.exit_code == 0, empty_tree.stderr
+    empty_data = json.loads(empty_tree.stdout)
+    assert len(empty_data) == 1
+    assert empty_data[0]["pointer"] == empty.id
+    assert empty_data[0]["parent"] is None
+    assert empty_data[0]["operation"] == "agic:test"
+    assert empty_data[0]["status"] == "succeeded"
+    assert empty_data[0]["finished_at"] is not None
+    assert empty_data[0]["metrics"] == {
+        "runs": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "usage_complete": True,
+        "cost_usd": None,
+        "cost_complete": True,
+        "cost_approximate": False,
+    }
+    assert failed_json.exit_code == 0, failed_json.stderr
+    failed_data = json.loads(failed_json.stdout)
+    assert (
+        next(node for node in failed_data if node["pointer"] == str(step.path))["error"]
+        == error
+    )
+    assert failed_human.exit_code == 0, failed_human.stderr
+    assert error[:240] in failed_human.stdout
+    assert error[:241] not in failed_human.stdout
+
+
+def test_inspect_empty_step_relations_and_container_call_succeed(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    store = RunStore(AgentLayout.resident(root, "alice").run_store)
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_empty_relations",
+            thread_id="term_empty_relations",
+            origin="test",
+            input=Message.user("Empty relations"),
+        )
+        run_step = project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="run",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+        loop = project_step(
+            store,
+            run_id=run.id,
+            step_index=1,
+            kind="loop",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+    finally:
+        store.close()
+
+    run_children = _invoke(
+        root, "alice", "inspect", str(run_step.path), "runs", "--json"
+    )
+    loop_runs = _invoke(root, "alice", "inspect", str(loop.path), "runs", "--json")
+    loop_steps = _invoke(root, "alice", "inspect", str(loop.path), "steps", "--json")
+    loop_steps_human = _invoke(root, "alice", "inspect", str(loop.path), "steps")
+    loop_call = _invoke(root, "alice", "inspect", str(loop.path), "call", "--json")
+    invalid_steps = _invoke(root, "alice", "inspect", str(run_step.path), "steps")
+
+    assert run_children.exit_code == 0 and json.loads(run_children.stdout) == []
+    assert loop_runs.exit_code == 0 and json.loads(loop_runs.stdout) == []
+    assert loop_steps.exit_code == 0 and json.loads(loop_steps.stdout) == []
+    assert loop_steps_human.exit_code == 0, loop_steps_human.stderr
+    assert "CHILD STEP ACTIVITY OCCUR RUNS STATUS CREATED" in " ".join(
+        loop_steps_human.stdout.split()
+    )
+    assert "PARENT STEP" not in loop_steps_human.stdout
+    assert loop_call.exit_code == 0, loop_call.stderr
+    assert [item["pointer"] for item in json.loads(loop_call.stdout)] == [
+        str(loop.path)
+    ]
+    assert invalid_steps.exit_code == 2
+    assert "allowed: runs, call" in " ".join(
+        strip_ansi(invalid_steps.stderr).replace("│", "").split()
+    )
 
 
 @pytest.mark.parametrize(
@@ -1059,7 +1407,7 @@ def test_inspect_rejects_unregistered_projector_spellings(
             store,
             run_id=run.id,
             step_index=0,
-            kind="value",
+            kind="model",
             status="succeeded",
             input=(),
             output=(TextPart("value"),),
@@ -1076,7 +1424,7 @@ def test_inspect_rejects_unregistered_projector_spellings(
         "run_projector_spelling.0",
         projector,
     )
-    non_model = _invoke(
+    removed = _invoke(
         root,
         "alice",
         "inspect",
@@ -1086,9 +1434,77 @@ def test_inspect_rejects_unregistered_projector_spellings(
 
     assert spelling.exit_code == 2
     compact_error = " ".join(strip_ansi(spelling.stderr).replace("│", "").split())
-    assert "allowed: model-call" in compact_error
-    assert non_model.exit_code == 1
-    assert "step is not a model call: run_projector_spelling.0" in non_model.stderr
+    assert "allowed: call" in compact_error
+    assert removed.exit_code == 2
+    compact_removed = " ".join(strip_ansi(removed.stderr).replace("│", "").split())
+    assert "allowed: call" in compact_removed
+
+
+def test_inspect_validates_tree_and_call_before_specialized_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    store = RunStore(AgentLayout.resident(root, "alice").run_store)
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_projector_validation",
+            thread_id="term_projector_validation",
+            origin="test",
+            input=Message.user("Validation"),
+        )
+        model = project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="model",
+            status="succeeded",
+            input=(),
+            output=(TextPart("model"),),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+        value = project_step(
+            store,
+            run_id=run.id,
+            step_index=1,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(TextPart("value"),),
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+    finally:
+        store.close()
+
+    monkeypatch.setattr(
+        RunStore,
+        "load_execution_snapshot",
+        lambda *_args, **_kwargs: pytest.fail("invalid projector must not read a tree"),
+    )
+    monkeypatch.setattr(
+        RunStore,
+        "rebuild_model_call",
+        lambda *_args, **_kwargs: pytest.fail(
+            "invalid projector must not rebuild a model call"
+        ),
+    )
+
+    run_call = _invoke(root, "alice", "inspect", run.id, "call")
+    step_tree = _invoke(root, "alice", "inspect", str(model.path), "tree")
+    value_call = _invoke(root, "alice", "inspect", str(value.path), "call")
+
+    assert run_call.exit_code == 2
+    assert "allowed: steps, tree" in " ".join(
+        strip_ansi(run_call.stderr).replace("│", "").split()
+    )
+    assert step_tree.exit_code == 2
+    assert "allowed: call" in " ".join(step_tree.stderr.split())
+    assert value_call.exit_code == 2
+    assert "does not accept a child subject" in value_call.stderr
 
 
 def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
@@ -1139,7 +1555,12 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
     assert "Root subjects: threads, runs, controls" in compact_help
     assert "THREAD runs" in compact_help
     assert "RUN steps" in compact_help
-    assert "STEP model-call" in compact_help
+    assert "STEP runs" in compact_help
+    assert "LOOP_STEP steps" in compact_help
+    assert "STEP call" in compact_help
+    assert "RUN tree" in compact_help
+    assert "Run tree is a durable structural snapshot" in compact_help
+    assert "Step-owned historical call" in compact_help
     assert "Render human-readable output (default)." in help_text
     assert "--human" in help_text
     assert "--json" in help_text

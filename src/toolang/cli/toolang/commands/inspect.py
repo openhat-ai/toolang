@@ -19,7 +19,14 @@ from toolang.cli.common.human_values import (
     human_scalar_text,
     human_value_renderable,
 )
+from toolang.cli.common.execution_progress.formatting import (
+    count as _format_count,
+    elapsed as _format_elapsed,
+    one_line as _one_line,
+    token_fact as _token_fact,
+)
 from toolang.execution.history import RunHistory
+from toolang.execution.inspection import InspectedRun, InspectedStep
 from toolang.execution.records import (
     ControlRecord,
     RunRecord,
@@ -37,6 +44,7 @@ from toolang.execution.store import RunStore
 from toolang.execution.types import (
     Local,
     Pointer,
+    ToolStepGiven,
     TypedPointer,
     local_to_protocol_data,
     validate_runtime_value,
@@ -57,7 +65,7 @@ _SubjectKind = Literal[
     "runs",
     "steps",
 ]
-_ProjectionKind = Literal["records", "fields", "value", "model-call"]
+_ProjectionKind = Literal["records", "fields", "value", "tree", "call"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +74,7 @@ class _InspectSubject:
     selection: RecordSelection | None = None
     records: tuple[Record, ...] = ()
     scope: str | None = None
+    inspected: tuple[InspectedRun | InspectedStep, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +83,7 @@ class _SubjectTransition:
     name: str
     target: _SubjectKind
     load: Callable[[RunStore, _InspectSubject], _InspectSubject]
+    supports: Callable[[_InspectSubject], bool] = lambda _subject: True
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +92,7 @@ class _ProjectorTransition:
     name: str
     project: Callable[[RunStore, _InspectSubject], object]
     render: Callable[[Console, _InspectSubject, object], None]
+    supports: Callable[[_InspectSubject], bool] = lambda _subject: True
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +107,12 @@ class _InspectProjection:
     kind: _ProjectionKind
     subject: _InspectSubject
     value: object
+
+
+@dataclass(frozen=True, slots=True)
+class _ProjectedValue:
+    json: object
+    human: object
 
 
 def _load_threads(store: RunStore, _source: _InspectSubject) -> _InspectSubject:
@@ -118,10 +135,12 @@ def _load_runs(store: RunStore, source: _InspectSubject) -> _InspectSubject:
         if source.kind == "thread" and source.selection is not None
         else None
     )
+    inspected = store.inspect_runs(thread_id=thread_id)
     return _InspectSubject(
         kind="runs",
-        records=tuple(store.list_runs(limit=None, thread_id=thread_id)),
+        records=tuple(item.record for item in inspected),
         scope=thread_id,
+        inspected=inspected,
     )
 
 
@@ -129,17 +148,83 @@ def _load_steps(store: RunStore, source: _InspectSubject) -> _InspectSubject:
     if source.selection is None:  # pragma: no cover - registry source guarantees this
         raise RuntimeError("run subject has no record selection")
     run_id = source.selection.pointer.record
+    inspected = store.inspect_steps(run_id=run_id)
     return _InspectSubject(
         kind="steps",
-        records=tuple(store.list_steps(run_id=run_id)),
+        records=tuple(item.record for item in inspected),
         scope=run_id,
+        inspected=inspected,
     )
 
 
-def _project_model_call(store: RunStore, source: _InspectSubject) -> object:
+def _load_child_runs(store: RunStore, source: _InspectSubject) -> _InspectSubject:
+    step = _selected_step(source)
+    inspected = store.inspect_child_runs(parent=step)
+    return _InspectSubject(
+        kind="runs",
+        records=tuple(item.record for item in inspected),
+        scope=str(step.path),
+        inspected=inspected,
+    )
+
+
+def _load_child_steps(store: RunStore, source: _InspectSubject) -> _InspectSubject:
+    step = _selected_step(source)
+    inspected = store.inspect_child_steps(parent=step)
+    return _InspectSubject(
+        kind="steps",
+        records=tuple(item.record for item in inspected),
+        scope=str(step.path),
+        inspected=inspected,
+    )
+
+
+def _selected_step(source: _InspectSubject) -> StepRecord:
     if source.selection is None or not isinstance(source.selection.record, StepRecord):
-        raise RuntimeError("step subject has no Step record")  # pragma: no cover
-    return model_call_to_data(store.rebuild_model_call(source.selection.record))
+        raise RuntimeError("step subject has no Step record")
+    return source.selection.record
+
+
+def _project_model_call(store: RunStore, source: _InspectSubject) -> object:
+    step = _selected_step(source)
+    data = model_call_to_data(store.rebuild_model_call(step))
+    return _ProjectedValue(json=data, human=data)
+
+
+def _project_tool_call(_store: RunStore, source: _InspectSubject) -> object:
+    step = _selected_step(source)
+    if not isinstance(step.given, ToolStepGiven):
+        raise ValueError(f"step is not a tool call: {step.path}")
+    call = step.given.call
+    data = {
+        "tool_call_id": call.tool_call_id,
+        "call_id": call.call_id,
+        "name": call.name,
+        "input": dict(call.input),
+    }
+    return _ProjectedValue(json=data, human=data)
+
+
+def _project_structural_tree(store: RunStore, source: _InspectSubject) -> object:
+    from toolang.execution.trees import build_execution_tree, tree_to_data
+
+    if source.selection is None:
+        raise RuntimeError("structural projection has no record selection")
+    record = source.selection.record
+    root = record.id if isinstance(record, RunRecord) else _selected_step(source).path
+    tree = build_execution_tree(store.load_execution_snapshot(root=root))
+    return _ProjectedValue(json=tree_to_data(tree), human=tree)
+
+
+def _project_step_call(store: RunStore, source: _InspectSubject) -> object:
+    step = _selected_step(source)
+    if step.kind == "model":
+        return _project_model_call(store, source)
+    if step.kind == "tool":
+        return _project_tool_call(store, source)
+    if step.kind in {"run", "par", "loop"}:
+        return _project_structural_tree(store, source)
+    raise click.UsageError(f"{step.path} does not support projector call")
 
 
 def _render_model_call(
@@ -152,6 +237,21 @@ def _render_model_call(
         result_parts=_model_step_result_parts(subject),
     ):
         console.print(renderable, soft_wrap=True)
+
+
+def _render_step_call(
+    console: Console,
+    subject: _InspectSubject,
+    value: object,
+) -> None:
+    step = _selected_step(subject)
+    if step.kind == "model":
+        _render_model_call(console, subject, value)
+        return
+    if step.kind == "tool":
+        _render_tool_call(console, subject, value)
+        return
+    _render_execution_tree(console, subject, value)
 
 
 def _model_step_result_parts(
@@ -172,20 +272,276 @@ def _model_step_result_parts(
     return tuple(cast(Mapping[str, object], part) for part in value)
 
 
+def _render_tool_call(
+    console: Console,
+    subject: _InspectSubject,
+    value: object,
+) -> None:
+    step = _selected_step(subject)
+    if not isinstance(step.given, ToolStepGiven) or not isinstance(value, Mapping):
+        raise TypeError("tool call projector returned an invalid value")
+    data = cast(Mapping[str, object], value)
+    lines: list[Text] = []
+    _append_model_call_section(lines, "Invocation", width=80)
+    lines.extend(
+        (
+            Text(f"Plugin       {step.given.plugin}"),
+            Text(f"Call ID      {data.get('call_id', '')}"),
+            Text(f"Tool-call ID {data.get('tool_call_id', '')}"),
+            Text(_tool_invocation(str(data.get("name") or "tool"), data.get("input"))),
+        )
+    )
+    result = _tool_step_result(step)
+    if result is not None:
+        _append_model_call_section(lines, "Result", width=80)
+        lines.extend(_tool_part_renderables(result, result=True, index=0))
+    for line in lines:
+        console.print(line, soft_wrap=True)
+
+
+def _tool_step_result(step: StepRecord) -> Mapping[str, object] | None:
+    if step.output is None:
+        return None
+    value = local_to_protocol_data(step.output)["value"]
+    candidates = value if isinstance(value, list) else [value]
+    for item in candidates:
+        if not isinstance(item, Mapping):
+            continue
+        result = cast(Mapping[str, object], item)
+        if result.get("type") == "tool_result":
+            return result
+    return None
+
+
+def _render_execution_tree(
+    console: Console,
+    _subject: _InspectSubject,
+    value: object,
+) -> None:
+    from toolang.execution.trees import ExecutionTree
+
+    if not isinstance(value, ExecutionTree):
+        raise TypeError("structural projector returned an invalid tree")
+    children: dict[str | None, list[str]] = {}
+    parents = {node.pointer: node.parent for node in value.nodes}
+    for node in value.nodes:
+        children.setdefault(node.parent, []).append(node.pointer)
+    last = {pointer for pointers in children.values() for pointer in pointers[-1:]}
+
+    rows: list[tuple[Text | str, ...]] = []
+    for node in value.nodes:
+        rows.append(
+            (
+                _tree_node_label(node.pointer, node.parent, parents, last),
+                Text(_tree_activity(node.record_kind, node.step_kind, node.operation)),
+                _occurrence_label(node.occur),
+                _display_status(node.status),
+                _format_elapsed(node.started_at, node.finished_at or ""),
+                _tree_metrics_label(node.metrics),
+            )
+        )
+        error = value.resolve_error(node.error)
+        if error is not None:
+            bounded = _one_line(error)[:240]
+            rows.append(
+                (
+                    Text(
+                        f"{_tree_error_indent(node.depth)}error: {bounded}",
+                        style="red",
+                    ),
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                )
+            )
+    _render_execution_table(
+        console,
+        ("NODE", "ACTIVITY", "OCCUR", "STATUS", "DURATION", "METRICS"),
+        rows,
+    )
+
+
+def _render_execution_table(
+    console: Console,
+    headers: Sequence[str],
+    rows: Sequence[Sequence[Text | str]],
+) -> None:
+    """Render execution pointers without terminal-width truncation."""
+
+    normalized = tuple(
+        tuple(cell if isinstance(cell, Text) else Text(cell) for cell in row)
+        for row in rows
+    )
+    minimum_width = sum(
+        max(
+            (
+                cell_len(header),
+                *(cell_len(row[index].plain) for row in normalized),
+            )
+        )
+        for index, header in enumerate(headers)
+    ) + 2 * len(headers)
+
+    table = Table(
+        box=box.HORIZONTALS,
+        header_style="",
+        show_lines=False,
+        pad_edge=False,
+        collapse_padding=True,
+        width=minimum_width if minimum_width > console.width else None,
+    )
+    for header in headers:
+        table.add_column(header, no_wrap=True, overflow="ignore")
+    for row in normalized:
+        table.add_row(*row)
+    console.print(table, crop=False)
+
+
+def _echo_execution_table(
+    headers: Sequence[str],
+    rows: Sequence[Sequence[Text | str]],
+) -> None:
+    _render_execution_table(Console(highlight=False), headers, rows)
+
+
+def _tree_node_label(
+    pointer: str,
+    parent: str | None,
+    parents: Mapping[str, str | None],
+    last: set[str],
+) -> str:
+    if parent is None:
+        return pointer
+    ancestors: list[str] = []
+    current = parent
+    while current is not None:
+        ancestors.append(current)
+        current = parents[current]
+    guides = "".join(
+        "   " if ancestor in last else "│  " for ancestor in reversed(ancestors[:-1])
+    )
+    branch = "└─ " if pointer in last else "├─ "
+    return f"{guides}{branch}{pointer}"
+
+
+def _tree_error_indent(depth: int) -> str:
+    return "   " * (depth + 1) + "└─ "
+
+
+def _tree_activity(
+    record_kind: str,
+    step_kind: str | None,
+    operation: str,
+) -> str:
+    if record_kind == "run":
+        return _runnable_activity(operation)
+    if step_kind is None:  # pragma: no cover - typed tree invariant
+        return operation
+    content = operation
+    prefix = f"{step_kind} "
+    if content.startswith(prefix):
+        content = content[len(prefix) :]
+    if step_kind == "run":
+        content = _replace_runnable_tokens(content)
+    return f"[{step_kind}]".ljust(7) + f" {content}"
+
+
+def _replace_runnable_tokens(operation: str) -> str:
+    return " ".join(
+        _runnable_activity(word) if word.partition(":")[0] in {"flow", "agic"} else word
+        for word in operation.split()
+    )
+
+
+def _runnable_activity(runnable: str) -> str:
+    kind, separator, name = runnable.partition(":")
+    if separator and kind in {"flow", "agic"} and name:
+        return f"<{kind}>".ljust(7) + f" {name}"
+    return "<?>".ljust(7) + f" {runnable}"
+
+
+def _occurrence_label(occur: object) -> str:
+    if occur is None:
+        return ""
+    facts = []
+    item = getattr(occur, "item", None)
+    lane = getattr(occur, "lane", None)
+    iteration = getattr(occur, "iteration", None)
+    if item is not None:
+        facts.append(f"item {item.index + 1}/{item.count}")
+    if lane is not None:
+        facts.append(f"lane {lane.index + 1}/{lane.count}")
+    if iteration is not None:
+        total = f"/{iteration.count}" if iteration.count is not None else ""
+        facts.append(f"iteration {iteration.index + 1}{total} {iteration.phase}")
+    return " · ".join(facts)
+
+
+def _tree_metrics_label(metrics: object) -> str:
+    facts = []
+    runs = int(getattr(metrics, "runs"))
+    model_calls = int(getattr(metrics, "model_calls"))
+    tool_calls = int(getattr(metrics, "tool_calls"))
+    if runs:
+        facts.append(_format_count(runs, "run"))
+    if model_calls:
+        facts.append(_format_count(model_calls, "model call"))
+    if tool_calls:
+        facts.append(_format_count(tool_calls, "tool call"))
+    input_tokens = getattr(metrics, "input_tokens")
+    output_tokens = getattr(metrics, "output_tokens")
+    if isinstance(input_tokens, int) and isinstance(output_tokens, int):
+        token = _token_fact(input_tokens, output_tokens)
+        if not bool(getattr(metrics, "usage_complete")):
+            token += "+"
+        facts.append(token)
+    cost = getattr(metrics, "cost_usd")
+    if isinstance(cost, str):
+        prefix = "~$" if bool(getattr(metrics, "cost_approximate")) else "$"
+        suffix = "" if bool(getattr(metrics, "cost_complete")) else "+"
+        facts.append(f"{prefix}{cost}{suffix}")
+    return " · ".join(facts)
+
+
 INSPECT_SUBJECT_TRANSITIONS: tuple[_SubjectTransition, ...] = (
     _SubjectTransition("agent", "threads", "threads", _load_threads),
     _SubjectTransition("agent", "runs", "runs", _load_runs),
     _SubjectTransition("agent", "controls", "controls", _load_controls),
     _SubjectTransition("thread", "runs", "runs", _load_runs),
     _SubjectTransition("run", "steps", "steps", _load_steps),
+    _SubjectTransition(
+        "step",
+        "runs",
+        "runs",
+        _load_child_runs,
+        lambda subject: _selected_step(subject).kind in {"run", "par", "loop"},
+    ),
+    _SubjectTransition(
+        "step",
+        "steps",
+        "steps",
+        _load_child_steps,
+        lambda subject: _selected_step(subject).kind == "loop",
+    ),
 )
 
 INSPECT_PROJECTORS: tuple[_ProjectorTransition, ...] = (
     _ProjectorTransition(
+        "run",
+        "tree",
+        _project_structural_tree,
+        _render_execution_tree,
+    ),
+    _ProjectorTransition(
         "step",
-        "model-call",
-        _project_model_call,
-        _render_model_call,
+        "call",
+        _project_step_call,
+        _render_step_call,
+        lambda subject: (
+            _selected_step(subject).kind in {"model", "tool", "run", "par", "loop"}
+        ),
     ),
 )
 
@@ -196,9 +552,10 @@ _PROJECTOR_NAMES = frozenset(projector.name for projector in INSPECT_PROJECTORS)
 
 
 def _inspect_subject_help() -> str:
-    roots = ", ".join(_allowed_transitions("agent"))
+    roots = ", ".join(_allowed_transitions(_InspectSubject(kind="agent")))
     relations = "; ".join(
-        f"{transition.source.upper()} {transition.name}"
+        f"{'LOOP_STEP' if transition.source == 'step' and transition.name == 'steps' else transition.source.upper()} "
+        f"{transition.name}"
         for transition in INSPECT_SUBJECT_TRANSITIONS
         if transition.source != "agent"
     )
@@ -208,7 +565,9 @@ def _inspect_subject_help() -> str:
     )
     return (
         f"Subject chain. Root subjects: {roots}, or POINTER. "
-        f"Relations: {relations}. Projectors: {projectors}."
+        f"Relations: {relations}. Projectors: {projectors}. "
+        "Run tree is a durable structural snapshot; Step call is the "
+        "Step-owned historical call."
     )
 
 
@@ -280,7 +639,7 @@ def _parse_inspect_query(values: Sequence[str]) -> _InspectQuery:
 def _resolve_inspect_subject(store: RunStore, query: _InspectQuery) -> _InspectSubject:
     current = _InspectSubject(kind="agent")
     for index, token in enumerate(query.subjects):
-        transition = _subject_transition(current.kind, token)
+        transition = _subject_transition(current, token)
         if transition is not None:
             resolved = transition.load(store, current)
             if resolved.kind != transition.target:
@@ -306,49 +665,71 @@ def _resolve_inspect_subject(store: RunStore, query: _InspectQuery) -> _InspectS
 
 
 def _subject_transition(
-    source: _SubjectKind,
+    source: _InspectSubject | _SubjectKind,
     name: str,
 ) -> _SubjectTransition | None:
+    source_kind = source.kind if isinstance(source, _InspectSubject) else source
+    if isinstance(source, _InspectSubject) and name not in _available_names(source):
+        return None
     return next(
         (
             transition
             for transition in INSPECT_SUBJECT_TRANSITIONS
-            if transition.source == source and transition.name == name
+            if transition.source == source_kind and transition.name == name
         ),
         None,
     )
 
 
-def _allowed_transitions(source: _SubjectKind) -> tuple[str, ...]:
+def _allowed_transitions(
+    source: _InspectSubject | _SubjectKind,
+) -> tuple[str, ...]:
+    source_kind = source.kind if isinstance(source, _InspectSubject) else source
     return tuple(
         transition.name
         for transition in INSPECT_SUBJECT_TRANSITIONS
-        if transition.source == source
+        if transition.source == source_kind
+        and (not isinstance(source, _InspectSubject) or transition.supports(source))
     )
 
 
-def _allowed_projectors(source: _SubjectKind) -> tuple[str, ...]:
+def _allowed_projectors(
+    source: _InspectSubject | _SubjectKind,
+) -> tuple[str, ...]:
+    source_kind = source.kind if isinstance(source, _InspectSubject) else source
     return tuple(
-        projector.name for projector in INSPECT_PROJECTORS if projector.source == source
+        projector.name
+        for projector in INSPECT_PROJECTORS
+        if projector.source == source_kind
+        and (not isinstance(source, _InspectSubject) or projector.supports(source))
     )
+
+
+def _available_names(source: _InspectSubject) -> tuple[str, ...]:
+    """Return every relation and explicit projector valid for one subject."""
+
+    return (*_allowed_transitions(source), *_allowed_projectors(source))
 
 
 def _projector_transition(
-    source: _SubjectKind,
+    source: _InspectSubject | _SubjectKind,
     name: str,
 ) -> _ProjectorTransition | None:
+    source_kind = source.kind if isinstance(source, _InspectSubject) else source
+    if isinstance(source, _InspectSubject) and name not in _available_names(source):
+        return None
     return next(
         (
             projector
             for projector in INSPECT_PROJECTORS
-            if projector.source == source and projector.name == name
+            if projector.source == source_kind and projector.name == name
         ),
         None,
     )
 
 
 def _invalid_child(subject: _InspectSubject, token: str) -> click.UsageError:
-    allowed = (*_allowed_transitions(subject.kind), *_allowed_projectors(subject.kind))
+    allowed = _available_names(subject)
     label = _inspect_subject_label(subject)
     if allowed:
         return click.UsageError(
@@ -363,11 +744,9 @@ def _apply_projector(
     subject: _InspectSubject,
     name: str,
 ) -> object:
-    projector = _projector_transition(subject.kind, name)
+    projector = _projector_transition(subject, name)
     if projector is None:
-        raise click.UsageError(
-            f"{_inspect_subject_label(subject)} does not support projector {name}"
-        )
+        raise _invalid_child(subject, name)
     return projector.project(store, subject)
 
 
@@ -377,10 +756,13 @@ def _resolve_inspect_projection(
     projector: str | None,
 ) -> _InspectProjection:
     if projector is not None:
+        value = _apply_projector(store, subject, projector)
+        if not isinstance(value, _ProjectedValue):
+            raise RuntimeError(f"inspect projector {projector} returned no projection")
         return _InspectProjection(
             kind=cast(_ProjectionKind, projector),
             subject=subject,
-            value=_apply_projector(store, subject, projector),
+            value=value,
         )
     if subject.selection is None:
         return _InspectProjection(
@@ -422,7 +804,13 @@ def _render_projection_json(projection: _InspectProjection) -> None:
         records = cast(tuple[Record, ...], projection.value)
         _echo_json([record_to_data(record) for record in records])
         return
-    _echo_json(projection.value)
+    if projection.kind in {"fields", "value"}:
+        _echo_json(projection.value)
+        return
+    projected = projection.value
+    if not isinstance(projected, _ProjectedValue):
+        raise RuntimeError("explicit projection has no typed value")
+    _echo_json(projected.json)
 
 
 def _render_projection_human(
@@ -485,55 +873,134 @@ def _render_collection(
         echo_table(("THREAD", "TITLE", "RUNS", "STATUS", "UPDATED"), rows)
         return
     if subject.kind == "runs":
-        records = cast(tuple[RunRecord, ...], subject.records)
-        steps_by_run = store.list_steps_for_runs(
-            run_ids=tuple(record.id for record in records)
+        items = tuple(
+            item for item in subject.inspected if isinstance(item, InspectedRun)
         )
-        items = history.describe_runs(records, steps_by_run=steps_by_run)
-        if subject.scope is not None:
+        if subject.scope is not None and "." in subject.scope:
             rows = [
                 (
-                    item.id,
-                    _truncate(item.summary or item.input_text, width=48),
-                    str(len(steps_by_run.get(item.id, ()))),
-                    _display_status(item.status),
-                    item.created_at,
+                    subject.scope,
+                    item.record.id,
+                    _runnable_activity(item.runnable),
+                    _occurrence_label(item.record.occur),
+                    str(item.step_count),
+                    _display_status(item.record.status),
+                    item.record.created_at,
                 )
                 for item in items
             ]
-            echo_table(
-                ("THREAD RUN", "TITLE", "STEPS", "STATUS", "CREATED"),
+            _echo_execution_table(
+                (
+                    "PARENT STEP",
+                    "RUN",
+                    "RUNNABLE",
+                    "OCCUR",
+                    "STEPS",
+                    "STATUS",
+                    "CREATED",
+                ),
+                rows,
+            )
+            return
+        if subject.scope is not None:
+            rows = [
+                (
+                    item.record.id,
+                    str(item.record.parent) if item.record.parent is not None else "-",
+                    _runnable_activity(item.runnable),
+                    _occurrence_label(item.record.occur),
+                    str(item.step_count),
+                    _display_status(item.record.status),
+                    item.record.created_at,
+                )
+                for item in items
+            ]
+            _echo_execution_table(
+                (
+                    "THREAD RUN",
+                    "PARENT STEP",
+                    "RUNNABLE",
+                    "OCCUR",
+                    "STEPS",
+                    "STATUS",
+                    "CREATED",
+                ),
                 rows,
             )
             return
         rows = [
             (
-                item.id,
-                item.thread_id,
-                _truncate(item.summary or item.input_text, width=48),
-                str(len(steps_by_run.get(item.id, ()))),
-                _display_status(item.status),
-                item.created_at,
+                item.record.id,
+                item.record.thread,
+                str(item.record.parent) if item.record.parent is not None else "-",
+                _runnable_activity(item.runnable),
+                _occurrence_label(item.record.occur),
+                str(item.step_count),
+                _display_status(item.record.status),
+                item.record.created_at,
             )
             for item in items
         ]
-        echo_table(
-            ("RUN", "THREAD", "TITLE", "STEPS", "STATUS", "CREATED"),
+        _echo_execution_table(
+            (
+                "RUN",
+                "THREAD",
+                "PARENT STEP",
+                "RUNNABLE",
+                "OCCUR",
+                "STEPS",
+                "STATUS",
+                "CREATED",
+            ),
             rows,
         )
         return
     if subject.kind == "steps":
-        steps = cast(tuple[StepRecord, ...], subject.records)
+        items = tuple(
+            item for item in subject.inspected if isinstance(item, InspectedStep)
+        )
+        child_steps = subject.scope is not None and "." in subject.scope
+        if child_steps:
+            rows = [
+                (
+                    str(item.record.path),
+                    _tree_activity("step", item.record.kind, item.operation),
+                    _occurrence_label(item.record.occur),
+                    str(item.child_run_count),
+                    _display_status(item.record.status),
+                    item.record.created_at,
+                )
+                for item in items
+            ]
+            _echo_execution_table(
+                ("CHILD STEP", "ACTIVITY", "OCCUR", "RUNS", "STATUS", "CREATED"),
+                rows,
+            )
+            return
         rows = [
             (
-                str(step.path),
-                step.kind,
-                _display_status(step.status),
-                step.created_at,
+                str(item.record.path),
+                str(item.record.parent) if item.record.parent is not None else "-",
+                _tree_activity("step", item.record.kind, item.operation),
+                _occurrence_label(item.record.occur),
+                str(item.child_run_count),
+                _display_status(item.record.status),
+                item.record.created_at,
             )
-            for step in steps
+            for item in items
         ]
-        echo_table(("RUN STEP", "KIND", "STATUS", "CREATED"), rows)
+        _echo_execution_table(
+            (
+                "RUN STEP",
+                "PARENT STEP",
+                "ACTIVITY",
+                "OCCUR",
+                "RUNS",
+                "STATUS",
+                "CREATED",
+            ),
+            rows,
+        )
         return
     raise RuntimeError(f"unsupported collection subject: {subject.kind}")
 
@@ -543,13 +1010,15 @@ def _render_explicit_projection(
     projector: str,
     value: object,
 ) -> None:
-    transition = _projector_transition(subject.kind, projector)
+    transition = _projector_transition(subject, projector)
     if transition is None:  # pragma: no cover - projection was already applied
         raise RuntimeError(
             f"missing human renderer for {subject.kind} projector {projector}"
         )
     console = Console(highlight=False)
-    transition.render(console, subject, value)
+    if not isinstance(value, _ProjectedValue):
+        raise RuntimeError("explicit projection has no typed value")
+    transition.render(console, subject, value.human)
 
 
 def _model_call_renderables(
@@ -559,7 +1028,7 @@ def _model_call_renderables(
     section_width: int = 80,
 ) -> tuple[Text, ...]:
     if not isinstance(value, Mapping):  # pragma: no cover - projector is canonical
-        raise TypeError("model-call projector returned a non-object value")
+        raise TypeError("model Step call projector returned a non-object value")
     data = cast(Mapping[str, object], value)
 
     lines: list[Text] = []

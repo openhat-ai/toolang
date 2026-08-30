@@ -30,6 +30,7 @@ from toolang.execution.records import (
     RetryControlPayload,
     RunControlPayload,
 )
+from toolang.execution.trees import build_execution_tree
 from toolang.execution.types import (
     CollectionStepNoted,
     IterationOccurrence,
@@ -162,6 +163,25 @@ flow relay(_: Part[]) -> Part[]:
                 ("run_begin", child.id),
                 ("run_end", child.id),
                 ("run_end", root.id),
+            ]
+            tree = build_execution_tree(
+                harness.store.load_execution_snapshot(root=root.id)
+            )
+            assert [node.pointer for node in tree.nodes] == [
+                root.id,
+                f"{root.id}.0",
+                child.id,
+                f"{child.id}.0",
+            ]
+            call = build_execution_tree(
+                harness.store.load_execution_snapshot(
+                    root=StepPath.parse(f"{root.id}.0")
+                )
+            )
+            assert [node.pointer for node in call.nodes] == [
+                f"{root.id}.0",
+                child.id,
+                f"{child.id}.0",
             ]
 
     asyncio.run(scenario())
@@ -1773,6 +1793,25 @@ flow repeated(_: Text) -> Text:
                 run.output is not None and run.output.name is None for run in until_runs
             )
             assert harness.adapter.pending_responses == 0
+            tree = build_execution_tree(
+                harness.store.load_execution_snapshot(root=root.id)
+            )
+            direct = [node for node in tree.nodes if node.parent == str(loop.path)]
+            iterations = []
+            for node in direct:
+                assert node.occur is not None
+                assert node.occur.iteration is not None
+                iterations.append(node.occur.iteration)
+            assert [
+                (node.record_kind, iteration.phase)
+                for node, iteration in zip(direct, iterations, strict=True)
+            ] == [
+                ("step", "body"),
+                ("run", "until"),
+                ("step", "body"),
+                ("run", "until"),
+            ]
+            assert [iteration.index for iteration in iterations] == [0, 0, 1, 1]
 
     asyncio.run(scenario())
 
