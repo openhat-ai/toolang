@@ -133,7 +133,6 @@ def _render_model_call(
     for renderable in _model_call_renderables(
         value,
         result_parts=_model_step_result_parts(subject),
-        section_width=max(1, console.width - 1),
     ):
         console.print(renderable, soft_wrap=True)
 
@@ -466,7 +465,7 @@ def _model_call_renderables(
     value: object,
     *,
     result_parts: Sequence[Mapping[str, object]] | None = None,
-    section_width: int = 79,
+    section_width: int = 80,
 ) -> tuple[Text, ...]:
     if not isinstance(value, Mapping):  # pragma: no cover - projector is canonical
         raise TypeError("model-call projector returned a non-object value")
@@ -483,13 +482,13 @@ def _model_call_renderables(
 
     messages = data.get("messages")
     message_count = len(messages) if isinstance(messages, list) else 0
-    conversation_fact = f"{message_count} {_counted('message', message_count)}"
-    if result_parts is not None:
-        conversation_fact += " + result"
+    displayed_message_count = message_count + (result_parts is not None)
     _append_model_call_section(
         lines,
         "Conversation",
-        fact=conversation_fact,
+        fact=(
+            f"{displayed_message_count} {_counted('message', displayed_message_count)}"
+        ),
         width=section_width,
     )
     if isinstance(messages, list) and messages:
@@ -516,7 +515,6 @@ def _model_call_renderables(
             index=message_count,
             role="assistant",
             parts=result_parts,
-            fact="result",
         )
 
     tools = data.get("tools")
@@ -598,11 +596,18 @@ def _append_model_call_section(
 ) -> None:
     if lines:
         lines.append(Text())
+    line_width = max(1, width)
     heading = Text()
     heading.append(title, style="bold")
     if fact is not None:
         heading.append(f" · {fact}", style="dim")
-    boundary = "=" * max(cell_len(heading.plain), width)
+    remaining = line_width - cell_len(heading.plain)
+    if remaining > 0:
+        fill = "░" * remaining
+        if remaining > 1:
+            fill = f" {'░' * (remaining - 1)}"
+        heading.append(fill, style="dim")
+    boundary = "░" * line_width
     lines.extend(
         (
             Text(boundary, style="dim"),

@@ -121,7 +121,6 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
 
     renderables = inspect_commands._model_call_renderables(
         model_call_to_data(call),
-        section_width=64,
     )
     by_text = {renderable.plain: renderable for renderable in renderables}
     output = "\n".join(renderable.plain for renderable in renderables)
@@ -150,7 +149,16 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
         "[0] inspect.run(run_id: string, include?: string[], limit?: integer | null)"
     )
     assert signature in output
-    assert f"{'=' * 64}\nContinuation\n{'=' * 64}\n\ncursor: next" in output
+    section_boundary = "░" * 80
+    continuation_heading = next(
+        renderable
+        for renderable in renderables
+        if renderable.plain.startswith("Continuation ")
+    )
+    assert (
+        f"{section_boundary}\n{continuation_heading.plain}\n"
+        f"{section_boundary}\n\ncursor: next"
+    ) in output
     assert '"messages":' not in output
     assert by_text["[0] user"].style == "dim"
     assert by_text["[1] assistant"].style == "dim"
@@ -174,23 +182,39 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
         title_index = next(
             index
             for index, renderable in enumerate(renderables)
-            if renderable.plain == title
+            if renderable.plain.startswith(f"{title} ")
         )
-        assert renderables[title_index - 1].plain == "=" * 64
+        assert len(renderables[title_index].plain) == 80
+        assert renderables[title_index].plain.endswith("░")
+        assert renderables[title_index - 1].plain == section_boundary
         assert renderables[title_index - 1].style == "dim"
-        assert renderables[title_index + 1].plain == "=" * 64
+        assert renderables[title_index + 1].plain == section_boundary
         assert renderables[title_index + 1].style == "dim"
-    conversation_heading = by_text["Conversation · 3 messages"]
+    conversation_heading = next(
+        renderable
+        for renderable in renderables
+        if renderable.plain.startswith("Conversation · 3 messages ")
+    )
+    conversation_title_end = len("Conversation")
+    conversation_fact_end = len("Conversation · 3 messages")
     assert [
         (span.start, span.end, span.style) for span in conversation_heading.spans
     ] == [
-        (0, len("Conversation"), "bold"),
-        (len("Conversation"), len("Conversation · 3 messages"), "dim"),
+        (0, conversation_title_end, "bold"),
+        (conversation_title_end, conversation_fact_end, "dim"),
+        (conversation_fact_end, 80, "dim"),
     ]
-    tools_heading = by_text["Available Tools · 1 tool"]
+    tools_heading = next(
+        renderable
+        for renderable in renderables
+        if renderable.plain.startswith("Available Tools · 1 tool ")
+    )
+    tools_title_end = len("Available Tools")
+    tools_fact_end = len("Available Tools · 1 tool")
     assert [(span.start, span.end, span.style) for span in tools_heading.spans] == [
-        (0, len("Available Tools"), "bold"),
-        (len("Available Tools"), len("Available Tools · 1 tool"), "dim"),
+        (0, tools_title_end, "bold"),
+        (tools_title_end, tools_fact_end, "dim"),
+        (tools_fact_end, 80, "dim"),
     ]
     assert all(renderable.plain != "Model Call" for renderable in renderables)
     for line in (
