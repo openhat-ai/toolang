@@ -697,6 +697,20 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
             state=ControlRef(run.id, 0),
             started_at="2026-01-01T00:00:00Z",
         )
+        store.finish_step(
+            path=StepPath(run.id, (0,)),
+            kind="model",
+            status="succeeded",
+            output=Local.typed(
+                "Part[]",
+                (TextPart("Complete answer"),),
+                "_",
+                0,
+            ),
+            noted=None,
+            error=None,
+            finished_at="2026-01-01T00:00:01Z",
+        )
     finally:
         store.close()
 
@@ -758,6 +772,8 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
     assert "Context" in human_output
     assert "[1] user" in human_output
     assert "Question" in human_output
+    assert "[2] assistant · result" in human_output
+    assert "Complete answer" in human_output
     assert "Available Tools · 0 tools" in human_output
     assert "No available tools." in human_output
     assert "Continuation" in human_output

@@ -78,7 +78,7 @@ class _ProjectorTransition:
     source: _SubjectKind
     name: str
     project: Callable[[RunStore, _InspectSubject], object]
-    render: Callable[[Console, object], None]
+    render: Callable[[Console, _InspectSubject, object], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,12 +125,35 @@ def _project_model_call(store: RunStore, source: _InspectSubject) -> object:
     return model_call_to_data(store.rebuild_model_call(source.selection.record))
 
 
-def _render_model_call(console: Console, value: object) -> None:
+def _render_model_call(
+    console: Console,
+    subject: _InspectSubject,
+    value: object,
+) -> None:
     for renderable in _model_call_renderables(
         value,
+        result_parts=_model_step_result_parts(subject),
         section_width=max(1, console.width - 1),
     ):
         console.print(renderable, soft_wrap=True)
+
+
+def _model_step_result_parts(
+    subject: _InspectSubject,
+) -> tuple[Mapping[str, object], ...] | None:
+    if subject.selection is None or not isinstance(
+        subject.selection.record, StepRecord
+    ):
+        raise RuntimeError("step subject has no Step record")  # pragma: no cover
+    output = subject.selection.record.output
+    if output is None:
+        return None
+    value = local_to_protocol_data(output)["value"]
+    if not isinstance(value, list):  # pragma: no cover - model output is Part[]
+        raise TypeError("model Step output is not a Part array")
+    if not all(isinstance(part, Mapping) for part in value):  # pragma: no cover
+        raise TypeError("model Step output contains a non-Part value")
+    return tuple(cast(Mapping[str, object], part) for part in value)
 
 
 INSPECT_SUBJECT_TRANSITIONS: tuple[_SubjectTransition, ...] = (
@@ -428,7 +451,7 @@ def _render_projection(
             f"missing human renderer for {subject.kind} projector {projector}"
         )
     console = Console(highlight=False)
-    transition.render(console, value)
+    transition.render(console, subject, value)
     console.print()
     console.print(
         Text(
@@ -442,6 +465,7 @@ def _render_projection(
 def _model_call_renderables(
     value: object,
     *,
+    result_parts: Sequence[Mapping[str, object]] | None = None,
     section_width: int = 79,
 ) -> tuple[Text, ...]:
     if not isinstance(value, Mapping):  # pragma: no cover - projector is canonical
@@ -459,10 +483,13 @@ def _model_call_renderables(
 
     messages = data.get("messages")
     message_count = len(messages) if isinstance(messages, list) else 0
+    conversation_fact = f"{message_count} {_counted('message', message_count)}"
+    if result_parts is not None:
+        conversation_fact += " + result"
     _append_model_call_section(
         lines,
         "Conversation",
-        fact=f"{message_count} {_counted('message', message_count)}",
+        fact=conversation_fact,
         width=section_width,
     )
     if isinstance(messages, list) and messages:
@@ -473,24 +500,24 @@ def _model_call_renderables(
             if index:
                 lines.append(Text())
             role = str(message_data.get("role") or "message")
-            lines.extend((Text(f"[{index}] {role}", style="dim"), Text()))
-            parts = message_data.get("parts")
-            if not isinstance(parts, list) or not parts:
-                lines.append(Text("No content.", style="dim italic"))
-                continue
-            for part_index, part in enumerate(parts):
-                if not isinstance(part, Mapping):  # pragma: no cover - canonical data
-                    continue
-                if part_index:
-                    lines.append(Text())
-                lines.extend(
-                    _message_part_renderables(
-                        cast(Mapping[str, object], part),
-                        index=part_index if len(parts) > 1 else None,
-                    )
-                )
-    else:
+            _append_model_message(
+                lines,
+                index=index,
+                role=role,
+                parts=message_data.get("parts"),
+            )
+    elif result_parts is None:
         lines.append(Text("No messages.", style="dim italic"))
+    if result_parts is not None:
+        if isinstance(messages, list) and messages:
+            lines.append(Text())
+        _append_model_message(
+            lines,
+            index=message_count,
+            role="assistant",
+            parts=result_parts,
+            fact="result",
+        )
 
     tools = data.get("tools")
     tool_count = len(tools) if isinstance(tools, list) else 0
@@ -531,6 +558,34 @@ def _model_call_renderables(
     else:
         lines.extend(_structured_renderables(continuation))
     return tuple(lines)
+
+
+def _append_model_message(
+    lines: list[Text],
+    *,
+    index: int,
+    role: str,
+    parts: object,
+    fact: str | None = None,
+) -> None:
+    heading = Text(f"[{index}] {role}", style="dim")
+    if fact is not None:
+        heading.append(f" · {fact}", style="dim")
+    lines.extend((heading, Text()))
+    if not isinstance(parts, Sequence) or isinstance(parts, str) or not parts:
+        lines.append(Text("No content.", style="dim italic"))
+        return
+    for part_index, part in enumerate(parts):
+        if not isinstance(part, Mapping):  # pragma: no cover - canonical data
+            continue
+        if part_index:
+            lines.append(Text())
+        lines.extend(
+            _message_part_renderables(
+                cast(Mapping[str, object], part),
+                index=part_index if len(parts) > 1 else None,
+            )
+        )
 
 
 def _append_model_call_section(
