@@ -153,13 +153,15 @@ def _chat_runtime(
                         expected_sandbox=server.sandbox,
                     )
                     current = dict(selector_payload or {})
-                    updated = remote.apply_settings(
-                        _remote_session_commands(
-                            allow_options=allow_options,
-                            default_options=default_options,
-                            limit_options=limit_options,
-                        ),
-                        current,
+                    commands = _chat_session_commands(
+                        allow_options=allow_options,
+                        default_options=default_options,
+                        limit_options=limit_options,
+                    )
+                    updated = (
+                        remote.apply_settings(commands, current)
+                        if commands
+                        else current
                     )
                     if selector_payload is not None:
                         selector_payload.clear()
@@ -186,20 +188,29 @@ def _chat_runtime(
                 ceiling_overrides=user_call(
                     resolve_ceiling_overrides,
                     environ,
-                    allow_options,
                 ),
                 binding_overrides=user_call(
                     resolve_binding_overrides,
                     environ,
-                    default_options,
                 ),
                 limit_overrides=user_call(
                     resolve_limit_overrides,
                     environ,
-                    limit_options,
                 ),
             )
             try:
+                current = dict(selector_payload or {})
+                commands = _chat_session_commands(
+                    allow_options=allow_options,
+                    default_options=default_options,
+                    limit_options=limit_options,
+                )
+                updated = (
+                    local.apply_settings(commands, current) if commands else current
+                )
+                if selector_payload is not None:
+                    selector_payload.clear()
+                    selector_payload.update(updated)
                 yield local
             finally:
                 local.close()
@@ -207,7 +218,7 @@ def _chat_runtime(
         raise click.ClickException(str(exc)) from exc
 
 
-def _remote_session_commands(
+def _chat_session_commands(
     *,
     allow_options: list[str] | None,
     default_options: list[str] | None,

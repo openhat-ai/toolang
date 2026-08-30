@@ -587,9 +587,7 @@ class RunExecutor:
         if not runnable:
             raise ValueError(f"run runnable not found: {run_id}")
         _module, declaration = resolve_state_runnable(state, runnable)
-        persisted_model_request = control.payload.model_request or ModelRequest(
-            control.payload.model
-        )
+        persisted_model_request = control.payload.model_request
         selected_model_request = model_request or (
             ModelRequest(model) if model is not None else persisted_model_request
         )
@@ -599,7 +597,11 @@ class RunExecutor:
             thread=run.thread,
             bindings=RunBindings(
                 runnable=f"{declaration.kind}:{runnable}",
-                model=selected_model_request.ref,
+                model=(
+                    selected_model_request.ref
+                    if selected_model_request is not None
+                    else None
+                ),
             ),
             model_request=selected_model_request,
             limits=limits,

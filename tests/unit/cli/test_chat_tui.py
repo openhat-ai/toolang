@@ -2137,6 +2137,56 @@ def test_model_picker_escape_cancels_without_changing_session_state() -> None:
     assert closed == [None]
 
 
+def test_model_picker_resets_effort_when_changing_models() -> None:
+    committed: list[tuple[str, object]] = []
+    picker = widgets.ModelPicker(
+        current=lambda: ("openai/gpt-5", "high"),
+        commit=lambda ref, effort: committed.append((ref, effort)),
+        close=lambda: None,
+        invalidate=lambda: None,
+    )
+    keys = KeyBindings()
+    picker.bind(keys)
+    picker.open(
+        {
+            "default": "openai/gpt-5",
+            "items": [
+                {
+                    "ref": "openai/gpt-5",
+                    "name": "GPT-5",
+                    "provider": "openai",
+                    "parameters": {"reasoning": {"effort": ["low", "high"]}},
+                },
+                {
+                    "ref": "anthropic/claude-sonnet-4.5",
+                    "name": "Claude Sonnet 4.5",
+                    "provider": "anthropic",
+                    "parameters": {"reasoning": {"effort": ["low", "high"]}},
+                },
+            ],
+        }
+    )
+
+    def press(key: Keys) -> None:
+        bindings = [
+            binding
+            for binding in keys.get_bindings_for_keys((key,))
+            if binding.filter()
+        ]
+        assert bindings
+        bindings[-1].handler(cast(Any, None))
+
+    press(Keys.Down)
+    press(Keys.Enter)
+
+    assert picker.stage == "effort"
+    assert picker.index == 0
+
+    press(Keys.Enter)
+
+    assert committed == [("anthropic/claude-sonnet-4.5", None)]
+
+
 def test_chat_status_bar_right_aligns_the_model_without_hotkeys(
     monkeypatch: Any,
 ) -> None:

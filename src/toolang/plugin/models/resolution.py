@@ -147,6 +147,40 @@ def resolve_model(
 ) -> ModelTarget:
     """Resolve one model selector against one uptime context."""
 
+    return _resolve_model_candidate(
+        context,
+        selector=selector,
+        default_selector=default_selector,
+        allowed_selectors=allowed_selectors,
+    ).target
+
+
+def resolve_model_ref(
+    context: SupportsModelSelection,
+    *,
+    selector: str | None,
+    default_selector: str | None = None,
+    allowed_selectors: Sequence[str] | None = None,
+) -> str:
+    """Resolve one model selector to its exact selectable route ref."""
+
+    return _resolve_model_candidate(
+        context,
+        selector=selector,
+        default_selector=default_selector,
+        allowed_selectors=allowed_selectors,
+    ).selector
+
+
+def _resolve_model_candidate(
+    context: SupportsModelSelection,
+    *,
+    selector: str | None,
+    default_selector: str | None,
+    allowed_selectors: Sequence[str] | None,
+) -> _Candidate:
+    """Resolve one effective selector to one selectable candidate."""
+
     provider_configs = _context_provider_configs(context)
     resolved_allowed = _resolve_allowed_targets(
         allowed_selectors,
@@ -185,9 +219,13 @@ def resolve_model(
         raise ToolangError(
             f"model selector is ambiguous: {effective_selector} (matches {joined})"
         )
-    target = matches[0].target
-    _require_allowed(target, selector=effective_selector, allowed=resolved_allowed)
-    return target
+    candidate = matches[0]
+    _require_allowed(
+        candidate.target,
+        selector=effective_selector,
+        allowed=resolved_allowed,
+    )
+    return candidate
 
 
 def model_reasoning_efforts(

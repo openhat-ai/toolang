@@ -709,13 +709,16 @@ def _control_payload_from_data(
         state = _optional_payload_text(payload, "state")
         runnable = _required_payload_text(payload, "runnable")
         model = _required_payload_text(payload, "model")
-        raw_model_request = payload.get("model_request")
-        model_request = (
-            ModelRequest(model)
-            if raw_model_request is None
-            else _MODEL_REQUEST_ADAPTER.validate_python(raw_model_request)
-        )
-        if model_request.ref != model:
+        if "model_request" not in payload:
+            model_request = None if model == "none" else ModelRequest(model)
+        else:
+            raw_model_request = payload.get("model_request")
+            model_request = (
+                None
+                if raw_model_request is None
+                else _MODEL_REQUEST_ADAPTER.validate_python(raw_model_request)
+            )
+        if model_request is not None and model_request.ref != model:
             raise ValueError("preparation model request must match model")
         sandbox = _optional_payload_text(payload, "sandbox")
         raw_locals = payload.get("locals")
@@ -1652,9 +1655,10 @@ def _preparation_payload_data(
         "limits": run_limits_to_data(payload.limits),
         "runnable": payload.runnable,
         "model": payload.model,
-        "model_request": _MODEL_REQUEST_ADAPTER.dump_python(
-            payload.model_request or ModelRequest(payload.model),
-            mode="json",
+        "model_request": (
+            _MODEL_REQUEST_ADAPTER.dump_python(payload.model_request, mode="json")
+            if payload.model_request is not None
+            else None
         ),
         "locals": (
             [local_to_data(local) for local in payload.locals]

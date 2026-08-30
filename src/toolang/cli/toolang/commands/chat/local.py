@@ -13,10 +13,11 @@ from typing import Any
 from uuid import uuid4
 
 from toolang.base.types.message import Message
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunBindings
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
-from toolang.execution.calls import parse_call
+from toolang.execution.calls import materialize_model_request, parse_call
 from toolang.execution.client import LocalRunClient, RunClient
 from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.executor import RunExecutor
@@ -304,6 +305,8 @@ class LocalChatSession:
             input_commands=commands,
             selects=selects,
             defaults=self._run_defaults(),
+            resolve_model_ref=self._materialize_model_ref,
+            resolve_runnable_ref=self._materialize_runnable_ref,
         )
         handle = await self.run_client.run(
             request,
@@ -318,12 +321,24 @@ class LocalChatSession:
             raise RuntimeError("local chat run defaults are not initialized")
         return self._defaults
 
+    def _materialize_model_ref(self, selector: str) -> str:
+        return materialize_model_request(
+            ModelRequest(selector),
+            setup=self.setup_watcher.current(),
+            state=self.state_watcher.current(),
+        ).ref
+
+    def _materialize_runnable_ref(self, selector: str) -> str:
+        state = self.state_watcher.current()
+        name, kind = parse_runnable_ref(selector)
+        _module, runnable = resolve_state_runnable(state, name, kind=kind)
+        return f"{runnable.kind}:{name}"
+
     @staticmethod
     def _current_run_defaults(
         *, setup: AgentSetup, state: AgentState
     ) -> ChatRunDefaults:
-        inferred_model, _targets = agent_model_targets(setup, state, setup.ceiling)
-        model = setup.bindings.model or inferred_model
+        model, _targets = agent_model_targets(setup, state, setup.ceiling)
         runnable = setup.bindings.runnable
         if runnable is None:
             default_agic, default_flow = runnable_binding_defaults(

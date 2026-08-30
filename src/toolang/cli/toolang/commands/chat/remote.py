@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import threading
 from typing import Any, cast
@@ -17,6 +17,10 @@ from pydantic import TypeAdapter, ValidationError
 
 from toolang.base.types.message import Message
 from toolang.base.types.policy import RunBindings, RunPolicy
+from toolang.cli.common.model_selection import (
+    materialize_model_list_ref,
+    model_ref_is_exact_route,
+)
 from toolang.common.errors import ToolangError
 from toolang.cli.common.remote_runtime import (
     RemoteRuntimeIdentity as _RuntimeIdentity,
@@ -40,7 +44,12 @@ from .base import (
     RunDisconnected,
     RunRecovered,
 )
-from .policy import ChatRunDefaults, apply_session_commands, build_run_request
+from .policy import (
+    ChatRunDefaults,
+    apply_session_commands,
+    build_run_request,
+    materialize_runnable_list_ref,
+)
 
 
 _RUN_DETAIL_ADAPTER = TypeAdapter(RunDetail)
@@ -418,7 +427,33 @@ class RemoteChatSession:
             input_commands=commands,
             selects=selects,
             defaults=self._session_defaults(),
+            resolve_model_ref=lambda selector: selector,
+            resolve_runnable_ref=lambda selector: selector,
         )
+        if request.model is not None and not model_ref_is_exact_route(
+            request.model.ref
+        ):
+            models = await self._list_models()
+            request = replace(
+                request,
+                model=replace(
+                    request.model,
+                    ref=materialize_model_list_ref(models, request.model.ref),
+                ),
+            )
+        _runnable_name, runnable_kind = parse_runnable_ref(request.runnable.ref)
+        if runnable_kind is None:
+            runnables = await self._list_runnables("runnable")
+            request = replace(
+                request,
+                runnable=replace(
+                    request.runnable,
+                    ref=materialize_runnable_list_ref(
+                        runnables,
+                        request.runnable.ref,
+                    ),
+                ),
+            )
         run_client = self._run_client()
         try:
             handle = await run_client.run(

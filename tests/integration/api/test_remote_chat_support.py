@@ -13,7 +13,7 @@ from pydantic import TypeAdapter
 import pytest
 
 from toolang.api.app import create_app
-from toolang.api.routers import agent as agent_router, runs as runs_router
+from toolang.api.routers import agent as agent_router
 from toolang.api.routers.agent import profile
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.policy import RunBindings
@@ -57,17 +57,7 @@ agic chat(_: Part[]) -> Part[]:
     )
     setup = replace(
         harness.setup,
-        bindings=RunBindings(model=TEST_MODEL_REF, runnable="agic:chat"),
-    )
-    monkeypatch.setattr(
-        agent_router,
-        "agent_model_targets",
-        lambda *_args: ("catalog/inferred", ()),
-    )
-    monkeypatch.setattr(
-        runs_router,
-        "agent_model_targets",
-        lambda *_args: ("catalog/inferred", ()),
+        bindings=RunBindings(model="scripted", runnable="agic:chat"),
     )
     harness.store.close()
     core = AgentCore(setup.layout)

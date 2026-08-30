@@ -13,12 +13,13 @@ from anyio import to_process
 
 from tests.support.execution_harness import ExecutionHarness, TEST_MODEL_REF
 from toolang.base.types.message import Message, TextPart
-from toolang.base.types.policy import RunBindings, RunLimits
+from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelCallResult
 from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.base import ChatExecutorMetadata
 from toolang.cli.toolang.commands.chat.policy import ChatRunDefaults
 from toolang.execution.events import RunEvent
+from toolang.execution.types import RunOverride
 from toolang.state.watcher import StateRefresh
 
 
@@ -122,20 +123,25 @@ def test_local_chat_run_request_materializes_chat_runnable() -> None:
             bindings=RunBindings(model="test/scripted", runnable="agic:chat"),
             limits=RunLimits(),
         )
+        session._materialize_model_ref = lambda value: value
+        session._materialize_runnable_ref = lambda value: value
 
-        await session._run("term_test", "hello", {}, lambda _event: None)
+        await session._run(
+            "term_test",
+            "hello",
+            {"run_overrides": (RunOverride("allow", "models", ("test/*",)),)},
+            lambda _event: None,
+        )
 
     asyncio.run(scenario())
 
     assert len(requests) == 1
     assert requests[0].runnable.ref == "agic:chat"
     assert requests[0].model.ref == "test/scripted"
+    assert requests[0].policy.allow == (AgentCeiling(models=("test/*",)),)
 
 
-def test_local_chat_defaults_prefer_configured_model(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
+def test_local_chat_defaults_materialize_configured_model(tmp_path: Path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -149,14 +155,8 @@ agic chat(_: Part[]) -> Part[]:
     )
     setup = replace(
         harness.setup,
-        bindings=RunBindings(model=TEST_MODEL_REF, runnable="agic:chat"),
+        bindings=RunBindings(model="scripted", runnable="agic:chat"),
     )
-    monkeypatch.setattr(
-        local,
-        "agent_model_targets",
-        lambda *_args: ("catalog/inferred", ()),
-    )
-
     try:
         defaults = local.LocalChatSession._current_run_defaults(
             setup=setup,

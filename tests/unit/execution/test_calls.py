@@ -108,6 +108,50 @@ def test_materialized_agic_request_requires_a_model(tmp_path) -> None:
         harness.store.close()
 
 
+def test_materialized_request_rejects_a_model_selector(tmp_path) -> None:
+    harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
+    try:
+        with pytest.raises(ValueError, match="model ref must be exact"):
+            resolve_run_request(
+                RunRequest(
+                    thread_id="term_test",
+                    request_id="request_with_selector",
+                    runnable=RunnableRequest(
+                        "agic:default",
+                        RunnableInputRaw(_="hello"),
+                    ),
+                    model=ModelRequest("scripted"),
+                    policy=RunPolicy(),
+                ),
+                setup=harness.setup,
+                state=harness.state,
+            )
+    finally:
+        harness.store.close()
+
+
+def test_materialized_request_rejects_an_unqualified_runnable(tmp_path) -> None:
+    harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
+    try:
+        with pytest.raises(ValueError, match="kind-qualified runnable"):
+            resolve_run_request(
+                RunRequest(
+                    thread_id="term_test",
+                    request_id="request_with_selector",
+                    runnable=RunnableRequest(
+                        "default",
+                        RunnableInputRaw(_="hello"),
+                    ),
+                    model=ModelRequest("test/scripted"),
+                    policy=RunPolicy(),
+                ),
+                setup=harness.setup,
+                state=harness.state,
+            )
+    finally:
+        harness.store.close()
+
+
 def test_root_runnable_selector_is_removed_from_current_model_input(tmp_path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
@@ -371,17 +415,15 @@ def test_invalid_explicit_model_is_rejected_before_run_persistence(tmp_path) -> 
     async def scenario() -> None:
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
         commands, input = parse_call(":model missing\nInput")
-        spec = resolve_spec(
-            commands,
-            input,
-            setup=harness.setup,
-            state=harness.state,
-            thread=thread,
-            default_runnable="default",
-        )
-
         with pytest.raises(ToolangError, match="model"):
-            harness.executor.run(spec)
+            resolve_spec(
+                commands,
+                input,
+                setup=harness.setup,
+                state=harness.state,
+                thread=thread,
+                default_runnable="default",
+            )
 
         assert not harness.store.list_runs(thread_id=thread, limit=None)
 

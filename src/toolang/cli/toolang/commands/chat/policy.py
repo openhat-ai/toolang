@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
 
@@ -39,6 +39,8 @@ def build_run_request(
     input_commands: Sequence[RunOverride],
     selects: Mapping[str, object],
     defaults: ChatRunDefaults,
+    resolve_model_ref: Callable[[str], str],
+    resolve_runnable_ref: Callable[[str], str],
 ) -> RunRequest:
     """Snapshot Chat state and input-local overrides into one run request."""
 
@@ -50,6 +52,7 @@ def build_run_request(
     )
     if bindings.runnable is None:
         raise ValueError("chat session has no runnable")
+    runnable_ref = resolve_runnable_ref(bindings.runnable)
     selected_model = _text(selects.get("model"))
     effort = (
         reasoning_effort_from_selects(selects)
@@ -58,7 +61,7 @@ def build_run_request(
     )
     model = (
         ModelRequest(
-            bindings.model,
+            resolve_model_ref(bindings.model),
             ModelParameters(
                 reasoning=(
                     ReasoningParameters(effort=effort) if effort is not None else None
@@ -71,7 +74,7 @@ def build_run_request(
     return RunRequest(
         thread_id=thread_id,
         request_id=request_id,
-        runnable=RunnableRequest(bindings.runnable, input),
+        runnable=RunnableRequest(runnable_ref, input),
         model=model,
         policy=RunPolicy(allow=ceilings, limits=limits),
     )
@@ -84,6 +87,35 @@ def reasoning_effort_from_selects(
     if value in {"none", "minimal", "low", "medium", "high", "xhigh", "max", "default"}:
         return cast(ReasoningEffort, value)
     return None
+
+
+def materialize_runnable_list_ref(
+    payload: Mapping[str, object],
+    selector: str,
+) -> str:
+    """Resolve one runnable selector to a kind-qualified list ref."""
+
+    requested_name, requested_kind = parse_runnable_ref(selector)
+    raw_items = payload.get("items")
+    items = raw_items if isinstance(raw_items, list | tuple) else ()
+    matches: list[str] = []
+    for raw in items:
+        if not isinstance(raw, Mapping):
+            continue
+        item = cast(Mapping[str, object], raw)
+        name = _text(item.get("name"))
+        kind = _text(item.get("kind"))
+        if name != requested_name or kind not in {"agic", "flow"}:
+            continue
+        if requested_kind is not None and requested_kind != kind:
+            continue
+        matches.append(f"{kind}:{name}")
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise ValueError(f"runnable ref did not match an available route: {selector}")
+    joined = ", ".join(matches)
+    raise ValueError(f"runnable ref is ambiguous: {selector} (matches {joined})")
 
 
 def apply_model_selection(

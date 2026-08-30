@@ -87,6 +87,7 @@ def test_script_binds_options_arguments_and_primary_input(
     assert result == 0
     assert captured["source_path"] == source.resolve()
     assert captured["runnable"] == "demo"
+    assert captured["runnable_kind"] == "agic"
     assert captured["default_options"] == ("model=openai/gpt",)
     assert captured["allow_options"] == (
         "models=openai/*,deepseek/*",
@@ -506,6 +507,7 @@ def test_script_accepts_explicit_runnable_selectors(
 
     assert result == 0
     assert captured["runnable"] == "demo"
+    assert captured["runnable_kind"] == "agic"
 
 
 def test_script_rejects_an_explicit_runnable_kind_mismatch(
@@ -595,6 +597,7 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
     result = script._run(
         source,
         runnable="demo",
+        runnable_kind="agic",
         commands=(),
         input=RunnableInputRaw(_="hello"),
         raw_named=(NamedInputSource("count", "2"),),
@@ -655,6 +658,7 @@ def test_embedded_script_prepare_failure_uses_the_operational_failure_block(
     result = script._run(
         source,
         runnable="demo",
+        runnable_kind="agic",
         commands=(),
         input=RunnableInputRaw(_="hello"),
         raw_named=(NamedInputSource("count", "2"),),
@@ -742,7 +746,7 @@ def test_remote_script_cancellation_cancels_the_accepted_run(
                 layout=layout,
                 endpoint=Client.endpoint,
                 sandbox="docker:python:3.13-slim",
-                runnable="demo",
+                runnable="agic:demo",
                 commands=(),
                 input=RunnableInputRaw(_="hello"),
                 raw_named=(NamedInputSource("count", "2"),),
@@ -776,6 +780,15 @@ def test_remote_script_default_returns_to_the_dynamic_runnable() -> None:
     )
 
     assert commands == (RunOverride("default", "runnable", "demo"),)
+
+
+def test_script_materializes_input_local_runnable_refs() -> None:
+    commands = script._materialize_script_runnable_commands(
+        (RunOverride("default", "runnable", "demo"),),
+        program=script.Program.from_source(_SOURCE),
+    )
+
+    assert commands == (RunOverride("default", "runnable", "agic:demo"),)
 
 
 def test_remote_script_rejects_mixed_named_input_sources() -> None:

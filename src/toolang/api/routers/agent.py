@@ -49,8 +49,7 @@ def models(core: AgentCoreDep) -> dict[str, object]:
     try:
         setup = core.setup.current()
         state = core.state.current()
-        inferred_default, targets = agent_model_targets(setup, state, setup.ceiling)
-        default = setup.bindings.model or inferred_default
+        default, targets = agent_model_targets(setup, state, setup.ceiling)
         selection = snapshot_model_selection(setup, state)
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

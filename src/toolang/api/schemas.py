@@ -19,6 +19,7 @@ from toolang.execution.schemas import (
     ThreadInfo,
 )
 from toolang.execution.types import StepPath
+from toolang.lang.types import parse_public_runnable_ref
 
 
 NonNegativeInt = Annotated[int, Field(strict=True, ge=0)]
@@ -52,6 +53,12 @@ def _reject_materialized_run_unknowns(value: object, *, direct: bool) -> None:
         {"ref", "input", "args"} if direct else {"ref", "input"},
         "runnable request",
     )
+    if isinstance(runnable, Mapping):
+        runnable_ref = cast(Mapping[str, object], runnable).get("ref")
+        if isinstance(runnable_ref, str):
+            _name, kind = parse_public_runnable_ref(runnable_ref)
+            if kind is None:
+                raise ValueError("runnable request requires a kind-qualified ref")
     if not direct and isinstance(runnable, Mapping):
         runnable_data = cast(Mapping[str, object], runnable)
         raw_input = runnable_data.get("input")
@@ -82,11 +89,25 @@ def _reject_materialized_run_unknowns(value: object, *, direct: bool) -> None:
         if isinstance(allow, list | tuple):
             for item in allow:
                 _reject_keys(item, {"models", "tools", "caps"}, "allow ceiling")
+        raw_limits = policy_data.get("limits")
         _reject_keys(
-            policy_data.get("limits"),
+            raw_limits,
             {"agic_model_calls", "agic_tool_calls", "tokens", "cost", "time"},
             "run limits",
         )
+        _reject_run_limit_types(raw_limits)
+
+
+def _reject_run_limit_types(value: object) -> None:
+    """Reject lossy coercion of integer run limits at the HTTP boundary."""
+
+    if not isinstance(value, Mapping):
+        return
+    limits = cast(Mapping[str, object], value)
+    for field in ("agic_model_calls", "agic_tool_calls", "tokens", "time"):
+        raw = limits.get(field)
+        if raw is not None and (isinstance(raw, bool) or not isinstance(raw, int)):
+            raise ValueError(f"run limit {field} must be an integer or null")
 
 
 class ApiRequest(BaseModel):

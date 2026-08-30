@@ -22,6 +22,7 @@ from toolang.lang.input import (
 from toolang.lang.ast import AgicDecl, Program
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState, state_module_caps
+from toolang.plugin.models.resolution import resolve_model_ref
 
 from .policy import parse_policy_prefix, resolve_commands
 from .runnables import (
@@ -65,6 +66,15 @@ def resolve_run_request(
 ) -> RunSpec:
     """Resolve one caller request against one setup and state snapshot pair."""
 
+    model_request = require_exact_model_request(
+        request.model,
+        setup=setup,
+        state=state,
+    )
+    _runnable_name, runnable_kind = parse_runnable_ref(request.runnable.ref)
+    if runnable_kind is None:
+        raise ValueError("run request requires a kind-qualified runnable ref")
+
     return _resolve_concrete_spec(
         request.runnable.input,
         setup=setup,
@@ -72,9 +82,9 @@ def resolve_run_request(
         thread=request.thread_id,
         bindings=RunBindings(
             runnable=request.runnable.ref,
-            model=request.model.ref if request.model is not None else None,
+            model=model_request.ref if model_request is not None else None,
         ),
-        model_request=request.model,
+        model_request=model_request,
         ceilings=request.policy.allow,
         limits=request.policy.limits,
         include=include,
@@ -93,11 +103,14 @@ def resolve_restart_request(
     ceilings, bindings, limits = resolve_commands(setup, run=request.commands)
     if len(ceilings) > 1:  # pragma: no cover - one request contributes one layer
         raise RuntimeError("restart request resolved multiple run ceilings")
+    model = _rerun_model_request(request, bindings)
+    if model is not None:
+        model = materialize_model_request(model, setup=setup, state=state)
     return RestartSpec(
         setup=setup,
         state=state,
         ceiling=ceilings[0] if ceilings else AgentCeiling(),
-        model=_rerun_model_request(request, bindings),
+        model=model,
         limits=limits,
     )
 
@@ -145,15 +158,26 @@ def resolve_spec(
     )
     if bindings.runnable is None:
         bindings = RunBindings(model=bindings.model, runnable=default_runnable)
+    model_request = (
+        materialize_model_request(
+            ModelRequest(bindings.model),
+            setup=setup,
+            state=state,
+        )
+        if bindings.model is not None
+        else None
+    )
+    bindings = replace(
+        bindings,
+        model=model_request.ref if model_request is not None else None,
+    )
     return _resolve_concrete_spec(
         input,
         setup=setup,
         state=state,
         thread=thread,
         bindings=bindings,
-        model_request=(
-            ModelRequest(bindings.model) if bindings.model is not None else None
-        ),
+        model_request=model_request,
         ceilings=ceilings,
         limits=limits,
         surface_named=surface_named,
@@ -162,6 +186,42 @@ def resolve_spec(
         authored_commands=tuple(commands),
         authored_session_commands=tuple(session_commands),
     )
+
+
+def materialize_model_request(
+    request: ModelRequest,
+    *,
+    setup: AgentSetup,
+    state: AgentState,
+) -> ModelRequest:
+    """Resolve one model selector-bearing value to an exact request ref."""
+
+    from .executor.resources import snapshot_model_selection
+
+    ref = resolve_model_ref(
+        snapshot_model_selection(setup, state),
+        selector=request.ref,
+    )
+    return request if ref == request.ref else replace(request, ref=ref)
+
+
+def require_exact_model_request(
+    request: ModelRequest | None,
+    *,
+    setup: AgentSetup,
+    state: AgentState,
+) -> ModelRequest | None:
+    """Reject selector syntax at the materialized run-request boundary."""
+
+    if request is None:
+        return None
+    materialized = materialize_model_request(request, setup=setup, state=state)
+    if materialized.ref != request.ref:
+        raise ValueError(
+            f"run model ref must be exact: {request.ref!r} resolves to "
+            f"{materialized.ref!r}"
+        )
+    return request
 
 
 def _resolve_concrete_spec(

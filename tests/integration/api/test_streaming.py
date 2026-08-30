@@ -56,7 +56,11 @@ def _direct_request(
     return {
         "thread_id": thread_id,
         "request_id": request_id,
-        "runnable": {"ref": runnable, "input": input or [], "args": None},
+        "runnable": {
+            "ref": runnable if ":" in runnable else f"agic:{runnable}",
+            "input": input or [],
+            "args": None,
+        },
         "model": {"ref": TEST_MODEL_REF, "parameters": {}},
         "policy": {"allow": [], "limits": limits or {}},
     }

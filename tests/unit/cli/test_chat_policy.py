@@ -50,6 +50,8 @@ def test_build_run_request_materializes_a_session_snapshot_without_mutation() ->
             ),
             limits=RunLimits(cost=Decimal("1.50"), time=30),
         ),
+        resolve_model_ref=lambda value: value,
+        resolve_runnable_ref=lambda value: value,
     )
 
     assert request == RunRequest(
@@ -115,6 +117,33 @@ def test_input_local_model_replacement_does_not_reuse_session_reasoning() -> Non
             ),
             limits=RunLimits(),
         ),
+        resolve_model_ref=lambda value: value,
+        resolve_runnable_ref=lambda value: value,
     )
 
     assert request.model == ModelRequest("anthropic/claude-sonnet-4.5")
+
+
+def test_build_run_request_materializes_selector_values_to_exact_refs() -> None:
+    request = build_run_request(
+        thread_id="term_test",
+        request_id="term_request",
+        input=RunnableInputRaw(_="hello"),
+        input_commands=(
+            RunOverride("default", "model", "gpt-5[openai]"),
+            RunOverride("default", "runnable", "review"),
+        ),
+        selects={},
+        defaults=ChatRunDefaults(
+            bindings=RunBindings(
+                model="openai/gpt-4.1",
+                runnable="agic:chat",
+            ),
+            limits=RunLimits(),
+        ),
+        resolve_model_ref=lambda value: {"gpt-5[openai]": "openai/gpt-5"}[value],
+        resolve_runnable_ref=lambda value: {"review": "flow:review"}[value],
+    )
+
+    assert request.model == ModelRequest("openai/gpt-5")
+    assert request.runnable.ref == "flow:review"

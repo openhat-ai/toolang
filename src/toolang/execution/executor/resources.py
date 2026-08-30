@@ -25,6 +25,7 @@ from toolang.plugin.models.config import (
 from toolang.plugin.models.messages import NO_AVAILABLE_MODELS_MESSAGE
 from toolang.plugin.models.resolution import (
     resolve_model,
+    resolve_model_ref,
     select_model_selectors,
     selectable_model_targets,
 )
@@ -84,7 +85,17 @@ def agent_model_targets(
         if selectors
         else ()
     )
-    return (selectors[0] if selectors else None), targets
+    default = (
+        resolve_model_ref(
+            selection,
+            selector=setup.bindings.model,
+            default_selector=selectors[0],
+            allowed_selectors=selectors,
+        )
+        if selectors
+        else None
+    )
+    return default, targets
 
 
 def validate_agent_ceiling(

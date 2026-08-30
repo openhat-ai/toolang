@@ -382,6 +382,62 @@ def test_preparation_payload_round_trips_resolved_locals() -> None:
     assert control_payload_from_data("run", data) == payload
 
 
+def test_preparation_payload_preserves_an_absent_model_request() -> None:
+    payload = RunControlPayload(
+        resources=AgentResources(),
+        limits=RunLimits(),
+        state="0" * 64,
+        runnable="flow:worker",
+        model="none",
+        model_request=None,
+        locals=(),
+    )
+
+    data = control_payload_to_data(payload)
+    restored = control_payload_from_data("run", data)
+
+    assert data["model_request"] is None
+    assert restored == payload
+
+
+def test_preparation_payload_materializes_a_legacy_model_field() -> None:
+    payload = RunControlPayload(
+        resources=AgentResources(models=("test/model",)),
+        limits=RunLimits(),
+        state="0" * 64,
+        runnable="agic:worker",
+        model="test/model",
+        model_request=ModelRequest("test/model"),
+        locals=(),
+    )
+    data = control_payload_to_data(payload)
+    data.pop("model_request")
+
+    restored = control_payload_from_data("run", data)
+
+    assert isinstance(restored, RunControlPayload)
+    assert restored.model_request == ModelRequest("test/model")
+
+
+def test_preparation_payload_preserves_a_legacy_model_free_run() -> None:
+    payload = RunControlPayload(
+        resources=AgentResources(),
+        limits=RunLimits(),
+        state="0" * 64,
+        runnable="flow:worker",
+        model="none",
+        model_request=None,
+        locals=(),
+    )
+    data = control_payload_to_data(payload)
+    data.pop("model_request")
+
+    restored = control_payload_from_data("run", data)
+
+    assert isinstance(restored, RunControlPayload)
+    assert restored.model_request is None
+
+
 def test_preparation_payload_round_trips_authored_prompt_facts() -> None:
     payload = RunControlPayload(
         resources=AgentResources(models=("test/model",)),

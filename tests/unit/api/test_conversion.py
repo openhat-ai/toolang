@@ -148,9 +148,12 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
     [
         {"extra": True},
         {"thread_id": 1},
+        {"runnable": {"ref": "chat", "input": {"_": None, "named": []}}},
         {"runnable": {"ref": "agic:chat", "input": {"primary": "legacy"}}},
         {"model": {"ref": "openai/test", "parameters": {"temperature": 1}}},
         {"policy": {"allow": [], "limits": {"tokens": -1}}},
+        {"policy": {"allow": [], "limits": {"tokens": True}}},
+        {"policy": {"allow": [], "limits": {"tokens": "10"}}},
     ],
 )
 def test_authored_run_schema_rejects_extra_or_lossy_values(

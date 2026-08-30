@@ -27,6 +27,7 @@ from toolang.api.schemas import (
     RunSteerRequest,
 )
 from toolang.base.types.policy import RunBindings
+from toolang.execution.calls import require_exact_model_request
 from toolang.execution.executor.resources import agent_model_targets
 from toolang.common.errors import ToolangError
 from toolang.execution.executor import LocalRunHandle, RunSpec
@@ -65,6 +66,11 @@ async def _run_stream(
             runnable_name,
             kind=runnable_kind,
         )
+        model_request = require_exact_model_request(
+            payload.model,
+            setup=setup,
+            state=state,
+        )
         if isinstance(runnable, AgicDecl) and payload.model is None:
             raise ValueError("run request requires a model for an agic runnable")
         handle = core.executor.run(
@@ -74,9 +80,9 @@ async def _run_stream(
                 thread=thread_id,
                 bindings=RunBindings(
                     runnable=payload.runnable.ref,
-                    model=payload.model.ref if payload.model is not None else None,
+                    model=(model_request.ref if model_request is not None else None),
                 ),
-                model_request=payload.model,
+                model_request=model_request,
                 limits=payload.policy.limits,
                 ceilings=payload.policy.allow,
                 input=resolve_runnable_input(
@@ -303,8 +309,7 @@ async def run_defaults(core: AgentCoreDep) -> dict[str, object]:
 
     setup = core.setup.current()
     state = await _fresh_state(core)
-    inferred_model, _targets = agent_model_targets(setup, state, setup.ceiling)
-    model = setup.bindings.model or inferred_model
+    model, _targets = agent_model_targets(setup, state, setup.ceiling)
     runnable = setup.bindings.runnable
     if runnable is None:
         default_agic, default_flow = runnable_binding_defaults(

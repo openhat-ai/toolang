@@ -187,11 +187,12 @@ class ModelPicker:
                 efforts = self._efforts(self.selected_model)
                 if efforts:
                     self.stage = "effort"
-                    _model, current_effort = self._current()
+                    current_model, current_effort = self._current()
+                    selected_ref = self._text(self.selected_model.get("ref"))
                     choices: tuple[ReasoningEffort | None, ...] = (None, *efforts)
                     self.index = (
                         choices.index(current_effort)
-                        if current_effort in choices
+                        if selected_ref == current_model and current_effort in choices
                         else 0
                     )
                     self._invalidate()

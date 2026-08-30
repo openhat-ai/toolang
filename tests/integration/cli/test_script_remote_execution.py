@@ -69,7 +69,7 @@ def test_remote_script_uses_a_script_thread_and_native_progress(
                 layout=core.layout,
                 endpoint="http://runtime.test:7001",
                 sandbox="host",
-                runnable="echo",
+                runnable="agic:echo",
                 commands=(),
                 input=RunnableInputRaw(_="hello"),
                 raw_named=(),
