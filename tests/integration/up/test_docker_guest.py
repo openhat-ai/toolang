@@ -1,6 +1,10 @@
+"""Opt-in checks for the fixed Docker guest across supported image shapes.
+
+Run with ``uv run pytest -m live_docker --live-docker``.
+"""
+
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -8,13 +12,7 @@ import subprocess
 import pytest
 
 
-pytestmark = [
-    pytest.mark.live_docker,
-    pytest.mark.skipif(
-        os.environ.get("TOOLANG_TEST_DOCKER") != "1",
-        reason="set TOOLANG_TEST_DOCKER=1 to run live Docker guest checks",
-    ),
-]
+pytestmark = pytest.mark.live_docker
 
 
 @pytest.mark.parametrize(
