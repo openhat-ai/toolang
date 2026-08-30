@@ -34,6 +34,7 @@ from ..common.routing import (
 from . import routing
 from .commands import agent as agent_commands
 from .commands import chat as chat_commands
+from .commands import inspect as inspect_commands
 from .commands import plugin as plugin_commands
 from .commands import program as program_commands
 from .commands import runtime as runtime_commands
@@ -295,11 +296,11 @@ _registered_command(
 )(thread_commands.runs_command)
 _registered_command(
     "inspect",
-    help="Inspect runs.",
+    help="Inspect execution subjects.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
-)(thread_commands.inspect_command)
+)(inspect_commands.inspect_command)
 _registered_command(
     "steer",
     help="Steer an active run.",

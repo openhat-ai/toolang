@@ -5,7 +5,7 @@ from io import StringIO
 from rich.console import Console
 
 from toolang.base.types.message import TextPart
-from toolang.cli.toolang.commands.thread import (
+from toolang.cli.toolang.commands.inspect import (
     _HumanValue,
     _human_type_label,
     _print_human_table,

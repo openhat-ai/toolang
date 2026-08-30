@@ -14,6 +14,7 @@ from .records import (
     RunRecord,
     StepRecord,
     StoredModelStepGiven,
+    ThreadRecord,
 )
 from .schemas import RunDetail, RunInfo, ThreadDetail, ThreadInfo
 from .store import RunStore
@@ -38,7 +39,23 @@ class RunHistory:
         """Return filtered thread summaries in most-recently-updated order."""
 
         _validate_limit(limit)
-        threads = self._store.list_threads()
+        items = self.describe_threads(self._store.list_threads())
+        filtered = [
+            item
+            for item in items
+            if (origin is None or item.origin == origin)
+            and (channel is None or item.channel == channel)
+            and (status is None or item.status == status)
+        ]
+        ordered = sorted(filtered, key=lambda item: item.updated_at, reverse=True)
+        return ordered if limit is None else ordered[:limit]
+
+    def describe_threads(
+        self,
+        threads: Sequence[ThreadRecord],
+    ) -> list[ThreadInfo]:
+        """Build summaries for a caller-selected sequence of Thread records."""
+
         runs_by_thread = self._store.list_thread_histories_chronological(
             thread_ids=tuple(thread.thread_id for thread in threads)
         )
@@ -65,15 +82,7 @@ class RunHistory:
                     ),
                 )
             )
-        filtered = [
-            item
-            for item in items
-            if (origin is None or item.origin == origin)
-            and (channel is None or item.channel == channel)
-            and (status is None or item.status == status)
-        ]
-        ordered = sorted(filtered, key=lambda item: item.updated_at, reverse=True)
-        return ordered if limit is None else ordered[:limit]
+        return items
 
     def get_thread(
         self, thread_id: str, *, run_limit: int | None = 50
@@ -139,6 +148,11 @@ class RunHistory:
 
         _validate_limit(limit)
         runs = self._store.list_runs(limit=limit, thread_id=thread_id, status=status)
+        return self.describe_runs(runs)
+
+    def describe_runs(self, runs: Sequence[RunRecord]) -> list[RunInfo]:
+        """Build summaries for a caller-selected sequence of Run records."""
+
         steps_by_run = self._store.list_steps_for_runs(
             run_ids=tuple(item.id for item in runs)
         )

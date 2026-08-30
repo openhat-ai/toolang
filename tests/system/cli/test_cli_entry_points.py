@@ -141,7 +141,7 @@ def test_inspect_help_is_concise_and_consistent() -> None:
     assert inspect_result.exit_code == 0, inspect_result.output
     for result in (root_result, inspect_result):
         output = click.unstyle(result.output)
-        assert "Inspect runs." in output
+        assert "Inspect execution subjects." in output
         assert "Inspect run records." not in output
         assert "Inspect a historical record or one of its fields." not in output
 

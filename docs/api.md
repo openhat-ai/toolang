@@ -107,7 +107,11 @@ toolang alice chat term_3nprht9x
 toolang alice chat --sandbox docker
 toolang alice threads
 toolang alice runs --thread term_3nprht9x
+toolang alice inspect threads
+toolang alice inspect term_3nprht9x runs
+toolang alice inspect run_ppkp9e94 steps
 toolang alice inspect run_ppkp9e94.0/output/value
+toolang alice inspect run_ppkp9e94.0 model-call
 toolang alice retry run_ppkp9e94 --limit tokens=200000 --limit time=900
 toolang alice rerun run_ppkp9e94 --default model=openai/gpt-5
 toolang alice steer run_ppkp9e94 "Use the smaller patch"
@@ -272,7 +276,7 @@ toolang SCRIPT run
 toolang SCRIPT chat [THREAD]
 toolang SCRIPT threads
 toolang SCRIPT runs [--thread THREAD]
-toolang SCRIPT inspect POINTER [--human | --json]
+toolang SCRIPT inspect SUBJECT... [PROJECTOR] [--human | --json]
 toolang SCRIPT retry RUN [--anchor STEP]
 toolang SCRIPT rerun RUN
 ```
@@ -287,7 +291,7 @@ Visiting selectors support the same agent-self and execution-history commands:
 toolang brice/alice info
 toolang brice/alice run
 toolang brice/alice chat [THREAD]
-toolang brice/alice inspect POINTER [--human | --json]
+toolang brice/alice inspect SUBJECT... [PROJECTOR] [--human | --json]
 toolang brice/alice retry RUN
 ```
 
@@ -298,8 +302,28 @@ existing `runs.db` without fetching the source.
 
 ### Historical record inspection
 
-`inspect` accepts one Pointer to a durable Thread, Control, Run, or Step record,
-or to a field inside that record:
+`inspect` evaluates a subject chain and an optional terminal projector:
+
+```text
+toolang AGENT inspect SUBJECT... [PROJECTOR] [--human | --json]
+```
+
+The initial collection and relation subjects are:
+
+```text
+threads                 every visible Thread record
+runs                    every visible Run record
+THREAD runs             every visible Run directly owned by THREAD
+RUN steps               every visible Step owned by RUN
+```
+
+Collections are unbounded and preserve durable ordering. Their JSON form is a
+bare array of canonical record objects; every object is identical to inspecting
+its printed Pointer individually. A missing `runs.db` is an error, while an
+existing store with no matching records returns an empty collection.
+
+A Pointer still selects one durable Thread, Control, Run, or Step record, or a
+field inside that record:
 
 ```text
 term_ab12                         Thread record
@@ -315,6 +339,24 @@ run_ab12@1/payload/locals/0/value nested Control field
 field using RFC 6901 escaping (`~0` for `~` and `~1` for `/`). Run ids occupy
 the `run_` namespace; thread ids cannot begin with `run_`.
 
+Exact `threads`, `runs`, and `steps` tokens are reserved by this grammar and
+take precedence over Thread Pointer parsing. The accepted transitions are
+Agent to `threads` or `runs`, Thread to `runs`, and Run to `steps`; collections,
+Controls, Steps, and fields do not accept relation subjects.
+
+`model-call` is the initial projector. It applies only to a whole model Step and
+reconstructs the complete normalized call persisted for that Step, including
+instructions, messages, tool definitions, and continuation data:
+
+```bash
+toolang alice inspect run_ab12.0 model-call
+toolang alice inspect run_ab12.0 model-call --json
+```
+
+This is distinct from `run_ab12.0/given/call`, which exposes compact persisted
+references. Projection is local and read-only: it does not prepare a call,
+select a model, construct a provider-native request, or send provider traffic.
+
 Human output is the default. Record and container tables use the CLI's
 horizontal-rule Rich style and list direct children as relative field suffixes
 with TYPE in the second column. Output ends with dim context naming the selected
@@ -324,7 +366,7 @@ content stays aligned inside the VALUE cell without a leading bullet. A
 separate `→` means the shown value was resolved from a Pointer-valued field.
 `--json` prints only the selected canonical JSON value. The two display modes
 are mutually exclusive, and `--type` is not an option. Inspection is read-only
-and historical; it does not prepare future model calls or load a runnable.
+and historical and does not load a runnable.
 
 ## File Request Runtime
 
