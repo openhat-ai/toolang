@@ -536,10 +536,12 @@ def _append_model_call_section(
 ) -> None:
     if lines:
         lines.append(Text())
+    boundary = "=" * max(cell_len(title), width)
     lines.extend(
         (
+            Text(boundary, style="dim"),
             Text(title, style="bold"),
-            Text("=" * max(cell_len(title), width)),
+            Text(boundary, style="dim"),
             Text(),
         )
     )

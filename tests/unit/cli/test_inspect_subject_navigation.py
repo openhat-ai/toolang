@@ -139,7 +139,7 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
         "[0] inspect.run(run_id: string, include?: string[], limit?: integer | null)"
     )
     assert signature in output
-    assert f"Continuation\n{'=' * 64}\n\ncursor: next" in output
+    assert f"{'=' * 64}\nContinuation\n{'=' * 64}\n\ncursor: next" in output
     assert '"messages":' not in output
     assert by_text["[0] user"].style == "dim"
     assert by_text["[1] assistant"].style == "dim"
@@ -156,8 +156,10 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
             for index, renderable in enumerate(renderables)
             if renderable.plain == title
         )
+        assert renderables[title_index - 1].plain == "=" * 64
+        assert renderables[title_index - 1].style == "dim"
         assert renderables[title_index + 1].plain == "=" * 64
-        assert renderables[title_index + 1].style == ""
+        assert renderables[title_index + 1].style == "dim"
     assert all(renderable.plain != "Model Call" for renderable in renderables)
     for line in (
         "[0] user",
