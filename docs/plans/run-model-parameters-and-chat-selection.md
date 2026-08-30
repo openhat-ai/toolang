@@ -79,6 +79,18 @@ class ModelRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class NamedInputSource:
+    name: str
+    source: str
+
+
+@dataclass(frozen=True, slots=True)
+class RunnableInputRaw:
+    _: str | None = None
+    named: tuple[NamedInputSource, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class RunnableRequest:
     ref: str
     input: RunnableInputRaw
@@ -128,7 +140,7 @@ only in their existing input representation:
   "request_id": "term_request_123",
   "runnable": {
     "ref": "agic:chat",
-    "input": {"_": "Hello"}
+    "input": {"_": "Hello", "named": []}
   },
   "model": {
     "ref": "openai/gpt-5",
@@ -149,12 +161,12 @@ only in their existing input representation:
 }
 ```
 
-The wire `runnable.input` object uses `_` for the primary runnable input. Other
-members are named runnable inputs, for example
-`{"_": "Hello", "audience": "maintainers"}`. The transport converts this
-object to the existing `RunnableInputRaw(primary, named)` value; `_` is reserved
-and named members must use canonical parameter names. Text parsing and resolved
-input values do not change.
+`RunnableInputRaw` uses `_` as its Python and JSON field for the primary
+runnable input. `_` is reserved; `named` contains canonical name/source values.
+The HTTP request embeds this dataclass and validates it through a type adapter,
+so there is no `primary` alias or transport-to-core conversion. It must not
+redeclare `_` as a Pydantic model field because Pydantic treats underscore names
+as private. Text parsing and resolved input values do not change.
 
 The parameter schema is closed; unknown fields fail. A future `temperature`
 field belongs directly under `ModelParameters`, while reasoning-owned fields
@@ -243,13 +255,16 @@ same model-list payload and send the same materialized run request.
   `runnable_fallbacks`. There is no dual legacy decoder; mismatched client and
   runtime protocol versions fail visibly.
 - Existing durable run history requires no migration. New preparation records
-  retain the structured model request.
+  retain the structured model request. Durable authored-input adapters keep
+  their existing record representation; the `_` rename applies to the raw
+  request type and wire boundary, not stored record field names.
 - Raw model catalog JSON and selector-list syntax do not change.
 
 ## Implementation Touchpoints
 
 - `src/toolang/base/types/model.py` for model request and parameter vocabulary;
 - `src/toolang/base/types/policy.py` for the explicit request policy fields;
+- `src/toolang/lang/input.py` for the `_`-named raw primary input field;
 - `src/toolang/execution/schemas.py`, `calls.py`, policy resolution, preparation,
   and retry/rerun persistence;
 - `src/toolang/api/schemas.py`, conversion, model projection, and run routers;
@@ -265,8 +280,9 @@ same model-list payload and send the same materialized run request.
    metadata; legacy provider-filter selector input still resolves.
 2. Core and HTTP requests round-trip the grouped model request, reject unknown
    fields, preserve `thread_id`, group each runnable with its input, require a
-   concrete runnable ref, encode primary input as `_`, and contain no session or
-   fallback fields.
+   concrete runnable ref, expose `_` directly on `RunnableInputRaw`, perform no
+   request-boundary primary alias conversion, and contain no session or fallback
+   fields.
 3. Submission building applies session and input-local choices without mutating
    session state and materializes named allow and limit policy fields locally
    and remotely while retaining allow-ceiling intersection.
