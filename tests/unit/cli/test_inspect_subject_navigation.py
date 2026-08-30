@@ -132,13 +132,19 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
     assert "[0] user" in output
     assert "[1] assistant" in output
     assert "[2] tool" in output
-    assert "[0] text\n\nI will inspect it." in output
-    invocation = '[1] inspect.run(run_id: "run_123", include: ["steps", "errors"])'
+    assert "[0] text" not in output
+    assert "I will inspect it." in output
+    call_boundary = "<[[ ToolCallPart index=1, id=tool-1"
+    result_boundary = "<[[ ToolResultPart index=0, id=tool-1"
+    assert call_boundary in output
+    invocation = 'inspect.run(run_id: "run_123", include: ["steps", "errors"])'
     assert invocation in output
     assert "Reason\nThe run record contains the failure." in output
     assert "\nInput\n" not in output
-    assert "inspect.run · result" in output
-    assert "Output\nstatus: failed" in output
+    assert result_boundary in output
+    assert "status: failed" in output
+    assert "\nOutput\n" not in output
+    assert output_lines.count("]]>") == 2
     assert "Available Tools · 1 tool" in output
     signature = (
         "[0] inspect.run(run_id: string, include?: string[], limit?: integer | null)"
@@ -149,9 +155,15 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
     assert by_text["[0] user"].style == "dim"
     assert by_text["[1] assistant"].style == "dim"
     assert by_text["[2] tool"].style == "dim"
-    assert by_text["[0] text"].style == "dim"
-    assert by_text[invocation].style == "dim"
-    assert by_text["inspect.run · result"].style == "dim"
+    assert by_text[call_boundary].style == "dim"
+    assert by_text[result_boundary].style == "dim"
+    assert not by_text[invocation].style
+    assert not by_text["status: failed"].style
+    assert all(
+        renderable.style == "dim"
+        for renderable in renderables
+        if renderable.plain == "]]>"
+    )
     assert by_text[signature].style == "dim"
     for title in (
         "Instructions",
@@ -186,10 +198,10 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
         '<context name="failure">What happened?</context>',
         "[1] assistant",
         "I will inspect it.",
-        "[0] text",
         invocation,
         "[2] tool",
-        "inspect.run · result",
+        call_boundary,
+        result_boundary,
         "status: failed",
         signature,
     ):

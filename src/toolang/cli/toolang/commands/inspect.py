@@ -583,7 +583,8 @@ def _append_model_message(
         lines.extend(
             _message_part_renderables(
                 cast(Mapping[str, object], part),
-                index=part_index if len(parts) > 1 else None,
+                index=part_index,
+                multipart=len(parts) > 1,
             )
         )
 
@@ -670,15 +671,13 @@ def _schema_type(value: object) -> str:
 def _message_part_renderables(
     part: Mapping[str, object],
     *,
-    index: int | None,
+    index: int,
+    multipart: bool,
 ) -> tuple[Text, ...]:
     part_type = str(part.get("type") or "part")
     if part_type == "text":
         text = part.get("text")
-        content = Text(text if isinstance(text, str) else "")
-        if index is None:
-            return (content,)
-        return (Text(f"[{index}] text", style="dim"), Text(), content)
+        return (Text(text if isinstance(text, str) else ""),)
     if part_type == "tool_call":
         return _tool_part_renderables(part, result=False, index=index)
     if part_type == "tool_result":
@@ -686,7 +685,7 @@ def _message_part_renderables(
     label = part_type.replace("_", " ").title()
     details = dict(part)
     details.pop("type", None)
-    prefix = f"[{index}] " if index is not None else ""
+    prefix = f"[{index}] " if multipart else ""
     return (
         Text(f"{prefix}{label}", style="dim"),
         *_structured_renderables(details),
@@ -697,22 +696,19 @@ def _tool_part_renderables(
     part: Mapping[str, object],
     *,
     result: bool,
-    index: int | None,
+    index: int,
 ) -> tuple[Text, ...]:
-    name = _display_tool_name(str(part.get("tool_name") or "unnamed"))
-    prefix = f"[{index}] " if index is not None else ""
-    title = (
-        f"{name} · result" if result else _tool_invocation(name, part.get("input", {}))
-    )
-    lines = [Text(f"{prefix}{title}", style="dim")]
-    for heading, key in (
-        ("tool_call_id", "tool_call_id"),
-        ("family", "tool_family"),
-        ("provider_call_id", "call_id"),
-    ):
-        item = part.get(key)
-        if item is not None:
-            lines.append(Text(f"{heading}: {item}", style="dim"))
+    type_name = "ToolResultPart" if result else "ToolCallPart"
+    tool_call_id = str(part.get("tool_call_id") or "unknown")
+    lines = [
+        Text(
+            f"<[[ {type_name} index={index}, id={tool_call_id}",
+            style="dim",
+        )
+    ]
+    if not result:
+        name = _display_tool_name(str(part.get("tool_name") or "unnamed"))
+        lines.append(Text(_tool_invocation(name, part.get("input", {}))))
     reasoning = part.get("reasoning")
     if isinstance(reasoning, str) and reasoning:
         lines.extend((Text(), Text("Reason", style="bold"), Text(reasoning)))
@@ -720,8 +716,10 @@ def _tool_part_renderables(
     if isinstance(error, str) and error:
         lines.extend((Text(), Text("Error", style="bold"), Text(error)))
     if result:
-        lines.extend((Text(), Text("Output", style="bold")))
+        if isinstance(error, str) and error:
+            lines.append(Text())
         lines.extend(_structured_renderables(part.get("output", {})))
+    lines.append(Text("]]>", style="dim"))
     return tuple(lines)
 
 
