@@ -55,6 +55,7 @@ _SubjectKind = Literal[
     "runs",
     "steps",
 ]
+_ProjectionKind = Literal["records", "fields", "value", "model-call"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +87,13 @@ class _InspectQuery:
     subjects: tuple[str, ...]
     root_pointer: Pointer | None
     projector: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _InspectProjection:
+    kind: _ProjectionKind
+    subject: _InspectSubject
+    value: object
 
 
 def _load_threads(store: RunStore, _source: _InspectSubject) -> _InspectSubject:
@@ -221,23 +229,15 @@ def inspect_command(
             raise RuntimeError("execution resources were not opened")
         try:
             subject = _resolve_inspect_subject(resources.store, query)
-            if query.projector is not None:
-                projected = _apply_projector(
-                    resources.store,
-                    subject,
-                    query.projector,
-                )
-                if json_view:
-                    _echo_json(projected)
-                else:
-                    _render_projection(subject, query.projector, projected)
-            elif subject.selection is not None:
-                if json_view:
-                    _echo_json(subject.selection.value)
-                else:
-                    _render_pointer(resources.store, subject.selection)
+            projection = _resolve_inspect_projection(
+                resources.store,
+                subject,
+                query.projector,
+            )
+            if json_view:
+                _render_projection_json(projection)
             else:
-                _render_collection(resources.store, subject, json_view=json_view)
+                _render_projection_human(resources.store, projection)
         except click.UsageError:
             raise
         except (TypeError, ValueError) as exc:
@@ -361,6 +361,42 @@ def _apply_projector(
     return projector.project(store, subject)
 
 
+def _resolve_inspect_projection(
+    store: RunStore,
+    subject: _InspectSubject,
+    projector: str | None,
+) -> _InspectProjection:
+    if projector is not None:
+        return _InspectProjection(
+            kind=cast(_ProjectionKind, projector),
+            subject=subject,
+            value=_apply_projector(store, subject, projector),
+        )
+    if subject.selection is None:
+        return _InspectProjection(
+            kind="records",
+            subject=subject,
+            value=subject.records,
+        )
+    return _InspectProjection(
+        kind=_implicit_pointer_projector(subject.selection),
+        subject=subject,
+        value=subject.selection.value,
+    )
+
+
+def _implicit_pointer_projector(
+    selected: RecordSelection,
+) -> Literal["fields", "value"]:
+    if isinstance(selected.runtime, Local) or selected.is_pointer:
+        return "value"
+    if selected.render_type in {"Part", "Part[]"}:
+        return "value"
+    if isinstance(selected.value, Mapping | list) and bool(selected.value):
+        return "fields"
+    return "value"
+
+
 def _inspect_subject_label(subject: _InspectSubject) -> str:
     if subject.selection is not None:
         return str(subject.selection.pointer)
@@ -371,15 +407,44 @@ def _echo_json(value: object) -> None:
     typer.echo(json.dumps(value, ensure_ascii=False, indent=2))
 
 
+def _render_projection_json(projection: _InspectProjection) -> None:
+    if projection.kind == "records":
+        records = cast(tuple[Record, ...], projection.value)
+        _echo_json([record_to_data(record) for record in records])
+        return
+    _echo_json(projection.value)
+
+
+def _render_projection_human(
+    store: RunStore,
+    projection: _InspectProjection,
+) -> None:
+    if projection.kind == "records":
+        _render_collection(store, projection.subject)
+        return
+    if projection.kind == "fields":
+        selected = projection.subject.selection
+        if selected is None:  # pragma: no cover - projection invariant
+            raise RuntimeError("fields projection has no selection")
+        _render_pointer(store, selected, projector="fields")
+        return
+    if projection.kind == "value":
+        selected = projection.subject.selection
+        if selected is None:  # pragma: no cover - projection invariant
+            raise RuntimeError("value projection has no selection")
+        _render_pointer(store, selected, projector="value")
+        return
+    _render_explicit_projection(
+        projection.subject,
+        projection.kind,
+        projection.value,
+    )
+
+
 def _render_collection(
     store: RunStore,
     subject: _InspectSubject,
-    *,
-    json_view: bool,
 ) -> None:
-    if json_view:
-        _echo_json([record_to_data(record) for record in subject.records])
-        return
     history = RunHistory(store)
     if subject.kind == "threads":
         records = cast(tuple[ThreadRecord, ...], subject.records)
@@ -413,7 +478,10 @@ def _render_collection(
                 )
                 for item in items
             ]
-            echo_table(("RUN", "TITLE", "STEPS", "STATUS", "CREATED"), rows)
+            echo_table(
+                ("THREAD RUN", "TITLE", "STEPS", "STATUS", "CREATED"),
+                rows,
+            )
             return
         rows = [
             (
@@ -442,12 +510,12 @@ def _render_collection(
             )
             for step in steps
         ]
-        echo_table(("STEP", "KIND", "STATUS", "CREATED"), rows)
+        echo_table(("RUN STEP", "KIND", "STATUS", "CREATED"), rows)
         return
     raise RuntimeError(f"unsupported collection subject: {subject.kind}")
 
 
-def _render_projection(
+def _render_explicit_projection(
     subject: _InspectSubject,
     projector: str,
     value: object,
@@ -459,14 +527,6 @@ def _render_projection(
         )
     console = Console(highlight=False)
     transition.render(console, subject, value)
-    console.print()
-    console.print(
-        Text(
-            f"{_inspect_subject_label(subject)} projected as {projector}.",
-            style="dim",
-        ),
-        soft_wrap=True,
-    )
 
 
 def _model_call_renderables(
@@ -817,39 +877,39 @@ class _HumanValue:
     resolved: bool
 
 
-def _render_pointer(store: RunStore, selected: RecordSelection) -> None:
+def _render_pointer(
+    store: RunStore,
+    selected: RecordSelection,
+    *,
+    projector: Literal["fields", "value"],
+) -> None:
     console = Console(highlight=False)
     root = _human_value(store, selected)
-    browsable = _browse_children(selected, root)
-    if browsable:
+    if projector == "fields":
         _render_human_rows(
             console,
             _human_children(store, selected),
             base=selected.pointer,
+            pointer_heading=_field_projection_heading(selected, root),
         )
+        return
+    block = _human_block(root)
+    if block is not None:
+        console.print(block)
     else:
-        block = _human_block(root)
-        if block is not None:
-            console.print(block)
-        else:
-            console.print(Text(_human_summary(root)), soft_wrap=True)
+        console.print(Text(_human_summary(root)), soft_wrap=True)
 
-    console.print()
-    relation = "resolves to" if root.resolved else "has type"
-    suffix = "; append a FIELD to inspect a child." if browsable else "."
-    context = Text(
-        f"{selected.pointer} {relation} {_human_type_label(root.render_type)}{suffix}",
-        style="dim",
+
+def _field_projection_heading(
+    selected: RecordSelection,
+    value: _HumanValue,
+) -> str:
+    source = (
+        record_kind(selected.record)
+        if not selected.pointer.field
+        else _human_type_label(value.render_type)
     )
-    console.print(context, soft_wrap=True)
-
-
-def _browse_children(selected: RecordSelection, value: _HumanValue) -> bool:
-    if value.resolved or isinstance(selected.runtime, Local):
-        return False
-    if value.render_type in {"Part", "Part[]"}:
-        return False
-    return isinstance(selected.value, Mapping | list) and bool(selected.value)
+    return f"{source.upper()} FIELD"
 
 
 def _human_children(
@@ -908,23 +968,26 @@ def _render_human_rows(
     rows: Iterable[tuple[RecordSelection, _HumanValue]],
     *,
     base: Pointer | None = None,
+    pointer_heading: str | None = None,
 ) -> None:
     compact: list[tuple[str, str, RenderableType]] = []
-    pointer_heading = "FIELD" if base is not None else "POINTER"
+    heading = pointer_heading or ("FIELD" if base is not None else "POINTER")
     for selected, value in rows:
         pointer = str(selected.pointer)
         if base is not None:
             pointer = pointer.removeprefix(str(base))
-        label = f"{pointer}{' →' if value.resolved else ''}"
+        type_label = _human_type_label(value.render_type)
+        if value.resolved:
+            type_label = f"*{type_label}"
         rendered = _human_block(value)
         compact.append(
             (
-                label,
-                _human_type_label(value.render_type),
+                pointer,
+                type_label,
                 rendered if rendered is not None else _human_summary(value),
             )
         )
-    _print_human_table(console, compact, pointer_heading=pointer_heading)
+    _print_human_table(console, compact, pointer_heading=heading)
 
 
 def _print_human_table(

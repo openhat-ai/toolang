@@ -344,6 +344,18 @@ take precedence over Thread Pointer parsing. The accepted transitions are
 Agent to `threads` or `runs`, Thread to `runs`, and Run to `steps`; collections,
 Controls, Steps, and fields do not accept relation subjects.
 
+Every successful query selects one projector after its subject resolves:
+
+| Projector | Selection | Human result | JSON result |
+| --- | --- | --- | --- |
+| `records` | collection subject | summarized record rows | canonical record array |
+| `fields` | browsable Pointer value | direct child fields | exact selected value |
+| `value` | scalar, empty, resolved, or specialized value | rendered value | exact selected value |
+| `model-call` | model Step with the explicit terminal name | structured model call | normalized model call |
+
+`records`, `fields`, and `value` are implicit view kinds, not accepted command
+tokens. `model-call` remains the only explicit projector.
+
 `model-call` is the initial projector. It applies only to a whole model Step and
 reconstructs the complete normalized call persisted for that Step, including
 instructions, messages, tool definitions, and continuation data:
@@ -359,14 +371,21 @@ select a model, construct a provider-native request, or send provider traffic.
 
 Human output is the default. Record and container tables use the CLI's
 horizontal-rule Rich style and list direct children as relative field suffixes
-with TYPE in the second column. Output ends with dim context naming the selected
-Pointer and displayed type plus, for a table, how to inspect a child. Strings
-have no JSON quotes, and nullable Human type labels use `T?`. Multiline Part
-content stays aligned inside the VALUE cell without a leading bullet. A
-separate `→` means the shown value was resolved from a Pointer-valued field.
-`--json` prints only the selected canonical JSON value. The two display modes
-are mutually exclusive, and `--type` is not an option. Inspection is read-only
-and historical and does not load a runnable.
+with TYPE in the second column. Root collection headings remain `THREAD` and
+`RUN`; explicit relations and whole-record field projections use compound
+headings such as `THREAD RUN`, `RUN STEP`, and `STEP FIELD`. A browsable nested
+field uses its uppercase displayed type, such as `POINTER[] FIELD`.
+
+Human projections have no trailing context footer. Direct scalar and
+specialized values print only their value. Strings have no JSON quotes, and
+nullable Human type labels use `T?`. Multiline Part content stays aligned
+inside the VALUE cell without a leading bullet. A child resolved from a stored
+Pointer keeps its canonical field suffix and prefixes its resolved TYPE with
+one presentation-only `*`, such as `/output  *Part[]`; multiple dereference
+hops still use one marker. `--json` does not resolve Pointers and prints only
+the selected canonical JSON value. The two display modes are mutually
+exclusive, and `--type` is not an option. Inspection is read-only and
+historical and does not load a runnable.
 
 ## File Request Runtime
 
