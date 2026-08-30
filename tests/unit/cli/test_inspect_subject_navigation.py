@@ -160,6 +160,18 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
         assert renderables[title_index - 1].style == "dim"
         assert renderables[title_index + 1].plain == "=" * 64
         assert renderables[title_index + 1].style == "dim"
+    conversation_heading = by_text["Conversation · 3 messages"]
+    assert [
+        (span.start, span.end, span.style) for span in conversation_heading.spans
+    ] == [
+        (0, len("Conversation"), "bold"),
+        (len("Conversation"), len("Conversation · 3 messages"), "dim"),
+    ]
+    tools_heading = by_text["Available Tools · 1 tool"]
+    assert [(span.start, span.end, span.style) for span in tools_heading.spans] == [
+        (0, len("Available Tools"), "bold"),
+        (len("Available Tools"), len("Available Tools · 1 tool"), "dim"),
+    ]
     assert all(renderable.plain != "Model Call" for renderable in renderables)
     for line in (
         "[0] user",
