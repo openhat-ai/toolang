@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 from collections.abc import Mapping
+import sqlite3
 import sys
 from typing import Any, cast
 
@@ -808,9 +809,21 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
             origin="test",
             input=Message.user("Call"),
         )
+        structured_output: dict[str, object] = {
+            "$defs": {
+                "Answer": {
+                    "additionalProperties": False,
+                    "properties": {"answer": {"type": "boolean"}},
+                    "required": ["answer"],
+                    "type": "object",
+                }
+            },
+            "$ref": "#/$defs/Answer",
+        }
         call = ModelCall(
             instructions="Diagnose the run.",
             messages=[Message.assistant("Context"), Message.user("Question")],
+            structured_output=structured_output,
             continuation={"provider_cursor": "next"},
         )
         store.begin_step(
@@ -883,7 +896,7 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
             },
         ],
         "tools": [],
-        "structured_output": None,
+        "structured_output": structured_output,
         "cont": {"provider_cursor": "next"},
     }
     assert references.exit_code == 0, references.stderr
@@ -903,12 +916,43 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
     assert "Complete answer" in human_output
     assert "Tools 0" in human_output
     assert "No available tools." in human_output
+    assert "Structured Output" in human_output
+    assert json.dumps(structured_output, ensure_ascii=False, indent=2) in human_output
     assert "Continuation" in human_output
     assert "provider_cursor" in human_output
     assert '"instructions":' not in human_output
     assert "projected as model-call" not in human_output
     assert rejected.exit_code == 2
     assert "does not support projector model-call" in rejected.stderr
+
+    connection = sqlite3.connect(AgentLayout.resident(root, "alice").run_store)
+    try:
+        row = connection.execute(
+            "SELECT given FROM steps WHERE run = ? AND path = ?",
+            ("run_model_call", "0"),
+        ).fetchone()
+        assert row is not None
+        given = json.loads(row[0])
+        given["call"].pop("structured_output")
+        connection.execute(
+            "UPDATE steps SET given = ? WHERE run = ? AND path = ?",
+            (json.dumps(given), "run_model_call", "0"),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    legacy = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_model_call.0",
+        "model-call",
+        "--json",
+    )
+
+    assert legacy.exit_code == 0, legacy.stderr
+    assert json.loads(legacy.stdout)["structured_output"] is None
 
 
 @pytest.mark.parametrize(

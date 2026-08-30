@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from toolang.base.types.message import Message, TextPart, ToolCallPart, ToolResultPart
@@ -121,6 +123,7 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
                 },
             ),
         ),
+        structured_output={"type": "boolean"},
         continuation={"cursor": "next"},
     )
 
@@ -180,23 +183,29 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
         if renderable.plain == "]]>"
     )
     assert by_text[signature].style == "dim"
-    for title in (
+    section_titles = (
         "Instructions",
         "Messages 3",
         "Tools 1",
+        "Structured Output",
         "Continuation",
-    ):
+    )
+    section_indexes = []
+    for title in section_titles:
         title_index = next(
             index
             for index, renderable in enumerate(renderables)
             if renderable.plain.startswith(f"{title} ")
         )
+        section_indexes.append(title_index)
         assert len(renderables[title_index].plain) == 80
         assert renderables[title_index].plain.endswith("░")
         assert renderables[title_index - 1].plain == section_boundary
         assert renderables[title_index - 1].style == "dim"
         assert renderables[title_index + 1].plain == section_boundary
         assert renderables[title_index + 1].style == "dim"
+    assert section_indexes == sorted(section_indexes)
+    assert '{\n  "type": "boolean"\n}' in output
     messages_heading = next(
         renderable
         for renderable in renderables
@@ -235,6 +244,58 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
         signature,
     ):
         assert line in output_lines
+
+
+@pytest.mark.parametrize(
+    "schema",
+    (
+        {
+            "additionalProperties": False,
+            "properties": {"answer": {"type": "boolean"}},
+            "required": ["answer"],
+            "type": "object",
+        },
+        {"items": {"type": "string"}, "type": "array"},
+        {"type": "number"},
+        {},
+        None,
+    ),
+)
+def test_model_call_human_view_renders_structured_output_as_json(
+    schema: dict[str, object] | None,
+) -> None:
+    call = ModelCall(
+        instructions="",
+        messages=[],
+        structured_output=schema,
+    )
+
+    renderables = inspect_commands._model_call_renderables(model_call_to_data(call))
+    output = "\n".join(renderable.plain for renderable in renderables)
+    tools_index = next(
+        index
+        for index, renderable in enumerate(renderables)
+        if renderable.plain.startswith("Tools 0 ")
+    )
+    structured_index = next(
+        index
+        for index, renderable in enumerate(renderables)
+        if renderable.plain.startswith("Structured Output ")
+    )
+    continuation_index = next(
+        index
+        for index, renderable in enumerate(renderables)
+        if renderable.plain.startswith("Continuation ")
+    )
+
+    assert tools_index < structured_index < continuation_index
+    if schema is None:
+        none = next(
+            renderable for renderable in renderables if renderable.plain == "None"
+        )
+        assert none.style == "dim"
+    else:
+        assert json.dumps(schema, ensure_ascii=False, indent=2) in output
 
 
 def test_structured_human_values_are_zero_based_and_keep_nested_shape() -> None:

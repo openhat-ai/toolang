@@ -637,6 +637,20 @@ def _model_call_renderables(
     else:
         lines.append(Text("No available tools.", style="dim italic"))
 
+    _append_model_call_section(lines, "Structured Output", width=section_width)
+    structured_output = data.get("structured_output")
+    if structured_output is None:
+        lines.append(Text("None", style="dim"))
+    else:
+        lines.extend(
+            Text(line)
+            for line in json.dumps(
+                structured_output,
+                ensure_ascii=False,
+                indent=2,
+            ).splitlines()
+        )
+
     _append_model_call_section(lines, "Continuation", width=section_width)
     continuation = data.get("cont")
     if continuation is None:
