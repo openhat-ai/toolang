@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from decimal import Decimal
 import json
 from types import SimpleNamespace
@@ -175,7 +176,7 @@ def test_generate_content_preserves_thought_signatures_and_thinking_usage() -> N
             Message(role="assistant", parts=(call,)),
             Message(role="tool", parts=(result_part,)),
         ],
-        cont={"thought_signatures": {"call-1": "opaque-signature"}},
+        continuation={"thought_signatures": {"call-1": "opaque-signature"}},
     )
 
     payload = generate_content_payload(target, request)
@@ -233,7 +234,7 @@ def test_generate_content_preserves_thought_signatures_and_thinking_usage() -> N
     assert payload["generationConfig"] == {"thinkingConfig": {"thinkingLevel": "HIGH"}}
     assert result.message is not None
     assert result.message.parts[0] == TextPart("Done.")
-    assert result.cont == {"thought_signatures": {"call-2": "next-signature"}}
+    assert result.continuation == {"thought_signatures": {"call-2": "next-signature"}}
     assert result.usage == ModelUsage(
         input_tokens=120,
         output_tokens=40,
@@ -627,6 +628,439 @@ def test_responses_maps_supported_reasoning_and_rejects_token_budgets() -> None:
             request,
             stateful=False,
         )
+
+
+def test_protocol_adapters_map_normalized_structured_output() -> None:
+    schema: dict[str, object] = {
+        "additionalProperties": False,
+        "properties": {"answer": {"type": "boolean"}},
+        "required": ["answer"],
+        "type": "object",
+    }
+    request = ModelCall(
+        instructions="Keep this logical instruction unchanged.",
+        messages=[Message.user("Decide.")],
+        structured_output=schema,
+    )
+
+    chat_payload = chat_completions.chat_completion_payload(
+        ModelTarget(
+            ref="openai/model",
+            provider="openai",
+            name="model",
+            model="model",
+            adapter="chat_completions",
+            structured_output=True,
+        ),
+        request,
+        stream=False,
+    )
+    response_payload = responses.response_payload(
+        ModelTarget(
+            ref="openai/model",
+            provider="openai",
+            name="model",
+            model="model",
+            adapter="responses",
+            structured_output=True,
+            options={"text": {"verbosity": "low"}},
+        ),
+        request,
+        stateful=False,
+    )
+    message_payload = messages_payload(
+        ModelTarget(
+            ref="anthropic/model",
+            provider="anthropic",
+            name="model",
+            model="model",
+            adapter="messages",
+            structured_output=True,
+            reasoning={"effort": "high"},
+        ),
+        request,
+        stream=False,
+    )
+    generate_payload = generate_content_payload(
+        ModelTarget(
+            ref="google/model",
+            provider="google",
+            name="model",
+            model="model",
+            adapter="generate_content",
+            structured_output=True,
+            options={"generationConfig": {"temperature": 0}},
+        ),
+        request,
+    )
+
+    assert chat_payload["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "output",
+            "strict": True,
+            "schema": schema,
+        },
+    }
+    assert response_payload["text"] == {
+        "verbosity": "low",
+        "format": {
+            "type": "json_schema",
+            "name": "output",
+            "strict": True,
+            "schema": schema,
+        },
+    }
+    assert message_payload["output_config"] == {
+        "effort": "high",
+        "format": {"type": "json_schema", "schema": schema},
+    }
+    assert generate_payload["generationConfig"] == {
+        "temperature": 0,
+        "responseMimeType": "application/json",
+        "responseJsonSchema": schema,
+    }
+    assert request.instructions == "Keep this logical instruction unchanged."
+    assert request.messages == [Message.user("Decide.")]
+
+
+@pytest.mark.parametrize(
+    "schema",
+    (
+        {"type": "boolean"},
+        {"items": {"type": "string"}, "type": "array"},
+        {},
+        {
+            "additionalProperties": False,
+            "properties": {"answer": {"type": "boolean"}},
+            "type": "object",
+        },
+    ),
+)
+def test_openai_adapters_fall_back_for_non_strict_object_schemas(
+    schema: dict[str, object],
+) -> None:
+    request = ModelCall(
+        instructions="Keep this logical instruction unchanged.",
+        messages=[Message.user("Decide.")],
+        structured_output=schema,
+    )
+    target = ModelTarget(
+        ref="openai/model",
+        provider="openai",
+        name="model",
+        model="model",
+        adapter="chat_completions",
+        structured_output=True,
+    )
+
+    chat_payload = chat_completions.chat_completion_payload(
+        target,
+        request,
+        stream=False,
+    )
+    response_payload = responses.response_payload(
+        replace(target, adapter="responses"),
+        request,
+        stateful=False,
+    )
+
+    assert "response_format" not in chat_payload
+    assert "text" not in response_payload
+    schema_text = json.dumps(
+        schema,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    assert schema_text in chat_payload["messages"][0]["content"]
+    assert schema_text in response_payload["input"][0]["content"][0]["text"]
+    assert request.instructions == "Keep this logical instruction unchanged."
+    assert request.messages == [Message.user("Decide.")]
+
+
+def test_openai_adapters_inline_strict_root_struct_schema() -> None:
+    schema: dict[str, object] = {
+        "$defs": {
+            "Answer": {
+                "additionalProperties": False,
+                "properties": {"answer": {"type": "boolean"}},
+                "required": ["answer"],
+                "type": "object",
+            }
+        },
+        "$ref": "#/$defs/Answer",
+    }
+    request = ModelCall(
+        instructions="",
+        messages=[Message.user("Decide.")],
+        structured_output=schema,
+    )
+    target = ModelTarget(
+        ref="openai/model",
+        provider="openai",
+        name="model",
+        model="model",
+        adapter="chat_completions",
+        structured_output=True,
+    )
+
+    chat_payload = chat_completions.chat_completion_payload(
+        target,
+        request,
+        stream=False,
+    )
+    response_payload = responses.response_payload(
+        replace(target, adapter="responses"),
+        request,
+        stateful=False,
+    )
+
+    expected = {
+        "$defs": schema["$defs"],
+        "additionalProperties": False,
+        "properties": {"answer": {"type": "boolean"}},
+        "required": ["answer"],
+        "type": "object",
+    }
+    assert chat_payload["response_format"]["json_schema"]["schema"] == expected
+    assert response_payload["text"]["format"]["schema"] == expected
+
+
+def test_generate_content_falls_back_for_tools_before_gemini_3() -> None:
+    schema: dict[str, object] = {"type": "boolean"}
+    request = ModelCall(
+        instructions="Keep this logical instruction unchanged.",
+        messages=[Message.user("Decide.")],
+        tools=(_tool(),),
+        structured_output=schema,
+    )
+    target = ModelTarget(
+        ref="google/gemini-2.5-flash",
+        provider="google",
+        name="gemini-2.5-flash",
+        model="gemini-2.5-flash",
+        adapter="generate_content",
+        structured_output=True,
+    )
+
+    payload = generate_content_payload(target, request)
+
+    assert "tools" in payload
+    assert "generationConfig" not in payload
+    schema_text = json.dumps(schema, separators=(",", ":"), sort_keys=True)
+    system_instruction = cast(dict[str, Any], payload["systemInstruction"])
+    assert schema_text in system_instruction["parts"][0]["text"]
+    assert request.instructions == "Keep this logical instruction unchanged."
+
+
+def test_generate_content_uses_native_schema_with_tools_for_gemini_3() -> None:
+    schema: dict[str, object] = {"type": "boolean"}
+    request = ModelCall(
+        instructions="",
+        messages=[Message.user("Decide.")],
+        tools=(_tool(),),
+        structured_output=schema,
+    )
+    target = ModelTarget(
+        ref="google/gemini-3.1-pro-preview",
+        provider="google",
+        name="gemini-3.1-pro-preview",
+        model="models/gemini-3.1-pro-preview",
+        adapter="generate_content",
+        structured_output=True,
+    )
+
+    payload = generate_content_payload(target, request)
+
+    assert "tools" in payload
+    assert payload["generationConfig"] == {
+        "responseMimeType": "application/json",
+        "responseJsonSchema": schema,
+    }
+    assert "systemInstruction" not in payload
+
+
+def test_chat_completions_falls_back_for_deepseek_json_output() -> None:
+    schema: dict[str, object] = {
+        "additionalProperties": False,
+        "properties": {"answer": {"type": "boolean"}},
+        "required": ["answer"],
+        "type": "object",
+    }
+    request = ModelCall(
+        instructions="Keep this logical instruction unchanged.",
+        messages=[Message.user("Decide.")],
+        structured_output=schema,
+    )
+    target = ModelTarget(
+        ref="deepseek/deepseek-v4-pro",
+        provider="deepseek",
+        name="DeepSeek V4 Pro",
+        model="deepseek-v4-pro",
+        adapter="chat_completions",
+        structured_output=True,
+    )
+
+    payload = chat_completions.chat_completion_payload(
+        target,
+        request,
+        stream=False,
+    )
+
+    assert "response_format" not in payload
+    schema_text = json.dumps(schema, separators=(",", ":"), sort_keys=True)
+    assert schema_text in payload["messages"][0]["content"]
+    assert request.instructions == "Keep this logical instruction unchanged."
+
+
+@pytest.mark.parametrize("capability", (False, None))
+def test_messages_falls_back_without_native_structured_output_capability(
+    capability: bool | None,
+) -> None:
+    schema: dict[str, object] = {"type": "boolean"}
+    request = ModelCall(
+        instructions="Keep this logical instruction unchanged.",
+        messages=[Message.user("Decide.")],
+        structured_output=schema,
+    )
+    target = ModelTarget(
+        ref="anthropic/model",
+        provider="anthropic",
+        name="model",
+        model="model",
+        adapter="messages",
+        structured_output=capability,
+        options={"output_config": {"effort": "high"}},
+    )
+
+    payload = messages_payload(target, request, stream=False)
+
+    assert payload["output_config"] == {"effort": "high"}
+    schema_text = json.dumps(schema, separators=(",", ":"), sort_keys=True)
+    assert schema_text in cast(str, payload["system"])
+    assert request.instructions == "Keep this logical instruction unchanged."
+
+
+def test_protocol_adapters_fall_back_without_advertised_model_capability() -> None:
+    schema: dict[str, object] = {
+        "additionalProperties": False,
+        "properties": {"answer": {"type": "boolean"}},
+        "required": ["answer"],
+        "type": "object",
+    }
+    request = ModelCall(
+        instructions="Keep this logical instruction unchanged.",
+        messages=[Message.user("Decide.")],
+        structured_output=schema,
+    )
+    target = ModelTarget(
+        ref="provider/model",
+        provider="provider",
+        name="model",
+        model="model",
+        adapter="chat_completions",
+        structured_output=False,
+    )
+
+    chat_payload = chat_completions.chat_completion_payload(
+        target,
+        request,
+        stream=False,
+    )
+    response_payload = responses.response_payload(
+        replace(target, adapter="responses"),
+        request,
+        stateful=False,
+    )
+    message_payload = messages_payload(
+        replace(target, adapter="messages"),
+        request,
+        stream=False,
+    )
+    generate_payload = generate_content_payload(
+        replace(target, adapter="generate_content"),
+        request,
+    )
+
+    assert "response_format" not in chat_payload
+    assert "text" not in response_payload
+    assert "output_config" not in message_payload
+    assert "generationConfig" not in generate_payload
+    schema_text = json.dumps(schema, separators=(",", ":"), sort_keys=True)
+    assert schema_text in chat_payload["messages"][0]["content"]
+    assert schema_text in response_payload["input"][0]["content"][0]["text"]
+    assert schema_text in cast(str, message_payload["system"])
+    system_instruction = cast(dict[str, Any], generate_payload["systemInstruction"])
+    assert schema_text in system_instruction["parts"][0]["text"]
+    assert request.instructions == "Keep this logical instruction unchanged."
+
+
+@pytest.mark.parametrize(
+    ("target", "build"),
+    (
+        (
+            ModelTarget(
+                ref="openai/model",
+                provider="openai",
+                name="model",
+                model="model",
+                adapter="chat_completions",
+                options={"response_format": {"type": "json_object"}},
+            ),
+            lambda target, request: chat_completions.chat_completion_payload(
+                target, request, stream=False
+            ),
+        ),
+        (
+            ModelTarget(
+                ref="openai/model",
+                provider="openai",
+                name="model",
+                model="model",
+                adapter="responses",
+                options={"text": {"format": {"type": "json_object"}}},
+            ),
+            lambda target, request: responses.response_payload(
+                target, request, stateful=False
+            ),
+        ),
+        (
+            ModelTarget(
+                ref="anthropic/model",
+                provider="anthropic",
+                name="model",
+                model="model",
+                adapter="messages",
+                options={"output_config": {"format": {"type": "json_schema"}}},
+            ),
+            lambda target, request: messages_payload(target, request, stream=False),
+        ),
+        (
+            ModelTarget(
+                ref="google/model",
+                provider="google",
+                name="model",
+                model="model",
+                adapter="generate_content",
+                options={"generationConfig": {"responseSchema": {"type": "string"}}},
+            ),
+            generate_content_payload,
+        ),
+    ),
+)
+def test_protocol_adapters_reject_conflicting_structured_output_options(
+    target: ModelTarget,
+    build,
+) -> None:
+    request = ModelCall(
+        instructions="",
+        messages=[Message.user("hello")],
+        structured_output={"type": "boolean"},
+    )
+
+    with pytest.raises(ToolangError, match="conflicts with normalized structured"):
+        build(target, request)
 
 
 class _FakeStreamResponse:

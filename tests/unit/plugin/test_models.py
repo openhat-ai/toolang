@@ -1064,7 +1064,7 @@ def test_messages_adapter_replays_signed_thinking_before_tool_use() -> None:
                     ),
                 ),
             ],
-            cont=result.cont,
+            continuation=result.continuation,
         ),
         stream=False,
     )
@@ -1663,7 +1663,7 @@ def test_execute_run_input_reuses_provider_state_for_followups() -> None:
                         input={"command": "pwd"},
                     ),
                 ),
-                cont={"previous_response_id": "resp-1", "baseline_count": 2},
+                continuation={"previous_response_id": "resp-1", "baseline_count": 2},
             ),
             ModelCallResult(message=Message.assistant("done")),
         ],
@@ -1679,8 +1679,8 @@ def test_execute_run_input_reuses_provider_state_for_followups() -> None:
     result = _run_agic(_prepared_agic(provider, model))
 
     assert result == Message.assistant("done")
-    assert provider.requests[0].cont is None
-    assert provider.requests[1].cont == {
+    assert provider.requests[0].continuation is None
+    assert provider.requests[1].continuation == {
         "previous_response_id": "resp-1",
         "baseline_count": 2,
     }
@@ -1755,8 +1755,8 @@ def test_execute_run_input_appends_provider_messages_for_stateless_providers() -
     result = _run_agic(_prepared_agic(provider, model))
 
     assert result == Message.assistant("done")
-    assert provider.requests[0].cont is None
-    assert provider.requests[1].cont is None
+    assert provider.requests[0].continuation is None
+    assert provider.requests[1].continuation is None
     assert [item.to_data() for item in provider.requests[1].messages] == [
         {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
         {
@@ -1904,7 +1904,7 @@ def test_agic_logs_model_and_tool_io_at_debug(caplog) -> None:
                     ),
                 ),
                 usage=ModelUsage(input_tokens=11, output_tokens=7),
-                cont={"previous_response_id": "resp-1"},
+                continuation={"previous_response_id": "resp-1"},
             ),
             ModelCallResult(
                 message=Message.assistant("done"),
@@ -2699,7 +2699,7 @@ def test_responses_previous_response_id_replays_tool_output_without_item_id() ->
                     ),
                 ),
             ],
-            cont={"previous_response_id": "resp_1", "baseline_count": 2},
+            continuation={"previous_response_id": "resp_1", "baseline_count": 2},
         ),
         stateful=True,
     )

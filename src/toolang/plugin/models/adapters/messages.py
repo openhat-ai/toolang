@@ -34,6 +34,7 @@ from toolang.base.types.run import (
     ToolCall,
 )
 
+from ._structured_output import append_structured_output_directive
 from ._usage import billing_value, reported_cost
 
 
@@ -58,7 +59,13 @@ class MessagesModelAdapter(ModelAdapter):
             )
             response.raise_for_status()
             result = parse_message_response(_json_object(response.json()))
-            return replace(result, cont=_merge_cont(request.cont, result.cont))
+            return replace(
+                result,
+                continuation=_merge_continuation(
+                    request.continuation,
+                    result.continuation,
+                ),
+            )
 
     async def stream(
         self,
@@ -157,9 +164,9 @@ class MessagesModelAdapter(ModelAdapter):
             message=message,
             tool_calls=calls,
             usage=messages_usage(usage),
-            cont=_merge_cont(
-                request.cont,
-                _thinking_cont(
+            continuation=_merge_continuation(
+                request.continuation,
+                _thinking_continuation(
                     thinking_blocks=thinking_blocks,
                     tool_blocks=tool_blocks,
                 ),
@@ -182,6 +189,17 @@ def messages_payload(
 ) -> dict[str, object]:
     """Encode one canonical request for Anthropic Messages."""
 
+    native_schema = (
+        request.structured_output if target.structured_output is True else None
+    )
+    instructions = (
+        append_structured_output_directive(
+            request.instructions,
+            request.structured_output,
+        )
+        if request.structured_output is not None and native_schema is None
+        else request.instructions
+    )
     options = dict(target.options)
     explicit_max_tokens = "max_tokens" in options
     max_tokens = options.pop("max_tokens", 4096)
@@ -207,14 +225,14 @@ def messages_payload(
         "messages": [
             _encode_message(
                 message,
-                thinking_blocks=_cont_thinking_blocks(request.cont),
+                thinking_blocks=_continuation_thinking_blocks(request.continuation),
             )
             for message in request.messages
         ],
         "stream": stream,
     }
-    if request.instructions:
-        payload["system"] = request.instructions
+    if instructions:
+        payload["system"] = instructions
     if request.tools:
         payload["tools"] = [
             {
@@ -225,6 +243,12 @@ def messages_payload(
             for tool in request.tools
         ]
     _apply_reasoning(payload, target.reasoning)
+    _apply_structured_output(
+        payload,
+        options,
+        request.structured_output,
+        native_schema=native_schema,
+    )
     payload.update(options)
     return payload
 
@@ -257,7 +281,7 @@ def parse_message_response(payload: Mapping[str, object]) -> ModelCallResult:
         message=Message(role="assistant", parts=tuple(parts)),
         tool_calls=tuple(calls),
         usage=messages_usage(_json_object(payload.get("usage"))),
-        cont=({_THINKING_BLOCKS: call_thinking} if call_thinking else None),
+        continuation=({_THINKING_BLOCKS: call_thinking} if call_thinking else None),
     )
 
 
@@ -320,12 +344,12 @@ def messages_usage(value: Mapping[str, object]) -> ModelUsage | None:
 _THINKING_BLOCKS = "anthropic_thinking_blocks"
 
 
-def _cont_thinking_blocks(
-    cont: Mapping[str, Any] | None,
+def _continuation_thinking_blocks(
+    continuation: Mapping[str, Any] | None,
 ) -> dict[str, tuple[dict[str, object], ...]]:
-    if not isinstance(cont, Mapping):
+    if not isinstance(continuation, Mapping):
         return {}
-    raw = cont.get(_THINKING_BLOCKS)
+    raw = continuation.get(_THINKING_BLOCKS)
     if not isinstance(raw, Mapping):
         return {}
     values: dict[str, tuple[dict[str, object], ...]] = {}
@@ -343,7 +367,7 @@ def _cont_thinking_blocks(
     return values
 
 
-def _thinking_cont(
+def _thinking_continuation(
     *,
     thinking_blocks: Mapping[int, Mapping[str, object]],
     tool_blocks: Mapping[int, Mapping[str, object]],
@@ -361,20 +385,57 @@ def _thinking_cont(
     return {_THINKING_BLOCKS: by_call} if by_call else None
 
 
-def _merge_cont(
+def _merge_continuation(
     previous: Mapping[str, Any] | None,
     current: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
     merged = dict(previous or {})
     merged.update(dict(current or {}))
-    blocks = _cont_thinking_blocks(previous)
-    blocks.update(_cont_thinking_blocks(current))
+    blocks = _continuation_thinking_blocks(previous)
+    blocks.update(_continuation_thinking_blocks(current))
     if blocks:
         merged[_THINKING_BLOCKS] = {
             call_id: [dict(block) for block in values]
             for call_id, values in blocks.items()
         }
     return merged or None
+
+
+def _apply_structured_output(
+    payload: dict[str, object],
+    options: dict[str, Any],
+    schema: dict[str, object] | None,
+    *,
+    native_schema: dict[str, object] | None,
+) -> None:
+    if schema is None:
+        return
+    raw_options = options.pop("output_config", None)
+    if raw_options is not None and not isinstance(raw_options, Mapping):
+        raise ToolangError(
+            "Messages output_config format conflicts with normalized structured output"
+        )
+    option_config = (
+        dict(cast(Mapping[str, object], raw_options)) if raw_options is not None else {}
+    )
+    if "format" in option_config:
+        raise ToolangError(
+            "Messages output_config format conflicts with normalized structured output"
+        )
+    raw_current = payload.get("output_config")
+    current = (
+        dict(cast(Mapping[str, object], raw_current))
+        if isinstance(raw_current, Mapping)
+        else {}
+    )
+    current.update(option_config)
+    if native_schema is not None:
+        current["format"] = {
+            "type": "json_schema",
+            "schema": dict(native_schema),
+        }
+    if current:
+        payload["output_config"] = current
 
 
 def _encode_message(

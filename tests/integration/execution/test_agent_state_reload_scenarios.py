@@ -53,7 +53,7 @@ _ACTIVE_AGIC_SOURCE = """
 instruct:
   old state
 
-agic active:
+agic active -> Number:
   recall = none
   context: none
   user: hello
@@ -62,7 +62,7 @@ agic active:
 _RELOADED_ACTIVE_AGIC_SOURCE = _ACTIVE_AGIC_SOURCE.replace(
     "old state",
     "new state",
-)
+).replace("-> Number", "-> Boolean")
 
 _PARALLEL_SOURCE = """
 instruct:
@@ -301,10 +301,10 @@ def test_reload_refreshes_the_next_step_of_an_active_agic(tmp_path: Path) -> Non
         source=_ACTIVE_AGIC_SOURCE,
         responses=(
             ScriptedModelTurn(
-                result=ModelCallResult(message=Message.assistant("first")),
+                result=ModelCallResult(message=Message.assistant("1")),
                 gate=first_call,
             ),
-            ModelCallResult(message=Message.assistant("second")),
+            ModelCallResult(message=Message.assistant("7")),
         ),
     )
     reloaded = _durable_state(harness, _RELOADED_ACTIVE_AGIC_SOURCE)
@@ -338,6 +338,14 @@ def test_reload_refreshes_the_next_step_of_an_active_agic(tmp_path: Path) -> Non
             ]
             assert "old state" in harness.adapter.invocations[0].call.instructions
             assert "new state" in harness.adapter.invocations[1].call.instructions
+            assert harness.adapter.invocations[0].call.structured_output == {
+                "type": "number"
+            }
+            assert harness.adapter.invocations[1].call.structured_output == {
+                "type": "number"
+            }
+            assert root.output is not None
+            assert harness.store.resolve_value(root.output.value) == 7
 
     asyncio.run(scenario())
 

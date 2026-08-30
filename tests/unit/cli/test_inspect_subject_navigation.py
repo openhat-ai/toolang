@@ -121,7 +121,7 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
                 },
             ),
         ),
-        cont={"cursor": "next"},
+        continuation={"cursor": "next"},
     )
 
     renderables = inspect_commands._model_call_renderables(

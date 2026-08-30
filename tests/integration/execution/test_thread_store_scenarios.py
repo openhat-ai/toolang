@@ -22,7 +22,12 @@ from toolang.base.types.message import (
 from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall
 from toolang.base.types.tool import ToolDefinition
 from toolang.execution.history import RunHistory
-from toolang.execution.records import StepRecord
+from toolang.execution.records import (
+    StepRecord,
+    StoredModelStepGiven,
+    stored_step_given_from_data,
+    stored_step_given_to_data,
+)
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     ControlRef,
@@ -264,7 +269,7 @@ def test_reopened_store_rebuilds_stateful_tool_loop_without_duplicate_blobs(
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
-agic calculate(_: Text) -> Text:
+agic calculate(_: Text) -> Boolean:
   recall = none
   context: none
   instruct: none
@@ -274,11 +279,11 @@ agic calculate(_: Text) -> Text:
             ModelCallResult(
                 message=Message(role="assistant", parts=(call_part,)),
                 tool_calls=(call,),
-                cont={"cursor": "turn-1"},
+                continuation={"cursor": "turn-1"},
             ),
             ModelCallResult(
-                message=Message.assistant("six"),
-                cont={"cursor": "turn-2"},
+                message=Message.assistant("true"),
+                continuation={"cursor": "turn-2"},
             ),
         ],
         tools={tool.name: tool},
@@ -296,7 +301,15 @@ agic calculate(_: Text) -> Text:
             )
 
             assert record.status == "succeeded"
-            assert harness.adapter.invocations[1].call.cont == {"cursor": "turn-1"}
+            assert harness.adapter.invocations[0].call.structured_output == {
+                "type": "boolean"
+            }
+            assert harness.adapter.invocations[1].call.structured_output == {
+                "type": "boolean"
+            }
+            assert harness.adapter.invocations[1].call.continuation == {
+                "cursor": "turn-1"
+            }
             assert harness.adapter.invocations[1].call.messages[-1].parts == (
                 ToolResultPart(
                     tool_call_id=call.tool_call_id,
@@ -325,8 +338,10 @@ agic calculate(_: Text) -> Text:
         )
         assert isinstance(model_steps[0].noted, ModelStepNoted)
         assert isinstance(model_steps[1].noted, ModelStepNoted)
-        assert model_steps[0].noted.cont == {"cursor": "turn-1"}
-        assert model_steps[1].noted.cont == {"cursor": "turn-2"}
+        assert isinstance(model_steps[0].given, StoredModelStepGiven)
+        assert model_steps[0].given.call.structured_output == {"type": "boolean"}
+        assert model_steps[0].noted.continuation == {"cursor": "turn-1"}
+        assert model_steps[1].noted.continuation == {"cursor": "turn-2"}
 
         connection = sqlite3.connect(reopened.db_path)
         try:
@@ -343,6 +358,32 @@ agic calculate(_: Text) -> Text:
             connection.close()
     finally:
         reopened.close()
+
+
+def test_legacy_stored_model_call_defaults_structured_output_to_none() -> None:
+    legacy = stored_step_given_from_data(
+        "model",
+        {
+            "model": "test/model",
+            "call": {
+                "instructions": "instruction-ref",
+                "messages": [],
+                "tools": None,
+                "cont": {"cursor": "legacy"},
+            },
+        },
+    )
+
+    assert isinstance(legacy, StoredModelStepGiven)
+    assert legacy.call.structured_output is None
+    assert legacy.call.continuation == {"cursor": "legacy"}
+    assert stored_step_given_to_data("model", legacy)["call"] == {
+        "instructions": "instruction-ref",
+        "messages": [],
+        "tools": None,
+        "structured_output": None,
+        "cont": {"cursor": "legacy"},
+    }
 
 
 @pytest.mark.parametrize(

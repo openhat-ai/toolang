@@ -270,10 +270,15 @@ adapter, endpoint, key environment, headers, options, and scope.
 
 ## Runtime Calls and Accounting
 
-`ModelCall` contains provider-neutral instructions, messages, tools, and
-optional opaque protocol state. `ModelCallResult` contains the assistant
-message, tool calls, normalized usage, and next protocol state. Streaming emits
-ordered `ModelPartStart`, `ModelPartDelta`, and `ModelPartEnd` updates.
+`ModelCall` contains provider-neutral instructions, messages, tools, an optional
+normalized JSON Schema in `structured_output`, and optional opaque
+`continuation` data. Built-in adapters translate the schema and continuation to
+their provider request fields. Native schema controls are used only when the
+resolved model advertises structured-output support; other targets receive the
+deterministic provider-wire schema directive. `ModelCallResult` contains the
+assistant message, tool calls, normalized usage, and next continuation.
+Canonical and durable JSON use the compact `cont` key. Streaming emits ordered
+`ModelPartStart`, `ModelPartDelta`, and `ModelPartEnd` updates.
 
 The runtime records inclusive token totals plus cache read/write, visible,
 reasoning, audio, and provider-specific meters. Reported provider cost is kept

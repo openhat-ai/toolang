@@ -36,6 +36,7 @@ from toolang.base.types.run import (
     ToolCall,
 )
 
+from ._structured_output import append_structured_output_directive
 from ._usage import billing_value, reported_cost
 
 
@@ -60,7 +61,13 @@ class GenerateContentModelAdapter(ModelAdapter):
             )
             response.raise_for_status()
             result = parse_generate_content(_json_object(response.json()))
-            return replace(result, cont=_merge_cont(request.cont, result.cont))
+            return replace(
+                result,
+                continuation=_merge_continuation(
+                    request.continuation,
+                    result.continuation,
+                ),
+            )
 
     async def stream(
         self,
@@ -116,8 +123,8 @@ class GenerateContentModelAdapter(ModelAdapter):
             message=Message(role="assistant", parts=tuple(parts)),
             tool_calls=tuple(calls),
             usage=generate_content_usage(usage),
-            cont=_merge_cont(
-                request.cont,
+            continuation=_merge_continuation(
+                request.continuation,
                 {_THOUGHT_SIGNATURES: signatures} if signatures else None,
             ),
         )
@@ -136,18 +143,35 @@ def generate_content_payload(
 ) -> dict[str, object]:
     """Encode one canonical request for Gemini Generate Content."""
 
+    native_schema = (
+        request.structured_output if target.structured_output is True else None
+    )
+    if (
+        native_schema is not None
+        and request.tools
+        and not _supports_structured_output_with_tools(target.model)
+    ):
+        native_schema = None
+    instructions = (
+        append_structured_output_directive(
+            request.instructions,
+            request.structured_output,
+        )
+        if request.structured_output is not None and native_schema is None
+        else request.instructions
+    )
     options = dict(target.options)
     payload: dict[str, object] = {
         "contents": [
             _encode_message(
                 message,
-                signatures=_cont_signatures(request.cont),
+                signatures=_continuation_signatures(request.continuation),
             )
             for message in request.messages
         ],
     }
-    if request.instructions:
-        payload["systemInstruction"] = {"parts": [{"text": request.instructions}]}
+    if instructions:
+        payload["systemInstruction"] = {"parts": [{"text": instructions}]}
     if request.tools:
         payload["tools"] = [
             {
@@ -167,6 +191,11 @@ def generate_content_payload(
             payload["generationConfig"] = dict(generation)
         payload.update(options)
     _apply_reasoning(payload, target.reasoning)
+    _apply_structured_output(
+        payload,
+        request.structured_output,
+        native_schema=native_schema,
+    )
     return payload
 
 
@@ -192,7 +221,7 @@ def parse_generate_content(payload: Mapping[str, object]) -> ModelCallResult:
         message=Message(role="assistant", parts=tuple(parts)),
         tool_calls=tuple(calls),
         usage=generate_content_usage(_json_object(payload.get("usageMetadata"))),
-        cont={_THOUGHT_SIGNATURES: signatures} if signatures else None,
+        continuation={_THOUGHT_SIGNATURES: signatures} if signatures else None,
     )
 
 
@@ -443,10 +472,12 @@ def _int(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _cont_signatures(cont: Mapping[str, Any] | None) -> dict[str, str]:
-    if not isinstance(cont, Mapping):
+def _continuation_signatures(
+    continuation: Mapping[str, Any] | None,
+) -> dict[str, str]:
+    if not isinstance(continuation, Mapping):
         return {}
-    value = cont.get(_THOUGHT_SIGNATURES)
+    value = continuation.get(_THOUGHT_SIGNATURES)
     if not isinstance(value, Mapping):
         return {}
     return {
@@ -456,18 +487,55 @@ def _cont_signatures(cont: Mapping[str, Any] | None) -> dict[str, str]:
     }
 
 
-def _merge_cont(
+def _merge_continuation(
     previous: Mapping[str, Any] | None,
     current: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
     merged = dict(previous or {})
     current_values = dict(current or {})
-    signatures = _cont_signatures(previous)
-    signatures.update(_cont_signatures(current))
+    signatures = _continuation_signatures(previous)
+    signatures.update(_continuation_signatures(current))
     merged.update(current_values)
     if signatures:
         merged[_THOUGHT_SIGNATURES] = signatures
     return merged or None
+
+
+def _apply_structured_output(
+    payload: dict[str, object],
+    schema: dict[str, object] | None,
+    *,
+    native_schema: dict[str, object] | None,
+) -> None:
+    if schema is None:
+        return
+    raw_generation = payload.get("generationConfig")
+    generation = (
+        dict(cast(Mapping[str, object], raw_generation))
+        if isinstance(raw_generation, Mapping)
+        else {}
+    )
+    output_fields = {
+        "_responseJsonSchema",
+        "responseFormat",
+        "responseJsonSchema",
+        "responseMimeType",
+        "responseSchema",
+    }
+    if output_fields & generation.keys():
+        raise ToolangError(
+            "Generate Content response format conflicts with normalized structured output"
+        )
+    if native_schema is None:
+        return
+    generation["responseMimeType"] = "application/json"
+    generation["responseJsonSchema"] = dict(native_schema)
+    payload["generationConfig"] = generation
+
+
+def _supports_structured_output_with_tools(model: str) -> bool:
+    model_name = model.rsplit("/", 1)[-1].lower()
+    return model_name.startswith("gemini-3")
 
 
 def _apply_reasoning(

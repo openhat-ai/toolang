@@ -36,14 +36,15 @@ def log_model_request(
     if not _LOGGER.isEnabledFor(logging.DEBUG):
         return
     _LOGGER.debug(
-        "model.request thread=%s run=%s step=%s instructions=%s messages=%s tools=%s cont=%s",
+        "model.request thread=%s run=%s step=%s instructions=%s messages=%s tools=%s structured_output=%s continuation=%s",
         thread_id,
         run_id,
         step_index,
         _preview(" ".join(request.instructions.split())),
         _data([message.to_data() for message in request.messages]),
         _data([tool.name for tool in request.tools]),
-        _data(request.cont),
+        _data(request.structured_output),
+        _data(request.continuation),
     )
 
 
@@ -61,7 +62,7 @@ def log_model_result(
         else None
     )
     _LOGGER.debug(
-        "model.result thread=%s run=%s step=%s message=%s tool_calls=%s usage=%s cont=%s",
+        "model.result thread=%s run=%s step=%s message=%s tool_calls=%s usage=%s continuation=%s",
         thread_id,
         run_id,
         step_index,
@@ -78,7 +79,7 @@ def log_model_result(
             ]
         ),
         _data(usage),
-        _data(result.cont),
+        _data(result.continuation),
     )
 
 

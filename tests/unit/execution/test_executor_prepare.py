@@ -275,7 +275,9 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     ]
 
 
-def test_prepare_agic_includes_declared_output_contract(tmp_path: Path) -> None:
+def test_prepare_agic_keeps_declared_output_contract_out_of_instructions(
+    tmp_path: Path,
+) -> None:
     root = tmp_path / "toolang"
     provider = _provider()
     adapter = _Adapter()
@@ -359,13 +361,8 @@ def test_prepare_agic_includes_declared_output_contract(tmp_path: Path) -> None:
         variables={"_": run.input.primary, **run.input.named},
     )
 
-    assert "<output-contract>" in prepared.instructions
-    assert "type: Text[]" in prepared.instructions
-    assert "For Number, return exactly one JSON number such as 7.5." in (
-        prepared.instructions
-    )
-    assert "For Boolean, return exactly true or false." in prepared.instructions
-    assert "Use raw JSON for Json, array, and struct values." in prepared.instructions
+    assert "<output-contract>" not in prepared.instructions
+    assert "type: Text[]" not in prepared.instructions
 
 
 def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None:

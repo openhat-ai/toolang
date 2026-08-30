@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field, replace
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from toolang.base.types.message import Message, ToolResultPart
@@ -12,9 +13,9 @@ from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelContinuation, ModelUsage, ToolCall
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
-from toolang.lang.ast import AgicDecl, RunStmt, Span
+from toolang.lang.ast import AgicDecl, RunStmt, Span, StructDecl
 from toolang.lang.errors import ToolangOutputError
-from toolang.lang.input import coerce_output
+from toolang.lang.input import coerce_output, output_json_schema
 from toolang.state.state import AgentState
 from toolang.state.state import state_program
 
@@ -55,6 +56,15 @@ if TYPE_CHECKING:
     from ..executor import _Execution
 
 
+@dataclass(frozen=True, slots=True)
+class _OutputBinding:
+    """One immutable output contract for a complete Agic invocation."""
+
+    type_name: str | None = None
+    structs: Mapping[str, StructDecl] = field(default_factory=dict)
+    structured_output: dict[str, object] | None = None
+
+
 @dataclass(slots=True)
 class _AgicState:
     """Mutable state shared by one agic's model and tool steps."""
@@ -75,7 +85,8 @@ class _AgicState:
     limits: RunLimits = RunLimits()
     record_output: Callable[[Pointer], None] = lambda _ref: None
     output: Pointer | None = None
-    cont: ModelContinuation | None = None
+    continuation: ModelContinuation | None = None
+    output_binding: _OutputBinding = field(default_factory=_OutputBinding)
     next_step: int = 0
     last_step: int | None = None
     next_model_inputs: tuple[Pointer, ...] | None = None
@@ -182,6 +193,15 @@ async def execute(
         return prepared
 
     prepared = refresh_frame(binding.state, binding.state_ref)
+    output_structs = program_structs(prepared.run)
+    output_binding = _OutputBinding(
+        type_name=prepared.agic.output,
+        structs=MappingProxyType(dict(output_structs)),
+        structured_output=output_json_schema(
+            prepared.agic.output,
+            structs=output_structs,
+        ),
+    )
     state = _AgicState(
         prepared,
         layout=execution.layout,
@@ -199,6 +219,7 @@ async def execute(
         limits=binding.limits,
         record_output=lambda ref: execution.record_output(binding.run_id, ref),
         messages=list(prepared.messages),
+        output_binding=output_binding,
         execution=execution,
         next_step=execution.next_step(binding.run_id),
         initial_inputs=tuple(
@@ -212,18 +233,17 @@ async def execute(
     message = await _execute(state)
     if state.output is None:
         raise RuntimeError("agic completed without a model output")
-    effective_agic = state.prepared.agic
-    structs = program_structs(state.prepared.run)
+    output_type = state.output_binding.type_name
     try:
         output = coerce_output(
             message or Message(role="assistant"),
-            effective_agic.output,
-            structs=structs,
+            output_type,
+            structs=state.output_binding.structs,
         )
     except ToolangOutputError:
-        if not _can_repair_output(state, effective_agic.output):
+        if not _can_repair_output(state, output_type):
             raise
-        state.messages.append(_output_repair_message(effective_agic.output))
+        state.messages.append(_output_repair_message(output_type))
         state.repairing_output = True
         try:
             message = await _execute(state)
@@ -231,14 +251,14 @@ async def execute(
             state.repairing_output = False
         output = coerce_output(
             message or Message(role="assistant"),
-            effective_agic.output,
-            structs=structs,
+            output_type,
+            structs=state.output_binding.structs,
         )
     return Local(
         output,
         "item",
         state.output,
-        type_name=effective_agic.output or "Part[]",
+        type_name=output_type or "Part[]",
     )
 
 

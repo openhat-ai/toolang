@@ -1886,7 +1886,10 @@ flow scattered(_: Text) -> Text[]:
 
             assert root.status == "succeeded"
             assert _output_value(harness, root.id) == ["a", "b"]
-            assert "type: Text[]" in harness.adapter.invocations[0].call.instructions
+            assert harness.adapter.invocations[0].call.structured_output == {
+                "items": {"type": "string"},
+                "type": "array",
+            }
             assert "Return distinct pieces of this source:\nsplit" in message_text(
                 harness.adapter.invocations[0].call.messages[-1].parts
             )

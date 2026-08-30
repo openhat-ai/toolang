@@ -23,6 +23,7 @@ from toolang.lang.input import (
     coerce_input,
     coerce_output,
     decode_json_input,
+    output_json_schema,
     parse_input,
     resolve_input_parts,
     resolve_input_parts_with_provenance,
@@ -509,3 +510,56 @@ def test_output_coercion_keeps_undeclared_assistant_parts() -> None:
 
     assert coerce_output(message, None) == Array("Part[]", (audio,))
     assert coerce_output(Message.assistant("3"), "Number") == 3
+
+
+def test_output_json_schema_normalizes_scalar_and_unstructured_types() -> None:
+    assert output_json_schema(None) is None
+    assert output_json_schema("Part") is None
+    assert output_json_schema("Part[]") is None
+    assert output_json_schema("Text") is None
+    assert output_json_schema("Number") == {"type": "number"}
+    assert output_json_schema("Boolean") == {"type": "boolean"}
+    assert output_json_schema("Json") == {}
+    assert output_json_schema("Text[]") == {
+        "items": {"type": "string"},
+        "type": "array",
+    }
+
+
+def test_output_json_schema_normalizes_optional_and_recursive_structs() -> None:
+    node = StructDecl(
+        name="Node",
+        fields=(
+            Field(name="value", type_name="Number", span=Span(1)),
+            Field(
+                name="children",
+                type_name="Node[]",
+                optional=True,
+                span=Span(1),
+            ),
+        ),
+        span=Span(1),
+    )
+
+    assert output_json_schema("Node", structs={"Node": node}) == {
+        "$defs": {
+            "Node": {
+                "additionalProperties": False,
+                "properties": {
+                    "children": {
+                        "items": {"$ref": "#/$defs/Node"},
+                        "type": "array",
+                    },
+                    "value": {"type": "number"},
+                },
+                "required": ["value"],
+                "type": "object",
+            }
+        },
+        "$ref": "#/$defs/Node",
+    }
+
+
+def test_output_json_schema_rejects_unknown_output_types() -> None:
+    with pytest.raises(ToolangError, match="unknown Toolang output type: Missing"):
+        output_json_schema("Missing")
