@@ -123,7 +123,7 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
                 },
             ),
         ),
-        structured_output={"type": "boolean"},
+        output_schema={"type": "boolean"},
         continuation={"cursor": "next"},
     )
 
@@ -186,8 +186,9 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
     section_titles = (
         "Instructions",
         "Messages 3",
+        "Output Contract",
+        "Output",
         "Tools 1",
-        "Structured Output",
         "Continuation",
     )
     section_indexes = []
@@ -196,6 +197,9 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
             index
             for index, renderable in enumerate(renderables)
             if renderable.plain.startswith(f"{title} ")
+            and (
+                title != "Output" or not renderable.plain.startswith("Output Contract ")
+            )
         )
         section_indexes.append(title_index)
         assert len(renderables[title_index].plain) == 80
@@ -206,6 +210,7 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
         assert renderables[title_index + 1].style == "dim"
     assert section_indexes == sorted(section_indexes)
     assert '{\n  "type": "boolean"\n}' in output
+    assert "No output." in output
     messages_heading = next(
         renderable
         for renderable in renderables
@@ -261,26 +266,37 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
         None,
     ),
 )
-def test_model_call_human_view_renders_structured_output_as_json(
+def test_model_call_human_view_renders_output_contract_as_json(
     schema: dict[str, object] | None,
 ) -> None:
     call = ModelCall(
         instructions="",
         messages=[],
-        structured_output=schema,
+        output_schema=schema,
     )
 
     renderables = inspect_commands._model_call_renderables(model_call_to_data(call))
     output = "\n".join(renderable.plain for renderable in renderables)
+    messages_index = next(
+        index
+        for index, renderable in enumerate(renderables)
+        if renderable.plain.startswith("Messages 0 ")
+    )
+    contract_index = next(
+        index
+        for index, renderable in enumerate(renderables)
+        if renderable.plain.startswith("Output Contract ")
+    )
+    output_index = next(
+        index
+        for index, renderable in enumerate(renderables)
+        if renderable.plain.startswith("Output ")
+        and not renderable.plain.startswith("Output Contract ")
+    )
     tools_index = next(
         index
         for index, renderable in enumerate(renderables)
         if renderable.plain.startswith("Tools 0 ")
-    )
-    structured_index = next(
-        index
-        for index, renderable in enumerate(renderables)
-        if renderable.plain.startswith("Structured Output ")
     )
     continuation_index = next(
         index
@@ -288,7 +304,13 @@ def test_model_call_human_view_renders_structured_output_as_json(
         if renderable.plain.startswith("Continuation ")
     )
 
-    assert tools_index < structured_index < continuation_index
+    assert (
+        messages_index
+        < contract_index
+        < output_index
+        < tools_index
+        < continuation_index
+    )
     if schema is None:
         none = next(
             renderable for renderable in renderables if renderable.plain == "None"
@@ -335,6 +357,29 @@ def test_model_call_messages_count_down_to_the_current_result() -> None:
         *(f"[{index}] user" for index in range(10, 0, -1)),
         "[=] assistant",
     ]
+    messages_index = next(
+        index
+        for index, renderable in enumerate(renderables)
+        if renderable.plain.startswith("Messages 10 ")
+    )
+    output_index = next(
+        index
+        for index, renderable in enumerate(renderables)
+        if renderable.plain.startswith("Output ")
+        and not renderable.plain.startswith("Output Contract ")
+    )
+    result_index = next(
+        index
+        for index, renderable in enumerate(renderables)
+        if renderable.plain == "[=] assistant"
+    )
+    tools_index = next(
+        index
+        for index, renderable in enumerate(renderables)
+        if renderable.plain.startswith("Tools 0 ")
+    )
+
+    assert messages_index < output_index < result_index < tools_index
 
 
 def test_human_tool_name_replaces_only_the_toolset_separator() -> None:

@@ -593,17 +593,33 @@ def _model_call_renderables(
                 role=role,
                 parts=message_data.get("parts"),
             )
-    elif result_parts is None:
+    else:
         lines.append(Text("No messages.", style="dim italic"))
+
+    _append_model_call_section(lines, "Output Contract", width=section_width)
+    output_schema = data.get("output_schema")
+    if output_schema is None:
+        lines.append(Text("None", style="dim"))
+    else:
+        lines.extend(
+            Text(line)
+            for line in json.dumps(
+                output_schema,
+                ensure_ascii=False,
+                indent=2,
+            ).splitlines()
+        )
+
+    _append_model_call_section(lines, "Output", width=section_width)
     if result_parts is not None:
-        if isinstance(messages, list) and messages:
-            lines.append(Text())
         _append_model_message(
             lines,
             index="=",
             role="assistant",
             parts=result_parts,
         )
+    else:
+        lines.append(Text("No output.", style="dim italic"))
 
     tools = data.get("tools")
     tool_count = len(tools) if isinstance(tools, list) else 0
@@ -636,20 +652,6 @@ def _model_call_renderables(
             )
     else:
         lines.append(Text("No available tools.", style="dim italic"))
-
-    _append_model_call_section(lines, "Structured Output", width=section_width)
-    structured_output = data.get("structured_output")
-    if structured_output is None:
-        lines.append(Text("None", style="dim"))
-    else:
-        lines.extend(
-            Text(line)
-            for line in json.dumps(
-                structured_output,
-                ensure_ascii=False,
-                indent=2,
-            ).splitlines()
-        )
 
     _append_model_call_section(lines, "Continuation", width=section_width)
     continuation = data.get("cont")

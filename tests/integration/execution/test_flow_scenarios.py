@@ -1886,7 +1886,7 @@ flow scattered(_: Text) -> Text[]:
 
             assert root.status == "succeeded"
             assert _output_value(harness, root.id) == ["a", "b"]
-            assert harness.adapter.invocations[0].call.structured_output == {
+            assert harness.adapter.invocations[0].call.output_schema == {
                 "items": {"type": "string"},
                 "type": "array",
             }

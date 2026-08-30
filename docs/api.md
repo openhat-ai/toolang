@@ -389,11 +389,13 @@ This is distinct from `run_ab12.0/given/call`, which exposes compact persisted
 references. Projection is local and read-only: it does not prepare a call,
 select a model, construct a provider-native request, or send provider traffic.
 
-The human view presents `Instructions`, `Messages N`, `Tools N`,
-`Structured Output`, and `Continuation` as independent sections. Structured
-output is indented JSON; calls without a schema display `None`. The JSON view
-keeps the exact normalized `structured_output` value, including `null` for
-unstructured and historical calls.
+The human view presents `Instructions`, `Messages N`, `Output Contract`,
+`Output`, `Tools N`, and `Continuation` as independent sections. The output
+contract is indented JSON; calls without a schema display `None`. `Output`
+uses the same Message and Part rendering as the input history and keeps the
+current response under `[=] assistant`; a missing response displays
+`No output.`. The JSON view keeps the exact normalized `output_schema` value,
+including `null` for unstructured and historical calls.
 
 Human output is the default. Record and container tables use the CLI's
 horizontal-rule Rich style and list direct children as relative field suffixes

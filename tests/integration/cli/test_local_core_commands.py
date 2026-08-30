@@ -809,7 +809,7 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
             origin="test",
             input=Message.user("Call"),
         )
-        structured_output: dict[str, object] = {
+        output_schema: dict[str, object] = {
             "$defs": {
                 "Answer": {
                     "additionalProperties": False,
@@ -823,7 +823,7 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
         call = ModelCall(
             instructions="Diagnose the run.",
             messages=[Message.assistant("Context"), Message.user("Question")],
-            structured_output=structured_output,
+            output_schema=output_schema,
             continuation={"provider_cursor": "next"},
         )
         store.begin_step(
@@ -896,7 +896,7 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
             },
         ],
         "tools": [],
-        "structured_output": structured_output,
+        "output_schema": output_schema,
         "cont": {"provider_cursor": "next"},
     }
     assert references.exit_code == 0, references.stderr
@@ -916,14 +916,65 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
     assert "Complete answer" in human_output
     assert "Tools 0" in human_output
     assert "No available tools." in human_output
-    assert "Structured Output" in human_output
-    assert json.dumps(structured_output, ensure_ascii=False, indent=2) in human_output
+    assert "Output Contract" in human_output
+    assert json.dumps(output_schema, ensure_ascii=False, indent=2) in human_output
+    assert "Output" in human_output
     assert "Continuation" in human_output
     assert "provider_cursor" in human_output
     assert '"instructions":' not in human_output
     assert "projected as model-call" not in human_output
+    assert [
+        human_output.index(title)
+        for title in (
+            "Instructions",
+            "Messages 2",
+            "Output Contract",
+            "Output ░",
+            "Tools 0",
+            "Continuation",
+        )
+    ] == sorted(
+        human_output.index(title)
+        for title in (
+            "Instructions",
+            "Messages 2",
+            "Output Contract",
+            "Output ░",
+            "Tools 0",
+            "Continuation",
+        )
+    )
     assert rejected.exit_code == 2
     assert "does not support projector model-call" in rejected.stderr
+
+    connection = sqlite3.connect(AgentLayout.resident(root, "alice").run_store)
+    try:
+        row = connection.execute(
+            "SELECT given FROM steps WHERE run = ? AND path = ?",
+            ("run_model_call", "0"),
+        ).fetchone()
+        assert row is not None
+        given = json.loads(row[0])
+        given["call"]["structured_output"] = given["call"].pop("output_schema")
+        connection.execute(
+            "UPDATE steps SET given = ? WHERE run = ? AND path = ?",
+            (json.dumps(given), "run_model_call", "0"),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    structured_output_legacy = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_model_call.0",
+        "model-call",
+        "--json",
+    )
+
+    assert structured_output_legacy.exit_code == 0, structured_output_legacy.stderr
+    assert json.loads(structured_output_legacy.stdout)["output_schema"] == output_schema
 
     connection = sqlite3.connect(AgentLayout.resident(root, "alice").run_store)
     try:
@@ -942,7 +993,7 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
     finally:
         connection.close()
 
-    legacy = _invoke(
+    schema_absent_legacy = _invoke(
         root,
         "alice",
         "inspect",
@@ -951,8 +1002,8 @@ def test_inspect_projects_complete_persisted_model_call(tmp_path: Path) -> None:
         "--json",
     )
 
-    assert legacy.exit_code == 0, legacy.stderr
-    assert json.loads(legacy.stdout)["structured_output"] is None
+    assert schema_absent_legacy.exit_code == 0, schema_absent_legacy.stderr
+    assert json.loads(schema_absent_legacy.stdout)["output_schema"] is None
 
 
 @pytest.mark.parametrize(

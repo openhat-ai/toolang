@@ -145,7 +145,7 @@ class ModelCall:
     instructions: str
     messages: list[Message]
     tools: tuple[ToolDefinition, ...] = field(default_factory=tuple)
-    structured_output: dict[str, object] | None = None
+    output_schema: dict[str, object] | None = None
     continuation: ModelContinuation | None = field(
         default=None,
         metadata={

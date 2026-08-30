@@ -159,10 +159,10 @@ agic decide(_: Text) -> Boolean:
             initial = harness.adapter.invocations[0].call
             assert "<output-contract>" not in initial.instructions
             assert "type: Boolean" not in initial.instructions
-            assert initial.structured_output == {"type": "boolean"}
+            assert initial.output_schema == {"type": "boolean"}
             repair = harness.adapter.invocations[1].call
             assert repair.tools == ()
-            assert repair.structured_output == initial.structured_output
+            assert repair.output_schema == initial.output_schema
             assert repair.messages[-1].role == "user"
             repair_part = repair.messages[-1].parts[0]
             assert isinstance(repair_part, TextPart)

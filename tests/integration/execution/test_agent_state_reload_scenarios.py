@@ -338,10 +338,10 @@ def test_reload_refreshes_the_next_step_of_an_active_agic(tmp_path: Path) -> Non
             ]
             assert "old state" in harness.adapter.invocations[0].call.instructions
             assert "new state" in harness.adapter.invocations[1].call.instructions
-            assert harness.adapter.invocations[0].call.structured_output == {
+            assert harness.adapter.invocations[0].call.output_schema == {
                 "type": "number"
             }
-            assert harness.adapter.invocations[1].call.structured_output == {
+            assert harness.adapter.invocations[1].call.output_schema == {
                 "type": "number"
             }
             assert root.output is not None

@@ -33,11 +33,11 @@ from tests.support.execution_fixtures import (
 )
 
 
-def test_model_call_payload_uses_structured_output_and_compact_cont_key() -> None:
+def test_model_call_payload_uses_output_schema_and_compact_cont_key() -> None:
     call = ModelCall(
         instructions="Return the value.",
         messages=[Message.user("Decide")],
-        structured_output={"type": "boolean"},
+        output_schema={"type": "boolean"},
         continuation={"cursor": "next"},
     )
 
@@ -52,10 +52,14 @@ def test_model_call_payload_uses_structured_output_and_compact_cont_key() -> Non
             }
         ],
         "tools": [],
-        "structured_output": {"type": "boolean"},
+        "output_schema": {"type": "boolean"},
         "cont": {"cursor": "next"},
     }
     assert model_call_from_data(data) == call
+
+    legacy_data = {**data, "structured_output": data["output_schema"]}
+    legacy_data.pop("output_schema")
+    assert model_call_from_data(legacy_data) == call
 
 
 def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:

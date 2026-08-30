@@ -115,7 +115,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
                 if prepared.model.tools and not state.repairing_output
                 else ()
             ),
-            structured_output=deepcopy(state.output_binding.structured_output),
+            output_schema=deepcopy(state.output_binding.output_schema),
             continuation=state.continuation,
         )
         return StepBegin(
