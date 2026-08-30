@@ -144,11 +144,11 @@ def test_cli_no_args_still_shows_root_help(
 def test_cli_control_commands_have_consistent_order_and_descriptions() -> None:
     group = typer.main.get_command(cli.app)
     expected = {
-        "chat": "Start a run in a terminal chat.",
+        "chat": "Start an interactive TUI",
         "steer": "Steer an active run.",
         "cancel": "Cancel an active run.",
         "retry": "Retry a run from a failed step.",
-        "rerun": "Start a new run from a prior invocation.",
+        "rerun": "Rerun an earlier run as a new one.",
         "rewind": "Rewind a thread to an earlier run.",
         "fork": "Fork a thread from an earlier run.",
     }
@@ -189,9 +189,9 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
         "Inspection Commands": (
             "inspect",
             "caps",
+            "tools",
             "models",
             "providers",
-            "tools",
             "catalogs",
             "adapters",
             "toolsets",
