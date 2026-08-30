@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import cast
 
 from toolang.common.query import QueryDataset
-from toolang.lang.ast import AgicDecl, FlowDecl
+from toolang.lang.ast import AgicDecl, FlowDecl, Program
 from toolang.lang.runnable_query import (
     RUNNABLE_DEFINITION,
     RUNNABLE_SCHEMA,
@@ -28,7 +28,10 @@ def runnable_dataset(
     actions = route_actions or {}
     raw_index = getattr(state, "runnables", None)
     raw_modules = getattr(state, "runnable_modules", None)
-    if isinstance(raw_index, Mapping) and isinstance(raw_modules, Mapping):
+    if isinstance(state, Program):
+        index = {item.name: item for item in (*effective_agics(state), *state.flows)}
+        modules = {name: "agent" for name in index}
+    elif isinstance(raw_index, Mapping) and isinstance(raw_modules, Mapping):
         index = cast(Mapping[str, AgicDecl | FlowDecl], raw_index)
         modules = cast(Mapping[str, str], raw_modules)
     else:

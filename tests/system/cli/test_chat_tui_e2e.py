@@ -30,7 +30,11 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
             "scripted",
         )
         session.send(b":flow research\r")
-        session.wait_for("runnable query matched no items")
+        session.wait_for("flowresearch")
+        session.send(b"\x1b\r")
+        session.wait_for("■ flow:research")
+        session.send(b":agic chat\r")
+        session.wait_for("■ agic:chat")
         session.send(b"hello from user")
         session.wait_for("hello from user")
         session.send(b"\r")

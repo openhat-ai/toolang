@@ -807,6 +807,15 @@ def test_script_materializes_input_local_runnable_refs() -> None:
     assert commands == (RunOverride("default", "runnable", "agic:demo"),)
 
 
+def test_script_materializes_input_local_runnable_queries() -> None:
+    commands = script._materialize_script_runnable_commands(
+        (RunOverride("default", "runnable", "*[kind=agic;name=demo]"),),
+        program=script.Program.from_source(_SOURCE),
+    )
+
+    assert commands == (RunOverride("default", "runnable", "agic:demo"),)
+
+
 def test_remote_script_rejects_mixed_named_input_sources() -> None:
     with pytest.raises(
         ValueError,

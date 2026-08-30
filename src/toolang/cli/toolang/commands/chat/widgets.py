@@ -114,8 +114,8 @@ class ModelPicker:
         self.buffer.text = ""
         current, _effort = self._current()
         current = current or self.default
-        refs = [self._text(item.get("ref")) for item in self._filtered_items()]
-        self.index = refs.index(current) if current in refs else 0
+        selections = [self._selection(item) for item in self._filtered_items()]
+        self.index = selections.index(current) if current in selections else 0
         self.visible = True
         self._invalidate()
 
@@ -188,7 +188,7 @@ class ModelPicker:
                 if efforts:
                     self.stage = "effort"
                     current_model, current_effort = self._current()
-                    selected_ref = self._text(self.selected_model.get("ref"))
+                    selected_ref = self._selection(self.selected_model)
                     choices: tuple[ReasoningEffort | None, ...] = (None, *efforts)
                     self.index = (
                         choices.index(current_effort)
@@ -207,9 +207,11 @@ class ModelPicker:
         def cancel(_event) -> None:
             if self.stage == "effort":
                 self.stage = "model"
-                selected_ref = self._text((self.selected_model or {}).get("ref"))
-                refs = [self._text(item.get("ref")) for item in self._filtered_items()]
-                self.index = refs.index(selected_ref) if selected_ref in refs else 0
+                selected_ref = self._selection(self.selected_model or {})
+                selections = [self._selection(item) for item in self._filtered_items()]
+                self.index = (
+                    selections.index(selected_ref) if selected_ref in selections else 0
+                )
                 self.selected_model = None
                 self._invalidate()
                 return
@@ -218,11 +220,11 @@ class ModelPicker:
             self._invalidate()
 
     def _finish(self, effort: ReasoningEffort | None) -> None:
-        ref = self._text((self.selected_model or {}).get("ref"))
-        if ref is None:
+        selection = self._selection(self.selected_model or {})
+        if selection is None:
             return
         self.visible = False
-        self._commit(ref, effort)
+        self._commit(selection, effort)
         self._close()
         self._invalidate()
 
@@ -284,15 +286,16 @@ class ModelPicker:
         fragments: list[tuple[str, str]] = []
         for row, item in enumerate(items):
             ref = self._text(item.get("ref")) or ""
+            selection = self._selection(item)
             name = self._text(item.get("name")) or ref
             style = "class:picker.selected" if row == self.index else "class:picker"
             marker = "›" if row == self.index else " "
             fragments.extend(
                 [(style, f" {marker} {name} "), ("class:picker.secondary", ref)]
             )
-            if ref == current:
+            if selection == current:
                 fragments.append(("class:picker.badge", " Current "))
-            if ref == self.default:
+            if selection == self.default:
                 fragments.append(("class:picker.badge", " Default "))
             if row < len(items) - 1:
                 fragments.append(("", "\n"))
@@ -314,6 +317,10 @@ class ModelPicker:
     @staticmethod
     def _text(value: object) -> str | None:
         return value.strip() if isinstance(value, str) and value.strip() else None
+
+    @classmethod
+    def _selection(cls, item: Mapping[str, Any]) -> str | None:
+        return cls._text(item.get("selector")) or cls._text(item.get("ref"))
 
     @staticmethod
     def _efforts(item: Mapping[str, Any]) -> tuple[ReasoningEffort, ...]:

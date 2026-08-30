@@ -25,6 +25,7 @@ from toolang.plugin.models.config import (
 from toolang.plugin.models.messages import NO_AVAILABLE_MODELS_MESSAGE
 from toolang.plugin.models.resolution import (
     apply_model_query_operations,
+    model_target_ref,
     resolve_model,
     select_model_queries,
     selectable_model_targets,
@@ -73,7 +74,7 @@ def agent_model_targets(
 
     selection = _snapshot_model_selection(setup, state)
     queries = _select_agent_model_queries(selection, ceiling)
-    targets = (
+    query_targets = (
         selectable_model_targets(
             providers=setup.providers,
             models=setup.models,
@@ -85,17 +86,26 @@ def agent_model_targets(
         if queries
         else ()
     )
+    targets = tuple(
+        (model_target_ref(target), target) for _query, target in query_targets
+    )
+    refs = tuple(ref for ref, _target in targets)
+    if len(set(refs)) != len(refs):
+        duplicate = next(ref for ref in refs if refs.count(ref) > 1)
+        raise ToolangError(
+            f"selectable models have duplicate concrete ref: {duplicate}"
+        )
     if not queries:
         return None, targets
     if setup.bindings.model is None:
-        return queries[0], targets
+        return targets[0][0], targets
     default_target = resolve_model(
         selection,
         query=setup.bindings.model,
         allowed_queries=queries,
     )
     default = next(
-        (exact_query for exact_query, target in targets if target == default_target),
+        (ref for ref, target in targets if target == default_target),
         None,
     )
     if default is None:

@@ -56,11 +56,11 @@ def models(core: AgentCoreDep) -> dict[str, object]:
         "default": resolved_default,
         "items": [
             _model_item(
-                selector=selector,
+                ref=ref,
                 target=target,
                 efforts=model_reasoning_efforts(selection, target),
             )
-            for selector, target in targets
+            for ref, target in targets
         ],
     }
 
@@ -281,17 +281,12 @@ def _runtime_sandbox_spec(runtime_state: dict[str, object]) -> str:
 
 
 def _model_item(
-    *, selector: str, target: Any, efforts: tuple[str, ...]
+    *, ref: str, target: Any, efforts: tuple[str, ...]
 ) -> dict[str, object]:
     return {
-        "selector": selector,
-        "ref": target.ref,
+        "ref": ref,
         "name": target.name,
         "provider": target.provider,
-        "model": target.model,
-        "adapter": target.adapter,
-        "tools": target.tools,
-        "streaming": target.streaming,
         "parameters": {"reasoning": {"effort": list(efforts)}},
     }
 

@@ -10,11 +10,15 @@ import click
 
 from toolang.common.errors import ToolangError
 from toolang.base.types.model import ReasoningEffort
-from toolang.execution.runnables import parse_runnable_ref
+from toolang.cli.common.model_selection import materialize_model_selection
 from toolang.execution.types import RunOverride
 from .base import AppContext, ChatResult, as_text, friendly_error
 from .input import QuickCommand
-from .policy import apply_model_selection, reasoning_effort_from_selects
+from .policy import (
+    apply_model_selection,
+    materialize_runnable_list_ref,
+    reasoning_effort_from_selects,
+)
 
 SlashOutput = str | Sequence[str] | ChatResult | None
 
@@ -260,23 +264,10 @@ def _resolve_runnable_command(
     *,
     kind: str,
 ) -> str | None:
-    requested_name, requested_kind = parse_runnable_ref(selector)
-    if kind in {"agic", "flow"}:
-        if requested_kind not in {None, kind}:
-            return None
-        requested_kind = kind
-    matches: list[str] = []
-    for item in _items(payload):
-        name = as_text(item.get("name"))
-        if name != requested_name:
-            continue
-        item_kind = as_text(item.get("kind")) or requested_kind
-        if item_kind not in {"agic", "flow"}:
-            continue
-        if requested_kind is not None and item_kind != requested_kind:
-            continue
-        matches.append(f"{item_kind}:{name}")
-    return matches[0] if len(matches) == 1 else None
+    try:
+        return materialize_runnable_list_ref(payload, selector, kind=kind)
+    except ValueError:
+        return None
 
 
 def _chat_resolve_model_command_labels(
@@ -295,50 +286,21 @@ def _chat_resolve_model_command(
     models_payload: Mapping[str, Any],
     selector: str,
 ) -> tuple[str, str] | None:
-    items = [
-        item for item in _items(models_payload) if isinstance(item.get("selector"), str)
-    ]
-    target = _model_command_value(selector)
-    exact = [
-        item
-        for item in items
-        if _model_command_value(as_text(item.get("selector")) or "") == target
-    ]
-    if len(exact) == 1:
-        return _resolved_model_command(exact[0])
-    if exact:
+    try:
+        canonical = materialize_model_selection(models_payload, selector)
+    except ValueError:
         return None
-    matches = [
-        item
-        for item in items
-        if any(
-            _model_command_value(value) == target
-            for value in (
-                as_text(item.get("ref")),
-                as_text(item.get("name")),
-                as_text(item.get("model")),
-                as_text(item.get("provider")),
-            )
-            if value is not None
-        )
-    ]
-    if len(matches) != 1:
-        return None
-    return _resolved_model_command(matches[0])
-
-
-def _resolved_model_command(match: Mapping[str, Any]) -> tuple[str, str] | None:
-    canonical = as_text(match.get("selector"))
-    if canonical is None:
+    match = next(
+        (
+            item
+            for item in _items(models_payload)
+            if (as_text(item.get("selector")) or as_text(item.get("ref"))) == canonical
+        ),
+        None,
+    )
+    if match is None:
         return None
     return canonical, _model_label(match)
-
-
-def _model_command_value(value: str) -> str:
-    text = value.strip()
-    if text.startswith("[") and text.endswith("]"):
-        return text[1:-1].strip()
-    return text
 
 
 def chat_model_label(
@@ -364,7 +326,7 @@ def _chat_model_list_lines(payload: Mapping[str, Any]) -> list[str]:
     default = as_text(payload.get("default"))
     lines: list[str] = []
     for item in _items(payload):
-        selector = as_text(item.get("selector"))
+        selector = as_text(item.get("selector")) or as_text(item.get("ref"))
         if selector is None:
             continue
         efforts = _model_efforts(item)
@@ -449,7 +411,11 @@ def _resolve_model_selection(
     if len(tokens) == 1 or tokens[1].lower() == "auto":
         return ref, None
     item = next(
-        (item for item in _items(payload) if as_text(item.get("selector")) == ref),
+        (
+            item
+            for item in _items(payload)
+            if (as_text(item.get("selector")) or as_text(item.get("ref"))) == ref
+        ),
         None,
     )
     effort = tokens[1].lower()

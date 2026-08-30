@@ -119,21 +119,16 @@ class LocalChatSession:
             "default": default,
             "items": [
                 {
-                    "selector": selector,
+                    "ref": ref,
                     "name": target.name,
-                    "ref": target.ref,
                     "provider": target.provider,
-                    "model": target.model,
-                    "adapter": target.adapter,
-                    "tools": target.tools,
-                    "streaming": target.streaming,
                     "parameters": {
                         "reasoning": {
                             "effort": list(model_reasoning_efforts(selection, target))
                         }
                     },
                 }
-                for selector, target in targets
+                for ref, target in targets
             ],
         }
 
@@ -325,16 +320,16 @@ class LocalChatSession:
             raise RuntimeError("local chat run defaults are not initialized")
         return self._defaults
 
-    def _materialize_model_ref(self, selector: str) -> str:
+    def _materialize_model_ref(self, query: str) -> str:
         return materialize_model_request(
-            ModelRequest(selector),
+            ModelRequest(query),
             setup=self.setup_watcher.current(),
             state=self.state_watcher.current(),
         ).ref
 
-    def _materialize_runnable_ref(self, selector: str) -> str:
+    def _materialize_runnable_ref(self, query: str) -> str:
         state = self.state_watcher.current()
-        return resolve_public_runnable_query(state, selector).ref
+        return resolve_public_runnable_query(state, query).ref
 
     @staticmethod
     def _current_run_defaults(

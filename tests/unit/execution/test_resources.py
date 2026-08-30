@@ -125,7 +125,7 @@ def test_agent_resources_never_filter_setup_snapshot(tmp_path: Path) -> None:
     assert AgentResources.from_data(alpha.to_data()) == alpha
 
 
-def test_agent_model_default_is_the_selected_candidate_exact_query(
+def test_agent_model_default_is_the_selected_candidate_concrete_ref(
     tmp_path: Path,
 ) -> None:
     setup, state, _selection = _snapshots(tmp_path)
@@ -134,7 +134,7 @@ def test_agent_model_default_is_the_selected_candidate_exact_query(
     default, targets = agent_model_targets(setup, state, AgentCeiling())
 
     assert default == targets[0][0]
-    assert default != setup.bindings.model
+    assert default == setup.bindings.model
 
 
 def test_agent_resources_durable_data_round_trips_every_resource_kind() -> None:

@@ -47,6 +47,8 @@ from toolang.plugin.models.resolution import (
     apply_model_parameters,
     model_reasoning_efforts,
     resolve_model,
+    resolve_model_ref,
+    resolve_model_request,
     select_model_queries,
     selectable_model_targets,
 )
@@ -482,6 +484,18 @@ def test_model_resolution_rejects_ambiguous_query() -> None:
 
     with pytest.raises(ToolangError, match="ambiguous"):
         resolve_model(context, query="openai/gpt-5")
+    assert resolve_model_request(context, ref="openai/gpt-5").provider == "openai"
+    assert (
+        resolve_model_request(context, ref="openrouter/openai/gpt-5").provider
+        == "openrouter"
+    )
+    assert (
+        resolve_model_ref(
+            context,
+            query="openai/gpt-5[route.provider=openrouter]",
+        )
+        == "openrouter/openai/gpt-5"
+    )
 
 
 def test_model_resolution_rejects_missing_provider_env_before_target_use() -> None:
@@ -676,9 +690,8 @@ def test_model_resolution_rejects_query_outside_allowed_set() -> None:
             allowed_queries=("gpt-5[route.provider=openrouter]",),
         )
     message = str(exc.value)
-    assert "o3[openrouter]" in message
-    assert "allowed: openrouter/openai/gpt-5" in message
-    assert "[openrouter]" not in message.partition("(allowed: ")[2]
+    assert "o3[route.provider=openrouter]" in message
+    assert "allowed: openai/gpt-5[openrouter]" in message
 
 
 def test_model_resolution_rejects_explicitly_empty_allowed_set() -> None:

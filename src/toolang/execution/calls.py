@@ -22,7 +22,7 @@ from toolang.lang.input import (
 from toolang.lang.ast import AgicDecl, Program
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState, state_module_caps
-from toolang.plugin.models.resolution import resolve_model_ref
+from toolang.plugin.models.resolution import resolve_model_ref, resolve_model_request
 
 from .policy import parse_policy_prefix, resolve_commands
 from .runnables import (
@@ -107,7 +107,11 @@ def resolve_restart_request(
         raise RuntimeError("restart request resolved multiple run ceilings")
     model = _rerun_model_request(request, bindings)
     if model is not None:
-        model = materialize_model_request(model, setup=setup, state=state)
+        model = (
+            require_exact_model_request(model, setup=setup, state=state)
+            if isinstance(request, RerunRequest) and request.model is not None
+            else materialize_model_request(model, setup=setup, state=state)
+        )
     return RestartSpec(
         setup=setup,
         state=state,
@@ -217,12 +221,20 @@ def require_exact_model_request(
 
     if request is None:
         return None
-    materialized = materialize_model_request(request, setup=setup, state=state)
-    if materialized.ref != request.ref:
+    if "/" not in request.ref or any(
+        character in request.ref for character in "*?[],;"
+    ):
+        materialized = materialize_model_request(request, setup=setup, state=state)
         raise ValueError(
             f"run model ref must be exact: {request.ref!r} resolves to "
             f"{materialized.ref!r}"
         )
+    from .executor.resources import snapshot_model_selection
+
+    resolve_model_request(
+        snapshot_model_selection(setup, state),
+        ref=request.ref,
+    )
     return request
 
 
@@ -386,6 +398,7 @@ def validate_session_commands(
         default_runnable=_select_runnable_fallback(state, runnable_fallbacks),
     )
 
+
 def _resolve_named_sources(
     sources: NamedInputSources,
     *,
@@ -460,6 +473,7 @@ def _select_runnable_fallback(
         return dataset.schema.exact_selector_for(matches[0])
     joined = ", ".join(candidates)
     raise ValueError(f"no runnable fallback is available: {joined}")
+
 
 def _strip_final_line_break(source: str) -> str:
     if source.endswith("\r\n"):

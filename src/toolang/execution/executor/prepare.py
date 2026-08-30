@@ -33,7 +33,11 @@ from toolang.lang.input import (
     PromptInvocation,
     resolve_input_parts_with_provenance,
 )
-from toolang.plugin.models.resolution import apply_model_parameters, resolve_model
+from toolang.plugin.models.resolution import (
+    apply_model_parameters,
+    resolve_model,
+    resolve_model_request,
+)
 from toolang.state import state as cap_store
 from toolang.state.state import (
     AgentState,
@@ -98,12 +102,18 @@ def prepare_agic(
         if isinstance(run.state, AgentState)
         else context
     )
-    model = resolve_model(
-        selection,
-        query=run.bindings.model or (model_queries[0] if model_queries else None),
-        allowed_queries=model_queries,
-    )
-    if run.model_request is not None:
+    if run.model_request is None:
+        model = resolve_model(
+            selection,
+            query=run.bindings.model or (model_queries[0] if model_queries else None),
+            allowed_queries=model_queries,
+        )
+    else:
+        model = resolve_model_request(
+            selection,
+            ref=run.model_request.ref,
+            allowed_queries=model_queries,
+        )
         model = apply_model_parameters(
             selection,
             model,

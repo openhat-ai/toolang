@@ -18,7 +18,7 @@ from pydantic import TypeAdapter, ValidationError
 from toolang.base.types.message import Message
 from toolang.base.types.policy import RunBindings, RunPolicy
 from toolang.cli.common.model_selection import (
-    materialize_model_list_ref,
+    materialize_model_selection,
 )
 from toolang.common.errors import ToolangError
 from toolang.cli.common.remote_runtime import (
@@ -435,7 +435,7 @@ class RemoteChatSession:
                 request,
                 model=replace(
                     request.model,
-                    ref=materialize_model_list_ref(models, request.model.ref),
+                    ref=materialize_model_selection(models, request.model.ref),
                 ),
             )
         _runnable_name, runnable_kind = parse_runnable_ref(request.runnable.ref)

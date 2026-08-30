@@ -818,9 +818,9 @@ run starts, not by this inspection endpoint. The response includes:
   - `provider`
   - `parameters.reasoning.effort`
 
-`ref` is the exact catalog route identity, including nested model ids, and
-never includes a `[provider]` suffix. Reasoning efforts are distinct recognized
-catalog values in catalog order; an unsupported model returns an empty list.
+`ref` is the exact catalog route identity, including nested model ids, and does
+not include query predicates. Reasoning efforts are distinct recognized catalog
+values in catalog order; an unsupported model returns an empty list.
 
 `GET /api/v1/agics` and `GET /api/v1/flows` list the agent's runnable
 definitions.

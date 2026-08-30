@@ -242,14 +242,76 @@ def resolve_model_ref(
     default_query: str | None = None,
     allowed_queries: Sequence[str] | None = None,
 ) -> str:
-    """Resolve one model query to its canonical exact query."""
+    """Resolve one model query to its concrete selectable route ref."""
 
-    return _resolve_model_candidate(
-        context,
-        query=query,
-        default_query=default_query,
-        allowed_queries=allowed_queries,
-    ).exact_query
+    return model_target_ref(
+        _resolve_model_candidate(
+            context,
+            query=query,
+            default_query=default_query,
+            allowed_queries=allowed_queries,
+        ).target
+    )
+
+
+def model_target_ref(target: ModelTarget) -> str:
+    """Return the concrete public ref for one resolved model route."""
+
+    return (
+        target.ref
+        if target.ref.partition("/")[0] == target.provider
+        else f"{target.provider}/{target.ref}"
+    )
+
+
+def resolve_model_request(
+    context: SupportsModelSelection,
+    *,
+    ref: str,
+    allowed_queries: Sequence[str] | None = None,
+) -> ModelTarget:
+    """Resolve one concrete model route ref against one uptime context."""
+
+    provider_configs = _context_provider_configs(context)
+    candidates = _discover_available_candidates(
+        providers=context.providers,
+        models=context.models,
+        aliases=context.model_aliases,
+        envs=context.envs,
+        provider_configs=provider_configs,
+    )
+    matches = tuple(
+        candidate
+        for candidate in candidates
+        if model_target_ref(candidate.target) == ref
+    )
+    if not matches:
+        raise ToolangError(
+            _empty_model_selection_message(
+                providers=context.providers,
+                models=context.models,
+                aliases=context.model_aliases,
+                envs=context.envs,
+                provider_configs=provider_configs,
+            )
+        )
+    if len(matches) > 1:
+        joined = ", ".join(candidate.exact_query for candidate in matches)
+        raise ToolangError(f"model ref is ambiguous: {ref} (matches {joined})")
+    target = matches[0].target
+    _require_allowed(
+        target,
+        query=ref,
+        allowed=_resolve_allowed_targets(
+            allowed_queries,
+            providers=context.providers,
+            models=context.models,
+            aliases=context.model_aliases,
+            envs=context.envs,
+            provider_configs=provider_configs,
+        ),
+    )
+    return target
 
 
 def _resolve_model_candidate(

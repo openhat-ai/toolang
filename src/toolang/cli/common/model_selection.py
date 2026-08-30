@@ -1,60 +1,49 @@
-"""Materialize model selectors against one effective model-list payload."""
+"""Materialize model selections against one effective model-list payload."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from fnmatch import fnmatchcase
+from collections.abc import Mapping
 from typing import Any, cast
 
-from toolang.common.selectors import (
-    Selector,
-    filter_value_matches,
-    selector_identity_matches,
-)
-from toolang.plugin.models.resolution import parse_model_selector
 
-
-def materialize_model_list_ref(
+def materialize_model_selection(
     payload: Mapping[str, Any],
-    selector: str,
+    selection: str,
 ) -> str:
-    """Resolve one selector to exactly one ref exposed by a model list."""
+    """Resolve one user-facing value to one exact model selection."""
 
-    parsed = parse_model_selector(selector)
     items = _model_items(payload)
-    if _selector_is_exact_route(parsed):
-        exact_matches = tuple(
-            ref
-            for item in items
-            if (ref := _text(item.get("ref"))) is not None and ref == parsed.pattern
+    requested = _selection_value(selection)
+    exact_matches = tuple(
+        ref
+        for item in items
+        if (ref := _item_ref(item)) is not None and _selection_value(ref) == requested
+    )
+    if len(exact_matches) == 1:
+        return exact_matches[0]
+    if len(exact_matches) > 1:
+        joined = ", ".join(exact_matches)
+        raise ValueError(
+            f"model selection is ambiguous: {selection} (matches {joined})"
         )
-        if len(exact_matches) == 1:
-            return exact_matches[0]
-        if len(exact_matches) > 1:
-            joined = ", ".join(exact_matches)
-            raise ValueError(
-                f"model selector is ambiguous: {selector} (matches {joined})"
-            )
     matches = tuple(
         ref
         for item in items
-        if (ref := _text(item.get("ref"))) is not None
-        and _model_item_matches(item, ref=ref, selector=parsed)
+        if (ref := _item_ref(item)) is not None
+        and any(
+            _selection_value(value) == requested
+            for field in ("ref", "name", "model", "provider")
+            if (value := _text(item.get(field))) is not None
+        )
     )
     if len(matches) == 1:
         return matches[0]
     if not matches:
-        raise ValueError(f"model selector did not match an available model: {selector}")
+        raise ValueError(
+            f"model selection did not match an available model: {selection}"
+        )
     joined = ", ".join(matches)
-    raise ValueError(f"model selector is ambiguous: {selector} (matches {joined})")
-
-
-def _selector_is_exact_route(selector: Selector) -> bool:
-    return (
-        "/" in selector.pattern
-        and not selector.filters
-        and not any(char in selector.pattern for char in "*?[")
-    )
+    raise ValueError(f"model selection is ambiguous: {selection} (matches {joined})")
 
 
 def _model_items(payload: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
@@ -66,61 +55,15 @@ def _model_items(payload: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
     )
 
 
-def _model_item_matches(
-    item: Mapping[str, Any],
-    *,
-    ref: str,
-    selector: Selector,
-) -> bool:
-    provider = _text(item.get("provider")) or ref.partition("/")[0]
-    prefix, separator, suffix = ref.partition("/")
-    family = provider or prefix
-    name = suffix if separator and prefix == family else ref
-    route_model = suffix if separator else ref
-    route_name = route_model.rpartition("/")[2]
-    identity_matches = selector_identity_matches(
-        family=family,
-        name=name,
-        selector=selector,
-        extra_values=tuple(
-            value
-            for value in (
-                ref,
-                _text(item.get("name")),
-                provider,
-                _text(item.get("model")),
-                route_name,
-            )
-            if value is not None
-        ),
-    ) or ("/" in selector.pattern and fnmatchcase(route_model, selector.pattern))
-    if not identity_matches:
-        return False
-    for key, allowed in selector.filters.items():
-        actual = _model_filter_values(item, key=key, provider=provider)
-        if not actual or not any(
-            filter_value_matches(value, allowed) for value in actual
-        ):
-            return False
-    return True
+def _selection_value(value: str) -> str:
+    text = value.strip()
+    if text.startswith("[") and text.endswith("]"):
+        return text[1:-1].strip()
+    return text
 
 
-def _model_filter_values(
-    item: Mapping[str, Any],
-    *,
-    key: str,
-    provider: str,
-) -> tuple[str, ...]:
-    if key == "provider":
-        return (provider,)
-    value = item.get(key)
-    if isinstance(value, bool):
-        return ("true" if value else "false",)
-    if isinstance(value, str):
-        return (value,)
-    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
-        return tuple(candidate for candidate in value if isinstance(candidate, str))
-    return ()
+def _item_ref(item: Mapping[str, Any]) -> str | None:
+    return _text(item.get("ref"))
 
 
 def _text(value: object) -> str | None:

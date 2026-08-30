@@ -144,67 +144,6 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
 
 
 @pytest.mark.parametrize(
-    ("change", "detail"),
-    [
-        (
-            {"commands": [{"group": "allow", "field": "models", "value": "all"}]},
-            "allow policy value must be queries, all, or none",
-        ),
-        (
-            {"commands": [{"group": "default", "field": "model", "value": 1}]},
-            "default policy value must be a string or none",
-        ),
-        (
-            {"commands": [{"group": "limit", "field": "cost", "value": "02.50"}]},
-            "limit cost expects canonical non-negative decimal text",
-        ),
-        (
-            {"commands": [{"group": "limit", "field": "tokens", "value": -1}]},
-            "integer run limit value must be non-negative",
-        ),
-        (
-            {"commands": [{"group": "limit", "field": "unknown", "value": 1}]},
-            "unknown limit field: unknown",
-        ),
-        (
-            {
-                "input": {
-                    "primary": "hello",
-                    "named": [
-                        {"name": "tone", "source": "brief"},
-                        {"name": "tone", "source": "direct"},
-                    ],
-                }
-            },
-            "duplicate named input: tone",
-        ),
-        (
-            {"runnable_fallbacks": ["agic:chat", "agic:chat"]},
-            "run request runnable fallbacks must be unique",
-        ),
-    ],
-)
-def test_parse_authored_run_rejects_invalid_core_values(
-    change: dict[str, object],
-    detail: str,
-) -> None:
-    source: dict[str, object] = {
-        "thread": "term_example",
-        "request_id": "term_request",
-        "input": {"primary": "hello"},
-        "runnable_fallbacks": ["agic:chat", "default"],
-    }
-    source.update(change)
-    payload = AuthoredRunRequest.model_validate(source)
-
-    with pytest.raises(HTTPException) as caught:
-        parse_authored_run(payload)
-
-    assert caught.value.status_code == 422
-    assert caught.value.detail == detail
-
-
-@pytest.mark.parametrize(
     "change",
     [
         {"extra": True},

@@ -2006,14 +2006,12 @@ def test_chat_model_list_lines_render_as_columns() -> None:
         "items": [
             {
                 "name": "DeepSeek V4 Flash",
-                "selector": "deepseek/deepseek-v4-flash[deepseek]",
                 "ref": "deepseek/deepseek-v4-flash",
                 "provider": "deepseek",
                 "parameters": {"reasoning": {"effort": ["low", "high"]}},
             },
             {
                 "name": "DeepSeek V4 Pro",
-                "selector": "deepseek/deepseek-v4-pro[deepseek]",
                 "ref": "deepseek/deepseek-v4-pro",
                 "provider": "deepseek",
                 "parameters": {"reasoning": {"effort": []}},
@@ -2024,12 +2022,12 @@ def test_chat_model_list_lines_render_as_columns() -> None:
         "/model", ["Available Models", *slashes._chat_model_list_lines(payload)]
     )
     rendered = _render_text(block.render(), width=120)
-    model_lines = [line for line in rendered.splitlines() if "deepseek/" in line]
+    model_lines = [line for line in rendered.splitlines() if "DeepSeek V4" in line]
     rendered_lines = rendered.splitlines()
 
     assert ": Available Models" in rendered
     assert not rendered_lines[rendered_lines.index(": Available Models") + 1].strip()
-    assert "deepseek/deepseek-v4-flash" in rendered
+    assert "DeepSeek V4 Flash" in rendered
     assert "[deepseek]" not in rendered
     assert "default" in rendered
     assert "reasoning: low, high" in rendered
