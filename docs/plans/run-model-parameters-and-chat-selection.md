@@ -39,7 +39,7 @@ Out of scope:
 - reasoning toggle or token-budget controls in Chat;
 - implementing temperature or other new call parameters now;
 - changing raw `models.json`, catalog export, pricing, or adapter wire formats;
-- redesigning authored input values or run event transport.
+- changing text input parsing, resolved runnable values, or run event transport.
 
 ## Request Boundary
 
@@ -128,7 +128,7 @@ only in their existing input representation:
   "request_id": "term_request_123",
   "runnable": {
     "ref": "agic:chat",
-    "input": {"primary": "Hello", "named": []}
+    "input": {"_": "Hello"}
   },
   "model": {
     "ref": "openai/gpt-5",
@@ -148,6 +148,13 @@ only in their existing input representation:
   }
 }
 ```
+
+The wire `runnable.input` object uses `_` for the primary runnable input. Other
+members are named runnable inputs, for example
+`{"_": "Hello", "audience": "maintainers"}`. The transport converts this
+object to the existing `RunnableInputRaw(primary, named)` value; `_` is reserved
+and named members must use canonical parameter names. Text parsing and resolved
+input values do not change.
 
 The parameter schema is closed; unknown fields fail. A future `temperature`
 field belongs directly under `ModelParameters`, while reasoning-owned fields
@@ -258,7 +265,8 @@ same model-list payload and send the same materialized run request.
    metadata; legacy provider-filter selector input still resolves.
 2. Core and HTTP requests round-trip the grouped model request, reject unknown
    fields, preserve `thread_id`, group each runnable with its input, require a
-   concrete runnable ref, and contain no session or fallback fields.
+   concrete runnable ref, encode primary input as `_`, and contain no session or
+   fallback fields.
 3. Submission building applies session and input-local choices without mutating
    session state and materializes named allow and limit policy fields locally
    and remotely while retaining allow-ceiling intersection.
