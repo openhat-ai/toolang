@@ -155,7 +155,7 @@ agic chat(_: Part[]) -> Part[]:
     )
     setup = replace(
         harness.setup,
-        bindings=RunBindings(model="scripted", runnable="chat"),
+        bindings=RunBindings(model=TEST_MODEL_REF, runnable="chat"),
     )
     try:
         defaults = local.LocalChatSession._current_run_defaults(

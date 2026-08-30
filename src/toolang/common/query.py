@@ -185,8 +185,8 @@ class QueryPredicate:
 
 
 @dataclass(frozen=True, slots=True)
-class QuerySelector:
-    """One identity alternative with conjunctive predicates."""
+class Match:
+    """One identity pattern with conjunctive predicates."""
 
     identity_pattern: str = "*"
     identity_exact: bool = False
@@ -194,15 +194,15 @@ class QuerySelector:
 
 
 @dataclass(frozen=True, slots=True)
-class CollectionQuery:
-    """A validated disjunction of collection selectors."""
+class MatchUnion:
+    """A validated union of collection matches."""
 
-    selectors: tuple[QuerySelector, ...]
+    matches: tuple[Match, ...]
 
     def __post_init__(self) -> None:
-        if not self.selectors:
-            raise ToolangError("collection query must contain at least one selector")
-        object.__setattr__(self, "selectors", tuple(self.selectors))
+        if not self.matches:
+            raise ToolangError("collection query must contain at least one match")
+        object.__setattr__(self, "matches", tuple(self.matches))
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,18 +326,18 @@ class CollectionSchema(Generic[_T]):
             columns=tuple(columns),
         )
 
-    def parse(self, values: str | Sequence[str]) -> CollectionQuery:
-        """Parse one or more repeated query values as alternatives."""
+    def parse(self, values: str | Sequence[str]) -> MatchUnion:
+        """Parse one or more repeated query values as matches."""
 
         raw_values = (values,) if isinstance(values, str) else tuple(values)
         if not raw_values:
             raise ToolangError("collection query cannot be empty")
-        selectors: list[QuerySelector] = []
+        matches: list[Match] = []
         for raw in raw_values:
             if not isinstance(raw, str):
                 raise TypeError("collection query values must be strings")
-            selectors.extend(_parse_query_value(raw, self))
-        return CollectionQuery(tuple(selectors))
+            matches.extend(_parse_query_value(raw, self))
+        return MatchUnion(tuple(matches))
 
     def item_key(self, item: _T) -> Hashable:
         """Return the configured stable key for an item."""
@@ -380,8 +380,8 @@ class CollectionSchema(Generic[_T]):
         assert separator is not None
         return separator.join(components)
 
-    def exact_selector_for(self, item: _T) -> str:
-        """Format a selector that exactly identifies this public identity."""
+    def exact_match_for(self, item: _T) -> str:
+        """Format a match that exactly identifies this public identity."""
 
         return format_identity(self.identity_for(item), exact=True)
 
@@ -411,14 +411,6 @@ class CollectionSchema(Generic[_T]):
                 }
                 for field in self.fields.values()
             ],
-            "columns": [
-                {
-                    "label": column.label,
-                    "fields": list(column.fields),
-                    "formatter": column.formatter,
-                }
-                for column in self.columns
-            ],
         }
 
     def to_json(self) -> str:
@@ -427,7 +419,7 @@ class CollectionSchema(Generic[_T]):
         return json.dumps(self.to_data(), sort_keys=True, separators=(",", ":"))
 
     def help_text(self) -> str:
-        """Return concise human-readable identity, field, and column help."""
+        """Return concise human-readable identity and field help."""
 
         labels = (
             self.identity.labels[0]
@@ -449,10 +441,6 @@ class CollectionSchema(Generic[_T]):
                 f"  {field.name}: {field.type_name}; "
                 f"operators={','.join(field.operators)}{choices}"
             )
-        if self.columns:
-            lines.append("Columns:")
-            for column in self.columns:
-                lines.append(f"  {column.label}: {', '.join(column.fields)}")
         return "\n".join(lines)
 
 
@@ -529,27 +517,22 @@ class QueryDataset(Generic[_T]):
 
     def query(
         self,
-        query: CollectionQuery | str | Sequence[str] | None = None,
+        query: MatchUnion | str | Sequence[str] | None = None,
     ) -> tuple[_T, ...]:
         """Return a stable base-order subsequence accepted by the query."""
 
         if query is None:
             return self.items
-        parsed = (
-            query if isinstance(query, CollectionQuery) else self.schema.parse(query)
-        )
+        parsed = query if isinstance(query, MatchUnion) else self.schema.parse(query)
         return tuple(
             item
             for key, item in zip(self._keys, self.items, strict=True)
-            if any(
-                self._selector_matches(item, key, selector)
-                for selector in parsed.selectors
-            )
+            if any(self._match_accepts(item, key, match) for match in parsed.matches)
         )
 
     def require_one(
         self,
-        query: CollectionQuery | str | Sequence[str],
+        query: MatchUnion | str | Sequence[str],
         *,
         label: str | None = None,
     ) -> _T:
@@ -587,7 +570,7 @@ class QueryDataset(Generic[_T]):
 
     def apply(
         self,
-        operations: Sequence[tuple[SetOperator, CollectionQuery | str | Sequence[str]]],
+        operations: Sequence[tuple[SetOperator, MatchUnion | str | Sequence[str]]],
         *,
         active: Sequence[_T] | None = None,
     ) -> tuple[_T, ...]:
@@ -706,20 +689,20 @@ class QueryDataset(Generic[_T]):
             return f"{text[: truncate_at - 3].rstrip()}..."
         raise AssertionError(f"unhandled column formatter: {formatter}")
 
-    def _selector_matches(
+    def _match_accepts(
         self,
         item: _T,
         key: Hashable,
-        selector: QuerySelector,
+        match: Match,
     ) -> bool:
         components = self.schema.identity_components(item)
-        if not _identity_matches(components, self.schema.identity, selector):
+        if not _identity_matches(components, self.schema.identity, match):
             return False
         return all(
             _predicate_matches(
                 self._field_values(item, key, predicate.field), predicate
             )
-            for predicate in selector.predicates
+            for predicate in match.predicates
         )
 
     def _field_values(
@@ -981,37 +964,33 @@ def _unwrap_optional(annotation: Any) -> tuple[bool, Any]:
     return True, non_null[0]
 
 
-def _parse_query_value(
-    raw: str, schema: CollectionSchema[Any]
-) -> tuple[QuerySelector, ...]:
+def _parse_query_value(raw: str, schema: CollectionSchema[Any]) -> tuple[Match, ...]:
     text = raw.strip()
     if not text:
         raise ToolangError("collection query cannot be empty")
     parts = _split_top_level(text, ",", context="query")
-    return tuple(_parse_selector(part, schema) for part in parts)
+    return tuple(_parse_match(part, schema) for part in parts)
 
 
-def _parse_selector(raw: str, schema: CollectionSchema[Any]) -> QuerySelector:
+def _parse_match(raw: str, schema: CollectionSchema[Any]) -> Match:
     text = raw.strip()
     if not text:
-        raise ToolangError("collection query contains an empty selector")
+        raise ToolangError("collection query contains an empty match")
     bracket = _find_unquoted(text, "[")
     predicates_text: str | None = None
     identity_text = text
     if bracket >= 0:
         closing = _matching_closing_bracket(text, bracket)
         if closing != len(text) - 1:
-            raise ToolangError(
-                f"invalid selector {raw!r}: predicate block must be last"
-            )
+            raise ToolangError(f"invalid match {raw!r}: predicate block must be last")
         identity_text = text[:bracket].strip()
         predicates_text = text[bracket + 1 : closing].strip()
         if not predicates_text:
             raise ToolangError(
-                f"invalid selector {raw!r}: predicate block cannot be empty"
+                f"invalid match {raw!r}: predicate block cannot be empty"
             )
     elif _find_unquoted(text, "]") >= 0:
-        raise ToolangError(f"invalid selector {raw!r}: unmatched closing bracket")
+        raise ToolangError(f"invalid match {raw!r}: unmatched closing bracket")
     pattern, exact = _parse_identity(identity_text)
     predicates: tuple[QueryPredicate, ...] = ()
     if predicates_text is not None:
@@ -1021,7 +1000,7 @@ def _parse_selector(raw: str, schema: CollectionSchema[Any]) -> QuerySelector:
                 predicates_text, ";", context="predicate list"
             )
         )
-    return QuerySelector(pattern, exact, predicates)
+    return Match(pattern, exact, predicates)
 
 
 def _parse_identity(text: str) -> tuple[str, bool]:
@@ -1255,15 +1234,15 @@ def _coerce_literal(
 def _identity_matches(
     components: tuple[str, ...],
     spec: IdentitySpec,
-    selector: QuerySelector,
+    match: Match,
 ) -> bool:
     separator = spec.separator
     canonical = (
         components[0] if len(components) == 1 else (separator or "").join(components)
     )
-    if selector.identity_exact:
-        return canonical == selector.identity_pattern
-    pattern = selector.identity_pattern
+    if match.identity_exact:
+        return canonical == match.identity_pattern
+    pattern = match.identity_pattern
     if len(components) == 1 or not separator or separator not in pattern:
         return _glob_matches(components[-1], pattern)
     patterns = tuple(pattern.split(separator, maxsplit=len(components) - 1))
@@ -1481,7 +1460,7 @@ def _find_unquoted(text: str, target: str) -> int:
         elif char == target:
             return index
     if quoted:
-        raise ToolangError("unterminated JSON string in selector")
+        raise ToolangError("unterminated JSON string in match")
     return -1
 
 
@@ -1553,16 +1532,14 @@ def format_literal(value: ScalarValue) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def format_query(query: CollectionQuery) -> str:
+def format_query(query: MatchUnion) -> str:
     """Format a validated query in canonical syntax."""
 
-    selectors: list[str] = []
-    for selector in query.selectors:
-        identity = format_identity(
-            selector.identity_pattern, exact=selector.identity_exact
-        )
+    matches: list[str] = []
+    for match in query.matches:
+        identity = format_identity(match.identity_pattern, exact=match.identity_exact)
         predicates: list[str] = []
-        for predicate in selector.predicates:
+        for predicate in match.predicates:
             if (
                 predicate.field.kind == "bool"
                 and predicate.operator == "="
@@ -1583,12 +1560,12 @@ def format_query(query: CollectionQuery) -> str:
                 predicates.append(
                     f"{predicate.field.name}{predicate.operator}{format_literal(predicate.values[0])}"
                 )
-        selectors.append(identity + (f"[{';'.join(predicates)}]" if predicates else ""))
-    return ",".join(selectors)
+        matches.append(identity + (f"[{';'.join(predicates)}]" if predicates else ""))
+    return ",".join(matches)
 
 
 def format_query_text(raw: str) -> str:
-    """Normalize top-level alternative spacing without repairing invalid syntax."""
+    """Normalize top-level match spacing without repairing invalid syntax."""
 
     parts: list[str] = []
     start = 0
@@ -1623,23 +1600,23 @@ def format_query_text(raw: str) -> str:
 
 
 def prefix_query_identities(
-    query: CollectionQuery,
+    query: MatchUnion,
     *,
     prefix: str,
     separator: str,
-) -> CollectionQuery:
+) -> MatchUnion:
     """Bind one leading identity component without changing predicates."""
 
     if not prefix or not separator or separator in prefix:
         raise ToolangError("query identity prefix and separator must be unambiguous")
-    return CollectionQuery(
+    return MatchUnion(
         tuple(
-            QuerySelector(
-                identity_pattern=f"{prefix}{separator}{selector.identity_pattern}",
-                identity_exact=selector.identity_exact,
-                predicates=selector.predicates,
+            Match(
+                identity_pattern=f"{prefix}{separator}{match.identity_pattern}",
+                identity_exact=match.identity_exact,
+                predicates=match.predicates,
             )
-            for selector in query.selectors
+            for match in query.matches
         )
     )
 
@@ -1661,7 +1638,7 @@ def prefix_query_value(raw: str, *, prefix: str, separator: str) -> str:
             closing = _matching_closing_bracket(part, bracket)
             if closing != len(part) - 1:
                 raise ToolangError(
-                    f"invalid selector {part!r}: predicate block must be last"
+                    f"invalid match {part!r}: predicate block must be last"
                 )
             predicate_suffix = part[bracket:]
             identity_text = part[:bracket].strip()
@@ -1693,12 +1670,12 @@ def resolve_query_sentinels(
         return None
     if len(normalized) == 1 and normalized[0].lower() == "none":
         return ()
-    if any(_query_has_sentinel_alternative(value) for value in normalized):
+    if any(_query_has_sentinel_match(value) for value in normalized):
         raise ToolangError(f"{label} cannot mix queries with all or none")
     return tuple(normalized)
 
 
-def _query_has_sentinel_alternative(raw: str) -> bool:
+def _query_has_sentinel_match(raw: str) -> bool:
     for part in _split_top_level(raw, ",", context="query"):
         bracket = _find_unquoted(part, "[")
         identity_text = part
@@ -1706,7 +1683,7 @@ def _query_has_sentinel_alternative(raw: str) -> bool:
             closing = _matching_closing_bracket(part, bracket)
             if closing != len(part) - 1:
                 raise ToolangError(
-                    f"invalid selector {part!r}: predicate block must be last"
+                    f"invalid match {part!r}: predicate block must be last"
                 )
             identity_text = part[:bracket].strip()
         pattern, exact = _parse_identity(identity_text)
@@ -1741,16 +1718,16 @@ def _json_value(value: ScalarValue) -> object:
 
 __all__ = [
     "CollectionDefinition",
-    "CollectionQuery",
     "CollectionSchema",
     "ColumnFormatter",
     "ColumnSpec",
     "IdentitySpec",
+    "Match",
+    "MatchUnion",
     "QueryDataset",
     "QueryField",
     "QueryOperator",
     "QueryPredicate",
-    "QuerySelector",
     "SetOperator",
     "format_identity",
     "format_literal",

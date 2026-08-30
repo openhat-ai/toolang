@@ -61,6 +61,13 @@ class ModelRequest:
             raise TypeError("model request ref must be a string")
         if not self.ref or self.ref != self.ref.strip():
             raise ValueError("model request requires a canonical ref")
+        if (
+            self.ref.startswith("/")
+            or self.ref.endswith("/")
+            or any(character.isspace() for character in self.ref)
+            or any(character in self.ref for character in '*?[],;"')
+        ):
+            raise ValueError(f"model request ref must be exact: {self.ref!r}")
         if not isinstance(self.parameters, ModelParameters):
             raise TypeError("model request parameters must be ModelParameters")
 

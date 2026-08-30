@@ -11,11 +11,10 @@ import typer
 
 from ...common.context import context_agent, context_root
 from ...common.output import echo_table
-from ...common.query import emit_query_discovery, query_items
+from ...common.query import query_items
 from toolang.common.layout import AgentLayout
 from toolang.common.query import QueryDataset
 from toolang.plugin.toolsets.collections import (
-    TOOL_SCHEMA,
     ToolQueryView,
     tool_dataset,
 )
@@ -38,24 +37,10 @@ def list_tools(
         typer.Option(
             "--query",
             "-q",
-            help="Query tools. Repeat values to add alternatives.",
+            help="Query tools. Repeat to add matches; see 'too query tools'.",
         ),
     ] = None,
-    query_help: Annotated[
-        bool,
-        typer.Option("--query-help", help="Show tool query fields and operators."),
-    ] = False,
-    query_schema: Annotated[
-        bool,
-        typer.Option("--query-schema", help="Write the tool query schema as JSON."),
-    ] = False,
 ) -> None:
-    if emit_query_discovery(
-        TOOL_SCHEMA,
-        query_help=query_help,
-        query_schema=query_schema,
-    ):
-        return
     setup = _setup(_layout(ctx))
     dataset = setup_tool_dataset(setup)
     selected = query_items(dataset, query)

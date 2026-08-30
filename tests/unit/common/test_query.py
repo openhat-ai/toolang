@@ -14,6 +14,8 @@ from toolang.common.query import (
     CollectionSchema,
     ColumnSpec,
     IdentitySpec,
+    Match,
+    MatchUnion,
     QueryDataset,
     format_query,
     format_query_text,
@@ -152,7 +154,7 @@ def identities(
     return [dataset.schema.identity_for(item) for item in dataset.query(query)]
 
 
-def test_query_combines_selector_or_predicate_and_and_value_or(
+def test_query_combines_match_union_predicate_and_and_value_or(
     models: QueryDataset[ModelView],
 ) -> None:
     assert identities(
@@ -226,7 +228,7 @@ def test_quoted_text_literals_round_trip_and_globs_only_treat_star_question_spec
     assert format_query(MODEL_SCHEMA.parse('*[family="gpt=5"]')) == '*[family="gpt=5"]'
 
 
-def test_raw_query_formatting_preserves_nested_and_empty_alternatives() -> None:
+def test_raw_query_formatting_preserves_nested_and_empty_matches() -> None:
     assert (
         format_query_text('one[family in (a,b)],,two[name="x,y"],')
         == 'one[family in (a,b)], , two[name="x,y"],'
@@ -367,7 +369,7 @@ def test_one_component_identity_treats_separators_as_data() -> None:
     assert [item.key for item in dataset.query('"https://example.test/a/b"')] == ["b"]
 
 
-def test_alternatives_preserve_base_order_and_deduplicate(
+def test_matches_preserve_base_order_and_deduplicate(
     models: QueryDataset[ModelView],
 ) -> None:
     assert identities(models, ("local/*", "openai/*", "gpt-*")) == [
@@ -417,7 +419,7 @@ def test_singular_query_reports_zero_and_ambiguity(
         models.require_one("gpt-*")
 
 
-def test_schema_drives_help_json_columns_and_canonical_formatting() -> None:
+def test_schema_drives_help_json_and_canonical_formatting() -> None:
     data = MODEL_SCHEMA.to_data()
     assert data["identity"] == {
         "labels": ["provider", "model"],
@@ -433,19 +435,14 @@ def test_schema_drives_help_json_columns_and_canonical_formatting() -> None:
     assert isinstance(fields, list)
     typed_fields = cast(list[dict[str, object]], fields)
     assert [field["name"] for field in typed_fields] == list(MODEL_SCHEMA.fields)
-    assert data["columns"] == [
-        {"label": "MODEL", "fields": ["scope"], "formatter": "text"},
-        {
-            "label": "LIMIT",
-            "fields": ["limits.context", "limits.output"],
-            "formatter": "pair",
-        },
-    ]
+    assert "columns" not in data
     assert MODEL_SCHEMA.to_json() == MODEL_SCHEMA.to_json()
     assert "route.streaming: bool" in MODEL_SCHEMA.help_text()
     parsed = MODEL_SCHEMA.parse(
         '*[scope in (remote,local);family="two words";!available]'
     )
+    assert isinstance(parsed, MatchUnion)
+    assert all(isinstance(match, Match) for match in parsed.matches)
     assert (
         format_query(parsed)
         == '*[scope in (remote,local);family="two words";!available]'
@@ -502,7 +499,7 @@ def test_table_formats_currency_pairs_and_env_requirements() -> None:
     )
 
 
-def test_exact_selector_quotes_glob_identity() -> None:
+def test_exact_match_quotes_glob_identity() -> None:
     item = ModelView(
         key="glob",
         provider="provider",
@@ -517,7 +514,7 @@ def test_exact_selector_quotes_glob_identity() -> None:
         limits=Limits(1, 1),
         modalities=Modalities(("text",), ("text",)),
     )
-    assert MODEL_SCHEMA.exact_selector_for(item) == '"provider/model*literal"'
+    assert MODEL_SCHEMA.exact_match_for(item) == '"provider/model*literal"'
 
 
 def test_policy_sentinels_are_standalone_and_quoted_identity_remains_a_query() -> None:

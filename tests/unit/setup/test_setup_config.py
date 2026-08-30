@@ -16,7 +16,7 @@ from toolang.setup.config import (
     resolve_run_bindings,
     resolve_run_limits,
 )
-from toolang.state.collections import CAP_SCHEMA
+from toolang.state.collections import cap_kind_definition
 
 
 def test_setup_config_reads_only_the_toolang_root(tmp_path: Path) -> None:
@@ -88,7 +88,6 @@ def test_setup_policy_overlays_root_agent_and_frozen_overrides() -> None:
     root = {
         "allow": {
             "models": ["gateway/*"],
-            "caps": ["service/*"],
             "skills": ["reviewer"],
         },
         "default": {"model": "gateway/chat", "runnable": "agic:chat"},
@@ -106,10 +105,10 @@ def test_setup_policy_overlays_root_agent_and_frozen_overrides() -> None:
 
     assert resolve_agent_ceiling(
         (root, agent),
-        overrides={"models": ("local/*",), "caps": None},
+        overrides={"models": ("local/*",), "services": None},
     ) == AgentCeiling(
         models=("local/*",),
-        caps=("skill/editor",),
+        skills=("editor",),
     )
     assert resolve_run_bindings(
         (root, agent),
@@ -155,19 +154,31 @@ def test_setup_policy_rejects_unknown_and_invalid_fields() -> None:
         resolve_agent_ceiling(({"allow": {"models": "gateway"}},))
     with pytest.raises(ValueError, match="unknown default field: tool"):
         resolve_run_bindings(({"default": {"tool": "shell"}},))
+    with pytest.raises(ValueError, match="model request ref must be exact"):
+        resolve_run_bindings(({"default": {"model": "openai/*"}},))
     with pytest.raises(ValueError, match="unknown run limit: turns"):
         resolve_run_limits(({"limit": {"turns": 1}},))
     with pytest.raises(ValueError, match="cost must be non-negative"):
         resolve_run_limits(({"limit": {"cost": -1.0}},))
     with pytest.raises(ValueError, match="cannot mix queries with all or none"):
         resolve_agent_ceiling(({"allow": {"models": ["all,openai/*"]}},))
+    with pytest.raises(ValueError, match="unknown allow field: caps"):
+        resolve_agent_ceiling(({"allow": {"caps": ["skill/reviewer"]}},))
 
 
 def test_setup_policy_validates_owner_collection_queries_when_provided() -> None:
-    with pytest.raises(ToolangError, match="unknown caps query field"):
+    with pytest.raises(ToolangError, match="unknown skills query field"):
         resolve_agent_ceiling(
-            ({"allow": {"caps": ["*[missing=value]"]}},),
-            cap_query_schema=CAP_SCHEMA,
+            ({"allow": {"skills": ["*[missing=value]"]}},),
+            cap_query_schemas={
+                name: cap_kind_definition(kind).schema
+                for name, kind in (
+                    ("psyches", "psyche"),
+                    ("skills", "skill"),
+                    ("services", "service"),
+                    ("prompts", "prompt"),
+                )
+            },
         )
     with pytest.raises(ToolangError, match="unknown runnables query field"):
         resolve_run_bindings(
@@ -180,7 +191,7 @@ def test_setup_policy_all_and_none_are_standalone_layer_values() -> None:
     root = {"allow": {"models": ["openai/*"], "skills": ["review"]}}
     agent = {"allow": {"models": ["all"], "skills": ["none"]}}
 
-    assert resolve_agent_ceiling((root, agent)) == AgentCeiling(caps=())
+    assert resolve_agent_ceiling((root, agent)) == AgentCeiling(skills=())
 
 
 def test_old_nested_run_limits_are_not_interpreted() -> None:

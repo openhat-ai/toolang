@@ -27,6 +27,7 @@ from toolang.plugin.models.resolution import (
     apply_model_query_operations,
     model_target_ref,
     resolve_model,
+    resolve_unique_model_query,
     select_model_queries,
     selectable_model_targets,
 )
@@ -42,8 +43,15 @@ from toolang.state.state import (
     state_module_caps,
 )
 from toolang.state.collections import cap_dataset
+from toolang.state.types import EntryKind
 
 _Runnable = AgicDecl | FlowDecl
+_CAP_CEILING_FIELDS: tuple[tuple[EntryKind, str], ...] = (
+    ("psyche", "psyches"),
+    ("skill", "skills"),
+    ("service", "services"),
+    ("prompt", "prompts"),
+)
 
 
 class _ModelSelection(Protocol):
@@ -98,10 +106,10 @@ def agent_model_targets(
     if not queries:
         return None, targets
     if setup.bindings.model is None:
-        return targets[0][0], targets
+        return (targets[0][0] if targets else None), targets
     default_target = resolve_model(
         selection,
-        query=setup.bindings.model,
+        ref=setup.bindings.model,
         allowed_queries=queries,
     )
     default = next(
@@ -139,14 +147,12 @@ def resolve_agent_resources(
     tools = query_tools(dict(setup.tools), ceiling.tools)
 
     caps = state_module_caps(state, module or "agent")
-    if ceiling.caps is not None:
-        dataset = cap_dataset(caps, agent_name=setup.layout.name)
-        dataset.require_each(ceiling.caps, label="cap")
-        caps = (
-            tuple(cast(StateCap, item.record) for item in dataset.query(ceiling.caps))
-            if ceiling.caps
-            else ()
-        )
+    caps = _apply_cap_ceiling(
+        caps,
+        ceiling,
+        agent_name=setup.layout.name,
+        label="cap",
+    )
     return _agent_resources(models=models, tools=tools, caps=caps)
 
 
@@ -179,15 +185,40 @@ def apply_agent_ceiling(
     tools = query_tools(dict(available_tools), ceiling.tools)
 
     caps = resource_caps(state, resources, module=module)
-    if ceiling.caps is not None:
-        dataset = cap_dataset(caps, agent_name=setup.layout.name)
-        dataset.require_each(ceiling.caps, label="cap ceiling")
-        caps = (
-            tuple(cast(StateCap, item.record) for item in dataset.query(ceiling.caps))
-            if ceiling.caps
-            else ()
-        )
+    caps = _apply_cap_ceiling(
+        caps,
+        ceiling,
+        agent_name=setup.layout.name,
+        label="cap ceiling",
+    )
     return _agent_resources(models=models, tools=tools, caps=caps)
+
+
+def _apply_cap_ceiling(
+    caps: tuple[StateCap, ...],
+    ceiling: AgentCeiling,
+    *,
+    agent_name: str,
+    label: str,
+) -> tuple[StateCap, ...]:
+    selected_ids: set[tuple[str, str, str]] = set()
+    for kind, field in _CAP_CEILING_FIELDS:
+        entries = tuple(item for item in caps if item.kind == kind)
+        queries = getattr(ceiling, field)
+        if queries is None:
+            selected = entries
+        elif not queries:
+            selected = ()
+        else:
+            dataset = cap_dataset(entries, agent_name=agent_name, kind=kind)
+            dataset.require_each(queries, label=f"{label} {kind}")
+            selected = tuple(
+                cast(StateCap, view.record) for view in dataset.query(queries)
+            )
+        selected_ids.update((item.kind, item.name, item.ref) for item in selected)
+    return tuple(
+        item for item in caps if (item.kind, item.name, item.ref) in selected_ids
+    )
 
 
 def resolve_runnable_resources(
@@ -258,13 +289,21 @@ def validate_model_binding(
 ) -> None:
     """Validate one bound model within final runnable resources."""
 
-    if model is not None or isinstance(runnable, AgicDecl):
-        resolve_model(
-            selection,
-            query=model,
-            default_query=resources.models[0] if resources.models else None,
-            allowed_queries=resources.models,
-        )
+    if model is not None:
+        if model in resources.models:
+            resolve_unique_model_query(
+                selection,
+                query=model,
+                allowed_queries=resources.models,
+            )
+        else:
+            resolve_model(
+                selection,
+                ref=model,
+                allowed_queries=resources.models,
+            )
+    elif isinstance(runnable, AgicDecl) and not resources.models:
+        raise ToolangError(f"run resources include no models: {runnable.name}")
 
 
 def resource_tools(

@@ -53,7 +53,6 @@ ALLOW_POLICY_FIELDS = frozenset(
     {
         "models",
         "tools",
-        "caps",
         "psyches",
         "skills",
         "services",

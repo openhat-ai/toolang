@@ -40,10 +40,17 @@ def test_policy_overrides_preserve_absent_empty_and_unrestricted() -> None:
     assert resolve_limit_overrides({}, ("time=none",)) == {"time": None}
 
 
+@pytest.mark.parametrize("field", ["CAPS", "CHANNELS"])
+def test_policy_overrides_reject_unknown_allow_environment_fields(field: str) -> None:
+    with pytest.raises(ValueError, match=f"unknown allow field: {field.lower()}"):
+        resolve_ceiling_overrides({f"TOOLANG_ALLOW_{field}": "*"}, ())
+
+
 @pytest.mark.parametrize(
     ("resolver", "value", "message"),
     [
         (resolve_ceiling_overrides, "channels=web", "unknown allow field"),
+        (resolve_ceiling_overrides, "caps=review", "unknown allow field"),
         (resolve_ceiling_overrides, "models=none", "cannot combine"),
         (resolve_ceiling_overrides, "models=all,openai/*", "cannot mix"),
         (resolve_binding_overrides, "model=a", "duplicate default field"),

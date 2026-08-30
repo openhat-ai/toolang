@@ -37,6 +37,7 @@ from .commands import chat as chat_commands
 from .commands import inspect as inspect_commands
 from .commands import plugin as plugin_commands
 from .commands import program as program_commands
+from .commands import query as query_commands
 from .commands import runtime as runtime_commands
 from .commands import job as job_commands
 from .commands import model_catalog as model_catalog_commands
@@ -406,6 +407,11 @@ _registered_command(
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )(cap_commands.list_caps)
 
+_registered_command(
+    "query",
+    help=query_commands.QUERY_HELP,
+    hidden=True,
+)(query_commands.query_command)
 _registered_command(
     "fmt",
     help="Format .too files.",

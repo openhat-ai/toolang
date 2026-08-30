@@ -203,12 +203,12 @@ def test_agent_ceiling_normalizes_stable_queries() -> None:
     spec = AgentCeiling(
         models=(" openai/gpt-5 ", "openai/gpt-5"),
         tools=None,
-        caps=(),
+        skills=(),
     )
 
     assert spec.models == ("openai/gpt-5",)
     assert spec.tools is None
-    assert spec.caps == ()
+    assert spec.skills == ()
 
 
 def test_agent_ceiling_cannot_expand_empty_agent_resources(

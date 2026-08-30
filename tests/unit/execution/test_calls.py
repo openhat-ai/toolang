@@ -109,25 +109,9 @@ def test_materialized_agic_request_requires_a_model(tmp_path) -> None:
 
 
 def test_materialized_request_rejects_a_non_exact_model_query(tmp_path) -> None:
-    harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
-    try:
-        with pytest.raises(ValueError, match="model ref must be exact"):
-            resolve_run_request(
-                RunRequest(
-                    thread_id="term_test",
-                    request_id="request_with_selector",
-                    runnable=RunnableRequest(
-                        "agic:default",
-                        RunnableInputRaw(_="hello"),
-                    ),
-                    model=ModelRequest("scripted"),
-                    policy=RunPolicy(),
-                ),
-                setup=harness.setup,
-                state=harness.state,
-            )
-    finally:
-        harness.store.close()
+    del tmp_path
+    with pytest.raises(ValueError, match="model request ref must be exact"):
+        ModelRequest("script*")
 
 
 def test_materialized_request_rejects_an_unqualified_runnable(tmp_path) -> None:

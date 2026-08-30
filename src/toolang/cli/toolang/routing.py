@@ -127,6 +127,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
         _command("channel", "none"),
         _command("sandboxes", "none"),
         _command("hidden", "none"),
+        _command("query", "none"),
         _command("fmt", "none"),
         _command("parse", "none"),
         _command("serve", "after", placements=_RESIDENT, prepare="program"),

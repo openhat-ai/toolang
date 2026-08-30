@@ -86,7 +86,9 @@ sources are shown as directly accessible `https://github.com/...` URLs.
 `FORM` accepts `authored`, `inline`, `configured`, and `referenced`. `SCOPE`
 accepts `root`, `home`, and `here`. Query predicates use typed fields such as
 `scope=home`, `form=authored`, and `origin=remote`. Combined lists use
-`kind/cap` identities; kind-specific lists use local cap names.
+`psyches`, `skills`, `services`, and `prompts` as identity prefixes;
+kind-specific lists also accept local cap names. Run `too query COLLECTION` for
+the complete query contract.
 
 Typical usage:
 
@@ -238,10 +240,10 @@ Behavior:
   already-running compatible AgentServer is attached instead
 - `--dev PATH` installs Toolang in a newly started guest from one wheel; a
   directory selects its newest Toolang wheel recursively
-- `--default model=SELECTOR` supplies the invocation's setup model binding
+- `--default model=REF` supplies one exact invocation model binding
 - `--limit FIELD=VALUE` overrides one run-limit field; it may be repeated
-- `--allow DOMAIN=SELECTORS` sets model, tool, cap, or cap-kind allow fields and
-  may be repeated
+- `--allow COLLECTION=QUERY` sets one of `models`, `tools`, `psyches`, `skills`,
+  `services`, or `prompts` and may be repeated
 - host execution remains embedded when no AgentServer is active; a selected
   non-host sandbox starts a temporary AgentServer and cleans it up after the run
 - an explicit sandbox that does not match an active AgentServer is rejected
@@ -505,7 +507,7 @@ each action and outcome as an append-only plain-text line. The stable
 `Agent NAME running: ...` and `Agent NAME started: ...` result lines are written
 only after readiness succeeds.
 
-Both commands accept repeatable `--allow DOMAIN=SELECTORS`,
+Both commands accept repeatable `--allow COLLECTION=QUERY`,
 `--limit FIELD=VALUE`, and `--default FIELD=VALUE` options. The CLI parses these
 with `TOOLANG_ALLOW_*`, `TOOLANG_DEFAULT_*`, and `TOOLANG_LIMIT_*` into frozen
 field overrides passed to `SetupWatcher`.
@@ -723,8 +725,8 @@ including:
 
 Pass repeatable `--query/-q` options to select models, for example
 `toolang models --query '*[scope=remote]'` or
-`toolang models --query 'openrouter/*[adapter=chat_completions]'`. Use `--query-help` for
-the exact identity, fields, operators, and output-column mapping.
+`toolang models --query 'openrouter/*[adapter=chat_completions]'`. Run `too
+query models` for the exact identity, fields, and operators.
 
 `toolang providers` shows catalog providers and runtime availability.
 `toolang adapters` lists installed model adapter names.
@@ -761,7 +763,7 @@ The provider table footer mirrors the model footer, for example
 ## Plugin Inventory Commands
 
 - `toolang catalogs`
-- `toolang adapters [--query QUERY] [--json]`
+- `toolang adapters [--json]`
 - `toolang tools [--query QUERY]`
 - `toolang toolsets`
 - `toolang sandboxes`
@@ -983,7 +985,7 @@ that needs another presentation shape adapts these events client-side; the API
 does not maintain a second chat event vocabulary.
 
 The CLI command for interactive chat is `toolang <agent> chat [thread]
-[--sandbox <selector>] [--allow DOMAIN=SELECTORS] [--limit FIELD=VALUE]
+[--sandbox <selector>] [--allow COLLECTION=QUERY] [--limit FIELD=VALUE]
 [--default FIELD=VALUE]`.
 Without a thread id, the TUI creates a terminal chat thread on first input. With
 a thread id, it continues that thread. A stopped resident, roaming agent, or

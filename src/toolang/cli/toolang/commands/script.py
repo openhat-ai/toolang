@@ -223,7 +223,7 @@ def _runnable_command(
             type=str,
             multiple=True,
             default=(),
-            help="Set DOMAIN=SELECTORS. Repeat by domain.",
+            help="Set COLLECTION=QUERY. Repeat by collection.",
         ),
         TyperOption(
             param_decls=["--limit"],
@@ -420,7 +420,7 @@ def _materialize_script_runnable_commands(
             RunOverride(
                 "default",
                 "runnable",
-                dataset.schema.exact_selector_for(matches[0]),
+                dataset.schema.exact_match_for(matches[0]),
             )
         )
     return tuple(materialized)

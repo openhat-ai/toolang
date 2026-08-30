@@ -19,7 +19,7 @@ from toolang.cli.common.context import (
     resolve_model_catalog_option,
 )
 from toolang.cli.common.output import echo_table
-from toolang.cli.common.query import emit_query_discovery, query_items
+from toolang.cli.common.query import query_items
 from toolang.cli.config import load_config_layers
 from toolang.common.layout import AgentLayout
 from toolang.plugin.loading import list_plugin_infos
@@ -27,14 +27,10 @@ from toolang.plugin.models.catalog import (
     catalog_json_dumps,
 )
 from toolang.plugin.models.collections import (
-    ADAPTER_DEFINITION,
-    CATALOG_MODEL_SCHEMA,
-    CATALOG_PROVIDER_SCHEMA,
-    CatalogModelView,
     CatalogProviderView,
+    ModelQueryView,
     catalog_model_dataset,
-    catalog_provider_dataset,
-    plugin_inventory_dataset,
+    catalog_provider_views,
 )
 from toolang.plugin.models.config import ProviderConfig, parse_model_aliases
 from toolang.plugin.models.discovery import (
@@ -54,17 +50,9 @@ def models_command(
         typer.Option(
             "--query",
             "-q",
-            help="Query models. Repeat values to add alternatives.",
+            help="Query models. Repeat to add matches; see 'too query models'.",
         ),
     ] = None,
-    query_help: Annotated[
-        bool,
-        typer.Option("--query-help", help="Show model query fields and operators."),
-    ] = False,
-    query_schema: Annotated[
-        bool,
-        typer.Option("--query-schema", help="Write the model query schema as JSON."),
-    ] = False,
     json_: Annotated[
         bool,
         typer.Option("--json", help="Write a valid filtered models.json to stdout."),
@@ -72,12 +60,6 @@ def models_command(
 ) -> None:
     """List or export model catalog entries."""
 
-    if emit_query_discovery(
-        CATALOG_MODEL_SCHEMA,
-        query_help=query_help,
-        query_schema=query_schema,
-    ):
-        return
     setup = _setup(ctx, model_catalog=model_catalog)
     snapshot = _catalog(setup)
     available = _available_identities(ctx, setup)
@@ -87,8 +69,8 @@ def models_command(
         available=available,
         adapters=adapters,
     )
-    selected_views = cast(tuple[CatalogModelView, ...], query_items(dataset, query))
-    selected = tuple(item.record for item in selected_views)
+    selected_views = cast(tuple[ModelQueryView, ...], query_items(dataset, query))
+    selected = tuple(cast(Model, item.record) for item in selected_views)
     if json_:
         exportable = tuple(model for model in selected if not model.local)
         if len(exportable) != len(selected):
@@ -116,22 +98,6 @@ def models_command(
 def providers_command(
     ctx: typer.Context,
     model_catalog: ModelCatalogOption = None,
-    query: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--query",
-            "-q",
-            help="Query providers. Repeat values to add alternatives.",
-        ),
-    ] = None,
-    query_help: Annotated[
-        bool,
-        typer.Option("--query-help", help="Show provider query fields and operators."),
-    ] = False,
-    query_schema: Annotated[
-        bool,
-        typer.Option("--query-schema", help="Write the provider query schema as JSON."),
-    ] = False,
     json_: Annotated[
         bool,
         typer.Option("--json", help="Write catalog providers as JSON."),
@@ -139,12 +105,6 @@ def providers_command(
 ) -> None:
     """List catalog providers and runtime availability."""
 
-    if emit_query_discovery(
-        CATALOG_PROVIDER_SCHEMA,
-        query_help=query_help,
-        query_schema=query_schema,
-    ):
-        return
     setup = _setup(ctx, model_catalog=model_catalog)
     snapshot = _catalog(setup)
     base_providers = tuple(
@@ -153,7 +113,7 @@ def providers_command(
         if provider_id != "custom"
     )
     available = _available_identities(ctx, setup)
-    dataset = catalog_provider_dataset(
+    selected_views = catalog_provider_views(
         base_providers,
         available=available,
         adapters={
@@ -175,10 +135,6 @@ def providers_command(
             for provider in base_providers
         },
     )
-    selected_views = cast(
-        tuple[CatalogProviderView, ...],
-        query_items(dataset, query),
-    )
     providers = tuple(item.record for item in selected_views)
     if json_:
         typer.echo(
@@ -188,19 +144,20 @@ def providers_command(
             nl=False,
         )
         return
-    headers, base_rows = dataset.table(selected_views)
-    adapters_index = headers.index("ADAPTERS")
-    api_index = headers.index("API")
-    env_index = headers.index("ENV")
-    rows: list[tuple[str | Text, ...]] = []
-    for item, base_row in zip(selected_views, base_rows, strict=True):
-        row: list[str | Text] = list(base_row)
-        row[adapters_index] = _provider_adapters_cell(setup, item)
-        row[api_index] = _provider_api_cell(item)
-        row[env_index] = _provider_env_cell(item)
-        rows.append(tuple(row))
+    headers = ("PROVIDER", "NAME", "AVAILABLE", "ADAPTERS", "API", "ENV")
+    rows = [
+        (
+            item.id,
+            item.name,
+            f"{item.available_models}/{item.model_count}",
+            _provider_adapters_cell(setup, item),
+            _provider_api_cell(item),
+            _provider_env_cell(item),
+        )
+        for item in selected_views
+    ]
     if not rows:
-        typer.echo("No providers matched query." if query else "No providers found.")
+        typer.echo("No providers found.")
         return
     echo_table(
         headers,
@@ -211,22 +168,6 @@ def providers_command(
 
 
 def adapters_command(
-    query: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--query",
-            "-q",
-            help="Query adapters. Repeat values to add alternatives.",
-        ),
-    ] = None,
-    query_help: Annotated[
-        bool,
-        typer.Option("--query-help", help="Show adapter query fields and operators."),
-    ] = False,
-    query_schema: Annotated[
-        bool,
-        typer.Option("--query-schema", help="Write adapter query schema as JSON."),
-    ] = False,
     json_: Annotated[
         bool,
         typer.Option("--json", help="Write adapter metadata as JSON."),
@@ -234,18 +175,7 @@ def adapters_command(
 ) -> None:
     """List installed protocol adapters."""
 
-    if emit_query_discovery(
-        ADAPTER_DEFINITION.schema,
-        query_help=query_help,
-        query_schema=query_schema,
-    ):
-        return
-    base_infos = tuple(list_plugin_infos(group="toolang.model_adapter"))
-    dataset = plugin_inventory_dataset(
-        ADAPTER_DEFINITION,
-        tuple((info.name, info.source) for info in base_infos),
-    )
-    infos = query_items(dataset, query)
+    infos = tuple(list_plugin_infos(group="toolang.model_adapter"))
     if json_:
         typer.echo(
             json.dumps(
@@ -257,10 +187,12 @@ def adapters_command(
         )
         return
     if not infos:
-        typer.echo("No adapters matched query." if query else "No adapters found.")
+        typer.echo("No adapters found.")
         return
-    headers, rows = dataset.table(infos)
-    echo_table(headers, rows)
+    echo_table(
+        ("ADAPTER", "SOURCE"),
+        tuple((info.name, info.source) for info in infos),
+    )
 
 
 def _setup(

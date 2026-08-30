@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed for review. Definition only; implementation is separate.
+Approved by the human on 2026-08-30. Implementation is tracked separately.
 
 ## Goal
 
@@ -18,7 +18,7 @@ policy, not for every inventory command.
 - Existing table headers, column groupings, cell formats, and column order stay
   unchanged.
 - Only real base collections own schemas; combined caps query their union.
-- Per-list schema options are replaced by the visible, data-independent
+- Per-list schema options are replaced by the hidden, data-independent
   `too query` help command.
 - Singular `model`, plugin inventories, and provider diagnostics do not acquire
   collection-query semantics.
@@ -85,8 +85,8 @@ mirror composite columns or split existing display columns into operands.
 ## Combined Caps
 
 `caps` is an umbrella, not a base collection or schema. The four base schemas
-bind plural identity prefixes, producing identities such as
-`skills/reviewer`. Unqualified names still match the final component.
+bind singular cap-kind identity prefixes, producing identities such as
+`skill/reviewer`. Unqualified names still match the final component.
 
 `too caps --query QUERY` applies the query independently to `psyches`,
 `skills`, `services`, and `prompts`, then concatenates matches in established
@@ -105,7 +105,7 @@ aggregate because it stores results, not queries.
 ## Query Help
 
 Remove `--query-help` and `--query-schema` from list commands. Replace them
-with the top-level command:
+with the hidden top-level command:
 
 ```text
 too query --help
@@ -184,7 +184,7 @@ Excluded:
 7. Resource-list help exposes `--query/-q` only where defined. Plugin/provider
    lists expose no query. Query-enabled help points to the matching `too query`
    collection. Removed discovery options fail as unknown.
-8. Root help exposes `query`; generic help documents the grammar and supported
+8. Root help hides `query`; generic help documents the grammar and supported
    collections, and human and JSON collection help work for all six names
    without runtime loading while rejecting `caps` and `model`.
 9. Existing JSON exports remain unchanged; ruff, formatting, ty, and the

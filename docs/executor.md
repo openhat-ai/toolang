@@ -116,7 +116,7 @@ program module. `bindings.model` is the effective singular model choice and
 accounting, retry, and rerun.
 The spec does not carry an origin, run identity, request identity, or arbitrary
 transport context. Each item in `ceilings` is one independently applied
-selector-based restriction inside `setup.ceiling`; retaining separate session
+collection-query restriction inside `setup.ceiling`; retaining separate session
 and run restrictions preserves intersection semantics when queries use
 OR matching. `input.primary` is the primary multimodal input;
 `input.named` contains typed values for the runnable's declared `params`.

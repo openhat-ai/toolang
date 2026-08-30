@@ -52,7 +52,16 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
                 "parameters": {"reasoning": {"effort": "high"}},
             },
             "policy": {
-                "allow": [{"models": ["one", "two"]}, {"tools": None}],
+                "allow": [
+                    {"models": ["one", "two"]},
+                    {"tools": None},
+                    {
+                        "psyches": ["calm"],
+                        "skills": ["review"],
+                        "services": ["github"],
+                        "prompts": ["summary"],
+                    },
+                ],
                 "limits": {"tokens": 4000, "cost": "2.50"},
             },
         }
@@ -79,6 +88,12 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
             allow=(
                 AgentCeiling(models=("one", "two")),
                 AgentCeiling(tools=None),
+                AgentCeiling(
+                    psyches=("calm",),
+                    skills=("review",),
+                    services=("github",),
+                    prompts=("summary",),
+                ),
             ),
             limits=RunLimits(tokens=4000, cost=Decimal("2.50")),
         ),
@@ -154,6 +169,7 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
         {"policy": {"allow": [], "limits": {"tokens": -1}}},
         {"policy": {"allow": [], "limits": {"tokens": True}}},
         {"policy": {"allow": [], "limits": {"tokens": "10"}}},
+        {"policy": {"allow": [{"caps": ["review"]}], "limits": {}}},
     ],
 )
 def test_authored_run_schema_rejects_extra_or_lossy_values(

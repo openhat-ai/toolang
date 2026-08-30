@@ -37,6 +37,8 @@ from toolang.plugin.models.resolution import (
     apply_model_parameters,
     resolve_model,
     resolve_model_request,
+    resolve_unique_model_query,
+    selectable_model_targets,
 )
 from toolang.state import state as cap_store
 from toolang.state.state import (
@@ -103,11 +105,31 @@ def prepare_agic(
         else context
     )
     if run.model_request is None:
-        model = resolve_model(
-            selection,
-            query=run.bindings.model or (model_queries[0] if model_queries else None),
-            allowed_queries=model_queries,
-        )
+        if run.bindings.model is not None:
+            if run.bindings.model in model_queries:
+                model = resolve_unique_model_query(
+                    selection,
+                    query=run.bindings.model,
+                    allowed_queries=model_queries,
+                )
+            else:
+                model = resolve_model(
+                    selection,
+                    ref=run.bindings.model,
+                    allowed_queries=model_queries,
+                )
+        else:
+            candidates = selectable_model_targets(
+                providers=selection.providers,
+                models=selection.models,
+                aliases=selection.model_aliases,
+                envs=selection.envs,
+                provider_configs=getattr(selection, "provider_configs", {}),
+                queries=(model_queries[0],),
+            )
+            if not candidates:
+                raise ToolangError(f"run resources include no models: {agic.name}")
+            model = candidates[0][1]
     else:
         model = resolve_model_request(
             selection,

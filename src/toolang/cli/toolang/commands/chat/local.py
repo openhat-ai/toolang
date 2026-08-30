@@ -320,9 +320,9 @@ class LocalChatSession:
             raise RuntimeError("local chat run defaults are not initialized")
         return self._defaults
 
-    def _materialize_model_ref(self, query: str) -> str:
+    def _materialize_model_ref(self, ref: str) -> str:
         return materialize_model_request(
-            ModelRequest(query),
+            ModelRequest(ref),
             setup=self.setup_watcher.current(),
             state=self.state_watcher.current(),
         ).ref

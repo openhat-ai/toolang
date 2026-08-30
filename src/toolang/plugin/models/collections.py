@@ -1,4 +1,4 @@
-"""Public query views for model, provider, and adapter collections."""
+"""Public query views for the models collection."""
 
 from __future__ import annotations
 
@@ -43,20 +43,47 @@ class ModelCostView:
 
 
 @dataclass(frozen=True, slots=True)
-class CatalogModelView:
-    """Explicitly public catalog-model query representation."""
+class ModelRouteView:
+    """Queryable model route attributes."""
+
+    provider: str
+    adapter: str | None
+    scope: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ModelReasoningParametersView:
+    """Queryable reasoning parameter values."""
+
+    effort: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ModelParametersView:
+    """Queryable model parameter values."""
+
+    reasoning: ModelReasoningParametersView
+
+
+@dataclass(frozen=True, slots=True)
+class ModelQueryView:
+    """Shared public model query representation."""
 
     key: str
-    record: Model
+    record: object
     provider: str
-    id: str
+    model: str
     name: str
     description: str | None
     family: str | None
-    scope: Literal["local", "remote"]
+    scope: str | None
     available: bool
     adapter: str | None
     catalog: str | None
+    alias: tuple[str, ...] | None
+    route: ModelRouteView
+    tags: tuple[str, ...]
+    streaming: bool | None
     attachment: bool | None
     reasoning: bool | None
     tool_call: bool | None
@@ -69,20 +96,21 @@ class CatalogModelView:
     modalities: ModelModalitiesView
     limit: ModelLimitView
     cost: ModelCostView
+    parameters: ModelParametersView
 
 
-CATALOG_MODEL_SCHEMA = CollectionSchema.from_type(
+MODEL_SCHEMA = CollectionSchema.from_type(
     "models",
-    CatalogModelView,
+    ModelQueryView,
     key="key",
     identity=IdentitySpec(
-        paths=("provider", "id"),
+        paths=("provider", "model"),
         labels=("provider", "model"),
         separator="/",
     ),
     exclude=("key", "record"),
     columns=(
-        ColumnSpec("MODEL", ("provider", "id"), "identity"),
+        ColumnSpec("MODEL", ("provider", "model"), "identity"),
         ColumnSpec("AVAILABLE", ("available",), "bool"),
         ColumnSpec("CONTEXT", ("limit.context",), "integer"),
         ColumnSpec("OUTPUT", ("limit.output",), "integer"),
@@ -99,12 +127,12 @@ CATALOG_MODEL_SCHEMA = CollectionSchema.from_type(
         ),
     ),
 )
-CATALOG_MODEL_DEFINITION = CollectionDefinition(CATALOG_MODEL_SCHEMA)
+MODEL_DEFINITION = CollectionDefinition(MODEL_SCHEMA)
 
 
 @dataclass(frozen=True, slots=True)
 class CatalogProviderView:
-    """Explicitly public provider query representation."""
+    """Provider-list presentation values."""
 
     id: str
     record: Provider
@@ -122,66 +150,13 @@ class CatalogProviderView:
     missing_env: tuple[str, ...]
 
 
-CATALOG_PROVIDER_SCHEMA = CollectionSchema.from_type(
-    "providers",
-    CatalogProviderView,
-    key="id",
-    identity=IdentitySpec(paths=("id",), labels=("provider",)),
-    exclude=("record",),
-    columns=(
-        ColumnSpec("PROVIDER", ("id",), "identity"),
-        ColumnSpec("NAME", ("name",)),
-        ColumnSpec("AVAILABLE", ("available_models", "model_count"), "ratio"),
-        ColumnSpec("ADAPTERS", ("adapters",), "join"),
-        ColumnSpec("API", ("api",)),
-        ColumnSpec("ENV", ("env_requirements", "missing_env"), "env"),
-    ),
-)
-CATALOG_PROVIDER_DEFINITION = CollectionDefinition(CATALOG_PROVIDER_SCHEMA)
-
-
-@dataclass(frozen=True, slots=True)
-class PluginInventoryView:
-    """Public installed-plugin inventory item."""
-
-    name: str
-    source: str
-
-
-def plugin_inventory_definition(
-    collection: str,
-    *,
-    identity_label: str,
-) -> CollectionDefinition[PluginInventoryView]:
-    """Create one named plugin-inventory definition from shared typed data."""
-
-    return CollectionDefinition(
-        CollectionSchema.from_type(
-            collection,
-            PluginInventoryView,
-            key="name",
-            identity=IdentitySpec(paths=("name",), labels=(identity_label,)),
-            columns=(
-                ColumnSpec(identity_label.upper(), ("name",), "identity"),
-                ColumnSpec("SOURCE", ("source",)),
-            ),
-        )
-    )
-
-
-ADAPTER_DEFINITION = plugin_inventory_definition(
-    "adapters",
-    identity_label="adapter",
-)
-
-
 def catalog_model_dataset(
     snapshot: ModelCatalogSnapshot,
     *,
     include_local: bool = True,
     available: set[str] | None = None,
     adapters: Mapping[str, str] | None = None,
-) -> QueryDataset[CatalogModelView]:
+) -> QueryDataset[ModelQueryView]:
     """Materialize one model catalog snapshot for generic querying."""
 
     available_identities = available or set()
@@ -195,10 +170,10 @@ def catalog_model_dataset(
         for model in snapshot.models
         if include_local or not model.local
     )
-    return CATALOG_MODEL_DEFINITION.dataset(items)
+    return MODEL_DEFINITION.dataset(items)
 
 
-def catalog_provider_dataset(
+def catalog_provider_views(
     providers: Sequence[Provider],
     *,
     available: set[str],
@@ -207,10 +182,10 @@ def catalog_provider_dataset(
     env_requirements: Mapping[str, Sequence[str]],
     required_env: Mapping[str, Sequence[str]],
     missing_env: Mapping[str, Sequence[str]],
-) -> QueryDataset[CatalogProviderView]:
-    """Materialize providers and runtime-derived query values."""
+) -> tuple[CatalogProviderView, ...]:
+    """Materialize providers and runtime-derived presentation values."""
 
-    items = tuple(
+    return tuple(
         CatalogProviderView(
             id=provider.id,
             record=provider,
@@ -231,7 +206,6 @@ def catalog_provider_dataset(
         )
         for provider in providers
     )
-    return CATALOG_PROVIDER_DEFINITION.dataset(items)
 
 
 def _provider_offline(provider: Provider) -> bool:
@@ -242,35 +216,33 @@ def _provider_offline(provider: Provider) -> bool:
     )
 
 
-def plugin_inventory_dataset(
-    definition: CollectionDefinition[PluginInventoryView],
-    values: Sequence[tuple[str, str]],
-) -> QueryDataset[PluginInventoryView]:
-    """Materialize a complete installed-plugin inventory."""
-
-    return definition.dataset(
-        tuple(PluginInventoryView(name=name, source=source) for name, source in values)
-    )
-
-
 def _catalog_model_view(
     model: Model,
     *,
     available: bool,
     adapter: str | None,
-) -> CatalogModelView:
-    return CatalogModelView(
+) -> ModelQueryView:
+    scope: Literal["local", "remote"] = "local" if model.local else "remote"
+    return ModelQueryView(
         key=model.identity,
         record=model,
         provider=model.provider_id,
-        id=model.id,
+        model=model.id,
         name=model.name,
         description=model.description,
         family=model.family,
-        scope="local" if model.local else "remote",
+        scope=scope,
         available=available,
         adapter=adapter,
         catalog=model.catalog,
+        alias=None,
+        route=ModelRouteView(
+            provider=model.provider_id,
+            adapter=adapter,
+            scope=scope,
+        ),
+        tags=(),
+        streaming=None,
         attachment=model.attachment,
         reasoning=model.reasoning,
         tool_call=model.tool_call,
@@ -292,7 +264,22 @@ def _catalog_model_view(
             input=_optional_decimal((model.cost or {}).get("input")),
             output=_optional_decimal((model.cost or {}).get("output")),
         ),
+        parameters=ModelParametersView(
+            reasoning=ModelReasoningParametersView(
+                effort=_reasoning_efforts(model.reasoning_options or ())
+            )
+        ),
     )
+
+
+def _reasoning_efforts(options: Sequence[Mapping[str, object]]) -> tuple[str, ...]:
+    values: list[str] = []
+    for option in options:
+        raw_values = option.get("values")
+        if option.get("type") != "effort" or not isinstance(raw_values, list | tuple):
+            continue
+        values.extend(value for value in raw_values if isinstance(value, str))
+    return tuple(dict.fromkeys(values))
 
 
 def _optional_date(value: str | None) -> date | None:
@@ -308,16 +295,16 @@ def _optional_decimal(value: object) -> Decimal | None:
 
 
 __all__ = [
-    "ADAPTER_DEFINITION",
-    "CATALOG_MODEL_DEFINITION",
-    "CATALOG_MODEL_SCHEMA",
-    "CATALOG_PROVIDER_DEFINITION",
-    "CATALOG_PROVIDER_SCHEMA",
-    "CatalogModelView",
     "CatalogProviderView",
-    "PluginInventoryView",
+    "MODEL_DEFINITION",
+    "MODEL_SCHEMA",
+    "ModelCostView",
+    "ModelLimitView",
+    "ModelModalitiesView",
+    "ModelParametersView",
+    "ModelQueryView",
+    "ModelReasoningParametersView",
+    "ModelRouteView",
     "catalog_model_dataset",
-    "catalog_provider_dataset",
-    "plugin_inventory_dataset",
-    "plugin_inventory_definition",
+    "catalog_provider_views",
 ]

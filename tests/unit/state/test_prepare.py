@@ -240,7 +240,7 @@ def test_prepare_does_not_create_missing_agent_source(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("config", "message"),
     [
-        ('[allow]\ncaps = ["*[missing=value]"]\n', "unknown caps query field"),
+        ('[allow]\ncaps = ["*[missing=value]"]\n', "unknown allow field: caps"),
         (
             '[default]\nrunnable = "*[missing=value]"\n',
             "unknown runnables query field",
@@ -258,7 +258,7 @@ def test_prepare_rejects_invalid_state_owned_config_queries(
     (toolang_root / "config.toml").write_text(config, encoding="utf-8")
     (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
 
-    with pytest.raises(ToolangError, match=message):
+    with pytest.raises((ToolangError, ValueError), match=message):
         prepare_agent_state(_layout(toolang_root))
 
 

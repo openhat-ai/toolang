@@ -62,7 +62,9 @@ def test_script_binds_options_arguments_and_primary_input(
             "--allow",
             "tools=fs/*,shell/*",
             "--allow",
-            "caps=skill/reviewer,service/github",
+            "skills=reviewer",
+            "--allow",
+            "services=github",
             "--limit",
             "tokens=1000",
             "--limit",
@@ -93,7 +95,8 @@ def test_script_binds_options_arguments_and_primary_input(
         "models=openai/*,deepseek/*",
         "models=openai/*",
         "tools=fs/*,shell/*",
-        "caps=skill/reviewer,service/github",
+        "skills=reviewer",
+        "services=github",
     )
     assert "verbosity" not in captured
     assert captured["save"] == "-"

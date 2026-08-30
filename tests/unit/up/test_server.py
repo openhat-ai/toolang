@@ -22,7 +22,7 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
         ceiling_overrides={
             "models": ("openai/gpt-5",),
             "tools": (),
-            "caps": None,
+            "skills": None,
         },
         binding_overrides={"model": "openai/gpt-5", "runnable": None},
         limit_overrides={
@@ -43,7 +43,7 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
     assert spec.ceiling_overrides == {
         "models": ("openai/gpt-5",),
         "tools": (),
-        "caps": None,
+        "skills": None,
     }
     assert argv[:9] == (
         "--root",
@@ -61,7 +61,7 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
     assert _option_values(argv, "--allow") == [
         "models=openai/gpt-5",
         "tools=none",
-        "caps=all",
+        "skills=all",
     ]
     assert _option_values(argv, "--default") == [
         "model=openai/gpt-5",

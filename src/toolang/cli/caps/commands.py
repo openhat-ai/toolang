@@ -21,7 +21,7 @@ from toolang.state import state as cap_state
 from toolang.state.prepare import prepare_agent_state
 from ..common.context import context_agent, context_root, user_call
 from ..common.output import echo_block, echo_table
-from ..common.query import emit_query_discovery, query_items
+from ..common.query import query_items
 from ..common.routing import (
     OptionalPrefixAgentCommand,
     OptionalPrefixAgentListCommand,
@@ -206,26 +206,12 @@ def list_caps(
         typer.Option(
             "--query",
             "-q",
-            help="Query caps. Repeat values to add alternatives.",
+            help="Query cap collections. Repeat to add matches; see 'too query'.",
         ),
     ] = None,
-    query_help: Annotated[
-        bool,
-        typer.Option("--query-help", help="Show cap query fields and operators."),
-    ] = False,
-    query_schema: Annotated[
-        bool,
-        typer.Option("--query-schema", help="Write the cap query schema as JSON."),
-    ] = False,
 ) -> None:
-    from toolang.state.collections import CAP_SCHEMA, cap_dataset
+    from toolang.state.collections import cap_table, query_cap_views
 
-    if emit_query_discovery(
-        CAP_SCHEMA,
-        query_help=query_help,
-        query_schema=query_schema,
-    ):
-        return
     selected_agent = context_agent(ctx)
     agent_name = selected_agent or "default"
     effective_scope = "all" if selected_agent else "root"
@@ -236,9 +222,13 @@ def list_caps(
         prepare=selected_agent is not None,
         kinds=set(CAP_KINDS),
     )
-    dataset = cap_dataset(entries, agent_name=agent_name)
-    selected = query_items(dataset, query)
-    headers, rows = dataset.table(selected)
+    selected = user_call(
+        query_cap_views,
+        entries,
+        agent_name=agent_name,
+        queries=query,
+    )
+    headers, rows = cap_table(selected)
     if not rows:
         typer.echo("No caps matched query." if query else "No caps found.")
         return
@@ -248,32 +238,15 @@ def list_caps(
 def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
     def list_caps(
         ctx: typer.Context,
-        query: Annotated[
-            list[str] | None,
-            typer.Option(
-                "--query",
-                "-q",
-                help="Query caps. Repeat values to add alternatives.",
-            ),
-        ] = None,
-        query_help: Annotated[
-            bool,
-            typer.Option("--query-help", help="Show cap query fields and operators."),
-        ] = False,
-        query_schema: Annotated[
-            bool,
-            typer.Option("--query-schema", help="Write the cap query schema as JSON."),
-        ] = False,
+        query: list[str] | None = typer.Option(
+            None,
+            "--query",
+            "-q",
+            help=(f"Query {kind}s. Repeat to add matches; see 'too query {kind}s'."),
+        ),
     ) -> None:
-        from toolang.state.collections import cap_dataset, cap_kind_definition
+        from toolang.state.collections import cap_dataset, cap_table
 
-        definition = cap_kind_definition(kind)
-        if emit_query_discovery(
-            definition.schema,
-            query_help=query_help,
-            query_schema=query_schema,
-        ):
-            return
         selected_agent = context_agent(ctx)
         agent_name = selected_agent or "default"
         effective_scope = "all" if selected_agent else "root"
@@ -286,7 +259,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
         )
         dataset = cap_dataset(entries, agent_name=agent_name, kind=kind)
         selected = query_items(dataset, query)
-        headers, rows = dataset.table(selected)
+        headers, rows = cap_table(selected, kind=kind)
         if not rows:
             typer.echo(f"No {kind}s matched query." if query else f"No {kind}s found.")
             return

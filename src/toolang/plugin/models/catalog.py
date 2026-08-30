@@ -283,7 +283,7 @@ def query_catalog_models(
         adapters=adapters,
     )
     selected = dataset.query(queries)
-    return tuple(item.record for item in selected)
+    return tuple(cast(Model, item.record) for item in selected)
 
 
 def model_info_from_catalog(
@@ -332,6 +332,9 @@ def model_info_from_catalog(
             "temperature": model.temperature,
             "structured_output": model.structured_output,
             "attachment": model.attachment,
+            "open_weights": model.open_weights,
+            "release_date": model.release_date,
+            "last_updated": model.last_updated,
             "modalities": {key: list(value) for key, value in model.modalities.items()},
             "status": model.status,
             "experimental": (

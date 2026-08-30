@@ -110,8 +110,8 @@ Toolset entry-point names, effective `Toolset.name` identities, public
 toolset names, and leaf names start with an ASCII letter and contain only ASCII
 letters and underscores. They cannot contain `__`, which is reserved as the
 provider-facing separator. A toolset plugin may return either a bare leaf key or
-an explicit `<toolset>/<leaf>` key. Selectors use `<toolset>/<leaf>` while model
-APIs receive `<toolset>__<leaf>`.
+an explicit `<toolset>/<leaf>` key. Collection queries identify tools as
+`<toolset>/<leaf>`, while model APIs receive `<toolset>__<leaf>`.
 
 A toolset with exactly one leading underscore is internal to Toolang. Only
 entry points whose installed distribution metadata identifies the `toolang`

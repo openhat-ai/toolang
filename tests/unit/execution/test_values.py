@@ -438,23 +438,21 @@ def test_preparation_payload_preserves_a_legacy_model_free_run() -> None:
     assert restored.model_request is None
 
 
-def test_preparation_payload_preserves_a_legacy_model_named_none() -> None:
+def test_preparation_payload_rejects_a_legacy_non_exact_model_ref() -> None:
     payload = RunControlPayload(
-        resources=AgentResources(models=("none",)),
+        resources=AgentResources(models=("test/*",)),
         limits=RunLimits(),
         state="0" * 64,
         runnable="agic:worker",
-        model="none",
-        model_request=ModelRequest("none"),
+        model="test/*",
+        model_request=None,
         locals=(),
     )
     data = control_payload_to_data(payload)
     data.pop("model_request")
 
-    restored = control_payload_from_data("run", data)
-
-    assert isinstance(restored, RunControlPayload)
-    assert restored.model_request == ModelRequest("none")
+    with pytest.raises(ValueError, match="model request ref must be exact"):
+        control_payload_from_data("run", data)
 
 
 def test_preparation_payload_rejects_a_mismatched_model_request() -> None:

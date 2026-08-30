@@ -615,7 +615,10 @@ class RunExecutor:
                     for value in (
                         ceiling.models,
                         ceiling.tools,
-                        ceiling.caps,
+                        ceiling.psyches,
+                        ceiling.skills,
+                        ceiling.services,
+                        ceiling.prompts,
                     )
                 )
                 else ()

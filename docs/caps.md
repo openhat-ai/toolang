@@ -93,10 +93,12 @@ view:
 `FORM` uses the same values as the runtime source form. It is not remapped for
 display.
 
-Use repeatable `--query/-q` options. Combined lists use `kind/cap` identities;
-kind-specific lists use local cap names. Predicates use typed fields such as
-`scope`, `form`, and `origin`, for example
-`skill/*[scope=home;form=authored]`. `--query-help` prints every field.
+Use repeatable `--query/-q` options. Qualified cap identities use the singular
+kind prefixes `psyche`, `skill`, `service`, and `prompt`; kind-specific lists
+also accept unqualified cap names. Predicates use typed fields such as `scope`,
+`form`, and `origin`, for example `skill/*[scope=home;form=authored]`. Run
+`too query skills` to inspect the fields. There is no `caps` query schema: the
+combined command queries the four base collections independently.
 
 
 ## Refs
@@ -212,10 +214,11 @@ preparation:
 3. materializes runtime-ready artifacts when needed
 4. selects the winning definition for each `(kind, name)`
 
-At root-run start, `AgentSetup.ceiling.caps` narrows that captured set
-into the tree-level `AgentResources`. Any request-level cap ceiling is applied
-to that result. Flow and agic directives may narrow it further, but cannot
-restore caps outside the agent resources.
+At root-run start, the `psyches`, `skills`, `services`, and `prompts` fields in
+`AgentSetup.ceiling` narrow that captured set into tree-level
+`AgentResources`. Request-level ceilings preserve the same four boundaries.
+Flow and agic directives may narrow the result further, but cannot restore caps
+outside the agent resources.
 
 
 ## HTTP API

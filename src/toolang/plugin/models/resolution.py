@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from datetime import date
+from decimal import Decimal
 from typing import Protocol, cast
 
 from toolang.base.errors import ToolangError
@@ -12,18 +14,27 @@ from toolang.base.types.model import (
     ModelAlias,
     ModelInfo,
     ModelParameters,
+    ModelRequest,
     ModelTarget,
     Provider,
     ReasoningEffort,
 )
 from toolang.common.query import (
-    CollectionDefinition,
-    CollectionSchema,
-    IdentitySpec,
     QueryDataset,
     SetOperator,
     format_identity,
     format_literal,
+)
+from toolang.plugin.models.collections import (
+    MODEL_DEFINITION,
+    MODEL_SCHEMA,
+    ModelCostView,
+    ModelLimitView,
+    ModelModalitiesView,
+    ModelParametersView,
+    ModelQueryView,
+    ModelReasoningParametersView,
+    ModelRouteView,
 )
 from toolang.plugin.models.config import ProviderConfig
 from toolang.plugin.models.messages import (
@@ -88,98 +99,6 @@ class _Candidate:
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeModelRouteView:
-    """Public runtime route attributes for one selectable model."""
-
-    provider: str
-    adapter: str
-    scope: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeModelModalitiesView:
-    """Public runtime model modalities."""
-
-    input: tuple[str, ...]
-    output: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeModelLimitView:
-    """Public runtime model limits."""
-
-    context: int | None
-    output: int | None
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeModelCostView:
-    """Public runtime model token prices."""
-
-    input: float | None
-    output: float | None
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeReasoningParametersView:
-    """Public supported reasoning parameter values."""
-
-    effort: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeModelParametersView:
-    """Public supported model parameter values."""
-
-    reasoning: RuntimeReasoningParametersView
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeModelView:
-    """Explicitly public runtime-model route query representation."""
-
-    key_query: str
-    candidate: object
-    provider: str
-    model: str
-    name: str
-    alias: tuple[str, ...] | None
-    route: RuntimeModelRouteView
-    tags: tuple[str, ...]
-    tools: bool
-    streaming: bool
-    available: bool
-    family: str | None
-    reasoning: bool | None
-    temperature: bool | None
-    structured_output: bool | None
-    attachment: bool | None
-    open_weights: bool | None
-    status: str | None
-    modalities: RuntimeModelModalitiesView
-    limit: RuntimeModelLimitView
-    cost: RuntimeModelCostView
-    parameters: RuntimeModelParametersView
-
-
-RUNTIME_MODEL_SCHEMA = CollectionSchema.from_type(
-    "runtime models",
-    RuntimeModelView,
-    key="key_query",
-    identity=IdentitySpec(
-        paths=("provider", "model"),
-        labels=("provider", "model"),
-        separator="/",
-    ),
-    exclude=(
-        "key_query",
-        "candidate",
-    ),
-)
-RUNTIME_MODEL_DEFINITION = CollectionDefinition(RUNTIME_MODEL_SCHEMA)
-
-
-@dataclass(frozen=True, slots=True)
 class ModelTargetResolver:
     """Resolve model catalog entries and runtime configuration into targets."""
 
@@ -192,15 +111,13 @@ class ModelTargetResolver:
 
     def resolve(
         self,
-        query: str | None,
+        ref: str,
         *,
-        default_query: str | None = None,
         allowed_queries: Sequence[str] | None = None,
     ) -> ModelTarget:
         return resolve_model(
             self,
-            query=query,
-            default_query=default_query,
+            ref=ref,
             allowed_queries=allowed_queries,
         )
 
@@ -221,37 +138,67 @@ class ModelTargetResolver:
 def resolve_model(
     context: SupportsModelSelection,
     *,
-    query: str | None,
-    default_query: str | None = None,
+    ref: str,
     allowed_queries: Sequence[str] | None = None,
 ) -> ModelTarget:
-    """Resolve one singular model query against one uptime context."""
+    """Resolve one exact model ref against one uptime context."""
 
-    return _resolve_model_candidate(
-        context,
-        query=query,
-        default_query=default_query,
-        allowed_queries=allowed_queries,
-    ).target
+    return resolve_model_request(context, ref=ref, allowed_queries=allowed_queries)
 
 
-def resolve_model_ref(
+def resolve_unique_model_query(
     context: SupportsModelSelection,
     *,
-    query: str | None,
-    default_query: str | None = None,
+    query: str,
     allowed_queries: Sequence[str] | None = None,
-) -> str:
-    """Resolve one model query to its concrete selectable route ref."""
+) -> ModelTarget:
+    """Require one target from a plural models collection query."""
 
-    return model_target_ref(
-        _resolve_model_candidate(
-            context,
-            query=query,
-            default_query=default_query,
-            allowed_queries=allowed_queries,
-        ).target
+    provider_configs = _context_provider_configs(context)
+    matches = _resolve_query_targets(
+        (query,),
+        providers=context.providers,
+        models=context.models,
+        aliases=context.model_aliases,
+        envs=context.envs,
+        provider_configs=provider_configs,
     )
+    if not matches:
+        _raise_unavailable_alias_match(
+            query,
+            providers=context.providers,
+            models=context.models,
+            aliases=context.model_aliases,
+            envs=context.envs,
+            provider_configs=provider_configs,
+        )
+        raise ToolangError(
+            _empty_model_selection_message(
+                providers=context.providers,
+                models=context.models,
+                aliases=context.model_aliases,
+                envs=context.envs,
+                provider_configs=provider_configs,
+            )
+        )
+    if len(matches) > 1:
+        joined = ", ".join(item.exact_query for item in matches)
+        raise ToolangError(f"models query is ambiguous: {query} (matches {joined})")
+    selected = matches[0]
+    _require_allowed(
+        selected.target,
+        value=query,
+        label="models query",
+        allowed=_resolve_allowed_targets(
+            allowed_queries,
+            providers=context.providers,
+            models=context.models,
+            aliases=context.model_aliases,
+            envs=context.envs,
+            provider_configs=provider_configs,
+        ),
+    )
+    return selected.target
 
 
 def model_target_ref(target: ModelTarget) -> str:
@@ -272,6 +219,7 @@ def resolve_model_request(
 ) -> ModelTarget:
     """Resolve one concrete model route ref against one uptime context."""
 
+    ModelRequest(ref)
     provider_configs = _context_provider_configs(context)
     candidates = _discover_available_candidates(
         providers=context.providers,
@@ -283,7 +231,7 @@ def resolve_model_request(
     matches = tuple(
         candidate
         for candidate in candidates
-        if model_target_ref(candidate.target) == ref
+        if model_target_ref(candidate.target) == ref or ref in candidate.aliases
     )
     if not matches:
         raise ToolangError(
@@ -301,7 +249,8 @@ def resolve_model_request(
     target = matches[0].target
     _require_allowed(
         target,
-        query=ref,
+        value=ref,
+        label="model ref",
         allowed=_resolve_allowed_targets(
             allowed_queries,
             providers=context.providers,
@@ -312,72 +261,6 @@ def resolve_model_request(
         ),
     )
     return target
-
-
-def _resolve_model_candidate(
-    context: SupportsModelSelection,
-    *,
-    query: str | None,
-    default_query: str | None,
-    allowed_queries: Sequence[str] | None,
-) -> _Candidate:
-    """Resolve one effective singular query to one selectable candidate."""
-
-    provider_configs = _context_provider_configs(context)
-    resolved_allowed = _resolve_allowed_targets(
-        allowed_queries,
-        providers=context.providers,
-        models=context.models,
-        aliases=context.model_aliases,
-        envs=context.envs,
-        provider_configs=provider_configs,
-    )
-    explicit = next(
-        (
-            value.strip()
-            for value in (query, default_query)
-            if value is not None and value.strip()
-        ),
-        None,
-    )
-    fallback_queries = (
-        (explicit,)
-        if explicit is not None
-        else tuple(context.default_models) or (DEFAULT_MODEL_QUERY,)
-    )
-    selected = _resolve_first_unique_query(
-        fallback_queries,
-        providers=context.providers,
-        models=context.models,
-        aliases=context.model_aliases,
-        envs=context.envs,
-        provider_configs=provider_configs,
-    )
-    if selected is None:
-        if explicit is not None:
-            _raise_unavailable_alias_query(
-                explicit,
-                providers=context.providers,
-                models=context.models,
-                aliases=context.model_aliases,
-                envs=context.envs,
-                provider_configs=provider_configs,
-            )
-        raise ToolangError(
-            _empty_model_selection_message(
-                providers=context.providers,
-                models=context.models,
-                aliases=context.model_aliases,
-                envs=context.envs,
-                provider_configs=provider_configs,
-            )
-        )
-    _require_allowed(
-        selected.target,
-        query=explicit or selected.exact_query,
-        allowed=resolved_allowed,
-    )
-    return selected
 
 
 def model_reasoning_efforts(
@@ -577,12 +460,12 @@ def _resolve_first_unique_query(
             continue
         if len(matches) > 1:
             joined = ", ".join(item.exact_query for item in matches)
-            raise ToolangError(f"model query is ambiguous: {query} (matches {joined})")
+            raise ToolangError(f"models query is ambiguous: {query} (matches {joined})")
         return matches[0]
     return None
 
 
-def _raise_unavailable_alias_query(
+def _raise_unavailable_alias_match(
     query: str,
     *,
     providers: Mapping[str, Provider],
@@ -591,14 +474,14 @@ def _raise_unavailable_alias_query(
     envs: Mapping[str, str],
     provider_configs: Mapping[str, ProviderConfig],
 ) -> None:
-    """Preserve route diagnostics for an explicit exact alias predicate."""
+    """Preserve route diagnostics for an explicit alias predicate."""
 
-    parsed = RUNTIME_MODEL_SCHEMA.parse(query)
+    parsed = MODEL_SCHEMA.parse(query)
     alias_names = {
         value
-        for selector in parsed.selectors
-        if selector.identity_pattern == "*"
-        for predicate in selector.predicates
+        for match in parsed.matches
+        if match.identity_pattern == "*"
+        for predicate in match.predicates
         if predicate.field.name == "alias" and predicate.operator == "="
         for value in predicate.values
         if isinstance(value, str)
@@ -672,7 +555,7 @@ def apply_model_query_operations(
     )
     dataset = _candidate_dataset(candidates)
     selected = dataset.apply(operations)
-    return tuple(cast(_Candidate, item.candidate).exact_query for item in selected)
+    return tuple(cast(_Candidate, item.record).exact_query for item in selected)
 
 
 def _resolve_allowed_targets(
@@ -799,18 +682,18 @@ def _resolve_query_targets(
     if not queries:
         return ()
     selected = _candidate_dataset(candidates).query(queries)
-    return tuple(cast(_Candidate, item.candidate) for item in selected)
+    return tuple(cast(_Candidate, item.record) for item in selected)
 
 
 def _candidate_dataset(
     candidates: Sequence[_Candidate],
-) -> QueryDataset[RuntimeModelView]:
-    return RUNTIME_MODEL_DEFINITION.dataset(
+) -> QueryDataset[ModelQueryView]:
+    return MODEL_DEFINITION.dataset(
         tuple(_candidate_view(candidate) for candidate in candidates)
     )
 
 
-def _candidate_view(candidate: _Candidate) -> RuntimeModelView:
+def _candidate_view(candidate: _Candidate) -> ModelQueryView:
     target = candidate.target
     provider, model = _runtime_identity_components(target)
     info = candidate.info
@@ -822,47 +705,57 @@ def _candidate_view(candidate: _Candidate) -> RuntimeModelView:
     output_modalities = (
         modalities.get("output") if isinstance(modalities, Mapping) else None
     )
-    return RuntimeModelView(
-        key_query=candidate.exact_query,
-        candidate=candidate,
+    return ModelQueryView(
+        key=candidate.exact_query,
+        record=candidate,
         provider=provider,
         model=model,
         name=target.name,
+        description=info.details if info is not None else None,
+        family=_metadata_text(metadata, "family"),
+        scope=target.scope,
+        available=True,
+        adapter=target.adapter,
+        catalog=target.catalog,
         alias=candidate.aliases or None,
-        route=RuntimeModelRouteView(
+        route=ModelRouteView(
             provider=target.provider,
             adapter=target.adapter,
             scope=target.scope,
         ),
         tags=tuple(target.tags),
-        tools=target.tools,
         streaming=target.streaming,
-        available=True,
-        family=_metadata_text(metadata, "family"),
+        attachment=_metadata_bool(metadata, "attachment"),
         reasoning=_metadata_bool(metadata, "reasoning"),
+        tool_call=target.tools,
         temperature=_metadata_bool(metadata, "temperature"),
         structured_output=target.structured_output,
-        attachment=_metadata_bool(metadata, "attachment"),
         open_weights=_metadata_bool(metadata, "open_weights"),
         status=_metadata_text(metadata, "status"),
-        modalities=RuntimeModelModalitiesView(
+        release_date=_metadata_date(metadata, "release_date"),
+        last_updated=_metadata_date(metadata, "last_updated"),
+        modalities=ModelModalitiesView(
             input=_string_values(input_modalities),
             output=_string_values(output_modalities),
         ),
-        limit=RuntimeModelLimitView(
+        limit=ModelLimitView(
             context=info.context_window if info is not None else None,
             output=info.max_output_tokens if info is not None else None,
         ),
-        cost=RuntimeModelCostView(
-            input=info.input_price if info is not None else None,
-            output=info.output_price if info is not None else None,
+        cost=ModelCostView(
+            input=_optional_decimal(info.input_price if info is not None else None),
+            output=_optional_decimal(info.output_price if info is not None else None),
         ),
-        parameters=RuntimeModelParametersView(
-            reasoning=RuntimeReasoningParametersView(
+        parameters=ModelParametersView(
+            reasoning=ModelReasoningParametersView(
                 effort=_reasoning_effort_values(metadata)
             )
         ),
     )
+
+
+def _optional_decimal(value: float | None) -> Decimal | None:
+    return Decimal(str(value)) if value is not None else None
 
 
 def _runtime_identity_components(target: ModelTarget) -> tuple[str, str]:
@@ -1241,6 +1134,11 @@ def _metadata_bool(metadata: Mapping[str, object], key: str) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
+def _metadata_date(metadata: Mapping[str, object], key: str) -> date | None:
+    value = _metadata_text(metadata, key)
+    return date.fromisoformat(value) if value is not None else None
+
+
 def _validate_reasoning_request(
     request: Mapping[str, object],
     *,
@@ -1308,7 +1206,8 @@ def _validate_reasoning_request(
 def _require_allowed(
     target: ModelTarget,
     *,
-    query: str,
+    value: str,
+    label: str,
     allowed: Sequence[ModelTarget] | None,
 ) -> None:
     if allowed is None:
@@ -1319,8 +1218,7 @@ def _require_allowed(
         ", ".join(f"{item.ref}[{item.provider}]" for item in allowed) or "none"
     )
     raise ToolangError(
-        f"model query is outside the current resources: {query} "
-        f"(allowed: {allowed_text})"
+        f"{label} is outside the current resources: {value} (allowed: {allowed_text})"
     )
 
 
