@@ -93,7 +93,11 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
                         tool_call_id="tool-1",
                         tool_name="inspect__run",
                         tool_family="inspect",
-                        output={"status": "failed"},
+                        output={
+                            "status": "failed",
+                            "exit_code": 2,
+                            "message": "Run inspection failed.",
+                        },
                     ),
                 ),
             ),
@@ -133,15 +137,17 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
     assert "[2] tool" in output
     assert "[0] text" not in output
     assert "I will inspect it." in output
-    call_boundary = "<[[ ToolCallPart index=1, id=tool-1"
-    result_boundary = "<[[ ToolResultPart index=0, id=tool-1"
+    call_boundary = "<[[ ToolCallPart(1), id=tool-1"
+    result_boundary = "<[[ ToolResultPart(0), id=tool-1, status=failed, exit_code=2"
     assert call_boundary in output
     invocation = 'inspect.run(run_id: "run_123", include: ["steps", "errors"])'
     assert invocation in output
     assert "Reason\nThe run record contains the failure." in output
     assert "\nInput\n" not in output
     assert result_boundary in output
-    assert "status: failed" in output
+    assert "status: failed" not in output
+    assert "exit_code: 2" not in output
+    assert "message: Run inspection failed." in output
     assert "\nOutput\n" not in output
     assert output_lines.count("]]>") == 2
     assert "Available Tools · 1 tool" in output
@@ -166,7 +172,7 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
     assert by_text[call_boundary].style == "dim"
     assert by_text[result_boundary].style == "dim"
     assert not by_text[invocation].style
-    assert not by_text["status: failed"].style
+    assert not by_text["message: Run inspection failed."].style
     assert all(
         renderable.style == "dim"
         for renderable in renderables
@@ -226,7 +232,7 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
         "[2] tool",
         call_boundary,
         result_boundary,
-        "status: failed",
+        "message: Run inspection failed.",
         signature,
     ):
         assert line in output_lines
@@ -252,3 +258,32 @@ def test_human_tool_name_replaces_only_the_toolset_separator() -> None:
         inspect_commands._display_tool_name("browser__open__preview")
         == "browser.open__preview"
     )
+
+
+def test_tool_result_human_view_prioritizes_error_over_output() -> None:
+    renderables = inspect_commands._tool_part_renderables(
+        {
+            "type": "tool_result",
+            "tool_call_id": "tool-error",
+            "tool_name": "shell__execute",
+            "tool_family": "shell",
+            "output": {
+                "exit_code": 1,
+                "ok": False,
+                "stdout": "partial output",
+            },
+            "error": "Command failed.",
+        },
+        result=True,
+        index=2,
+    )
+
+    assert [renderable.plain for renderable in renderables] == [
+        "<[[ ToolResultPart(2), id=tool-error, exit_code=1, ok=false",
+        "",
+        "Error",
+        "Command failed.",
+        "]]>",
+    ]
+    assert renderables[0].style == "dim"
+    assert renderables[-1].style == "dim"

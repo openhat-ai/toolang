@@ -699,12 +699,13 @@ def _tool_part_renderables(
 ) -> tuple[Text, ...]:
     type_name = "ToolResultPart" if result else "ToolCallPart"
     tool_call_id = str(part.get("tool_call_id") or "unknown")
-    lines = [
-        Text(
-            f"<[[ {type_name} index={index}, id={tool_call_id}",
-            style="dim",
-        )
-    ]
+    header = f"<[[ {type_name}({index}), id={tool_call_id}"
+    output: object = part.get("output", {})
+    if result:
+        result_facts, output = _tool_result_presentation(output)
+        if result_facts:
+            header += f", {', '.join(result_facts)}"
+    lines = [Text(header, style="dim")]
     if not result:
         name = _display_tool_name(str(part.get("tool_name") or "unnamed"))
         lines.append(Text(_tool_invocation(name, part.get("input", {}))))
@@ -714,12 +715,21 @@ def _tool_part_renderables(
     error = part.get("error")
     if isinstance(error, str) and error:
         lines.extend((Text(), Text("Error", style="bold"), Text(error)))
-    if result:
-        if isinstance(error, str) and error:
-            lines.append(Text())
-        lines.extend(_structured_renderables(part.get("output", {})))
+    elif result and output != {}:
+        lines.extend(_structured_renderables(output))
     lines.append(Text("]]>", style="dim"))
     return tuple(lines)
+
+
+def _tool_result_presentation(output: object) -> tuple[tuple[str, ...], object]:
+    if not isinstance(output, Mapping):  # pragma: no cover - canonical ToolResultPart
+        return (), output
+    body = dict(cast(Mapping[object, object], output))
+    facts = []
+    for key in ("status", "exit_code", "ok"):
+        if key in body:
+            facts.append(f"{key}={_structured_scalar(body.pop(key))}")
+    return tuple(facts), body
 
 
 def _tool_invocation(name: str, value: object) -> str:
