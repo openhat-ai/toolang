@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import copy
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -136,6 +137,13 @@ class Model:
         """Return the exact provider/model catalog identity."""
 
         return f"{self.provider_id}/{self.id}"
+
+    def with_resolution(self, resolved: ResolvedModel) -> Self:
+        """Attach runtime resolution without rebuilding frozen catalog fields."""
+
+        result = copy(self)
+        object.__setattr__(result, "resolved", resolved)
+        return result
 
     def to_data(self) -> dict[str, object]:
         """Return this model in models.dev-compatible JSON form."""
