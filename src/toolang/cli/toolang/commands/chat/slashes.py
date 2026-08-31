@@ -81,14 +81,10 @@ def _exit(app: AppContext, _command: str, _argument: str) -> None:
 
 
 def _model(app: AppContext, _command: str, argument: str) -> SlashOutput:
+    if not argument:
+        raise ValueError("/model requires a model or parameter assignment.")
     client = app.get_client()
     payload = client.list_models()
-    if not argument:
-        open_picker = getattr(app, "open_model_picker", None)
-        if callable(open_picker):
-            open_picker(payload)
-            return None
-        return ["Available Models", *_chat_model_list_lines(payload)]
     tokens = argument.split()
     resolved = _resolve_model_selection(payload, tokens)
     if resolved is None:
@@ -105,35 +101,19 @@ def _model(app: AppContext, _command: str, argument: str) -> SlashOutput:
 
 
 def _runnable(app: AppContext, command: str, argument: str) -> SlashOutput:
+    if not argument:
+        raise ValueError(f"/{command} requires a runnable identity.")
     client = app.get_client()
-    selects = app.get_selects()
     kind = "runnable" if command == "runnable" else command
     payload = client.list_runnables(kind)
-    if argument:
-        tokens = argument.split()
-        if len(tokens) != 1:
-            raise ValueError(f"/{command} accepts at most one runnable query.")
-        resolved = _resolve_runnable_command(payload, tokens[0], kind=kind)
-        if resolved is None:
-            raise ValueError(f"Runnable selection is unknown or ambiguous: {tokens[0]}")
-        _apply_default(app, field="runnable", value=resolved)
-        return None
-    selected = as_text(selects.get(command))
-    if command == "runnable" and selected is None:
-        for kind in ("agic", "flow"):
-            if (name := as_text(selects.get(kind))) is not None:
-                selected = f"{kind}:{name}"
-                break
-    return [
-        "Available Runnables"
-        if command == "runnable"
-        else f"Available {command.title()}s",
-        *_chat_runnable_list_lines(
-            payload,
-            selected=selected,
-            show_kind=command == "runnable",
-        ),
-    ]
+    tokens = argument.split()
+    if len(tokens) != 1:
+        raise ValueError(f"/{command} accepts exactly one runnable identity.")
+    resolved = _resolve_runnable_command(payload, tokens[0], kind=kind)
+    if resolved is None:
+        raise ValueError(f"Runnable selection is unknown or ambiguous: {tokens[0]}")
+    _apply_default(app, field="runnable", value=resolved)
+    return None
 
 
 def _queue(app: AppContext, _command: str, argument: str) -> SlashOutput:
@@ -192,17 +172,17 @@ SLASHES: tuple[SlashCommand, ...] = (
     SlashCommand(("help", "?"), "Show help.", _help, "/help, /?"),
     SlashCommand(
         ("model",),
-        "List or switch models.",
+        "Switch the session model.",
         _model,
-        "/model [MODEL [EFFORT|auto]]",
+        "/model MODEL [EFFORT|auto]",
     ),
-    SlashCommand(("agic",), "List or switch agics.", _runnable, "/agic [AGIC]"),
-    SlashCommand(("flow",), "List or switch flows.", _runnable, "/flow [FLOW]"),
+    SlashCommand(("agic",), "Switch the session agic.", _runnable, "/agic AGIC"),
+    SlashCommand(("flow",), "Switch the session flow.", _runnable, "/flow FLOW"),
     SlashCommand(
         ("runnable",),
-        "List or switch runnables.",
+        "Switch the session runnable.",
         _runnable,
-        "/runnable [RUNNABLE]",
+        "/runnable RUNNABLE",
     ),
     SlashCommand(
         ("steer", "s"),

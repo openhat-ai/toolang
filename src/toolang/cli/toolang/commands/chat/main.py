@@ -362,35 +362,33 @@ def _chat_handle_scripted_command(
     if command != "model":
         typer.echo(f"Unknown command: /{command}")
         return True
+    if chat_input.tail is None:
+        typer.echo("/model requires a model or parameter assignment.", err=True)
+        return True
     try:
         payload = client.list_models()
     except (click.ClickException, ToolangError, ValueError) as exc:
         message = exc.message if isinstance(exc, click.ClickException) else str(exc)
         typer.echo(chat_friendly_error(message))
         return True
-    if chat_input.tail is not None:
-        tokens = chat_input.tail.split()
-        resolved = chat_slashes._resolve_model_selection(payload, tokens)
-        if resolved is None:
-            typer.echo(f"Model selection is unknown or ambiguous: {chat_input.tail}")
-            return True
-        try:
-            updated = apply_model_selection(
-                selector_payload,
-                ref=resolved[0],
-                effort=resolved[1],
-            )
-        except (click.ClickException, ToolangError, ValueError) as exc:
-            message = exc.message if isinstance(exc, click.ClickException) else str(exc)
-            typer.echo(chat_friendly_error(message))
-            return True
-        selector_payload.clear()
-        selector_payload.update(updated)
-        typer.echo(chat_status_label(selector_payload))
+    tokens = chat_input.tail.split()
+    resolved = chat_slashes._resolve_model_selection(payload, tokens)
+    if resolved is None:
+        typer.echo(f"Model selection is unknown or ambiguous: {chat_input.tail}")
         return True
-    typer.echo("available models")
-    for line in chat_slashes._chat_model_list_lines(payload):
-        typer.echo(line)
+    try:
+        updated = apply_model_selection(
+            selector_payload,
+            ref=resolved[0],
+            effort=resolved[1],
+        )
+    except (click.ClickException, ToolangError, ValueError) as exc:
+        message = exc.message if isinstance(exc, click.ClickException) else str(exc)
+        typer.echo(chat_friendly_error(message))
+        return True
+    selector_payload.clear()
+    selector_payload.update(updated)
+    typer.echo(chat_status_label(selector_payload))
     return True
 
 
@@ -401,50 +399,36 @@ def _chat_handle_scripted_runnable_command(
     *,
     client: ChatClient,
 ) -> bool:
+    if argument is None:
+        typer.echo(f"/{command} requires a runnable identity.", err=True)
+        return True
     try:
         payload = client.list_runnables(command)
     except (click.ClickException, ToolangError, ValueError) as exc:
         message = exc.message if isinstance(exc, click.ClickException) else str(exc)
         typer.echo(chat_friendly_error(message))
         return True
-    if argument is not None:
-        tokens = argument.split()
-        resolved = (
-            chat_slashes._resolve_runnable_command(payload, tokens[0], kind=command)
-            if len(tokens) == 1
-            else None
-        )
-        if resolved is None:
-            typer.echo(f"Runnable selection is unknown or ambiguous: {argument}")
-            return True
-        try:
-            updated = client.apply_settings(
-                (RunOverride("default", "runnable", resolved),),
-                selector_payload,
-            )
-        except (click.ClickException, ToolangError, ValueError) as exc:
-            message = exc.message if isinstance(exc, click.ClickException) else str(exc)
-            typer.echo(chat_friendly_error(message))
-            return True
-        selector_payload.clear()
-        selector_payload.update(updated)
-        typer.echo(chat_status_label(selector_payload))
-        return True
-    selected = _text(selector_payload.get(command))
-    if command == "runnable" and selected is None:
-        for kind in ("agic", "flow"):
-            if (name := _text(selector_payload.get(kind))) is not None:
-                selected = f"{kind}:{name}"
-                break
-    typer.echo(
-        "available runnables" if command == "runnable" else f"available {command}s"
+    tokens = argument.split()
+    resolved = (
+        chat_slashes._resolve_runnable_command(payload, tokens[0], kind=command)
+        if len(tokens) == 1
+        else None
     )
-    for line in chat_slashes._chat_runnable_list_lines(
-        payload,
-        selected=selected,
-        show_kind=command == "runnable",
-    ):
-        typer.echo(line)
+    if resolved is None:
+        typer.echo(f"Runnable selection is unknown or ambiguous: {argument}")
+        return True
+    try:
+        updated = client.apply_settings(
+            (RunOverride("default", "runnable", resolved),),
+            selector_payload,
+        )
+    except (click.ClickException, ToolangError, ValueError) as exc:
+        message = exc.message if isinstance(exc, click.ClickException) else str(exc)
+        typer.echo(chat_friendly_error(message))
+        return True
+    selector_payload.clear()
+    selector_payload.update(updated)
+    typer.echo(chat_status_label(selector_payload))
     return True
 
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. Human approval is required before implementation.
+Approved for implementation on 2026-08-31.
 
 ## Goal
 
@@ -57,7 +57,7 @@ allow-and-limit value inside `RunRequest`; it is not part of authored input.
 In scope:
 
 - typed `SessionSetting` and aggregate `RunOverride` values;
-- model identity and convenient reasoning input;
+- model identity and convenient effort input;
 - runnable identity and kind-qualified shorthand;
 - allow ceilings and run limits;
 - colon override and slash setting parsing;
@@ -151,21 +151,22 @@ Colon and slash forms share command bodies but have different destinations:
 ModelBody = MODEL_IDENTITY? MODEL_PARAMETER_ASSIGNMENT*
 MODEL_IDENTITY = EXACT_REF | default | none
 MODEL_PARAMETER_ASSIGNMENT = MODEL_PARAMETER=VALUE
-MODEL_PARAMETER = reasoning
+MODEL_PARAMETER = effort
 ```
 
 The body requires an identity or at least one assignment. The optional token
 without `=` is identity and must come first. Tokens containing `=` are model
-call parameters. `ref=...` and `reasoning.effort=...` are invalid input names.
+call parameters. `ref=...`, `reasoning=...`, and `reasoning.effort=...` are
+invalid input names.
 
 Session examples:
 
 ```text
 /model openai/gpt-5
-/model reasoning=high
-/model reasoning=4096
-/model reasoning=auto
-/model openai/gpt-5 reasoning=high
+/model effort=high
+/model effort=4096
+/model effort=auto
+/model openai/gpt-5 effort=high
 /model default
 /model none
 ```
@@ -173,21 +174,21 @@ Session examples:
 One-run examples:
 
 ```text
-:model reasoning=high
+:model effort=high
 
 Explain this code.
 
-:model openai/gpt-5 reasoning=4096
+:model openai/gpt-5 effort=4096
 
 Solve this problem.
 ```
 
-`reasoning` is input-only convenience:
+`effort` is input-only convenience:
 
 ```text
-reasoning=auto -> omit explicit reasoning
-reasoning=4096 -> reasoning.budget_tokens = 4096
-reasoning=high -> reasoning.effort = high
+effort=auto -> omit explicit reasoning
+effort=4096 -> reasoning.budget_tokens = 4096
+effort=high -> reasoning.effort = high
 ```
 
 The parser checks `auto`, then accepts `0|[1-9][0-9]*` as a token budget. Every
@@ -196,13 +197,13 @@ known. Signs, leading zeros, decimals, exponents, and separators are not budget
 syntax.
 
 Bare `default` selects the captured surface model. Bare `none` selects no model.
-Assigned `reasoning=default` and `reasoning=none` are effort levels, not identity
+Assigned `effort=default` and `effort=none` are effort levels, not identity
 operations, and succeed only when the model advertises them.
 
 A parameter-only command retains model identity and every unmentioned model
 parameter. An explicit identity is a selection boundary: it clears unmentioned
 explicit parameters, even when it reselects the current ref, then applies
-parameters in the same command. `reasoning=auto` clears only explicit reasoning
+parameters in the same command. `effort=auto` clears only explicit reasoning
 and preserves alias or provider defaults.
 
 An effort must be advertised by the selected model. A budget requires an
@@ -222,8 +223,8 @@ A future direct parameter uses the same assignment form:
 ```text
 /model temperature=0.2
 /model temperature=auto
-:model reasoning=high temperature=0.2
-:model openai/gpt-5 reasoning=high temperature=0.2
+:model effort=high temperature=0.2
+:model openai/gpt-5 effort=high temperature=0.2
 ```
 
 These examples reserve the syntax. Temperature remains out of scope until it
@@ -367,10 +368,10 @@ by primary input or contain named runnable input. The following is invalid and
 does not update the session:
 
 ```text
-:model reasoning=high
+:model effort=high
 ```
 
-Use `/model reasoning=high` to change the session.
+Use `/model effort=high` to change the session.
 
 One slash command occupies the complete normalized Chat submission. It cannot
 be mixed with primary input, named input, another slash command, or a colon
@@ -440,7 +441,7 @@ The new boundary intentionally removes ambiguous compatibility forms:
 - settings-only colon input; use the corresponding slash command;
 - generic `:default FIELD=VALUE`; use `/model`, `/runnable`, `:model`, or
   `:runnable` according to the desired lifetime;
-- positional `/model REF EFFORT`; use `/model REF reasoning=EFFORT`;
+- positional `/model REF EFFORT`; use `/model REF effort=EFFORT`;
 - collection shortcuts such as `:models QUERY`; use `:allow models=QUERY`;
 - bare slash setting commands as list or picker actions; use completion while
   editing a complete command.

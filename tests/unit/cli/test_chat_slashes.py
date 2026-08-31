@@ -171,15 +171,14 @@ def test_quick_help_and_exit_are_declarative_commands() -> None:
     assert app.exited is True
 
 
-def test_quick_model_lists_models_without_changing_settings() -> None:
+def test_quick_model_requires_a_submitted_setting_without_listing() -> None:
     app = _App()
+    app.client.error = AssertionError("model list must not be loaded")
 
-    listed = slashes.handle(app, QuickCommand("model"))
+    result = slashes.handle(app, QuickCommand("model"))
 
-    assert listed.lines == [
-        "Available Models",
-        "GPT-5  default  openai  reasoning: low, high, default",
-    ]
+    assert result.lines is None
+    assert app.error == "/model requires a model or parameter assignment."
     assert app.selects == {}
     assert app.status_refreshes == 0
 
@@ -205,28 +204,29 @@ def test_model_argument_updates_typed_session_selection() -> None:
     assert "reasoning_effort" not in app.selects
 
 
-def test_quick_runnable_lists_without_changing_settings() -> None:
+def test_quick_runnable_requires_an_identity_without_listing() -> None:
     app = _App()
     app.selects["flow"] = "review"
+    app.client.error = AssertionError("runnable list must not be loaded")
 
     result = slashes.handle(app, QuickCommand("agic"))
 
-    assert result.lines == ["Available Agics", "chat  default"]
+    assert result.lines is None
+    assert app.error == "/agic requires a runnable identity."
     assert app.selects == {"flow": "review"}
     assert app.status_refreshes == 0
 
 
-def test_quick_runnable_lists_qualified_agics_and_flows() -> None:
+def test_quick_generic_runnable_requires_an_identity_without_listing() -> None:
     app = _App()
     app.selects["flow"] = "review"
+    app.client.error = AssertionError("runnable list must not be loaded")
 
     result = slashes.handle(app, QuickCommand("runnable"))
 
-    assert result.lines == [
-        "Available Runnables",
-        "agic:chat  default",
-        "flow:review  current",
-    ]
+    assert result.lines is None
+    assert app.error == "/runnable requires a runnable identity."
+    assert app.selects == {"flow": "review"}
 
 
 def test_runnable_argument_updates_validated_session_default() -> None:
@@ -270,7 +270,7 @@ def test_quick_client_errors_are_reported_in_status() -> None:
     app = _App()
     app.client.error = ToolangError("unavailable")
 
-    result = slashes.handle(app, QuickCommand("model"))
+    result = slashes.handle(app, QuickCommand("model", "openai/gpt-5"))
 
     assert result.handled is True
     assert result.lines is None

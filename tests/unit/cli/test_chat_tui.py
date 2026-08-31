@@ -43,7 +43,6 @@ from toolang.cli.toolang.commands.chat import (
     tui,
     widgets,
 )
-from toolang.cli.toolang.commands.chat.remote import RemoteChatError
 from toolang.cli.toolang.commands.chat.policy import apply_session_commands
 from toolang.cli.toolang.commands.chat.events import ChatUIEvent
 from toolang.cli.toolang.commands.chat.base import (
@@ -2951,22 +2950,31 @@ def test_chat_tui_blocks_mutating_input_after_ambiguous_acceptance(
     assert any("durable result" in value for value in rendered)
 
 
-def test_chat_tui_reports_remote_read_failure_without_exiting() -> None:
-    class FailingRemoteClient(FakeClient):
-        def list_models(self) -> dict[str, object]:
-            raise RemoteChatError("remote chat models transport failed")
+def test_chat_tui_bare_model_command_does_not_open_or_load_a_picker() -> None:
+    class CountingRemoteClient(FakeClient):
+        model_reads = 0
 
+        def list_models(self) -> dict[str, object]:
+            self.model_reads += 1
+            return super().list_models()
+
+    client = CountingRemoteClient()
     app = tui.ChatTuiApp(
         thread_id="term_remote",
         selects={},
         home="/tmp/agent",
         input_history=None,
-        client=FailingRemoteClient(),
+        client=client,
     )
+    initial_reads = client.model_reads
 
     app.handle_submit("/model")
 
-    assert app.status_bar.error_message == "remote chat models transport failed"
+    assert (
+        app.status_bar.error_message
+        == "/model requires a model or parameter assignment."
+    )
+    assert client.model_reads == initial_reads
 
 
 def test_chat_tui_uses_queued_runnable_snapshot_for_the_next_active_status() -> None:
