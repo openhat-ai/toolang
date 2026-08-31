@@ -240,6 +240,63 @@ def test_setup_watcher_warm_process_reuses_persistent_projection(
     assert actual.models.refs() == expected.models.refs()
 
 
+def test_setup_watcher_model_cache_preserves_decimal_catalog_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "models.json"
+    _write_catalog(path, ("one",))
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            '"input": 1,',
+            '"input": 0.12345678901234567890123456789,',
+        ),
+        encoding="utf-8",
+    )
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    expected = asyncio.run(watcher.refresh())
+    asyncio.run(watcher.refresh())
+
+    warm = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
+    actual = asyncio.run(warm.refresh())
+
+    expected_cost = expected.providers["test"].models["one"].cost
+    actual_cost = actual.providers["test"].models["one"].cost
+    assert expected_cost is not None
+    assert actual_cost is not None
+    assert actual_cost["input"] == expected_cost["input"]
+    assert isinstance(actual_cost["input"], Decimal)
+
+
+def test_setup_watcher_retries_transient_model_cache_write_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "models.json", ("one",))
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    original_store = watcher._model_cache.store
+    store_calls = 0
+
+    def flaky_store(**kwargs: object) -> None:
+        nonlocal store_calls
+        store_calls += 1
+        if store_calls == 1:
+            raise OSError("temporary cache failure")
+        original_store(**kwargs)
+
+    monkeypatch.setattr(watcher._model_cache, "store", flaky_store)
+
+    asyncio.run(watcher.refresh())
+    asyncio.run(watcher.refresh())
+    cache = tmp_path / ".setup" / "models" / "projection.json"
+    assert not cache.exists()
+
+    asyncio.run(watcher.refresh())
+
+    assert store_calls == 2
+    assert cache.is_file()
+
+
 def test_catalog_inspection_reuses_setup_model_cache(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -333,6 +390,48 @@ def test_setup_watcher_treats_stale_model_cache_as_a_miss(
 
     assert parse_calls == 1
     assert setup.models.refs() == ("test/one", "test/two")
+
+
+def test_model_cache_does_not_bypass_catalog_size_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "models.json", ("one",))
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    expected = asyncio.run(watcher.refresh())
+    asyncio.run(watcher.refresh())
+    config = {
+        "plugin": {
+            "model_catalog": {
+                "models_dev": {"max_bytes": 1},
+            }
+        }
+    }
+    (tmp_path / "config.toml").write_text(
+        "[plugin.model_catalog.models_dev]\nmax_bytes = 1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
+
+    assert asyncio.run(watcher.refresh()) is expected
+    assert watcher.diagnostics()[0].code == "value-error"
+    assert "model catalog exceeds 1 bytes" in watcher.diagnostics()[0].message
+
+    fresh = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
+
+    with pytest.raises(ValueError, match="model catalog exceeds 1 bytes"):
+        asyncio.run(fresh.refresh())
+
+    monkeypatch.setattr(catalog_module, "load_setup_config", lambda _layout: config)
+    monkeypatch.setattr(catalog_module, "load_agent_config", lambda _layout: {})
+    monkeypatch.setattr(
+        catalog_module,
+        "load_setup_envs",
+        lambda _layout: {"TEST_API_KEY": "secret"},
+    )
+
+    with pytest.raises(ValueError, match="model catalog exceeds 1 bytes"):
+        asyncio.run(load_catalog_inspection(AgentLayout.resident(tmp_path, "alice")))
 
 
 def test_large_model_cache_avoids_duplicate_derived_rows(

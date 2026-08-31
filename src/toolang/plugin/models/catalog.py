@@ -8,7 +8,6 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from hashlib import sha256
 import json
-import math
 from pathlib import Path
 from typing import cast
 
@@ -640,9 +639,7 @@ def _reasoning_options(
 
 
 def _validate_json(value: object, *, label: str) -> None:
-    if value is None or isinstance(value, str | bool | int | float | Decimal):
-        if isinstance(value, float) and not math.isfinite(value):
-            raise ValueError(f"{label} numbers must be finite")
+    if value is None or isinstance(value, str | bool | int | Decimal):
         return
     if isinstance(value, Mapping):
         if any(not isinstance(key, str) for key in value):
@@ -660,9 +657,8 @@ def _validate_json(value: object, *, label: str) -> None:
 def _validate_non_negative_numbers(value: object, *, label: str) -> None:
     if isinstance(value, bool) or value is None or isinstance(value, str):
         return
-    if isinstance(value, int | float | Decimal):
-        non_finite = not isinstance(value, int) and not math.isfinite(value)
-        if non_finite or value < 0:
+    if isinstance(value, int | Decimal):
+        if value < 0:
             raise ValueError(f"{label} must not contain negative numbers")
         return
     if isinstance(value, Mapping):
@@ -678,9 +674,9 @@ def _cost_per_token(cost: Mapping[str, object] | None, key: str) -> float | None
     if cost is None:
         return None
     value = cost.get(key)
-    if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
+    if isinstance(value, bool) or not isinstance(value, int | Decimal):
         return None
-    return float(Decimal(str(value)) / Decimal(1_000_000))
+    return float(Decimal(value) / Decimal(1_000_000))
 
 
 def _reject_json_constant(value: str) -> None:

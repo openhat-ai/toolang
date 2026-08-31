@@ -15,6 +15,7 @@ from toolang.common.layout import AgentLayout
 from toolang.plugin.config import merge_plugin_configs
 from toolang.plugin.models.catalog import (
     MergedModelCatalog,
+    ModelsDevModelCatalog,
     model_info_from_catalog,
     resolve_model_catalog_path,
 )
@@ -95,7 +96,6 @@ async def load_catalog_inspection(
     )
     source = FileFingerprint.capture(catalog_path)
     cache = ModelProjectionCache(layout.model_cache)
-    cached = cache.load(source)
     catalog_configs["models_dev"] = {
         **catalog_configs.get("models_dev", {}),
         "path": catalog_path,
@@ -116,7 +116,16 @@ async def load_catalog_inspection(
     ) + tuple(catalogs[name] for name in sorted(catalogs))
     if not ordered or ordered[0].name != "models_dev":
         raise RuntimeError("models_dev catalog plugin is not installed")
-    static = cached.static if cached is not None else await ordered[0].snapshot()
+    models_dev = ordered[0]
+    cached = cache.load(
+        source,
+        max_source_bytes=(
+            models_dev.max_bytes
+            if isinstance(models_dev, ModelsDevModelCatalog)
+            else None
+        ),
+    )
+    static = cached.static if cached is not None else await models_dev.snapshot()
     additional = ordered[1:]
     additional_snapshots = await asyncio.gather(
         *(catalog.snapshot() for catalog in additional)

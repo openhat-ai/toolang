@@ -94,13 +94,24 @@ class ModelProjectionCache:
         self._path = directory / _CACHE_FILE
         self._lock = directory / _CACHE_LOCK
 
-    def load(self, source: FileFingerprint) -> CachedModelProjection | None:
+    def load(
+        self,
+        source: FileFingerprint,
+        *,
+        max_source_bytes: int | None = None,
+    ) -> CachedModelProjection | None:
         """Return a fully validated matching cache entry, or a cache miss."""
 
         try:
+            if max_source_bytes is not None and source.size > max_source_bytes:
+                return None
             if self._path.stat().st_size > _MAX_CACHE_BYTES:
                 return None
-            payload = json.loads(self._path.read_text(encoding="utf-8"))
+            payload = json.loads(
+                self._path.read_text(encoding="utf-8"),
+                parse_float=Decimal,
+                parse_constant=_reject_cache_constant,
+            )
             if not isinstance(payload, Mapping):
                 return None
             if payload.get("schema") != CACHE_SCHEMA:
@@ -291,19 +302,11 @@ def _required_int(data: Mapping[object, object], key: str) -> int:
 
 
 def _cache_json_dumps(value: object) -> str:
-    return json.dumps(
-        value,
-        default=_cache_json_default,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
+    return catalog_json_dumps(value, indent=None)
 
 
-def _cache_json_default(value: object) -> object:
-    if isinstance(value, Decimal):
-        return float(value)
-    raise TypeError(f"unsupported model cache value: {type(value).__name__}")
+def _reject_cache_constant(value: str) -> None:
+    raise ValueError(f"invalid model cache numeric constant: {value}")
 
 
 def _contains_unsafe_headers(content: str) -> bool:

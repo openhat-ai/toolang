@@ -17,6 +17,7 @@ from toolang.common.layout import AgentLayout
 from toolang.plugin.config import merge_plugin_configs
 from toolang.plugin.models.catalog import (
     MergedModelCatalog,
+    ModelsDevModelCatalog,
     model_info_from_catalog,
     resolve_model_catalog_path,
 )
@@ -215,10 +216,27 @@ class SetupWatcher:
         if models_dev is None:
             raise RuntimeError("models_dev catalog plugin is not installed")
         source = FileFingerprint.capture(catalog_path)
-        cache_entry = self._cache_entry if self._catalog_identity == source else None
-        if cache_entry is None:
-            cache_entry = self._model_cache.load(source)
-        if self._catalog_identity == source and self._static_catalog is not None:
+        max_source_bytes = (
+            models_dev.max_bytes
+            if isinstance(models_dev, ModelsDevModelCatalog)
+            else None
+        )
+        source_cacheable = max_source_bytes is None or source.size <= max_source_bytes
+        cache_entry = (
+            self._cache_entry
+            if source_cacheable and self._catalog_identity == source
+            else None
+        )
+        if cache_entry is None and source_cacheable:
+            cache_entry = self._model_cache.load(
+                source,
+                max_source_bytes=max_source_bytes,
+            )
+        if (
+            source_cacheable
+            and self._catalog_identity == source
+            and self._static_catalog is not None
+        ):
             static = self._static_catalog
         elif cache_entry is not None:
             static = cache_entry.static
@@ -427,7 +445,11 @@ class SetupWatcher:
                 projection_key=pending.projection_key,
                 model_infos=pending.model_infos,
             )
+        except asyncio.CancelledError:
+            self._pending_model_cache = pending
+            raise
         except Exception:
+            self._pending_model_cache = pending
             logger.exception(
                 "setup.model_cache_write_failed agent=%s", self.layout.name
             )
