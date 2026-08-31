@@ -110,7 +110,6 @@ def agent_model_targets(
     default_target = resolve_model(
         selection,
         ref=setup.bindings.model,
-        allowed_queries=queries,
     )
     default = next(
         (ref for ref, target in targets if target == default_target),

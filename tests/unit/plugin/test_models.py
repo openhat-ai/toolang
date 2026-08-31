@@ -59,6 +59,7 @@ from toolang.plugin.models.catalog import (
     read_model_catalog_snapshot,
 )
 from toolang.plugin.models.loading import load_model_adapters
+from toolang.plugin.models import resolution as model_resolution
 from toolang.plugin.models.adapters import chat_completions as chat_completions_models
 from toolang.plugin.models.adapters import messages as messages_models
 from toolang.plugin.models.adapters import responses as responses_models
@@ -377,6 +378,85 @@ def test_model_query_exact_queries_round_trip_distinct_alias_endpoints() -> None
     ) == (
         "https://primary.example.test/v1",
         "https://backup.example.test/v1",
+    )
+
+
+def test_selectable_model_targets_reuse_exact_candidate_queries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _FakeModels(
+        name="openai",
+        models=(
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openai",
+                name="gpt-5",
+                model="gpt-5",
+                adapter="responses",
+            ),
+            ModelInfo(
+                ref="openai/o3",
+                provider="openai",
+                name="o3",
+                model="o3",
+                adapter="responses",
+            ),
+        ),
+    )
+    context = _SelectionContext(
+        model_providers={"openai": provider},
+        model_aliases={},
+        default_models=(),
+        model_environ={},
+    )
+    discovered = selectable_model_targets(
+        providers=context.providers,
+        models=context.models,
+        aliases=context.model_aliases,
+        envs=context.envs,
+    )
+
+    def fail_candidate_dataset(_candidates: object) -> object:
+        raise AssertionError("exact candidate queries must bypass generic matching")
+
+    monkeypatch.setattr(
+        model_resolution,
+        "_candidate_dataset",
+        fail_candidate_dataset,
+    )
+
+    selected = selectable_model_targets(
+        providers=context.providers,
+        models=context.models,
+        aliases=context.model_aliases,
+        envs=context.envs,
+        queries=tuple(query for query, _target in discovered),
+    )
+
+    assert selected == discovered
+
+
+def test_selectable_model_targets_skip_discovery_for_empty_queries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_discovery(**_kwargs: object) -> object:
+        raise AssertionError("empty model queries must bypass candidate discovery")
+
+    monkeypatch.setattr(
+        model_resolution,
+        "_discover_available_candidates",
+        fail_discovery,
+    )
+
+    assert (
+        selectable_model_targets(
+            providers={},
+            models=(),
+            aliases={},
+            envs={},
+            queries=(),
+        )
+        == ()
     )
 
 

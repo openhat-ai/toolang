@@ -672,6 +672,8 @@ def _resolve_query_targets(
     provider_configs: Mapping[str, ProviderConfig],
     prefer_exact_route: bool = False,
 ) -> tuple[_Candidate, ...]:
+    if not queries:
+        return ()
     candidates = _discover_available_candidates(
         providers=providers,
         models=models,
@@ -679,8 +681,12 @@ def _resolve_query_targets(
         envs=envs,
         provider_configs=provider_configs,
     )
-    if not queries:
-        return ()
+    exact_queries = {candidate.exact_query for candidate in candidates}
+    if all(query in exact_queries for query in queries):
+        selected = set(queries)
+        return tuple(
+            candidate for candidate in candidates if candidate.exact_query in selected
+        )
     selected = _candidate_dataset(candidates).query(queries)
     return tuple(cast(_Candidate, item.record) for item in selected)
 

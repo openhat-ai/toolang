@@ -137,6 +137,34 @@ def test_agent_model_default_is_the_selected_candidate_concrete_ref(
     assert default == setup.bindings.model
 
 
+def test_agent_model_default_must_be_within_selected_candidates(
+    tmp_path: Path,
+) -> None:
+    setup, state, _selection = _snapshots(tmp_path)
+    other = replace(
+        setup.models[0],
+        ref="test/other",
+        name="other",
+        model="other",
+        selectors=("test/other", "other"),
+    )
+    setup = replace(
+        setup,
+        models=(*setup.models, other),
+        bindings=RunBindings(model="test/other"),
+    )
+
+    with pytest.raises(
+        ToolangError,
+        match="default model is outside the selectable model collection",
+    ):
+        agent_model_targets(
+            setup,
+            state,
+            AgentCeiling(models=("test/scripted",)),
+        )
+
+
 def test_agent_resources_durable_data_round_trips_every_resource_kind() -> None:
     resources = AgentResources(
         models=("test/model",),
