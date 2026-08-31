@@ -13,7 +13,7 @@ import typer
 
 from toolang.base.types.message import TextDelta, TextPart, message_text
 from toolang.cli.common.policy import (
-    resolve_binding_overrides,
+    resolve_default_overrides,
     resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
@@ -189,8 +189,8 @@ def _chat_runtime(
                     resolve_ceiling_overrides,
                     environ,
                 ),
-                binding_overrides=user_call(
-                    resolve_binding_overrides,
+                default_overrides=user_call(
+                    resolve_default_overrides,
                     environ,
                 ),
                 limit_overrides=user_call(
@@ -225,11 +225,11 @@ def _chat_session_commands(
     limit_options: list[str] | None,
 ) -> tuple[RunOverride, ...]:
     ceilings = user_call(resolve_ceiling_overrides, {}, allow_options)
-    bindings = user_call(resolve_binding_overrides, {}, default_options)
+    defaults = user_call(resolve_default_overrides, {}, default_options)
     limits = user_call(resolve_limit_overrides, {}, limit_options)
     return (
         *(RunOverride("allow", field, value) for field, value in ceilings.items()),
-        *(RunOverride("default", field, value) for field, value in bindings.items()),
+        *(RunOverride("default", field, value) for field, value in defaults.items()),
         *(RunOverride("limit", field, value) for field, value in limits.items()),
     )
 

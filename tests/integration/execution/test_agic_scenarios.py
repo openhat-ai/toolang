@@ -62,7 +62,7 @@ from toolang.execution.types import (
     Pointer,
 )
 from toolang.lang.input import resolve_input_parts
-from toolang.plugin.models.config import ProviderConfig
+from toolang.setup import ModelCollection
 
 
 def test_agic_executes_perceived_text_and_typed_arguments(
@@ -264,28 +264,31 @@ agic reply(_: Part[]) -> Part[]:
     )
     harness.setup = replace(
         harness.setup,
-        models=tuple(
-            replace(
-                model,
-                metadata={
-                    **model.metadata,
-                    "reasoning_options": [
-                        {"type": "toggle"},
-                        {
-                            "type": "effort",
-                            "values": ["medium", "high", "low"],
+        models=ModelCollection(
+            tuple(
+                replace(
+                    entry,
+                    target=replace(
+                        entry.target,
+                        reasoning={"enabled": True, "effort": "medium"},
+                    ),
+                    info=replace(
+                        entry.info,
+                        metadata={
+                            **entry.info.metadata,
+                            "reasoning_options": [
+                                {"type": "toggle"},
+                                {
+                                    "type": "effort",
+                                    "values": ["medium", "high", "low"],
+                                },
+                            ],
                         },
-                    ],
-                },
+                    ),
+                )
+                for entry in harness.setup.models.entries
             )
-            for model in harness.setup.models
         ),
-        provider_configs={
-            "test": ProviderConfig(
-                "test",
-                options={"reasoning": {"enabled": True, "effort": "medium"}},
-            )
-        },
     )
     high = ModelRequest(
         TEST_MODEL_REF,
@@ -1414,9 +1417,18 @@ agic reply(_: Text) -> Text:
     )
     harness.setup = replace(
         harness.setup,
-        models=tuple(
-            replace(model, input_price=0.01, output_price=0.02)
-            for model in harness.setup.models
+        models=ModelCollection(
+            tuple(
+                replace(
+                    entry,
+                    info=replace(
+                        entry.info,
+                        input_price=0.01,
+                        output_price=0.02,
+                    ),
+                )
+                for entry in harness.setup.models.entries
+            )
         ),
     )
 

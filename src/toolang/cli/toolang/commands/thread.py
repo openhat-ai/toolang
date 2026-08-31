@@ -15,7 +15,7 @@ import typer
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import Message
 from toolang.cli.common.policy import (
-    resolve_binding_overrides,
+    resolve_default_overrides,
     resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
@@ -383,23 +383,23 @@ def _restart_commands(
     model_replacement: bool,
 ) -> tuple[RunOverride, ...]:
     environ = load_runtime_environ(layout, base_environ=os.environ)
-    cli_bindings = resolve_binding_overrides({}, default_options)
-    if "runnable" in cli_bindings:
+    cli_defaults = resolve_default_overrides({}, default_options)
+    if "runnable" in cli_defaults:
         raise ValueError("--default runnable does not apply to a persisted source run")
-    binding_overrides = {
-        **resolve_binding_overrides(environ),
-        **cli_bindings,
+    default_overrides = {
+        **resolve_default_overrides(environ),
+        **cli_defaults,
     }
-    binding_overrides.pop("runnable", None)
+    default_overrides.pop("runnable", None)
     if not model_replacement:
-        binding_overrides.pop("model", None)
+        default_overrides.pop("model", None)
     ceilings = resolve_ceiling_overrides(environ, allow_options or ())
     limits = resolve_limit_overrides(environ, limit_options or ())
     return (
         *(RunOverride("allow", field, value) for field, value in ceilings.items()),
         *(
             RunOverride("default", field, value)
-            for field, value in binding_overrides.items()
+            for field, value in default_overrides.items()
         ),
         *(RunOverride("limit", field, value) for field, value in limits.items()),
     )

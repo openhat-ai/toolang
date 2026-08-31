@@ -22,7 +22,7 @@ from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.records import RunRecord
 from toolang.lang.includes import resolve_file_include
 from toolang.setup import AgentSetup
-from toolang.state.state import AgentState
+from toolang.state.state import AgentState, StatePublication
 
 from .records import JobRecord
 from .state import Job, merge_jobs, program_jobs
@@ -62,7 +62,7 @@ class JobScheduler:
         executor: RunExecutor,
         ids: IdIssuer,
         get_agent_setup: Callable[[], AgentSetup],
-        get_agent_state: Callable[[], AgentState],
+        get_agent_state: Callable[[], AgentState | StatePublication],
         safety_refresh_seconds: float = DEFAULT_SAFETY_REFRESH_SECONDS,
         state_poll_seconds: float = DEFAULT_STATE_POLL_SECONDS,
     ) -> None:

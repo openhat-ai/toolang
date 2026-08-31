@@ -318,7 +318,7 @@ def test_chat_runtime_builds_process_local_execution_resources(
     assert captured["kwargs"] == {
         "sandbox": "host",
         "ceiling_overrides": {"models": ("env/*",)},
-        "binding_overrides": {},
+        "default_overrides": {},
         "limit_overrides": {"time": 30},
     }
     assert captured["commands"] == (

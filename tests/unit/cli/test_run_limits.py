@@ -1,7 +1,7 @@
 import pytest
 
 from toolang.cli.common.policy import (
-    resolve_binding_overrides,
+    resolve_default_overrides,
     resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
@@ -21,7 +21,7 @@ def test_policy_options_overlay_environment_by_field() -> None:
         "models": ("local/*", "test/*"),
         "tools": (),
     }
-    assert resolve_binding_overrides(environ, ("model=none",)) == {"model": None}
+    assert resolve_default_overrides(environ, ("model=none",)) == {"model": None}
     assert resolve_limit_overrides(
         environ,
         ("tokens=500", "agic_tool_calls=none", "time=60"),
@@ -36,7 +36,7 @@ def test_policy_overrides_preserve_absent_empty_and_unrestricted() -> None:
     assert resolve_ceiling_overrides({}, ()) == {}
     assert resolve_ceiling_overrides({}, ("tools=none",)) == {"tools": ()}
     assert resolve_ceiling_overrides({}, ("tools=all",)) == {"tools": None}
-    assert resolve_binding_overrides({}, ("model=none",)) == {"model": None}
+    assert resolve_default_overrides({}, ("model=none",)) == {"model": None}
     assert resolve_limit_overrides({}, ("time=none",)) == {"time": None}
 
 
@@ -53,7 +53,7 @@ def test_policy_overrides_reject_unknown_allow_environment_fields(field: str) ->
         (resolve_ceiling_overrides, "caps=review", "unknown allow field"),
         (resolve_ceiling_overrides, "models=none", "cannot combine"),
         (resolve_ceiling_overrides, "models=all,openai/*", "cannot mix"),
-        (resolve_binding_overrides, "model=a", "duplicate default field"),
+        (resolve_default_overrides, "model=a", "duplicate default field"),
         (resolve_limit_overrides, "tokens=1", "duplicate run limit"),
         (resolve_limit_overrides, "unknown=1", "unknown run limit"),
         (resolve_limit_overrides, "tokens=-1", "non-negative integer"),

@@ -110,11 +110,11 @@ def resolve_commands(
     """Resolve policy layers against one current setup snapshot."""
 
     base = RunBindings(
-        model=surface.model if surface.model is not None else setup.bindings.model,
+        model=surface.model if surface.model is not None else setup.defaults.model,
         runnable=(
             surface.runnable
             if surface.runnable is not None
-            else setup.bindings.runnable
+            else setup.defaults.runnable
         ),
     )
     return materialize_policy(

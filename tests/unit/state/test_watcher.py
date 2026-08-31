@@ -7,6 +7,7 @@ import threading
 import pytest
 
 from toolang.common.layout import AgentLayout
+from toolang.state import collections as state_collections
 from toolang.state import watcher as state_watcher
 from toolang.state.prepare import prepare_agent_state
 
@@ -198,7 +199,7 @@ def test_concurrent_refresh_requests_each_run_one_serialized_check(
         def counted_prepare(*_args, **_kwargs):
             nonlocal calls
             calls += 1
-            return initial
+            return initial.state
 
         monkeypatch.setattr(state_watcher, "prepare_agent_state", counted_prepare)
 
@@ -315,7 +316,7 @@ def test_invalid_flow_candidate_retains_last_valid_state_until_repaired(
 
         flow.write_text("flow other:\n  pass\n", encoding="utf-8")
         refresh = await watcher.refresh_result()
-        rejected = refresh.state
+        rejected = refresh.publication
 
         assert rejected is initial
         assert rejected.revision == initial.revision
@@ -373,3 +374,56 @@ def test_watcher_loads_an_older_persisted_state_after_publishing_a_new_one(
     assert watcher.current().revision == second.revision
     assert loaded.revision == first.revision
     assert loaded.modules["agent"].agics[0].messages[0].content == "First."
+
+
+def test_state_watcher_publishes_filtered_caps_once_per_revision_and_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    prompts = toolang_root / "prompts"
+    prompts.mkdir()
+    (prompts / "one.md").write_text("One prompt.\n", encoding="utf-8")
+    (prompts / "two.md").write_text("Two prompt.\n", encoding="utf-8")
+    for name in ("one", "two"):
+        skill = toolang_root / "skills" / name
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text(
+            f"---\ndescription: {name.title()}\n---\nUse {name}.\n",
+            encoding="utf-8",
+        )
+    (toolang_root / "config.toml").write_text(
+        '[allow]\nprompts = ["prompt/one"]\nskills = ["skill/one"]\n',
+        encoding="utf-8",
+    )
+    layout = AgentLayout.resident(toolang_root, "alice")
+    durable = prepare_agent_state(layout)
+    watcher = state_watcher.StateWatcher(
+        layout,
+        allow_overrides={"prompts": ("prompt/two",)},
+    )
+
+    publication = asyncio.run(watcher.refresh())
+
+    assert publication.state.revision == durable.revision
+    assert {(cap.kind, cap.name) for cap in publication.state.caps.values()} == {
+        ("prompt", "one"),
+        ("prompt", "two"),
+        ("skill", "one"),
+        ("skill", "two"),
+    }
+    assert [(cap.kind, cap.name) for cap in publication.caps_for("agent")] == [
+        ("prompt", "two"),
+        ("skill", "one"),
+    ]
+    loaded = watcher.load(publication.revision)
+    assert loaded is publication
+
+    def fail_query(*_args, **_kwargs):
+        raise AssertionError("caps_for must use the precomputed State resources")
+
+    monkeypatch.setattr(state_collections, "cap_dataset", fail_query)
+    assert publication.resources.caps_for("agent") == publication.caps_for("agent")

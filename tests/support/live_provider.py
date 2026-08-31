@@ -49,6 +49,6 @@ async def create_live_agent(
     )
     setup = await SetupWatcher(
         AgentLayout.resident(root, "alice"),
-        binding_overrides={"model": model},
+        default_overrides={"model": model},
     ).refresh()
     return setup, state

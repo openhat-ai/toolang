@@ -14,7 +14,12 @@ from typing import Any, Self
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import Part, TextPart
 from toolang.base.types.model import ModelInfo, ModelTarget, Provider, ResolvedProvider
-from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
+from toolang.base.types.policy import (
+    AgentCeiling,
+    RunBindings,
+    RunDefaults,
+    RunLimits,
+)
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
@@ -36,6 +41,8 @@ from toolang.lang import Program
 from toolang.lang.input import resolve_runnable_input
 from toolang.state.state import AgentState, agent_state_revision
 from toolang.state.watcher import StateRefresh
+from toolang.plugin.models.resolution import build_model_collection
+from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.setup import AgentEnvironment, AgentSetup
 
 TEST_MODEL_REF = "test/scripted"
@@ -323,12 +330,17 @@ class ExecutionHarness:
         provider = FakeModels(streaming=streaming)
         adapter = ScriptedModelAdapter(responses)
         layout = AgentLayout.resident(root, "alice")
+        providers = {provider.name: provider.catalog_provider()}
         setup = AgentSetup(
             layout=layout,
-            providers={provider.name: provider.catalog_provider()},
+            providers=providers,
             adapters={adapter.name: adapter},
-            models=provider.list_models(environ={}),
-            tools=tools or {},
+            models=build_model_collection(
+                providers=providers,
+                models=provider.list_models(environ={}),
+                envs={},
+            ),
+            tools=ToolCollection.from_tools(tools or {}),
             envs={},
             environment=AgentEnvironment(
                 sandbox="host",
@@ -340,6 +352,7 @@ class ExecutionHarness:
                 home=home,
                 working_directory=home,
             ),
+            defaults=RunDefaults(model=TEST_MODEL_REF),
         )
         store = RunStore(runtime / "runs.db")
         ids = IdIssuer(runtime / "ids.json")
@@ -388,7 +401,10 @@ class ExecutionHarness:
             setup=self.setup,
             state=self.state,
             thread=thread,
-            bindings=RunBindings(model=model, runnable=runnable),
+            bindings=RunBindings(
+                model=model if model is not None else self.setup.defaults.model,
+                runnable=runnable,
+            ),
             limits=limits if limits is not None else self.setup.limits,
             ceilings=ceilings,
             input=resolve_runnable_input(

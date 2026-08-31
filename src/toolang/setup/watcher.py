@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 import logging
 from pathlib import Path
@@ -25,15 +25,18 @@ from toolang.plugin.models.config import (
 )
 from toolang.plugin.models.loading import load_model_adapters, load_model_catalogs
 from toolang.plugin.models.provider_resolver import resolve_catalog_providers
+from toolang.plugin.models.resolution import build_model_collection
+from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.loading import load_tools
 
 from .config import (
     load_agent_config,
     load_setup_config,
     load_setup_envs,
-    resolve_agent_ceiling,
-    resolve_run_bindings,
+    project_setup_config,
+    resolve_run_defaults,
     resolve_run_limits,
+    resolve_setup_allow,
 )
 from .types import AgentEnvironment, AgentSetup
 
@@ -59,15 +62,15 @@ class SetupWatcher:
         *,
         sandbox: str = "host",
         model_catalog: Path | None = None,
-        ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
-        binding_overrides: Mapping[str, str | None] | None = None,
+        allow_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
+        default_overrides: Mapping[str, str | None] | None = None,
         limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     ) -> None:
         self.layout = layout
         self._sandbox = sandbox
         self._model_catalog_override = model_catalog
-        self._ceiling_overrides = dict(ceiling_overrides or {})
-        self._binding_overrides = dict(binding_overrides or {})
+        self._allow_overrides = dict(allow_overrides or {})
+        self._default_overrides = dict(default_overrides or {})
         self._limit_overrides = dict(limit_overrides or {})
         self._config: tuple[dict[str, object], dict[str, object]] | None = None
         self._adapters: dict[str, ModelAdapter] = {}
@@ -95,7 +98,10 @@ class SetupWatcher:
             agent_config = load_agent_config(self.layout)
             envs = load_setup_envs(self.layout)
             configs = (root_config, agent_config)
-            config_value = (root_config, agent_config)
+            config_value = (
+                project_setup_config(root_config),
+                project_setup_config(agent_config),
+            )
             config_changed = config_value != self._config
             envs_changed = self._setup is None or envs != self._setup.envs
             catalog_path = resolve_model_catalog_path(
@@ -105,13 +111,13 @@ class SetupWatcher:
             )
             identity = _catalog_file_identity(catalog_path)
             catalog_changed = identity != self._catalog_identity
-            ceiling = resolve_agent_ceiling(
+            allow = resolve_setup_allow(
                 configs,
-                overrides=self._ceiling_overrides,
+                overrides=self._allow_overrides,
             )
-            bindings = resolve_run_bindings(
+            defaults = resolve_run_defaults(
                 configs,
-                overrides=self._binding_overrides,
+                overrides=self._default_overrides,
             )
             limits = resolve_run_limits(
                 configs,
@@ -130,9 +136,9 @@ class SetupWatcher:
                 configs,
                 family="model_catalog",
             )
-            if config_changed or envs_changed or not self._adapters:
+            if config_changed or envs_changed or self._setup is None:
                 self._adapters = load_model_adapters(adapter_configs)
-            if config_changed or envs_changed or not self._tools:
+            if config_changed or envs_changed or self._setup is None:
                 self._tools = load_tools(
                     toolset_config=toolset_configs,
                 )
@@ -208,25 +214,51 @@ class SetupWatcher:
                 environ=envs,
                 configs=provider_configs,
             )
-            providers = dict(resolved_catalog.providers)
-            models = tuple(
+            all_providers = dict(resolved_catalog.providers)
+            model_infos = tuple(
                 model_info_from_catalog(model) for model in resolved_catalog.models
             )
+            models = build_model_collection(
+                providers=all_providers,
+                models=model_infos,
+                envs=envs,
+                provider_configs=provider_configs,
+            )
+            if allow.models is not None:
+                models = models.match(allow.models)
+            tools = ToolCollection.from_tools(self._tools)
+            if allow.tools is not None:
+                tools = tools.match(allow.tools)
+            if defaults.model is not None:
+                models.resolve(defaults.model)
+            provider_models: dict[str, set[str]] = {}
+            for entry in models.entries:
+                provider_models.setdefault(entry.target.provider, set()).add(
+                    entry.info.model
+                )
+            providers = {
+                provider_id: replace(
+                    all_providers[provider_id],
+                    models={
+                        model_id: model
+                        for model_id, model in all_providers[provider_id].models.items()
+                        if model_id in model_ids
+                    },
+                )
+                for provider_id, model_ids in provider_models.items()
+            }
             setup = AgentSetup(
                 layout=self.layout,
                 providers=providers,
                 adapters=self._adapters,
                 models=models,
-                tools=self._tools,
+                tools=tools,
                 envs=envs,
-                catalog=resolved_catalog,
-                provider_configs=provider_configs,
                 environment=AgentEnvironment.capture(
                     self.layout,
                     sandbox=self._sandbox,
                 ),
-                ceiling=ceiling,
-                bindings=bindings,
+                defaults=defaults,
                 limits=limits,
             )
             self._config = config_value

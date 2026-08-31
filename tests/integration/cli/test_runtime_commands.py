@@ -92,7 +92,7 @@ def _launch_spec(
     port: int | None,
     sandbox: str | None,
     ceiling_overrides: Mapping[str, tuple[str, ...] | None],
-    binding_overrides: Mapping[str, str | None],
+    default_overrides: Mapping[str, str | None],
     limit_overrides: Mapping[str, int | Decimal | None],
     file_inboxes: Sequence[Path] | None,
     dev: Path | None,
@@ -110,7 +110,7 @@ def _launch_spec(
             or ("localhost" if host == "127.0.0.1" else host),
             port=port or 7123,
             ceiling_overrides=ceiling_overrides,
-            binding_overrides=binding_overrides,
+            default_overrides=default_overrides,
             limit_overrides=limit_overrides,
             file_inboxes=tuple(file_inboxes or ()),
             log_spec=log_spec,
@@ -288,7 +288,7 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
         "tools": ("fs,shell",),
         "skills": ("reviewer",),
     }
-    assert resolved["binding_overrides"] == {"model": "openai/gpt-5"}
+    assert resolved["default_overrides"] == {"model": "openai/gpt-5"}
     assert resolved["limit_overrides"] == {
         "agic_tool_calls": 40,
         "tokens": 3000,

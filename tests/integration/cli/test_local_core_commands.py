@@ -50,7 +50,7 @@ from toolang.execution.types import (
     ToolStepGiven,
 )
 from toolang.lang.input import resolve_input_parts
-from toolang.setup import AgentSetup
+from toolang.setup import AgentSetup, ModelCollection, ToolCollection
 from toolang.up import process as agents
 from toolang.up.types import AgentServerRef
 from toolang.work.state import load_ready_jobs
@@ -2307,8 +2307,8 @@ def test_tools_uses_setup_snapshot(tmp_path: Path, monkeypatch) -> None:
         layout=layout,
         providers={},
         adapters={},
-        models=(),
-        tools={"shell__echo": tool},
+        models=ModelCollection(),
+        tools=ToolCollection.from_tools({"shell__echo": tool}),
         envs={},
     )
     monkeypatch.setattr(
@@ -2433,8 +2433,8 @@ def test_agent_info_builds_state_and_setup_without_server(
                 layout=self.layout,
                 providers={},
                 adapters={},
-                models=(),
-                tools={},
+                models=ModelCollection(),
+                tools=ToolCollection(),
                 envs={},
             )
 
@@ -2572,8 +2572,8 @@ class _EmptySetupWatcher:
             layout=self.layout,
             providers={},
             adapters={},
-            models=(),
-            tools={},
+            models=ModelCollection(),
+            tools=ToolCollection(),
             envs={},
         )
 

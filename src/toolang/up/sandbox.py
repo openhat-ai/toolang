@@ -39,7 +39,6 @@ from toolang.setup.config import (
     load_setup_dotenvs,
 )
 from toolang.state.state import AgentState
-from toolang.state.watcher import StateWatcher
 from toolang.up.mounts import prepare_root_mounts
 from toolang.up.records import SandboxState
 from toolang.up.server import ServeSpec, build_serve_argv, resolve_serve
@@ -97,7 +96,7 @@ async def resolve_launch(
     endpoint_host: str | None = None,
     port: int | None = None,
     ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
-    binding_overrides: Mapping[str, str | None] | None = None,
+    default_overrides: Mapping[str, str | None] | None = None,
     limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     file_inboxes: Sequence[Path] | None = None,
     dev: Path | None = None,
@@ -108,10 +107,8 @@ async def resolve_launch(
 ) -> LaunchSpec:
     """Resolve source state, server inputs, and one sandbox selection."""
 
-    watcher = StateWatcher(layout)
-    state = await watcher.refresh()
-    selected, config = _select_sandbox(
-        state,
+    selected, config = _select_sandbox_configs(
+        (load_setup_config(layout), load_agent_config(layout)),
         explicit=sandbox,
     )
     artifact = _resolve_dev_artifact(dev, sandbox=selected)
@@ -121,7 +118,7 @@ async def resolve_launch(
         endpoint_host=endpoint_host,
         port=port,
         ceiling_overrides=ceiling_overrides,
-        binding_overrides=binding_overrides,
+        default_overrides=default_overrides,
         limit_overrides=limit_overrides,
         file_inboxes=file_inboxes,
         log_spec=log_spec,

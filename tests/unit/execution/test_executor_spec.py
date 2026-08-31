@@ -6,7 +6,7 @@ from typing import Any, cast
 from toolang.base.types.policy import RunBindings
 from toolang.execution.executor import RunSpec
 from toolang.common.layout import AgentLayout
-from toolang.setup import AgentSetup
+from toolang.setup import AgentSetup, ModelCollection, ToolCollection
 
 
 def _setup() -> AgentSetup:
@@ -14,8 +14,8 @@ def _setup() -> AgentSetup:
         layout=AgentLayout.resident(Path("/"), "alice"),
         providers={},
         adapters={},
-        models=(),
-        tools={},
+        models=ModelCollection(),
+        tools=ToolCollection(),
         envs={},
     )
 

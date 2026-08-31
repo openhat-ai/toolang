@@ -6,11 +6,11 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 
-from toolang.base.types.policy import AgentCeiling
 from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.tui import ChatTuiApp
+from toolang.plugin.models.collections import ModelCollection
 from toolang.setup import AgentSetup
-from toolang.state.state import AgentState
+from toolang.state.state import AgentState, StatePublication, publish_state_resources
 from toolang.state.watcher import StateRefresh
 
 
@@ -24,7 +24,11 @@ def run_chat_tui(
     """Run a local chat TUI with fixed setup and state snapshots."""
 
     if models:
-        setup = replace(setup, ceiling=AgentCeiling(models=tuple(models)))
+        setup = replace(
+            setup,
+            models=ModelCollection(tuple(setup.models.resolve(ref) for ref in models)),
+        )
+    publication = publish_state_resources(state, agent_name=setup.layout.name)
 
     class SetupWatcher:
         def __init__(self, _layout: object, **_kwargs: object) -> None:
@@ -41,19 +45,19 @@ def run_chat_tui(
             await stop_signal.wait()
 
     class StateWatcher:
-        def __init__(self, _layout: object) -> None:
+        def __init__(self, _layout: object, **_kwargs: object) -> None:
             pass
 
-        def current(self) -> AgentState:
-            return state
+        def current(self) -> StatePublication:
+            return publication
 
-        async def refresh(self, *, force: bool = False) -> AgentState:
+        async def refresh(self, *, force: bool = False) -> StatePublication:
             del force
-            return state
+            return publication
 
         async def refresh_result(self, *, force: bool = False) -> StateRefresh:
             del force
-            return StateRefresh(state)
+            return StateRefresh(publication)
 
         async def run(self, *, stop_signal: asyncio.Event) -> None:
             await stop_signal.wait()

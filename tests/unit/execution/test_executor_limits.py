@@ -5,11 +5,12 @@ from decimal import Decimal
 
 import pytest
 
-from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelTarget, Provider
+from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.run import ModelUsage
 from toolang.execution.executor import RunLimits
 from toolang.execution.executor.limits import _model_accounting
 from toolang.execution.records import run_limits_to_data
+from toolang.setup import ModelCollection, ModelEntry
 
 
 def test_run_limits_have_one_compact_stable_shape() -> None:
@@ -62,24 +63,6 @@ def test_run_limits_reject_invalid_values(
 
 
 def test_cost_limit_accounting_uses_estimate_for_non_usd_report() -> None:
-    model = Model(
-        provider_id="test",
-        id="model",
-        name="Model",
-        cost={"input": 1, "output": 2},
-    )
-    provider = Provider(
-        id="test",
-        name="Test",
-        env=(),
-        npm="@ai-sdk/openai-compatible",
-        models={model.id: model},
-    )
-    catalog = ModelCatalogSnapshot(
-        providers={provider.id: provider},
-        models=(model,),
-        revision="sha256:test",
-    )
     target = ModelTarget(
         ref="test/model",
         provider="test",
@@ -87,17 +70,29 @@ def test_cost_limit_accounting_uses_estimate_for_non_usd_report() -> None:
         model="model",
         adapter="chat_completions",
     )
+    info = ModelInfo(
+        ref=target.ref,
+        provider=target.provider,
+        name=target.name,
+        model=target.model,
+        adapter=target.adapter,
+        input_price=0.000001,
+        output_price=0.000002,
+        metadata={"cost": {"input": 1, "output": 2}},
+    )
+    models = ModelCollection(
+        (ModelEntry(key=target.ref, ref=target.ref, target=target, info=info),)
+    )
 
     accounting = _model_accounting(
         target,
-        (),
+        models,
         ModelUsage(
             input_tokens=10,
             output_tokens=5,
             reported_cost=Decimal("2"),
             reported_currency="EUR",
         ),
-        catalog=catalog,
     )
 
     assert accounting.cost == Decimal("0.00002")

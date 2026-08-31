@@ -35,15 +35,11 @@ from toolang.lang.input import (
 )
 from toolang.plugin.models.resolution import (
     apply_model_parameters,
-    resolve_model,
-    resolve_model_request,
-    resolve_unique_model_query,
-    selectable_model_targets,
 )
 from toolang.state import state as cap_store
 from toolang.state.state import (
-    AgentState,
     StateCap,
+    StatePublication,
     state_program,
     state_program_source,
 )
@@ -96,53 +92,28 @@ def prepare_agic(
     resources = run.resources
     if resources is None:
         raise RuntimeError(f"run resources missing: {run.run_id}")
-    model_queries = resources.models
-    if not model_queries:
+    model_keys = resources.models
+    if not model_keys:
         raise ToolangError(f"run resources include no models: {agic.name}")
-    selection = (
-        snapshot_model_selection(run.setup, run.state)
-        if isinstance(run.state, AgentState)
-        else context
+    selection = snapshot_model_selection(run.setup)
+    durable_state = (
+        run.state.state if isinstance(run.state, StatePublication) else run.state
     )
-    if run.model_request is None:
-        if run.bindings.model is not None:
-            if run.bindings.model in model_queries:
-                model = resolve_unique_model_query(
-                    selection,
-                    query=run.bindings.model,
-                    allowed_queries=model_queries,
-                )
-            else:
-                model = resolve_model(
-                    selection,
-                    ref=run.bindings.model,
-                    allowed_queries=model_queries,
-                )
-        else:
-            candidates = selectable_model_targets(
-                providers=selection.providers,
-                models=selection.models,
-                aliases=selection.model_aliases,
-                envs=selection.envs,
-                provider_configs=getattr(selection, "provider_configs", {}),
-                queries=(model_queries[0],),
-            )
-            if not candidates:
-                raise ToolangError(f"run resources include no models: {agic.name}")
-            model = candidates[0][1]
-    else:
-        model = resolve_model_request(
-            selection,
-            ref=run.model_request.ref,
-            allowed_queries=model_queries,
-        )
+    ref = run.model_request.ref if run.model_request is not None else run.bindings.model
+    if ref is None:
+        raise ToolangError(f"run requires a model: {agic.name}")
+    entry = selection.resolve(ref)
+    if entry.key not in model_keys:
+        raise ToolangError(f"model ref is outside run resources: {ref}")
+    model = entry.target
+    if run.model_request is not None:
         model = apply_model_parameters(
             selection,
             model,
             run.model_request.parameters,
         )
     tools = dict(resource_tools(run.setup, resources))
-    routes = resolve_agic_routes(run.state, agic)
+    routes = resolve_agic_routes(durable_state, agic)
     inner_tools = {} if agic.name.startswith("<agic:") else runtime_tools()
     collisions = sorted(set(tools) & set(inner_tools))
     if collisions:
@@ -210,7 +181,7 @@ def prepare_agic(
     )
     instructions = _render_instructions(program, agic, system_runtime)
     runtime_instructions = (
-        render_runtime_instructions(run.state, routes) if inner_tools else ""
+        render_runtime_instructions(durable_state, routes) if inner_tools else ""
     )
     adapter = run.setup.adapters.get(model.adapter)
     if adapter is None:

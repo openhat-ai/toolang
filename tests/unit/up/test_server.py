@@ -4,7 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from toolang.cli.common.policy import (
-    resolve_binding_overrides,
+    resolve_default_overrides,
     resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
@@ -24,7 +24,7 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
             "tools": (),
             "skills": None,
         },
-        binding_overrides={"model": "openai/gpt-5", "runnable": None},
+        default_overrides={"model": "openai/gpt-5", "runnable": None},
         limit_overrides={
             "agic_model_calls": 25,
             "tokens": 1000,
@@ -76,8 +76,8 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
     assert resolve_ceiling_overrides({}, _option_values(argv, "--allow")) == dict(
         spec.ceiling_overrides
     )
-    assert resolve_binding_overrides({}, _option_values(argv, "--default")) == dict(
-        spec.binding_overrides
+    assert resolve_default_overrides({}, _option_values(argv, "--default")) == dict(
+        spec.default_overrides
     )
     assert resolve_limit_overrides({}, _option_values(argv, "--limit")) == dict(
         spec.limit_overrides

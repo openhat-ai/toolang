@@ -16,7 +16,7 @@ _ALLOW_FIELDS = (
     "services",
     "prompts",
 )
-_BINDING_FIELDS = ("model", "runnable")
+_DEFAULT_FIELDS = ("model", "runnable")
 _LIMIT_FIELDS = (
     "agic_model_calls",
     "agic_tool_calls",
@@ -51,18 +51,18 @@ def resolve_ceiling_overrides(
     return resolved
 
 
-def resolve_binding_overrides(
+def resolve_default_overrides(
     environ: Mapping[str, str],
     options: Sequence[str] | None = None,
 ) -> dict[str, str | None]:
-    """Resolve frozen environment and CLI default-binding overrides."""
+    """Resolve frozen environment and CLI run-default overrides."""
 
     resolved: dict[str, str | None] = {}
-    for name in _BINDING_FIELDS:
+    for name in _DEFAULT_FIELDS:
         raw = environ.get(f"TOOLANG_DEFAULT_{name.upper()}")
         if raw is not None:
-            resolved[name] = _parse_binding_value(name, raw, source="environment")
-    resolved.update(_parse_binding_options(options or ()))
+            resolved[name] = _parse_default_value(name, raw, source="environment")
+    resolved.update(_parse_default_options(options or ()))
     return resolved
 
 
@@ -102,15 +102,15 @@ def _parse_allow_options(
     return parsed
 
 
-def _parse_binding_options(values: Sequence[str]) -> dict[str, str | None]:
+def _parse_default_options(values: Sequence[str]) -> dict[str, str | None]:
     parsed: dict[str, str | None] = {}
     for source in values:
         name, raw_value = _assignment(source, option="--default")
-        if name not in _BINDING_FIELDS:
+        if name not in _DEFAULT_FIELDS:
             raise ValueError(f"unknown default field: {name}")
         if name in parsed:
             raise ValueError(f"duplicate default field: {name}")
-        parsed[name] = _parse_binding_value(name, raw_value, source="--default")
+        parsed[name] = _parse_default_value(name, raw_value, source="--default")
     return parsed
 
 
@@ -152,7 +152,7 @@ def _parse_allow_value(
         raise ValueError(str(error)) from error
 
 
-def _parse_binding_value(name: str, value: str, *, source: str) -> str | None:
+def _parse_default_value(name: str, value: str, *, source: str) -> str | None:
     normalized = value.strip()
     if not normalized:
         raise ValueError(f"{source} default {name} must not be empty")

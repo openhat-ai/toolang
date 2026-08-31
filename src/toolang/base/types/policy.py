@@ -46,6 +46,22 @@ class RunBindings:
 
 
 @dataclass(frozen=True, slots=True)
+class RunDefaults:
+    """Configured starting values for one accepted run."""
+
+    model: str | None = None
+    runnable: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "model", _normalize_optional(self.model, "model"))
+        object.__setattr__(
+            self,
+            "runnable",
+            _normalize_optional(self.runnable, "runnable"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class RunLimits:
     """Limits applied to one root run tree."""
 

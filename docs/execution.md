@@ -301,14 +301,14 @@ check; it is not part of the public manager API.
 
 ## State Capture
 
-`RunSpec` carries one explicit immutable `AgentState`,
+`RunSpec` carries one explicit immutable `StatePublication`,
 `toolang.setup.AgentSetup`, effective `RunBindings` and `RunLimits`, and zero
 or more `AgentCeiling` restrictions. `AgentSetup` supplies the immutable
-`AgentLayout`, root-scoped installed runtime implementations, and captured
-policy defaults. `SetupWatcher` resolves
-root and agent-home `[allow]`, `[default]`, and `[limit]` config on every
-refresh, then applies frozen field-level environment/CLI overrides before
-publishing the setup snapshot.
+`AgentLayout`, installed runtime implementations, effective model/tool
+collections, and captured policy defaults. `StatePublication` pairs the durable
+`AgentState` with effective per-module cap collections. Setup and State apply
+their owned `[allow]` fields before publication; session and run policy only
+narrow those bases.
 Execution uses that layout directly for the agent identity, home, and runtime
 rooms. `RunSpec.input.primary` is one protocol-level `Percept`;
 after runnable resolution, input coercion exposes that value as `Part[]` or

@@ -104,18 +104,18 @@ def model_rows(
     config_layers: Sequence[Mapping[str, object]],
     model_queries: Sequence[str] | None = None,
 ) -> list[tuple[str, str, str]]:
-    from toolang.plugin.models.config import (
-        parse_model_aliases,
-    )
-    from toolang.plugin.models.views import model_list_rows
+    from toolang.plugin.models.views import model_target_profile
 
-    return model_list_rows(
-        providers=setup.providers,
-        models=setup.models,
-        aliases=parse_model_aliases(config_layers),
-        envs=setup.envs,
-        queries=model_queries,
-    )
+    del config_layers
+    models = setup.models.match(model_queries) if model_queries else setup.models
+    return [
+        (
+            entry.ref,
+            entry.target.provider,
+            model_target_profile(entry.target, models=(entry.info,)),
+        )
+        for entry in models.entries
+    ]
 
 
 def setup_tool_dataset(setup: AgentSetup) -> QueryDataset[ToolQueryView]:

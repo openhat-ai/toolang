@@ -353,6 +353,7 @@ def model_info_from_catalog(
             "experimental": (
                 dict(model.experimental) if model.experimental is not None else None
             ),
+            "cost": dict(model.cost) if model.cost is not None else None,
             "provider": dict(model.provider) if model.provider is not None else None,
             "local": model.local,
         },

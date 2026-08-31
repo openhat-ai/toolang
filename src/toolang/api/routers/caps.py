@@ -15,7 +15,7 @@ from toolang.catalog import config as cap_config
 from toolang.catalog.types import CapKind
 from toolang.state import state as cap_state
 from toolang.state.schemas import CapDetail, CapInfo
-from toolang.state.state import AgentState, StateCap, CapScope
+from toolang.state.state import StateCap, StatePublication, CapScope
 
 MutableCapScope = Literal["home", "root"]
 
@@ -200,7 +200,7 @@ def caps_summary(core: AgentCoreDep) -> dict[str, object]:
     collections = {
         "psyches": _CAP_INFOS.dump_python(
             _cap_infos(
-                tuple(state.psyches.values()),
+                tuple(_state_cap_index(state, "psyche").values()),
                 agent_name=core.layout.name,
                 kind="psyche",
             ),
@@ -208,7 +208,7 @@ def caps_summary(core: AgentCoreDep) -> dict[str, object]:
         ),
         "skills": _CAP_INFOS.dump_python(
             _cap_infos(
-                tuple(state.skills.values()),
+                tuple(_state_cap_index(state, "skill").values()),
                 agent_name=core.layout.name,
                 kind="skill",
             ),
@@ -216,7 +216,7 @@ def caps_summary(core: AgentCoreDep) -> dict[str, object]:
         ),
         "services": _CAP_INFOS.dump_python(
             _cap_infos(
-                tuple(state.services.values()),
+                tuple(_state_cap_index(state, "service").values()),
                 agent_name=core.layout.name,
                 kind="service",
             ),
@@ -224,7 +224,7 @@ def caps_summary(core: AgentCoreDep) -> dict[str, object]:
         ),
         "prompts": _CAP_INFOS.dump_python(
             _cap_infos(
-                tuple(state.prompts.values()),
+                tuple(_state_cap_index(state, "prompt").values()),
                 agent_name=core.layout.name,
                 kind="prompt",
             ),
@@ -300,15 +300,14 @@ def _collection_kind(collection: str) -> CapKind:
 
 
 def _state_cap_index(
-    state: AgentState,
+    state: StatePublication,
     kind: CapKind,
 ) -> Mapping[str, StateCap]:
     return {
-        "psyche": state.psyches,
-        "skill": state.skills,
-        "service": state.services,
-        "prompt": state.prompts,
-    }[kind]
+        item.name: item
+        for item in state.resources.caps_for("agent")
+        if item.kind == kind
+    }
 
 
 def _authored_caps(

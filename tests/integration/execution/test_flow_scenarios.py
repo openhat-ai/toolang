@@ -21,6 +21,7 @@ from tests.support.execution_harness import (
     ScriptedModelTurn,
 )
 from toolang.base.types.message import Message, TextPart, message_text
+from toolang.base.types.policy import RunDefaults
 from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.execution.events import RunBegin, RunEnd
 from toolang.execution.executor import RunLimits
@@ -75,6 +76,7 @@ flow passthrough(_: Text) -> Text:
 """,
         responses=[],
     )
+    harness.setup = replace(harness.setup, defaults=RunDefaults())
 
     async def scenario() -> None:
         async with harness:

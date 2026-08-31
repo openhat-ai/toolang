@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from toolang.base.types.message import Message
 from toolang.base.types.model import ModelRequest
-from toolang.base.types.policy import RunBindings
+from toolang.base.types.policy import AgentCeiling, RunBindings
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.calls import materialize_model_request, parse_call
@@ -39,7 +39,7 @@ from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.plugin.sandboxes.host import host_sandbox_description
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.watcher import StateWatcher
-from toolang.state.state import AgentState, state_program
+from toolang.state.state import AgentState, StatePublication, state_program
 from toolang.execution.values import parts_from_local
 from .base import ChatExecutorMetadata, ChatResult, ChatRunState, RunAccepted
 from .policy import ChatRunDefaults, apply_session_commands, build_run_request
@@ -65,7 +65,7 @@ class LocalChatSession:
         sandbox: str = "host",
         model_catalog: Path | None = None,
         ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
-        binding_overrides: Mapping[str, str | None] | None = None,
+        default_overrides: Mapping[str, str | None] | None = None,
         limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     ) -> None:
         self.layout = layout
@@ -77,15 +77,27 @@ class LocalChatSession:
         self.history = RunHistory(self.store)
         self.ids = IdIssuer(layout.id_state)
         self.threads = ThreadManager(self.store, self.ids)
+        allow_overrides = dict(ceiling_overrides or {})
         self.setup_watcher = SetupWatcher(
             layout,
             sandbox=sandbox,
             model_catalog=model_catalog,
-            ceiling_overrides=ceiling_overrides,
-            binding_overrides=binding_overrides,
+            allow_overrides={
+                name: value
+                for name, value in allow_overrides.items()
+                if name in {"models", "tools"}
+            },
+            default_overrides=default_overrides,
             limit_overrides=limit_overrides,
         )
-        self.state_watcher = StateWatcher(layout)
+        self.state_watcher = StateWatcher(
+            layout,
+            allow_overrides={
+                name: value
+                for name, value in allow_overrides.items()
+                if name in {"psyches", "skills", "services", "prompts"}
+            },
+        )
         self.executor = RunExecutor(
             self.store,
             self.ids,
@@ -112,9 +124,8 @@ class LocalChatSession:
 
     def list_models(self) -> Mapping[str, Any]:
         setup = self.setup_watcher.current()
-        state = self.state_watcher.current()
-        default, targets = agent_model_targets(setup, state, setup.ceiling)
-        selection = snapshot_model_selection(setup, state)
+        default, targets = agent_model_targets(setup, AgentCeiling())
+        selection = snapshot_model_selection(setup)
         return {
             "default": default,
             "items": [
@@ -273,7 +284,7 @@ class LocalChatSession:
         await self.run_client.connect()
         state = await self.state_watcher.refresh()
         setup = await self.setup_watcher.refresh()
-        validate_agent_ceiling(setup, state, setup.ceiling)
+        validate_agent_ceiling(setup, state, AgentCeiling())
         self._defaults = self._current_run_defaults(setup=setup, state=state)
         if self._stop_signal is None:
             raise RuntimeError("local chat event loop was not initialized")
@@ -324,7 +335,6 @@ class LocalChatSession:
         return materialize_model_request(
             ModelRequest(ref),
             setup=self.setup_watcher.current(),
-            state=self.state_watcher.current(),
         ).ref
 
     def _materialize_runnable_ref(self, query: str) -> str:
@@ -333,10 +343,10 @@ class LocalChatSession:
 
     @staticmethod
     def _current_run_defaults(
-        *, setup: AgentSetup, state: AgentState
+        *, setup: AgentSetup, state: AgentState | StatePublication
     ) -> ChatRunDefaults:
-        model, _targets = agent_model_targets(setup, state, setup.ceiling)
-        runnable = setup.bindings.runnable
+        model, _targets = agent_model_targets(setup, AgentCeiling())
+        runnable = setup.defaults.runnable
         if runnable is None:
             default_agic, default_flow = runnable_binding_defaults(
                 state,

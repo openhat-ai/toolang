@@ -14,7 +14,7 @@ import typer
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.catalog import MODEL_CATALOG_ENV
 from toolang.cli.common.policy import (
-    resolve_binding_overrides,
+    resolve_default_overrides,
     resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
@@ -107,8 +107,8 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
                 log_plan.environ,
                 options.allows,
             )
-            binding_overrides = user_call(
-                resolve_binding_overrides,
+            default_overrides = user_call(
+                resolve_default_overrides,
                 log_plan.environ,
                 options.defaults,
             )
@@ -126,7 +126,7 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
                     port=options.port,
                     sandbox=options.sandbox,
                     ceiling_overrides=ceiling_overrides,
-                    binding_overrides=binding_overrides,
+                    default_overrides=default_overrides,
                     limit_overrides=limit_overrides,
                     file_inboxes=options.inboxes,
                     dev=options.dev,
@@ -611,7 +611,7 @@ def serve(
         endpoint_host=endpoint_host,
         port=port,
         ceiling_overrides=user_call(resolve_ceiling_overrides, {}, allows),
-        binding_overrides=user_call(resolve_binding_overrides, {}, defaults),
+        default_overrides=user_call(resolve_default_overrides, {}, defaults),
         limit_overrides=user_call(resolve_limit_overrides, {}, limits),
         file_inboxes=inboxes,
         log_spec=log_spec,
@@ -665,8 +665,8 @@ def resolve_startup(
         log_plan.environ,
         allows,
     )
-    binding_overrides = user_call(
-        resolve_binding_overrides,
+    default_overrides = user_call(
+        resolve_default_overrides,
         log_plan.environ,
         defaults,
     )
@@ -684,7 +684,7 @@ def resolve_startup(
             port=port,
             sandbox=sandbox,
             ceiling_overrides=ceiling_overrides,
-            binding_overrides=binding_overrides,
+            default_overrides=default_overrides,
             limit_overrides=limit_overrides,
             file_inboxes=inboxes,
             dev=dev,

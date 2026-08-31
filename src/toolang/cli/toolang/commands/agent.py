@@ -269,8 +269,6 @@ def _models_summary(
     runtime_state: dict[str, object],
     running: bool,
 ) -> str:
-    from toolang.plugin.models.config import parse_default_models
-
     queries: Sequence[str] = ()
     raw_models = runtime_state.get("models")
     if running and isinstance(raw_models, list):
@@ -278,10 +276,6 @@ def _models_summary(
             value.strip()
             for item in raw_models
             if isinstance(item, str) and (value := item.strip())
-        )
-    if not queries:
-        queries = parse_default_models(
-            (state.root_config, state.home_config),
         )
     rows = plugin.model_rows(
         setup,

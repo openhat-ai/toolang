@@ -28,6 +28,8 @@ from toolang.plugin.models.collections import (
     MODEL_DEFINITION,
     MODEL_SCHEMA,
     ModelCostView,
+    ModelCollection,
+    ModelEntry,
     ModelLimitView,
     ModelModalitiesView,
     ModelParametersView,
@@ -133,6 +135,38 @@ class ModelTargetResolver:
             provider_configs=self.provider_configs,
             queries=queries,
         )
+
+
+def build_model_collection(
+    *,
+    providers: Mapping[str, Provider],
+    models: Sequence[ModelInfo],
+    envs: Mapping[str, str],
+    provider_configs: Mapping[str, ProviderConfig] | None = None,
+) -> ModelCollection:
+    """Compile available catalog routes into one immutable effective collection."""
+
+    candidates = _discover_available_candidates(
+        providers=providers,
+        models=models,
+        aliases={},
+        envs=envs,
+        provider_configs=provider_configs or {},
+    )
+    entries: list[ModelEntry] = []
+    for candidate in candidates:
+        if candidate.info is None:
+            continue
+        ref = model_target_ref(candidate.target)
+        entries.append(
+            ModelEntry(
+                key=ref,
+                ref=ref,
+                target=candidate.target,
+                info=candidate.info,
+            )
+        )
+    return ModelCollection(entries)
 
 
 def resolve_model(
@@ -264,16 +298,20 @@ def resolve_model_request(
 
 
 def model_reasoning_efforts(
-    context: SupportsModelSelection,
+    context: SupportsModelSelection | ModelCollection,
     target: ModelTarget,
 ) -> tuple[ReasoningEffort, ...]:
     """Return recognized catalog-advertised efforts in catalog order."""
 
-    info = _find_model_info_by_ref(
-        context.models,
-        provider=target.provider,
-        ref=target.ref,
-    )
+    if isinstance(context, ModelCollection):
+        ref = model_target_ref(target)
+        info = context.resolve(ref).info if context.contains(ref) else None
+    else:
+        info = _find_model_info_by_ref(
+            context.models,
+            provider=target.provider,
+            ref=target.ref,
+        )
     if info is None:
         return ()
     raw_options = info.metadata.get("reasoning_options")
@@ -306,7 +344,7 @@ def model_reasoning_efforts(
 
 
 def apply_model_parameters(
-    context: SupportsModelSelection,
+    context: SupportsModelSelection | ModelCollection,
     target: ModelTarget,
     parameters: ModelParameters,
 ) -> ModelTarget:

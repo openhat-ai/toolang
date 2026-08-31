@@ -53,7 +53,7 @@ from toolang.plugin.models.resolution import (
     selectable_model_targets,
 )
 from toolang.plugin.models.views import _format_decimal_unit, model_list_rows
-from toolang.setup import AgentSetup
+from toolang.setup import AgentSetup, ModelCollection, ToolCollection
 from toolang.plugin.models.catalog import (
     PACKAGED_MODEL_CATALOG,
     read_model_catalog_snapshot,
@@ -65,7 +65,7 @@ from toolang.plugin.models.adapters import responses as responses_models
 from toolang.plugin.models.adapters.responses import encode_message, response_payload
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
 from toolang.lang.input import RunnableInput
-from toolang.plugin.models.config import parse_default_models, parse_model_aliases
+from toolang.plugin.models.config import parse_provider_configs
 
 
 def load_config_layers(root: Path, agent_name: str) -> tuple[dict[str, object], ...]:
@@ -204,7 +204,7 @@ async def _ignore_event(_event: object) -> None:
     return None
 
 
-def test_model_resolution_resolves_named_route(tmp_path: Path) -> None:
+def test_model_config_rejects_legacy_default_and_alias(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     (toolang_root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
     (toolang_root / "config.toml").write_text(
@@ -216,33 +216,8 @@ def test_model_resolution_resolves_named_route(tmp_path: Path) -> None:
         'provider = "openai"\n',
         encoding="utf-8",
     )
-    provider = _FakeModels(
-        name="openai",
-        models=(
-            ModelInfo(
-                ref="openai/gpt-5",
-                provider="openai",
-                name="gpt-5",
-                model="gpt-5",
-                selectors=("gpt-5", "openai/gpt-5"),
-                adapter="responses",
-            ),
-        ),
-        default_api_key_env="OPENAI_API_KEY",
-    )
-    context = _SelectionContext(
-        model_providers={"openai": provider},
-        model_aliases=parse_model_aliases(load_config_layers(toolang_root, "alice")),
-        default_models=parse_default_models(load_config_layers(toolang_root, "alice")),
-        model_environ={"OPENAI_API_KEY": "secret"},
-    )
-
-    target = resolve_unique_model_query(context, query="*[alias=fast]")
-
-    assert target.ref == "openai/gpt-5"
-    assert target.provider == "openai"
-    assert target.model == "gpt-5"
-    assert target.api_key == "secret"
+    with pytest.raises(ValueError, match=r"\[models\]\.default is not supported"):
+        parse_provider_configs(load_config_layers(toolang_root, "alice"))
 
 
 def test_model_query_groups_route_aliases_and_retains_catalog_fields() -> None:
@@ -1195,7 +1170,7 @@ def test_model_selection_filters_the_complete_captured_snapshot() -> None:
     assert (openai.list_models_calls, openrouter.list_models_calls) == discovery_calls
 
 
-def test_model_route_can_override_provider_defaults(tmp_path: Path) -> None:
+def test_model_config_rejects_alias_route_overrides(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     (toolang_root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
     (toolang_root / "config.toml").write_text(
@@ -1208,61 +1183,22 @@ def test_model_route_can_override_provider_defaults(tmp_path: Path) -> None:
         'headers = { "X-Team" = "infra" }\n',
         encoding="utf-8",
     )
-    provider = _FakeModels(
-        name="openai",
-        models=(),
-        default_base_url="https://api.openai.com/v1",
-        default_api_key_env="OPENAI_API_KEY",
-    )
-    context = _SelectionContext(
-        model_providers={"openai": provider},
-        model_aliases=parse_model_aliases(load_config_layers(toolang_root, "alice")),
-        default_models=(),
-        model_environ={"GATEWAY_API_KEY": "secret"},
-    )
-
-    target = resolve_unique_model_query(context, query="*[alias=gateway]")
-
-    assert target.ref == "openai/gpt-5"
-    assert target.provider == "openai"
-    assert target.model == "gpt-5"
-    assert target.adapter == "responses"
-    assert target.base_url == "https://gateway.example.com/v1"
-    assert target.api_key == "secret"
-    assert target.headers == {"X-Team": "infra"}
+    with pytest.raises(ValueError, match=r"\[models\.aliases\] is not supported"):
+        parse_provider_configs(load_config_layers(toolang_root, "alice"))
 
 
-def test_model_alias_uses_provider_default_key_env(tmp_path: Path) -> None:
+def test_model_config_rejects_alias_provider_defaults(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     (toolang_root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
     (toolang_root / "config.toml").write_text(
         '[models.aliases.qwen]\nref = "qwen/qwen3-coder"\nprovider = "openrouter"\n',
         encoding="utf-8",
     )
-    provider = _FakeModels(
-        name="openrouter",
-        models=(),
-        default_base_url="https://openrouter.ai/api/v1",
-        default_api_key_env="OPENROUTER_API_KEY",
-    )
-    context = _SelectionContext(
-        model_providers={"openrouter": provider},
-        model_aliases=parse_model_aliases(load_config_layers(toolang_root, "alice")),
-        default_models=(),
-        model_environ={"OPENROUTER_API_KEY": "secret"},
-    )
-
-    target = resolve_unique_model_query(context, query="*[alias=qwen]")
-
-    assert target.ref == "qwen/qwen3-coder"
-    assert target.provider == "openrouter"
-    assert target.model == "qwen/qwen3-coder"
-    assert target.adapter == "chat_completions"
-    assert target.base_url == "https://openrouter.ai/api/v1"
-    assert target.api_key == "secret"
+    with pytest.raises(ValueError, match=r"\[models\.aliases\] is not supported"):
+        parse_provider_configs(load_config_layers(toolang_root, "alice"))
 
 
-def test_model_alias_reports_missing_key_env(tmp_path: Path) -> None:
+def test_model_config_rejects_alias_key_env(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     (toolang_root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
     (toolang_root / "config.toml").write_text(
@@ -1273,21 +1209,23 @@ def test_model_alias_reports_missing_key_env(tmp_path: Path) -> None:
         'key_env = "GATEWAY_API_KEY"\n',
         encoding="utf-8",
     )
-    provider = _FakeModels(
-        name="openai",
-        models=(),
-        required_env_vars=("OPENAI_API_KEY",),
-        default_api_key_env="OPENAI_API_KEY",
-    )
-    context = _SelectionContext(
-        model_providers={"openai": provider},
-        model_aliases=parse_model_aliases(load_config_layers(toolang_root, "alice")),
-        default_models=(),
-        model_environ={},
-    )
+    with pytest.raises(ValueError, match=r"\[models\.aliases\] is not supported"):
+        parse_provider_configs(load_config_layers(toolang_root, "alice"))
 
-    with pytest.raises(ToolangError, match="model alias 'gateway'.*GATEWAY_API_KEY"):
-        resolve_unique_model_query(context, query="*[alias=gateway]")
+
+def test_model_config_rejects_malformed_owned_provider_fields() -> None:
+    with pytest.raises(TypeError, match="models config must be a table"):
+        parse_provider_configs(({"models": "openai"},))
+    with pytest.raises(TypeError, match="models providers config must be a table"):
+        parse_provider_configs(({"models": {"providers": "openai"}},))
+    with pytest.raises(TypeError, match="model provider endpoint must be a string"):
+        parse_provider_configs(
+            ({"models": {"providers": {"openai": {"endpoint": 1}}}},)
+        )
+    with pytest.raises(ValueError, match="unknown model provider config field"):
+        parse_provider_configs(
+            ({"models": {"providers": {"openai": {"unknown": True}}}},)
+        )
 
 
 def test_packaged_catalog_includes_mainstream_remote_providers() -> None:
@@ -3053,8 +2991,8 @@ def _prepared_agic(
                 layout=AgentLayout.resident(Path("/"), "alice"),
                 providers={},
                 adapters={},
-                models=(),
-                tools={},
+                models=ModelCollection(),
+                tools=ToolCollection(),
                 envs={},
             ),
             created_at="2026-04-10T00:00:00Z",

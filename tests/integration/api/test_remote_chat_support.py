@@ -16,7 +16,7 @@ from toolang.api.app import create_app
 from toolang.api.routers import agent as agent_router
 from toolang.api.routers.agent import profile
 from toolang.base.types.message import Message, TextPart
-from toolang.base.types.policy import RunBindings
+from toolang.base.types.policy import RunDefaults
 from toolang.base.types.run import ModelCallResult
 from toolang.catalog import CapsManager, JobsManager
 from toolang.common.layout import AgentLayout
@@ -57,7 +57,7 @@ agic chat(_: Part[]) -> Part[]:
     )
     setup = replace(
         harness.setup,
-        bindings=RunBindings(model=TEST_MODEL_REF, runnable="chat"),
+        defaults=RunDefaults(model=TEST_MODEL_REF, runnable="chat"),
     )
     harness.store.close()
     core = AgentCore(setup.layout)
