@@ -259,8 +259,8 @@ def test_model_query_groups_route_aliases_and_retains_catalog_fields() -> None:
                 metadata={
                     "family": "gpt-5",
                     "open_weights": False,
-                    "release_date": "2026-01-01",
-                    "last_updated": "2026-08-30",
+                    "release_date": "2026-01",
+                    "last_updated": "2026-08",
                 },
             ),
         ),
@@ -281,7 +281,7 @@ def test_model_query_groups_route_aliases_and_retains_catalog_fields() -> None:
         context,
         allowed_queries=(
             "*[alias=quick;family=gpt-5;!open_weights;"
-            "release_date>=2026-01-01;last_updated=2026-08-30;"
+            "release_date>=2026-01-01;last_updated=2026-08-01;"
             "limit.context>=200000]",
         ),
     )
