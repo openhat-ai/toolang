@@ -1307,6 +1307,8 @@ def test_inspect_structural_projection_handles_empty_and_bounded_errors(
     empty_tree = _invoke(root, "alice", "inspect", empty.id, "tree", "--json")
     failed_json = _invoke(root, "alice", "inspect", failed.id, "tree", "--json")
     failed_human = _invoke(root, "alice", "inspect", failed.id, "tree")
+    failed_fields = _invoke(root, "alice", "inspect", str(step.path))
+    failed_error = _invoke(root, "alice", "inspect", f"{step.path}/error")
 
     assert empty_tree.exit_code == 0, empty_tree.stderr
     empty_data = json.loads(empty_tree.stdout)
@@ -1341,6 +1343,11 @@ def test_inspect_structural_projection_handles_empty_and_bounded_errors(
     assert any("✖ [value]" in line for line in failed_lines)
     assert error[:240] in failed_human.stdout
     assert error[:241] not in failed_human.stdout
+    assert failed_fields.exit_code == 0, failed_fields.stderr
+    assert "308 chars" in failed_fields.stdout
+    assert error not in failed_fields.stdout
+    assert failed_error.exit_code == 0, failed_error.stderr
+    assert strip_ansi(failed_error.stdout).strip() == error
 
 
 def test_inspect_empty_step_relations_and_container_call_succeed(

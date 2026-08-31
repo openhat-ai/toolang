@@ -1648,9 +1648,9 @@ def _human_summary(value: _HumanValue) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
 
-def _raw_human_summary(value: object) -> str:
+def _raw_human_summary(value: object) -> RenderableType:
     if isinstance(value, str):
-        return value
+        return _text_preview(value)
     return _truncate(
         json.dumps(value, ensure_ascii=False, separators=(", ", ": ")),
         width=160,

@@ -2136,12 +2136,13 @@ class RunStore:
             chunk = run_ids[offset : offset + 400]
             placeholders = ", ".join("?" for _ in chunk)
             rows = self._conn.execute(
-                f"SELECT * FROM steps WHERE run IN ({placeholders}) "
+                f"SELECT run, path FROM steps WHERE run IN ({placeholders}) "
                 "AND ejected_by_target IS NULL",
                 chunk,
             ).fetchall()
             for row in rows:
-                parent = _step_from_row(row).parent
+                path = StepPath.from_local(str(row["run"]), str(row["path"]))
+                parent = path.parent
                 if parent is not None and str(parent) in child_step_counts:
                     child_step_counts[str(parent)] += 1
 

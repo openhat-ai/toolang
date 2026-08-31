@@ -445,10 +445,11 @@ collections use `STEP`, `ACTIVITY`, `CHILD RUNS`, `CHILD STEPS`, optional
 vocabulary as trees, and both child counts are direct visible relations.
 
 Field tables always use `FIELD`, `TYPE`, and `VALUE`. They list direct children
-as relative field suffixes and show the raw canonical value in the third column.
-They do not unwrap `Local`, follow a Pointer, mark a resolved type, or fail
-because a stored Pointer is missing, cyclic, or has a mismatched target. A
-directly selected value retains normal Pointer resolution and validation.
+as relative field suffixes and show a bounded preview of the raw canonical value
+in the third column. Long or multiline strings include size facts. Field tables
+do not unwrap `Local`, follow a Pointer, mark a resolved type, or fail because a
+stored Pointer is missing, cyclic, or has a mismatched target. A directly
+selected value retains normal Pointer resolution and validation.
 
 Human projections have no trailing context footer. Direct scalar and
 specialized values print only their value. Strings have no JSON quotes, and
