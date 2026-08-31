@@ -399,18 +399,24 @@ This is distinct from `run_ab12.0/given/call`, which exposes compact persisted
 references. Projection is local and read-only: it does not prepare a call,
 select a model, construct a provider-native request, or send provider traffic.
 
-The human view presents `Instructions`, `Messages N`, `Output Contract`,
-`Output`, `Tools N`, and `Continuation` as independent sections. The output
-contract is indented JSON; calls without a schema display `None`. `Output`
-uses the same Message and Part rendering as the input history and keeps the
-current response under `[=] assistant`; a missing response displays
-`No output.`. The JSON view keeps the exact normalized `output_schema` value,
-including `null` for unstructured and historical calls.
+The Human view follows call lifecycle order: summary, non-empty instructions,
+messages, tools, output contract, continuation, and result. Empty sections are
+omitted. Request text and result payloads are never truncated. All tool
+signatures and descriptions are shown, while parameter schemas remain
+summarized by the signatures. Text preserves authored line breaks. Messages use
+descending review numbers, tool-call and tool-result parts retain their fenced
+Human layout, structured values use indented key and index lines, and the
+output contract uses formatted JSON. Section headers contain only their title:
+message and tool counts and result Pointers are not appended. Result is last.
+The JSON view keeps the complete normalized call and exact `output_schema`
+value, including `null` for unstructured and historical calls.
 
-`call` on a tool Step shows its persisted plugin, identifiers, normalized
-invocation, and stored tool result when present. Its JSON is the bare canonical
-`ToolCall` with exactly `tool_call_id`, `call_id`, `name`, and `input`; it does
-not add the result or an inspection envelope.
+`call` on a tool Step shows a summary, its persisted plugin, normalized
+invocation, and the stored result payload without truncation when present. Tool
+results retain the same fenced, structured Human layout used inside model
+messages. Both identifiers are shown only when they differ. Its JSON is the bare
+canonical `ToolCall` with exactly `tool_call_id`, `call_id`, `name`, and `input`;
+it does not add the result or an inspection envelope.
 
 `tree` on a Run and `call` on a run, par, or loop Step render the same durable
 structural model. A Run tree starts at that Run. A container-Step call starts at
@@ -418,39 +424,44 @@ the selected Step, omits its owning Run and siblings, and retains each accepted
 child Run as a separate node:
 
 ```text
-NODE                  ACTIVITY
-run_parent            <flow>  parent
-└─ run_parent.0       [run]   <agic>  child
-   └─ run_child       <agic>  child
-      └─ run_child.0  [model] openai/gpt-5
+NODE                  ACTIVITY                       OCCUR
+run_parent            ✔ <flow>  parent
+└─ run_parent.0       ✔ [run]   <agic>  child        3 items · 2 lanes
+   └─ run_child       ✔ <agic>  child                item 2 · lane 1
+      └─ run_child.0  • [model] openai/gpt-5
 ```
 
-Human rows include the exact reusable pointer, operation, occurrence, status,
-own wall duration, and durable subtree metrics. JSON is a flat depth-first
-array with `pointer`, `record_kind`, `step_kind`, `parent`, `depth`, operation,
-status, occurrence, timestamps, canonical error, and metrics. This is a
-transactionally consistent structural snapshot, not event replay or a live
-trace; exact interleaving is unavailable because execution events are not
-persisted as a journal.
+Human trees contain exactly `NODE`, `ACTIVITY`, and `OCCUR`. Activity starts
+with `•` for pending or running, `✔` for succeeded, and `✖` for failed or
+canceled; color distinguishes the statuses that share a marker. A child shows
+only one-based item and lane indexes, while the owning Step shows known totals.
+JSON is a flat depth-first array with `pointer`, `record_kind`, `step_kind`,
+`parent`, `depth`, operation, status, occurrence, timestamps, canonical error,
+and metrics. This is a transactionally consistent structural snapshot, not
+event replay or a live trace; exact interleaving is unavailable because
+execution events are not persisted as a journal.
 
 Human output is the default. Record and container tables use the CLI's
-horizontal-rule Rich style and list direct children as relative field suffixes
-with TYPE in the second column. Root collection headings remain `THREAD`, `RUN`,
-and `CONTROL`; the Control collection summarizes `KIND`, `STATUS`, and
-`CREATED`. Explicit relations and whole-record field projections use compound
-headings such as `THREAD RUN`, `RUN STEP`, and `STEP FIELD`. A browsable nested
-field uses its uppercase displayed type, such as `POINTER[] FIELD`.
+horizontal-rule Rich style. Run collections order identity, runnable, status,
+Step count, ownership, and creation time; they never show occurrence. Step
+collections use `STEP`, `ACTIVITY`, `CHILD RUNS`, `CHILD STEPS`, optional
+`PARENT STEP`, `CREATED`, and `OCCUR`. Their activity uses the same marker
+vocabulary as trees, and both child counts are direct visible relations.
+
+Field tables always use `FIELD`, `TYPE`, and `VALUE`. They list direct children
+as relative field suffixes and show a bounded preview of the raw canonical value
+in the third column. Long or multiline strings include size facts. Field tables
+do not unwrap `Local`, follow a Pointer, mark a resolved type, or fail because a
+stored Pointer is missing, cyclic, or has a mismatched target. A directly
+selected value retains normal Pointer resolution and validation.
 
 Human projections have no trailing context footer. Direct scalar and
 specialized values print only their value. Strings have no JSON quotes, and
 nullable Human type labels use `T?`. Multiline Part content stays aligned
-inside the VALUE cell without a leading bullet. A child resolved from a stored
-Pointer keeps its canonical field suffix and prefixes its resolved TYPE with
-one presentation-only `*`, such as `/output  *Part[]`; multiple dereference
-hops still use one marker. `--json` does not resolve Pointers and prints only
-the selected canonical JSON value. The two display modes are mutually
-exclusive, and `--type` is not an option. Inspection is read-only and
-historical and does not load a runnable.
+inside the VALUE cell without a leading bullet. `--json` does not resolve
+Pointers and prints only the selected canonical JSON value. The two display
+modes are mutually exclusive, and `--type` is not an option. Inspection is
+read-only and historical and does not load a runnable.
 
 ## File Request Runtime
 

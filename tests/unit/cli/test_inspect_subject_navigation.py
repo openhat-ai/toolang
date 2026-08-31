@@ -1,8 +1,6 @@
-"""Typed inspect subject navigation registry tests."""
+"""Typed inspect subject navigation registry and call rendering tests."""
 
 from __future__ import annotations
-
-import json
 
 import pytest
 
@@ -93,6 +91,29 @@ def test_tree_activity_preserves_run_statement_operands_and_aligns_tags() -> Non
     )
 
 
+@pytest.mark.parametrize(
+    ("status", "marker", "style"),
+    (
+        ("pending", "•", "dim"),
+        ("running", "•", "cyan"),
+        ("succeeded", "✔", "green"),
+        ("failed", "✖", "red"),
+        ("canceled", "✖", "yellow"),
+    ),
+)
+def test_status_activity_uses_the_approved_marker_vocabulary(
+    status: str,
+    marker: str,
+    style: str,
+) -> None:
+    rendered = inspect_commands._status_activity(status, "[model] test")
+
+    assert rendered.plain == f"{marker} [model] test"
+    assert [(span.start, span.end, span.style) for span in rendered.spans] == [
+        (0, 1, style)
+    ]
+
+
 def test_execution_table_does_not_truncate_reusable_pointers(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -108,7 +129,7 @@ def test_execution_table_does_not_truncate_reusable_pointers(
     assert "…" not in output
 
 
-def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -> None:
+def test_model_call_human_view_restores_review_content_presentation() -> None:
     call = ModelCall(
         instructions="Review the run.\n<important>Preserve this tag.</important>",
         messages=[
@@ -153,10 +174,7 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
                     "type": "object",
                     "properties": {
                         "run_id": {"type": "string"},
-                        "include": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
+                        "include": {"type": "array", "items": {"type": "string"}},
                         "limit": {"type": ["integer", "null"]},
                     },
                     "required": ["run_id"],
@@ -169,6 +187,7 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
 
     renderables = inspect_commands._model_call_renderables(
         model_call_to_data(call),
+        result_parts=({"type": "text", "text": "Final answer."},),
     )
     by_text = {renderable.plain: renderable for renderable in renderables}
     output = "\n".join(renderable.plain for renderable in renderables)
@@ -179,7 +198,6 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
     assert "[3] user" in output
     assert "[2] assistant" in output
     assert "[1] tool" in output
-    assert "[0] text" not in output
     assert "I will inspect it." in output
     call_boundary = "<[[ ToolCallPart(1), id=tool-1"
     result_boundary = "<[[ ToolResultPart(0), id=tool-1, status=failed, exit_code=2"
@@ -187,195 +205,121 @@ def test_model_call_human_view_preserves_prompts_and_numbers_review_subjects() -
     invocation = 'inspect.run(run_id: "run_123", include: ["steps", "errors"])'
     assert invocation in output
     assert "Reason\nThe run record contains the failure." in output
-    assert "\nInput\n" not in output
     assert result_boundary in output
-    assert "status: failed" not in output
-    assert "exit_code: 2" not in output
     assert "message: Run inspection failed." in output
-    assert "\nOutput\n" not in output
     assert output_lines.count("]]>") == 2
-    assert "Tools 1" in output
     signature = (
         "[0] inspect.run(run_id: string, include?: string[], limit?: integer | null)"
     )
     assert signature in output
-    section_boundary = "░" * 80
-    continuation_heading = next(
-        renderable
-        for renderable in renderables
-        if renderable.plain.startswith("Continuation ")
-    )
-    assert (
-        f"{section_boundary}\n{continuation_heading.plain}\n"
-        f"{section_boundary}\n\ncursor: next"
-    ) in output
-    assert '"messages":' not in output
+    assert "Inspect one run." in output
+    assert '{\n  "type": "boolean"\n}' in output
+    assert "cursor: next" in output
+    assert "Result " in output
+    assert "run_123.4/output/value" not in output
+    assert "[=] assistant" in output
+    assert "Final answer." in output_lines
     assert by_text["[3] user"].style == "dim"
-    assert by_text["[2] assistant"].style == "dim"
-    assert by_text["[1] tool"].style == "dim"
     assert by_text[call_boundary].style == "dim"
     assert by_text[result_boundary].style == "dim"
-    assert not by_text[invocation].style
-    assert not by_text["message: Run inspection failed."].style
+    assert by_text[signature].style == "dim"
     assert all(
         renderable.style == "dim"
         for renderable in renderables
         if renderable.plain == "]]>"
     )
-    assert by_text[signature].style == "dim"
     section_titles = (
         "Instructions",
-        "Messages 3",
+        "Messages",
+        "Tools",
         "Output Contract",
-        "Output",
-        "Tools 1",
         "Continuation",
+        "Result",
     )
-    section_indexes = []
-    for title in section_titles:
-        title_index = next(
+    section_indexes = [
+        next(
             index
             for index, renderable in enumerate(renderables)
             if renderable.plain.startswith(f"{title} ")
-            and (
-                title != "Output" or not renderable.plain.startswith("Output Contract ")
-            )
         )
-        section_indexes.append(title_index)
-        assert len(renderables[title_index].plain) == 80
-        assert renderables[title_index].plain.endswith("░")
-        assert renderables[title_index - 1].plain == section_boundary
-        assert renderables[title_index - 1].style == "dim"
-        assert renderables[title_index + 1].plain == section_boundary
-        assert renderables[title_index + 1].style == "dim"
+        for title in section_titles
+    ]
     assert section_indexes == sorted(section_indexes)
-    assert '{\n  "type": "boolean"\n}' in output
-    assert "No output." in output
-    messages_heading = next(
-        renderable
-        for renderable in renderables
-        if renderable.plain.startswith("Messages 3 ")
-    )
-    messages_title_end = len("Messages")
-    messages_fact_end = len("Messages 3")
-    assert [(span.start, span.end, span.style) for span in messages_heading.spans] == [
-        (0, messages_title_end, "bold"),
-        (messages_title_end, messages_fact_end, "dim"),
-        (messages_fact_end, 80, "dim"),
-    ]
-    tools_heading = next(
-        renderable
-        for renderable in renderables
-        if renderable.plain.startswith("Tools 1 ")
-    )
-    tools_title_end = len("Tools")
-    tools_fact_end = len("Tools 1")
-    assert [(span.start, span.end, span.style) for span in tools_heading.spans] == [
-        (0, tools_title_end, "bold"),
-        (tools_title_end, tools_fact_end, "dim"),
-        (tools_fact_end, 80, "dim"),
-    ]
-    assert all(renderable.plain != "Model Call" for renderable in renderables)
-    for line in (
-        "[3] user",
-        '<context name="failure">What happened?</context>',
-        "[2] assistant",
-        "I will inspect it.",
-        invocation,
-        "[1] tool",
-        call_boundary,
-        result_boundary,
-        "message: Run inspection failed.",
-        signature,
-    ):
-        assert line in output_lines
 
 
-@pytest.mark.parametrize(
-    "schema",
-    (
-        {
-            "additionalProperties": False,
-            "properties": {"answer": {"type": "boolean"}},
-            "required": ["answer"],
-            "type": "object",
-        },
-        {"items": {"type": "string"}, "type": "array"},
-        {"type": "number"},
-        {},
-        None,
-    ),
-)
-def test_model_call_human_view_renders_output_contract_as_json(
-    schema: dict[str, object] | None,
-) -> None:
+def test_model_call_human_view_omits_empty_sections() -> None:
+    call = ModelCall(instructions="", messages=[], output_schema=None)
+
+    assert inspect_commands._model_call_renderables(model_call_to_data(call)) == ()
+
+
+def test_model_call_human_view_shows_every_tool_signature() -> None:
     call = ModelCall(
         instructions="",
         messages=[],
-        output_schema=schema,
+        tools=tuple(
+            ToolDefinition(
+                name=f"tools__tool_{index}",
+                description=f"Tool description {index}",
+                parameters={},
+            )
+            for index in range(14)
+        ),
     )
 
-    renderables = inspect_commands._model_call_renderables(model_call_to_data(call))
-    output = "\n".join(renderable.plain for renderable in renderables)
-    messages_index = next(
-        index
-        for index, renderable in enumerate(renderables)
-        if renderable.plain.startswith("Messages 0 ")
-    )
-    contract_index = next(
-        index
-        for index, renderable in enumerate(renderables)
-        if renderable.plain.startswith("Output Contract ")
-    )
-    output_index = next(
-        index
-        for index, renderable in enumerate(renderables)
-        if renderable.plain.startswith("Output ")
-        and not renderable.plain.startswith("Output Contract ")
-    )
-    tools_index = next(
-        index
-        for index, renderable in enumerate(renderables)
-        if renderable.plain.startswith("Tools 0 ")
-    )
-    continuation_index = next(
-        index
-        for index, renderable in enumerate(renderables)
-        if renderable.plain.startswith("Continuation ")
-    )
-
-    assert (
-        messages_index
-        < contract_index
-        < output_index
-        < tools_index
-        < continuation_index
-    )
-    if schema is None:
-        none = next(
-            renderable for renderable in renderables if renderable.plain == "None"
+    output = "\n".join(
+        renderable.plain
+        for renderable in inspect_commands._model_call_renderables(
+            model_call_to_data(call)
         )
-        assert none.style == "dim"
-    else:
-        assert json.dumps(schema, ensure_ascii=False, indent=2) in output
-
-
-def test_structured_human_values_are_zero_based_and_keep_nested_shape() -> None:
-    renderables = inspect_commands._structured_renderables(
-        {"items": ["first", {"enabled": True}]},
-        style="dim",
     )
 
-    assert [renderable.plain for renderable in renderables] == [
-        "items:",
-        "  [0]: first",
-        "  [1]:",
-        "    enabled: true",
-    ]
-    assert all(renderable.style == "dim" for renderable in renderables)
+    assert "[13] tools.tool_13()" in output
+    assert "Tool description 13" in output
 
 
-def test_model_call_messages_count_down_to_the_current_result() -> None:
+def test_model_call_human_view_does_not_truncate_request_text_or_result() -> None:
+    instructions = f"instructions start\n{'i' * 200}\ninstructions end"
+    message = f"message start\n{'m' * 200}\nmessage end"
+    result = f"result start\n{'r' * 200}\nresult end"
+    call = ModelCall(
+        instructions=instructions,
+        messages=[Message.user(message)],
+        tools=(
+            ToolDefinition(
+                name="tools__complete",
+                description=f"description start {'d' * 200} description end",
+                parameters={
+                    "type": "object",
+                    "description": f"schema start {'s' * 200} schema end",
+                },
+            ),
+        ),
+        output_schema={"description": f"output start {'o' * 200} output end"},
+        continuation={"cursor": f"cursor start {'c' * 200} cursor end"},
+    )
+
+    output = "\n".join(
+        renderable.plain
+        for renderable in inspect_commands._model_call_renderables(
+            model_call_to_data(call),
+            result_parts=({"type": "text", "text": result},),
+        )
+    )
+
+    for exact_value in (
+        instructions,
+        message,
+        result,
+        "description end",
+        "output end",
+        "cursor end",
+    ):
+        assert exact_value in output
+    assert "schema end" not in output
+
+
+def test_model_call_messages_count_down_and_result_is_last() -> None:
     call = ModelCall(
         instructions="",
         messages=[Message.user(str(index)) for index in range(10)],
@@ -386,40 +330,13 @@ def test_model_call_messages_count_down_to_the_current_result() -> None:
         result_parts=({"type": "text", "text": "result"},),
     )
 
-    assert any(
-        renderable.plain.startswith("Messages 10 ") for renderable in renderables
-    )
+    assert any(renderable.plain.startswith("Messages ") for renderable in renderables)
     assert [
         renderable.plain
         for renderable in renderables
-        if renderable.plain.endswith((" user", " assistant"))
-    ] == [
-        *(f"[{index}] user" for index in range(10, 0, -1)),
-        "[=] assistant",
-    ]
-    messages_index = next(
-        index
-        for index, renderable in enumerate(renderables)
-        if renderable.plain.startswith("Messages 10 ")
-    )
-    output_index = next(
-        index
-        for index, renderable in enumerate(renderables)
-        if renderable.plain.startswith("Output ")
-        and not renderable.plain.startswith("Output Contract ")
-    )
-    result_index = next(
-        index
-        for index, renderable in enumerate(renderables)
-        if renderable.plain == "[=] assistant"
-    )
-    tools_index = next(
-        index
-        for index, renderable in enumerate(renderables)
-        if renderable.plain.startswith("Tools 0 ")
-    )
-
-    assert messages_index < output_index < result_index < tools_index
+        if renderable.plain.startswith("[")
+    ] == [*(f"[{index}] user" for index in range(10, 0, -1)), "[=] assistant"]
+    assert renderables[-1].plain == "result"
 
 
 def test_human_tool_name_replaces_only_the_toolset_separator() -> None:
@@ -429,7 +346,7 @@ def test_human_tool_name_replaces_only_the_toolset_separator() -> None:
     )
 
 
-def test_tool_result_human_view_prioritizes_error_over_output() -> None:
+def test_tool_result_human_view_keeps_complete_output_and_error_context() -> None:
     renderables = inspect_commands._tool_part_renderables(
         {
             "type": "tool_result",
@@ -440,6 +357,7 @@ def test_tool_result_human_view_prioritizes_error_over_output() -> None:
                 "exit_code": 1,
                 "ok": False,
                 "stdout": "partial output",
+                "nested": {"items": ["first", "last"]},
             },
             "error": "Command failed.",
         },
@@ -449,6 +367,11 @@ def test_tool_result_human_view_prioritizes_error_over_output() -> None:
 
     assert [renderable.plain for renderable in renderables] == [
         "<[[ ToolResultPart(2), id=tool-error, exit_code=1, ok=false",
+        "stdout: partial output",
+        "nested:",
+        "  items:",
+        "    [0]: first",
+        "    [1]: last",
         "",
         "Error",
         "Command failed.",
@@ -456,3 +379,4 @@ def test_tool_result_human_view_prioritizes_error_over_output() -> None:
     ]
     assert renderables[0].style == "dim"
     assert renderables[-1].style == "dim"
+    assert renderables[-3].style == "bold"

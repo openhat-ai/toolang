@@ -20,17 +20,21 @@ from toolang.cli.common.human_values import (
     human_value_renderable,
 )
 from toolang.cli.common.execution_progress.formatting import (
-    count as _format_count,
     elapsed as _format_elapsed,
     one_line as _one_line,
     token_fact as _token_fact,
 )
 from toolang.execution.history import RunHistory
-from toolang.execution.inspection import InspectedRun, InspectedStep
+from toolang.execution.inspection import (
+    ChildOccurrenceTotals,
+    InspectedRun,
+    InspectedStep,
+)
 from toolang.execution.records import (
     ControlRecord,
     RunRecord,
     StepRecord,
+    StoredModelStepGiven,
     ThreadRecord,
     model_call_to_data,
 )
@@ -42,7 +46,10 @@ from toolang.execution.schemas import (
 )
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
+    CollectionStepNoted,
     Local,
+    ModelStepNoted,
+    Occurrence,
     Pointer,
     ToolStepGiven,
     TypedPointer,
@@ -234,6 +241,7 @@ def _render_model_call(
 ) -> None:
     for renderable in _model_call_renderables(
         value,
+        step=_selected_step(subject),
         result_parts=_model_step_result_parts(subject),
     ):
         console.print(renderable, soft_wrap=True)
@@ -281,19 +289,29 @@ def _render_tool_call(
     if not isinstance(step.given, ToolStepGiven) or not isinstance(value, Mapping):
         raise TypeError("tool call projector returned an invalid value")
     data = cast(Mapping[str, object], value)
-    lines: list[Text] = []
+    lines = list(_call_summary_renderables(step, title="Tool Call"))
     _append_model_call_section(lines, "Invocation", width=80)
-    lines.extend(
-        (
-            Text(f"Plugin       {step.given.plugin}"),
-            Text(f"Call ID      {data.get('call_id', '')}"),
-            Text(f"Tool-call ID {data.get('tool_call_id', '')}"),
-            Text(_tool_invocation(str(data.get("name") or "tool"), data.get("input"))),
+    tool_call_id = str(data.get("tool_call_id") or "")
+    call_id = str(data.get("call_id") or "")
+    lines.append(Text(f"Plugin       {step.given.plugin}"))
+    lines.append(Text(f"Tool-call ID {tool_call_id}"))
+    if call_id and call_id != tool_call_id:
+        lines.append(Text(f"Call ID      {call_id}"))
+    lines.append(
+        Text(
+            _tool_invocation(
+                _display_tool_name(str(data.get("name") or "tool")),
+                data.get("input"),
+            )
         )
     )
     result = _tool_step_result(step)
     if result is not None:
-        _append_model_call_section(lines, "Result", width=80)
+        _append_model_call_section(
+            lines,
+            "Result",
+            width=80,
+        )
         lines.extend(_tool_part_renderables(result, result=True, index=0))
     for line in lines:
         console.print(line, soft_wrap=True)
@@ -327,17 +345,29 @@ def _render_execution_tree(
     for node in value.nodes:
         children.setdefault(node.parent, []).append(node.pointer)
     last = {pointer for pointers in children.values() for pointer in pointers[-1:]}
+    steps = {
+        str(record.path): record
+        for record in value.records
+        if isinstance(record, StepRecord)
+    }
 
     rows: list[tuple[Text | str, ...]] = []
     for node in value.nodes:
+        activity = _tree_activity(node.record_kind, node.step_kind, node.operation)
+        occur = _occurrence_index_label(node.occur)
+        if node.record_kind == "step":
+            step = steps.get(node.pointer)
+            if step is None:  # pragma: no cover - typed tree invariant
+                raise RuntimeError(f"tree Step record is missing: {node.pointer}")
+            occur = _step_occurrence_label(
+                step,
+                fallback=_tree_child_occurrence_totals(node.pointer, value.nodes),
+            )
         rows.append(
             (
                 _tree_node_label(node.pointer, node.parent, parents, last),
-                Text(_tree_activity(node.record_kind, node.step_kind, node.operation)),
-                _occurrence_label(node.occur),
-                _display_status(node.status),
-                _format_elapsed(node.started_at, node.finished_at or ""),
-                _tree_metrics_label(node.metrics),
+                _status_activity(node.status, activity),
+                occur,
             )
         )
         error = value.resolve_error(node.error)
@@ -345,20 +375,14 @@ def _render_execution_tree(
             bounded = _one_line(error)[:240]
             rows.append(
                 (
-                    Text(
-                        f"{_tree_error_indent(node.depth)}error: {bounded}",
-                        style="red",
-                    ),
                     "",
-                    "",
-                    "",
-                    "",
+                    Text(f"error: {bounded}", style="red"),
                     "",
                 )
             )
     _render_execution_table(
         console,
-        ("NODE", "ACTIVITY", "OCCUR", "STATUS", "DURATION", "METRICS"),
+        ("NODE", "ACTIVITY", "OCCUR"),
         rows,
     )
 
@@ -426,10 +450,6 @@ def _tree_node_label(
     return f"{guides}{branch}{pointer}"
 
 
-def _tree_error_indent(depth: int) -> str:
-    return "   " * (depth + 1) + "└─ "
-
-
 def _tree_activity(
     record_kind: str,
     step_kind: str | None,
@@ -462,47 +482,94 @@ def _runnable_activity(runnable: str) -> str:
     return "<?>".ljust(7) + f" {runnable}"
 
 
-def _occurrence_label(occur: object) -> str:
+def _occurrence_index_label(occur: Occurrence | None) -> str:
     if occur is None:
         return ""
     facts = []
-    item = getattr(occur, "item", None)
-    lane = getattr(occur, "lane", None)
-    iteration = getattr(occur, "iteration", None)
+    item = occur.item
+    lane = occur.lane
+    iteration = occur.iteration
     if item is not None:
-        facts.append(f"item {item.index + 1}/{item.count}")
+        facts.append(f"item {item.index + 1}")
     if lane is not None:
-        facts.append(f"lane {lane.index + 1}/{lane.count}")
+        facts.append(f"lane {lane.index + 1}")
     if iteration is not None:
         total = f"/{iteration.count}" if iteration.count is not None else ""
         facts.append(f"iteration {iteration.index + 1}{total} {iteration.phase}")
     return " · ".join(facts)
 
 
-def _tree_metrics_label(metrics: object) -> str:
-    facts = []
-    runs = int(getattr(metrics, "runs"))
-    model_calls = int(getattr(metrics, "model_calls"))
-    tool_calls = int(getattr(metrics, "tool_calls"))
-    if runs:
-        facts.append(_format_count(runs, "run"))
-    if model_calls:
-        facts.append(_format_count(model_calls, "model call"))
-    if tool_calls:
-        facts.append(_format_count(tool_calls, "tool call"))
-    input_tokens = getattr(metrics, "input_tokens")
-    output_tokens = getattr(metrics, "output_tokens")
-    if isinstance(input_tokens, int) and isinstance(output_tokens, int):
-        token = _token_fact(input_tokens, output_tokens)
-        if not bool(getattr(metrics, "usage_complete")):
-            token += "+"
-        facts.append(token)
-    cost = getattr(metrics, "cost_usd")
-    if isinstance(cost, str):
-        prefix = "~$" if bool(getattr(metrics, "cost_approximate")) else "$"
-        suffix = "" if bool(getattr(metrics, "cost_complete")) else "+"
-        facts.append(f"{prefix}{cost}{suffix}")
-    return " · ".join(facts)
+def _status_activity(status: object, activity: str) -> Text:
+    value = str(status or "")
+    marker, style = {
+        "pending": ("•", "dim"),
+        "running": ("•", "cyan"),
+        "succeeded": ("✔", "green"),
+        "failed": ("✖", "red"),
+        "canceled": ("✖", "yellow"),
+    }.get(value, ("?", "dim"))
+    rendered = Text()
+    rendered.append(marker, style=style)
+    if activity:
+        rendered.append(f" {activity}")
+    return rendered
+
+
+def _step_occurrence_label(
+    step: StepRecord,
+    *,
+    fallback: ChildOccurrenceTotals,
+) -> str:
+    facts = [_occurrence_index_label(step.occur)]
+    items = fallback.items
+    lanes = fallback.lanes
+    if isinstance(step.noted, CollectionStepNoted):
+        items = step.noted.total_items
+    elif step.kind in {"run", "par"}:
+        count = getattr(step.given, "count", None)
+        if isinstance(count, int) and not isinstance(count, bool):
+            items = count
+    if step.kind == "par":
+        configured_lanes = getattr(step.given, "lanes", None)
+        if isinstance(configured_lanes, int) and not isinstance(configured_lanes, bool):
+            lanes = configured_lanes
+    if items is not None:
+        facts.append(f"{items} {_plural(items, 'item')}")
+    if lanes is not None:
+        facts.append(f"{lanes} {_plural(lanes, 'lane')}")
+    return " · ".join(fact for fact in facts if fact)
+
+
+def _tree_child_occurrence_totals(
+    pointer: str,
+    nodes: Sequence[object],
+) -> ChildOccurrenceTotals:
+    child_occurrences = [
+        getattr(node, "occur")
+        for node in nodes
+        if getattr(node, "parent") == pointer and getattr(node, "record_kind") == "run"
+    ]
+
+    def consistent_count(name: Literal["item", "lane"]) -> int | None:
+        if not child_occurrences:
+            return None
+        positions = [
+            getattr(occur, name) if isinstance(occur, Occurrence) else None
+            for occur in child_occurrences
+        ]
+        if any(position is None for position in positions):
+            return None
+        counts = {position.count for position in positions if position is not None}
+        return counts.pop() if len(counts) == 1 else None
+
+    return ChildOccurrenceTotals(
+        items=consistent_count("item"),
+        lanes=consistent_count("lane"),
+    )
+
+
+def _plural(count: int, noun: str) -> str:
+    return noun if count == 1 else f"{noun}s"
 
 
 INSPECT_SUBJECT_TRANSITIONS: tuple[_SubjectTransition, ...] = (
@@ -879,24 +946,20 @@ def _render_collection(
         if subject.scope is not None and "." in subject.scope:
             rows = [
                 (
-                    subject.scope,
                     item.record.id,
                     _runnable_activity(item.runnable),
-                    _occurrence_label(item.record.occur),
-                    str(item.step_count),
                     _display_status(item.record.status),
+                    str(item.step_count),
                     item.record.created_at,
                 )
                 for item in items
             ]
             _echo_execution_table(
                 (
-                    "PARENT STEP",
                     "RUN",
                     "RUNNABLE",
-                    "OCCUR",
-                    "STEPS",
                     "STATUS",
+                    "STEPS",
                     "CREATED",
                 ),
                 rows,
@@ -906,23 +969,21 @@ def _render_collection(
             rows = [
                 (
                     item.record.id,
-                    str(item.record.parent) if item.record.parent is not None else "-",
                     _runnable_activity(item.runnable),
-                    _occurrence_label(item.record.occur),
-                    str(item.step_count),
                     _display_status(item.record.status),
+                    str(item.step_count),
+                    str(item.record.parent) if item.record.parent is not None else "-",
                     item.record.created_at,
                 )
                 for item in items
             ]
             _echo_execution_table(
                 (
-                    "THREAD RUN",
-                    "PARENT STEP",
+                    "RUN",
                     "RUNNABLE",
-                    "OCCUR",
-                    "STEPS",
                     "STATUS",
+                    "STEPS",
+                    "PARENT STEP",
                     "CREATED",
                 ),
                 rows,
@@ -931,12 +992,11 @@ def _render_collection(
         rows = [
             (
                 item.record.id,
+                _runnable_activity(item.runnable),
+                _display_status(item.record.status),
+                str(item.step_count),
                 item.record.thread,
                 str(item.record.parent) if item.record.parent is not None else "-",
-                _runnable_activity(item.runnable),
-                _occurrence_label(item.record.occur),
-                str(item.step_count),
-                _display_status(item.record.status),
                 item.record.created_at,
             )
             for item in items
@@ -944,12 +1004,11 @@ def _render_collection(
         _echo_execution_table(
             (
                 "RUN",
+                "RUNNABLE",
+                "STATUS",
+                "STEPS",
                 "THREAD",
                 "PARENT STEP",
-                "RUNNABLE",
-                "OCCUR",
-                "STEPS",
-                "STATUS",
                 "CREATED",
             ),
             rows,
@@ -964,40 +1023,59 @@ def _render_collection(
             rows = [
                 (
                     str(item.record.path),
-                    _tree_activity("step", item.record.kind, item.operation),
-                    _occurrence_label(item.record.occur),
+                    _status_activity(
+                        item.record.status,
+                        _tree_activity("step", item.record.kind, item.operation),
+                    ),
                     str(item.child_run_count),
-                    _display_status(item.record.status),
+                    str(item.child_step_count),
                     item.record.created_at,
+                    _step_occurrence_label(
+                        item.record,
+                        fallback=item.child_occurrence_totals,
+                    ),
                 )
                 for item in items
             ]
             _echo_execution_table(
-                ("CHILD STEP", "ACTIVITY", "OCCUR", "RUNS", "STATUS", "CREATED"),
+                (
+                    "STEP",
+                    "ACTIVITY",
+                    "CHILD RUNS",
+                    "CHILD STEPS",
+                    "CREATED",
+                    "OCCUR",
+                ),
                 rows,
             )
             return
         rows = [
             (
                 str(item.record.path),
-                str(item.record.parent) if item.record.parent is not None else "-",
-                _tree_activity("step", item.record.kind, item.operation),
-                _occurrence_label(item.record.occur),
+                _status_activity(
+                    item.record.status,
+                    _tree_activity("step", item.record.kind, item.operation),
+                ),
                 str(item.child_run_count),
-                _display_status(item.record.status),
+                str(item.child_step_count),
+                str(item.record.parent) if item.record.parent is not None else "-",
                 item.record.created_at,
+                _step_occurrence_label(
+                    item.record,
+                    fallback=item.child_occurrence_totals,
+                ),
             )
             for item in items
         ]
         _echo_execution_table(
             (
-                "RUN STEP",
-                "PARENT STEP",
+                "STEP",
                 "ACTIVITY",
-                "OCCUR",
-                "RUNS",
-                "STATUS",
+                "CHILD RUNS",
+                "CHILD STEPS",
+                "PARENT STEP",
                 "CREATED",
+                "OCCUR",
             ),
             rows,
         )
@@ -1024,6 +1102,7 @@ def _render_explicit_projection(
 def _model_call_renderables(
     value: object,
     *,
+    step: StepRecord | None = None,
     result_parts: Sequence[Mapping[str, object]] | None = None,
     section_width: int = 80,
 ) -> tuple[Text, ...]:
@@ -1031,24 +1110,22 @@ def _model_call_renderables(
         raise TypeError("model Step call projector returned a non-object value")
     data = cast(Mapping[str, object], value)
 
-    lines: list[Text] = []
-    _append_model_call_section(lines, "Instructions", width=section_width)
-    instructions = data.get("instructions")
-    lines.append(
-        Text(instructions)
-        if isinstance(instructions, str) and instructions
-        else Text("No instructions.", style="dim italic")
+    lines = list(
+        _call_summary_renderables(step, title="Model Call") if step is not None else ()
     )
+    instructions = data.get("instructions")
+    if isinstance(instructions, str) and instructions:
+        _append_model_call_section(lines, "Instructions", width=section_width)
+        lines.append(Text(instructions))
 
     messages = data.get("messages")
     message_count = len(messages) if isinstance(messages, list) else 0
-    _append_model_call_section(
-        lines,
-        "Messages",
-        fact=str(message_count),
-        width=section_width,
-    )
     if isinstance(messages, list) and messages:
+        _append_model_call_section(
+            lines,
+            "Messages",
+            width=section_width,
+        )
         for offset, message in enumerate(messages):
             if not isinstance(message, Mapping):  # pragma: no cover - canonical data
                 continue
@@ -1062,43 +1139,14 @@ def _model_call_renderables(
                 role=role,
                 parts=message_data.get("parts"),
             )
-    else:
-        lines.append(Text("No messages.", style="dim italic"))
-
-    _append_model_call_section(lines, "Output Contract", width=section_width)
-    output_schema = data.get("output_schema")
-    if output_schema is None:
-        lines.append(Text("None", style="dim"))
-    else:
-        lines.extend(
-            Text(line)
-            for line in json.dumps(
-                output_schema,
-                ensure_ascii=False,
-                indent=2,
-            ).splitlines()
-        )
-
-    _append_model_call_section(lines, "Output", width=section_width)
-    if result_parts is not None:
-        _append_model_message(
-            lines,
-            index="=",
-            role="assistant",
-            parts=result_parts,
-        )
-    else:
-        lines.append(Text("No output.", style="dim italic"))
 
     tools = data.get("tools")
-    tool_count = len(tools) if isinstance(tools, list) else 0
-    _append_model_call_section(
-        lines,
-        "Tools",
-        fact=str(tool_count),
-        width=section_width,
-    )
     if isinstance(tools, list) and tools:
+        _append_model_call_section(
+            lines,
+            "Tools",
+            width=section_width,
+        )
         for index, tool in enumerate(tools):
             if not isinstance(tool, Mapping):  # pragma: no cover - canonical data
                 continue
@@ -1119,15 +1167,36 @@ def _model_call_renderables(
                     else Text("No description.", style="dim italic"),
                 )
             )
-    else:
-        lines.append(Text("No available tools.", style="dim italic"))
 
-    _append_model_call_section(lines, "Continuation", width=section_width)
+    output_schema = data.get("output_schema")
+    if output_schema is not None:
+        _append_model_call_section(lines, "Output Contract", width=section_width)
+        lines.extend(
+            Text(line)
+            for line in json.dumps(
+                output_schema,
+                ensure_ascii=False,
+                indent=2,
+            ).splitlines()
+        )
+
     continuation = data.get("cont")
-    if continuation is None:
-        lines.append(Text("No continuation data.", style="dim italic"))
-    else:
+    if continuation is not None:
+        _append_model_call_section(lines, "Continuation", width=section_width)
         lines.extend(_structured_renderables(continuation))
+
+    if result_parts is not None:
+        _append_model_call_section(
+            lines,
+            "Result",
+            width=section_width,
+        )
+        _append_model_message(
+            lines,
+            index="=",
+            role="assistant",
+            parts=result_parts,
+        )
     return tuple(lines)
 
 
@@ -1155,6 +1224,78 @@ def _append_model_message(
                 multipart=len(parts) > 1,
             )
         )
+
+
+def _call_summary_renderables(
+    step: StepRecord,
+    *,
+    title: str,
+) -> tuple[Text, ...]:
+    lines: list[Text] = []
+    _append_model_call_section(lines, title, width=80)
+    lines.append(Text(f"Step         {step.path}"))
+    if isinstance(step.given, StoredModelStepGiven):
+        lines.append(Text(f"Model        {step.given.model}"))
+    elif isinstance(step.given, ToolStepGiven):
+        lines.append(Text(f"Tool         {_display_tool_name(step.given.call.name)}"))
+    status = Text("Status       ")
+    status.append_text(_status_activity(step.status, step.status))
+    lines.append(status)
+    elapsed = _format_elapsed(step.started_at, step.finished_at or "")
+    if elapsed:
+        lines.append(Text(f"Elapsed      {elapsed}"))
+    if isinstance(step.noted, ModelStepNoted):
+        usage = _model_usage_fact(step.noted)
+        if usage:
+            lines.append(Text(f"Usage        {usage}"))
+    return tuple(lines)
+
+
+def _model_usage_fact(noted: ModelStepNoted) -> str:
+    accounting = noted.accounting
+    if accounting is not None:
+        return _token_fact(accounting.input_tokens, accounting.output_tokens)
+    if noted.tokens is not None:
+        return _token_fact(noted.tokens.input, noted.tokens.output)
+    return ""
+
+
+def _message_part_renderables(
+    part: Mapping[str, object],
+    *,
+    index: int,
+    multipart: bool,
+) -> tuple[Text, ...]:
+    part_type = str(part.get("type") or "part")
+    if part_type == "text":
+        text = part.get("text")
+        return (Text(text if isinstance(text, str) else ""),)
+    if part_type == "tool_call":
+        return _tool_part_renderables(part, result=False, index=index)
+    if part_type == "tool_result":
+        return _tool_part_renderables(part, result=True, index=index)
+    label = part_type.replace("_", " ").title()
+    details = dict(part)
+    details.pop("type", None)
+    prefix = f"[{index}] " if multipart else ""
+    return (
+        Text(f"{prefix}{label}", style="dim"),
+        *_structured_renderables(details),
+    )
+
+
+def _text_preview(value: str, *, width: int = 160) -> Text:
+    preview = _truncate(_one_line(value), width=width)
+    line_count = value.count("\n") + 1
+    facts: list[str] = []
+    if line_count > 1:
+        facts.append(f"{line_count} lines")
+    if len(preview) < len(_one_line(value)) or line_count > 1:
+        facts.append(f"{len(value)} chars")
+    output = Text(preview)
+    if facts:
+        output.append(f" · {' · '.join(facts)}", style="dim")
+    return output
 
 
 def _append_model_call_section(
@@ -1239,30 +1380,6 @@ def _schema_type(value: object) -> str:
     return "any"
 
 
-def _message_part_renderables(
-    part: Mapping[str, object],
-    *,
-    index: int,
-    multipart: bool,
-) -> tuple[Text, ...]:
-    part_type = str(part.get("type") or "part")
-    if part_type == "text":
-        text = part.get("text")
-        return (Text(text if isinstance(text, str) else ""),)
-    if part_type == "tool_call":
-        return _tool_part_renderables(part, result=False, index=index)
-    if part_type == "tool_result":
-        return _tool_part_renderables(part, result=True, index=index)
-    label = part_type.replace("_", " ").title()
-    details = dict(part)
-    details.pop("type", None)
-    prefix = f"[{index}] " if multipart else ""
-    return (
-        Text(f"{prefix}{label}", style="dim"),
-        *_structured_renderables(details),
-    )
-
-
 def _tool_part_renderables(
     part: Mapping[str, object],
     *,
@@ -1281,14 +1398,14 @@ def _tool_part_renderables(
     if not result:
         name = _display_tool_name(str(part.get("tool_name") or "unnamed"))
         lines.append(Text(_tool_invocation(name, part.get("input", {}))))
+    if result and output != {}:
+        lines.extend(_structured_renderables(output))
     reasoning = part.get("reasoning")
     if isinstance(reasoning, str) and reasoning:
         lines.extend((Text(), Text("Reason", style="bold"), Text(reasoning)))
     error = part.get("error")
     if isinstance(error, str) and error:
         lines.extend((Text(), Text("Error", style="bold"), Text(error)))
-    elif result and output != {}:
-        lines.extend(_structured_renderables(output))
     lines.append(Text("]]>", style="dim"))
     return tuple(lines)
 
@@ -1383,6 +1500,7 @@ class _HumanValue:
     runtime: object
     render_type: str
     resolved: bool
+    raw: bool = False
 
 
 def _render_pointer(
@@ -1392,15 +1510,15 @@ def _render_pointer(
     projector: Literal["fields", "value"],
 ) -> None:
     console = Console(highlight=False)
-    root = _human_value(store, selected)
     if projector == "fields":
         _render_human_rows(
             console,
-            _human_children(store, selected),
+            _raw_human_children(selected),
             base=selected.pointer,
-            pointer_heading=_field_projection_heading(selected, root),
+            pointer_heading="FIELD",
         )
         return
+    root = _human_value(store, selected)
     block = _human_block(root)
     if block is not None:
         console.print(block)
@@ -1408,20 +1526,7 @@ def _render_pointer(
         console.print(Text(_human_summary(root)), soft_wrap=True)
 
 
-def _field_projection_heading(
-    selected: RecordSelection,
-    value: _HumanValue,
-) -> str:
-    source = (
-        record_kind(selected.record)
-        if not selected.pointer.field
-        else _human_type_label(value.render_type)
-    )
-    return f"{source.upper()} FIELD"
-
-
-def _human_children(
-    store: RunStore,
+def _raw_human_children(
     selected: RecordSelection,
 ) -> Iterable[tuple[RecordSelection, _HumanValue]]:
     keys: Iterable[str | int]
@@ -1431,7 +1536,16 @@ def _human_children(
         keys = range(len(cast(Sequence[object], selected.value)))
     for key in keys:
         child = selected.child(key)
-        yield child, _human_value(store, child)
+        yield (
+            child,
+            _HumanValue(
+                data=child.value,
+                runtime=child.value,
+                render_type=child.type_name,
+                resolved=False,
+                raw=True,
+            ),
+        )
 
 
 def _human_value(store: RunStore, selected: RecordSelection) -> _HumanValue:
@@ -1487,12 +1601,18 @@ def _render_human_rows(
         type_label = _human_type_label(value.render_type)
         if value.resolved:
             type_label = f"*{type_label}"
-        rendered = _human_block(value)
+        rendered = None if value.raw else _human_block(value)
         compact.append(
             (
                 pointer,
                 type_label,
-                rendered if rendered is not None else _human_summary(value),
+                (
+                    rendered
+                    if rendered is not None
+                    else _raw_human_summary(value.data)
+                    if value.raw
+                    else _human_summary(value)
+                ),
             )
         )
     _print_human_table(console, compact, pointer_heading=heading)
@@ -1563,6 +1683,15 @@ def _human_summary(value: _HumanValue) -> str:
     if isinstance(data, list):
         return "[]" if not data else f"[{len(data)} items]"
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+
+
+def _raw_human_summary(value: object) -> RenderableType:
+    if isinstance(value, str):
+        return _text_preview(value)
+    return _truncate(
+        json.dumps(value, ensure_ascii=False, separators=(", ", ": ")),
+        width=160,
+    )
 
 
 def _nested_summary(value: object) -> str:

@@ -105,10 +105,73 @@ def test_focused_relations_preserve_run_and_step_ownership(tmp_path: Path) -> No
         nested.path,
     ]
     assert root_steps[0].child_run_count == 1
+    assert root_steps[0].child_step_count == 0
+    assert root_steps[0].child_occurrence_totals.items is None
+    assert root_steps[0].child_occurrence_totals.lanes is None
     assert root_steps[1].child_run_count == 0
+    assert root_steps[1].child_step_count == 1
     assert [item.record.id for item in child_runs] == [child.id]
     assert [item.record.path for item in nested_steps] == [nested.path]
     assert [item.record.path for item in child_steps] == [child_step.path]
+
+
+def test_child_step_counts_do_not_decode_unrelated_step_payloads(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_focused_step_counts",
+            thread_id="term_focused_step_counts",
+            origin="test",
+            input=Message.user("Focused counts"),
+        )
+        loop = project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="loop",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+        nested = project_step(
+            store,
+            parent=loop.path,
+            index=0,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(TextPart("nested"),),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+        unrelated = project_step(
+            store,
+            run_id=run.id,
+            step_index=1,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(TextPart("unrelated"),),
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        with store.write_transaction():
+            store._conn.execute(
+                "UPDATE steps SET given = ? WHERE run = ? AND path = ?",
+                ("{", unrelated.run_id, unrelated.path.local),
+            )
+
+        inspected = store.inspect_child_steps(parent=loop)
+    finally:
+        store.close()
+
+    assert [item.record.path for item in inspected] == [nested.path]
+    assert inspected[0].child_step_count == 0
 
 
 def test_focused_multi_table_read_uses_one_sqlite_snapshot(tmp_path: Path) -> None:
@@ -313,6 +376,9 @@ def test_direct_child_run_order_keeps_semantic_coordinates_separate(
 
         parallel_children = store.inspect_child_runs(parent=parallel)
         loop_children = store.inspect_child_runs(parent=loop)
+        inspected_steps = {
+            item.record.path: item for item in store.inspect_steps(run_id=root.id)
+        }
     finally:
         store.close()
 
@@ -324,3 +390,7 @@ def test_direct_child_run_order_keeps_semantic_coordinates_separate(
         loop_body.id,
         loop_until.id,
     ]
+    assert inspected_steps[parallel.path].child_occurrence_totals.items == 1
+    assert inspected_steps[parallel.path].child_occurrence_totals.lanes == 1
+    assert inspected_steps[loop.path].child_occurrence_totals.items is None
+    assert inspected_steps[loop.path].child_occurrence_totals.lanes is None
