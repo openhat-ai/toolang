@@ -35,6 +35,8 @@ _MODELS = {
         "openai/gpt-5",
         "openrouter/openai/gpt-5",
         "provider/model:variant",
+        "provider/model(variant)",
+        "provider/model=variant",
     ),
 )
 def test_concrete_model_ref_recognizes_canonical_routes(value: str) -> None:

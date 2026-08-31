@@ -126,10 +126,11 @@ class LocalChatSession:
 
     def list_models(self) -> Mapping[str, Any]:
         setup = self.setup_watcher.current()
-        default, targets = agent_model_targets(setup, AgentCeiling())
+        _setup_default, targets = agent_model_targets(setup, AgentCeiling())
         selection = snapshot_model_selection(setup)
+        session_model = self.initial_setting().model
         return {
-            "default": default,
+            "default": session_model.ref if session_model is not None else None,
             "items": [
                 {
                     "ref": ref,

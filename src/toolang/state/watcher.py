@@ -75,31 +75,31 @@ class StateWatcher:
         self._checked_root_source: SourceTree | None = None
         self._checked_home_source: SourceTree | None = None
         self._checked_layer_revisions: tuple[str | None, str | None] | None = None
-        try:
-            state = (
-                initial_state if initial_state is not None else load_agent_state(layout)
-            )
-            root_source = load_layer_source(
-                layout,
-                "root",
-                state.root_revision,
-            )
-            home_source = load_layer_source(
-                layout,
-                "home",
-                state.home_revision,
-            )
-        except (FileNotFoundError, KeyError, TypeError, ValueError):
-            if initial_state is not None:
-                self._publication = self._publish(initial_state)
+        if initial_state is not None:
+            self._publication = self._publish(initial_state)
         else:
-            self._publication = self._publish(state)
-            self._checked_root_source = root_source
-            self._checked_home_source = home_source
-            self._checked_layer_revisions = (
-                state.root_revision,
-                state.home_revision,
-            )
+            try:
+                state = load_agent_state(layout)
+                root_source = load_layer_source(
+                    layout,
+                    "root",
+                    state.root_revision,
+                )
+                home_source = load_layer_source(
+                    layout,
+                    "home",
+                    state.home_revision,
+                )
+            except (FileNotFoundError, KeyError, TypeError, ValueError):
+                pass
+            else:
+                self._publication = self._publish(state)
+                self._checked_root_source = root_source
+                self._checked_home_source = home_source
+                self._checked_layer_revisions = (
+                    state.root_revision,
+                    state.home_revision,
+                )
         self._diagnostics: tuple[StateDiagnostic, ...] = ()
         self._check_requests: deque[_CheckRequest] = deque()
         self._check_task: asyncio.Task[None] | None = None

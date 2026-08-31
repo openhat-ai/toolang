@@ -2567,14 +2567,14 @@ def test_chat_tui_applies_default_settings_while_a_run_is_active() -> None:
 
     model_changed = "".join(text for _style, text in app.status_bar._render())
     assert app.status_bar.active_runnable_label == "agic:chat"
-    assert app.status_bar.model_label == "GPT-5 · high"
-    assert model_changed.endswith("flow:research · GPT-5 · high")
+    assert app.status_bar.model_label == "openai/gpt-5 · high"
+    assert model_changed.endswith("flow:research · openai/gpt-5 · high")
 
     app.handle_submit("/agic chat")
 
     restored = "".join(text for _style, text in app.status_bar._render())
     assert restored.count("agic:chat") == 1
-    assert restored.endswith("GPT-5 · high")
+    assert restored.endswith("openai/gpt-5 · high")
 
 
 def test_chat_default_settings_clear_explicit_model_and_runnable() -> None:

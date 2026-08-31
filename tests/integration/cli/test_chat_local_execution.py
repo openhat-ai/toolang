@@ -20,7 +20,7 @@ from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.base import ChatExecutorMetadata
 from toolang.execution.events import RunEvent
 from toolang.execution.schemas import RunRequest, RunnableRequest
-from toolang.execution.types import RunOverride
+from toolang.execution.types import RunOverride, SessionSetting
 from toolang.lang.input import RunnableInputRaw
 from toolang.state.state import publish_state_resources
 from toolang.state.watcher import StateRefresh
@@ -167,6 +167,37 @@ agic chat(_: Part[]) -> Part[]:
 
     assert defaults.model == ModelRequest(TEST_MODEL_REF)
     assert defaults.runnable == "agic:chat"
+
+
+def test_local_chat_model_list_retains_the_session_default(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic chat(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=(),
+    )
+    session: Any = object.__new__(local.LocalChatSession)
+    session.setup_watcher = type(
+        "SetupWatcher",
+        (),
+        {"current": lambda _self: harness.setup},
+    )()
+    session._surface = SessionSetting(
+        model=ModelRequest("session/model"),
+        runnable="agic:chat",
+    )
+    try:
+        payload = session.list_models()
+    finally:
+        harness.store.close()
+
+    assert payload["default"] == "session/model"
+    assert [item["ref"] for item in payload["items"]] == [TEST_MODEL_REF]
 
 
 def test_local_chat_owner_loop_control_does_not_wait_on_itself() -> None:

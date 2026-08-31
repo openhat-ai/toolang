@@ -36,6 +36,11 @@ def test_watcher_publishes_a_prepared_initial_state_without_reloading_it(
         "load_agent_state",
         lambda _layout: pytest.fail("prepared initial State must not be reloaded"),
     )
+    monkeypatch.setattr(
+        state_watcher,
+        "load_layer_source",
+        lambda *_args: pytest.fail("prepared initial State needs no watcher baseline"),
+    )
 
     watcher = state_watcher.StateWatcher(layout, initial_state=durable)
 

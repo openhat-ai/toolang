@@ -537,10 +537,13 @@ def test_remote_chat_repeated_concrete_runs_do_not_list_models() -> None:
     states: list[object] = []
     errors: list[str] = []
     try:
-        for _ in range(2):
+        for override in (
+            RunOverride(),
+            RunOverride(model=ModelOverride(identity="test/model(variant)")),
+        ):
             request = session.build_request(
                 "term_remote",
-                RunOverride(),
+                override,
                 RunnableInputRaw(_="hello"),
                 session.initial_setting(),
             )
