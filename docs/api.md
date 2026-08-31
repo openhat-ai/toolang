@@ -400,19 +400,18 @@ references. Projection is local and read-only: it does not prepare a call,
 select a model, construct a provider-native request, or send provider traffic.
 
 The Human view follows call lifecycle order: summary, non-empty instructions,
-messages, tool signatures, output contract, continuation, and result. Empty
-sections are omitted. Long text is previewed with its original size, tool
-descriptions and schemas are omitted, and at most 12 tool signatures are shown
-with an explicit remainder count. Result is last and names the exact Step
-`/output/value` Pointer. The JSON view keeps the complete normalized call and
-exact `output_schema` value, including `null` for unstructured and historical
-calls.
+messages, tools, output contract, continuation, and result. Empty sections are
+omitted. Request and result payloads are never truncated: every tool definition,
+including its description and parameter schema, is shown. Result is last and
+names the exact Step `/output/value` Pointer. The JSON view keeps the complete
+normalized call and exact `output_schema` value, including `null` for
+unstructured and historical calls.
 
 `call` on a tool Step shows a summary, its persisted plugin, normalized
-invocation, and a shallow stored-result summary when present. Both identifiers
-are shown only when they differ. Its JSON is the bare canonical `ToolCall` with
-exactly `tool_call_id`, `call_id`, `name`, and `input`; it does not add the
-result or an inspection envelope.
+invocation, and the stored result payload without truncation when present. Both
+identifiers are shown only when they differ. Its JSON is the bare canonical
+`ToolCall` with exactly `tool_call_id`, `call_id`, `name`, and `input`; it does
+not add the result or an inspection envelope.
 
 `tree` on a Run and `call` on a run, par, or loop Step render the same durable
 structural model. A Run tree starts at that Run. A container-Step call starts at

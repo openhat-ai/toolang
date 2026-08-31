@@ -846,9 +846,12 @@ def test_inspect_projects_complete_persisted_model_call(
             },
             "$ref": "#/$defs/Answer",
         }
+        instructions = f"Diagnose the run.\n{'i' * 200}\ninstructions-end"
+        question = f"Question {'q' * 200} question-end"
+        result_text = f"Complete answer {'r' * 200} result-end"
         call = ModelCall(
-            instructions="Diagnose the run.",
-            messages=[Message.assistant("Context"), Message.user("Question")],
+            instructions=instructions,
+            messages=[Message.assistant("Context"), Message.user(question)],
             output_schema=output_schema,
             continuation={"provider_cursor": "next"},
         )
@@ -866,7 +869,7 @@ def test_inspect_projects_complete_persisted_model_call(
             status="succeeded",
             output=Local.typed(
                 "Part[]",
-                (TextPart("Complete answer"),),
+                (TextPart(result_text),),
                 "_",
                 0,
             ),
@@ -919,7 +922,7 @@ def test_inspect_projects_complete_persisted_model_call(
 
     assert projected.exit_code == 0, projected.stderr
     assert json.loads(projected.stdout) == {
-        "instructions": "Diagnose the run.",
+        "instructions": instructions,
         "messages": [
             {
                 "role": "assistant",
@@ -927,7 +930,7 @@ def test_inspect_projects_complete_persisted_model_call(
             },
             {
                 "role": "user",
-                "parts": [{"type": "text", "text": "Question"}],
+                "parts": [{"type": "text", "text": question}],
             },
         ],
         "tools": [],
@@ -940,21 +943,24 @@ def test_inspect_projects_complete_persisted_model_call(
     human_output = strip_ansi(human.stdout)
     assert "Instructions" in human_output
     assert "Diagnose the run." in human_output
+    assert instructions in human_output
     assert "Messages 2" in human_output
     assert "[0] assistant" in human_output
     assert "Context" in human_output
     assert "[1] user" in human_output
     assert "Question" in human_output
+    assert question in human_output
     assert "[=] assistant" in human_output
     assert "assistant · result" not in human_output
     assert "Complete answer" in human_output
+    assert result_text in human_output
     assert "Tools 0" not in human_output
     assert "No available tools." not in human_output
     assert "Output Contract" in human_output
-    assert '{$defs: {1 fields}, $ref: "#/$defs/Answer"}' in human_output
+    assert '"$ref": "#/$defs/Answer"' in human_output
     assert "Result run_model_call.0/output/value" in human_output
     assert "Continuation" in human_output
-    assert "provider_cursor" in human_output
+    assert '"provider_cursor": "next"' in human_output
     assert '"instructions":' not in human_output
     assert "projected as call" not in human_output
     assert [
@@ -1201,11 +1207,13 @@ def test_inspect_projects_exact_tool_call_and_persisted_result(
             input=Message.user("Tool"),
         )
         path = StepPath(run.id, (0,))
+        query = f"toolang {'q' * 200} input-end"
+        result_detail = f"detail {'r' * 200} result-end"
         call = ToolCall(
             tool_call_id="provider-tool-1",
             call_id="local-call-1",
             name="search",
-            input={"query": "toolang"},
+            input={"query": query},
         )
         store.begin_step(
             path=path,
@@ -1226,7 +1234,11 @@ def test_inspect_projects_exact_tool_call_and_persisted_result(
                     call_id=call.call_id,
                     tool_name=call.name,
                     tool_family="web",
-                    output={"status": "ok", "results": 3},
+                    output={
+                        "status": "ok",
+                        "results": 3,
+                        "detail": result_detail,
+                    },
                 ),
                 "_",
                 0,
@@ -1255,14 +1267,15 @@ def test_inspect_projects_exact_tool_call_and_persisted_result(
         "tool_call_id": "provider-tool-1",
         "call_id": "local-call-1",
         "name": "search",
-        "input": {"query": "toolang"},
+        "input": {"query": query},
     }
     assert human.exit_code == 0, human.stderr
     assert "Plugin       web" in human.stdout
     assert "Call ID      local-call-1" in human.stdout
     assert "Tool-call ID provider-tool-1" in human.stdout
-    assert 'search(query: "toolang")' in human.stdout
-    assert "results: 3" in human.stdout
+    assert query in human.stdout
+    assert '"results": 3' in human.stdout
+    assert result_detail in human.stdout
 
 
 def test_inspect_structural_projection_handles_empty_and_bounded_errors(

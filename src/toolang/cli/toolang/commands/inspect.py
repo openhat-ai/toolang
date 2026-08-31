@@ -73,7 +73,6 @@ _SubjectKind = Literal[
     "steps",
 ]
 _ProjectionKind = Literal["records", "fields", "value", "tree", "call"]
-_MAX_CALL_TOOL_SIGNATURES = 12
 
 
 @dataclass(frozen=True, slots=True)
@@ -1120,7 +1119,7 @@ def _model_call_renderables(
     instructions = data.get("instructions")
     if isinstance(instructions, str) and instructions:
         _append_model_call_section(lines, "Instructions", width=section_width)
-        lines.append(_text_preview(instructions))
+        lines.append(Text(instructions))
 
     messages = data.get("messages")
     message_count = len(messages) if isinstance(messages, list) else 0
@@ -1152,7 +1151,7 @@ def _model_call_renderables(
             fact=str(tool_count),
             width=section_width,
         )
-        for index, tool in enumerate(tools[:_MAX_CALL_TOOL_SIGNATURES]):
+        for index, tool in enumerate(tools):
             if not isinstance(tool, Mapping):  # pragma: no cover - canonical data
                 continue
             tool_data = cast(Mapping[str, object], tool)
@@ -1160,24 +1159,17 @@ def _model_call_renderables(
             lines.append(
                 Text(f"[{index}] {_tool_signature(name, tool_data.get('parameters'))}")
             )
-        if tool_count > _MAX_CALL_TOOL_SIGNATURES:
-            lines.append(
-                Text(
-                    f"… {tool_count - _MAX_CALL_TOOL_SIGNATURES} more tools; "
-                    "use --json for the exact call",
-                    style="dim",
-                )
-            )
+            lines.append(_exact_json(tool_data))
 
     output_schema = data.get("output_schema")
     if output_schema is not None:
         _append_model_call_section(lines, "Output Contract", width=section_width)
-        lines.append(Text(_shallow_summary(output_schema)))
+        lines.append(_exact_json(output_schema))
 
     continuation = data.get("cont")
     if continuation is not None:
         _append_model_call_section(lines, "Continuation", width=section_width)
-        lines.append(Text(_shallow_summary(continuation)))
+        lines.append(_exact_json(continuation))
 
     if result_parts is not None:
         _append_model_call_section(
@@ -1209,7 +1201,7 @@ def _append_model_message(
     for part_index, part in enumerate(parts):
         if not isinstance(part, Mapping):  # pragma: no cover - canonical data
             continue
-        summary = _message_part_summary(cast(Mapping[str, object], part))
+        summary = _exact_message_part(cast(Mapping[str, object], part))
         label = prefix if part_index == 0 else " " * cell_len(prefix)
         line = Text(f"{label}  ", style="dim")
         line.append(summary)
@@ -1250,29 +1242,16 @@ def _model_usage_fact(noted: ModelStepNoted) -> str:
     return ""
 
 
-def _message_part_summary(part: Mapping[str, object]) -> Text:
+def _exact_message_part(part: Mapping[str, object]) -> Text:
     part_type = str(part.get("type") or "part")
     if part_type == "text":
         text = part.get("text")
-        return _text_preview(text if isinstance(text, str) else "")
-    if part_type == "tool_call":
-        name = _display_tool_name(str(part.get("tool_name") or "unnamed"))
-        return Text(_tool_invocation(name, part.get("input", {})))
-    if part_type == "tool_result":
-        tool_call_id = str(part.get("tool_call_id") or "unknown")
-        facts, body = _tool_result_presentation(part.get("output", {}))
-        summary = f"tool result {tool_call_id}"
-        if facts:
-            summary += f" · {' · '.join(facts)}"
-        if body != {}:
-            summary += f" · {_shallow_summary(body)}"
-        error = part.get("error")
-        if isinstance(error, str) and error:
-            summary += f" · error: {_truncate(error, width=80)}"
-        return Text(_truncate(summary, width=160))
-    details = dict(part)
-    details.pop("type", None)
-    return Text(f"{part_type.replace('_', ' ')} · {_shallow_summary(details)}")
+        return Text(text if isinstance(text, str) else "")
+    return _exact_json(part)
+
+
+def _exact_json(value: object) -> Text:
+    return Text(json.dumps(value, ensure_ascii=False, indent=2))
 
 
 def _text_preview(value: str, *, width: int = 160) -> Text:
@@ -1287,30 +1266,6 @@ def _text_preview(value: str, *, width: int = 160) -> Text:
     if facts:
         output.append(f" · {' · '.join(facts)}", style="dim")
     return output
-
-
-def _shallow_summary(value: object, *, width: int = 160) -> str:
-    if isinstance(value, Mapping):
-        items = [
-            f"{key}: {_shallow_nested(item)}"
-            for key, item in cast(Mapping[object, object], value).items()
-        ]
-        return _truncate("{" + ", ".join(items) + "}", width=width)
-    if isinstance(value, list):
-        return f"[{len(value)} items]"
-    if isinstance(value, str):
-        return _truncate(value, width=width)
-    return _structured_scalar(value)
-
-
-def _shallow_nested(value: object) -> str:
-    if isinstance(value, Mapping):
-        return "{}" if not value else f"{{{len(value)} fields}}"
-    if isinstance(value, list):
-        return f"[{len(value)} items]"
-    if isinstance(value, str):
-        return json.dumps(_truncate(value, width=60), ensure_ascii=False)
-    return _structured_scalar(value)
 
 
 def _append_model_call_section(
@@ -1406,31 +1361,31 @@ def _tool_part_renderables(
         name = _display_tool_name(str(part.get("tool_name") or "unnamed"))
         lines = [Text(f"[{index}] {_tool_invocation(name, part.get('input', {}))}")]
     else:
-        result_facts, output = _tool_result_presentation(part.get("output", {}))
+        result_facts = _tool_result_facts(part.get("output", {}))
         summary = f"[{index}] Tool result {tool_call_id}"
         if result_facts:
             summary += f" · {' · '.join(result_facts)}"
         lines = [Text(summary)]
-        if output != {}:
-            lines.append(Text(_shallow_summary(output)))
+        if "output" in part:
+            lines.append(_exact_json(part["output"]))
     reasoning = part.get("reasoning")
     if isinstance(reasoning, str) and reasoning:
-        lines.append(Text(f"Reason       {_truncate(reasoning, width=140)}"))
+        lines.append(Text(f"Reason       {reasoning}"))
     error = part.get("error")
     if isinstance(error, str) and error:
-        lines.append(Text(f"Error        {_truncate(error, width=140)}", style="red"))
+        lines.append(Text(f"Error        {error}", style="red"))
     return tuple(lines)
 
 
-def _tool_result_presentation(output: object) -> tuple[tuple[str, ...], object]:
+def _tool_result_facts(output: object) -> tuple[str, ...]:
     if not isinstance(output, Mapping):  # pragma: no cover - canonical ToolResultPart
-        return (), output
-    body = dict(cast(Mapping[object, object], output))
+        return ()
+    data = cast(Mapping[object, object], output)
     facts = []
     for key in ("status", "exit_code", "ok"):
-        if key in body:
-            facts.append(f"{key}={_structured_scalar(body.pop(key))}")
-    return tuple(facts), body
+        if key in data:
+            facts.append(f"{key}={_structured_scalar(data[key])}")
+    return tuple(facts)
 
 
 def _tool_invocation(name: str, value: object) -> str:

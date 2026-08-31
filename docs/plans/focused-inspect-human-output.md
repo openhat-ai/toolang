@@ -2,8 +2,8 @@
 
 ## Status
 
-Approved by the human on 2026-08-31. Implementation may proceed in a separate
-commit.
+Approved by the human on 2026-08-31. The human clarified on the same date that
+call request and result payloads must remain complete in Human output.
 
 ## Goal
 
@@ -20,7 +20,7 @@ values, and reduce structural trees to an immediately scannable hierarchy.
 - Structural trees contain exactly `NODE`, `ACTIVITY`, and `OCCUR` columns.
 - Tree and Step activity uses the same status marker vocabulary.
 - Child occurrence rows show indexes while their parent Step shows totals.
-- Model and tool call Human output is concise and ordered by call lifecycle.
+- Model and tool call Human output is complete and ordered by call lifecycle.
 - Canonical JSON, subject grammar, durable ordering, and focused value
   resolution remain compatible.
 
@@ -33,9 +33,10 @@ values, and reduce structural trees to an immediately scannable hierarchy.
   validation, and specialized rendering.
 - `tree` is a complete durable ownership hierarchy, not a metrics or timeline
   view.
-- `call` is a concise historical request/result view. Exact normalized calls
-  remain available through `--json`, and exact results remain addressable
-  through Step output pointers.
+- `call` is a complete historical request/result review. Human output preserves
+  the full request and result payloads; `--json` remains the exact normalized
+  request value, and results remain independently addressable through Step
+  output pointers.
 
 ## Status Markers
 
@@ -132,15 +133,15 @@ Model call Human sections follow request/result order:
 6. continuation when present;
 7. result.
 
-Empty sections are omitted. Instructions, message text, and text results use a
-bounded preview with size facts. Tools retain signatures but omit full
-descriptions and parameter schemas. Result remains last and points to the Step
-output value for exact inspection.
+Empty sections are omitted. Instructions, messages, every tool definition,
+output contracts, continuation data, and results are rendered without
+truncation. Tools retain signatures and also expose their complete definitions.
+Result remains last and names the Step output Pointer for independent
+inspection.
 
-Tool call Human output shows one summary, the normalized invocation, and a
-shallow result summary. It displays both call identifiers only when they differ
-and does not recursively dump an arbitrary result payload. Bare canonical call
-JSON remains unchanged.
+Tool call Human output shows one summary, the normalized invocation, and the
+stored result payload without truncation. It displays both call identifiers only
+when they differ. Bare canonical call JSON remains unchanged.
 
 ## Scope
 
@@ -189,8 +190,9 @@ Excluded:
    indexes without counts; incomplete occurrence data is not invented.
 6. Pending/running/succeeded/failed/canceled markers and colors match the
    approved mapping; failed and canceled errors remain diagnosable.
-7. Model and tool call Human output omits empty or recursively verbose content,
-   follows lifecycle order, and identifies the exact result pointer.
+7. Model and tool call Human output omits empty sections, follows lifecycle
+   order, preserves complete request and result payloads, and identifies the
+   exact result pointer.
 8. Every `--json` projection is structurally identical to current output.
 9. Ruff, formatting, ty, and the complete default offline pytest suite pass.
 
@@ -202,4 +204,6 @@ Excluded:
   inspectable from fields and JSON.
 - Child counts and occurrence totals must stay snapshot-consistent and must not
   turn primitive Step inspection into structural-tree construction.
+- Call output can be large by design because its purpose is exact request/result
+  review; callers choose this explicit projector knowingly.
 - There are no open product questions.

@@ -129,7 +129,7 @@ def test_execution_table_does_not_truncate_reusable_pointers(
     assert "…" not in output
 
 
-def test_model_call_human_view_is_focused_and_follows_call_lifecycle() -> None:
+def test_model_call_human_view_is_complete_and_follows_call_lifecycle() -> None:
     call = ModelCall(
         instructions="Review the run.\n<important>Preserve this tag.</important>",
         messages=[
@@ -192,22 +192,24 @@ def test_model_call_human_view_is_focused_and_follows_call_lifecycle() -> None:
     )
     output = "\n".join(renderable.plain for renderable in renderables)
 
-    assert "Review the run. <important>Preserve this tag.</important>" in output
-    assert "2 lines · 57 chars" in output
+    assert "Review the run.\n<important>Preserve this tag.</important>" in output
     assert '[0] user  <context name="failure">What happened?</context>' in output
     assert "[1] assistant  I will inspect it." in output
-    invocation = 'inspect.run(run_id: "run_123", include: ["steps", "errors"])'
-    assert invocation in output
-    assert "The run record contains the failure." not in output
-    assert "tool result tool-1 · status=failed · exit_code=2" in output
-    assert '{message: "Run inspection failed."}' in output
+    assert '"tool_name": "inspect__run"' in output
+    assert '"include": [' in output
+    assert '"steps"' in output
+    assert '"errors"' in output
+    assert "The run record contains the failure." in output
+    assert '"status": "failed"' in output
+    assert '"exit_code": 2' in output
+    assert '"message": "Run inspection failed."' in output
     signature = (
         "[0] inspect.run(run_id: string, include?: string[], limit?: integer | null)"
     )
     assert signature in output
-    assert "Inspect one run." not in output
-    assert '{type: "boolean"}' in output
-    assert '{cursor: "next"}' in output
+    assert '"description": "Inspect one run."' in output
+    assert '"type": "boolean"' in output
+    assert '"cursor": "next"' in output
     assert "Result run_123.4/output/value" in output
     assert "[=] assistant  Final answer." in output
     section_titles = (
@@ -235,12 +237,16 @@ def test_model_call_human_view_omits_empty_sections() -> None:
     assert inspect_commands._model_call_renderables(model_call_to_data(call)) == ()
 
 
-def test_model_call_human_view_bounds_tool_signatures() -> None:
+def test_model_call_human_view_shows_every_tool_definition() -> None:
     call = ModelCall(
         instructions="",
         messages=[],
         tools=tuple(
-            ToolDefinition(name=f"tools__tool_{index}", description="", parameters={})
+            ToolDefinition(
+                name=f"tools__tool_{index}",
+                description=f"Tool description {index}",
+                parameters={},
+            )
             for index in range(14)
         ),
     )
@@ -252,9 +258,50 @@ def test_model_call_human_view_bounds_tool_signatures() -> None:
         )
     )
 
-    assert "[11] tools.tool_11()" in output
-    assert "tools.tool_12" not in output
-    assert "… 2 more tools; use --json for the exact call" in output
+    assert "[13] tools.tool_13()" in output
+    assert '"description": "Tool description 13"' in output
+
+
+def test_model_call_human_view_does_not_truncate_request_or_result() -> None:
+    instructions = f"instructions start\n{'i' * 200}\ninstructions end"
+    message = f"message start\n{'m' * 200}\nmessage end"
+    result = f"result start\n{'r' * 200}\nresult end"
+    call = ModelCall(
+        instructions=instructions,
+        messages=[Message.user(message)],
+        tools=(
+            ToolDefinition(
+                name="tools__complete",
+                description=f"description start {'d' * 200} description end",
+                parameters={
+                    "type": "object",
+                    "description": f"schema start {'s' * 200} schema end",
+                },
+            ),
+        ),
+        output_schema={"description": f"output start {'o' * 200} output end"},
+        continuation={"cursor": f"cursor start {'c' * 200} cursor end"},
+    )
+
+    output = "\n".join(
+        renderable.plain
+        for renderable in inspect_commands._model_call_renderables(
+            model_call_to_data(call),
+            result_parts=({"type": "text", "text": result},),
+            result_pointer="run_complete.0/output/value",
+        )
+    )
+
+    for exact_value in (
+        instructions,
+        message,
+        result,
+        "description end",
+        "schema end",
+        "output end",
+        "cursor end",
+    ):
+        assert exact_value in output
 
 
 def test_model_call_messages_are_zero_based_and_result_is_last() -> None:
@@ -292,7 +339,7 @@ def test_human_tool_name_replaces_only_the_toolset_separator() -> None:
     )
 
 
-def test_tool_result_human_view_keeps_facts_and_shallow_error_context() -> None:
+def test_tool_result_human_view_keeps_complete_output_and_error_context() -> None:
     renderables = inspect_commands._tool_part_renderables(
         {
             "type": "tool_result",
@@ -312,7 +359,7 @@ def test_tool_result_human_view_keeps_facts_and_shallow_error_context() -> None:
 
     assert [renderable.plain for renderable in renderables] == [
         "[2] Tool result tool-error · exit_code=1 · ok=false",
-        '{stdout: "partial output"}',
+        '{\n  "exit_code": 1,\n  "ok": false,\n  "stdout": "partial output"\n}',
         "Error        Command failed.",
     ]
     assert renderables[-1].style == "red"
