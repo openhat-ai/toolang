@@ -15,6 +15,7 @@ from toolang.base.types.progress import ProgressEvent
 from toolang.common.layout import AgentLayout
 from toolang.cli.toolang.commands import script
 from toolang.cli.toolang.commands.chat import main as chat_commands
+from toolang.execution.types import SessionSetting
 from toolang.cli.toolang.routing import (
     COMMAND_SPECS,
     RoutingError,
@@ -622,6 +623,9 @@ def test_cli_opens_roaming_chat_with_its_exact_layout(
         def close(self) -> None:
             captured["closed"] = True
 
+        def initial_setting(self) -> SessionSetting:
+            return SessionSetting(model=None, runnable=None)
+
     def end_input(_prompt: str) -> str:
         raise EOFError
 
@@ -893,6 +897,9 @@ def test_cli_opens_visiting_chat_with_its_exact_layout(
 
         def close(self) -> None:
             captured["closed"] = True
+
+        def initial_setting(self) -> SessionSetting:
+            return SessionSetting(model=None, runnable=None)
 
     def end_input(_prompt: str) -> str:
         raise EOFError

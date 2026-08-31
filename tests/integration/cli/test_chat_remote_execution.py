@@ -15,6 +15,8 @@ from toolang.catalog import CapsManager, JobsManager
 from toolang.cli.toolang.commands.chat.base import RunAccepted
 from toolang.cli.toolang.commands.chat.remote import RemoteChatSession
 from toolang.execution.events import RunBegin, RunEnd, RunEvent
+from toolang.execution.types import RunOverride
+from toolang.lang.input import RunnableInputRaw
 from toolang.up import AgentCore, process as agents
 from tests.support.execution_harness import ExecutionHarness
 
@@ -72,10 +74,14 @@ agic chat(_: Part[]) -> Part[]:
         assert session.list_models()["default"] == "test/scripted"
         assert session.list_runnables("runnable")["default"] == "agic:chat"
         thread_id = session.create_thread()
-        session.run(
+        request = session.build_request(
             thread_id,
-            "hello",
-            {},
+            RunOverride(),
+            RunnableInputRaw(_="hello"),
+            session.initial_setting(),
+        )
+        session.run(
+            request,
             events.append,
             errors.append,
             states.append,

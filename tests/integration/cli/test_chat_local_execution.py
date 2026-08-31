@@ -13,13 +13,15 @@ from anyio import to_process
 
 from tests.support.execution_harness import ExecutionHarness, TEST_MODEL_REF
 from toolang.base.types.message import Message, TextPart
-from toolang.base.types.policy import AgentCeiling, RunBindings, RunDefaults, RunLimits
+from toolang.base.types.model import ModelRequest
+from toolang.base.types.policy import AgentCeiling, RunDefaults, RunPolicy
 from toolang.base.types.run import ModelCallResult
 from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.base import ChatExecutorMetadata
-from toolang.cli.toolang.commands.chat.policy import ChatRunDefaults
 from toolang.execution.events import RunEvent
+from toolang.execution.schemas import RunRequest, RunnableRequest
 from toolang.execution.types import RunOverride
+from toolang.lang.input import RunnableInputRaw
 from toolang.state.state import publish_state_resources
 from toolang.state.watcher import StateRefresh
 
@@ -120,17 +122,14 @@ def test_local_chat_run_request_materializes_chat_runnable() -> None:
     async def scenario() -> None:
         session: Any = object.__new__(local.LocalChatSession)
         session.run_client = RunClient()
-        session._run_defaults = lambda: ChatRunDefaults(
-            bindings=RunBindings(model="test/scripted", runnable="agic:chat"),
-            limits=RunLimits(),
-        )
-        session._materialize_model_ref = lambda value: value
-        session._materialize_runnable_ref = lambda value: value
-
         await session._run(
-            "term_test",
-            "hello",
-            {"run_overrides": (RunOverride("allow", "models", ("test/*",)),)},
+            RunRequest(
+                thread_id="term_test",
+                request_id="term_request",
+                runnable=RunnableRequest("agic:chat", RunnableInputRaw(_="hello")),
+                model=ModelRequest("test/scripted"),
+                policy=RunPolicy(allow=(AgentCeiling(models=("test/*",)),)),
+            ),
             lambda _event: None,
         )
 
@@ -159,15 +158,15 @@ agic chat(_: Part[]) -> Part[]:
         defaults=RunDefaults(model=TEST_MODEL_REF, runnable="chat"),
     )
     try:
-        defaults = local.LocalChatSession._current_run_defaults(
+        defaults = local.LocalChatSession._current_session_setting(
             setup=setup,
             state=harness.state,
         )
     finally:
         harness.store.close()
 
-    assert defaults.bindings.model == TEST_MODEL_REF
-    assert defaults.bindings.runnable == "agic:chat"
+    assert defaults.model == ModelRequest(TEST_MODEL_REF)
+    assert defaults.runnable == "agic:chat"
 
 
 def test_local_chat_owner_loop_control_does_not_wait_on_itself() -> None:
@@ -286,10 +285,14 @@ agic chat(_: Part[]) -> Part[]:
             sandbox_detail="macOS 27.0 arm64",
         )
         thread_id = session.create_thread()
-        session.run(
+        request = session.build_request(
             thread_id,
-            "hello",
-            {},
+            RunOverride(),
+            RunnableInputRaw(_="hello"),
+            session.initial_setting(),
+        )
+        session.run(
+            request,
             on_event,
             errors.append,
         )

@@ -31,7 +31,7 @@ from toolang.execution.schemas import (
     RunRequest,
     RunnableRequest,
 )
-from toolang.execution.types import RunOverride, StepPath, ThreadPrefix
+from toolang.execution.types import RunCommand, StepPath, ThreadPrefix
 from toolang.execution.values import parts_from_local
 from toolang.lang import Program
 from toolang.lang.input import RunnableInputRaw
@@ -63,8 +63,8 @@ agic selected(_: Part[]) -> Part[]:
 def _request(
     thread: str,
     *,
-    commands: tuple[RunOverride, ...] = (),
-    session_commands: tuple[RunOverride, ...] = (),
+    commands: tuple[RunCommand, ...] = (),
+    session_commands: tuple[RunCommand, ...] = (),
     input: RunnableInputRaw = RunnableInputRaw(_="hello"),
     runnable_fallbacks: tuple[str, ...] = ("missing", "chat", "default"),
     request_id: str = "request_1",
@@ -150,13 +150,13 @@ def test_run_request_rejects_invalid_field_shapes(
 def test_restart_requests_keep_retry_and_rerun_inputs_unambiguous() -> None:
     retry = RetryRequest(
         source="run_source",
-        commands=(RunOverride("limit", "tokens", 10),),
+        commands=(RunCommand("limit", "tokens", 10),),
         request_id="retry_request",
         anchor=StepPath("run_source", (1,)),
     )
     rerun = RerunRequest(
         source="run_source",
-        commands=(RunOverride("default", "model", "test/scripted"),),
+        commands=(RunCommand("default", "model", "test/scripted"),),
         request_id="rerun_request",
     )
 
@@ -180,7 +180,7 @@ def test_restart_requests_keep_retry_and_rerun_inputs_unambiguous() -> None:
     with pytest.raises(ValueError, match="cannot replace the persisted runnable"):
         replace(
             rerun,
-            commands=(RunOverride("default", "runnable", "agic:selected"),),
+            commands=(RunCommand("default", "runnable", "agic:selected"),),
         )
 
 
@@ -245,7 +245,7 @@ def test_local_client_resolves_fallback_input_and_policy_precedence(
         session_handle = await client.run(
             _request(
                 thread,
-                session_commands=(RunOverride("default", "runnable", "agic:session"),),
+                session_commands=(RunCommand("default", "runnable", "agic:session"),),
                 request_id="session_request",
             )
         )
@@ -253,8 +253,8 @@ def test_local_client_resolves_fallback_input_and_policy_precedence(
         selected_handle = await client.run(
             _request(
                 thread,
-                commands=(RunOverride("default", "runnable", "agic:selected"),),
-                session_commands=(RunOverride("default", "runnable", "agic:session"),),
+                commands=(RunCommand("default", "runnable", "agic:selected"),),
+                session_commands=(RunCommand("default", "runnable", "agic:session"),),
                 request_id="selected_request",
             )
         )
@@ -312,7 +312,7 @@ def test_local_client_rejects_preparation_without_persisting_a_run(
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
         request = _request(
             thread,
-            commands=(RunOverride("default", "runnable", "agic:not_found"),),
+            commands=(RunCommand("default", "runnable", "agic:not_found"),),
         )
 
         with pytest.raises(ToolangError, match="runnable query matched no items"):
@@ -415,7 +415,7 @@ prompt rewrite:
         retry_handle = await client.retry(
             RetryRequest(
                 source=source.id,
-                commands=(RunOverride("limit", "tokens", 10),),
+                commands=(RunCommand("limit", "tokens", 10),),
                 request_id="retry_request",
             ),
             tracer=retry_tracer,
@@ -426,7 +426,7 @@ prompt rewrite:
         rerun_handle = await client.rerun(
             RerunRequest(
                 source=source.id,
-                commands=(RunOverride("limit", "time", 30),),
+                commands=(RunCommand("limit", "time", 30),),
                 request_id="rerun_request",
             ),
             tracer=rerun_tracer,

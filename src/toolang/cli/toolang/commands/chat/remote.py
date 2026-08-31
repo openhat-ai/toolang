@@ -16,7 +16,8 @@ import httpx
 from pydantic import TypeAdapter, ValidationError
 
 from toolang.base.types.message import Message
-from toolang.base.types.policy import RunBindings, RunPolicy
+from toolang.base.types.model import ModelRequest
+from toolang.base.types.policy import RunPolicy
 from toolang.cli.common.model_selection import (
     materialize_model_selection,
 )
@@ -25,12 +26,12 @@ from toolang.cli.common.remote_runtime import (
     RemoteRuntimeIdentity as _RuntimeIdentity,
     parse_remote_runtime_identity as _runtime_identity,
 )
-from toolang.execution.calls import parse_call
 from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.runnables import parse_runnable_ref
-from toolang.execution.schemas import RunDetail, ThreadInfo
-from toolang.execution.types import RunOverride
+from toolang.execution.schemas import RunDetail, RunRequest, ThreadInfo
+from toolang.execution.types import RunOverride, SessionSetting
+from toolang.lang.input import RunnableInputRaw
 from toolang.execution.values import parts_from_local
 from toolang.plugin.sandboxes.host import host_sandbox_description
 
@@ -44,10 +45,9 @@ from .base import (
     RunRecovered,
 )
 from .policy import (
-    ChatRunDefaults,
-    apply_session_commands,
     build_run_request,
     materialize_runnable_list_ref,
+    update_session_setting,
 )
 
 
@@ -107,7 +107,7 @@ class RemoteChatSession:
         self._http: httpx.AsyncClient | None = None
         self.run_client: RemoteRunClient | None = None
         self.executor_metadata: ChatExecutorMetadata
-        self._defaults: ChatRunDefaults | None = None
+        self._surface: SessionSetting | None = None
         self._blocked_run_id: str | None = None
         self._blocked_message: str | None = None
         self._closed = False
@@ -137,14 +137,31 @@ class RemoteChatSession:
     def create_thread(self) -> str:
         return cast(str, self._submit(self._create_thread()).result())
 
-    def apply_settings(
+    def initial_setting(self) -> SessionSetting:
+        return self._session_defaults()
+
+    def apply_setting(
         self,
-        commands: tuple[RunOverride, ...],
-        selects: Mapping[str, object],
-    ) -> Mapping[str, object]:
+        setting: SessionSetting,
+        update: RunOverride,
+    ) -> SessionSetting:
         return cast(
-            Mapping[str, object],
-            self._submit(self._apply_settings(commands, selects)).result(),
+            SessionSetting,
+            self._submit(self._apply_setting(setting, update)).result(),
+        )
+
+    def build_request(
+        self,
+        thread_id: str,
+        override: RunOverride,
+        input: RunnableInputRaw,
+        setting: SessionSetting,
+    ) -> RunRequest:
+        return cast(
+            RunRequest,
+            self._submit(
+                self._build_request(thread_id, override, input, setting)
+            ).result(),
         )
 
     def get_result(
@@ -160,9 +177,7 @@ class RemoteChatSession:
 
     def run(
         self,
-        thread_id: str,
-        message: str,
-        selects: Mapping[str, object],
+        request: RunRequest,
         on_event: Callable[[RunEvent], None],
         on_error: Callable[[str], None],
         on_state: Callable[[ChatRunState], None] | None = None,
@@ -170,9 +185,7 @@ class RemoteChatSession:
         try:
             self._submit(
                 self._run(
-                    thread_id,
-                    message,
-                    selects,
+                    request,
                     on_event,
                     on_state,
                 )
@@ -267,7 +280,7 @@ class RemoteChatSession:
             "/api/v1/runs/defaults",
             operation="run defaults",
         )
-        self._defaults = _run_defaults(defaults)
+        self._surface = _session_setting(defaults)
 
     async def _list_models(self) -> dict[str, object]:
         payload = await self._request_json(
@@ -276,7 +289,8 @@ class RemoteChatSession:
             operation="models",
         )
         result = _catalog_payload(payload, operation="models", item_kind="model")
-        result["default"] = self._session_defaults().bindings.model
+        model = self._session_defaults().model
+        result["default"] = model.ref if model is not None else None
         return result
 
     async def _list_runnables(self, kind: str) -> dict[str, object]:
@@ -291,7 +305,7 @@ class RemoteChatSession:
                 operation=kind,
                 item_kind="runnable",
             )
-            default_ref = self._session_defaults().bindings.runnable
+            default_ref = self._session_defaults().runnable
             default_name, default_kind = (
                 parse_runnable_ref(default_ref)
                 if default_ref is not None
@@ -316,7 +330,7 @@ class RemoteChatSession:
             item_kind="runnable",
         )
         return {
-            "default": self._session_defaults().bindings.runnable,
+            "default": self._session_defaults().runnable,
             "items": [
                 *(
                     {"kind": "agic", **item}
@@ -330,7 +344,7 @@ class RemoteChatSession:
         }
 
     async def _list_prompts(self, runnable: str | None) -> dict[str, object]:
-        selected = runnable or self._session_defaults().bindings.runnable
+        selected = runnable or self._session_defaults().runnable
         payload = await self._request_json(
             "GET",
             "/api/v1/prompt-completions",
@@ -359,19 +373,23 @@ class RemoteChatSession:
             ) from exc
         return thread.id
 
-    def _session_defaults(self) -> ChatRunDefaults:
-        if self._defaults is None:
+    def _session_defaults(self) -> SessionSetting:
+        if self._surface is None:
             raise RuntimeError("remote chat run defaults are not initialized")
-        return self._defaults
+        return self._surface
 
-    async def _apply_settings(
+    async def _apply_setting(
         self,
-        commands: tuple[RunOverride, ...],
-        selects: Mapping[str, object],
-    ) -> dict[str, object]:
+        setting: SessionSetting,
+        update: RunOverride,
+    ) -> SessionSetting:
         if self._blocked_message is not None:
             raise RemoteChatError(self._blocked_message)
-        return apply_session_commands(selects, commands)
+        return update_session_setting(
+            surface=self._session_defaults(),
+            current=setting,
+            update=update,
+        )
 
     async def _get_result(
         self,
@@ -404,28 +422,20 @@ class RemoteChatSession:
             raise ValueError(f"Run has no result: {detail.id}")
         return ChatResult(run_id=detail.id, output=output)
 
-    async def _run(
+    async def _build_request(
         self,
         thread_id: str,
-        message: str,
-        selects: Mapping[str, object],
-        on_event: Callable[[RunEvent], None],
-        on_state: Callable[[ChatRunState], None] | None,
-    ) -> None:
-        if self._blocked_message is not None:
-            _emit_state(
-                on_state,
-                RunBlocked(self._blocked_run_id, self._blocked_message),
-            )
-            return
-        commands, input_value = parse_call(message)
+        override: RunOverride,
+        input: RunnableInputRaw,
+        setting: SessionSetting,
+    ) -> RunRequest:
         request = build_run_request(
             thread_id=thread_id,
             request_id=f"term_{uuid4().hex}",
-            input=input_value,
-            input_commands=commands,
-            selects=selects,
-            defaults=self._session_defaults(),
+            input=input,
+            override=override,
+            setting=setting,
+            surface=self._session_defaults(),
             resolve_model_ref=lambda selector: selector,
             resolve_runnable_ref=lambda selector: selector,
         )
@@ -451,6 +461,20 @@ class RemoteChatSession:
                     ),
                 ),
             )
+        return request
+
+    async def _run(
+        self,
+        request: RunRequest,
+        on_event: Callable[[RunEvent], None],
+        on_state: Callable[[ChatRunState], None] | None,
+    ) -> None:
+        if self._blocked_message is not None:
+            _emit_state(
+                on_state,
+                RunBlocked(self._blocked_run_id, self._blocked_message),
+            )
+            return
         run_client = self._run_client()
         try:
             handle = await run_client.run(
@@ -763,7 +787,7 @@ def _mapping(payload: object, *, operation: str) -> Mapping[str, object]:
     return cast(Mapping[str, object], payload)
 
 
-def _run_defaults(payload: object) -> ChatRunDefaults:
+def _session_setting(payload: object) -> SessionSetting:
     body = _mapping(payload, operation="run defaults")
     if set(body) != {"model", "runnable", "policy"}:
         raise _RemoteChatProtocolError("remote chat run defaults returned invalid data")
@@ -773,7 +797,7 @@ def _run_defaults(payload: object) -> ChatRunDefaults:
         raise _RemoteChatProtocolError(
             "remote chat run defaults returned an invalid model"
         )
-    if not isinstance(runnable, str) or not runnable:
+    if runnable is not None and (not isinstance(runnable, str) or not runnable):
         raise _RemoteChatProtocolError(
             "remote chat run defaults returned an invalid runnable"
         )
@@ -783,8 +807,9 @@ def _run_defaults(payload: object) -> ChatRunDefaults:
         raise _RemoteChatProtocolError(
             "remote chat run defaults returned invalid policy"
         ) from exc
-    return ChatRunDefaults(
-        bindings=RunBindings(model=model, runnable=runnable),
+    return SessionSetting(
+        model=ModelRequest(model) if model is not None else None,
+        runnable=runnable,
         limits=policy.limits,
     )
 

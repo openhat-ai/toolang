@@ -29,12 +29,6 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
             "■ agic:chat",
             "scripted",
         )
-        session.send(b":flow research\r")
-        session.wait_for("flowresearch")
-        session.send(b"\x1b\r")
-        session.wait_for("■ flow:research")
-        session.send(b":agic chat\r")
-        session.wait_for("■ agic:chat")
         session.send(b"hello from user")
         session.wait_for("hello from user")
         session.send(b"\r")
@@ -155,7 +149,7 @@ def test_chat_tui_updates_defaults_while_a_run_is_active(tmp_path: Path) -> None
         session.send(b"hold status\r")
         session.wait_for("◧ agic:chat running")
 
-        session.send(b":flow relay\r")
+        session.send(b"/flow relay\r")
         running = session.wait_for("flow:relay · scripted")
 
         assert "agic:chat" in running

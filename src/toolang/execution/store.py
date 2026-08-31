@@ -88,7 +88,7 @@ from .types import (
     Occurrence,
     Pointer,
     TypedPointer,
-    RunOverride,
+    RunCommand,
     validate_runtime_value,
     valid_run_id,
     valid_thread_id,
@@ -236,8 +236,8 @@ class RunStore:
         source: str | None = None,
         state_ref: ControlRef | None = None,
         authored_input: RunnableInputRaw | None = None,
-        authored_commands: tuple[RunOverride, ...] = (),
-        authored_session_commands: tuple[RunOverride, ...] = (),
+        authored_commands: tuple[RunCommand, ...] = (),
+        authored_session_commands: tuple[RunCommand, ...] = (),
         prompt_invocations: tuple[PromptInvocation, ...] = (),
     ) -> tuple[RunRecord, ControlRecord]:
         """Atomically insert one new run and its entry control."""
@@ -718,8 +718,8 @@ class RunStore:
         request_id: str | None,
         created_at: str,
         authored_input: RunnableInputRaw | None = None,
-        authored_commands: tuple[RunOverride, ...] = (),
-        authored_session_commands: tuple[RunOverride, ...] = (),
+        authored_commands: tuple[RunCommand, ...] = (),
+        authored_session_commands: tuple[RunCommand, ...] = (),
         prompt_invocations: tuple[PromptInvocation, ...] = (),
     ) -> tuple[RunRecord, ControlRecord, tuple[StepPath, ...]]:
         """Atomically cut one root run at a step and reopen it for execution."""

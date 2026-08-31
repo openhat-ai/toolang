@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 
+from toolang.base.types.model import ModelRequest
 from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.tui import ChatTuiApp
 from toolang.plugin.models.collections import ModelCollection
@@ -66,9 +67,21 @@ def run_chat_tui(
     local.StateWatcher = StateWatcher  # type: ignore[invalid-assignment]
     session = local.LocalChatSession(setup.layout)
     try:
+        setting = session.initial_setting()
+        selected_model = selects.get("model")
+        if isinstance(selected_model, str):
+            setting = replace(setting, model=ModelRequest(selected_model))
+        for kind in ("flow", "agic"):
+            selected_runnable = selects.get(kind)
+            if isinstance(selected_runnable, str):
+                setting = replace(
+                    setting,
+                    runnable=f"{kind}:{selected_runnable}",
+                )
+                break
         ChatTuiApp.run(
             thread_id=None,
-            selects=dict(selects),
+            setting=setting,
             home=str(setup.layout.home),
             input_history=None,
             client=session,

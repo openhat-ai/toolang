@@ -15,7 +15,11 @@ from toolang.base.types.message import (
     ToolCallPart,
     ToolResultPart,
 )
-from toolang.base.types.model import ModelRequest
+from toolang.base.types.model import (
+    ModelParameters,
+    ModelRequest,
+    ReasoningParameters,
+)
 from toolang.base.types.policy import RunLimits
 from toolang.execution.records import (
     ExecuteControlPayload,
@@ -35,7 +39,7 @@ from toolang.execution.types import (
     AgentResources,
     Local,
     Pointer,
-    RunOverride,
+    RunCommand,
     StepPath,
     TypedPointer,
     local_from_protocol_data,
@@ -382,6 +386,38 @@ def test_preparation_payload_round_trips_resolved_locals() -> None:
     assert control_payload_from_data("run", data) == payload
 
 
+@pytest.mark.parametrize(
+    ("reasoning", "expected"),
+    [
+        (ReasoningParameters(effort="high"), {"effort": "high"}),
+        (ReasoningParameters(budget_tokens=4096), {"budget_tokens": 4096}),
+    ],
+)
+def test_preparation_payload_omits_inactive_reasoning_controls(
+    reasoning: ReasoningParameters,
+    expected: dict[str, object],
+) -> None:
+    payload = RunControlPayload(
+        resources=AgentResources(models=("test/model",)),
+        limits=RunLimits(),
+        state="0" * 64,
+        runnable="agic:worker",
+        model="test/model",
+        model_request=ModelRequest(
+            "test/model",
+            ModelParameters(reasoning),
+        ),
+        locals=(),
+    )
+
+    data = control_payload_to_data(payload)
+
+    model_request = cast(dict[str, object], data["model_request"])
+    parameters = cast(dict[str, object], model_request["parameters"])
+    assert parameters["reasoning"] == expected
+    assert control_payload_from_data("run", data) == payload
+
+
 def test_preparation_payload_preserves_an_absent_model_request() -> None:
     payload = RunControlPayload(
         resources=AgentResources(),
@@ -481,8 +517,8 @@ def test_preparation_payload_round_trips_authored_prompt_facts() -> None:
             _="$review focus=security -- inspect",
             named=(NamedInputSource("tone", "$brief"),),
         ),
-        authored_commands=(RunOverride("limit", "time", 30),),
-        authored_session_commands=(RunOverride("default", "model", "test/model"),),
+        authored_commands=(RunCommand("limit", "time", 30),),
+        authored_session_commands=(RunCommand("default", "model", "test/model"),),
         prompt_invocations=(
             PromptInvocation(
                 name="review",

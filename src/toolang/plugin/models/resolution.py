@@ -352,16 +352,35 @@ def apply_model_parameters(
 
     reasoning = parameters.reasoning
     effort = reasoning.effort if reasoning is not None else None
-    if effort is None:
+    budget = reasoning.budget_tokens if reasoning is not None else None
+    if effort is None and budget is None:
         return target
-    allowed = model_reasoning_efforts(context, target)
-    if effort not in allowed:
-        joined = ", ".join(allowed) or "none"
-        raise ToolangError(
-            f"model {target.ref} does not advertise reasoning effort "
-            f"{effort!r} (allowed: {joined})"
+    if effort is not None:
+        allowed = model_reasoning_efforts(context, target)
+        if effort not in allowed:
+            joined = ", ".join(allowed) or "none"
+            raise ToolangError(
+                f"model {target.ref} does not advertise reasoning effort "
+                f"{effort!r} (allowed: {joined})"
+            )
+        return replace(target, reasoning={"effort": effort})
+    if budget is None:  # pragma: no cover - closed ReasoningParameters invariant
+        return target
+    info = (
+        context.resolve(model_target_ref(target)).info
+        if isinstance(context, ModelCollection)
+        else _find_model_info_by_ref(
+            context.models,
+            provider=target.provider,
+            ref=target.ref,
         )
-    return replace(target, reasoning={"effort": effort})
+    )
+    if info is None:
+        raise ToolangError(
+            f"model {target.ref} does not advertise this reasoning token budget"
+        )
+    _validate_reasoning_request({"budget_tokens": budget}, info=info)
+    return replace(target, reasoning={"budget_tokens": budget})
 
 
 def select_model_queries(

@@ -29,12 +29,17 @@ from toolang.state.state import (
 )
 from toolang.plugin.models.resolution import apply_model_parameters
 
-from .policy import parse_policy_prefix, resolve_commands
+from .policy import (
+    commands_from_run_override,
+    materialize_run_setting,
+    parse_policy_prefix,
+    resolve_commands,
+)
 from .runnables import (
     resolve_public_runnable_query,
 )
 from .schemas import RerunRequest, RetryRequest, RunRequest
-from .types import RunOverride
+from .types import RunCommand, RunOverride, SessionSetting
 
 if TYPE_CHECKING:
     from .executor.executor import RunSpec
@@ -53,12 +58,15 @@ class RestartSpec:
     limits: RunLimits
 
 
-def parse_call(source: str) -> tuple[tuple[RunOverride, ...], RunnableInputRaw]:
-    """Parse one run-only source into policy commands and runnable input."""
+def parse_call(source: str) -> tuple[RunOverride, RunnableInputRaw]:
+    """Parse one run-only source into an aggregate override and runnable input."""
 
     body = _strip_final_line_break(source)
-    commands, named, primary = parse_policy_prefix(body)
-    return commands, parse_input(primary or None, named=named)
+    override, named, primary = parse_policy_prefix(body)
+    input = parse_input(primary or None, named=named)
+    if not override.empty and input._ is None and not input.named:
+        raise ValueError("colon override requires runnable input")
+    return override, input
 
 
 def resolve_run_request(
@@ -146,7 +154,7 @@ def _rerun_model_request(
 
 
 def resolve_spec(
-    commands: Sequence[RunOverride],
+    override: RunOverride,
     input: RunnableInputRaw,
     *,
     setup: AgentSetup,
@@ -154,32 +162,53 @@ def resolve_spec(
     thread: str,
     default_runnable: str,
     surface: RunBindings = RunBindings(),
-    session_commands: Sequence[RunOverride] = (),
+    session_commands: Sequence[RunCommand] = (),
     surface_named: Mapping[str, object] | None = None,
     surface_named_sources: NamedInputSources = (),
     include: IncludeResolver | None = None,
 ) -> RunSpec:
     """Resolve structured caller input against current immutable snapshots."""
 
-    ceilings, bindings, limits = resolve_commands(
+    session_ceilings, bindings, limits = resolve_commands(
         setup,
         surface=surface,
         session=session_commands,
-        run=commands,
     )
-    if bindings.runnable is None:
-        bindings = RunBindings(model=bindings.model, runnable=default_runnable)
+    surface_setting = SessionSetting(
+        model=(
+            ModelRequest(surface.model)
+            if surface.model is not None
+            else ModelRequest(setup.defaults.model)
+            if setup.defaults.model is not None
+            else None
+        ),
+        runnable=(
+            surface.runnable
+            if surface.runnable is not None
+            else setup.defaults.runnable
+        ),
+        limits=setup.limits,
+    )
+    session_setting = SessionSetting(
+        model=ModelRequest(bindings.model) if bindings.model is not None else None,
+        runnable=bindings.runnable,
+        allow=session_ceilings[0] if session_ceilings else AgentCeiling(),
+        limits=limits,
+    )
+    ceilings, effective = materialize_run_setting(
+        surface_setting,
+        session_setting,
+        override,
+    )
+    runnable_ref = effective.runnable or default_runnable
     model_request = (
-        materialize_model_request(
-            ModelRequest(bindings.model),
-            setup=setup,
-        )
-        if bindings.model is not None
+        materialize_model_request(effective.model, setup=setup)
+        if effective.model is not None
         else None
     )
-    bindings = replace(
-        bindings,
+    bindings = RunBindings(
         model=model_request.ref if model_request is not None else None,
+        runnable=runnable_ref,
     )
     return _resolve_concrete_spec(
         input,
@@ -189,11 +218,11 @@ def resolve_spec(
         bindings=bindings,
         model_request=model_request,
         ceilings=ceilings,
-        limits=limits,
+        limits=effective.limits,
         surface_named=surface_named,
         surface_named_sources=surface_named_sources,
         include=include,
-        authored_commands=tuple(commands),
+        authored_commands=commands_from_run_override(override),
         authored_session_commands=tuple(session_commands),
     )
 
@@ -242,8 +271,8 @@ def _resolve_concrete_spec(
     surface_named: Mapping[str, object] | None = None,
     surface_named_sources: NamedInputSources = (),
     include: IncludeResolver | None = None,
-    authored_commands: tuple[RunOverride, ...] = (),
-    authored_session_commands: tuple[RunOverride, ...] = (),
+    authored_commands: tuple[RunCommand, ...] = (),
+    authored_session_commands: tuple[RunCommand, ...] = (),
     require_model_request: bool = False,
 ) -> RunSpec:
     """Resolve one already-materialized request against runtime snapshots."""
@@ -316,7 +345,7 @@ def _resolve_concrete_spec(
 
 
 def validate_commands(
-    commands: Sequence[RunOverride],
+    commands: Sequence[RunCommand],
     *,
     setup: AgentSetup,
     state: AgentState | StatePublication,
@@ -375,7 +404,7 @@ def validate_commands(
 
 
 def validate_session_commands(
-    commands: Sequence[RunOverride],
+    commands: Sequence[RunCommand],
     *,
     setup: AgentSetup,
     state: AgentState | StatePublication,

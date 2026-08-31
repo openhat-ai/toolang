@@ -27,7 +27,7 @@ from toolang.execution.schemas import (
     RunDetail,
     RunRequest,
 )
-from toolang.execution.types import ControlTiming, RunOverride, validate_execution_id
+from toolang.execution.types import ControlTiming, RunCommand, validate_execution_id
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -536,7 +536,7 @@ def _run_request_data(request: RunRequest) -> dict[str, object]:
 def _restart_request_data(request: RetryRequest | RerunRequest) -> dict[str, object]:
     payload: dict[str, object] = {
         "request_id": request.request_id,
-        "commands": [_run_override_data(item) for item in request.commands],
+        "commands": [_run_command_data(item) for item in request.commands],
     }
     if isinstance(request, RetryRequest):
         payload["anchor"] = str(request.anchor) if request.anchor is not None else None
@@ -548,7 +548,7 @@ def _restart_request_data(request: RetryRequest | RerunRequest) -> dict[str, obj
     return payload
 
 
-def _run_override_data(command: RunOverride) -> dict[str, object]:
+def _run_command_data(command: RunCommand) -> dict[str, object]:
     value = command.value
     if isinstance(value, tuple):
         encoded: object = list(value)

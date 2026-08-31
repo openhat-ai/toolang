@@ -71,7 +71,7 @@ from ..types import (
     Occurrence,
     OccurrencePosition,
     TypedPointer,
-    RunOverride,
+    RunCommand,
 )
 from ..runnables import (
     ResolvedRunnable,
@@ -177,8 +177,8 @@ class RunSpec:
     ceilings: tuple[AgentCeiling, ...] = ()
     input: RunnableInput = RunnableInput()
     authored_input: RunnableInputRaw | None = None
-    authored_commands: tuple[RunOverride, ...] = ()
-    authored_session_commands: tuple[RunOverride, ...] = ()
+    authored_commands: tuple[RunCommand, ...] = ()
+    authored_session_commands: tuple[RunCommand, ...] = ()
     prompt_invocations: tuple[PromptInvocation, ...] = ()
 
 

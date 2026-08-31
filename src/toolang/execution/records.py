@@ -59,7 +59,7 @@ from .types import (
     ToolStepNoted,
     Pointer,
     TypedPointer,
-    RunOverride,
+    RunCommand,
     local_from_protocol_data,
     validate_occurrence,
     validate_runtime_value,
@@ -153,8 +153,8 @@ class RunControlPayload:
     model_request: ModelRequest | None = None
     sandbox: str | None = None
     authored_input: RunnableInputRaw | None = None
-    authored_commands: tuple[RunOverride, ...] = ()
-    authored_session_commands: tuple[RunOverride, ...] = ()
+    authored_commands: tuple[RunCommand, ...] = ()
+    authored_session_commands: tuple[RunCommand, ...] = ()
     prompt_invocations: tuple[PromptInvocation, ...] = ()
 
     def __post_init__(self) -> None:
@@ -188,8 +188,8 @@ class RerunControlPayload:
     model_request: ModelRequest | None = None
     sandbox: str | None = None
     authored_input: RunnableInputRaw | None = None
-    authored_commands: tuple[RunOverride, ...] = ()
-    authored_session_commands: tuple[RunOverride, ...] = ()
+    authored_commands: tuple[RunCommand, ...] = ()
+    authored_session_commands: tuple[RunCommand, ...] = ()
     prompt_invocations: tuple[PromptInvocation, ...] = ()
 
     def __post_init__(self) -> None:
@@ -225,8 +225,8 @@ class RetryControlPayload:
     model_request: ModelRequest | None = None
     sandbox: str | None = None
     authored_input: RunnableInputRaw | None = None
-    authored_commands: tuple[RunOverride, ...] = ()
-    authored_session_commands: tuple[RunOverride, ...] = ()
+    authored_commands: tuple[RunCommand, ...] = ()
+    authored_session_commands: tuple[RunCommand, ...] = ()
     prompt_invocations: tuple[PromptInvocation, ...] = ()
 
     def __post_init__(self) -> None:
@@ -755,11 +755,11 @@ def _control_payload_from_data(
         if kind != "retry" and locals_value is None:
             raise ValueError(f"{kind} payload requires locals")
         authored_input = _authored_input_from_data(payload.get("authored_input"))
-        authored_commands = _run_overrides_from_data(
+        authored_commands = _run_commands_from_data(
             payload.get("authored_commands", ()),
             label="authored_commands",
         )
-        authored_session_commands = _run_overrides_from_data(
+        authored_session_commands = _run_commands_from_data(
             payload.get("authored_session_commands", ()),
             label="authored_session_commands",
         )
@@ -1698,11 +1698,11 @@ def _preparation_payload_data(
         }
     if payload.authored_commands:
         data["authored_commands"] = [
-            _run_override_to_data(command) for command in payload.authored_commands
+            _run_command_to_data(command) for command in payload.authored_commands
         ]
     if payload.authored_session_commands:
         data["authored_session_commands"] = [
-            _run_override_to_data(command)
+            _run_command_to_data(command)
             for command in payload.authored_session_commands
         ]
     if payload.prompt_invocations:
@@ -1747,10 +1747,10 @@ def _authored_input_from_data(value: object) -> RunnableInputRaw | None:
     return parse_input(primary, named=tuple(named))
 
 
-def _run_overrides_from_data(value: object, *, label: str) -> tuple[RunOverride, ...]:
+def _run_commands_from_data(value: object, *, label: str) -> tuple[RunCommand, ...]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
         raise ValueError(f"preparation {label} must be an array")
-    result: list[RunOverride] = []
+    result: list[RunCommand] = []
     for item in value:
         if not isinstance(item, Mapping):
             raise ValueError(f"preparation {label} contains an invalid command")
@@ -1762,11 +1762,11 @@ def _run_overrides_from_data(value: object, *, label: str) -> tuple[RunOverride,
             raw = tuple(raw)
         elif group == "limit" and field == "cost" and isinstance(raw, str):
             raw = Decimal(raw)
-        result.append(RunOverride(cast(Any, group), cast(Any, field), cast(Any, raw)))
+        result.append(RunCommand(cast(Any, group), cast(Any, field), cast(Any, raw)))
     return tuple(result)
 
 
-def _run_override_to_data(command: RunOverride) -> dict[str, object]:
+def _run_command_to_data(command: RunCommand) -> dict[str, object]:
     value = command.value
     if isinstance(value, tuple):
         encoded: object = list(value)
@@ -1866,8 +1866,8 @@ def _validate_preparation_payload(
 
 def _validate_authored_facts(
     input: RunnableInputRaw | None,
-    commands: tuple[RunOverride, ...],
-    session_commands: tuple[RunOverride, ...],
+    commands: tuple[RunCommand, ...],
+    session_commands: tuple[RunCommand, ...],
     invocations: tuple[PromptInvocation, ...],
 ) -> None:
     if input is not None and not isinstance(input, RunnableInputRaw):
@@ -1877,9 +1877,9 @@ def _validate_authored_facts(
         ("session commands", session_commands),
     ):
         if not isinstance(values, tuple) or not all(
-            isinstance(command, RunOverride) for command in values
+            isinstance(command, RunCommand) for command in values
         ):
-            raise TypeError(f"preparation authored {label} must be RunOverride values")
+            raise TypeError(f"preparation authored {label} must be RunCommand values")
     if not isinstance(invocations, tuple) or not all(
         isinstance(invocation, PromptInvocation) for invocation in invocations
     ):

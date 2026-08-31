@@ -19,20 +19,18 @@ class QuickCommand:
     tail: str | None = None
 
 
-ChatInput: TypeAlias = (
-    QuickCommand
-    | tuple[RunOverride, ...]
-    | tuple[tuple[RunOverride, ...], RunnableInputRaw]
-)
+ChatInput: TypeAlias = QuickCommand | tuple[RunOverride, RunnableInputRaw]
 
 _QUICK_COMMANDS = frozenset(
     {
         "?",
         "agic",
+        "allow",
         "exit",
         "flow",
         "help",
         "model",
+        "limit",
         "q",
         "queue",
         "quit",
@@ -71,38 +69,28 @@ def parse_chat_input(chat_input: str) -> ChatInput:
             raise ValueError("quick command cannot be combined with other input")
         return quick
 
-    commands, named, primary_source = parse_policy_prefix(body)
-    if commands and not named and not primary_source:
-        return commands
+    override, named, primary_source = parse_policy_prefix(body)
     if primary_source.startswith("/") and not primary_source.startswith("//"):
         combined = _parse_slash(primary_source.splitlines()[0])
         if combined is not None:
             raise ValueError("slash command cannot be combined with other input")
     runnable_input = parse_input(primary_source or None, named=named)
     if runnable_input._ is None and not runnable_input.named:
+        if not override.empty:
+            raise ValueError("colon override requires runnable input")
         raise ValueError("chat input is empty")
-    return commands, runnable_input
-
-
-def is_run_overrides(
-    value: ChatInput,
-) -> TypeGuard[tuple[RunOverride, ...]]:
-    """Return whether a chat input is a policy-only command sequence."""
-
-    return (
-        bool(value) and isinstance(value, tuple) and isinstance(value[0], RunOverride)
-    )
+    return override, runnable_input
 
 
 def is_runnable_input(
     value: ChatInput,
-) -> TypeGuard[tuple[tuple[RunOverride, ...], RunnableInputRaw]]:
+) -> TypeGuard[tuple[RunOverride, RunnableInputRaw]]:
     """Return whether a chat input contains one runnable invocation."""
 
     return (
         isinstance(value, tuple)
         and len(value) == 2
-        and isinstance(value[0], tuple)
+        and isinstance(value[0], RunOverride)
         and isinstance(value[1], RunnableInputRaw)
     )
 
@@ -135,7 +123,6 @@ __all__ = [
     "ChatInput",
     "QuickCommand",
     "is_runnable_input",
-    "is_run_overrides",
     "normalize_chat_input",
     "parse_chat_input",
 ]

@@ -15,12 +15,9 @@ from prompt_toolkit.completion import (
 from prompt_toolkit.document import Document
 
 from toolang.execution.types import (
-    ALLOW_POLICY_FIELDS,
-    DEFAULT_POLICY_FIELDS,
-    LIMIT_POLICY_FIELDS,
+    ALLOW_FIELDS,
+    LIMIT_FIELDS,
 )
-
-from .slashes import SLASHES
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,29 +27,7 @@ class _Candidate:
     meta: str
 
 
-def _slash_candidates() -> tuple[_Candidate, ...]:
-    candidates: list[_Candidate] = []
-    for slash in SLASHES:
-        usage_tail = (
-            slash.display_usage.split(maxsplit=1)
-            if "," not in slash.display_usage
-            else [slash.display_usage]
-        )
-        placeholder = usage_tail[1] if len(usage_tail) == 2 else ""
-        placeholder = placeholder.replace("[", "").replace("]", "")
-        for name in slash.names:
-            text = f"/{name}{f' {placeholder}' if placeholder else ''}"
-            candidates.append(
-                _Candidate(
-                    text=text,
-                    display=f"/{name}{f' [{placeholder}]' if placeholder else ''}",
-                    meta=slash.summary,
-                )
-            )
-    return tuple(candidates)
-
-
-def _policy_candidates() -> tuple[_Candidate, ...]:
+def _override_candidates() -> tuple[_Candidate, ...]:
     candidates = [
         *(
             _Candidate(
@@ -60,15 +35,7 @@ def _policy_candidates() -> tuple[_Candidate, ...]:
                 f":allow {field}=QUERY",
                 "Restrict one resource collection.",
             )
-            for field in sorted(ALLOW_POLICY_FIELDS)
-        ),
-        *(
-            _Candidate(
-                f":default {field}=",
-                f":default {field}=VALUE",
-                "Set one execution default.",
-            )
-            for field in sorted(DEFAULT_POLICY_FIELDS)
+            for field in sorted(ALLOW_FIELDS)
         ),
         *(
             _Candidate(
@@ -76,16 +43,16 @@ def _policy_candidates() -> tuple[_Candidate, ...]:
                 f":limit {field}=VALUE",
                 "Set one execution limit.",
             )
-            for field in sorted(LIMIT_POLICY_FIELDS)
+            for field in sorted(LIMIT_FIELDS)
         ),
     ]
     candidates.extend(
-        _Candidate(f":{field} ", f":{field} QUERY", "Restrict resources.")
-        for field in sorted(ALLOW_POLICY_FIELDS)
-    )
-    candidates.extend(
         (
-            _Candidate(":model ", ":model MODEL", "Select the run model."),
+            _Candidate(
+                ":model ",
+                ":model MODEL? effort=VALUE",
+                "Override the run model.",
+            ),
             _Candidate(":agic ", ":agic AGIC", "Select an Agic runnable."),
             _Candidate(":flow ", ":flow FLOW", "Select a Flow runnable."),
             _Candidate(
@@ -98,8 +65,7 @@ def _policy_candidates() -> tuple[_Candidate, ...]:
     return tuple(candidates)
 
 
-_SLASH_CANDIDATES = _slash_candidates()
-_POLICY_CANDIDATES = _policy_candidates()
+_OVERRIDE_CANDIDATES = _override_candidates()
 
 
 class ChatInputCompleter(Completer):
@@ -171,15 +137,12 @@ class ChatInputCompleter(Completer):
             return
         marker = line[0]
         if marker == "/":
-            if "\n" in document.text_before_cursor:
-                return
-            yield from _candidate_completions(line, _SLASH_CANDIDATES)
             return
         if marker == "$":
             yield from _candidate_completions(line, self._prompts)
             return
         if marker == ":":
-            yield from _candidate_completions(line, _POLICY_CANDIDATES)
+            yield from _candidate_completions(line, _OVERRIDE_CANDIDATES)
             return
         path_document = Document(
             text=line[1:],

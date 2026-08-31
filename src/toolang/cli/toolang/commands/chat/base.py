@@ -11,8 +11,9 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 from toolang.base.types.message import Part
 from toolang.execution.events import RunEvent
 from toolang.execution.records import execution_error_message
-from toolang.execution.schemas import RunDetail
-from toolang.execution.types import ExecutionError, RunOverride
+from toolang.execution.schemas import RunDetail, RunRequest
+from toolang.execution.types import ExecutionError, RunOverride, SessionSetting
+from toolang.lang.input import RunnableInputRaw
 
 if TYPE_CHECKING:
     from .blocks import MutableBlock
@@ -29,10 +30,10 @@ class ChatResult:
 
 @dataclass(frozen=True, slots=True)
 class QueuedCall:
-    """One chat call with settings captured when it was submitted."""
+    """One chat call materialized when it was submitted."""
 
     source: str
-    selects: Mapping[str, object]
+    request: RunRequest
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,11 +104,21 @@ class ChatClient(Protocol):
 
     def create_thread(self) -> str: ...
 
-    def apply_settings(
+    def initial_setting(self) -> SessionSetting: ...
+
+    def apply_setting(
         self,
-        commands: tuple[RunOverride, ...],
-        selects: Mapping[str, object],
-    ) -> Mapping[str, object]: ...
+        setting: SessionSetting,
+        update: RunOverride,
+    ) -> SessionSetting: ...
+
+    def build_request(
+        self,
+        thread_id: str,
+        override: RunOverride,
+        input: RunnableInputRaw,
+        setting: SessionSetting,
+    ) -> RunRequest: ...
 
     def get_result(
         self,
@@ -118,9 +129,7 @@ class ChatClient(Protocol):
 
     def run(
         self,
-        thread_id: str,
-        message: str,
-        selects: Mapping[str, object],
+        request: RunRequest,
         on_event: Callable[[RunEvent], None],
         on_error: Callable[[str], None],
         on_state: Callable[[ChatRunState], None] | None = None,
@@ -141,7 +150,9 @@ class ChatClient(Protocol):
 
 
 class AppContext(Protocol):
-    def get_selects(self) -> dict[str, object]: ...
+    def get_setting(self) -> SessionSetting: ...
+
+    def set_setting(self, setting: SessionSetting) -> None: ...
 
     def get_client(self) -> ChatClient: ...
 
@@ -176,27 +187,23 @@ class AppContext(Protocol):
     def request_exit(self) -> None: ...
 
 
-def chat_status_label(selects: Mapping[str, object]) -> str:
-    model = as_text(selects.get("model"))
-    model_label = model or "default"
-    flow = as_text(selects.get("flow"))
-    agic = as_text(selects.get("agic"))
-    runnable_ref = as_text(selects.get("runnable"))
-    if agic == "default":
-        agic = None
-    runnable = (
-        f"flow:{flow}"
-        if flow
-        else f"agic:{agic}"
-        if agic
-        else f"runnable:{runnable_ref}"
-        if runnable_ref
-        else ""
+def chat_status_label(setting: SessionSetting) -> str:
+    model_label = setting.model.ref if setting.model is not None else "none"
+    reasoning = (
+        setting.model.parameters.reasoning if setting.model is not None else None
     )
-    effort = as_text(selects.get("reasoning_effort"))
-    if effort is not None:
-        model_label = f"{model_label} · {effort.title()}"
-    return f"{model_label}  {runnable}" if runnable else model_label
+    if reasoning is not None:
+        value = (
+            reasoning.effort
+            if reasoning.effort is not None
+            else str(reasoning.budget_tokens)
+        )
+        model_label = f"{model_label} · {value}"
+    return (
+        f"{model_label}  {setting.runnable}"
+        if setting.runnable is not None
+        else model_label
+    )
 
 
 def friendly_error(message: ExecutionError) -> str:

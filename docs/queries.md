@@ -116,9 +116,10 @@ support queries.
 ## Policy and Directives
 
 The six allow fields are `models`, `tools`, `psyches`, `skills`, `services`,
-and `prompts`. `[allow]`, `TOOLANG_ALLOW_*`, `--allow`, policy commands, and
-authored resource directives use collection queries. Singular `model` bindings
-instead accept one exact `ModelRequest` ref and never use this grammar.
+and `prompts`. `[allow]`, `TOOLANG_ALLOW_*`, `--allow`, Chat `/allow` settings,
+one-run `:allow` overrides, and authored resource directives use collection
+queries. Singular `model` bindings instead accept one exact `ModelRequest` ref
+and never use this grammar.
 
 ```bash
 toolang run alice \

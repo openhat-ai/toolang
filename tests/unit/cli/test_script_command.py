@@ -172,8 +172,8 @@ agic alternate(_: Part[]):
     )
 
     assert result == 0
-    assert captured["commands"] == (
-        RunOverride("default", "runnable", "agic:alternate"),
+    assert captured["override"] == RunOverride(
+        runnable="agic:alternate",
     )
     input = captured["input"]
     assert isinstance(input, RunnableInputRaw)
@@ -339,7 +339,7 @@ def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> Non
         return harness.setup
 
     monkeypatch.setattr(script.SetupWatcher, "refresh", current_setup)
-    commands, input = parse_call(":agic missing\nInput")
+    override, input = parse_call(":agic missing\nInput")
     try:
         with pytest.raises(ToolangError, match="runnable query matched no items"):
             asyncio.run(
@@ -351,7 +351,7 @@ def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> Non
                     run_id="run_test",
                     sandbox="host",
                     runnable="demo",
-                    commands=commands,
+                    override=override,
                     input=input,
                     raw_named=(NamedInputSource("count", "1"),),
                     allow_options=(),
@@ -601,7 +601,7 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
         source,
         runnable="demo",
         runnable_kind="agic",
-        commands=(),
+        override=RunOverride(),
         input=RunnableInputRaw(_="hello"),
         raw_named=(NamedInputSource("count", "2"),),
         allow_options=(),
@@ -662,7 +662,7 @@ def test_embedded_script_prepare_failure_uses_the_operational_failure_block(
         source,
         runnable="demo",
         runnable_kind="agic",
-        commands=(),
+        override=RunOverride(),
         input=RunnableInputRaw(_="hello"),
         raw_named=(NamedInputSource("count", "2"),),
         allow_options=(),
@@ -766,7 +766,7 @@ def test_remote_script_cancellation_cancels_the_accepted_run(
                 endpoint=Client.endpoint,
                 sandbox="docker:python:3.13-slim",
                 runnable="agic:demo",
-                commands=(),
+                override=RunOverride(),
                 input=RunnableInputRaw(_="hello"),
                 raw_named=(NamedInputSource("count", "2"),),
                 allow_options=(),
@@ -793,30 +793,30 @@ def test_remote_script_cancellation_cancels_the_accepted_run(
 
 
 def test_remote_script_default_returns_to_the_dynamic_runnable() -> None:
-    commands = script._remote_script_commands(
-        (RunOverride("default", "runnable", None),),
+    override = script._remote_script_override(
+        RunOverride(runnable="default"),
         runnable="demo",
     )
 
-    assert commands == (RunOverride("default", "runnable", "demo"),)
+    assert override == RunOverride(runnable="demo")
 
 
 def test_script_materializes_input_local_runnable_refs() -> None:
-    commands = script._materialize_script_runnable_commands(
-        (RunOverride("default", "runnable", "demo"),),
+    override = script._materialize_script_runnable_override(
+        RunOverride(runnable="demo"),
         program=script.Program.from_source(_SOURCE),
     )
 
-    assert commands == (RunOverride("default", "runnable", "agic:demo"),)
+    assert override == RunOverride(runnable="agic:demo")
 
 
 def test_script_materializes_input_local_runnable_queries() -> None:
-    commands = script._materialize_script_runnable_commands(
-        (RunOverride("default", "runnable", "*[kind=agic;name=demo]"),),
+    override = script._materialize_script_runnable_override(
+        RunOverride(runnable="*[kind=agic;name=demo]"),
         program=script.Program.from_source(_SOURCE),
     )
 
-    assert commands == (RunOverride("default", "runnable", "agic:demo"),)
+    assert override == RunOverride(runnable="agic:demo")
 
 
 def test_remote_script_rejects_mixed_named_input_sources() -> None:

@@ -478,10 +478,10 @@ class JobScheduler:
             or state.modules["agent"].find_flow(job.kind) is not None
             else "default"
         )
-        commands, input = parse_call(job.body)
+        override, input = parse_call(job.body)
         base = job.path.parent if job.path is not None else setup.layout.home
         spec = resolve_spec(
-            commands,
+            override,
             input,
             setup=setup,
             state=state,

@@ -37,7 +37,7 @@ from toolang.execution.schemas import (
     RunRequest,
     RunnableRequest,
 )
-from toolang.execution.types import ControlRef, Local, RunOverride, StepPath
+from toolang.execution.types import ControlRef, Local, RunCommand, StepPath
 from toolang.lang.input import NamedInputSource, RunnableInputRaw
 
 
@@ -300,14 +300,14 @@ def test_remote_client_reuses_the_run_stream_protocol_for_restarts(
         request = (
             RetryRequest(
                 source="run_source",
-                commands=(RunOverride("limit", "cost", Decimal("2.50")),),
+                commands=(RunCommand("limit", "cost", Decimal("2.50")),),
                 request_id="retry_request",
                 anchor=StepPath("run_source", (1, 2)),
             )
             if operation == "retry"
             else RerunRequest(
                 source="run_source",
-                commands=(RunOverride("limit", "time", 30),),
+                commands=(RunCommand("limit", "time", 30),),
                 request_id="rerun_request",
                 model=ModelRequest(
                     "openai/gpt-5",
