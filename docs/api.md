@@ -401,19 +401,22 @@ select a model, construct a provider-native request, or send provider traffic.
 
 The Human view follows call lifecycle order: summary, non-empty instructions,
 messages, tools, output contract, continuation, and result. Empty sections are
-omitted. Request text and result payloads are never truncated. Every tool
-signature is shown, while descriptions and parameter schemas remain omitted as
-view-specific context. Text retains the compact single-line style with original
-size facts, and structured values retain the compact `{key: value}` style.
-Result is last and names the exact Step `/output/value` Pointer. The JSON view
-keeps the complete normalized call and exact `output_schema` value, including
-`null` for unstructured and historical calls.
+omitted. Request text and result payloads are never truncated. All tool
+signatures and descriptions are shown, while parameter schemas remain
+summarized by the signatures. Text preserves authored line breaks. Messages use
+descending review numbers, tool-call and tool-result parts retain their fenced
+Human layout, structured values use indented key and index lines, and the
+output contract uses formatted JSON. Section headers contain only their title:
+message and tool counts and result Pointers are not appended. Result is last.
+The JSON view keeps the complete normalized call and exact `output_schema`
+value, including `null` for unstructured and historical calls.
 
 `call` on a tool Step shows a summary, its persisted plugin, normalized
-invocation, and the stored result payload without truncation when present. Both
-identifiers are shown only when they differ. Its JSON is the bare canonical
-`ToolCall` with exactly `tool_call_id`, `call_id`, `name`, and `input`; it does
-not add the result or an inspection envelope.
+invocation, and the stored result payload without truncation when present. Tool
+results retain the same fenced, structured Human layout used inside model
+messages. Both identifiers are shown only when they differ. Its JSON is the bare
+canonical `ToolCall` with exactly `tool_call_id`, `call_id`, `name`, and `input`;
+it does not add the result or an inspection envelope.
 
 `tree` on a Run and `call` on a run, par, or loop Step render the same durable
 structural model. A Run tree starts at that Run. A container-Step call starts at

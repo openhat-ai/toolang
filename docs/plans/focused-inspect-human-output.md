@@ -134,16 +134,18 @@ Model call Human sections follow request/result order:
 7. result.
 
 Empty sections are omitted. Request text, output contracts, continuation data,
-and results are rendered without truncation. Text retains the established
-single-line style with size facts, structured values retain the established
-compact `{key: value}` style, and every tool signature is shown. Tool
-descriptions and parameter schemas remain omitted as view-specific context.
-Result remains last and names the Step output Pointer for independent
-inspection.
+and results are rendered without truncation. Section content retains the
+established review presentation: authored text keeps line breaks, messages use
+descending review numbers, tool parts use fenced Human blocks, structured data
+uses indented key and index lines, output contracts use formatted JSON, and
+all tool signatures and descriptions are shown. Parameter schemas remain
+summarized by the signatures. Section headers contain only their titles, without
+message counts, tool counts, or result Pointers. Result remains last.
 
 Tool call Human output shows one summary, the normalized invocation, and the
-stored result payload without truncation. It displays both call identifiers only
-when they differ. Bare canonical call JSON remains unchanged.
+stored result payload without truncation. Results retain the same fenced,
+structured Human block used inside model messages. It displays both call
+identifiers only when they differ. Bare canonical call JSON remains unchanged.
 
 ## Scope
 
@@ -194,7 +196,7 @@ Excluded:
    approved mapping; failed and canceled errors remain diagnosable.
 7. Model and tool call Human output omits empty sections, follows lifecycle
    order, preserves request text and result payloads without truncation, and
-   identifies the exact result pointer.
+   uses clean title-only section headers.
 8. Every `--json` projection is structurally identical to current output.
 9. Ruff, formatting, ty, and the complete default offline pytest suite pass.
 
