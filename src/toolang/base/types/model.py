@@ -26,12 +26,22 @@ _REASONING_EFFORTS = frozenset(
 )
 
 
+def _exclude_none(value: object) -> bool:
+    return value is None
+
+
 @dataclass(frozen=True, slots=True)
 class ReasoningParameters:
     """Reasoning controls requested for one model selection."""
 
-    effort: ReasoningEffort | None = None
-    budget_tokens: int | None = None
+    effort: ReasoningEffort | None = field(
+        default=None,
+        metadata={"exclude_if": _exclude_none},
+    )
+    budget_tokens: int | None = field(
+        default=None,
+        metadata={"exclude_if": _exclude_none, "strict": True},
+    )
 
     def __post_init__(self) -> None:
         if self.effort is not None and self.effort not in _REASONING_EFFORTS:

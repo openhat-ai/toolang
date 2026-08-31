@@ -42,6 +42,15 @@ agic bound(_: Part[]):
 """
 
 
+def test_parse_call_rejects_an_override_without_runnable_input() -> None:
+    with pytest.raises(ValueError, match="colon override requires runnable input"):
+        parse_call(":model effort=high")
+
+
+def test_parse_call_allows_an_empty_call_without_an_override() -> None:
+    assert parse_call("") == (RunOverride(), RunnableInputRaw())
+
+
 def test_restart_resolution_preserves_model_unless_rerun_replaces_it(
     tmp_path,
 ) -> None:

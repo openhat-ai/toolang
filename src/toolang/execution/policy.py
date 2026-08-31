@@ -11,7 +11,6 @@ from typing import cast
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.model import (
-    ModelParameters,
     ModelRequest,
     ReasoningEffort,
     ReasoningParameters,
@@ -435,7 +434,10 @@ def _apply_model_override(
         reasoning = ReasoningParameters(budget_tokens=override.effort)
     else:
         reasoning = ReasoningParameters(effort=override.effort)
-    return replace(model, parameters=ModelParameters(reasoning=reasoning))
+    return replace(
+        model,
+        parameters=replace(model.parameters, reasoning=reasoning),
+    )
 
 
 def _replace_allow_fields(current: AgentCeiling, update: RunOverride) -> AgentCeiling:
@@ -551,6 +553,8 @@ def _merge_allow_value(
     current: tuple[str, ...] | None,
     update: tuple[str, ...] | None,
 ) -> tuple[str, ...] | None:
+    if current == update:
+        return current
     if current is None or update is None:
         raise ValueError(f"allow {field} cannot combine queries with all")
     if not current or not update:

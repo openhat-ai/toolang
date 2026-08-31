@@ -310,7 +310,7 @@ class RunCreateRequest(ApiRequest):
 
 
 class RunOverridePayload(ApiRequest):
-    """One unresolved run policy override."""
+    """One retained low-level restart command on the stable HTTP wire."""
 
     group: Literal["allow", "default", "limit"]
     field: StrictText

@@ -13,7 +13,7 @@ from .schemas import (
     AuthoredRetryRequest,
     InputMessagePayload,
     InputPart,
-    RunOverridePayload,
+    RunOverridePayload as RunCommandPayload,
 )
 
 
@@ -96,7 +96,7 @@ def parse_parts(parts: list[InputPart]) -> tuple[Part, ...]:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def _parse_run_command(payload: RunOverridePayload) -> RunCommand:
+def _parse_run_command(payload: RunCommandPayload) -> RunCommand:
     value = payload.value
     if payload.group == "allow":
         if value is not None and not isinstance(value, list):

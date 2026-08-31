@@ -151,6 +151,41 @@ def test_slash_and_colon_share_the_same_setting_body_parser() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("sentinel", "value"),
+    [("all", None), ("none", ())],
+)
+def test_repeated_allow_sentinels_are_idempotent(
+    sentinel: str,
+    value: tuple[str, ...] | None,
+) -> None:
+    expected = RunOverride(allow=(AllowOverride("models", value),))
+
+    assert (
+        parse_setting_override(
+            "allow",
+            f"models={sentinel} models={sentinel}",
+        )
+        == expected
+    )
+    override, _named, primary = parse_policy_prefix(
+        f":allow models={sentinel}\n:allow models={sentinel}\n\nRun"
+    )
+    assert override == expected
+    assert primary == "Run"
+
+
+@pytest.mark.parametrize("sentinel", ["all", "none"])
+def test_allow_sentinels_still_reject_a_query_for_the_same_field(
+    sentinel: str,
+) -> None:
+    with pytest.raises(ValueError, match="cannot combine"):
+        parse_setting_override(
+            "allow",
+            f"models={sentinel} models=openai/*",
+        )
+
+
 def test_model_identity_and_effort_have_independent_update_boundaries() -> None:
     surface = SessionSetting(
         model=ModelRequest("openai/gpt-4.1"),

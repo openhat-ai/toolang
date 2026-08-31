@@ -149,6 +149,27 @@ def test_authored_run_rejects_reasoning_effort_and_budget_together() -> None:
         )
 
 
+def test_authored_run_rejects_a_non_integer_reasoning_budget() -> None:
+    with pytest.raises(ValidationError, match="Input should be a valid integer"):
+        AuthoredRunRequest.model_validate(
+            {
+                "thread_id": "term_example",
+                "request_id": "term_request",
+                "runnable": {
+                    "ref": "agic:chat",
+                    "input": {"_": "hello", "named": []},
+                },
+                "model": {
+                    "ref": "anthropic/claude",
+                    "parameters": {
+                        "reasoning": {"budget_tokens": "4096"},
+                    },
+                },
+                "policy": {},
+            }
+        )
+
+
 def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
     retry_payload = AuthoredRetryRequest.model_validate(
         {

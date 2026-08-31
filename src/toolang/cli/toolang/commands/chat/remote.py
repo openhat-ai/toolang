@@ -797,7 +797,7 @@ def _session_setting(payload: object) -> SessionSetting:
         raise _RemoteChatProtocolError(
             "remote chat run defaults returned an invalid model"
         )
-    if not isinstance(runnable, str) or not runnable:
+    if runnable is not None and (not isinstance(runnable, str) or not runnable):
         raise _RemoteChatProtocolError(
             "remote chat run defaults returned an invalid runnable"
         )

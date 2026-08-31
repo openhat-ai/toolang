@@ -15,7 +15,11 @@ from toolang.base.types.message import (
     ToolCallPart,
     ToolResultPart,
 )
-from toolang.base.types.model import ModelRequest
+from toolang.base.types.model import (
+    ModelParameters,
+    ModelRequest,
+    ReasoningParameters,
+)
 from toolang.base.types.policy import RunLimits
 from toolang.execution.records import (
     ExecuteControlPayload,
@@ -379,6 +383,38 @@ def test_preparation_payload_round_trips_resolved_locals() -> None:
 
     data = control_payload_to_data(payload)
     assert data["sandbox"] == "docker:python:3.13-slim"
+    assert control_payload_from_data("run", data) == payload
+
+
+@pytest.mark.parametrize(
+    ("reasoning", "expected"),
+    [
+        (ReasoningParameters(effort="high"), {"effort": "high"}),
+        (ReasoningParameters(budget_tokens=4096), {"budget_tokens": 4096}),
+    ],
+)
+def test_preparation_payload_omits_inactive_reasoning_controls(
+    reasoning: ReasoningParameters,
+    expected: dict[str, object],
+) -> None:
+    payload = RunControlPayload(
+        resources=AgentResources(models=("test/model",)),
+        limits=RunLimits(),
+        state="0" * 64,
+        runnable="agic:worker",
+        model="test/model",
+        model_request=ModelRequest(
+            "test/model",
+            ModelParameters(reasoning),
+        ),
+        locals=(),
+    )
+
+    data = control_payload_to_data(payload)
+
+    model_request = cast(dict[str, object], data["model_request"])
+    parameters = cast(dict[str, object], model_request["parameters"])
+    assert parameters["reasoning"] == expected
     assert control_payload_from_data("run", data) == payload
 
 

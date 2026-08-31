@@ -155,8 +155,9 @@ its generated CLI. Resolution evaluates each source and coerces it against the
 selected runnable signature. Missing, duplicate, or unknown named inputs are
 rejected before a run is accepted.
 
-Run-only parsing permits an empty `RunnableInputRaw` when the selected runnable
-accepts no primary or named input. Parsing is atomic: any invalid run override,
+Plain run-only parsing permits an empty `RunnableInputRaw` when the selected
+runnable accepts no primary or named input. A colon override still requires
+primary or named runnable input. Parsing is atomic: any invalid run override,
 named input, include, prompt, or coerced value rejects the complete input.
 
 ## Content

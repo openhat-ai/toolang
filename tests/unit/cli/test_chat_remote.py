@@ -65,6 +65,19 @@ def _models() -> dict[str, object]:
     }
 
 
+def test_remote_run_defaults_allow_an_absent_runnable() -> None:
+    setting = remote._session_setting(
+        {
+            "model": None,
+            "runnable": None,
+            "policy": {"allow": [], "limits": {}},
+        }
+    )
+
+    assert setting.model is None
+    assert setting.runnable is None
+
+
 class _Bytes(httpx.AsyncByteStream):
     def __init__(self, *chunks: bytes) -> None:
         self._chunks = chunks

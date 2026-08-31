@@ -527,12 +527,10 @@ def _valid_endpoint_host(host: str) -> bool:
 
 
 def _run_request_data(request: RunRequest) -> dict[str, object]:
-    payload = cast(
+    return cast(
         dict[str, object],
         _RUN_REQUEST_ADAPTER.dump_python(request, mode="json"),
     )
-    _omit_empty_reasoning_fields(payload.get("model"))
-    return payload
 
 
 def _restart_request_data(request: RetryRequest | RerunRequest) -> dict[str, object]:
@@ -543,30 +541,11 @@ def _restart_request_data(request: RetryRequest | RerunRequest) -> dict[str, obj
     if isinstance(request, RetryRequest):
         payload["anchor"] = str(request.anchor) if request.anchor is not None else None
     elif request.model is not None:
-        model = _MODEL_REQUEST_ADAPTER.dump_python(
+        payload["model"] = _MODEL_REQUEST_ADAPTER.dump_python(
             request.model,
             mode="json",
         )
-        _omit_empty_reasoning_fields(model)
-        payload["model"] = model
     return payload
-
-
-def _omit_empty_reasoning_fields(value: object) -> None:
-    if not isinstance(value, dict):
-        return
-    model = cast(dict[str, object], value)
-    parameters = model.get("parameters")
-    if not isinstance(parameters, dict):
-        return
-    parameter_values = cast(dict[str, object], parameters)
-    reasoning = parameter_values.get("reasoning")
-    if not isinstance(reasoning, dict):
-        return
-    reasoning_values = cast(dict[str, object], reasoning)
-    for name in ("effort", "budget_tokens"):
-        if reasoning_values.get(name) is None:
-            reasoning_values.pop(name, None)
 
 
 def _run_command_data(command: RunCommand) -> dict[str, object]:
