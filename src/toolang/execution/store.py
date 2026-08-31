@@ -28,6 +28,7 @@ from toolang.base.types.policy import RunLimits
 from toolang.common.time import utc_now
 from .errors import RunStoreSchemaError
 from .inspection import (
+    ChildOccurrenceTotals,
     ExecutionSnapshot,
     InspectedRun,
     InspectedStep,
@@ -2115,19 +2116,44 @@ class RunStore:
         if not records:
             return ()
         pointers = tuple(str(step.path) for step in records)
-        counts: dict[str, int] = {pointer: 0 for pointer in pointers}
+        child_runs: dict[str, list[RunRecord]] = {pointer: [] for pointer in pointers}
         for offset in range(0, len(pointers), 400):
             chunk = pointers[offset : offset + 400]
             placeholders = ", ".join("?" for _ in chunk)
             rows = self._conn.execute(
-                f"SELECT parent, COUNT(*) AS count FROM runs "
-                f"WHERE parent IN ({placeholders}) AND ejected_by_target IS NULL "
-                "GROUP BY parent",
+                f"SELECT * FROM runs "
+                f"WHERE parent IN ({placeholders}) AND ejected_by_target IS NULL ",
                 chunk,
             ).fetchall()
             for row in rows:
-                counts[str(row["parent"])] = int(row["count"])
-        return tuple(InspectedStep(step, counts[str(step.path)]) for step in records)
+                run = _run_from_row(row)
+                if run.parent is not None:
+                    child_runs[str(run.parent)].append(run)
+
+        child_step_counts = {pointer: 0 for pointer in pointers}
+        run_ids = tuple(dict.fromkeys(step.run_id for step in records))
+        for offset in range(0, len(run_ids), 400):
+            chunk = run_ids[offset : offset + 400]
+            placeholders = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                f"SELECT * FROM steps WHERE run IN ({placeholders}) "
+                "AND ejected_by_target IS NULL",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                parent = _step_from_row(row).parent
+                if parent is not None and str(parent) in child_step_counts:
+                    child_step_counts[str(parent)] += 1
+
+        return tuple(
+            InspectedStep(
+                step,
+                len(child_runs[str(step.path)]),
+                child_step_counts[str(step.path)],
+                _child_occurrence_totals(child_runs[str(step.path)]),
+            )
+            for step in records
+        )
 
     def list_thread_runs_chronological(
         self,
@@ -3534,6 +3560,28 @@ def _history_tail(
     if limit == 0:
         return ()
     return tuple(runs[-limit:])
+
+
+def _child_occurrence_totals(
+    runs: Sequence[RunRecord],
+) -> ChildOccurrenceTotals:
+    """Return only occurrence totals consistently recorded by every child."""
+
+    def consistent_count(name: Literal["item", "lane"]) -> int | None:
+        if not runs:
+            return None
+        positions = [
+            getattr(run.occur, name) if run.occur is not None else None for run in runs
+        ]
+        if any(position is None for position in positions):
+            return None
+        counts = {position.count for position in positions if position is not None}
+        return counts.pop() if len(counts) == 1 else None
+
+    return ChildOccurrenceTotals(
+        items=consistent_count("item"),
+        lanes=consistent_count("lane"),
+    )
 
 
 def _run_from_row(row: sqlite3.Row) -> RunRecord:

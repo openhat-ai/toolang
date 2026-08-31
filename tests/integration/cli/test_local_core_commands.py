@@ -42,6 +42,8 @@ from toolang.execution.types import (
     ControlRef,
     Local,
     ModelStepGiven,
+    Occurrence,
+    OccurrencePosition,
     Pointer,
     StepPath,
     ThreadPrefix,
@@ -155,8 +157,10 @@ def test_inspect_thread_and_run_collections_read_local_history(tmp_path: Path) -
     assert "Review the repository" in threads.stdout
     assert runs.exit_code == 0
     assert "run_first" in runs.stdout
-    assert "THREAD RUN" in runs.stdout
+    assert "RUN" in runs.stdout
     assert "RUNNABLE" in runs.stdout
+    assert "PARENT STEP" in runs.stdout
+    assert "OCCUR" not in runs.stdout
     assert "<agic>  test" in runs.stdout
     assert "succeeded" in runs.stdout
 
@@ -315,20 +319,18 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     assert json.loads(raw_pointer.stdout) == document["input"][0]
     assert human_thread.exit_code == 0, human_thread.stderr
     human_thread_text = " ".join(strip_ansi(human_thread.stdout).split())
-    assert "THREAD FIELD TYPE VALUE" in human_thread_text
+    assert "FIELD TYPE VALUE" in human_thread_text
     assert "/id str term_inspect" in human_thread_text
     assert human_run.exit_code == 0, human_run.stderr
     human_run_text = " ".join(strip_ansi(human_run.stdout).split())
-    assert "RUN FIELD TYPE VALUE" in human_run_text
+    assert "FIELD TYPE VALUE" in human_run_text
     assert "/id str run_inspect" in human_run_text
     assert "/occur Occurrence?" in human_run_text
     assert human_control.exit_code == 0, human_control.stderr
-    assert "CONTROL FIELD TYPE VALUE" in " ".join(
-        strip_ansi(human_control.stdout).split()
-    )
+    assert "FIELD TYPE VALUE" in " ".join(strip_ansi(human_control.stdout).split())
     assert human.exit_code == 0
     human_step_text = " ".join(strip_ansi(human.stdout).split())
-    assert "STEP FIELD TYPE VALUE" in human_step_text
+    assert "FIELD TYPE VALUE" in human_step_text
     assert "/occur Occurrence?" in human_step_text
     for old_field in (old_thread_field, old_run_field, old_step_field):
         assert old_field.exit_code == 1
@@ -350,12 +352,13 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     resolved_lines = [
         " ".join(line.split()) for line in strip_ansi(resolved.stdout).splitlines()
     ]
-    assert "POINTER[] FIELD TYPE VALUE" in resolved_lines
+    assert "FIELD TYPE VALUE" in resolved_lines
     resolved_row = next(line for line in resolved_lines if line.startswith("/0 "))
-    assert resolved_row.split()[:2] == ["/0", "*Part[]"]
+    assert resolved_row.split()[:2] == ["/0", "Pointer"]
     assert "→" not in resolved.stdout
     assert "run_inspect.0/input/0" not in resolved.stdout
-    assert "Inspect this" in resolved.stdout
+    assert "run_inspect@0/payload/locals/0/value" in resolved.stdout
+    assert "Inspect this" not in resolved.stdout
     assert resolved_value.exit_code == 0
     assert "resolves to" not in resolved_value.stdout
     assert "run_inspect.0/input/0" not in resolved_value.stdout
@@ -510,42 +513,30 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
     human_run_lines = [
         " ".join(line.split()) for line in strip_ansi(human_runs.stdout).splitlines()
     ]
-    assert (
-        "RUN THREAD PARENT STEP RUNNABLE OCCUR STEPS STATUS CREATED" in human_run_lines
-    )
+    assert "RUN RUNNABLE STATUS STEPS THREAD PARENT STEP CREATED" in human_run_lines
     first_run_line = next(
         line for line in human_run_lines if line.startswith("run_subject_first ")
     )
     child_run_line = next(
         line for line in human_run_lines if line.startswith("run_subject_child ")
     )
-    assert first_run_line.split()[-3:] == [
-        "3",
-        "succeeded",
-        "2026-01-01T00:00:00Z",
-    ]
-    assert child_run_line.split()[-3:] == [
-        "0",
-        "succeeded",
-        "2026-01-01T12:00:00Z",
-    ]
+    assert "<agic> test succeeded 3 custom_subject -" in first_run_line
+    assert first_run_line.split()[-1] == "2026-01-01T00:00:00Z"
+    assert (
+        "<agic> test succeeded 0 custom_subject run_subject_first.2" in child_run_line
+    )
+    assert child_run_line.split()[-1] == "2026-01-01T12:00:00Z"
     assert human_scoped_runs.exit_code == 0, human_scoped_runs.stderr
     human_scoped_lines = [
         " ".join(line.split())
         for line in strip_ansi(human_scoped_runs.stdout).splitlines()
     ]
-    assert (
-        "THREAD RUN PARENT STEP RUNNABLE OCCUR STEPS STATUS CREATED"
-        in human_scoped_lines
-    )
+    assert "RUN RUNNABLE STATUS STEPS PARENT STEP CREATED" in human_scoped_lines
     scoped_first_line = next(
         line for line in human_scoped_lines if line.startswith("run_subject_first ")
     )
-    assert scoped_first_line.split()[-3:] == [
-        "3",
-        "succeeded",
-        "2026-01-01T00:00:00Z",
-    ]
+    assert "<agic> test succeeded 3 -" in scoped_first_line
+    assert scoped_first_line.split()[-1] == "2026-01-01T00:00:00Z"
     assert steps.exit_code == 0, steps.stderr
     step_documents = json.loads(steps.stdout)
     assert [item["path"] for item in step_documents] == [
@@ -569,7 +560,14 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
     human_step_lines = [
         " ".join(line.split()) for line in strip_ansi(human.stdout).splitlines()
     ]
-    assert "RUN STEP PARENT STEP ACTIVITY OCCUR RUNS STATUS CREATED" in human_step_lines
+    assert (
+        "STEP ACTIVITY CHILD RUNS CHILD STEPS PARENT STEP CREATED OCCUR"
+        in human_step_lines
+    )
+    outer_line = next(
+        line for line in human_step_lines if line.startswith("run_subject_first.2 ")
+    )
+    assert "✔ [value] let _ 1 1" in outer_line
     assert (
         human.stdout.index("run_subject_first.2")
         < human.stdout.index("run_subject_first.2.10")
@@ -943,19 +941,18 @@ def test_inspect_projects_complete_persisted_model_call(
     assert "Instructions" in human_output
     assert "Diagnose the run." in human_output
     assert "Messages 2" in human_output
-    assert "[2] assistant" in human_output
+    assert "[0] assistant" in human_output
     assert "Context" in human_output
     assert "[1] user" in human_output
     assert "Question" in human_output
     assert "[=] assistant" in human_output
-    assert "[0] assistant" not in human_output
     assert "assistant · result" not in human_output
     assert "Complete answer" in human_output
-    assert "Tools 0" in human_output
-    assert "No available tools." in human_output
+    assert "Tools 0" not in human_output
+    assert "No available tools." not in human_output
     assert "Output Contract" in human_output
-    assert json.dumps(output_schema, ensure_ascii=False, indent=2) in human_output
-    assert "Output" in human_output
+    assert '{$defs: {1 fields}, $ref: "#/$defs/Answer"}' in human_output
+    assert "Result run_model_call.0/output/value" in human_output
     assert "Continuation" in human_output
     assert "provider_cursor" in human_output
     assert '"instructions":' not in human_output
@@ -966,9 +963,8 @@ def test_inspect_projects_complete_persisted_model_call(
             "Instructions",
             "Messages 2",
             "Output Contract",
-            "Output ░",
-            "Tools 0",
             "Continuation",
+            "Result run_model_call.0/output/value",
         )
     ] == sorted(
         human_output.index(title)
@@ -976,9 +972,8 @@ def test_inspect_projects_complete_persisted_model_call(
             "Instructions",
             "Messages 2",
             "Output Contract",
-            "Output ░",
-            "Tools 0",
             "Continuation",
+            "Result run_model_call.0/output/value",
         )
     )
     assert rejected.exit_code == 2
@@ -1079,6 +1074,12 @@ def test_inspect_projects_run_tree_and_container_step_call(tmp_path: Path) -> No
             runnable_name="child",
             parent=run_step.path,
             started_at="2026-01-01T00:00:01Z",
+            context={
+                "occurrence": Occurrence(
+                    item=OccurrencePosition(index=1, count=3),
+                    lane=OccurrencePosition(index=0, count=2),
+                )
+            },
         )
         project_step(
             store,
@@ -1110,6 +1111,7 @@ def test_inspect_projects_run_tree_and_container_step_call(tmp_path: Path) -> No
     call = _invoke(root, "alice", "inspect", str(run_step.path), "call", "--json")
     human = _invoke(root, "alice", "inspect", parent.id, "tree")
     child_runs = _invoke(root, "alice", "inspect", str(run_step.path), "runs", "--json")
+    human_child_runs = _invoke(root, "alice", "inspect", str(run_step.path), "runs")
 
     assert tree.exit_code == 0, tree.stderr
     tree_data = json.loads(tree.stdout)
@@ -1157,12 +1159,30 @@ def test_inspect_projects_run_tree_and_container_step_call(tmp_path: Path) -> No
         f"{child.id}.0",
     ]
     assert human.exit_code == 0, human.stderr
+    human_lines = [
+        " ".join(line.split()) for line in strip_ansi(human.stdout).splitlines()
+    ]
+    assert "NODE ACTIVITY OCCUR" in human_lines
+    assert not any("STATUS" in line for line in human_lines)
+    assert not any("DURATION" in line for line in human_lines)
+    assert not any("METRICS" in line for line in human_lines)
     assert "<flow>  parent" in human.stdout
     assert "[run]   <agic>  test" in human.stdout
     assert "<agic>  child" in human.stdout
     assert "[model] openai/gpt-5" in human.stdout
+    parent_step_line = next(line for line in human_lines if str(run_step.path) in line)
+    child_line = next(line for line in human_lines if child.id in line)
+    assert parent_step_line.endswith("3 items · 2 lanes")
+    assert child_line.endswith("item 2 · lane 1")
     assert child_runs.exit_code == 0, child_runs.stderr
     assert [item["id"] for item in json.loads(child_runs.stdout)] == [child.id]
+    assert human_child_runs.exit_code == 0, human_child_runs.stderr
+    child_run_lines = [
+        " ".join(line.split())
+        for line in strip_ansi(human_child_runs.stdout).splitlines()
+    ]
+    assert "RUN RUNNABLE STATUS STEPS CREATED" in child_run_lines
+    assert not any("OCCUR" in line for line in child_run_lines)
 
 
 def test_inspect_projects_exact_tool_call_and_persisted_result(
@@ -1314,6 +1334,11 @@ def test_inspect_structural_projection_handles_empty_and_bounded_errors(
         == error
     )
     assert failed_human.exit_code == 0, failed_human.stderr
+    failed_lines = [
+        " ".join(line.split()) for line in strip_ansi(failed_human.stdout).splitlines()
+    ]
+    assert "NODE ACTIVITY OCCUR" in failed_lines
+    assert any("✖ [value]" in line for line in failed_lines)
     assert error[:240] in failed_human.stdout
     assert error[:241] not in failed_human.stdout
 
@@ -1370,7 +1395,7 @@ def test_inspect_empty_step_relations_and_container_call_succeed(
     assert loop_runs.exit_code == 0 and json.loads(loop_runs.stdout) == []
     assert loop_steps.exit_code == 0 and json.loads(loop_steps.stdout) == []
     assert loop_steps_human.exit_code == 0, loop_steps_human.stderr
-    assert "CHILD STEP ACTIVITY OCCUR RUNS STATUS CREATED" in " ".join(
+    assert "STEP ACTIVITY CHILD RUNS CHILD STEPS CREATED OCCUR" in " ".join(
         loop_steps_human.stdout.split()
     )
     assert "PARENT STEP" not in loop_steps_human.stdout
@@ -1648,6 +1673,9 @@ def test_inspect_human_reports_pointer_resolution_errors(tmp_path: Path) -> None
     finally:
         store.close()
 
+    cycle_fields = _invoke(root, "alice", "inspect", str(first))
+    missing_fields = _invoke(root, "alice", "inspect", f"{run.id}.2")
+    mismatch_fields = _invoke(root, "alice", "inspect", f"{run.id}.3")
     cycle = _invoke(
         root,
         "alice",
@@ -1667,6 +1695,14 @@ def test_inspect_human_reports_pointer_resolution_errors(tmp_path: Path) -> None
         f"{run.id}.3/output/value",
     )
 
+    for fields in (cycle_fields, missing_fields, mismatch_fields):
+        assert fields.exit_code == 0, fields.stderr
+        assert "FIELD" in fields.stdout
+        assert "/output" in fields.stdout
+        assert "Local?" in fields.stdout
+    assert f"{second}/output/value" in cycle_fields.stdout
+    assert "run_missing/output/value" in missing_fields.stdout
+    assert f"{run.id}.4/output/value/0" in mismatch_fields.stdout
     assert cycle.exit_code == 1
     assert "Pointer cycle" in cycle.stderr
     assert f"{first}/output/value" in cycle.stderr

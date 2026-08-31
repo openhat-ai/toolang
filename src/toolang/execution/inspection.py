@@ -42,11 +42,21 @@ class InspectedRun:
 
 
 @dataclass(frozen=True, slots=True)
+class ChildOccurrenceTotals:
+    """Consistent item and lane totals across direct visible child Runs."""
+
+    items: int | None = None
+    lanes: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class InspectedStep:
-    """One Step and its direct visible ownership count."""
+    """One Step and its direct visible ownership facts."""
 
     record: StepRecord
     child_run_count: int
+    child_step_count: int
+    child_occurrence_totals: ChildOccurrenceTotals
 
     @property
     def operation(self) -> str:

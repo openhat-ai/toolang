@@ -105,7 +105,11 @@ def test_focused_relations_preserve_run_and_step_ownership(tmp_path: Path) -> No
         nested.path,
     ]
     assert root_steps[0].child_run_count == 1
+    assert root_steps[0].child_step_count == 0
+    assert root_steps[0].child_occurrence_totals.items is None
+    assert root_steps[0].child_occurrence_totals.lanes is None
     assert root_steps[1].child_run_count == 0
+    assert root_steps[1].child_step_count == 1
     assert [item.record.id for item in child_runs] == [child.id]
     assert [item.record.path for item in nested_steps] == [nested.path]
     assert [item.record.path for item in child_steps] == [child_step.path]
@@ -313,6 +317,9 @@ def test_direct_child_run_order_keeps_semantic_coordinates_separate(
 
         parallel_children = store.inspect_child_runs(parent=parallel)
         loop_children = store.inspect_child_runs(parent=loop)
+        inspected_steps = {
+            item.record.path: item for item in store.inspect_steps(run_id=root.id)
+        }
     finally:
         store.close()
 
@@ -324,3 +331,7 @@ def test_direct_child_run_order_keeps_semantic_coordinates_separate(
         loop_body.id,
         loop_until.id,
     ]
+    assert inspected_steps[parallel.path].child_occurrence_totals.items == 1
+    assert inspected_steps[parallel.path].child_occurrence_totals.lanes == 1
+    assert inspected_steps[loop.path].child_occurrence_totals.items is None
+    assert inspected_steps[loop.path].child_occurrence_totals.lanes is None
