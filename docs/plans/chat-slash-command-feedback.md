@@ -7,14 +7,16 @@ Proposed for human approval in issue #431. Implementation is not started.
 ## Goal
 
 Make submitted Chat slash commands self-contained scrollback interactions. A
-command must return a consistent result, usage diagnostic, or error; session
-setting changes must leave the session coherent; and users must be able to
-query effective models, tools, and capabilities without leaving Chat.
+command must return an explicit success confirmation, read-only result, usage
+diagnostic, or error; session setting changes must leave the session coherent;
+and users must be able to query effective models, tools, and capabilities
+without leaving Chat.
 
 ## Success Criteria
 
-- Every submitted slash command that keeps Chat open writes its command and
-  outcome to scrollback instead of using the transient status bar.
+- Every submitted slash command that keeps Chat open writes its command and an
+  explicitly labeled outcome to scrollback instead of using the transient
+  status bar.
 - Missing required arguments show the command's canonical usage, including for
   `/model`, `/agic`, and `/flow`.
 - A session model is never retained outside the session's `allow.models`
@@ -80,16 +82,17 @@ Handlers return one semantic `SlashOutcome`:
 
 ```text
 SlashOutcome
-  kind: result | usage | error
+  kind: success | result | usage | error
   content: text | table | durable-run-result
 ```
 
 The concrete types should be closed enough for exhaustive rendering but keep
-status separate from content. Text covers short confirmations and help, table
-covers resource discovery, and the existing durable result value supports
-`/show`. A later content type can add a renderer without changing every
-handler. Handlers do not call status-bar error methods and do not render Rich
-objects directly.
+outcome kind separate from content. `success` confirms that a state-changing or
+control action was accepted; `result` presents data from a read-only command.
+Text covers short confirmations and help, table covers resource discovery, and
+the existing durable result value supports `/show`. A later content type can
+add a renderer without changing every handler. Handlers do not call status-bar
+error methods and do not render Rich objects directly.
 
 The dispatcher converts known user-facing exceptions into `error` outcomes.
 Unknown commands, malformed slash bodies, command failures, and slash-shaped
@@ -97,17 +100,19 @@ input that is incorrectly combined with other input use the same path. Direct
 status-bar errors remain only for transient asynchronous run and transport
 state, not completed slash submissions.
 
-Commands that perform a UI action still return a result when Chat remains
-open. For example, setting changes confirm the normalized value, queue edits
-confirm the affected item, and accepted steering confirms the action. `/exit`
-is the only silent success because it closes Chat before another scrollback
-interaction is useful.
+Commands that perform a state-changing or control action return `success` when
+Chat remains open. For example, setting changes confirm the normalized value,
+queue edits confirm the affected item, and accepted steering confirms the
+action. Help, resource discovery, queue inspection, and `/show` return
+`result`. `/exit` is the only silent success because it closes Chat before
+another scrollback interaction is useful.
 
-## Usage, Error, and Result Presentation
+## Success, Result, Usage, and Error Presentation
 
 The TUI appends one immutable scrollback interaction containing the submitted
 command and its outcome. The command keeps the existing slash-command accent.
-The body uses three stable presentations:
+The body always starts with one of four visible, textual labels so meaning does
+not depend on color:
 
 ```text
 /model
@@ -117,13 +122,19 @@ Usage: /model [MODEL] [effort=VALUE]
 Error: Unknown command: /missing
 
 /model openai/gpt-5 effort=high
-Model: openai/gpt-5 · high
+Success: Model set to openai/gpt-5 · high
+
+/models openrouter/*[reasoning]
+Result: 1 model matched
+MODEL                         STATE    EFFORT
+openrouter/openai/gpt-5                low, medium, high
 ```
 
-`Usage:` is styled as guidance, `Error:` as a failure, and successful text or
-tables use the neutral result style. The status bar is refreshed after a
-successful setting mutation but is not the command's confirmation. Outcomes
-remain in scrollback after later input and runs.
+`Success:` is styled as a confirmed mutation or accepted action, `Result:` as
+read-only output, `Usage:` as guidance, and `Error:` as a failure. A table or
+durable run result follows its `Result:` summary. The status bar is refreshed
+after a successful setting mutation but is not the command's confirmation.
+Outcomes remain in scrollback after later input and runs.
 
 Insufficient arguments return `usage`, while a supplied but invalid argument
 returns `error`. This rule applies to every registered command, not only the
@@ -140,7 +151,7 @@ three initially reported cases. In particular:
 ```
 
 An empty resource query is valid and lists all items. A valid query with no
-matches is a successful empty result such as `No models matched query.`; an
+matches is a read-only result such as `Result: No models matched query`; an
 invalid query is an error.
 
 Scripted Chat projects the same outcomes to plain text. It no longer owns a
@@ -201,15 +212,16 @@ Example:
 
 ```text
 /allow models=openrouter/*
-Allow: models=openrouter/*
+Success: Allow set to models=openrouter/*
 Model: none (cleared because deepseek/abc is outside allow.models)
 
 /models openrouter/*[reasoning]
+Result: 1 model matched
 MODEL                         STATE    EFFORT
 openrouter/openai/gpt-5                low, medium, high
 
 /model openrouter/openai/gpt-5 effort=high
-Model: openrouter/openai/gpt-5 · high
+Success: Model set to openrouter/openai/gpt-5 · high
 ```
 
 Changing `tools`, `psyches`, `skills`, `services`, or `prompts` preserves the
@@ -240,7 +252,7 @@ advertised effort values.
 Included:
 
 - one slash registry and typed outcome/content contract;
-- scrollback rendering for results, usage, and errors;
+- scrollback rendering for success confirmations, results, usage, and errors;
 - plain-text projection for scripted Chat;
 - consistent arity and unknown-command handling;
 - confirmations for setting and control commands that keep Chat open;
@@ -281,17 +293,18 @@ Excluded:
 
 ## Acceptance Tests
 
-1. TUI submissions append success, usage, and error outcomes to scrollback and
-   do not use the status bar for synchronous slash feedback; later input does
-   not erase them.
+1. TUI submissions append explicitly labeled success, result, usage, and error
+   outcomes to scrollback and do not use the status bar for synchronous slash
+   feedback; later input does not erase them.
 2. Unknown commands and slash parsing/body failures use the registered error
    presentation. `/model`, `/agic`, `/flow`, and every other missing required
    body use registered usage text.
 3. Help is generated from the same registry and includes `/models`, `/tools`,
    and `/caps`; adding a test command requires no parser allowlist change.
-4. Every setting command returns its normalized affected value. Queue, steer,
-   and show success/failure paths use the same outcome dispatcher, while
-   `/exit` remains silent.
+4. Every setting command returns `success` with its normalized affected value.
+   Queue mutation and steer acceptance also return `success`; help, queue
+   inspection, discovery, and show return `result`; failures use the same
+   outcome dispatcher; `/exit` remains silent.
 5. Narrowing `allow.models` preserves an allowed `ModelRequest`, clears an
    excluded model and effort, and reports the clearing. Invalid queries leave
    the complete prior setting unchanged.
@@ -308,7 +321,7 @@ Excluded:
    sanitize invalid-query failures, and preserve existing no-query model and
    cap consumers.
 10. Scripted and TUI Chat dispatch the same command registry and produce
-    semantically equivalent result, usage, and error text.
+    semantically equivalent success, result, usage, and error text.
 11. Existing run submission, queue snapshot, status bar, popup-free input,
     execution, and persistence tests remain unchanged; ruff, formatting, ty,
     and the default offline pytest suite pass.
