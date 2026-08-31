@@ -181,6 +181,34 @@ def parse_model_catalog_data(data: object) -> dict[str, Provider]:
     return _parse_model_catalog_data(data)
 
 
+def model_catalog_snapshot_from_data(
+    data: object,
+    *,
+    revision: str,
+    source: Path | None = None,
+    catalog: str | None = None,
+) -> ModelCatalogSnapshot:
+    """Validate normalized catalog data and rebuild one immutable snapshot."""
+
+    providers = _parse_model_catalog_data(
+        data,
+        catalog=catalog,
+        catalog_revision=revision,
+    )
+    models = tuple(
+        provider.models[model_id]
+        for provider_id in sorted(providers)
+        for model_id in sorted(providers[provider_id].models)
+        for provider in (providers[provider_id],)
+    )
+    return ModelCatalogSnapshot(
+        providers=providers,
+        models=models,
+        revision=revision,
+        source=source,
+    )
+
+
 def _parse_model_catalog_data(
     data: object,
     *,

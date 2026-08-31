@@ -128,12 +128,9 @@ def setup_tool_dataset(setup: AgentSetup) -> QueryDataset[ToolQueryView]:
 def _setup(
     layout: AgentLayout,
     *,
-    force: bool = False,
     model_catalog: Path | None = None,
 ) -> AgentSetup:
-    return asyncio.run(
-        SetupWatcher(layout, model_catalog=model_catalog).refresh(force=force)
-    )
+    return asyncio.run(SetupWatcher(layout, model_catalog=model_catalog).refresh())
 
 
 def _layout(ctx: typer.Context) -> AgentLayout:
