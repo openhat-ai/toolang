@@ -943,24 +943,24 @@ def test_inspect_projects_complete_persisted_model_call(
     human_output = strip_ansi(human.stdout)
     assert "Instructions" in human_output
     assert "Diagnose the run." in human_output
-    assert instructions in human_output
+    assert " ".join(instructions.split()) in human_output
     assert "Messages 2" in human_output
     assert "[0] assistant" in human_output
     assert "Context" in human_output
     assert "[1] user" in human_output
     assert "Question" in human_output
-    assert question in human_output
+    assert " ".join(question.split()) in human_output
     assert "[=] assistant" in human_output
     assert "assistant · result" not in human_output
     assert "Complete answer" in human_output
-    assert result_text in human_output
+    assert " ".join(result_text.split()) in human_output
     assert "Tools 0" not in human_output
     assert "No available tools." not in human_output
     assert "Output Contract" in human_output
-    assert '"$ref": "#/$defs/Answer"' in human_output
+    assert '$ref: "#/$defs/Answer"' in human_output
     assert "Result run_model_call.0/output/value" in human_output
     assert "Continuation" in human_output
-    assert '"provider_cursor": "next"' in human_output
+    assert 'provider_cursor: "next"' in human_output
     assert '"instructions":' not in human_output
     assert "projected as call" not in human_output
     assert [
@@ -1274,7 +1274,7 @@ def test_inspect_projects_exact_tool_call_and_persisted_result(
     assert "Call ID      local-call-1" in human.stdout
     assert "Tool-call ID provider-tool-1" in human.stdout
     assert query in human.stdout
-    assert '"results": 3' in human.stdout
+    assert "results: 3" in human.stdout
     assert result_detail in human.stdout
 
 

@@ -1119,7 +1119,7 @@ def _model_call_renderables(
     instructions = data.get("instructions")
     if isinstance(instructions, str) and instructions:
         _append_model_call_section(lines, "Instructions", width=section_width)
-        lines.append(Text(instructions))
+        lines.append(_text_preview(instructions, width=None))
 
     messages = data.get("messages")
     message_count = len(messages) if isinstance(messages, list) else 0
@@ -1159,17 +1159,16 @@ def _model_call_renderables(
             lines.append(
                 Text(f"[{index}] {_tool_signature(name, tool_data.get('parameters'))}")
             )
-            lines.append(_exact_json(tool_data))
 
     output_schema = data.get("output_schema")
     if output_schema is not None:
         _append_model_call_section(lines, "Output Contract", width=section_width)
-        lines.append(_exact_json(output_schema))
+        lines.append(Text(_complete_summary(output_schema)))
 
     continuation = data.get("cont")
     if continuation is not None:
         _append_model_call_section(lines, "Continuation", width=section_width)
-        lines.append(_exact_json(continuation))
+        lines.append(Text(_complete_summary(continuation)))
 
     if result_parts is not None:
         _append_model_call_section(
@@ -1201,7 +1200,7 @@ def _append_model_message(
     for part_index, part in enumerate(parts):
         if not isinstance(part, Mapping):  # pragma: no cover - canonical data
             continue
-        summary = _exact_message_part(cast(Mapping[str, object], part))
+        summary = _message_part_summary(cast(Mapping[str, object], part))
         label = prefix if part_index == 0 else " " * cell_len(prefix)
         line = Text(f"{label}  ", style="dim")
         line.append(summary)
@@ -1242,30 +1241,58 @@ def _model_usage_fact(noted: ModelStepNoted) -> str:
     return ""
 
 
-def _exact_message_part(part: Mapping[str, object]) -> Text:
+def _message_part_summary(part: Mapping[str, object]) -> Text:
     part_type = str(part.get("type") or "part")
     if part_type == "text":
         text = part.get("text")
-        return Text(text if isinstance(text, str) else "")
-    return _exact_json(part)
+        return _text_preview(text if isinstance(text, str) else "", width=None)
+    if part_type == "tool_call":
+        name = _display_tool_name(str(part.get("tool_name") or "unnamed"))
+        return Text(_tool_invocation(name, part.get("input", {})))
+    if part_type == "tool_result":
+        tool_call_id = str(part.get("tool_call_id") or "unknown")
+        facts, body = _tool_result_presentation(part.get("output", {}))
+        summary = f"tool result {tool_call_id}"
+        if facts:
+            summary += f" · {' · '.join(facts)}"
+        if body != {}:
+            summary += f" · {_complete_summary(body)}"
+        error = part.get("error")
+        if isinstance(error, str) and error:
+            summary += f" · error: {error}"
+        return Text(summary)
+    details = dict(part)
+    details.pop("type", None)
+    return Text(f"{part_type.replace('_', ' ')} · {_complete_summary(details)}")
 
 
-def _exact_json(value: object) -> Text:
-    return Text(json.dumps(value, ensure_ascii=False, indent=2))
-
-
-def _text_preview(value: str, *, width: int = 160) -> Text:
-    preview = _truncate(_one_line(value), width=width)
+def _text_preview(value: str, *, width: int | None = 160) -> Text:
+    normalized = _one_line(value)
+    preview = normalized if width is None else _truncate(normalized, width=width)
     line_count = value.count("\n") + 1
     facts: list[str] = []
     if line_count > 1:
         facts.append(f"{line_count} lines")
-    if len(preview) < len(_one_line(value)) or line_count > 1:
+    if len(preview) < len(normalized) or line_count > 1:
         facts.append(f"{len(value)} chars")
     output = Text(preview)
     if facts:
         output.append(f" · {' · '.join(facts)}", style="dim")
     return output
+
+
+def _complete_summary(value: object) -> str:
+    if isinstance(value, Mapping):
+        items = [
+            f"{key}: {_complete_summary(item)}"
+            for key, item in cast(Mapping[object, object], value).items()
+        ]
+        return "{" + ", ".join(items) + "}"
+    if isinstance(value, list):
+        return "[" + ", ".join(_complete_summary(item) for item in value) + "]"
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    return _structured_scalar(value)
 
 
 def _append_model_call_section(
@@ -1361,13 +1388,13 @@ def _tool_part_renderables(
         name = _display_tool_name(str(part.get("tool_name") or "unnamed"))
         lines = [Text(f"[{index}] {_tool_invocation(name, part.get('input', {}))}")]
     else:
-        result_facts = _tool_result_facts(part.get("output", {}))
+        result_facts, output = _tool_result_presentation(part.get("output", {}))
         summary = f"[{index}] Tool result {tool_call_id}"
         if result_facts:
             summary += f" · {' · '.join(result_facts)}"
         lines = [Text(summary)]
-        if "output" in part:
-            lines.append(_exact_json(part["output"]))
+        if output != {}:
+            lines.append(Text(_complete_summary(output)))
     reasoning = part.get("reasoning")
     if isinstance(reasoning, str) and reasoning:
         lines.append(Text(f"Reason       {reasoning}"))
@@ -1377,15 +1404,15 @@ def _tool_part_renderables(
     return tuple(lines)
 
 
-def _tool_result_facts(output: object) -> tuple[str, ...]:
+def _tool_result_presentation(output: object) -> tuple[tuple[str, ...], object]:
     if not isinstance(output, Mapping):  # pragma: no cover - canonical ToolResultPart
-        return ()
-    data = cast(Mapping[object, object], output)
+        return (), output
+    body = dict(cast(Mapping[object, object], output))
     facts = []
     for key in ("status", "exit_code", "ok"):
-        if key in data:
-            facts.append(f"{key}={_structured_scalar(data[key])}")
-    return tuple(facts)
+        if key in body:
+            facts.append(f"{key}={_structured_scalar(body.pop(key))}")
+    return tuple(facts), body
 
 
 def _tool_invocation(name: str, value: object) -> str:

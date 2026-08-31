@@ -401,11 +401,13 @@ select a model, construct a provider-native request, or send provider traffic.
 
 The Human view follows call lifecycle order: summary, non-empty instructions,
 messages, tools, output contract, continuation, and result. Empty sections are
-omitted. Request and result payloads are never truncated: every tool definition,
-including its description and parameter schema, is shown. Result is last and
-names the exact Step `/output/value` Pointer. The JSON view keeps the complete
-normalized call and exact `output_schema` value, including `null` for
-unstructured and historical calls.
+omitted. Request text and result payloads are never truncated. Every tool
+signature is shown, while descriptions and parameter schemas remain omitted as
+view-specific context. Text retains the compact single-line style with original
+size facts, and structured values retain the compact `{key: value}` style.
+Result is last and names the exact Step `/output/value` Pointer. The JSON view
+keeps the complete normalized call and exact `output_schema` value, including
+`null` for unstructured and historical calls.
 
 `call` on a tool Step shows a summary, its persisted plugin, normalized
 invocation, and the stored result payload without truncation when present. Both

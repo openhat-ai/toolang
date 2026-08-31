@@ -33,10 +33,10 @@ values, and reduce structural trees to an immediately scannable hierarchy.
   validation, and specialized rendering.
 - `tree` is a complete durable ownership hierarchy, not a metrics or timeline
   view.
-- `call` is a complete historical request/result review. Human output preserves
-  the full request and result payloads; `--json` remains the exact normalized
-  request value, and results remain independently addressable through Step
-  output pointers.
+- `call` is a historical request/result review. Human output preserves request
+  text, tool signatures, structured request facts, and result payloads without
+  truncation; `--json` remains the exact normalized request value, and results
+  remain independently addressable through Step output pointers.
 
 ## Status Markers
 
@@ -133,9 +133,11 @@ Model call Human sections follow request/result order:
 6. continuation when present;
 7. result.
 
-Empty sections are omitted. Instructions, messages, every tool definition,
-output contracts, continuation data, and results are rendered without
-truncation. Tools retain signatures and also expose their complete definitions.
+Empty sections are omitted. Request text, output contracts, continuation data,
+and results are rendered without truncation. Text retains the established
+single-line style with size facts, structured values retain the established
+compact `{key: value}` style, and every tool signature is shown. Tool
+descriptions and parameter schemas remain omitted as view-specific context.
 Result remains last and names the Step output Pointer for independent
 inspection.
 
@@ -191,8 +193,8 @@ Excluded:
 6. Pending/running/succeeded/failed/canceled markers and colors match the
    approved mapping; failed and canceled errors remain diagnosable.
 7. Model and tool call Human output omits empty sections, follows lifecycle
-   order, preserves complete request and result payloads, and identifies the
-   exact result pointer.
+   order, preserves request text and result payloads without truncation, and
+   identifies the exact result pointer.
 8. Every `--json` projection is structurally identical to current output.
 9. Ruff, formatting, ty, and the complete default offline pytest suite pass.
 
