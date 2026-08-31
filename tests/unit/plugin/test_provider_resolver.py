@@ -241,6 +241,36 @@ def test_model_provider_override_resolves_its_own_protocol_route() -> None:
     assert resolved.models["claude"].resolved.ready is True
 
 
+def test_resolver_reuses_frozen_model_catalog_fields() -> None:
+    model = Model(
+        provider_id="openai",
+        id="model",
+        name="Model",
+        modalities={"input": ("text",)},
+        cost={"input": 1},
+        extra={"nested": {"value": True}},
+    )
+    provider = Provider(
+        id="openai",
+        name="OpenAI",
+        env=("OPENAI_API_KEY",),
+        npm="@ai-sdk/openai",
+        models={model.id: model},
+    )
+
+    resolved = resolve_provider(
+        provider,
+        adapters={"responses": ResponsesModelAdapter()},
+        environ={"OPENAI_API_KEY": "secret"},
+    ).models[model.id]
+
+    assert resolved is not model
+    assert resolved.resolved is not None
+    assert resolved.modalities is model.modalities
+    assert resolved.cost is model.cost
+    assert resolved.extra is model.extra
+
+
 def test_raw_toolang_extension_is_preserved_but_never_used_as_runtime_config() -> None:
     model = Model(provider_id="openai", id="model", name="Model")
     provider = Provider(

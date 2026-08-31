@@ -201,13 +201,12 @@ def _resolve_model(
         and env_is_ready(default.env, environ=environ)
         and not _local_provider_offline(provider)
     )
-    return replace(
-        model,
-        resolved=ResolvedModel(
+    return model.with_resolution(
+        ResolvedModel(
             adapter=adapter_name,
             api=api,
             ready=ready,
-        ),
+        )
     )
 
 

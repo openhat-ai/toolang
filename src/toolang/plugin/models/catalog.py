@@ -155,27 +155,38 @@ def read_model_catalog_snapshot(
         )
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid model catalog JSON: {resolved}: {exc}") from exc
-    providers = parse_model_catalog_data(payload)
+    revision = f"sha256:{sha256(payload_bytes).hexdigest()}"
+    providers = _parse_model_catalog_data(
+        payload,
+        catalog="models.dev",
+        catalog_revision=revision,
+    )
     models = tuple(
         provider.models[model_id]
         for provider_id in sorted(providers)
         for model_id in sorted(providers[provider_id].models)
         for provider in (providers[provider_id],)
     )
-    return _with_catalog_origin(
-        ModelCatalogSnapshot(
-            providers=providers,
-            models=models,
-            revision=f"sha256:{sha256(payload_bytes).hexdigest()}",
-            source=resolved,
-        ),
-        "models_dev",
+    return ModelCatalogSnapshot(
+        providers=providers,
+        models=models,
+        revision=revision,
+        source=resolved,
     )
 
 
 def parse_model_catalog_data(data: object) -> dict[str, Provider]:
     """Validate parsed JSON and return typed providers."""
 
+    return _parse_model_catalog_data(data)
+
+
+def _parse_model_catalog_data(
+    data: object,
+    *,
+    catalog: str | None = None,
+    catalog_revision: str | None = None,
+) -> dict[str, Provider]:
     if not isinstance(data, Mapping):
         raise TypeError("model catalog must be a provider object")
     providers: dict[str, Provider] = {}
@@ -188,6 +199,8 @@ def parse_model_catalog_data(data: object) -> dict[str, Provider]:
         providers[provider_id] = _parse_provider(
             provider_id,
             cast(Mapping[str, object], raw_provider),
+            catalog=catalog,
+            catalog_revision=catalog_revision,
         )
     return providers
 
@@ -354,10 +367,14 @@ def _with_catalog_origin(
 
     catalog = "models.dev" if name == "models_dev" else name
     models = {
-        (model.provider_id, model.id): replace(
-            model,
-            catalog=model.catalog or catalog,
-            catalog_revision=model.catalog_revision or snapshot.revision,
+        (model.provider_id, model.id): (
+            model
+            if model.catalog is not None and model.catalog_revision is not None
+            else replace(
+                model,
+                catalog=model.catalog or catalog,
+                catalog_revision=model.catalog_revision or snapshot.revision,
+            )
         )
         for model in snapshot.models
     }
@@ -367,11 +384,20 @@ def _with_catalog_origin(
             model_id: models.get((provider_id, model_id), model)
             for model_id, model in provider.models.items()
         }
-        providers[provider_id] = replace(
-            provider,
-            models=provider_models,
-            catalog=provider.catalog or catalog,
-            catalog_revision=provider.catalog_revision or snapshot.revision,
+        providers[provider_id] = (
+            provider
+            if provider.catalog is not None
+            and provider.catalog_revision is not None
+            and all(
+                provider_models[model_id] is model
+                for model_id, model in provider.models.items()
+            )
+            else replace(
+                provider,
+                models=provider_models,
+                catalog=provider.catalog or catalog,
+                catalog_revision=provider.catalog_revision or snapshot.revision,
+            )
         )
     return ModelCatalogSnapshot(
         providers=providers,
@@ -383,7 +409,13 @@ def _with_catalog_origin(
     )
 
 
-def _parse_provider(provider_id: str, data: Mapping[str, object]) -> Provider:
+def _parse_provider(
+    provider_id: str,
+    data: Mapping[str, object],
+    *,
+    catalog: str | None = None,
+    catalog_revision: str | None = None,
+) -> Provider:
     parsed_id = _required_text(data.get("id"), label=f"provider {provider_id} id")
     if parsed_id != provider_id:
         raise ValueError(
@@ -403,6 +435,8 @@ def _parse_provider(provider_id: str, data: Mapping[str, object]) -> Provider:
             provider_id,
             model_id,
             cast(Mapping[str, object], raw_model),
+            catalog=catalog,
+            catalog_revision=catalog_revision,
         )
     env = _string_list(data.get("env"), label=f"provider {provider_id} env")
     return Provider(
@@ -413,6 +447,8 @@ def _parse_provider(provider_id: str, data: Mapping[str, object]) -> Provider:
         api=_optional_text(data.get("api"), label=f"provider {provider_id} api"),
         doc=_optional_text(data.get("doc"), label=f"provider {provider_id} doc"),
         models=models,
+        catalog=catalog,
+        catalog_revision=catalog_revision,
         extra={
             key: value for key, value in data.items() if key not in _PROVIDER_FIELDS
         },
@@ -423,6 +459,9 @@ def _parse_model(
     provider_id: str,
     model_id: str,
     data: Mapping[str, object],
+    *,
+    catalog: str | None = None,
+    catalog_revision: str | None = None,
 ) -> Model:
     parsed_id = _required_text(
         data.get("id"), label=f"model {provider_id}/{model_id} id"
@@ -482,6 +521,8 @@ def _parse_model(
         ),
         provider=_optional_mapping(data.get("provider"), label=f"{label} provider"),
         cost=cost,
+        catalog=catalog,
+        catalog_revision=catalog_revision,
         extra={key: value for key, value in data.items() if key not in _MODEL_FIELDS},
     )
 

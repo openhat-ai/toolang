@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass
 from decimal import Decimal
 import json
 from pathlib import Path
@@ -7,6 +9,8 @@ from typing import Any, cast
 
 import pytest
 
+import toolang.plugin.models.catalog as catalog_module
+from toolang.base.protocols.model import ModelCatalog
 from toolang.base.types.model import (
     Model,
     ModelAlias,
@@ -16,6 +20,7 @@ from toolang.base.types.model import (
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.catalog import (
+    MergedModelCatalog,
     PACKAGED_MODEL_CATALOG,
     catalog_json_dumps,
     read_model_catalog_snapshot,
@@ -37,6 +42,15 @@ from toolang.plugin.models.resolution import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _SnapshotCatalog(ModelCatalog):
+    value: ModelCatalogSnapshot
+    name: str = "models_dev"
+
+    async def snapshot(self) -> ModelCatalogSnapshot:
+        return self.value
+
+
 def test_packaged_catalog_is_small_valid_and_covers_mainstream_providers() -> None:
     snapshot = read_model_catalog_snapshot(PACKAGED_MODEL_CATALOG)
 
@@ -49,6 +63,56 @@ def test_packaged_catalog_is_small_valid_and_covers_mainstream_providers() -> No
     }
     assert len(snapshot.models) >= 15
     assert PACKAGED_MODEL_CATALOG.stat().st_size < 64 * 1024
+
+
+def test_merged_catalog_reuses_records_with_complete_origin() -> None:
+    model = Model(
+        provider_id="test",
+        id="one",
+        name="One",
+        catalog="models.dev",
+        catalog_revision="sha256:test",
+    )
+    provider = Provider(
+        id="test",
+        name="Test",
+        env=(),
+        npm="@ai-sdk/openai-compatible",
+        models={model.id: model},
+        catalog="models.dev",
+        catalog_revision="sha256:test",
+    )
+    snapshot = ModelCatalogSnapshot(
+        providers={provider.id: provider},
+        models=(model,),
+        revision="sha256:test",
+    )
+
+    merged = asyncio.run(MergedModelCatalog((_SnapshotCatalog(snapshot),)).snapshot())
+
+    assert merged.models[0] is model
+    assert merged.providers["test"] is provider
+
+
+def test_catalog_reader_attaches_origin_without_rematerializing_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "models.json"
+    path.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+
+    def reject_replace(*args: object, **kwargs: object) -> None:
+        raise AssertionError("catalog records must not be replaced after parsing")
+
+    monkeypatch.setattr(catalog_module, "replace", reject_replace)
+
+    snapshot = read_model_catalog_snapshot(path)
+    model = snapshot.find("test", "one")
+
+    assert model is not None
+    assert model.catalog == "models.dev"
+    assert model.catalog_revision == snapshot.revision
+    assert snapshot.providers["test"].catalog == "models.dev"
+    assert snapshot.providers["test"].catalog_revision == snapshot.revision
 
 
 def test_catalog_import_preserves_unknown_fields_and_decimal_prices(
