@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from hashlib import sha256
 import json
+import math
 from pathlib import Path
 from typing import cast
 
@@ -179,6 +180,34 @@ def parse_model_catalog_data(data: object) -> dict[str, Provider]:
     """Validate parsed JSON and return typed providers."""
 
     return _parse_model_catalog_data(data)
+
+
+def model_catalog_snapshot_from_data(
+    data: object,
+    *,
+    revision: str,
+    source: Path | None = None,
+    catalog: str | None = None,
+) -> ModelCatalogSnapshot:
+    """Validate normalized catalog data and rebuild one immutable snapshot."""
+
+    providers = _parse_model_catalog_data(
+        data,
+        catalog=catalog,
+        catalog_revision=revision,
+    )
+    models = tuple(
+        provider.models[model_id]
+        for provider_id in sorted(providers)
+        for model_id in sorted(providers[provider_id].models)
+        for provider in (providers[provider_id],)
+    )
+    return ModelCatalogSnapshot(
+        providers=providers,
+        models=models,
+        revision=revision,
+        source=source,
+    )
 
 
 def _parse_model_catalog_data(
@@ -611,7 +640,9 @@ def _reasoning_options(
 
 
 def _validate_json(value: object, *, label: str) -> None:
-    if value is None or isinstance(value, str | bool | int | Decimal):
+    if value is None or isinstance(value, str | bool | int | float | Decimal):
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(f"{label} numbers must be finite")
         return
     if isinstance(value, Mapping):
         if any(not isinstance(key, str) for key in value):
@@ -629,8 +660,9 @@ def _validate_json(value: object, *, label: str) -> None:
 def _validate_non_negative_numbers(value: object, *, label: str) -> None:
     if isinstance(value, bool) or value is None or isinstance(value, str):
         return
-    if isinstance(value, int | Decimal):
-        if value < 0:
+    if isinstance(value, int | float | Decimal):
+        non_finite = not isinstance(value, int) and not math.isfinite(value)
+        if non_finite or value < 0:
             raise ValueError(f"{label} must not contain negative numbers")
         return
     if isinstance(value, Mapping):
@@ -646,9 +678,9 @@ def _cost_per_token(cost: Mapping[str, object] | None, key: str) -> float | None
     if cost is None:
         return None
     value = cost.get(key)
-    if isinstance(value, bool) or not isinstance(value, int | Decimal):
+    if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
         return None
-    return float(Decimal(value) / Decimal(1_000_000))
+    return float(Decimal(str(value)) / Decimal(1_000_000))
 
 
 def _reject_json_constant(value: str) -> None:

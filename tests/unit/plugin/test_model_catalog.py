@@ -135,6 +135,17 @@ def test_catalog_import_preserves_unknown_fields_and_decimal_prices(
     assert exported["test"]["models"]["one"]["future_model_field"] == ["value"]
 
 
+def test_catalog_data_accepts_finite_json_float_values() -> None:
+    payload = json.loads(json.dumps(_catalog_data()))
+
+    providers = parse_model_catalog_data(payload)
+
+    assert providers["test"].models["one"].cost == {"input": 1.25, "output": 2}
+    assert model_info_from_catalog(providers["test"].models["one"]).input_price == (
+        0.00000125
+    )
+
+
 def test_catalog_values_are_deeply_immutable(tmp_path: Path) -> None:
     path = tmp_path / "models.json"
     payload = _catalog_data()
