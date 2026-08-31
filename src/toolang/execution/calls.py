@@ -21,7 +21,12 @@ from toolang.lang.input import (
 )
 from toolang.lang.ast import AgicDecl, Program
 from toolang.setup import AgentSetup
-from toolang.state.state import AgentState, StatePublication, state_module_caps
+from toolang.state.state import (
+    AgentState,
+    StateCap,
+    StatePublication,
+    state_module_caps,
+)
 from toolang.plugin.models.resolution import apply_model_parameters
 
 from .policy import parse_policy_prefix, resolve_commands
@@ -415,19 +420,26 @@ def prompt_definitions(
     *,
     module: str,
     program: Program,
+    caps: Sequence[StateCap] | None = None,
 ) -> dict[str, PromptDefinitionIdentity]:
+    if caps is None and isinstance(state, AgentState):
+        return {
+            prompt.name: prompt_definition_identity(prompt)
+            for prompt in program.caps
+            if prompt.kind == "prompt"
+        }
     cap_refs = {
         cap.name: cap.ref
-        for cap in state_module_caps(state, module)
+        for cap in (state_module_caps(state, module) if caps is None else caps)
         if cap.kind == "prompt"
     }
     return {
         prompt.name: prompt_definition_identity(
             prompt,
-            ref=cap_refs.get(prompt.name),
+            ref=cap_refs[prompt.name],
         )
         for prompt in program.caps
-        if prompt.kind == "prompt"
+        if prompt.kind == "prompt" and prompt.name in cap_refs
     }
 
 

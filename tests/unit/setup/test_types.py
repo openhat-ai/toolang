@@ -48,6 +48,11 @@ def test_agent_setup_has_only_effective_publication_fields() -> None:
     )
 
 
+def test_run_defaults_report_default_validation_context() -> None:
+    with pytest.raises(ValueError, match="run default model must not be empty"):
+        RunDefaults(model=" ")
+
+
 def test_agent_setup_copies_and_freezes_implementation_mappings() -> None:
     providers = {
         "openai": Provider(

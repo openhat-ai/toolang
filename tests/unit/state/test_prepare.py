@@ -356,9 +356,32 @@ def test_setup_only_config_changes_keep_state_revisions_and_artifacts(
     assert second.root_revision == first.root_revision
     assert second.home_revision == first.home_revision
     assert first_root.config == second_root.config == {}
-    assert (first_root.revision_dir / "files" / "config.toml").read_text(
-        encoding="utf-8"
-    ) == ""
+    assert not (first_root.revision_dir / "files" / "config.toml").exists()
+
+
+def test_setup_only_config_creation_and_removal_keep_state_revisions(
+    tmp_path: Path,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    layout = _layout(toolang_root)
+    first = prepare_agent_state(layout)
+    config = toolang_root / "config.toml"
+    config.write_text(
+        '[default]\nmodel = "openai/one"\n\n[allow]\nmodels = ["openai/*"]\n',
+        encoding="utf-8",
+    )
+
+    created = prepare_agent_state(layout)
+    config.unlink()
+    removed = prepare_agent_state(layout)
+
+    assert created.revision == first.revision
+    assert created.root_revision == first.root_revision
+    assert removed.revision == first.revision
+    assert removed.root_revision == first.root_revision
 
 
 def test_prepare_rebuilds_a_current_layer_from_an_older_schema(

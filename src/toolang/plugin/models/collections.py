@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from types import MappingProxyType
 from typing import Literal, cast
 
 from toolang.base.errors import ToolangError
@@ -155,25 +156,36 @@ class ModelEntry:
             raise ValueError("model entry requires a canonical ref")
 
 
+@dataclass(frozen=True, slots=True, eq=False, init=False)
 class ModelCollection:
     """Immutable effective models with one shared matcher and exact indexes."""
 
-    __slots__ = ("entries", "_by_key", "_by_ref", "_matcher")
+    entries: tuple[ModelEntry, ...]
+    _by_key: Mapping[str, ModelEntry]
+    _by_ref: Mapping[str, ModelEntry]
+    _matcher: QueryDataset[ModelQueryView]
 
     def __init__(self, entries: Sequence[ModelEntry] = ()) -> None:
         values = tuple(entries)
-        by_key = {entry.key: entry for entry in values}
-        by_ref = {entry.ref: entry for entry in values}
-        if len(by_key) != len(values):
-            raise ValueError("model collection contains duplicate entry keys")
-        if len(by_ref) != len(values):
-            raise ValueError("model collection contains duplicate public refs")
-        self.entries = values
-        self._by_key = by_key
-        self._by_ref = by_ref
-        self._matcher = MODEL_DEFINITION.dataset(
+        _validate_model_entries(values)
+        matcher = MODEL_DEFINITION.dataset(
             tuple(_model_entry_view(entry) for entry in values)
         )
+        self._initialize(values, matcher=matcher)
+
+    def _initialize(
+        self,
+        values: tuple[ModelEntry, ...],
+        *,
+        matcher: QueryDataset[ModelQueryView],
+    ) -> None:
+        _validate_model_entries(values)
+        by_key = {entry.key: entry for entry in values}
+        by_ref = {entry.ref: entry for entry in values}
+        object.__setattr__(self, "entries", values)
+        object.__setattr__(self, "_by_key", MappingProxyType(by_key))
+        object.__setattr__(self, "_by_ref", MappingProxyType(by_ref))
+        object.__setattr__(self, "_matcher", matcher)
 
     def match(
         self,
@@ -181,9 +193,13 @@ class ModelCollection:
     ) -> ModelCollection:
         """Return the stable-order subset accepted by collection queries."""
 
-        selected = self._matcher.query(queries)
-        return ModelCollection(
-            tuple(cast(ModelEntry, item.record) for item in selected)
+        if queries is None:
+            return self
+        matched = {
+            cast(ModelEntry, item.record).key for item in self._matcher.query(queries)
+        }
+        return self._derive(
+            tuple(entry for entry in self.entries if entry.key in matched)
         )
 
     def apply(
@@ -192,9 +208,24 @@ class ModelCollection:
     ) -> ModelCollection:
         """Apply set operations against this immutable collection base."""
 
-        selected = self._matcher.apply(operations)
-        return ModelCollection(
-            tuple(cast(ModelEntry, item.record) for item in selected)
+        if not operations:
+            return self
+        available = set(self._by_key)
+        active = set(available)
+        for operator, query in operations:
+            matched = {
+                cast(ModelEntry, item.record).key for item in self._matcher.query(query)
+            } & available
+            if operator == "=":
+                active.intersection_update(matched)
+            elif operator == "+=":
+                active.update(matched)
+            elif operator == "-=":
+                active.difference_update(matched)
+            else:  # pragma: no cover - SetOperator is a closed vocabulary
+                raise ToolangError(f"unknown collection set operator: {operator!r}")
+        return self._derive(
+            tuple(entry for entry in self.entries if entry.key in active)
         )
 
     def resolve(self, ref: str) -> ModelEntry:
@@ -216,7 +247,12 @@ class ModelCollection:
     def subset(self, keys: Sequence[str]) -> ModelCollection:
         """Resolve an ordered persisted-key subset without interpreting queries."""
 
-        return ModelCollection(tuple(self.entry(key) for key in keys))
+        return self._derive(tuple(self.entry(key) for key in keys))
+
+    def compact(self) -> ModelCollection:
+        """Fix this subset as a standalone publication matcher."""
+
+        return ModelCollection(self.entries)
 
     def contains(self, ref: str) -> bool:
         """Return whether one exact public ref is available."""
@@ -241,6 +277,20 @@ class ModelCollection:
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, ModelCollection) and self.entries == other.entries
+
+    def _derive(self, entries: tuple[ModelEntry, ...]) -> ModelCollection:
+        if entries == self.entries:
+            return self
+        derived = object.__new__(ModelCollection)
+        derived._initialize(entries, matcher=self._matcher)
+        return derived
+
+
+def _validate_model_entries(values: tuple[ModelEntry, ...]) -> None:
+    if len({entry.key for entry in values}) != len(values):
+        raise ValueError("model collection contains duplicate entry keys")
+    if len({entry.ref for entry in values}) != len(values):
+        raise ValueError("model collection contains duplicate public refs")
 
 
 @dataclass(frozen=True, slots=True)
@@ -388,7 +438,7 @@ def _catalog_model_view(
 def _model_entry_view(entry: ModelEntry) -> ModelQueryView:
     target = entry.target
     info = entry.info
-    provider, separator, model = target.ref.partition("/")
+    provider, separator, model = entry.ref.partition("/")
     if not separator or not provider or not model:
         provider, model = target.provider, target.model
     metadata = info.metadata

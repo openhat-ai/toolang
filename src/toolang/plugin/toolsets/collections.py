@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import cast
 
 from toolang.base.errors import ToolangError
@@ -72,17 +73,17 @@ class ToolEntry:
             raise ValueError("tool entry requires a canonical ref")
 
 
+@dataclass(frozen=True, slots=True, eq=False, init=False)
 class ToolCollection(Mapping[str, AgentTool]):
     """Immutable effective tools with one shared matcher and exact indexes."""
 
-    __slots__ = (
-        "entries",
-        "_by_key",
-        "_by_ref",
-        "_by_name",
-        "_matcher",
-        "_views",
-    )
+    entries: tuple[ToolEntry, ...]
+    _by_key: Mapping[str, ToolEntry]
+    _by_ref: Mapping[str, ToolEntry]
+    _by_name: Mapping[str, ToolEntry]
+    _matcher: QueryDataset[ToolQueryView]
+    _views: tuple[ToolQueryView, ...]
+    _view_by_name: Mapping[str, ToolQueryView]
 
     def __init__(
         self,
@@ -96,30 +97,29 @@ class ToolCollection(Mapping[str, AgentTool]):
             if views is not None
             else tuple(_tool_view(entry.model_name, entry.tool) for entry in values)
         )
-        if len(query_views) != len(values):
-            raise ValueError("tool collection entries and query views must align")
-        if any(
-            view.model_name != entry.model_name
-            or view.record is not entry.tool
-            or f"{view.toolset}/{view.name}" != entry.ref
-            for entry, view in zip(values, query_views, strict=True)
-        ):
-            raise ValueError("tool collection query view does not describe its entry")
+        _validate_tool_entries(values, query_views)
+        matcher = TOOL_DEFINITION.dataset(query_views)
+        self._initialize(values, query_views=query_views, matcher=matcher)
+
+    def _initialize(
+        self,
+        values: tuple[ToolEntry, ...],
+        *,
+        query_views: tuple[ToolQueryView, ...],
+        matcher: QueryDataset[ToolQueryView],
+    ) -> None:
+        _validate_tool_entries(values, query_views)
         by_key = {entry.key: entry for entry in values}
         by_ref = {entry.ref: entry for entry in values}
         by_name = {entry.model_name: entry for entry in values}
-        if len(by_key) != len(values):
-            raise ValueError("tool collection contains duplicate entry keys")
-        if len(by_ref) != len(values):
-            raise ValueError("tool collection contains duplicate public refs")
-        if len(by_name) != len(values):
-            raise ValueError("tool collection contains duplicate model-facing names")
-        self.entries = values
-        self._by_key = by_key
-        self._by_ref = by_ref
-        self._by_name = by_name
-        self._views = query_views
-        self._matcher = TOOL_DEFINITION.dataset(query_views)
+        view_by_name = {view.model_name: view for view in query_views}
+        object.__setattr__(self, "entries", values)
+        object.__setattr__(self, "_by_key", MappingProxyType(by_key))
+        object.__setattr__(self, "_by_ref", MappingProxyType(by_ref))
+        object.__setattr__(self, "_by_name", MappingProxyType(by_name))
+        object.__setattr__(self, "_views", query_views)
+        object.__setattr__(self, "_view_by_name", MappingProxyType(view_by_name))
+        object.__setattr__(self, "_matcher", matcher)
 
     @classmethod
     def from_tools(
@@ -158,9 +158,12 @@ class ToolCollection(Mapping[str, AgentTool]):
     ) -> ToolCollection:
         """Return the stable-order subset accepted by collection queries."""
 
-        selected = self._matcher.query(queries)
-        keys = {item.model_name for item in selected}
-        return self._subset(keys)
+        if queries is None:
+            return self
+        keys = {item.model_name for item in self._matcher.query(queries)}
+        return self._derive(
+            tuple(entry for entry in self.entries if entry.model_name in keys)
+        )
 
     def apply(
         self,
@@ -168,9 +171,25 @@ class ToolCollection(Mapping[str, AgentTool]):
     ) -> ToolCollection:
         """Apply set operations against this immutable collection base."""
 
-        selected = self._matcher.apply(operations)
-        keys = {item.model_name for item in selected}
-        return self._subset(keys)
+        if not operations:
+            return self
+        available = set(self._by_name)
+        active = set(available)
+        for operator, query in operations:
+            matched = {
+                item.model_name for item in self._matcher.query(query)
+            } & available
+            if operator == "=":
+                active.intersection_update(matched)
+            elif operator == "+=":
+                active.update(matched)
+            elif operator == "-=":
+                active.difference_update(matched)
+            else:  # pragma: no cover - SetOperator is a closed vocabulary
+                raise ToolangError(f"unknown collection set operator: {operator!r}")
+        return self._derive(
+            tuple(entry for entry in self.entries if entry.model_name in active)
+        )
 
     def resolve(self, ref: str) -> ToolEntry:
         """Resolve one exact public tool ref in O(1)."""
@@ -187,6 +206,30 @@ class ToolCollection(Mapping[str, AgentTool]):
         if entry is None:
             raise ToolangError(f"run tool resource is unavailable: {key}")
         return entry
+
+    def subset(self, keys: Sequence[str]) -> ToolCollection:
+        """Resolve an ordered persisted-key subset without rebuilding its matcher."""
+
+        return self._derive(tuple(self.entry(key) for key in keys))
+
+    def compact(self) -> ToolCollection:
+        """Fix this subset as a standalone publication matcher."""
+
+        return ToolCollection(self.entries, views=self._views)
+
+    def require_each(self, queries: Sequence[str], *, label: str = "tool") -> None:
+        """Require every query to match within this collection subset."""
+
+        available = set(self._by_name)
+        missing = [
+            query
+            for query in queries
+            if not any(
+                item.model_name in available for item in self._matcher.query(query)
+            )
+        ]
+        if missing:
+            raise ToolangError(f"{label} query matched no items: {', '.join(missing)}")
 
     def contains(self, ref: str) -> bool:
         return ref in self._by_ref
@@ -206,16 +249,39 @@ class ToolCollection(Mapping[str, AgentTool]):
     def __eq__(self, other: object) -> bool:
         return isinstance(other, ToolCollection) and self.entries == other.entries
 
-    def _subset(self, model_names: set[str]) -> ToolCollection:
-        indexes = tuple(
-            index
-            for index, entry in enumerate(self.entries)
-            if entry.model_name in model_names
+    def _derive(self, entries: tuple[ToolEntry, ...]) -> ToolCollection:
+        if entries == self.entries:
+            return self
+        derived = object.__new__(ToolCollection)
+        derived._initialize(
+            entries,
+            query_views=tuple(
+                self._view_by_name[entry.model_name] for entry in entries
+            ),
+            matcher=self._matcher,
         )
-        return ToolCollection(
-            tuple(self.entries[index] for index in indexes),
-            views=tuple(self._views[index] for index in indexes),
-        )
+        return derived
+
+
+def _validate_tool_entries(
+    values: tuple[ToolEntry, ...],
+    query_views: tuple[ToolQueryView, ...],
+) -> None:
+    if len(query_views) != len(values):
+        raise ValueError("tool collection entries and query views must align")
+    if any(
+        view.model_name != entry.model_name
+        or view.record is not entry.tool
+        or f"{view.toolset}/{view.name}" != entry.ref
+        for entry, view in zip(values, query_views, strict=True)
+    ):
+        raise ValueError("tool collection query view does not describe its entry")
+    if len({entry.key for entry in values}) != len(values):
+        raise ValueError("tool collection contains duplicate entry keys")
+    if len({entry.ref for entry in values}) != len(values):
+        raise ValueError("tool collection contains duplicate public refs")
+    if len({entry.model_name for entry in values}) != len(values):
+        raise ValueError("tool collection contains duplicate model-facing names")
 
 
 def tool_dataset(

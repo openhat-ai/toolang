@@ -149,6 +149,7 @@ def prepare_agic(
             run.state,
             module=run.module,
             program=program,
+            caps=caps if isinstance(run.state, StatePublication) else None,
         ),
     )
     if prompt_invocations:

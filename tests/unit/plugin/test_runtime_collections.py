@@ -10,6 +10,7 @@ from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.plugin.models.collections import ModelCollection, ModelEntry
 from toolang.plugin.toolsets.collections import ToolCollection
+from toolang.common.query import QueryDataset
 
 
 class _Tool:
@@ -98,6 +99,57 @@ def test_model_collection_owns_matching_set_operations_and_exact_indexes() -> No
         models.resolve("missing/model")
 
 
+def test_model_collection_matches_its_public_ref() -> None:
+    ref = "gateway/vendor/model"
+    info = ModelInfo(
+        ref="vendor/model",
+        provider="gateway",
+        name="model",
+        model="vendor/model",
+    )
+    entry = ModelEntry(
+        key=ref,
+        ref=ref,
+        target=ModelTarget(
+            ref="vendor/model",
+            provider="gateway",
+            name="model",
+            model="vendor/model",
+            adapter="test",
+        ),
+        info=info,
+    )
+    models = ModelCollection((entry,))
+
+    assert models.match(ref).entries == (entry,)
+
+
+def test_model_collection_subsets_reuse_the_published_matcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    alpha = _model_entry("alpha", "one")
+    beta = _model_entry("beta", "two")
+    models = ModelCollection((alpha, beta))
+
+    def fail_dataset(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("published model matcher must be reused")
+
+    monkeypatch.setattr(QueryDataset, "__init__", fail_dataset)
+
+    assert models.match("alpha/*").entries == (alpha,)
+    assert models.apply((("-=", "beta/*"),)).entries == (alpha,)
+    assert models.subset(("beta/two",)).entries == (beta,)
+
+
+def test_model_collection_public_state_is_immutable() -> None:
+    models = ModelCollection((_model_entry("alpha", "one"),))
+
+    with pytest.raises(AttributeError):
+        setattr(cast(Any, models), "entries", ())
+    with pytest.raises(TypeError):
+        cast(dict[str, object], models._by_ref)["other/model"] = object()
+
+
 def test_model_collection_keys_are_stable_and_duplicate_refs_are_rejected() -> None:
     first = ModelCollection((_model_entry("alpha", "one"), _model_entry("beta", "two")))
     rebuilt = ModelCollection(
@@ -137,6 +189,34 @@ def test_tool_collection_owns_matching_set_operations_and_exact_indexes() -> Non
     assert not tools.contains("missing/tool")
     with pytest.raises(ToolangError, match="tool ref is unavailable"):
         tools.resolve("missing/tool")
+
+
+def test_tool_collection_subsets_reuse_the_published_matcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    alpha = _Tool("alpha", "one")
+    beta = _Tool("beta", "two")
+    tools = ToolCollection.from_tools(
+        {"alpha__one": alpha, "beta__two": beta},
+    )
+
+    def fail_dataset(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("published tool matcher must be reused")
+
+    monkeypatch.setattr(QueryDataset, "__init__", fail_dataset)
+
+    assert tools.match("alpha/*").refs() == ("alpha/one",)
+    assert tools.apply((("-=", "beta/*"),)).refs() == ("alpha/one",)
+    assert tools.subset(("beta__two",)).refs() == ("beta/two",)
+
+
+def test_tool_collection_public_state_is_immutable() -> None:
+    tools = ToolCollection.from_tools({"alpha__one": _Tool("alpha", "one")})
+
+    with pytest.raises(AttributeError):
+        setattr(cast(Any, tools), "entries", ())
+    with pytest.raises(TypeError):
+        cast(dict[str, object], tools._by_ref)["other/tool"] = object()
 
 
 def test_tool_collection_keys_are_stable_and_duplicate_refs_are_rejected() -> None:

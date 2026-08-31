@@ -38,7 +38,6 @@ from toolang.setup.config import (
     load_setup_config,
     load_setup_dotenvs,
 )
-from toolang.state.state import AgentState
 from toolang.up.mounts import prepare_root_mounts
 from toolang.up.records import SandboxState
 from toolang.up.server import ServeSpec, build_serve_argv, resolve_serve
@@ -581,17 +580,6 @@ async def running(layout: AgentLayout) -> bool:
     if state is None:
         return False
     return await load_state_sandbox(layout, state).running(state.ref)
-
-
-def _select_sandbox(
-    state: AgentState,
-    *,
-    explicit: str | None,
-) -> tuple[str, dict[str, object]]:
-    return _select_sandbox_configs(
-        (state.root_config, state.home_config),
-        explicit=explicit,
-    )
 
 
 def _select_sandbox_configs(

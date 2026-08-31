@@ -120,7 +120,7 @@ def scan_source(
     *,
     project_configs: bool = False,
 ) -> SourceTree:
-    """Capture selected paths below one base without reading file contents."""
+    """Capture selected paths and project owned config semantics."""
 
     children: list[SourceNode] = []
     for value in sorted(set(paths)):
@@ -130,13 +130,19 @@ def scan_source(
         path = base / relative
         if not path.exists():
             continue
-        children.append(
-            _scan_node(
-                path,
-                name=value,
-                project_config=project_configs and relative == Path("config.toml"),
-            )
+        node = _scan_node(
+            path,
+            name=value,
+            project_config=project_configs and relative == Path("config.toml"),
         )
+        if (
+            project_configs
+            and relative == Path("config.toml")
+            and node.digest is not None
+            and node.size == 0
+        ):
+            continue
+        children.append(node)
     return SourceTree(
         root=SourceNode(
             name=".",
@@ -495,6 +501,8 @@ def _collect_file(
     content = path.read_bytes()
     if category == "config":
         content = canonical_state_config(content)
+        if not content:
+            return []
     stat = path.stat()
     return [
         SourceFile(

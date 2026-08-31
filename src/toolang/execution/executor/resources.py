@@ -17,8 +17,7 @@ from toolang.execution.types import (
 )
 from toolang.lang.ast import AgicDecl, Directive, FlowDecl
 from toolang.plugin.models.collections import ModelCollection
-from toolang.plugin.toolsets.loading import query_tools, validate_tool_queries
-from toolang.plugin.toolsets.collections import tool_dataset
+from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.registry import (
     tool_ref_for_model_tool,
 )
@@ -113,9 +112,17 @@ def apply_agent_ceiling(
     else:
         models = setup.models.subset(resources.models).match(ceiling.models)
 
-    available_tools = resource_tools(setup, resources)
-    validate_tool_queries(dict(available_tools), ceiling.tools)
-    tools = query_tools(dict(available_tools), ceiling.tools)
+    available_tools = _resource_tool_collection(setup, resources)
+    if ceiling.tools is None:
+        tools = available_tools
+    elif not ceiling.tools:
+        tools = ToolCollection()
+    else:
+        try:
+            available_tools.require_each(ceiling.tools)
+        except ToolangError as error:
+            raise ValueError(str(error)) from error
+        tools = available_tools.match(ceiling.tools)
 
     caps = resource_caps(state, resources, module=module)
     caps = _apply_cap_ceiling(
@@ -175,11 +182,11 @@ def resolve_runnable_resources(
     else:
         models = selection.subset(base.models)
 
-    available_tools = resource_tools(setup, base)
-    selected_tools = tool_dataset(available_tools).apply(
+    available_tools = _resource_tool_collection(setup, base)
+    selected_tools = available_tools.apply(
         _query_operations(_directives(runnable, "tools"))
     )
-    tools = {item.model_name: cast(AgentTool, item.record) for item in selected_tools}
+    tools = dict(selected_tools)
 
     available_caps = resource_caps(state, base, module=module)
     selected_cap_ids: set[tuple[str, str, str]] = {
@@ -234,20 +241,25 @@ def resource_tools(
 ) -> Mapping[str, AgentTool]:
     """Resolve stable tool identities against the current immutable setup."""
 
-    result: dict[str, AgentTool] = {}
+    return dict(_resource_tool_collection(setup, resources))
+
+
+def _resource_tool_collection(
+    setup: AgentSetup,
+    resources: AgentResources,
+) -> ToolCollection:
+    keys: list[str] = []
     for item in resources.tools:
-        tool = setup.tools.get(item.model_name)
-        if tool is None:
-            raise ToolangError(f"run tool resource is unavailable: {item.model_name}")
-        ref = tool_ref_for_model_tool(item.model_name, tool)
+        entry = setup.tools.entry(item.model_name)
+        ref = tool_ref_for_model_tool(item.model_name, entry.tool)
         if (ref.plugin, ref.toolset, ref.name) != (
             item.plugin,
             item.toolset,
             item.name,
         ):
             raise ToolangError(f"run tool resource changed: {item.model_name}")
-        result[item.model_name] = tool
-    return result
+        keys.append(entry.key)
+    return setup.tools.subset(keys)
 
 
 def resource_caps(

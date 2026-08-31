@@ -88,7 +88,7 @@ implements the `Sandbox` lifecycle. Current implementations are:
 Selectors use `name[:spec]`. Generic orchestration selects the plugin by name
 and passes the remaining spec unchanged to that implementation. Future drivers
 may use a cloud host. `RunExecutor` receives an `AgentSetup` and an immutable
-`AgentState` and does not know where its process is hosted.
+`StatePublication` and does not know where its process is hosted.
 
 `SandboxState` persists only the control-side workload reference required by a
 later `stop` command. AgentServer status and execution data remain separate.

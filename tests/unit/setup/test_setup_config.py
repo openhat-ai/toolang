@@ -103,7 +103,7 @@ def test_setup_policy_overlays_root_agent_and_frozen_overrides() -> None:
 
     assert resolve_setup_allow(
         (root, agent),
-        overrides={"models": ("local/*",), "services": None},
+        overrides={"models": ("local/*",)},
     ) == AgentCeiling(
         models=("local/*",),
     )
@@ -161,6 +161,8 @@ def test_setup_policy_rejects_unknown_and_invalid_fields() -> None:
         resolve_setup_allow(({"allow": {"models": ["all,openai/*"]}},))
     with pytest.raises(ValueError, match="unknown allow field: caps"):
         resolve_setup_allow(({"allow": {"caps": ["skill/reviewer"]}},))
+    with pytest.raises(ValueError, match="unknown Setup allow override: services"):
+        resolve_setup_allow((), overrides={"services": None})
 
 
 def test_setup_policy_validates_owned_collection_queries() -> None:
@@ -168,6 +170,19 @@ def test_setup_policy_validates_owned_collection_queries() -> None:
         resolve_setup_allow(({"allow": {"models": ["*[missing=value]"]}},))
     with pytest.raises(ValueError, match="invalid default runnable ref"):
         resolve_run_defaults(({"default": {"runnable": "*[missing=value]"}},))
+
+
+def test_setup_policy_ignores_state_owned_allow_value_syntax() -> None:
+    assert resolve_setup_allow(
+        (
+            {
+                "allow": {
+                    "models": ["openai/*"],
+                    "skills": "State validates this value",
+                }
+            },
+        )
+    ) == AgentCeiling(models=("openai/*",))
 
 
 def test_setup_policy_all_and_none_are_standalone_layer_values() -> None:

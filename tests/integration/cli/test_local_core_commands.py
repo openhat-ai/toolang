@@ -2450,6 +2450,46 @@ def test_agent_info_builds_state_and_setup_without_server(
     assert "stopped" in result.stdout
 
 
+def test_agent_info_reports_only_state_published_caps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "toolang"
+    LocalAgents(root / "agents").create(
+        "alice",
+        content=templates.render_template("agent", agent_name="alice", name="alice"),
+    )
+    prompts = root / "prompts"
+    prompts.mkdir()
+    (prompts / "one.md").write_text("One.\n", encoding="utf-8")
+    (prompts / "two.md").write_text("Two.\n", encoding="utf-8")
+    (root / "config.toml").write_text(
+        '[allow]\nprompts = ["prompt/one"]\n',
+        encoding="utf-8",
+    )
+
+    class _SetupWatcher:
+        def __init__(self, layout: AgentLayout) -> None:
+            self.layout = layout
+
+        async def refresh(self) -> AgentSetup:
+            return AgentSetup(
+                layout=self.layout,
+                providers={},
+                adapters={},
+                models=ModelCollection(),
+                tools=ToolCollection(),
+                envs={},
+            )
+
+    monkeypatch.setattr(agent_commands, "SetupWatcher", _SetupWatcher)
+
+    result = _invoke(root, "info", "alice")
+
+    assert result.exit_code == 0
+    assert "1 prompt" in strip_ansi(result.stdout)
+
+
 def test_roaming_agent_info_uses_the_source_layout(
     tmp_path: Path,
     monkeypatch,

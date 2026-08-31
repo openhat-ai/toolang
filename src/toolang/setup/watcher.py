@@ -225,10 +225,10 @@ class SetupWatcher:
                 provider_configs=provider_configs,
             )
             if allow.models is not None:
-                models = models.match(allow.models)
+                models = models.match(allow.models).compact()
             tools = ToolCollection.from_tools(self._tools)
             if allow.tools is not None:
-                tools = tools.match(allow.tools)
+                tools = tools.match(allow.tools).compact()
             if defaults.model is not None:
                 models.resolve(defaults.model)
             provider_models: dict[str, set[str]] = {}

@@ -97,6 +97,7 @@ from .common import (
 )
 from .resources import (
     apply_agent_ceiling,
+    resource_caps,
     resolve_agent_resources,
     resolve_runnable_resources,
     snapshot_model_selection,
@@ -2798,6 +2799,7 @@ def _prepare_run_spec(
         state=spec.state,
         module=module,
     )
+    _validate_prompt_invocations(spec, resources, module=module)
     if spec.model_request is None:
         validate_model_binding(
             selection,
@@ -2816,6 +2818,24 @@ def _prepare_run_spec(
         target = entry.target
         apply_model_parameters(selection, target, spec.model_request.parameters)
     return runnable, input, agent_resources, resources
+
+
+def _validate_prompt_invocations(
+    spec: RunSpec,
+    resources: AgentResources,
+    *,
+    module: str,
+) -> None:
+    if not isinstance(spec.state, StatePublication) or not spec.prompt_invocations:
+        return
+    available = {
+        cap.ref
+        for cap in resource_caps(spec.state, resources, module=module)
+        if cap.kind == "prompt"
+    }
+    for invocation in spec.prompt_invocations:
+        if invocation.cap_ref not in available:
+            raise ToolangError(f"prompt is outside run resources: {invocation.name}")
 
 
 def _setup_sandbox(setup: AgentSetup) -> str:

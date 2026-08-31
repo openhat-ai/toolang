@@ -354,6 +354,8 @@ def test_setup_watcher_publishes_only_effective_resources_and_policy(
 
     assert setup.models.refs() == ("test/one",)
     assert setup.tools.refs() == ("alpha/one",)
+    assert len(setup.models._matcher.items) == 1
+    assert len(setup.tools._matcher.items) == 1
     assert tuple(setup.providers) == ("test",)
     assert tuple(setup.providers["test"].models) == ("one",)
     assert setup.defaults.model == "test/one"

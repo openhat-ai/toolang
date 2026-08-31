@@ -37,8 +37,10 @@ class _Tool:
         self.toolset = toolset
         self.name = f"{toolset}__{name}"
         self.plugin_name = toolset
+        self.definition_calls = 0
 
     def definition(self) -> ToolDefinition:
+        self.definition_calls += 1
         return ToolDefinition(
             name=self.name,
             description=self.name,
@@ -120,6 +122,30 @@ def test_agent_resources_never_filter_setup_snapshot(tmp_path: Path) -> None:
     with pytest.raises(TypeError):
         cast(Any, alpha.tools)["beta__two"] = setup.tools["beta__two"]
     assert AgentResources.from_data(alpha.to_data()) == alpha
+
+
+def test_runtime_tool_narrowing_reuses_setup_collection_matcher(tmp_path: Path) -> None:
+    setup, state, selection = _snapshots(tmp_path)
+    tools = tuple(cast(_Tool, tool) for tool in setup.tools.values())
+    initial_definition_calls = tuple(tool.definition_calls for tool in tools)
+    agent = resolve_agent_resources(setup, state, AgentCeiling())
+
+    narrowed = apply_agent_ceiling(
+        setup,
+        state,
+        agent,
+        AgentCeiling(tools=("alpha/*",)),
+    )
+    resolved = resolve_runnable_resources(
+        selection,
+        runnable=AgicDecl(name="worker", span=Span(line=1)),
+        base=narrowed,
+        setup=setup,
+        state=state,
+    )
+
+    assert tuple(item.model_name for item in resolved.tools) == ("alpha__one",)
+    assert tuple(tool.definition_calls for tool in tools) == initial_definition_calls
 
 
 def test_agent_model_default_is_the_selected_candidate_concrete_ref(

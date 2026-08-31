@@ -29,7 +29,8 @@ _CAP_KIND_BY_FIELD = {
     "services": "service",
     "prompts": "prompt",
 }
-_ALLOW_FIELDS = frozenset({"models", "tools", *_CAP_KIND_BY_FIELD})
+_SETUP_ALLOW_FIELDS = frozenset({"models", "tools"})
+_KNOWN_ALLOW_FIELDS = frozenset({*_SETUP_ALLOW_FIELDS, *_CAP_KIND_BY_FIELD})
 _DEFAULT_FIELDS = frozenset({"model", "runnable"})
 _LIMIT_FIELDS = frozenset(
     {
@@ -119,15 +120,17 @@ def resolve_setup_allow(
         raw_allow = _table(config, "allow")
         if raw_allow is None:
             continue
-        _reject_unknown(raw_allow, _ALLOW_FIELDS, "allow field")
-        for name, value in raw_allow.items():
-            normalized = _query_values(str(name), value)
+        _reject_unknown(raw_allow, _KNOWN_ALLOW_FIELDS, "allow field")
+        for name in ("models", "tools"):
+            if name not in raw_allow:
+                continue
+            normalized = _query_values(name, raw_allow[name])
             if normalized is None:
-                fields.pop(str(name), None)
+                fields.pop(name, None)
             else:
-                fields[str(name)] = normalized
+                fields[name] = normalized
     resolved_overrides = overrides or {}
-    _reject_unknown(resolved_overrides, _ALLOW_FIELDS, "allow field")
+    _reject_unknown(resolved_overrides, _SETUP_ALLOW_FIELDS, "Setup allow override")
     for name, value in resolved_overrides.items():
         normalized = None if value is None else _query_values(name, value)
         if normalized is None:

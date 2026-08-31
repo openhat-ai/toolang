@@ -14,6 +14,7 @@ from toolang.execution.runnables import (
     resolve_public_runnable_query,
     runnable_binding_defaults,
 )
+from toolang.execution.calls import prompt_definitions
 from toolang.execution.schemas import ThreadInfo
 from toolang.execution.types import ModelStepNoted
 from toolang.execution.executor.resources import (
@@ -107,6 +108,8 @@ async def prompt_completions(
         module = resolve_public_runnable_query(state, selected).module
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    program = state_program(state, module)
+    available_prompts = prompt_definitions(state, module=module, program=program)
     return {
         "items": [
             {
@@ -116,8 +119,8 @@ async def prompt_completions(
                     for parameter in prompt.params
                 ],
             }
-            for prompt in state_program(state, module).caps
-            if prompt.kind == "prompt"
+            for prompt in program.caps
+            if prompt.kind == "prompt" and prompt.name in available_prompts
         ]
     }
 

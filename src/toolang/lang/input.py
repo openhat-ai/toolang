@@ -269,7 +269,7 @@ def resolve_input_parts_with_provenance(
         values=values or {},
         types=types or {},
         include=include,
-        prompt_definitions=prompt_definitions or {},
+        prompt_definitions=prompt_definitions,
         invocations=invocations,
         parent_invocation=None,
         prompt_stack=(),
@@ -485,7 +485,7 @@ def _resolve_parts_body(
     values: Mapping[str, object],
     types: Mapping[str, str],
     include: IncludeResolver | None,
-    prompt_definitions: Mapping[str, PromptDefinitionIdentity],
+    prompt_definitions: Mapping[str, PromptDefinitionIdentity] | None,
     invocations: list[PromptInvocation],
     parent_invocation: int | None,
     prompt_stack: tuple[str, ...],
@@ -539,9 +539,12 @@ def _resolve_parts_body(
                 raw_args=call.raw_args,
                 prompt_stack=prompt_stack,
             )
-            identity = prompt_definitions.get(
-                prompt_name
-            ) or prompt_definition_identity(prompt)
+            if prompt_definitions is None:
+                identity = prompt_definition_identity(prompt)
+            else:
+                identity = prompt_definitions.get(prompt_name)
+                if identity is None:
+                    raise ToolangError(f"Prompt is unavailable: {prompt_name}")
             invocation_index = len(invocations)
             invocations.append(
                 PromptInvocation(
@@ -684,7 +687,7 @@ def _resolve_prompt_parts(
     bindings: Mapping[str, str],
     input: tuple[Part, ...],
     include: IncludeResolver | None,
-    prompt_definitions: Mapping[str, PromptDefinitionIdentity],
+    prompt_definitions: Mapping[str, PromptDefinitionIdentity] | None,
     invocations: list[PromptInvocation],
     parent_invocation: int,
     prompt_stack: tuple[str, ...],

@@ -19,7 +19,7 @@ from toolang.up import process as agents
 from toolang.catalog import templates
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.prepare import prepare_agent_state
-from toolang.state.state import AgentState
+from toolang.state.state import AgentState, StatePublication, publish_state_resources
 from ...common.context import (
     ModelCatalogOption,
     cli_context,
@@ -184,7 +184,6 @@ def info_agent(
         (
             "Models",
             _models_summary(
-                state,
                 setup,
                 runtime_state=runtime_state,
                 running=status.status != "stopped",
@@ -215,12 +214,13 @@ def info_agent(
     echo_pairs_table(rows, avatar=agent_avatar(), title=agent_name.upper())
 
 
-def _caps_summary(state: AgentState) -> str:
+def _caps_summary(state: StatePublication) -> str:
+    caps = state.caps_for("agent")
     counts = {
-        "psyches": len(state.psyches),
-        "skills": len(state.skills),
-        "services": len(state.services),
-        "prompts": len(state.prompts),
+        "psyches": sum(item.kind == "psyche" for item in caps),
+        "skills": sum(item.kind == "skill" for item in caps),
+        "services": sum(item.kind == "service" for item in caps),
+        "prompts": sum(item.kind == "prompt" for item in caps),
     }
     singular = {
         "psyches": "psyche",
@@ -234,11 +234,11 @@ def _caps_summary(state: AgentState) -> str:
     )
 
 
-def _prepare_state(layout: AgentLayout) -> AgentState:
+def _prepare_state(layout: AgentLayout) -> StatePublication:
     progress = make_cli_progress()
     try:
         with progress:
-            return cast(
+            state = cast(
                 AgentState,
                 user_call(
                     prepare_agent_state,
@@ -246,6 +246,7 @@ def _prepare_state(layout: AgentLayout) -> AgentState:
                     progress=progress.sink,
                 ),
             )
+            return publish_state_resources(state, agent_name=layout.name)
     except Exception as exc:
         if progress.failure_stage is not None:
             raise click.ClickException(progress.failure_message(exc)) from exc
@@ -263,7 +264,6 @@ def _jobs_summary(layout: AgentLayout) -> str:
 
 
 def _models_summary(
-    state: AgentState,
     setup: AgentSetup,
     *,
     runtime_state: dict[str, object],
@@ -279,7 +279,6 @@ def _models_summary(
         )
     rows = plugin.model_rows(
         setup,
-        config_layers=(state.root_config, state.home_config),
         model_queries=queries or None,
     )
     provider_count = len({provider for _model, provider, _detail in rows})

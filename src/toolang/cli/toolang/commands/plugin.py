@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated
 
@@ -101,12 +101,10 @@ def _list_plugins(*, group: str, header: str, empty_message: str) -> None:
 def model_rows(
     setup: AgentSetup,
     *,
-    config_layers: Sequence[Mapping[str, object]],
     model_queries: Sequence[str] | None = None,
 ) -> list[tuple[str, str, str]]:
     from toolang.plugin.models.views import model_target_profile
 
-    del config_layers
     models = setup.models.match(model_queries) if model_queries else setup.models
     return [
         (
