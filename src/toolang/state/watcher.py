@@ -59,6 +59,7 @@ class StateWatcher:
         layout: AgentLayout,
         *,
         allow_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
+        initial_state: AgentState | None = None,
     ) -> None:
         self.layout = layout
         unknown_overrides = sorted(
@@ -75,7 +76,9 @@ class StateWatcher:
         self._checked_home_source: SourceTree | None = None
         self._checked_layer_revisions: tuple[str | None, str | None] | None = None
         try:
-            state = load_agent_state(layout)
+            state = (
+                initial_state if initial_state is not None else load_agent_state(layout)
+            )
             root_source = load_layer_source(
                 layout,
                 "root",
@@ -87,7 +90,8 @@ class StateWatcher:
                 state.home_revision,
             )
         except (FileNotFoundError, KeyError, TypeError, ValueError):
-            pass
+            if initial_state is not None:
+                self._publication = self._publish(initial_state)
         else:
             self._publication = self._publish(state)
             self._checked_root_source = root_source

@@ -6,6 +6,21 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 
+def is_concrete_model_ref(value: str) -> bool:
+    """Return whether a selection is already one unambiguous model ref."""
+
+    text = value.strip()
+    provider, separator, model = text.partition("/")
+    return bool(
+        text == value
+        and separator
+        and provider
+        and model
+        and not any(character.isspace() for character in text)
+        and not any(character in text for character in '*?[],;()"')
+    )
+
+
 def materialize_model_selection(
     payload: Mapping[str, Any],
     selection: str,

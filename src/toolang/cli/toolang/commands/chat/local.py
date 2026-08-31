@@ -146,7 +146,7 @@ class LocalChatSession:
         }
 
     def list_runnables(self, kind: str) -> Mapping[str, Any]:
-        state = self._submit(self.state_watcher.refresh()).result()
+        state = self.state_watcher.current()
         default_ref = self.initial_setting().runnable
         default_name, default_kind = (
             parse_runnable_ref(default_ref) if default_ref is not None else (None, None)
@@ -173,7 +173,7 @@ class LocalChatSession:
         raise ValueError(f"unknown runnable kind: {kind}")
 
     def list_prompts(self, runnable: str | None) -> Mapping[str, Any]:
-        state = self._submit(self.state_watcher.refresh()).result()
+        state = self.state_watcher.current()
         selected = runnable or self.initial_setting().runnable
         if selected is None:  # pragma: no cover - initialization invariant
             raise RuntimeError("chat has no default runnable")
@@ -307,8 +307,10 @@ class LocalChatSession:
     async def _initialize(self) -> None:
         self.executor.start()
         await self.run_client.connect()
-        state = await self.state_watcher.refresh()
-        setup = await self.setup_watcher.refresh()
+        state, setup = await asyncio.gather(
+            self.state_watcher.refresh(),
+            self.setup_watcher.refresh(),
+        )
         validate_agent_ceiling(setup, state, AgentCeiling())
         self._surface = self._current_session_setting(setup=setup, state=state)
         if self._stop_signal is None:
@@ -352,7 +354,7 @@ class LocalChatSession:
     def _current_session_setting(
         *, setup: AgentSetup, state: AgentState | StatePublication
     ) -> SessionSetting:
-        model, _targets = agent_model_targets(setup, AgentCeiling())
+        model = setup.defaults.model
         runnable = setup.defaults.runnable
         if runnable is None:
             default_agic, default_flow = runnable_binding_defaults(

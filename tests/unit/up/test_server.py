@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 from toolang.cli.common.policy import (
     resolve_default_overrides,
@@ -9,7 +11,35 @@ from toolang.cli.common.policy import (
     resolve_limit_overrides,
 )
 from toolang.common.layout import AgentLayout
+from toolang.up import server
 from toolang.up.server import build_serve_argv, resolve_serve
+
+
+def test_server_initializes_setup_and_state_once_concurrently() -> None:
+    entered: set[str] = set()
+    release = asyncio.Event()
+
+    class Watcher:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.calls = 0
+
+        async def refresh(self) -> None:
+            self.calls += 1
+            entered.add(self.name)
+            if entered == {"setup", "state"}:
+                release.set()
+            await release.wait()
+
+    setup = Watcher("setup")
+    state = Watcher("state")
+
+    asyncio.run(
+        server._refresh_core(SimpleNamespace(setup=setup, state=state))  # type: ignore[arg-type]
+    )
+
+    assert setup.calls == 1
+    assert state.calls == 1
 
 
 def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:

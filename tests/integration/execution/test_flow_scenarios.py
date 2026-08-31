@@ -18,14 +18,17 @@ from tests.support.execution_harness import (
     ExecutionHarness,
     RecordingTool,
     RecordingRunTracer,
+    ScriptedModelAdapter,
     ScriptedModelTurn,
 )
 from toolang.base.types.message import Message, TextPart, message_text
-from toolang.base.types.policy import RunDefaults
+from toolang.base.types.model import ModelRequest
+from toolang.base.types.policy import RunDefaults, RunPolicy
 from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.execution.events import RunBegin, RunEnd
-from toolang.execution.executor import RunLimits
+from toolang.execution.executor import RunExecutor, RunLimits
 from toolang.execution.history import RunHistory
+from toolang.execution.schemas import RunRequest, RunnableRequest
 from toolang.execution.records import (
     RerunControlPayload,
     RetryControlPayload,
@@ -44,7 +47,7 @@ from toolang.execution.types import (
     Pointer,
     TypedPointer,
 )
-from toolang.lang.input import resolve_input_parts
+from toolang.lang.input import RunnableInputRaw, resolve_input_parts
 from toolang.lang.types import Array
 from toolang.state.prepare import prepare_agent_state
 
@@ -185,6 +188,84 @@ flow relay(_: Part[]) -> Part[]:
                 child.id,
                 f"{child.id}.0",
             ]
+
+    asyncio.run(scenario())
+
+
+def test_root_run_retains_captured_setup_for_child_runs(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic echo(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow relay(_: Part[]) -> Part[]:
+  run echo
+""",
+        responses=[ModelCallResult(message=Message.assistant("first"))],
+    )
+    second_adapter = ScriptedModelAdapter(
+        [ModelCallResult(message=Message.assistant("second"))]
+    )
+    second_setup = replace(
+        harness.setup,
+        adapters={second_adapter.name: second_adapter},
+    )
+    current_setup = [harness.setup]
+    executor = RunExecutor(
+        harness.store,
+        harness.ids,
+        setup=lambda: current_setup[0],
+        state=lambda: harness.state,
+        load_state=lambda _revision: harness.state,
+    )
+
+    async def scenario() -> None:
+        executor.start()
+        try:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            first = executor.run(
+                RunRequest(
+                    thread_id=thread,
+                    request_id="term_first",
+                    runnable=RunnableRequest(
+                        "flow:relay",
+                        RunnableInputRaw(_="hello"),
+                    ),
+                    model=ModelRequest("test/scripted"),
+                    policy=RunPolicy(),
+                )
+            )
+            current_setup[0] = second_setup
+
+            first_record = await first
+            second_record = await executor.run(
+                RunRequest(
+                    thread_id=thread,
+                    request_id="term_second",
+                    runnable=RunnableRequest(
+                        "agic:echo",
+                        RunnableInputRaw(_="hello"),
+                    ),
+                    model=ModelRequest("test/scripted"),
+                    policy=RunPolicy(),
+                )
+            )
+
+            assert harness.store.run_output(run_id=first_record.id) == (
+                TextPart("first"),
+            )
+            assert harness.store.run_output(run_id=second_record.id) == (
+                TextPart("second"),
+            )
+            assert len(harness.adapter.invocations) == 1
+            assert len(second_adapter.invocations) == 1
+        finally:
+            await executor.stop()
+            harness.store.close()
 
     asyncio.run(scenario())
 

@@ -33,6 +33,9 @@ class _Snapshot:
     def current(self) -> Any:
         return self.value
 
+    async def refresh(self) -> object:
+        raise AssertionError("ordinary API requests must not refresh publications")
+
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
 _HOST_DESCRIPTION = "macOS 27.0 arm64"

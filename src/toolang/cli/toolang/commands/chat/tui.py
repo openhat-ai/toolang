@@ -381,10 +381,18 @@ class ChatTuiApp:
                 await self.dispatcher_task
 
     def _model_label(self) -> str:
-        try:
-            return slashes.chat_model_label(self.client.list_models(), self.setting)
-        except (click.ClickException, ToolangError, ValueError):
-            return self.setting.model.ref if self.setting.model is not None else "none"
+        model = self.setting.model
+        if model is None:
+            return "none"
+        reasoning = model.parameters.reasoning
+        if reasoning is None:
+            return model.ref
+        value = (
+            reasoning.effort
+            if reasoning.effort is not None
+            else str(reasoning.budget_tokens)
+        )
+        return f"{model.ref} · {value}"
 
     def _runnable_label(
         self,
@@ -392,15 +400,9 @@ class ChatTuiApp:
     ) -> str:
         current = self.setting if setting is None else setting
         reference = current.runnable
-        payload: Mapping[str, object] = {}
-        if reference is None or ":" not in reference:
-            try:
-                payload = self.client.list_runnables("runnable")
-            except (click.ClickException, ToolangError, ValueError):
-                pass
         if reference is None:
-            reference = as_text(payload.get("default")) or "agic:default"
-        return _qualified_runnable_label(reference, payload)
+            return "none"
+        return _qualified_runnable_label(reference, {})
 
     def _status_labels(self) -> tuple[str, str]:
         return self._runnable_label(), self._model_label()

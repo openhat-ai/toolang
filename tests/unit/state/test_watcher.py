@@ -20,6 +20,28 @@ def test_current_requires_initial_refresh(tmp_path: Path) -> None:
         watcher.current()
 
 
+def test_watcher_publishes_a_prepared_initial_state_without_reloading_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    layout = AgentLayout.resident(toolang_root, "alice")
+    durable = prepare_agent_state(layout)
+
+    monkeypatch.setattr(
+        state_watcher,
+        "load_agent_state",
+        lambda _layout: pytest.fail("prepared initial State must not be reloaded"),
+    )
+
+    watcher = state_watcher.StateWatcher(layout, initial_state=durable)
+
+    assert watcher.current().state is durable
+
+
 def test_timeout_check_recovers_change_before_watch_registration(
     tmp_path: Path,
     monkeypatch,

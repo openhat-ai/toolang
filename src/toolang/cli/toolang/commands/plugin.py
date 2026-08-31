@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -15,10 +13,12 @@ from ...common.query import query_items
 from toolang.common.layout import AgentLayout
 from toolang.common.query import QueryDataset
 from toolang.plugin.toolsets.collections import (
+    ToolCollection,
     ToolQueryView,
     tool_dataset,
 )
-from toolang.setup import AgentSetup, SetupWatcher
+from toolang.setup import AgentSetup
+from toolang.setup.tools import load_setup_tools
 from toolang.plugin.loading import list_plugin_infos
 
 channel_app = typer.Typer(
@@ -41,8 +41,7 @@ def list_tools(
         ),
     ] = None,
 ) -> None:
-    setup = _setup(_layout(ctx))
-    dataset = setup_tool_dataset(setup)
+    dataset = _tool_dataset(load_setup_tools(_layout(ctx)))
     selected = query_items(dataset, query)
     if not selected:
         typer.echo("No tools matched query." if query else "No tools found.")
@@ -119,18 +118,14 @@ def model_rows(
 def setup_tool_dataset(setup: AgentSetup) -> QueryDataset[ToolQueryView]:
     """Return the schema-owned tool query and display dataset for one setup."""
 
+    return _tool_dataset(setup.tools)
+
+
+def _tool_dataset(tools: ToolCollection) -> QueryDataset[ToolQueryView]:
     return tool_dataset(
-        setup.tools,
+        tools,
         plugin_sources=plugin_sources("toolang.toolset"),
     )
-
-
-def _setup(
-    layout: AgentLayout,
-    *,
-    model_catalog: Path | None = None,
-) -> AgentSetup:
-    return asyncio.run(SetupWatcher(layout, model_catalog=model_catalog).refresh())
 
 
 def _layout(ctx: typer.Context) -> AgentLayout:

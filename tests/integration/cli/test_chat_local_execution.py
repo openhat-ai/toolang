@@ -227,6 +227,8 @@ agic chat(_: Part[]) -> Part[]:
         harness.state,
         agent_name=harness.setup.layout.name,
     )
+    setup_refreshes = 0
+    state_refreshes = 0
 
     class SetupWatcher:
         def __init__(self, _layout: object, **_kwargs: object) -> None:
@@ -236,7 +238,9 @@ agic chat(_: Part[]) -> Part[]:
             return harness.setup
 
         async def refresh(self, *, force: bool = False):
+            nonlocal setup_refreshes
             del force
+            setup_refreshes += 1
             return harness.setup
 
         async def run(self, *, stop_signal: asyncio.Event) -> None:
@@ -250,7 +254,9 @@ agic chat(_: Part[]) -> Part[]:
             return self.state
 
         async def refresh(self, *, force: bool = False):
+            nonlocal state_refreshes
             del force
+            state_refreshes += 1
             return self.state
 
         async def refresh_result(self, *, force: bool = False):
@@ -284,6 +290,11 @@ agic chat(_: Part[]) -> Part[]:
             sandbox_selector="host",
             sandbox_detail="macOS 27.0 arm64",
         )
+        assert session.list_runnables("agic") == {
+            "default": "chat",
+            "items": [{"name": "chat"}, {"name": "default"}],
+        }
+        assert session.list_prompts(None) == {"items": []}
         thread_id = session.create_thread()
         request = session.build_request(
             thread_id,
@@ -317,6 +328,8 @@ agic chat(_: Part[]) -> Part[]:
             TextPart("hello back"),
         )
         assert harness.adapter.invocations[0].call.messages == [Message.user("hello")]
+        assert setup_refreshes == 1
+        assert state_refreshes == 1
         assert set(event_threads) == {session._thread.ident}
         assert threading.get_ident() != session._thread.ident
     finally:

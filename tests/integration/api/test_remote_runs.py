@@ -52,6 +52,9 @@ class _Snapshot:
             raise ValueError(f"snapshot revision not found: {revision}")
         return self.value
 
+    async def refresh(self) -> object:
+        raise AssertionError("run request boundaries must not refresh publications")
+
 
 def _authored_request(
     thread_id: str,
