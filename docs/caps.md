@@ -206,7 +206,7 @@ as `env: API_TOKEN, ANOTHER_ENV_VAR`.
 
 ## Effective Cap Set
 
-`AgentState` captures one complete effective capability set. State
+`AgentState` captures the complete durable capability set. State
 preparation:
 
 1. collects root and home definitions
@@ -214,11 +214,13 @@ preparation:
 3. materializes runtime-ready artifacts when needed
 4. selects the winning definition for each `(kind, name)`
 
-At root-run start, the `psyches`, `skills`, `services`, and `prompts` fields in
-`AgentSetup.ceiling` narrow that captured set into tree-level
-`AgentResources`. Request-level ceilings preserve the same four boundaries.
-Flow and agic directives may narrow the result further, but cannot restore caps
-outside the agent resources.
+`StateWatcher` applies the configured and startup `psyches`, `skills`,
+`services`, and `prompts` allow fields once and publishes the resulting
+per-module collections in `StatePublication.resources`. Root-run preparation
+copies concrete cap identities into tree-level `AgentResources`.
+Request-level ceilings preserve the same four boundaries. Flow and agic
+directives may narrow the result further, but cannot restore caps outside the
+published resources.
 
 
 ## HTTP API

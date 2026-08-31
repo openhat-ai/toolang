@@ -24,7 +24,7 @@ from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.cli.common.policy import (
-    resolve_binding_overrides,
+    resolve_default_overrides,
     resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
@@ -46,7 +46,7 @@ from toolang.lang.input import NamedInputSource, NamedInputSources, RunnableInpu
 from toolang.state.runnable_collections import runnable_dataset
 from toolang.setup import SetupWatcher
 from toolang.state.prepare import prepare_agent_state
-from toolang.state.state import AgentState
+from toolang.state.state import AgentState, StatePublication
 from toolang.state.watcher import StateWatcher
 from toolang.up import process as agents
 from toolang.up.logging import configure_logging_plan, resolve_agent_logging
@@ -590,7 +590,7 @@ def _run(
 
 
 def _reject_runnable_option(default_options: tuple[str, ...]) -> None:
-    if "runnable" in resolve_binding_overrides({}, default_options):
+    if "runnable" in resolve_default_overrides({}, default_options):
         raise ValueError(
             "--default runnable does not apply when a script runnable is explicit"
         )
@@ -736,16 +736,16 @@ def _remote_script_session_commands(
     """Place the explicit CLI runnable above AgentServer setup bindings."""
 
     ceilings = resolve_ceiling_overrides({}, allow_options)
-    bindings = resolve_binding_overrides({}, default_options)
+    defaults = resolve_default_overrides({}, default_options)
     limits = resolve_limit_overrides({}, limit_options)
-    if "runnable" in bindings:
+    if "runnable" in defaults:
         raise ValueError(
             "--default runnable does not apply when a script runnable is explicit"
         )
     return (
         RunOverride("default", "runnable", runnable),
         *(RunOverride("allow", field, value) for field, value in ceilings.items()),
-        *(RunOverride("default", field, value) for field, value in bindings.items()),
+        *(RunOverride("default", field, value) for field, value in defaults.items()),
         *(RunOverride("limit", field, value) for field, value in limits.items()),
     )
 
@@ -890,7 +890,7 @@ def _stored_run(
 async def _execute(
     *,
     layout: AgentLayout,
-    state: AgentState,
+    state: AgentState | StatePublication,
     store: RunStore,
     ids: IdIssuer,
     run_id: str,
@@ -905,23 +905,35 @@ async def _execute(
     limit_options: tuple[str, ...] = (),
 ) -> RunRecord:
     environ = load_runtime_environ(layout, base_environ=os.environ)
-    cli_bindings = resolve_binding_overrides({}, default_options)
-    if "runnable" in cli_bindings:
+    cli_defaults = resolve_default_overrides({}, default_options)
+    if "runnable" in cli_defaults:
         raise ValueError(
             "--default runnable does not apply when a script runnable is explicit"
         )
+    allow_overrides = resolve_ceiling_overrides(environ, allow_options)
     setup = await SetupWatcher(
         layout,
         sandbox=sandbox,
-        ceiling_overrides=resolve_ceiling_overrides(environ, allow_options),
-        binding_overrides={
-            **resolve_binding_overrides(environ),
-            **cli_bindings,
+        allow_overrides={
+            name: value
+            for name, value in allow_overrides.items()
+            if name in {"models", "tools"}
+        },
+        default_overrides={
+            **resolve_default_overrides(environ),
+            **cli_defaults,
         },
         limit_overrides=resolve_limit_overrides(environ, limit_options),
     ).refresh()
-    state_watcher = StateWatcher(layout)
-    await state_watcher.refresh()
+    state_watcher = StateWatcher(
+        layout,
+        allow_overrides={
+            name: value
+            for name, value in allow_overrides.items()
+            if name in {"psyches", "skills", "services", "prompts"}
+        },
+    )
+    state = await state_watcher.refresh()
     executor = RunExecutor(
         store,
         ids,

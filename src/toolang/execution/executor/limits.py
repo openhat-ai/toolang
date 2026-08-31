@@ -5,12 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from toolang.base.types.model import ModelCatalogSnapshot, ModelInfo, ModelTarget
+from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelUsage
 from toolang.common.errors import ToolangError
 from toolang.execution.accounting import build_model_accounting, selected_usd_cost
 from toolang.execution.types import ModelAccounting
+from toolang.plugin.models.collections import ModelCollection
+from toolang.plugin.models.resolution import model_target_ref
 
 
 class _RunLimitExceeded(ToolangError):
@@ -82,7 +84,7 @@ class _RunLimitState:
     def require_pricing(
         self,
         target: ModelTarget,
-        models: tuple[ModelInfo, ...],
+        models: ModelCollection,
     ) -> None:
         """Reject a priced run before invoking a model with unknown prices."""
 
@@ -129,34 +131,24 @@ class _RunLimitState:
         self.error = f"Run time limit exceeded: {limit}s"
 
 
-def _model_info(
-    target: ModelTarget,
-    models: tuple[ModelInfo, ...],
-) -> ModelInfo | None:
-    return next(
-        (
-            item
-            for item in models
-            if item.provider == target.provider and item.ref == target.ref
-        ),
-        None,
-    )
+def _model_info(target: ModelTarget, models: ModelCollection) -> ModelInfo | None:
+    ref = model_target_ref(target)
+    return models.resolve(ref).info if models.contains(ref) else None
 
 
 def _model_accounting(
     target: ModelTarget,
-    models: tuple[ModelInfo, ...],
+    models: ModelCollection,
     usage: ModelUsage | None,
-    *,
-    catalog: ModelCatalogSnapshot | None = None,
 ) -> _ModelAccounting:
-    durable = build_model_accounting(target, usage, catalog)
+    info = _model_info(target, models)
+    durable = build_model_accounting(target, usage, None, info=info)
     price = _accounting_price(durable) or _model_price(target, models)
     selected_cost = selected_usd_cost(durable)
     return _ModelAccounting(
         usage=usage,
         price=price,
-        cost=(selected_cost if catalog is not None else _model_cost(usage, price)),
+        cost=selected_cost if selected_cost is not None else _model_cost(usage, price),
         accounting=durable,
     )
 
@@ -179,7 +171,7 @@ def _accounting_price(accounting: ModelAccounting | None) -> _TokenPrice | None:
 
 def _model_price(
     target: ModelTarget,
-    models: tuple[ModelInfo, ...],
+    models: ModelCollection,
 ) -> _TokenPrice | None:
     info = _model_info(target, models)
     if info is None or (info.input_price is None and info.output_price is None):

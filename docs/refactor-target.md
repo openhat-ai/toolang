@@ -173,7 +173,8 @@ jobs collection; program-declared jobs remain available as
 `AgentState.program.jobs`.
 
 `StateWatcher` monitors the relevant files and publishes new immutable
-`AgentState` revisions. It owns invalidation and reuse of unchanged parsed
+`StatePublication` values pairing durable `AgentState` revisions with effective
+per-module caps. It owns invalidation and reuse of unchanged parsed
 sources. It does not know about `RunExecutor` or `JobScheduler`. Every API process
 that can accept runs starts its watcher as process infrastructure; watching is
 not an optional runtime component.
@@ -185,13 +186,15 @@ model snapshot, and resolved environment values:
 ```python
 @dataclass(frozen=True, slots=True)
 class AgentSetup:
-    name: str
-    home: Path
+    layout: AgentLayout
     providers: Mapping[str, Provider]
     adapters: Mapping[str, ModelAdapter]
-    models: tuple[ModelInfo, ...]
-    tools: Mapping[str, AgentTool]
+    models: ModelCollection
+    tools: ToolCollection
+    defaults: RunDefaults
+    limits: RunLimits
     envs: Mapping[str, str]
+    environment: AgentEnvironment | None
 ```
 
 Effective service definitions remain in the `AgentState` captured for each

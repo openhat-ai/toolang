@@ -7,13 +7,9 @@ import pytest
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import Message, TextPart
-from toolang.base.types.model import (
-    ModelParameters,
-    ModelRequest,
-    ReasoningParameters,
-)
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.run import ModelCallResult
-from toolang.base.types.policy import RunBindings, RunPolicy
+from toolang.base.types.policy import RunBindings, RunDefaults, RunPolicy
 from toolang.execution.calls import (
     parse_call,
     resolve_restart_request,
@@ -29,6 +25,8 @@ from toolang.execution.schemas import (
 from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.lang.input import NamedInputSource, NamedInputSources, RunnableInputRaw
 from toolang.lang.types import Array
+from toolang.setup import ModelCollection, ToolCollection
+from toolang.state.state import CapSource, StateCap, publish_state_resources
 from tests.support.execution_harness import ExecutionHarness
 
 
@@ -48,10 +46,7 @@ def test_restart_resolution_preserves_model_unless_rerun_replaces_it(
     tmp_path,
 ) -> None:
     harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
-    explicit = ModelRequest(
-        "test/scripted",
-        ModelParameters(ReasoningParameters("high")),
-    )
+    explicit = ModelRequest("test/scripted")
     try:
         preserved = resolve_restart_request(
             RerunRequest("run_source", (), "rerun_preserved"),
@@ -72,7 +67,6 @@ def test_restart_resolution_preserves_model_unless_rerun_replaces_it(
             setup=harness.setup,
             state=harness.state,
         )
-
         assert preserved.model is None
         assert replaced.model == explicit
         assert legacy.model == ModelRequest("test/scripted")
@@ -310,6 +304,89 @@ agic default(_: Part[]):
         harness.store.close()
 
 
+def test_resolve_spec_rejects_prompt_excluded_from_state_publication(tmp_path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+prompt review:
+  Review {{_}}
+
+agic default(_: Part[]):
+  {{_}}
+""",
+        responses=[],
+    )
+    state = publish_state_resources(
+        harness.state,
+        agent_name=harness.setup.layout.name,
+        allow_overrides={"prompts": ()},
+    )
+    try:
+        with pytest.raises(ToolangError, match="Prompt is unavailable: review"):
+            resolve_spec(
+                (),
+                RunnableInputRaw(_="$review -- inspect this"),
+                setup=harness.setup,
+                state=state,
+                thread="term_test",
+                default_runnable="default",
+            )
+    finally:
+        harness.store.close()
+
+
+def test_run_acceptance_rejects_prompt_excluded_from_request_resources(
+    tmp_path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+prompt review:
+  Review {{_}}
+
+agic default(_: Part[]):
+  {{_}}
+""",
+        responses=[],
+    )
+    prompt = StateCap(
+        kind="prompt",
+        name="review",
+        shape="file",
+        ref="inline://prompts/review",
+        path="files/caps/inline/agent/prompt/review.md",
+        source=CapSource(
+            origin="local",
+            form="inline",
+            path="agent.too",
+            updated_at="2026-08-31T00:00:00Z",
+            fingerprint="0" * 64,
+        ),
+        meta={},
+    )
+    state = publish_state_resources(
+        replace(harness.state, module_caps={"agent": (prompt,)}),
+        agent_name=harness.setup.layout.name,
+    )
+    try:
+        spec = resolve_spec(
+            (RunOverride("allow", "prompts", ()),),
+            RunnableInputRaw(_="$review -- inspect this"),
+            setup=harness.setup,
+            state=state,
+            thread="term_test",
+            default_runnable="default",
+        )
+
+        with pytest.raises(
+            ToolangError,
+            match="prompt is outside run resources: review",
+        ):
+            harness.executor.validate(spec)
+    finally:
+        harness.store.close()
+
+
 def test_run_default_returns_to_surface_binding_not_session_binding(
     tmp_path,
 ) -> None:
@@ -339,7 +416,7 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
     harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
     setup = replace(
         harness.setup,
-        bindings=RunBindings(model="test/scripted", runnable="agic:bound"),
+        defaults=RunDefaults(model="test/scripted", runnable="agic:bound"),
     )
 
     def resolve(
@@ -423,8 +500,8 @@ def test_missing_default_model_is_rejected_before_run_persistence(tmp_path) -> N
         layout=harness.setup.layout,
         providers={},
         adapters={},
-        models=(),
-        tools={},
+        models=ModelCollection(),
+        tools=ToolCollection(),
         envs={},
         environment=harness.setup.environment,
     )

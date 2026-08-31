@@ -28,7 +28,7 @@ from .state import (
 )
 
 LayerScope = Literal["root", "home"]
-LAYER_SCHEMA = 2
+LAYER_SCHEMA = 3
 AGENT_STATE_SCHEMA = 1
 _LAYER_FILE = "layer.json"
 _LAYERS_FILE = "layers.json"

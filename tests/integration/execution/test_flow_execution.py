@@ -10,7 +10,7 @@ from typing import Any, cast
 import pytest
 
 from toolang.base.types.message import ImagePart, Message, TextPart
-from toolang.base.types.policy import RunBindings
+from toolang.base.types.policy import RunBindings, RunDefaults
 from toolang.base.types.run import ModelCall
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
@@ -63,7 +63,8 @@ from toolang.lang.ast import (
     RunStmt,
     Span,
 )
-from toolang.setup import AgentEnvironment, AgentSetup
+from toolang.plugin.models.resolution import build_model_collection
+from toolang.setup import AgentEnvironment, AgentSetup, ModelCollection, ToolCollection
 from tests.support.execution_fixtures import accept_run
 from tests.support.execution_harness import FakeModels, RecordingTool
 
@@ -125,8 +126,8 @@ def _setup() -> AgentSetup:
         layout=layout,
         providers={},
         adapters={},
-        models=(),
-        tools={},
+        models=ModelCollection(),
+        tools=ToolCollection(),
         envs={},
         environment=AgentEnvironment.capture(layout, sandbox="host"),
     )
@@ -135,14 +136,20 @@ def _setup() -> AgentSetup:
 def _model_setup() -> AgentSetup:
     provider = FakeModels(streaming=False)
     layout = AgentLayout.resident(Path("/"), "alice")
+    providers = {provider.name: provider.catalog_provider()}
     return AgentSetup(
         layout=layout,
-        providers={provider.name: provider.catalog_provider()},
+        providers=providers,
         adapters={},
-        models=provider.list_models(environ={}),
-        tools={},
+        models=build_model_collection(
+            providers=providers,
+            models=provider.list_models(environ={}),
+            envs={},
+        ),
+        tools=ToolCollection(),
         envs={},
         environment=AgentEnvironment.capture(layout, sandbox="host"),
+        defaults=RunDefaults(model="test/scripted"),
     )
 
 
@@ -191,7 +198,7 @@ def _spec(
         setup=setup,
         state=state,
         thread=thread,
-        bindings=RunBindings(runnable=runnable),
+        bindings=RunBindings(model=setup.defaults.model, runnable=runnable),
         limits=setup.limits,
         ceilings=(ceiling,) if ceiling is not None else (),
         input=resolve_runnable_input(
@@ -702,7 +709,7 @@ def test_nested_flow_resets_resources_and_restores_parent_scope(
         providers=base_setup.providers,
         adapters=base_setup.adapters,
         models=base_setup.models,
-        tools=tools,
+        tools=ToolCollection.from_tools(tools),
         envs=base_setup.envs,
         environment=base_setup.environment,
     )

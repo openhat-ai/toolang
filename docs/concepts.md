@@ -88,7 +88,7 @@ implements the `Sandbox` lifecycle. Current implementations are:
 Selectors use `name[:spec]`. Generic orchestration selects the plugin by name
 and passes the remaining spec unchanged to that implementation. Future drivers
 may use a cloud host. `RunExecutor` receives an `AgentSetup` and an immutable
-`AgentState` and does not know where its process is hosted.
+`StatePublication` and does not know where its process is hosted.
 
 `SandboxState` persists only the control-side workload reference required by a
 later `stop` command. AgentServer status and execution data remain separate.
@@ -187,16 +187,16 @@ Toolang-owned run ids may also use one dedicated short generated id family. See
 ## Resource Preparation
 
 Runtime resources such as models, tools, and caps are selected through ordered
-sets. `SetupWatcher` rebuilds an immutable `AgentSetup.ceiling` from root and
-agent `[allow]` config on every refresh, then applies field-level environment
-and CLI overrides captured at process startup. Each completed setup snapshot is
-stable; the next root run observes the latest valid snapshot.
+sets. `SetupWatcher` applies root and agent `allow.models` and `allow.tools`
+before publishing immutable `AgentSetup.models` and `AgentSetup.tools`.
+`StateWatcher` publishes a `StatePublication` whose resources contain the
+effective caps for every module after cap-kind allow policy. Each completed
+snapshot is stable; the next root run observes the latest valid pair.
 
-At root-run start, the executor resolves `AgentSetup.ceiling` against the
-captured `AgentSetup` and `AgentState`, then intersects every session or
-request ceiling in `RunSpec.ceilings`. The resulting `AgentResources`
-is the concrete resource set for that recursive run tree. Request ceilings can
-narrow the preceding set but cannot expand it.
+At root-run start, the executor captures those effective collections and then
+intersects every session or request ceiling in `RunSpec.ceilings`. The
+resulting `AgentResources` is the concrete resource set for that recursive run
+tree. Request ceilings can narrow the published base but cannot expand it.
 
 Flow and agic directives compute runnable resources from a selected base:
 
@@ -225,7 +225,7 @@ from root `[limit]`, agent `[limit]`, and frozen environment/CLI fields before
 the per-session and per-run layers.
 
 `RunBindings` provides optional `model` and `runnable` values. `AgentSetup`
-captures their dynamic defaults through `[default]`; policy resolution then
+captures `RunDefaults` through `[default]`; policy resolution then
 produces the effective bindings stored in `RunSpec`. Surface selections,
 session policy, and run policy overlay in that order.
 

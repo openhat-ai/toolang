@@ -9,7 +9,7 @@ from typing import Any, cast
 import pytest
 
 from toolang.base.types.tool import ToolContext, ToolDefinition
-from toolang.base.types.policy import RunBindings
+from toolang.base.types.policy import RunDefaults
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import AgentCeiling
@@ -26,6 +26,8 @@ from toolang.execution.types import (
     AgentToolResource,
 )
 from toolang.lang.ast import AgicDecl, Directive, FlowDecl, Span
+from toolang.plugin.models.resolution import build_model_collection
+from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.setup import AgentSetup
 from tests.support.execution_harness import FakeModels
 
@@ -35,8 +37,10 @@ class _Tool:
         self.toolset = toolset
         self.name = f"{toolset}__{name}"
         self.plugin_name = toolset
+        self.definition_calls = 0
 
     def definition(self) -> ToolDefinition:
+        self.definition_calls += 1
         return ToolDefinition(
             name=self.name,
             description=self.name,
@@ -67,12 +71,17 @@ def _snapshots(tmp_path: Path) -> tuple[AgentSetup, Any, Any]:
         "beta__two": _Tool("beta", "two"),
     }
     provider = FakeModels(streaming=False)
+    providers = {provider.name: provider.catalog_provider()}
     setup = AgentSetup(
         layout=AgentLayout.resident(tmp_path, "alice"),
-        providers={provider.name: provider.catalog_provider()},
+        providers=providers,
         adapters={},
-        models=provider.list_models(environ={}),
-        tools=tools,
+        models=build_model_collection(
+            providers=providers,
+            models=provider.list_models(environ={}),
+            envs={},
+        ),
+        tools=ToolCollection.from_tools(tools),
         envs={},
     )
     state = cast(
@@ -83,17 +92,7 @@ def _snapshots(tmp_path: Path) -> tuple[AgentSetup, Any, Any]:
             caps=(),
         ),
     )
-    selection = cast(
-        Any,
-        SimpleNamespace(
-            providers=setup.providers,
-            models=setup.models,
-            model_aliases={},
-            default_models=(),
-            envs=setup.envs,
-        ),
-    )
-    return setup, state, selection
+    return setup, state, setup.models
 
 
 def test_agent_resources_never_filter_setup_snapshot(tmp_path: Path) -> None:
@@ -116,7 +115,7 @@ def test_agent_resources_never_filter_setup_snapshot(tmp_path: Path) -> None:
     )
 
     assert tuple(setup.tools) == ("alpha__one", "beta__two")
-    assert tuple(model.ref for model in setup.models) == ("test/scripted",)
+    assert setup.models.refs() == ("test/scripted",)
     assert tuple(item.model_name for item in alpha.tools) == ("alpha__one",)
     assert tuple(item.model_name for item in beta.tools) == ("beta__two",)
     assert no_models.models == ()
@@ -125,16 +124,40 @@ def test_agent_resources_never_filter_setup_snapshot(tmp_path: Path) -> None:
     assert AgentResources.from_data(alpha.to_data()) == alpha
 
 
+def test_runtime_tool_narrowing_reuses_setup_collection_matcher(tmp_path: Path) -> None:
+    setup, state, selection = _snapshots(tmp_path)
+    tools = tuple(cast(_Tool, tool) for tool in setup.tools.values())
+    initial_definition_calls = tuple(tool.definition_calls for tool in tools)
+    agent = resolve_agent_resources(setup, state, AgentCeiling())
+
+    narrowed = apply_agent_ceiling(
+        setup,
+        state,
+        agent,
+        AgentCeiling(tools=("alpha/*",)),
+    )
+    resolved = resolve_runnable_resources(
+        selection,
+        runnable=AgicDecl(name="worker", span=Span(line=1)),
+        base=narrowed,
+        setup=setup,
+        state=state,
+    )
+
+    assert tuple(item.model_name for item in resolved.tools) == ("alpha__one",)
+    assert tuple(tool.definition_calls for tool in tools) == initial_definition_calls
+
+
 def test_agent_model_default_is_the_selected_candidate_concrete_ref(
     tmp_path: Path,
 ) -> None:
     setup, state, _selection = _snapshots(tmp_path)
-    setup = replace(setup, bindings=RunBindings(model="test/scripted"))
+    setup = replace(setup, defaults=RunDefaults(model="test/scripted"))
 
-    default, targets = agent_model_targets(setup, state, AgentCeiling())
+    default, targets = agent_model_targets(setup, AgentCeiling())
 
     assert default == targets[0][0]
-    assert default == setup.bindings.model
+    assert default == setup.defaults.model
 
 
 def test_agent_resources_durable_data_round_trips_every_resource_kind() -> None:
@@ -239,7 +262,7 @@ def test_flow_resets_resources_while_agics_use_current_flow(
         state,
         AgentCeiling(),
     )
-    model_selection = snapshot_model_selection(setup, state)
+    model_selection = snapshot_model_selection(setup)
     outer = resolve_runnable_resources(
         model_selection,
         runnable=FlowDecl(

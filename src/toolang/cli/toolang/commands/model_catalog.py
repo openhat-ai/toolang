@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 import json
 from pathlib import Path
 from typing import Annotated, cast
@@ -20,7 +20,6 @@ from toolang.cli.common.context import (
 )
 from toolang.cli.common.output import echo_table
 from toolang.cli.common.query import query_items
-from toolang.cli.config import load_config_layers
 from toolang.common.layout import AgentLayout
 from toolang.plugin.loading import list_plugin_infos
 from toolang.plugin.models.catalog import (
@@ -32,14 +31,12 @@ from toolang.plugin.models.collections import (
     catalog_model_dataset,
     catalog_provider_views,
 )
-from toolang.plugin.models.config import ProviderConfig, parse_model_aliases
 from toolang.plugin.models.discovery import (
     absent_provider_env_vars,
     provider_env_requirements,
     required_provider_env_vars,
 )
-from toolang.plugin.models.resolution import ModelTargetResolver
-from toolang.setup import AgentSetup, SetupWatcher
+from toolang.setup.catalog import CatalogInspection, load_catalog_inspection
 
 
 def models_command(
@@ -60,10 +57,10 @@ def models_command(
 ) -> None:
     """List or export model catalog entries."""
 
-    setup = _setup(ctx, model_catalog=model_catalog)
-    snapshot = _catalog(setup)
-    available = _available_identities(ctx, setup)
-    adapters = _adapter_by_identity(setup)
+    inspection = _inspection(ctx, model_catalog=model_catalog)
+    snapshot = inspection.snapshot
+    available = set(inspection.models.refs())
+    adapters = _adapter_by_identity(inspection)
     dataset = catalog_model_dataset(
         snapshot,
         available=available,
@@ -105,23 +102,21 @@ def providers_command(
 ) -> None:
     """List catalog providers and runtime availability."""
 
-    setup = _setup(ctx, model_catalog=model_catalog)
-    snapshot = _catalog(setup)
+    inspection = _inspection(ctx, model_catalog=model_catalog)
+    snapshot = inspection.snapshot
     base_providers = tuple(
         provider
         for provider_id, provider in sorted(snapshot.providers.items())
         if provider_id != "custom"
     )
-    available = _available_identities(ctx, setup)
+    available = set(inspection.models.refs())
     selected_views = catalog_provider_views(
         base_providers,
         available=available,
         adapters={
             provider.id: _provider_adapters(provider) for provider in base_providers
         },
-        apis={
-            provider.id: _provider_api(setup, provider) for provider in base_providers
-        },
+        apis={provider.id: _provider_api(provider) for provider in base_providers},
         env_requirements={
             provider.id: provider_env_requirements(provider)
             for provider in base_providers
@@ -131,7 +126,7 @@ def providers_command(
             for provider in base_providers
         },
         missing_env={
-            provider.id: absent_provider_env_vars(provider, environ=setup.envs)
+            provider.id: absent_provider_env_vars(provider, environ=inspection.envs)
             for provider in base_providers
         },
     )
@@ -150,7 +145,7 @@ def providers_command(
             item.id,
             item.name,
             f"{item.available_models}/{item.model_count}",
-            _provider_adapters_cell(setup, item),
+            _provider_adapters_cell(inspection, item),
             _provider_api_cell(item),
             _provider_env_cell(item),
         )
@@ -195,57 +190,21 @@ def adapters_command(
     )
 
 
-def _setup(
+def _inspection(
     ctx: typer.Context,
     *,
     model_catalog: Path | None = None,
-) -> AgentSetup:
+) -> CatalogInspection:
     return asyncio.run(
-        SetupWatcher(
+        load_catalog_inspection(
             _layout(ctx),
             model_catalog=resolve_model_catalog_option(model_catalog),
-        ).refresh()
+        )
     )
 
 
 def _layout(ctx: typer.Context) -> AgentLayout:
     return AgentLayout.resident(context_root(ctx), context_agent(ctx) or "default")
-
-
-def _catalog(setup: AgentSetup):
-    if setup.catalog is None:
-        raise RuntimeError("setup has no model catalog")
-    return setup.catalog
-
-
-def _available_identities(ctx: typer.Context, setup: AgentSetup) -> set[str]:
-    layers = load_config_layers(setup.layout.root, context_agent(ctx) or "")
-    targets = ModelTargetResolver(
-        providers=setup.providers,
-        models=setup.models,
-        model_aliases=parse_model_aliases(layers),
-        default_models=(),
-        envs=setup.envs,
-        provider_configs=cast(
-            Mapping[str, ProviderConfig],
-            setup.provider_configs,
-        ),
-    ).selectable()
-    candidates = {target.ref for _query, target in targets}
-    snapshot = _catalog(setup)
-    return {
-        model.identity
-        for model in snapshot.models
-        if model.identity in candidates and not _model_missing_reasons(setup, model)
-    }
-
-
-def _model_missing_reasons(setup: AgentSetup, model: Model) -> tuple[str, ...]:
-    provider = setup.providers.get(model.provider_id)
-    if provider is None or not isinstance(provider, Provider):
-        return ("provider",)
-    resolved = model.resolved
-    return () if resolved is not None and resolved.ready else ("route",)
 
 
 def _catalog_summary(
@@ -265,12 +224,15 @@ def _catalog_summary(
     )
 
 
-def _adapter_by_identity(setup: AgentSetup) -> dict[str, str]:
-    return {info.ref: info.adapter for info in setup.models}
+def _adapter_by_identity(inspection: CatalogInspection) -> dict[str, str]:
+    return {
+        model.identity: model.resolved.adapter
+        for model in inspection.snapshot.models
+        if model.resolved is not None and model.resolved.adapter is not None
+    }
 
 
-def _provider_api(setup: AgentSetup, provider: Provider) -> str | None:
-    del setup
+def _provider_api(provider: Provider) -> str | None:
     return provider.resolved.api if provider.resolved is not None else None
 
 
@@ -286,7 +248,7 @@ def _provider_adapters(provider: Provider) -> tuple[str, ...]:
 
 
 def _provider_adapters_cell(
-    setup: AgentSetup,
+    inspection: CatalogInspection,
     provider: CatalogProviderView,
 ) -> Text:
     adapters = provider.adapters
@@ -296,7 +258,10 @@ def _provider_adapters_cell(
     for index, adapter in enumerate(adapters):
         if index:
             cell.append(",")
-        cell.append(adapter, style="dim" if adapter not in setup.adapters else None)
+        cell.append(
+            adapter,
+            style="dim" if adapter not in inspection.adapters else None,
+        )
     return cell
 
 

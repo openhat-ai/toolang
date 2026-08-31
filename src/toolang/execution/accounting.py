@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from decimal import Decimal
 from typing import Literal, cast
 
-from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelTarget
+from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelInfo, ModelTarget
 from toolang.base.types.run import ModelUsage
 
 from .types import (
@@ -34,13 +34,20 @@ def build_model_accounting(
     target: ModelTarget,
     usage: ModelUsage | None,
     catalog: ModelCatalogSnapshot | None,
+    *,
+    info: ModelInfo | None = None,
 ) -> ModelAccounting | None:
     """Build one versioned accounting value from observed usage and catalog rates."""
 
     if usage is None:
         return None
     model = catalog.find(target.provider, target.model) if catalog is not None else None
-    rates, plan, match = _selected_rates(model, target=target, usage=usage)
+    rates, plan, match = _selected_rates(
+        model,
+        info=info,
+        target=target,
+        usage=usage,
+    )
     estimate = (
         _estimate_cost(
             usage,
@@ -153,19 +160,25 @@ def cache_hit_ratio(accounting: ModelAccounting | None) -> Decimal | None:
 def _selected_rates(
     model: Model | None,
     *,
+    info: ModelInfo | None,
     target: ModelTarget,
     usage: ModelUsage,
 ) -> tuple[Mapping[str, object] | None, str, dict[str, object]]:
     match: dict[str, object] = {}
     if usage.billing:
         match["billing"] = dict(sorted(usage.billing.items()))
-    if model is None or model.cost is None:
+    metadata = info.metadata if info is not None else {}
+    raw_cost = model.cost if model is not None else metadata.get("cost")
+    if not isinstance(raw_cost, Mapping):
         return None, "standard", match
-    rates: Mapping[str, object] = model.cost
+    rates = cast(Mapping[str, object], raw_cost)
     plan = "standard"
     requested_mode = target.mode
-    if isinstance(requested_mode, str) and model.experimental is not None:
-        modes = model.experimental.get("modes")
+    experimental = (
+        model.experimental if model is not None else metadata.get("experimental")
+    )
+    if isinstance(requested_mode, str) and isinstance(experimental, Mapping):
+        modes = experimental.get("modes")
         mode = (
             cast(Mapping[str, object], modes).get(requested_mode)
             if isinstance(modes, Mapping)
@@ -201,7 +214,8 @@ def _selected_rates(
         rates = {**rates, **selected_tier}
         rates = {key: value for key, value in rates.items() if key != "tier"}
         match["tier"] = dict(cast(Mapping[str, object], selected_tier["tier"]))
-    if model.local:
+    local = model.local if model is not None else metadata.get("local") is True
+    if local:
         rates = {
             **{name: 0 for name in _LOCAL_API_TOKEN_RATE_NAMES},
             **rates,

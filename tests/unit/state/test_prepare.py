@@ -200,8 +200,8 @@ def test_prepare_root_home_snapshot_root_and_home(tmp_path: Path) -> None:
         / "notes.txt"
     ).read_text(encoding="utf-8") == "asset\n"
     assert home_layer.modules["agent"].span.line == 1
-    assert root.config == {"models": {"default": "root"}}
-    assert home_layer.config == {"models": {"default": "home"}}
+    assert root.config == {}
+    assert home_layer.config == {}
     assert (
         layer_revision_dir(_layout(toolang_root), "root", root.revision)
         == root.revision_dir
@@ -237,28 +237,19 @@ def test_prepare_does_not_create_missing_agent_source(tmp_path: Path) -> None:
     assert not (toolang_root / ".state").exists()
 
 
-@pytest.mark.parametrize(
-    ("config", "message"),
-    [
-        ('[allow]\ncaps = ["*[missing=value]"]\n', "unknown allow field: caps"),
-        (
-            '[default]\nrunnable = "*[missing=value]"\n',
-            "unknown runnables query field",
-        ),
-    ],
-)
 def test_prepare_rejects_invalid_state_owned_config_queries(
     tmp_path: Path,
-    config: str,
-    message: str,
 ) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
-    (toolang_root / "config.toml").write_text(config, encoding="utf-8")
+    (toolang_root / "config.toml").write_text(
+        '[allow]\ncaps = ["*[missing=value]"]\n',
+        encoding="utf-8",
+    )
     (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
 
-    with pytest.raises((ToolangError, ValueError), match=message):
+    with pytest.raises((ToolangError, ValueError), match="unknown allow field: caps"):
         prepare_agent_state(_layout(toolang_root))
 
 
@@ -336,6 +327,61 @@ def test_prepare_root_home_reuses_unchanged_revisions(tmp_path: Path) -> None:
     assert state.revision_dir == (home / ".state" / "agent" / "revs" / state.revision)
     assert state.revision_dir is not None
     assert state.revision_dir.is_dir()
+
+
+def test_setup_only_config_changes_keep_state_revisions_and_artifacts(
+    tmp_path: Path,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    config = toolang_root / "config.toml"
+    config.write_text(
+        '[default]\nmodel = "openai/one"\n\n[allow]\nmodels = ["openai/*"]\n',
+        encoding="utf-8",
+    )
+    layout = _layout(toolang_root)
+    first = prepare_agent_state(layout)
+    first_root = load_root_layer(layout, first.root_revision)
+    config.write_text(
+        '[default]\nmodel = "openai/two"\n\n[allow]\nmodels = ["local/*"]\n',
+        encoding="utf-8",
+    )
+
+    second = prepare_agent_state(layout)
+    second_root = load_root_layer(layout, second.root_revision)
+
+    assert second.revision == first.revision
+    assert second.root_revision == first.root_revision
+    assert second.home_revision == first.home_revision
+    assert first_root.config == second_root.config == {}
+    assert not (first_root.revision_dir / "files" / "config.toml").exists()
+
+
+def test_setup_only_config_creation_and_removal_keep_state_revisions(
+    tmp_path: Path,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    layout = _layout(toolang_root)
+    first = prepare_agent_state(layout)
+    config = toolang_root / "config.toml"
+    config.write_text(
+        '[default]\nmodel = "openai/one"\n\n[allow]\nmodels = ["openai/*"]\n',
+        encoding="utf-8",
+    )
+
+    created = prepare_agent_state(layout)
+    config.unlink()
+    removed = prepare_agent_state(layout)
+
+    assert created.revision == first.revision
+    assert created.root_revision == first.root_revision
+    assert removed.revision == first.revision
+    assert removed.root_revision == first.root_revision
 
 
 def test_prepare_rebuilds_a_current_layer_from_an_older_schema(

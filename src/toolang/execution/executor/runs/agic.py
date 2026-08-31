@@ -16,7 +16,7 @@ from toolang.common.layout import AgentLayout
 from toolang.lang.ast import AgicDecl, RunStmt, Span, StructDecl
 from toolang.lang.errors import ToolangOutputError
 from toolang.lang.input import coerce_output, output_json_schema
-from toolang.state.state import AgentState
+from toolang.state.state import AgentState, StatePublication
 from toolang.state.state import state_program
 
 from ...events import StepBegin
@@ -39,6 +39,7 @@ from ..common import (
     _StepFailed,
     program_structs,
 )
+
 from ..limits import _ModelAccounting
 from ..prepare import _AgicFrame, prepare_agic
 from ..steps import model as model_step
@@ -51,6 +52,8 @@ from ...runnables import (
     resolve_public_runnable,
 )
 from ...tools.runtime import EXECUTE_TOOL, RELOAD_TOOL, RUN_TOOL
+
+ExecutionState = AgentState | StatePublication
 
 if TYPE_CHECKING:
     from ..executor import _Execution
@@ -98,12 +101,12 @@ class _AgicState:
     repairing_output: bool = False
     begin_step: (
         Callable[
-            [Callable[[AgentState, ControlRef], StepBegin]],
-            Awaitable[tuple[AgentState, ControlRef]],
+            [Callable[[ExecutionState, ControlRef], StepBegin]],
+            Awaitable[tuple[ExecutionState, ControlRef]],
         ]
         | None
     ) = None
-    refresh_frame: Callable[[AgentState, ControlRef], _AgicFrame] | None = None
+    refresh_frame: Callable[[ExecutionState, ControlRef], _AgicFrame] | None = None
 
     def before_model_call(self) -> None:
         """Apply one model-call checkpoint and reserve its agic-local count."""
@@ -125,8 +128,8 @@ class _AgicState:
 
     async def start_step(
         self,
-        build: Callable[[AgentState, ControlRef], StepBegin],
-    ) -> tuple[AgentState, ControlRef]:
+        build: Callable[[ExecutionState, ControlRef], StepBegin],
+    ) -> tuple[ExecutionState, ControlRef]:
         """Commit one physical-step boundary and return its State snapshot."""
 
         if self.begin_step is not None:
@@ -136,7 +139,7 @@ class _AgicState:
         await self.emit(event)
         return run.state, run.state_ref
 
-    def frame_for_step(self, state: AgentState, ref: ControlRef) -> _AgicFrame:
+    def frame_for_step(self, state: ExecutionState, ref: ControlRef) -> _AgicFrame:
         """Prepare one step from the State captured at its boundary."""
 
         if self.refresh_frame is None:
@@ -157,7 +160,7 @@ async def execute(
     }
     frames: dict[str, _AgicFrame] = {}
 
-    def refresh_frame(state: AgentState, ref: ControlRef) -> _AgicFrame:
+    def refresh_frame(state: ExecutionState, ref: ControlRef) -> _AgicFrame:
         cached = frames.get(state.revision)
         if cached is not None:
             return replace(
@@ -467,7 +470,13 @@ async def _execute_transfer(
         if not isinstance(requested, str) or not requested.strip():
             raise ValueError("_too/execute requires a non-empty runnable ref")
         name, kind = parse_runnable_ref(requested)
-        target = resolve_public_runnable(captured_state, name, kind=kind)
+        target = resolve_public_runnable(
+            captured_state.state
+            if isinstance(captured_state, StatePublication)
+            else captured_state,
+            name,
+            kind=kind,
+        )
         if not state.prepared.routes.allows("execute", target):
             raise ToolangError(f"runnable is not authorized by handoffs: {target.ref}")
         raw_input = call.input.get("input", {})

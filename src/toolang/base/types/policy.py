@@ -36,12 +36,44 @@ class RunBindings:
     runnable: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "model", _normalize_optional(self.model, "model"))
-        runnable = _normalize_optional(self.runnable, "runnable")
+        object.__setattr__(
+            self,
+            "model",
+            _normalize_optional(self.model, "model", subject="run binding"),
+        )
+        runnable = _normalize_optional(
+            self.runnable,
+            "runnable",
+            subject="run binding",
+        )
         object.__setattr__(
             self,
             "runnable",
             runnable,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RunDefaults:
+    """Configured starting values for one accepted run."""
+
+    model: str | None = None
+    runnable: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "model",
+            _normalize_optional(self.model, "model", subject="run default"),
+        )
+        object.__setattr__(
+            self,
+            "runnable",
+            _normalize_optional(
+                self.runnable,
+                "runnable",
+                subject="run default",
+            ),
         )
 
 
@@ -101,14 +133,19 @@ def _normalize_queries(
     return tuple(normalized)
 
 
-def _normalize_optional(value: str | None, name: str) -> str | None:
+def _normalize_optional(
+    value: str | None,
+    name: str,
+    *,
+    subject: str,
+) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise TypeError(f"run binding {name} must be a string")
+        raise TypeError(f"{subject} {name} must be a string")
     normalized = value.strip()
     if not normalized:
-        raise ValueError(f"run binding {name} must not be empty")
+        raise ValueError(f"{subject} {name} must not be empty")
     return normalized
 
 

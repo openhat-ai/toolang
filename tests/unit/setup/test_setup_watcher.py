@@ -1,19 +1,44 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
+from decimal import Decimal
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from toolang.base.protocols.model import ModelCatalog
+from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.common.errors import ToolangError
 from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelInfo, Provider
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.adapters.responses import ResponsesModelAdapter
+from toolang.plugin.models.adapters.chat_completions import (
+    ChatCompletionsModelAdapter,
+)
 from toolang.plugin.models.catalog import ModelsDevModelCatalog
 from toolang.plugin.models.local import LlamaCppModelCatalog, OllamaModelCatalog
 from toolang.setup import SetupWatcher
 from toolang.setup import watcher as watcher_module
+
+
+class _Tool:
+    name = "one"
+    plugin_name = "test"
+    toolset = "alpha"
+
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(name=self.name, description="Use alpha one.")
+
+    async def invoke(
+        self,
+        arguments: Mapping[str, Any],
+        context: ToolContext,
+    ) -> dict[str, Any]:
+        del arguments, context
+        return {}
 
 
 def test_setup_watcher_current_requires_initial_refresh(tmp_path: Path) -> None:
@@ -32,18 +57,9 @@ def test_setup_watcher_loads_catalog_without_persistent_model_cache(
 
     setup = asyncio.run(watcher.refresh())
 
-    assert setup.catalog is not None
-    assert setup.catalog.source == (tmp_path / "models.json").resolve()
-    assert tuple(setup.catalog.providers)[:1] == ("test",)
-    assert [model.ref for model in setup.models if model.provider == "test"] == [
-        "test/one",
-        "test/two",
-    ]
-    assert all(
-        model.adapter == "responses"
-        for model in setup.models
-        if model.provider == "test"
-    )
+    assert tuple(setup.providers) == ("test",)
+    assert setup.models.refs() == ("test/one", "test/two")
+    assert all(entry.target.adapter == "responses" for entry in setup.models.entries)
     assert not (tmp_path / ".setup" / "models").exists()
 
 
@@ -168,11 +184,10 @@ def test_setup_watcher_detects_local_models_without_force(
     )
 
     first = asyncio.run(watcher.refresh())
-    second = asyncio.run(watcher.refresh())
+    second = asyncio.run(watcher.refresh(force=True))
 
     assert first is not second
-    assert second.catalog is not None
-    assert second.catalog.find("ollama", "new-local") is not None
+    assert second.models.contains("ollama/new-local")
 
 
 def test_setup_watcher_rebuilds_when_selected_catalog_file_changes(
@@ -187,14 +202,8 @@ def test_setup_watcher_rebuilds_when_selected_catalog_file_changes(
     _write_catalog(path, ("one", "second"))
     second = asyncio.run(watcher.refresh())
 
-    assert first.catalog is not None and second.catalog is not None
-    assert first.catalog.revision != second.catalog.revision
-    assert [
-        item.id for item in second.catalog.models if item.provider_id == "test"
-    ] == [
-        "one",
-        "second",
-    ]
+    assert first.models.refs() == ("test/one",)
+    assert second.models.refs() == ("test/one", "test/second")
 
 
 def test_setup_watcher_rebuilds_when_environment_changes(
@@ -308,6 +317,144 @@ def test_setup_watcher_routes_only_each_plugins_canonical_config(
     assert "mode" not in catalog_calls[0]["ollama"]
 
 
+def test_setup_watcher_publishes_only_effective_resources_and_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "models.json", ("one", "two"))
+    root_config = {
+        "allow": {"models": ["test/*"], "tools": ["none"]},
+        "default": {"model": "test/two", "runnable": "agic:chat"},
+        "limit": {"tokens": 100, "cost": "1.5"},
+    }
+    agent_config = {
+        "allow": {"models": ["test/two"], "tools": ["none"]},
+        "limit": {"tokens": 200},
+    }
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    monkeypatch.setattr(
+        watcher_module, "load_setup_config", lambda _layout: root_config
+    )
+    monkeypatch.setattr(
+        watcher_module, "load_agent_config", lambda _layout: agent_config
+    )
+    monkeypatch.setattr(
+        watcher_module,
+        "load_tools",
+        lambda **_kwargs: {"alpha__one": _Tool()},
+    )
+    watcher = SetupWatcher(
+        watcher.layout,
+        allow_overrides={"models": ("test/one",), "tools": ("alpha/*",)},
+        default_overrides={"model": "test/one"},
+        limit_overrides={"tokens": 300},
+    )
+
+    setup = asyncio.run(watcher.refresh())
+
+    assert setup.models.refs() == ("test/one",)
+    assert setup.tools.refs() == ("alpha/one",)
+    assert len(setup.models._matcher.items) == 1
+    assert len(setup.tools._matcher.items) == 1
+    assert tuple(setup.providers) == ("test",)
+    assert tuple(setup.providers["test"].models) == ("one",)
+    assert setup.defaults.model == "test/one"
+    assert setup.defaults.runnable == "agic:chat"
+    assert setup.limits.tokens == 300
+    assert setup.limits.cost == Decimal("1.5")
+    assert not hasattr(setup, "allow")
+    assert not hasattr(setup, "catalog")
+    assert not hasattr(setup, "ceiling")
+    assert not hasattr(setup, "bindings")
+    assert not hasattr(setup, "provider_configs")
+
+
+def test_setup_watcher_keeps_missing_default_absent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "models.json", ("one",))
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+
+    setup = asyncio.run(watcher.refresh())
+
+    assert setup.defaults.model is None
+
+
+def test_setup_watcher_rejects_default_excluded_from_effective_models(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "models.json", ("one", "two"))
+    config = {
+        "allow": {"models": ["test/one"]},
+        "default": {"model": "test/two"},
+    }
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
+
+    with pytest.raises(ToolangError, match="model ref is unavailable: test/two"):
+        asyncio.run(watcher.refresh())
+
+
+def test_setup_watcher_retains_last_setup_when_default_becomes_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "models.json"
+    _write_catalog(path, ("one", "two"))
+    config = {"default": {"model": "test/two"}}
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
+    initial = asyncio.run(watcher.refresh())
+    _write_catalog(path, ("one",))
+
+    with pytest.raises(ToolangError, match="model ref is unavailable: test/two"):
+        asyncio.run(watcher.refresh())
+
+    assert watcher.current() is initial
+
+
+def test_setup_watcher_reuses_publication_for_state_only_config_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "models.json", ("one",))
+    config: dict[str, object] = {"allow": {"prompts": ["prompt/one"]}}
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
+    initial = asyncio.run(watcher.refresh())
+    config = {"allow": {"prompts": ["prompt/two"]}}
+    model_info_calls = 0
+    original_model_info = watcher_module.model_info_from_catalog
+
+    def count_model_info(model: Model) -> ModelInfo:
+        nonlocal model_info_calls
+        model_info_calls += 1
+        return original_model_info(model)
+
+    monkeypatch.setattr(watcher_module, "model_info_from_catalog", count_model_info)
+    monkeypatch.setattr(
+        watcher_module,
+        "load_model_adapters",
+        lambda _config: (_ for _ in ()).throw(
+            AssertionError("State-only config must not reload Setup adapters")
+        ),
+    )
+    monkeypatch.setattr(
+        watcher_module,
+        "load_tools",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("State-only config must not reload Setup tools")
+        ),
+    )
+
+    refreshed = asyncio.run(watcher.refresh())
+
+    assert refreshed is initial
+    assert model_info_calls == 0
+
+
 def _watcher(
     monkeypatch: pytest.MonkeyPatch,
     root: Path,
@@ -321,7 +468,10 @@ def _watcher(
     monkeypatch.setattr(
         watcher_module,
         "load_model_adapters",
-        lambda _config: {"responses": ResponsesModelAdapter()},
+        lambda _config: {
+            "chat_completions": ChatCompletionsModelAdapter(),
+            "responses": ResponsesModelAdapter(),
+        },
     )
     monkeypatch.setattr(watcher_module, "load_tools", lambda **_kwargs: {})
     if patch_local:

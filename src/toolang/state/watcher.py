@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 import logging
 from pathlib import Path
@@ -12,7 +12,11 @@ from pathlib import Path
 from watchfiles import Change, awatch
 
 from toolang.common.layout import AgentLayout
-from .state import AgentState
+from .state import (
+    AgentState,
+    StatePublication,
+    publish_state_resources,
+)
 from .errors import StateDiagnostic, StatePreparationError
 from .cache import (
     LayerScope,
@@ -43,16 +47,30 @@ class _CheckRequest:
 class StateRefresh:
     """One completed watcher check and its exact last-valid result."""
 
-    state: AgentState
+    publication: StatePublication
     diagnostics: tuple[StateDiagnostic, ...] = ()
 
 
 class StateWatcher:
     """Publish new immutable agent state when authored files change."""
 
-    def __init__(self, layout: AgentLayout) -> None:
+    def __init__(
+        self,
+        layout: AgentLayout,
+        *,
+        allow_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
+    ) -> None:
         self.layout = layout
-        self._state: AgentState | None = None
+        unknown_overrides = sorted(
+            set(allow_overrides or ()) - {"psyches", "skills", "services", "prompts"}
+        )
+        if unknown_overrides:
+            raise ValueError(
+                "unknown State allow override: " + ", ".join(unknown_overrides)
+            )
+        self._allow_overrides = dict(allow_overrides or {})
+        self._publications: dict[str, StatePublication] = {}
+        self._publication: StatePublication | None = None
         self._checked_root_source: SourceTree | None = None
         self._checked_home_source: SourceTree | None = None
         self._checked_layer_revisions: tuple[str | None, str | None] | None = None
@@ -71,7 +89,7 @@ class StateWatcher:
         except (FileNotFoundError, KeyError, TypeError, ValueError):
             pass
         else:
-            self._state = state
+            self._publication = self._publish(state)
             self._checked_root_source = root_source
             self._checked_home_source = home_source
             self._checked_layer_revisions = (
@@ -83,27 +101,27 @@ class StateWatcher:
         self._check_task: asyncio.Task[None] | None = None
         self._monitoring = False
 
-    def current(self) -> AgentState:
-        """Return the latest immutable state snapshot."""
+    def current(self) -> StatePublication:
+        """Return the latest immutable State publication."""
 
-        if self._state is None:
+        if self._publication is None:
             raise RuntimeError("state watcher has not been refreshed")
-        return self._state
+        return self._publication
 
     def diagnostics(self) -> tuple[StateDiagnostic, ...]:
         """Return diagnostics for the latest rejected candidate, if any."""
 
         return self._diagnostics
 
-    def load(self, revision: str) -> AgentState:
-        """Load a durable Agent State revision without publishing it."""
+    def load(self, revision: str) -> StatePublication:
+        """Load one durable Agent State and derive the frozen startup policy."""
 
-        return load_agent_state(self.layout, revision)
+        return self._publish(load_agent_state(self.layout, revision))
 
-    async def refresh(self, *, force: bool = False) -> AgentState:
+    async def refresh(self, *, force: bool = False) -> StatePublication:
         """Request one serialized check and wait until that check completes."""
 
-        return (await self._request_check(requested=True, force=force)).state
+        return (await self._request_check(requested=True, force=force)).publication
 
     async def refresh_result(self, *, force: bool = False) -> StateRefresh:
         """Return one serialized check with diagnostics from that exact check."""
@@ -176,14 +194,14 @@ class StateWatcher:
             root_source = scan_root_source(self.layout.root)
             home_source = scan_home_source(self.layout.root, self.layout.name)
         except Exception as exc:
-            if self._state is None:
+            if self._publication is None:
                 raise
             self._diagnostics = (_candidate_diagnostic(exc),)
             logger.warning(
                 "watch.rejected agent=%s diagnostics=1",
                 self.layout.name,
             )
-            return StateRefresh(self._state, self._diagnostics)
+            return StateRefresh(self._publication, self._diagnostics)
         if not requested and not self._needs_check(
             root_source=root_source,
             home_source=home_source,
@@ -198,25 +216,25 @@ class StateWatcher:
         except StatePreparationError as exc:
             self._record_checked_candidate(root_source, home_source)
             self._diagnostics = exc.diagnostics
-            if self._state is None:
+            if self._publication is None:
                 raise
             logger.warning(
                 "watch.rejected agent=%s diagnostics=%s",
                 self.layout.name,
                 len(exc.diagnostics),
             )
-            return StateRefresh(self._state, self._diagnostics)
+            return StateRefresh(self._publication, self._diagnostics)
         except Exception as exc:
             self._record_checked_candidate(root_source, home_source)
-            if self._state is None:
+            if self._publication is None:
                 raise
             self._diagnostics = (_candidate_diagnostic(exc),)
             logger.warning(
                 "watch.rejected agent=%s diagnostics=1",
                 self.layout.name,
             )
-            return StateRefresh(self._state, self._diagnostics)
-        self._state = candidate
+            return StateRefresh(self._publication, self._diagnostics)
+        self._publication = self._publish(candidate)
         self._checked_root_source = load_layer_source(
             self.layout,
             "root",
@@ -232,7 +250,7 @@ class StateWatcher:
             candidate.home_revision,
         )
         self._diagnostics = ()
-        return StateRefresh(self._state)
+        return StateRefresh(self._publication)
 
     async def updates(
         self,
@@ -240,12 +258,12 @@ class StateWatcher:
         stop_signal: asyncio.Event,
         interval_ms: float = DEFAULT_INTERVAL_MS,
         debounce_ms: float = DEFAULT_DEBOUNCE_MS,
-    ) -> AsyncIterator[AgentState]:
+    ) -> AsyncIterator[StatePublication]:
         if self._monitoring:
             raise RuntimeError("State watcher is already monitoring")
         self._monitoring = True
         try:
-            if self._state is None:
+            if self._publication is None:
                 await self._request_check(requested=True)
             logger.debug(
                 "watch.started root=%s agent=%s interval_ms=%s debounce_ms=%s",
@@ -274,10 +292,10 @@ class StateWatcher:
                 }
                 if changes and not paths:
                     continue
-                previous = self.current().revision
-                state = (await self._request_check(requested=False)).state
-                if state.revision != previous:
-                    yield state
+                previous = self.current().state.revision
+                publication = (await self._request_check(requested=False)).publication
+                if publication.state.revision != previous:
+                    yield publication
         finally:
             self._monitoring = False
 
@@ -303,9 +321,9 @@ class StateWatcher:
         root_source: SourceTree,
         home_source: SourceTree,
     ) -> bool:
-        if self._state is None:
+        if self._publication is None:
             return True
-        state = self._state
+        state = self._publication.state
         try:
             return (
                 load_current_agent_revision(self.layout) != state.revision
@@ -316,6 +334,18 @@ class StateWatcher:
             )
         except (FileNotFoundError, TypeError, ValueError):
             return True
+
+    def _publish(self, state: AgentState) -> StatePublication:
+        existing = self._publications.get(state.revision)
+        if existing is not None:
+            return existing
+        publication = publish_state_resources(
+            state,
+            agent_name=self.layout.name,
+            allow_overrides=self._allow_overrides,
+        )
+        self._publications[state.revision] = publication
+        return publication
 
     def _record_checked_candidate(
         self,

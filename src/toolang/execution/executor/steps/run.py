@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Literal
 
 from toolang.lang.ast import FlowStmt
-from toolang.state.state import AgentState
+from toolang.state.state import AgentState, StatePublication
 
 from ...events import StepBegin
 from ...records import ControlRecord, StepPath
@@ -38,13 +38,16 @@ async def execute(
 ) -> Local:
     """Evaluate one child-run Step and emit its event boundary."""
 
-    captured: tuple[AgentState, ControlRef] | None = None
+    captured: tuple[AgentState | StatePublication, ControlRef] | None = None
     boundary = begin_step or execution.begin_step
 
     async def capture_boundary(
-        build: Callable[[AgentState, ControlRef], StepBegin],
-    ) -> tuple[AgentState, ControlRef]:
-        def capture(agent_state: AgentState, state_ref: ControlRef) -> StepBegin:
+        build: Callable[[AgentState | StatePublication, ControlRef], StepBegin],
+    ) -> tuple[AgentState | StatePublication, ControlRef]:
+        def capture(
+            agent_state: AgentState | StatePublication,
+            state_ref: ControlRef,
+        ) -> StepBegin:
             nonlocal captured
             captured = agent_state, state_ref
             return build(agent_state, state_ref)

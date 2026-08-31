@@ -5,7 +5,6 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -18,7 +17,6 @@ from toolang.base.types.sandbox import (
     SandboxRequest,
 )
 from toolang.common.layout import AgentLayout
-from toolang.state.state import AgentState
 from toolang.up import sandbox
 from toolang.up import process as process_runtime
 from toolang.up.server import ServeSpec
@@ -1064,30 +1062,27 @@ def test_resolve_dev_artifact_rejects_host_before_path_validation(
 
 
 def test_select_sandbox_keeps_selection_separate_from_plugin_config() -> None:
-    state = cast(
-        AgentState,
-        SimpleNamespace(
-            root_config={
-                "sandbox": {"driver": "docker", "target": "python:3.13"},
-                "plugin": {
-                    "sandbox": {
-                        "docker": {
-                            "image": "python:3.13-slim",
-                        },
-                        "host": {"mode": "local"},
+    configs = (
+        {
+            "sandbox": {"driver": "docker", "target": "python:3.13"},
+            "plugin": {
+                "sandbox": {
+                    "docker": {
+                        "image": "python:3.13-slim",
                     },
+                    "host": {"mode": "local"},
                 },
             },
-            home_config={"plugin": {"sandbox": {"docker": {"image": "agent-image"}}}},
-        ),
+        },
+        {"plugin": {"sandbox": {"docker": {"image": "agent-image"}}}},
     )
 
-    selected, config = sandbox._select_sandbox(
-        state,
+    selected, config = sandbox._select_sandbox_configs(
+        configs,
         explicit=None,
     )
-    explicit, host_config = sandbox._select_sandbox(
-        state,
+    explicit, host_config = sandbox._select_sandbox_configs(
+        configs,
         explicit="host",
     )
 

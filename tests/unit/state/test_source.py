@@ -40,6 +40,16 @@ def test_source_tree_changes_when_nested_file_metadata_changes(tmp_path: Path) -
     assert after != before
 
 
+def test_source_tree_keeps_empty_non_config_files(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "agent.too").touch()
+
+    tree = scan_source(source, ("agent.too",), project_configs=True)
+
+    assert [item.name for item in tree.root.children] == ["agent.too"]
+
+
 def test_source_tree_is_intentionally_coarse_for_preserved_metadata(
     tmp_path: Path,
 ) -> None:

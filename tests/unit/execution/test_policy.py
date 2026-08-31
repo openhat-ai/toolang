@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
+from toolang.base.types.policy import AgentCeiling, RunBindings, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.execution.policy import (
     merge_commands,
@@ -15,7 +15,7 @@ from toolang.execution.policy import (
 )
 from toolang.execution.types import RunOverride
 from toolang.lang.input import NamedInputSource
-from toolang.setup import AgentSetup
+from toolang.setup import AgentSetup, ModelCollection, ToolCollection
 
 
 def _setup() -> AgentSetup:
@@ -23,11 +23,10 @@ def _setup() -> AgentSetup:
         layout=AgentLayout.resident(Path("/tmp/toolang"), "alice"),
         providers={},
         adapters={},
-        models=(),
-        tools={},
+        models=ModelCollection(),
+        tools=ToolCollection(),
         envs={},
-        ceiling=AgentCeiling(models=("root/*",)),
-        bindings=RunBindings(model="root/model", runnable="agic:chat"),
+        defaults=RunDefaults(model="root/model", runnable="agic:chat"),
         limits=RunLimits(tokens=100, cost=Decimal("5"), time=60),
     )
 

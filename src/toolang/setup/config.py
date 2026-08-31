@@ -7,16 +7,16 @@ from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 import os
 from pathlib import Path
+import re
 import tomllib
-from typing import Any, cast
+from typing import cast
 
 from dotenv import dotenv_values
 from toolang.base.types.model import ModelRequest
-from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
+from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.common.query import (
-    CollectionSchema,
     resolve_query_sentinels,
 )
 from toolang.plugin.models.collections import MODEL_SCHEMA
@@ -29,8 +29,9 @@ _CAP_KIND_BY_FIELD = {
     "services": "service",
     "prompts": "prompt",
 }
-_ALLOW_FIELDS = frozenset({"models", "tools", *_CAP_KIND_BY_FIELD})
-_BINDING_FIELDS = frozenset({"model", "runnable"})
+_SETUP_ALLOW_FIELDS = frozenset({"models", "tools"})
+_KNOWN_ALLOW_FIELDS = frozenset({*_SETUP_ALLOW_FIELDS, *_CAP_KIND_BY_FIELD})
+_DEFAULT_FIELDS = frozenset({"model", "runnable"})
 _LIMIT_FIELDS = frozenset(
     {
         "agic_model_calls",
@@ -40,6 +41,8 @@ _LIMIT_FIELDS = frozenset(
         "time",
     }
 )
+_RUNNABLE_REF_RE = re.compile(r"(?:(?:agic|flow):)?[A-Za-z_][A-Za-z0-9_-]*")
+_SETUP_PLUGIN_FAMILIES = frozenset({"model_catalog", "model_adapter", "toolset"})
 
 
 def load_setup_config(layout: AgentLayout) -> dict[str, object]:
@@ -70,28 +73,64 @@ def load_setup_dotenvs(layout: AgentLayout) -> dict[str, str]:
     return envs
 
 
-def resolve_agent_ceiling(
+def project_setup_config(config: Mapping[str, object]) -> dict[str, object]:
+    """Return the semantic authored fields owned by installed Setup."""
+
+    projected = {
+        name: _mutable_value(config[name])
+        for name in ("models", "default", "limit")
+        if name in config
+    }
+    raw_allow = config.get("allow")
+    if isinstance(raw_allow, Mapping):
+        allow_mapping = cast(Mapping[str, object], raw_allow)
+        allow = {
+            name: _mutable_value(allow_mapping[name])
+            for name in ("models", "tools")
+            if name in allow_mapping
+        }
+        if allow:
+            projected["allow"] = allow
+    elif raw_allow is not None:
+        projected["allow"] = raw_allow
+    raw_plugin = config.get("plugin")
+    if isinstance(raw_plugin, Mapping):
+        plugin_mapping = cast(Mapping[str, object], raw_plugin)
+        plugin = {
+            str(name): _mutable_value(value)
+            for name, value in plugin_mapping.items()
+            if name in _SETUP_PLUGIN_FAMILIES
+        }
+        if plugin:
+            projected["plugin"] = plugin
+    elif raw_plugin is not None:
+        projected["plugin"] = raw_plugin
+    return projected
+
+
+def resolve_setup_allow(
     configs: Sequence[Mapping[str, object]],
     *,
     overrides: Mapping[str, tuple[str, ...] | None] | None = None,
-    cap_query_schemas: Mapping[str, CollectionSchema[Any]] | None = None,
 ) -> AgentCeiling:
-    """Resolve layered ``[allow]`` configuration and frozen overrides."""
+    """Resolve Setup-owned model/tool allow configuration and overrides."""
 
     fields: dict[str, tuple[str, ...]] = {}
     for config in configs:
         raw_allow = _table(config, "allow")
         if raw_allow is None:
             continue
-        _reject_unknown(raw_allow, _ALLOW_FIELDS, "allow field")
-        for name, value in raw_allow.items():
-            normalized = _query_values(str(name), value)
+        _reject_unknown(raw_allow, _KNOWN_ALLOW_FIELDS, "allow field")
+        for name in ("models", "tools"):
+            if name not in raw_allow:
+                continue
+            normalized = _query_values(name, raw_allow[name])
             if normalized is None:
-                fields.pop(str(name), None)
+                fields.pop(name, None)
             else:
-                fields[str(name)] = normalized
+                fields[name] = normalized
     resolved_overrides = overrides or {}
-    _reject_unknown(resolved_overrides, _ALLOW_FIELDS, "allow field")
+    _reject_unknown(resolved_overrides, _SETUP_ALLOW_FIELDS, "Setup allow override")
     for name, value in resolved_overrides.items():
         normalized = None if value is None else _query_values(name, value)
         if normalized is None:
@@ -102,21 +141,16 @@ def resolve_agent_ceiling(
     ceiling = AgentCeiling(
         models=fields.get("models"),
         tools=fields.get("tools"),
-        psyches=fields.get("psyches"),
-        skills=fields.get("skills"),
-        services=fields.get("services"),
-        prompts=fields.get("prompts"),
     )
-    _validate_agent_ceiling_syntax(ceiling, cap_query_schemas=cap_query_schemas)
+    _validate_setup_allow_syntax(ceiling)
     return ceiling
 
 
-def resolve_run_bindings(
+def resolve_run_defaults(
     configs: Sequence[Mapping[str, object]],
     *,
     overrides: Mapping[str, str | None] | None = None,
-    runnable_query_schema: CollectionSchema[Any] | None = None,
-) -> RunBindings:
+) -> RunDefaults:
     """Resolve layered ``[default]`` configuration and frozen overrides."""
 
     fields: dict[str, str | None] = {}
@@ -124,22 +158,24 @@ def resolve_run_bindings(
         raw_default = _table(config, "default")
         if raw_default is None:
             continue
-        _reject_unknown(raw_default, _BINDING_FIELDS, "default field")
+        _reject_unknown(raw_default, _DEFAULT_FIELDS, "default field")
         fields.update(
             {
-                str(name): _binding_value(str(name), value)
+                str(name): _default_value(str(name), value)
                 for name, value in raw_default.items()
             }
         )
     resolved_overrides = overrides or {}
-    _reject_unknown(resolved_overrides, _BINDING_FIELDS, "default field")
+    _reject_unknown(resolved_overrides, _DEFAULT_FIELDS, "default field")
     fields.update(resolved_overrides)
-    bindings = RunBindings(**fields)
-    if bindings.model is not None:
-        ModelRequest(bindings.model)
-    if bindings.runnable is not None and runnable_query_schema is not None:
-        runnable_query_schema.parse(bindings.runnable)
-    return bindings
+    defaults = RunDefaults(**fields)
+    if defaults.model is not None:
+        ModelRequest(defaults.model)
+    if defaults.runnable is not None and not _RUNNABLE_REF_RE.fullmatch(
+        defaults.runnable
+    ):
+        raise ValueError(f"invalid default runnable ref: {defaults.runnable!r}")
+    return defaults
 
 
 def resolve_run_limits(
@@ -201,23 +237,14 @@ def _query_values(name: str, value: object) -> tuple[str, ...] | None:
         raise ValueError(str(error)) from error
 
 
-def _validate_agent_ceiling_syntax(
-    ceiling: AgentCeiling,
-    *,
-    cap_query_schemas: Mapping[str, CollectionSchema[Any]] | None,
-) -> None:
+def _validate_setup_allow_syntax(ceiling: AgentCeiling) -> None:
     for query in ceiling.models or ():
         MODEL_SCHEMA.parse(query)
     for query in ceiling.tools or ():
         TOOL_SCHEMA.parse(query)
-    if cap_query_schemas is not None:
-        for name in _CAP_KIND_BY_FIELD:
-            schema = cap_query_schemas[name]
-            for query in getattr(ceiling, name) or ():
-                schema.parse(query)
 
 
-def _binding_value(name: str, value: object) -> str | None:
+def _default_value(name: str, value: object) -> str | None:
     if not isinstance(value, str):
         raise TypeError(f"default {name} must be a string")
     normalized = value.strip()
@@ -240,6 +267,14 @@ def _load_dotenv(path: Path) -> dict[str, str]:
         for key, value in dotenv_values(path, interpolate=False).items()
         if isinstance(key, str) and isinstance(value, str)
     }
+
+
+def _mutable_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _mutable_value(item) for key, item in value.items()}
+    if isinstance(value, tuple | list):
+        return [_mutable_value(item) for item in value]
+    return value
 
 
 def _limit_value(name: str, value: object) -> int | Decimal | None:

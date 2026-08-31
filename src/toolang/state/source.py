@@ -14,9 +14,10 @@ from uuid import uuid4
 from toolang.catalog.types import CAP_DIRECTORY_NAMES
 
 from ..lang.ast import Program, Span
+from .config import canonical_state_config
 
 SourceNodeKind = Literal["file", "directory"]
-SOURCE_SCHEMA = 1
+SOURCE_SCHEMA = 2
 _AGENT_HEADER_RE = re.compile(r"^agent\s+[A-Za-z_][\w-]*\s*$")
 
 
@@ -28,18 +29,22 @@ class SourceNode:
     kind: SourceNodeKind
     mtime_ns: int
     size: int
+    digest: str | None = None
     children: tuple[SourceNode, ...] = ()
 
     def to_data(self) -> dict[str, object]:
         """Return the canonical JSON-compatible node representation."""
 
-        return {
+        data: dict[str, object] = {
             "name": self.name,
             "type": self.kind,
             "mtime_ns": self.mtime_ns,
             "size": self.size,
             "children": [child.to_data() for child in self.children],
         }
+        if self.digest is not None:
+            data["digest"] = self.digest
+        return data
 
     @classmethod
     def from_data(cls, data: dict[str, object]) -> SourceNode:
@@ -59,6 +64,9 @@ class SourceNode:
             kind=cast(SourceNodeKind, kind),
             mtime_ns=_integer_field(data, "mtime_ns"),
             size=_integer_field(data, "size"),
+            digest=(
+                str(data["digest"]) if isinstance(data.get("digest"), str) else None
+            ),
             children=children,
         )
 
@@ -106,8 +114,13 @@ class SourceTree:
         return cls.from_data(data)
 
 
-def scan_source(base: Path, paths: tuple[str, ...]) -> SourceTree:
-    """Capture selected paths below one base without reading file contents."""
+def scan_source(
+    base: Path,
+    paths: tuple[str, ...],
+    *,
+    project_configs: bool = False,
+) -> SourceTree:
+    """Capture selected paths and project owned config semantics."""
 
     children: list[SourceNode] = []
     for value in sorted(set(paths)):
@@ -117,7 +130,19 @@ def scan_source(base: Path, paths: tuple[str, ...]) -> SourceTree:
         path = base / relative
         if not path.exists():
             continue
-        children.append(_scan_node(path, name=value))
+        node = _scan_node(
+            path,
+            name=value,
+            project_config=project_configs and relative == Path("config.toml"),
+        )
+        if (
+            project_configs
+            and relative == Path("config.toml")
+            and node.digest is not None
+            and node.size == 0
+        ):
+            continue
+        children.append(node)
     return SourceTree(
         root=SourceNode(
             name=".",
@@ -135,6 +160,7 @@ def scan_root_source(toolang_root: Path) -> SourceTree:
     return scan_source(
         toolang_root,
         ("config.toml", *CAP_DIRECTORY_NAMES),
+        project_configs=True,
     )
 
 
@@ -153,10 +179,16 @@ def scan_home_source(toolang_root: Path, agent_name: str) -> SourceTree:
                 for path in _direct_flow_files(home / "flows")
             ),
         ),
+        project_configs=True,
     )
 
 
-def _scan_node(path: Path, *, name: str | None = None) -> SourceNode:
+def _scan_node(
+    path: Path,
+    *,
+    name: str | None = None,
+    project_config: bool = False,
+) -> SourceNode:
     if path.is_symlink() and path.is_dir():
         raise ValueError(
             f"source tree does not support symbolic-link directories: {path}"
@@ -164,6 +196,15 @@ def _scan_node(path: Path, *, name: str | None = None) -> SourceNode:
     stat = path.stat()
     node_name = name if name is not None else path.name
     if path.is_file():
+        if project_config:
+            content = canonical_state_config(path.read_bytes())
+            return SourceNode(
+                name=node_name,
+                kind="file",
+                mtime_ns=0,
+                size=len(content),
+                digest=sha256(content).hexdigest(),
+            )
         return SourceNode(
             name=node_name,
             kind="file",
@@ -458,6 +499,10 @@ def _collect_file(
     if not path.is_file():
         return []
     content = path.read_bytes()
+    if category == "config":
+        content = canonical_state_config(content)
+        if not content:
+            return []
     stat = path.stat()
     return [
         SourceFile(
@@ -467,7 +512,7 @@ def _collect_file(
             origin=origin,
             content=content,
             digest=sha256(content).hexdigest(),
-            mtime_ns=stat.st_mtime_ns,
+            mtime_ns=0 if category == "config" else stat.st_mtime_ns,
             size=len(content),
         )
     ]

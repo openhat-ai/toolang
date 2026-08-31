@@ -6,15 +6,25 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from types import MappingProxyType
 from typing import Literal, cast
 
-from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
+from toolang.base.errors import ToolangError
+from toolang.base.types.model import (
+    Model,
+    ModelCatalogSnapshot,
+    ModelInfo,
+    ModelTarget,
+    Provider,
+)
 from toolang.common.query import (
     CollectionDefinition,
     CollectionSchema,
     ColumnSpec,
     IdentitySpec,
+    MatchUnion,
     QueryDataset,
+    SetOperator,
 )
 
 
@@ -128,6 +138,159 @@ MODEL_SCHEMA = CollectionSchema.from_type(
     ),
 )
 MODEL_DEFINITION = CollectionDefinition(MODEL_SCHEMA)
+
+
+@dataclass(frozen=True, slots=True)
+class ModelEntry:
+    """One effective model route published for execution."""
+
+    key: str
+    ref: str
+    target: ModelTarget
+    info: ModelInfo
+
+    def __post_init__(self) -> None:
+        if not self.key or self.key != self.key.strip():
+            raise ValueError("model entry requires a canonical key")
+        if not self.ref or self.ref != self.ref.strip():
+            raise ValueError("model entry requires a canonical ref")
+
+
+@dataclass(frozen=True, slots=True, eq=False, init=False)
+class ModelCollection:
+    """Immutable effective models with one shared matcher and exact indexes."""
+
+    entries: tuple[ModelEntry, ...]
+    _by_key: Mapping[str, ModelEntry]
+    _by_ref: Mapping[str, ModelEntry]
+    _matcher: QueryDataset[ModelQueryView]
+
+    def __init__(self, entries: Sequence[ModelEntry] = ()) -> None:
+        values = tuple(entries)
+        _validate_model_entries(values)
+        matcher = MODEL_DEFINITION.dataset(
+            tuple(_model_entry_view(entry) for entry in values)
+        )
+        self._initialize(values, matcher=matcher)
+
+    def _initialize(
+        self,
+        values: tuple[ModelEntry, ...],
+        *,
+        matcher: QueryDataset[ModelQueryView],
+    ) -> None:
+        _validate_model_entries(values)
+        by_key = {entry.key: entry for entry in values}
+        by_ref = {entry.ref: entry for entry in values}
+        object.__setattr__(self, "entries", values)
+        object.__setattr__(self, "_by_key", MappingProxyType(by_key))
+        object.__setattr__(self, "_by_ref", MappingProxyType(by_ref))
+        object.__setattr__(self, "_matcher", matcher)
+
+    def match(
+        self,
+        queries: MatchUnion | str | Sequence[str] | None = None,
+    ) -> ModelCollection:
+        """Return the stable-order subset accepted by collection queries."""
+
+        if queries is None:
+            return self
+        matched = {
+            cast(ModelEntry, item.record).key for item in self._matcher.query(queries)
+        }
+        return self._derive(
+            tuple(entry for entry in self.entries if entry.key in matched)
+        )
+
+    def apply(
+        self,
+        operations: Sequence[tuple[SetOperator, MatchUnion | str | Sequence[str]]],
+    ) -> ModelCollection:
+        """Apply set operations against this immutable collection base."""
+
+        if not operations:
+            return self
+        available = set(self._by_key)
+        active = set(available)
+        for operator, query in operations:
+            matched = {
+                cast(ModelEntry, item.record).key for item in self._matcher.query(query)
+            } & available
+            if operator == "=":
+                active.intersection_update(matched)
+            elif operator == "+=":
+                active.update(matched)
+            elif operator == "-=":
+                active.difference_update(matched)
+            else:  # pragma: no cover - SetOperator is a closed vocabulary
+                raise ToolangError(f"unknown collection set operator: {operator!r}")
+        return self._derive(
+            tuple(entry for entry in self.entries if entry.key in active)
+        )
+
+    def resolve(self, ref: str) -> ModelEntry:
+        """Resolve one exact public model ref in O(1)."""
+
+        entry = self._by_ref.get(ref)
+        if entry is None:
+            raise ToolangError(f"model ref is unavailable: {ref}")
+        return entry
+
+    def entry(self, key: str) -> ModelEntry:
+        """Resolve one persisted model resource key in O(1)."""
+
+        entry = self._by_key.get(key)
+        if entry is None:
+            raise ToolangError(f"run model resource is unavailable: {key}")
+        return entry
+
+    def subset(self, keys: Sequence[str]) -> ModelCollection:
+        """Resolve an ordered persisted-key subset without interpreting queries."""
+
+        return self._derive(tuple(self.entry(key) for key in keys))
+
+    def compact(self) -> ModelCollection:
+        """Fix this subset as a standalone publication matcher."""
+
+        return ModelCollection(self.entries)
+
+    def contains(self, ref: str) -> bool:
+        """Return whether one exact public ref is available."""
+
+        return ref in self._by_ref
+
+    def refs(self) -> tuple[str, ...]:
+        """Return public refs in collection order."""
+
+        return tuple(entry.ref for entry in self.entries)
+
+    def keys(self) -> tuple[str, ...]:
+        """Return stable resource keys in collection order."""
+
+        return tuple(entry.key for entry in self.entries)
+
+    def __bool__(self) -> bool:
+        return bool(self.entries)
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, ModelCollection) and self.entries == other.entries
+
+    def _derive(self, entries: tuple[ModelEntry, ...]) -> ModelCollection:
+        if entries == self.entries:
+            return self
+        derived = object.__new__(ModelCollection)
+        derived._initialize(entries, matcher=self._matcher)
+        return derived
+
+
+def _validate_model_entries(values: tuple[ModelEntry, ...]) -> None:
+    if len({entry.key for entry in values}) != len(values):
+        raise ValueError("model collection contains duplicate entry keys")
+    if len({entry.ref for entry in values}) != len(values):
+        raise ValueError("model collection contains duplicate public refs")
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,6 +435,69 @@ def _catalog_model_view(
     )
 
 
+def _model_entry_view(entry: ModelEntry) -> ModelQueryView:
+    target = entry.target
+    info = entry.info
+    provider, separator, model = entry.ref.partition("/")
+    if not separator or not provider or not model:
+        provider, model = target.provider, target.model
+    metadata = info.metadata
+    modalities = metadata.get("modalities")
+    input_modalities = (
+        modalities.get("input") if isinstance(modalities, Mapping) else None
+    )
+    output_modalities = (
+        modalities.get("output") if isinstance(modalities, Mapping) else None
+    )
+    return ModelQueryView(
+        key=entry.key,
+        record=entry,
+        provider=provider,
+        model=model,
+        name=target.name,
+        description=info.details,
+        family=_metadata_text(metadata, "family"),
+        scope=target.scope,
+        available=True,
+        adapter=target.adapter,
+        catalog=target.catalog,
+        alias=None,
+        route=ModelRouteView(
+            provider=target.provider,
+            adapter=target.adapter,
+            scope=target.scope,
+        ),
+        tags=tuple(target.tags),
+        streaming=target.streaming,
+        attachment=_metadata_bool(metadata, "attachment"),
+        reasoning=_metadata_bool(metadata, "reasoning"),
+        tool_call=target.tools,
+        temperature=_metadata_bool(metadata, "temperature"),
+        structured_output=target.structured_output,
+        open_weights=_metadata_bool(metadata, "open_weights"),
+        status=_metadata_text(metadata, "status"),
+        release_date=parse_model_query_date(_metadata_text(metadata, "release_date")),
+        last_updated=parse_model_query_date(_metadata_text(metadata, "last_updated")),
+        modalities=ModelModalitiesView(
+            input=_string_values(input_modalities),
+            output=_string_values(output_modalities),
+        ),
+        limit=ModelLimitView(
+            context=info.context_window,
+            output=info.max_output_tokens,
+        ),
+        cost=ModelCostView(
+            input=_optional_decimal(info.input_price),
+            output=_optional_decimal(info.output_price),
+        ),
+        parameters=ModelParametersView(
+            reasoning=ModelReasoningParametersView(
+                effort=_reasoning_efforts_from_metadata(metadata)
+            )
+        ),
+    )
+
+
 def _reasoning_efforts(options: Sequence[Mapping[str, object]]) -> tuple[str, ...]:
     values: list[str] = []
     for option in options:
@@ -299,11 +525,45 @@ def _optional_decimal(value: object) -> Decimal | None:
     return Decimal(str(value))
 
 
+def _metadata_text(metadata: Mapping[str, object], name: str) -> str | None:
+    value = metadata.get(name)
+    return value if isinstance(value, str) and value else None
+
+
+def _metadata_bool(metadata: Mapping[str, object], name: str) -> bool | None:
+    value = metadata.get(name)
+    return value if isinstance(value, bool) else None
+
+
+def _string_values(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list | tuple):
+        return ()
+    return tuple(item for item in value if isinstance(item, str))
+
+
+def _reasoning_efforts_from_metadata(
+    metadata: Mapping[str, object],
+) -> tuple[str, ...]:
+    raw = metadata.get("reasoning_options")
+    options = (
+        tuple(
+            cast(Mapping[str, object], item)
+            for item in raw
+            if isinstance(item, Mapping)
+        )
+        if isinstance(raw, list | tuple)
+        else ()
+    )
+    return _reasoning_efforts(options)
+
+
 __all__ = [
     "CatalogProviderView",
     "MODEL_DEFINITION",
     "MODEL_SCHEMA",
+    "ModelCollection",
     "ModelCostView",
+    "ModelEntry",
     "ModelLimitView",
     "ModelModalitiesView",
     "ModelParametersView",

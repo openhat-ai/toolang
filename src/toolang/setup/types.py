@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 import platform
 from types import MappingProxyType
 
 from toolang.base.protocols.model import ModelAdapter
-from toolang.base.protocols.tool import AgentTool
-from toolang.base.types.model import ModelCatalogSnapshot, ModelInfo, Provider
-from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
+from toolang.base.types.model import Provider
+from toolang.base.types.policy import RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
+from toolang.plugin.models.collections import ModelCollection
+from toolang.plugin.toolsets.collections import ToolCollection
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,24 +59,22 @@ class AgentSetup:
     layout: AgentLayout
     providers: Mapping[str, Provider]
     adapters: Mapping[str, ModelAdapter]
-    models: tuple[ModelInfo, ...]
-    tools: Mapping[str, AgentTool]
+    models: ModelCollection
+    tools: ToolCollection
     envs: Mapping[str, str]
-    catalog: ModelCatalogSnapshot | None = None
-    provider_configs: Mapping[str, object] = field(default_factory=dict)
     environment: AgentEnvironment | None = None
-    ceiling: AgentCeiling = AgentCeiling()
-    bindings: RunBindings = RunBindings()
+    defaults: RunDefaults = RunDefaults()
     limits: RunLimits = RunLimits()
 
     def __post_init__(self) -> None:
         providers = dict(self.providers)
         adapters = dict(self.adapters)
-        models = tuple(self.models)
-        if not isinstance(self.ceiling, AgentCeiling):
-            raise TypeError("setup agent ceiling must be AgentCeiling")
-        if not isinstance(self.bindings, RunBindings):
-            raise TypeError("setup bindings must be RunBindings")
+        if not isinstance(self.models, ModelCollection):
+            raise TypeError("setup models must be ModelCollection")
+        if not isinstance(self.tools, ToolCollection):
+            raise TypeError("setup tools must be ToolCollection")
+        if not isinstance(self.defaults, RunDefaults):
+            raise TypeError("setup defaults must be RunDefaults")
         if not isinstance(self.limits, RunLimits):
             raise TypeError("setup limits must be RunLimits")
         for key, provider in providers.items():
@@ -84,11 +83,10 @@ class AgentSetup:
                 raise ValueError(
                     f"provider mapping key {key!r} does not match {identity!r}"
                 )
-        identities = [(model.provider, model.ref) for model in models]
-        if len(identities) != len(set(identities)):
-            raise ValueError("setup models must be unique by provider and ref")
         missing_providers = {
-            model.provider for model in models if model.provider not in providers
+            entry.target.provider
+            for entry in self.models.entries
+            if entry.target.provider not in providers
         }
         if missing_providers:
             raise ValueError(
@@ -97,11 +95,4 @@ class AgentSetup:
             )
         object.__setattr__(self, "providers", MappingProxyType(providers))
         object.__setattr__(self, "adapters", MappingProxyType(adapters))
-        object.__setattr__(self, "models", models)
-        object.__setattr__(self, "tools", MappingProxyType(dict(self.tools)))
         object.__setattr__(self, "envs", MappingProxyType(dict(self.envs)))
-        object.__setattr__(
-            self,
-            "provider_configs",
-            MappingProxyType(dict(self.provider_configs)),
-        )

@@ -13,13 +13,14 @@ from anyio import to_process
 
 from tests.support.execution_harness import ExecutionHarness, TEST_MODEL_REF
 from toolang.base.types.message import Message, TextPart
-from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
+from toolang.base.types.policy import AgentCeiling, RunBindings, RunDefaults, RunLimits
 from toolang.base.types.run import ModelCallResult
 from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.base import ChatExecutorMetadata
 from toolang.cli.toolang.commands.chat.policy import ChatRunDefaults
 from toolang.execution.events import RunEvent
 from toolang.execution.types import RunOverride
+from toolang.state.state import publish_state_resources
 from toolang.state.watcher import StateRefresh
 
 
@@ -155,7 +156,7 @@ agic chat(_: Part[]) -> Part[]:
     )
     setup = replace(
         harness.setup,
-        bindings=RunBindings(model=TEST_MODEL_REF, runnable="chat"),
+        defaults=RunDefaults(model=TEST_MODEL_REF, runnable="chat"),
     )
     try:
         defaults = local.LocalChatSession._current_run_defaults(
@@ -223,6 +224,10 @@ agic chat(_: Part[]) -> Part[]:
         responses=[ModelCallResult(message=Message.assistant("hello back"))],
     )
     harness.store.close()
+    publication = publish_state_resources(
+        harness.state,
+        agent_name=harness.setup.layout.name,
+    )
 
     class SetupWatcher:
         def __init__(self, _layout: object, **_kwargs: object) -> None:
@@ -239,8 +244,8 @@ agic chat(_: Part[]) -> Part[]:
             await stop_signal.wait()
 
     class StateWatcher:
-        def __init__(self, _layout: object) -> None:
-            self.state = harness.state
+        def __init__(self, _layout: object, **_kwargs: object) -> None:
+            self.state = publication
 
         def current(self):
             return self.state
@@ -325,6 +330,10 @@ def test_chat_session_does_not_create_a_thread_on_open(
         responses=[],
     )
     harness.store.close()
+    publication = publish_state_resources(
+        harness.state,
+        agent_name=harness.setup.layout.name,
+    )
 
     class SetupWatcher:
         def __init__(self, _layout: object, **_kwargs: object) -> None:
@@ -341,8 +350,8 @@ def test_chat_session_does_not_create_a_thread_on_open(
             await stop_signal.wait()
 
     class StateWatcher:
-        def __init__(self, _layout: object) -> None:
-            self.state = harness.state
+        def __init__(self, _layout: object, **_kwargs: object) -> None:
+            self.state = publication
 
         def current(self):
             return self.state

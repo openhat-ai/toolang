@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal, Self, TypeAlias
+from typing import Any, Literal, Self, TypeAlias, cast
 
 ResolvedEnv = tuple[str | tuple[str, ...], ...]
 ReasoningEffort: TypeAlias = Literal[
@@ -337,7 +337,16 @@ class ModelInfo:
     input_price: float | None = None
     output_price: float | None = None
     details: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "selectors", tuple(self.selectors))
+        object.__setattr__(self, "tags", tuple(self.tags))
+        object.__setattr__(
+            self,
+            "metadata",
+            cast(Mapping[str, Any], _immutable_mapping(self.metadata)),
+        )
 
     @property
     def primary_selector(self) -> str:
@@ -400,7 +409,7 @@ class ModelInfo:
             "input_price": self.input_price,
             "output_price": self.output_price,
             "details": self.details,
-            "metadata": dict(self.metadata),
+            "metadata": _mutable_json(self.metadata),
         }
 
 
@@ -438,15 +447,33 @@ class ModelTarget:
     api_key: str | None = None
     scope: str | None = None
     tags: tuple[str, ...] = field(default_factory=tuple)
-    headers: dict[str, str] = field(default_factory=dict)
-    options: dict[str, Any] = field(default_factory=dict)
+    headers: Mapping[str, str] = field(default_factory=dict)
+    options: Mapping[str, Any] = field(default_factory=dict)
     tools: bool = True
     streaming: bool = True
     structured_output: bool | None = None
     catalog: str | None = None
     catalog_revision: str | None = None
-    reasoning: dict[str, Any] = field(default_factory=dict)
+    reasoning: Mapping[str, Any] = field(default_factory=dict)
     mode: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "tags", tuple(self.tags))
+        object.__setattr__(
+            self,
+            "headers",
+            MappingProxyType(dict(self.headers)),
+        )
+        object.__setattr__(
+            self,
+            "options",
+            cast(Mapping[str, Any], _immutable_mapping(self.options)),
+        )
+        object.__setattr__(
+            self,
+            "reasoning",
+            cast(Mapping[str, Any], _immutable_mapping(self.reasoning)),
+        )
 
 
 def _optional_int(value: object) -> int | None:

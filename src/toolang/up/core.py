@@ -35,7 +35,7 @@ class AgentCore:
         *,
         sandbox: str = "host",
         ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
-        binding_overrides: Mapping[str, str | None] | None = None,
+        default_overrides: Mapping[str, str | None] | None = None,
         limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     ) -> None:
         self.layout = layout
@@ -43,14 +43,26 @@ class AgentCore:
         self.ids = IdIssuer(layout.id_state)
         self.threads = ThreadManager(self.store, self.ids)
         self.history = RunHistory(self.store)
+        allow_overrides = dict(ceiling_overrides or {})
         self.setup = SetupWatcher(
             layout,
             sandbox=sandbox,
-            ceiling_overrides=ceiling_overrides,
-            binding_overrides=binding_overrides,
+            allow_overrides={
+                name: value
+                for name, value in allow_overrides.items()
+                if name in {"models", "tools"}
+            },
+            default_overrides=default_overrides,
             limit_overrides=limit_overrides,
         )
-        self.state = StateWatcher(layout)
+        self.state = StateWatcher(
+            layout,
+            allow_overrides={
+                name: value
+                for name, value in allow_overrides.items()
+                if name in {"psyches", "skills", "services", "prompts"}
+            },
+        )
         self.executor = RunExecutor(
             self.store,
             self.ids,

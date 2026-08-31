@@ -26,7 +26,7 @@ from toolang.api.schemas import (
     RunRetryRequest,
     RunSteerRequest,
 )
-from toolang.base.types.policy import RunBindings
+from toolang.base.types.policy import AgentCeiling, RunBindings
 from toolang.common.errors import ToolangError
 from toolang.execution.calls import require_exact_model_request
 from toolang.execution.executor import LocalRunHandle, RunSpec
@@ -43,7 +43,7 @@ from toolang.execution.runnables import (
     runnable_binding_defaults,
     resolve_public_runnable_query,
 )
-from toolang.state.state import AgentState
+from toolang.state.state import StatePublication
 from toolang.up import AgentCore
 
 router = APIRouter(prefix="/runs", tags=["runs"])
@@ -65,7 +65,6 @@ async def _run_stream(
         model_request = require_exact_model_request(
             payload.model,
             setup=setup,
-            state=state,
         )
         if isinstance(runnable, AgicDecl) and payload.model is None:
             raise ValueError("run request requires a model for an agic runnable")
@@ -305,8 +304,8 @@ async def run_defaults(core: AgentCoreDep) -> dict[str, object]:
 
     setup = core.setup.current()
     state = await _fresh_state(core)
-    model, _targets = agent_model_targets(setup, state, setup.ceiling)
-    runnable = setup.bindings.runnable
+    model, _targets = agent_model_targets(setup, AgentCeiling())
+    runnable = setup.defaults.runnable
     if runnable is None:
         default_agic, default_flow = runnable_binding_defaults(
             state,
@@ -467,7 +466,6 @@ async def rerun_run(
         model_request = require_exact_model_request(
             request.model,
             setup=setup,
-            state=state,
         )
         handle = core.executor.rerun(
             source.id,
@@ -497,12 +495,12 @@ def _run_or_404(core: AgentCore, run_id: str) -> RunRecord:
     return run
 
 
-async def _fresh_state(core: AgentCore) -> AgentState:
+async def _fresh_state(core: AgentCore) -> StatePublication:
     refresh = getattr(core.state, "refresh", None)
     return await refresh() if callable(refresh) else core.state.current()
 
 
-def _recorded_state(core: AgentCore, run: RunRecord) -> AgentState:
+def _recorded_state(core: AgentCore, run: RunRecord) -> StatePublication:
     return core.state.load(core.store.resolve_state_revision(run.state))
 
 

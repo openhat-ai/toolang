@@ -377,6 +377,30 @@ def test_prompt_resolution_records_ordered_nested_provenance() -> None:
     assert all(len(invocation.content_hash) == 64 for invocation in resolved.prompts)
 
 
+def test_explicit_prompt_publication_rejects_an_unavailable_prompt() -> None:
+    from toolang.lang.ast import CapDecl, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="review",
+                params=(),
+                body="Review {{_}}",
+                span=Span(1),
+            ),
+        ),
+    )
+
+    with pytest.raises(ToolangError, match="Prompt is unavailable: review"):
+        resolve_input_parts_with_provenance(
+            "$review -- target",
+            program=program,
+            prompt_definitions={},
+        )
+
+
 def test_slash_prompt_spelling_is_literal_content() -> None:
     from toolang.lang.ast import CapDecl, Program
 

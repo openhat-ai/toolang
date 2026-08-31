@@ -258,8 +258,8 @@ Behavior:
 - a runnable missing a required named argument or required primary input shows
   its dynamic help and does not create a run; omitted input is first read from
   stdin when available
-- script run reads the complete setup snapshot and resolves effective resources
-  inside the executor from `AgentSetup.ceiling`, captured state, and runnable
+- script run reads one effective Setup and State publication; the executor
+  narrows their model, tool, and cap collections with request and runnable
   directives
 - `NAME=VALUE` supplies one named argument and is coerced using its declared
   parameter type
@@ -814,7 +814,7 @@ Core endpoints are grouped as:
 Non-interactive execution uses `POST /api/v1/runs/stream`. It accepts an agic
 or flow's unique `runnable` name, primary input, optional model, and optional
 declared arguments, and returns the canonical trace event stream for HTTP
-clients. An omitted model uses the current `AgentSetup.bindings.model`. CLI
+clients. An omitted model uses the current `AgentSetup.defaults.model`. CLI
 script runs and TUI execution do not consume this endpoint.
 
 
@@ -853,8 +853,8 @@ profile readers ignore unknown additive fields, so TUI and executor releases can
 be upgraded independently. Breaking protocol changes require a separately
 versioned contract rather than making an additive display field mandatory.
 
-`GET /api/v1/models` returns the selectable model routes inside the server's
-current `AgentSetup.ceiling`. Runnable `models` directives are applied when a
+`GET /api/v1/models` returns the server's current effective
+`AgentSetup.models` collection. Runnable `models` directives are applied when a
 run starts, not by this inspection endpoint. The response includes:
 
 - `default`

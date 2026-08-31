@@ -34,7 +34,7 @@ from toolang.base.types.run import (
 from toolang.base.types.tool import ToolDefinition
 from toolang.common.time import elapsed_ms, utc_now
 from toolang.lang.types import Array
-from toolang.state.state import AgentState
+from toolang.state.state import AgentState, StatePublication
 
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
 from ...records import (
@@ -100,7 +100,10 @@ async def execute(state: _AgicState) -> ModelCallResult:
     request: ModelCall | None = None
     next_messages: list[Message] | None = None
 
-    def begin_step(agent_state: AgentState, state_ref: ControlRef) -> StepBegin:
+    def begin_step(
+        agent_state: AgentState | StatePublication,
+        state_ref: ControlRef,
+    ) -> StepBegin:
         nonlocal prepared, request, next_messages
         prepared = state.frame_for_step(agent_state, state_ref)
         next_messages = _messages_with_inputs(

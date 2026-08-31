@@ -21,8 +21,13 @@ from toolang.lang.input import (
 )
 from toolang.lang.ast import AgicDecl, Program
 from toolang.setup import AgentSetup
-from toolang.state.state import AgentState, state_module_caps
-from toolang.plugin.models.resolution import resolve_model_request
+from toolang.state.state import (
+    AgentState,
+    StateCap,
+    StatePublication,
+    state_module_caps,
+)
+from toolang.plugin.models.resolution import apply_model_parameters
 
 from .policy import parse_policy_prefix, resolve_commands
 from .runnables import (
@@ -42,7 +47,7 @@ class RestartSpec:
     """One restart request resolved against immutable runtime snapshots."""
 
     setup: AgentSetup
-    state: AgentState
+    state: AgentState | StatePublication
     ceiling: AgentCeiling
     model: ModelRequest | None
     limits: RunLimits
@@ -60,7 +65,7 @@ def resolve_run_request(
     request: RunRequest,
     *,
     setup: AgentSetup,
-    state: AgentState,
+    state: AgentState | StatePublication,
     include: IncludeResolver | None = None,
 ) -> RunSpec:
     """Resolve one caller request against one setup and state snapshot pair."""
@@ -68,9 +73,9 @@ def resolve_run_request(
     model_request = require_exact_model_request(
         request.model,
         setup=setup,
-        state=state,
     )
-    resolved_runnable = resolve_public_runnable_query(state, request.runnable.ref)
+    durable = state.state if isinstance(state, StatePublication) else state
+    resolved_runnable = resolve_public_runnable_query(durable, request.runnable.ref)
     if resolved_runnable.ref != request.runnable.ref:
         raise ValueError(
             f"run runnable ref must be exact: {request.runnable.ref!r} resolves to "
@@ -98,7 +103,7 @@ def resolve_restart_request(
     request: RetryRequest | RerunRequest,
     *,
     setup: AgentSetup,
-    state: AgentState,
+    state: AgentState | StatePublication,
 ) -> RestartSpec:
     """Resolve restart policy against exactly one setup and state snapshot pair."""
 
@@ -108,9 +113,9 @@ def resolve_restart_request(
     model = _rerun_model_request(request, bindings)
     if model is not None:
         model = (
-            require_exact_model_request(model, setup=setup, state=state)
+            require_exact_model_request(model, setup=setup)
             if isinstance(request, RerunRequest) and request.model is not None
-            else materialize_model_request(model, setup=setup, state=state)
+            else materialize_model_request(model, setup=setup)
         )
     return RestartSpec(
         setup=setup,
@@ -145,7 +150,7 @@ def resolve_spec(
     input: RunnableInputRaw,
     *,
     setup: AgentSetup,
-    state: AgentState,
+    state: AgentState | StatePublication,
     thread: str,
     default_runnable: str,
     surface: RunBindings = RunBindings(),
@@ -168,7 +173,6 @@ def resolve_spec(
         materialize_model_request(
             ModelRequest(bindings.model),
             setup=setup,
-            state=state,
         )
         if bindings.model is not None
         else None
@@ -198,15 +202,17 @@ def materialize_model_request(
     request: ModelRequest,
     *,
     setup: AgentSetup,
-    state: AgentState,
 ) -> ModelRequest:
     """Validate one exact model request against the current model snapshot."""
 
     from .executor.resources import snapshot_model_selection
 
-    resolve_model_request(
-        snapshot_model_selection(setup, state),
-        ref=request.ref,
+    selection = snapshot_model_selection(setup)
+    entry = selection.resolve(request.ref)
+    apply_model_parameters(
+        selection,
+        entry.target,
+        request.parameters,
     )
     return request
 
@@ -215,20 +221,19 @@ def require_exact_model_request(
     request: ModelRequest | None,
     *,
     setup: AgentSetup,
-    state: AgentState,
 ) -> ModelRequest | None:
     """Validate an exact request at the materialized run-request boundary."""
 
     if request is None:
         return None
-    return materialize_model_request(request, setup=setup, state=state)
+    return materialize_model_request(request, setup=setup)
 
 
 def _resolve_concrete_spec(
     input: RunnableInputRaw,
     *,
     setup: AgentSetup,
-    state: AgentState,
+    state: AgentState | StatePublication,
     thread: str,
     bindings: RunBindings,
     model_request: ModelRequest | None,
@@ -314,7 +319,7 @@ def validate_commands(
     commands: Sequence[RunOverride],
     *,
     setup: AgentSetup,
-    state: AgentState,
+    state: AgentState | StatePublication,
     default_runnable: str,
     surface: RunBindings = RunBindings(),
 ) -> None:
@@ -334,14 +339,15 @@ def validate_commands(
         session=commands,
     )
     resolved_runnable = resolve_public_runnable_query(
-        state, bindings.runnable or default_runnable
+        state.state if isinstance(state, StatePublication) else state,
+        bindings.runnable or default_runnable,
     )
     module = resolved_runnable.module
     runnable = resolved_runnable.executable
     resources = resolve_agent_resources(
         setup,
         state,
-        setup.ceiling,
+        AgentCeiling(),
         module=module,
     )
     for ceiling in ceilings:
@@ -353,7 +359,7 @@ def validate_commands(
             module=module,
         )
     resources = resolve_runnable_resources(
-        snapshot_model_selection(setup, state),
+        snapshot_model_selection(setup),
         runnable=runnable,
         base=resources,
         setup=setup,
@@ -361,7 +367,7 @@ def validate_commands(
         module=module,
     )
     validate_model_binding(
-        snapshot_model_selection(setup, state),
+        snapshot_model_selection(setup),
         runnable=runnable,
         resources=resources,
         model=bindings.model,
@@ -372,7 +378,7 @@ def validate_session_commands(
     commands: Sequence[RunOverride],
     *,
     setup: AgentSetup,
-    state: AgentState,
+    state: AgentState | StatePublication,
     runnable_fallbacks: tuple[str, ...],
 ) -> None:
     """Validate session commands against the first available runnable fallback."""
@@ -381,7 +387,10 @@ def validate_session_commands(
         commands,
         setup=setup,
         state=state,
-        default_runnable=_select_runnable_fallback(state, runnable_fallbacks),
+        default_runnable=_select_runnable_fallback(
+            state.state if isinstance(state, StatePublication) else state,
+            runnable_fallbacks,
+        ),
     )
 
 
@@ -407,23 +416,30 @@ def _resolve_named_sources(
 
 
 def prompt_definitions(
-    state: AgentState,
+    state: AgentState | StatePublication,
     *,
     module: str,
     program: Program,
+    caps: Sequence[StateCap] | None = None,
 ) -> dict[str, PromptDefinitionIdentity]:
+    if caps is None and isinstance(state, AgentState):
+        return {
+            prompt.name: prompt_definition_identity(prompt)
+            for prompt in program.caps
+            if prompt.kind == "prompt"
+        }
     cap_refs = {
         cap.name: cap.ref
-        for cap in state_module_caps(state, module)
+        for cap in (state_module_caps(state, module) if caps is None else caps)
         if cap.kind == "prompt"
     }
     return {
         prompt.name: prompt_definition_identity(
             prompt,
-            ref=cap_refs.get(prompt.name),
+            ref=cap_refs[prompt.name],
         )
         for prompt in program.caps
-        if prompt.kind == "prompt"
+        if prompt.kind == "prompt" and prompt.name in cap_refs
     }
 
 

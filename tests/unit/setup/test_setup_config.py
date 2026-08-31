@@ -4,19 +4,17 @@ from pathlib import Path
 
 import pytest
 
-from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
+from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
-from toolang.lang.runnable_query import RUNNABLE_SCHEMA
 from toolang.setup.config import (
     load_agent_config,
     load_setup_config,
     load_setup_envs,
-    resolve_agent_ceiling,
-    resolve_run_bindings,
+    resolve_run_defaults,
     resolve_run_limits,
+    resolve_setup_allow,
 )
-from toolang.state.collections import cap_kind_definition
 
 
 def test_setup_config_reads_only_the_toolang_root(tmp_path: Path) -> None:
@@ -103,17 +101,16 @@ def test_setup_policy_overlays_root_agent_and_frozen_overrides() -> None:
         "limit": {"tokens": 2000, "cost": "none", "time": 60},
     }
 
-    assert resolve_agent_ceiling(
+    assert resolve_setup_allow(
         (root, agent),
-        overrides={"models": ("local/*",), "services": None},
+        overrides={"models": ("local/*",)},
     ) == AgentCeiling(
         models=("local/*",),
-        skills=("editor",),
     )
-    assert resolve_run_bindings(
+    assert resolve_run_defaults(
         (root, agent),
         overrides={"runnable": None},
-    ) == RunBindings(model=None, runnable=None)
+    ) == RunDefaults(model=None, runnable=None)
     assert resolve_run_limits(
         (root, agent),
         overrides={"time": None},
@@ -149,49 +146,50 @@ def test_run_limits_use_limit_table() -> None:
 
 def test_setup_policy_rejects_unknown_and_invalid_fields() -> None:
     with pytest.raises(ValueError, match="unknown allow field: channels"):
-        resolve_agent_ceiling(({"allow": {"channels": ["web"]}},))
+        resolve_setup_allow(({"allow": {"channels": ["web"]}},))
     with pytest.raises(TypeError, match="allow models must be an array"):
-        resolve_agent_ceiling(({"allow": {"models": "gateway"}},))
+        resolve_setup_allow(({"allow": {"models": "gateway"}},))
     with pytest.raises(ValueError, match="unknown default field: tool"):
-        resolve_run_bindings(({"default": {"tool": "shell"}},))
+        resolve_run_defaults(({"default": {"tool": "shell"}},))
     with pytest.raises(ValueError, match="model request ref must be exact"):
-        resolve_run_bindings(({"default": {"model": "openai/*"}},))
+        resolve_run_defaults(({"default": {"model": "openai/*"}},))
     with pytest.raises(ValueError, match="unknown run limit: turns"):
         resolve_run_limits(({"limit": {"turns": 1}},))
     with pytest.raises(ValueError, match="cost must be non-negative"):
         resolve_run_limits(({"limit": {"cost": -1.0}},))
     with pytest.raises(ValueError, match="cannot mix queries with all or none"):
-        resolve_agent_ceiling(({"allow": {"models": ["all,openai/*"]}},))
+        resolve_setup_allow(({"allow": {"models": ["all,openai/*"]}},))
     with pytest.raises(ValueError, match="unknown allow field: caps"):
-        resolve_agent_ceiling(({"allow": {"caps": ["skill/reviewer"]}},))
+        resolve_setup_allow(({"allow": {"caps": ["skill/reviewer"]}},))
+    with pytest.raises(ValueError, match="unknown Setup allow override: services"):
+        resolve_setup_allow((), overrides={"services": None})
 
 
-def test_setup_policy_validates_owner_collection_queries_when_provided() -> None:
-    with pytest.raises(ToolangError, match="unknown skills query field"):
-        resolve_agent_ceiling(
-            ({"allow": {"skills": ["*[missing=value]"]}},),
-            cap_query_schemas={
-                name: cap_kind_definition(kind).schema
-                for name, kind in (
-                    ("psyches", "psyche"),
-                    ("skills", "skill"),
-                    ("services", "service"),
-                    ("prompts", "prompt"),
-                )
+def test_setup_policy_validates_owned_collection_queries() -> None:
+    with pytest.raises(ToolangError, match="unknown models query field"):
+        resolve_setup_allow(({"allow": {"models": ["*[missing=value]"]}},))
+    with pytest.raises(ValueError, match="invalid default runnable ref"):
+        resolve_run_defaults(({"default": {"runnable": "*[missing=value]"}},))
+
+
+def test_setup_policy_ignores_state_owned_allow_value_syntax() -> None:
+    assert resolve_setup_allow(
+        (
+            {
+                "allow": {
+                    "models": ["openai/*"],
+                    "skills": "State validates this value",
+                }
             },
         )
-    with pytest.raises(ToolangError, match="unknown runnables query field"):
-        resolve_run_bindings(
-            ({"default": {"runnable": "*[missing=value]"}},),
-            runnable_query_schema=RUNNABLE_SCHEMA,
-        )
+    ) == AgentCeiling(models=("openai/*",))
 
 
 def test_setup_policy_all_and_none_are_standalone_layer_values() -> None:
     root = {"allow": {"models": ["openai/*"], "skills": ["review"]}}
     agent = {"allow": {"models": ["all"], "skills": ["none"]}}
 
-    assert resolve_agent_ceiling((root, agent)) == AgentCeiling(skills=())
+    assert resolve_setup_allow((root, agent)) == AgentCeiling()
 
 
 def test_old_nested_run_limits_are_not_interpreted() -> None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated
 
@@ -101,21 +101,19 @@ def _list_plugins(*, group: str, header: str, empty_message: str) -> None:
 def model_rows(
     setup: AgentSetup,
     *,
-    config_layers: Sequence[Mapping[str, object]],
     model_queries: Sequence[str] | None = None,
 ) -> list[tuple[str, str, str]]:
-    from toolang.plugin.models.config import (
-        parse_model_aliases,
-    )
-    from toolang.plugin.models.views import model_list_rows
+    from toolang.plugin.models.views import model_target_profile
 
-    return model_list_rows(
-        providers=setup.providers,
-        models=setup.models,
-        aliases=parse_model_aliases(config_layers),
-        envs=setup.envs,
-        queries=model_queries,
-    )
+    models = setup.models.match(model_queries) if model_queries else setup.models
+    return [
+        (
+            entry.ref,
+            entry.target.provider,
+            model_target_profile(entry.target, models=(entry.info,)),
+        )
+        for entry in models.entries
+    ]
 
 
 def setup_tool_dataset(setup: AgentSetup) -> QueryDataset[ToolQueryView]:

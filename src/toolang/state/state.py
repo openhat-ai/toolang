@@ -635,6 +635,174 @@ class AgentState:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class StateResources:
+    """Process-local effective cap collections for one durable Agent State."""
+
+    caps_by_module: Mapping[str, tuple[StateCap, ...]]
+
+    def __post_init__(self) -> None:
+        values = {name: tuple(entries) for name, entries in self.caps_by_module.items()}
+        if tuple(sorted(values)) != tuple(values):
+            raise ValueError("State resource modules must be sorted by name")
+        object.__setattr__(self, "caps_by_module", freeze_mapping(values))
+
+    def caps_for(self, module: str) -> tuple[StateCap, ...]:
+        """Return the precomputed effective caps for one Program module."""
+
+        try:
+            return self.caps_by_module[module]
+        except KeyError as exc:
+            raise ValueError(f"Program not found: {module}") from exc
+
+
+@dataclass(frozen=True, slots=True)
+class StatePublication:
+    """One durable Agent State paired with its effective runtime resources."""
+
+    state: AgentState
+    resources: StateResources
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.state, AgentState):
+            raise TypeError("State publication requires an AgentState")
+        if not isinstance(self.resources, StateResources):
+            raise TypeError("State publication requires StateResources")
+        if set(self.resources.caps_by_module) != set(self.state.modules):
+            raise ValueError("State publication resources must cover every module")
+
+    @property
+    def revision(self) -> str:
+        """Return the durable State revision represented by this publication."""
+
+        return self.state.revision
+
+    @property
+    def root_revision(self) -> str:
+        return self.state.root_revision
+
+    @property
+    def home_revision(self) -> str:
+        return self.state.home_revision
+
+    @property
+    def root_config(self) -> Mapping[str, object]:
+        return self.state.root_config
+
+    @property
+    def home_config(self) -> Mapping[str, object]:
+        return self.state.home_config
+
+    @property
+    def config(self) -> Mapping[str, object]:
+        return self.state.config
+
+    @property
+    def caps(self) -> Mapping[str, StateCap]:
+        return self.state.caps
+
+    @property
+    def modules(self) -> Mapping[str, Program]:
+        return self.state.modules
+
+    @property
+    def module_sources(self) -> Mapping[str, str]:
+        return self.state.module_sources
+
+    @property
+    def module_digests(self) -> Mapping[str, str]:
+        return self.state.module_digests
+
+    @property
+    def module_caps(self) -> Mapping[str, tuple[StateCap, ...]]:
+        return self.state.module_caps
+
+    @property
+    def psyches(self) -> Mapping[str, StateCap]:
+        return self.state.psyches
+
+    @property
+    def skills(self) -> Mapping[str, StateCap]:
+        return self.state.skills
+
+    @property
+    def services(self) -> Mapping[str, StateCap]:
+        return self.state.services
+
+    @property
+    def prompts(self) -> Mapping[str, StateCap]:
+        return self.state.prompts
+
+    @property
+    def agics(self) -> Mapping[str, AgicDecl]:
+        return self.state.agics
+
+    @property
+    def flows(self) -> Mapping[str, FlowDecl]:
+        return self.state.flows
+
+    @property
+    def runnables(self) -> Mapping[str, AgicDecl | FlowDecl]:
+        return self.state.runnables
+
+    @property
+    def runnable_modules(self) -> Mapping[str, str]:
+        return self.state.runnable_modules
+
+    @property
+    def module_runnables(self) -> Mapping[str, AgicDecl | FlowDecl]:
+        return self.state.module_runnables
+
+    def caps_for(self, module: str) -> tuple[StateCap, ...]:
+        """Return the already-filtered cap collection for one module."""
+
+        return self.resources.caps_for(module)
+
+
+def publish_state_resources(
+    state: AgentState,
+    *,
+    agent_name: str,
+    allow_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
+) -> StatePublication:
+    """Derive cap-kind allow policy once for one immutable State revision."""
+
+    from .collections import cap_dataset
+    from .config import CAP_ALLOW_FIELDS, resolve_cap_allows
+
+    allows = resolve_cap_allows(
+        (state.root_config, state.home_config),
+        overrides=allow_overrides,
+    )
+    by_module: dict[str, tuple[StateCap, ...]] = {}
+    for module in state.modules:
+        base = state.caps_for(module)
+        selected_ids: set[tuple[str, str, str]] = set()
+        for allow_field in CAP_ALLOW_FIELDS:
+            kind = cast(EntryKind, allow_field.removesuffix("s"))
+            entries = tuple(item for item in base if item.kind == kind)
+            queries = allows.get(allow_field)
+            if queries is None:
+                selected = entries
+            elif not queries:
+                selected = ()
+            else:
+                selected = tuple(
+                    cast(StateCap, item.record)
+                    for item in cap_dataset(
+                        entries,
+                        agent_name=agent_name,
+                        kind=kind,
+                    ).query(queries)
+                )
+            selected_ids.update((item.kind, item.name, item.ref) for item in selected)
+        by_module[module] = tuple(
+            item for item in base if (item.kind, item.name, item.ref) in selected_ids
+        )
+    resources = StateResources({name: by_module[name] for name in sorted(by_module)})
+    return StatePublication(state=state, resources=resources)
+
+
 def compose_agent_state(
     *,
     root_revision: str,

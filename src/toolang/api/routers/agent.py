@@ -7,12 +7,14 @@ from fastapi import APIRouter, HTTPException, Query
 
 from toolang.api.app import AgentCoreDep
 from toolang.api.schemas import RuntimeIdentityPayload, RuntimeSandboxPayload
+from toolang.base.types.policy import AgentCeiling
 from toolang.common.errors import ToolangError
 from toolang.common.version import toolang_version
 from toolang.execution.runnables import (
     resolve_public_runnable_query,
     runnable_binding_defaults,
 )
+from toolang.execution.calls import prompt_definitions
 from toolang.execution.schemas import ThreadInfo
 from toolang.execution.types import ModelStepNoted
 from toolang.execution.executor.resources import (
@@ -47,9 +49,8 @@ def profile(core: AgentCoreDep) -> dict[str, object]:
 def models(core: AgentCoreDep) -> dict[str, object]:
     try:
         setup = core.setup.current()
-        state = core.state.current()
-        resolved_default, targets = agent_model_targets(setup, state, setup.ceiling)
-        selection = snapshot_model_selection(setup, state)
+        resolved_default, targets = agent_model_targets(setup, AgentCeiling())
+        selection = snapshot_model_selection(setup)
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {
@@ -69,7 +70,7 @@ def models(core: AgentCoreDep) -> dict[str, object]:
 async def agics(core: AgentCoreDep) -> dict[str, object]:
     setup = core.setup.current()
     state = await _fresh_state(core)
-    default, _flow = _runnable_defaults(state, setup.bindings.runnable)
+    default, _flow = _runnable_defaults(state, setup.defaults.runnable)
     return {
         "default": default,
         "items": [{"name": name} for name in state.agics],
@@ -80,7 +81,7 @@ async def agics(core: AgentCoreDep) -> dict[str, object]:
 async def flows(core: AgentCoreDep) -> dict[str, object]:
     setup = core.setup.current()
     state = await _fresh_state(core)
-    _agic, default = _runnable_defaults(state, setup.bindings.runnable)
+    _agic, default = _runnable_defaults(state, setup.defaults.runnable)
     return {
         "default": default,
         "items": [{"name": name} for name in state.flows],
@@ -94,7 +95,7 @@ async def prompt_completions(
 ) -> dict[str, object]:
     setup = core.setup.current()
     state = await _fresh_state(core)
-    selected = runnable or setup.bindings.runnable
+    selected = runnable or setup.defaults.runnable
     if selected is None:
         default_agic, default_flow = _runnable_defaults(state, None)
         if default_agic is not None:
@@ -107,6 +108,8 @@ async def prompt_completions(
         module = resolve_public_runnable_query(state, selected).module
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    program = state_program(state, module)
+    available_prompts = prompt_definitions(state, module=module, program=program)
     return {
         "items": [
             {
@@ -116,8 +119,8 @@ async def prompt_completions(
                     for parameter in prompt.params
                 ],
             }
-            for prompt in state_program(state, module).caps
-            if prompt.kind == "prompt"
+            for prompt in program.caps
+            if prompt.kind == "prompt" and prompt.name in available_prompts
         ]
     }
 

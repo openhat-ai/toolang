@@ -20,7 +20,7 @@ from toolang.execution.runnables import (
 )
 from toolang.execution.store import RunStore
 from toolang.lang.input import resolve_runnable_input
-from toolang.state.state import AgentState
+from toolang.state.state import AgentState, StatePublication
 from toolang.setup import AgentSetup
 from toolang.work import files
 from toolang.work.records import FileRequestRecord
@@ -44,7 +44,7 @@ def spawn(
     layout: AgentLayout,
     executor: RunExecutor,
     get_agent_setup: Callable[[], AgentSetup],
-    get_agent_state: Callable[[], AgentState],
+    get_agent_state: Callable[[], AgentState | StatePublication],
     inboxes: tuple[Path, ...],
     interval_ms: float,
     stable_ms: float,
@@ -71,7 +71,7 @@ async def run(
     layout: AgentLayout,
     executor: RunExecutor,
     get_agent_setup: Callable[[], AgentSetup],
-    get_agent_state: Callable[[], AgentState],
+    get_agent_state: Callable[[], AgentState | StatePublication],
     inboxes: tuple[Path, ...],
     interval_ms: float,
     stable_ms: float,
@@ -132,7 +132,7 @@ async def run(
                         thread=submission.record.thread_id,
                         bindings=RunBindings(
                             runnable=runnable_ref,
-                            model=setup.bindings.model,
+                            model=setup.defaults.model,
                         ),
                         limits=setup.limits,
                         input=resolve_runnable_input(

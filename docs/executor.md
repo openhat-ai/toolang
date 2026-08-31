@@ -26,7 +26,7 @@ class RunExecutor:
         source: str,
         *,
         setup: AgentSetup,
-        state: AgentState,
+        state: StatePublication,
         ceiling: AgentCeiling = AgentCeiling(),
         model: str | None = None,
         limits: RunLimits | None = None,
@@ -40,7 +40,7 @@ class RunExecutor:
         run_id: str,
         *,
         setup: AgentSetup,
-        state: AgentState,
+        state: StatePublication,
         anchor: StepPath | str | None = None,
         ceiling: AgentCeiling = AgentCeiling(),
         model: str | None = None,
@@ -71,7 +71,7 @@ class RunExecutor:
         self,
         *,
         run_id: str,
-        state: AgentState,
+        state: StatePublication,
         request_id: str | None = None,
     ) -> ControlRecord: ...
 
@@ -100,7 +100,7 @@ options when runtime tuning becomes public.
 @dataclass(frozen=True, slots=True)
 class RunSpec:
     setup: AgentSetup
-    state: AgentState
+    state: StatePublication
     thread: str
     bindings: RunBindings
     limits: RunLimits
@@ -116,9 +116,10 @@ program module. `bindings.model` is the effective singular model choice and
 accounting, retry, and rerun.
 The spec does not carry an origin, run identity, request identity, or arbitrary
 transport context. Each item in `ceilings` is one independently applied
-collection-query restriction inside `setup.ceiling`; retaining separate session
-and run restrictions preserves intersection semantics when queries use
-OR matching. `input.primary` is the primary multimodal input;
+collection-query restriction over the effective resources already published by
+Setup and State. Retaining separate session and run restrictions preserves
+intersection semantics when queries use OR matching. `input.primary` is the
+primary multimodal input;
 `input.named` contains typed values for the runnable's declared `params`.
 The executor validates both before
 accepting the run and constructs the user message internally. It
@@ -206,7 +207,7 @@ control reference captured by its calling step.
 ## Execution Structure
 
 `RunExecutor` is the process-level singleton. Each owned root run creates one
-private `_Execution` that carries the current `(AgentState, ControlRef)` pair
+private `_Execution` that carries the current `(StatePublication, ControlRef)` pair
 for its recursive run tree.
 The implementation is divided by semantic level:
 
@@ -238,11 +239,12 @@ the authored routes and resolved union as model hints only when `hands` or
 target is authorized and omit the catalog. Authorization always checks the
 captured authored route list.
 
-`AgentSetup.ceiling` contains stable queries, not resolved resources. At
-`run()`, the executor resolves it against the captured `AgentSetup` and
-`AgentState`, intersects every `RunSpec.ceilings` restriction, and creates
-the tree-level `AgentResources`. A ceiling cannot expand the preceding resource
-set. Invalid queries are rejected before the run is durably accepted.
+`AgentSetup.models` and `AgentSetup.tools` are already filtered immutable
+collections. `StatePublication.resources` similarly contains the filtered caps
+for every module. At `run()`, the executor intersects every
+`RunSpec.ceilings` restriction and creates tree-level `AgentResources` using
+stable model entry keys. A ceiling cannot expand the published base. Invalid
+queries are rejected before the run is durably accepted.
 Every flow invocation starts from the tree-level agent resources and applies
 its own directives, whether or not the flow declares any. Agics start from the
 nearest containing flow resources, or directly from the agent resources at the

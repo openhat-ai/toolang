@@ -14,6 +14,8 @@ the setup resolver joins those facts once for the current process.
 | `ModelAdapter` | A plugin that invokes one wire protocol |
 | `ModelInfo` | The runtime selection projection of one catalog model |
 | `ModelTarget` | One fully resolved call target with concrete execution values |
+| `ModelEntry` | One stable concrete ref, execution target, and metadata record |
+| `ModelCollection` | The immutable effective model set published by Setup |
 
 There is no model-provider plugin layer. A provider does not execute calls, and
 an adapter does not discover models, match providers, own prices, or determine
@@ -77,8 +79,8 @@ credential_env = "COMPANY_CATALOG_TOKEN"
 The merged mapping is passed unchanged to the catalog factory; the plugin owns
 resolution of `credential_env` when it needs the credential. Built-in
 `models_dev`, `ollama`, and `llama_cpp` catalogs remain enabled. Core provider
-routes and aliases remain under `[models.providers.<name>]` and
-`[models.aliases.<name>]`; they are not plugin factory configuration.
+routes remain under `[models.providers.<name>]`; they are not plugin factory
+configuration.
 
 ## One-Time Route Resolution
 
@@ -247,29 +249,34 @@ complete contract.
 Model-call parameters such as reasoning effort are structured request fields,
 not query syntax.
 
-## Local Configuration and Aliases
+## Runtime Configuration
 
-Root configuration may override provider runtime values and define named model
-aliases:
+Root or agent configuration may override provider runtime values, filter the
+effective Setup collection, and select one exact default:
 
 ```toml
-[models]
-default = ["*[alias=gateway]", "openai/gpt-5[route.provider=openai]"]
-
 [models.providers.gateway]
 adapter = "responses"
 endpoint = "https://gateway.example.com/v1"
 key_env = "GATEWAY_API_KEY"
 
-[models.aliases.gateway]
-ref = "openai/gpt-5"
-provider = "gateway"
-headers = { X-Team = "infra" }
+[allow]
+models = ["gateway/*"]
+
+[default]
+model = "gateway/chat"
 ```
 
 Provider configuration participates in the one-time provider resolution.
-Aliases are explicit routes and may override call target fields such as model,
-adapter, endpoint, key environment, headers, options, and scope.
+`SetupWatcher` applies `allow.models` once and publishes the resulting
+`ModelCollection`; request and runnable policy can only narrow that base.
+`default.model` must be one concrete ref present in the effective collection.
+When it is absent, Toolang does not choose a first model implicitly. Agics then
+require an explicit surface selection, while model-free flows remain valid.
+
+`[models].default` and `[models.aliases.*]` are rejected. Custom model
+identities and aliases will be supplied by a future custom catalog rather than
+by a parallel runtime route mechanism.
 
 ## Runtime Calls and Accounting
 

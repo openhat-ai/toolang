@@ -19,7 +19,7 @@ from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.common.template import render_text_template
 from toolang.common.time import elapsed_ms, utc_now
-from toolang.state.state import AgentState
+from toolang.state.state import AgentState, StatePublication
 
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
 from ...types import (
@@ -104,7 +104,10 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     plugin_name = "-"
     summary_context = _tool_summary_context(call, None)
 
-    def begin_step(agent_state: AgentState, state_ref: ControlRef) -> StepBegin:
+    def begin_step(
+        agent_state: AgentState | StatePublication,
+        state_ref: ControlRef,
+    ) -> StepBegin:
         nonlocal prepared, plugin_name, summary_context
         prepared = state.frame_for_step(agent_state, state_ref)
         tool = prepared.tools.get(call.name)

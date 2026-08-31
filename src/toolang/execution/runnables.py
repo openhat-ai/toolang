@@ -16,12 +16,14 @@ from toolang.lang.ast import (
 from toolang.lang.types import parse_public_runnable_ref
 from toolang.state.state import (
     AgentState,
+    StatePublication,
     effective_agics,
     state_program,
 )
 from toolang.state.runnable_collections import runnable_dataset
 
 Runnable: TypeAlias = AgicDecl | FlowDecl
+ExecutionState: TypeAlias = AgentState | StatePublication
 RUNNABLE_CATALOG_MAX_ENTRIES = 64
 RUNNABLE_CATALOG_MAX_BYTES = 32_768
 RUNNABLE_DOCUMENTATION_MAX_CHARS = 512
@@ -100,7 +102,7 @@ class AgicRoutes:
 
 
 def resolve_public_runnable(
-    state: AgentState,
+    state: ExecutionState,
     name: str,
     *,
     kind: str | None = None,
@@ -111,7 +113,7 @@ def resolve_public_runnable(
     return ResolvedRunnable(name=name, module=module, executable=executable)
 
 
-def resolve_agic_routes(state: AgentState, agic: AgicDecl) -> AgicRoutes:
+def resolve_agic_routes(state: ExecutionState, agic: AgicDecl) -> AgicRoutes:
     """Resolve one Agic's authored routes against a captured State."""
 
     hands = _directive_values(agic, "hands")
@@ -121,7 +123,7 @@ def resolve_agic_routes(state: AgentState, agic: AgicDecl) -> AgicRoutes:
         ("run", hands),
         ("execute", handoffs),
     )
-    dataset = runnable_dataset(state)
+    dataset = runnable_dataset(_durable_state(state))
     for route_action, queries in groups:
         selected = dataset.query(queries) if queries else ()
         for item in selected:
@@ -175,13 +177,14 @@ def resolve_runnable(
 
 
 def resolve_state_runnable(
-    state: AgentState,
+    state: ExecutionState,
     name: str,
     *,
     kind: str | None = None,
 ) -> tuple[str, Runnable]:
     """Resolve one public runnable to its owning module and declaration."""
 
+    state = _durable_state(state)
     if not name or name != name.strip():
         raise ValueError("run spec requires a canonical runnable name")
     index = getattr(state, "runnables", None)
@@ -194,7 +197,7 @@ def resolve_state_runnable(
 
 
 def resolve_state_runnable_query(
-    state: AgentState,
+    state: ExecutionState,
     query: str,
 ) -> tuple[str, Runnable]:
     """Resolve one singular runnable collection query."""
@@ -204,12 +207,12 @@ def resolve_state_runnable_query(
 
 
 def resolve_public_runnable_query(
-    state: AgentState,
+    state: ExecutionState,
     query: str,
 ) -> ResolvedRunnable:
     """Resolve one singular query with its effective public identity."""
 
-    item = runnable_dataset(state).require_one(query, label="runnable")
+    item = runnable_dataset(_durable_state(state)).require_one(query, label="runnable")
     return ResolvedRunnable(
         name=item.name,
         module=item.module,
@@ -218,7 +221,7 @@ def resolve_public_runnable_query(
 
 
 def resolve_module_runnable(
-    state: AgentState,
+    state: ExecutionState,
     module_name: str,
     name: str,
     *,
@@ -226,6 +229,7 @@ def resolve_module_runnable(
 ) -> tuple[str, Runnable]:
     """Resolve a module-local runnable and its effective public name."""
 
+    state = _durable_state(state)
     resolve_indexed = getattr(state, "module_runnable", None)
     if not callable(resolve_indexed):
         runnable = resolve_runnable(state_program(state, module_name), name, kind=kind)
@@ -246,12 +250,13 @@ def resolve_module_runnable(
 
 
 def resolve_bound_runnable(
-    state: AgentState,
+    state: ExecutionState,
     module_name: str,
     ref: str,
 ) -> Runnable:
     """Resolve a stored effective ref back to its Program declaration."""
 
+    state = _durable_state(state)
     name, kind = parse_runnable_ref(ref)
     index = getattr(state, "runnables", None)
     if index is None:
@@ -278,14 +283,22 @@ def parse_runnable_ref(value: str) -> tuple[str, str | None]:
     return parse_public_runnable_ref(value)
 
 
+def _durable_state(state: ExecutionState) -> AgentState:
+    """Return the durable State carried by one runtime publication."""
+
+    return state.state if isinstance(state, StatePublication) else state
+
+
 def runnable_binding_defaults(
-    program: Program | AgentState,
+    program: Program | ExecutionState,
     binding: str | None,
     *,
     fallback_agic: str,
 ) -> tuple[str | None, str | None]:
     """Project one runnable binding into exclusive agic and flow defaults."""
 
+    if isinstance(program, StatePublication):
+        program = program.state
     if binding is None:
         if isinstance(program, AgentState):
             fallback = program.runnables.get(fallback_agic)
@@ -447,12 +460,13 @@ def _authorized_document(
 
 
 def runnable_input_contract(
-    state: AgentState,
+    state: ExecutionState,
     module: str,
     runnable: Runnable,
 ) -> dict[str, object]:
     """Return the model-facing input contract for one runnable declaration."""
 
+    state = _durable_state(state)
     structs = {item.name: item for item in state.modules[module].structs}
     signature_types = (
         *((runnable.input.type_name or "Part[]",) if runnable.input else ()),

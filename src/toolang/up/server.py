@@ -34,8 +34,9 @@ from toolang.execution.executor.resources import (
 )
 from toolang.plugin.sandboxes.host import HOST_SANDBOX_DESCRIPTION_ENV
 from toolang.setup import AgentSetup
+from toolang.setup.config import load_setup_config
 from toolang.state import watcher as state_watcher
-from toolang.state.state import AgentState
+from toolang.state.state import AgentState, StatePublication
 from toolang.up import process as agents
 from toolang.up.config import resolve_cors_allowed_origins
 from toolang.up.core import AgentCore
@@ -70,7 +71,7 @@ class ServeSpec:
     ceiling_overrides: Mapping[str, tuple[str, ...] | None] = field(
         default_factory=dict
     )
-    binding_overrides: Mapping[str, str | None] = field(default_factory=dict)
+    default_overrides: Mapping[str, str | None] = field(default_factory=dict)
     limit_overrides: Mapping[str, int | Decimal | None] = field(default_factory=dict)
     file_inboxes: tuple[Path, ...] = ()
     log_spec: str | None = None
@@ -83,8 +84,8 @@ class ServeSpec:
         )
         object.__setattr__(
             self,
-            "binding_overrides",
-            MappingProxyType(dict(self.binding_overrides)),
+            "default_overrides",
+            MappingProxyType(dict(self.default_overrides)),
         )
         object.__setattr__(
             self,
@@ -104,7 +105,7 @@ def resolve_serve(
     endpoint_host: str | None = None,
     port: int | None = None,
     ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
-    binding_overrides: Mapping[str, str | None] | None = None,
+    default_overrides: Mapping[str, str | None] | None = None,
     limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     file_inboxes: Sequence[Path] | None = None,
     log_spec: str | None = None,
@@ -124,7 +125,7 @@ def resolve_serve(
             temporary=temporary_port,
         ),
         ceiling_overrides=dict(ceiling_overrides or {}),
-        binding_overrides=dict(binding_overrides or {}),
+        default_overrides=dict(default_overrides or {}),
         limit_overrides=dict(limit_overrides or {}),
         file_inboxes=resolved_inboxes,
         log_spec=log_spec.strip()
@@ -155,7 +156,7 @@ def build_serve_argv(
     ]
     for name, selectors in spec.ceiling_overrides.items():
         command.extend(["--allow", f"{name}={_format_allow(selectors)}"])
-    for name, value in spec.binding_overrides.items():
+    for name, value in spec.default_overrides.items():
         command.extend(["--default", f"{name}={_format_value(value)}"])
     for name, value in spec.limit_overrides.items():
         command.extend(["--limit", f"{name}={_format_value(value)}"])
@@ -184,17 +185,17 @@ def serve(
         spec.layout,
         sandbox=sandbox,
         ceiling_overrides=spec.ceiling_overrides,
-        binding_overrides=spec.binding_overrides,
+        default_overrides=spec.default_overrides,
         limit_overrides=spec.limit_overrides,
     )
     asyncio.run(core.state.refresh())
     asyncio.run(core.setup.refresh())
     state = core.state.current()
-    ceiling = core.setup.current().ceiling
-    _validate_file_agic(state, enabled=bool(spec.file_inboxes))
+    ceiling = AgentCeiling()
+    _validate_file_agic(state.state, enabled=bool(spec.file_inboxes))
     validate_agent_ceiling(core.setup.current(), state, ceiling)
     cors_allowed_origins = resolve_cors_allowed_origins(
-        state.root_config,
+        load_setup_config(spec.layout),
         environ=environ,
     )
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -202,7 +203,7 @@ def serve(
     def current_setup() -> AgentSetup:
         return core.setup.current()
 
-    def current_state() -> AgentState:
+    def current_state() -> StatePublication:
         return core.state.current()
 
     _log_state_loaded(
@@ -225,7 +226,7 @@ def serve(
                 endpoint=spec.endpoint,
                 started_at=started_at,
                 pid=os.getpid(),
-                models=ceiling.models or (),
+                models=current_setup().models.refs(),
                 sandbox=sandbox,
                 sandbox_description=environ.get(HOST_SANDBOX_DESCRIPTION_ENV),
                 sandbox_instance=environ.get("TOOLANG_SANDBOX_INSTANCE"),
@@ -289,7 +290,7 @@ def serve(
     app.state.shutdown_signal = shutdown_signal
     webui_url = _runtime_webui_url(
         spec.endpoint,
-        state=state,
+        config=load_setup_config(spec.layout),
         environ=environ,
     )
     _run_uvicorn_app(
@@ -366,7 +367,7 @@ def _runtime_log_spec_value(
 
 def _log_state_loaded(
     setup: AgentSetup,
-    state: AgentState,
+    state: AgentState | StatePublication,
     *,
     ceiling: AgentCeiling,
 ) -> None:
@@ -383,15 +384,17 @@ def _log_state_loaded(
 
 def _model_count(
     setup: AgentSetup,
-    state: AgentState,
+    state: AgentState | StatePublication,
     *,
     ceiling: AgentCeiling,
 ) -> int:
-    _default, targets = agent_model_targets(setup, state, ceiling)
+    _default, targets = agent_model_targets(setup, ceiling)
     return len(targets)
 
 
-def _cap_count(state: AgentState, kind: str) -> int:
+def _cap_count(state: AgentState | StatePublication, kind: str) -> int:
+    if isinstance(state, StatePublication):
+        return sum(item.kind == kind for item in state.resources.caps_for("agent"))
     return len(
         {
             "psyche": state.psyches,
@@ -502,14 +505,14 @@ async def _finish_runtime_tasks(
 def _runtime_webui_url(
     endpoint: str,
     *,
-    state: AgentState,
+    config: Mapping[str, object],
     environ: Mapping[str, str],
 ) -> str:
     try:
         port = urlsplit(endpoint).port
     except ValueError:
         port = None
-    base_url = resolve_ui_base_url(state.root_config, environ=environ).rstrip("/")
+    base_url = resolve_ui_base_url(config, environ=environ).rstrip("/")
     return base_url if port is None else f"{base_url}/{port}"
 
 

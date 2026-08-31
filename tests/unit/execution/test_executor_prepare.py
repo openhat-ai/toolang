@@ -18,7 +18,7 @@ from toolang.base.types.message import (
     message_text,
 )
 from toolang.base.types.model import (
-    ModelAlias,
+    ModelInfo,
     ModelTarget,
     Provider,
     ResolvedProvider,
@@ -53,7 +53,13 @@ from toolang.execution.types import (
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
 from toolang.lang.input import resolve_runnable_input
 from toolang.plugin.toolsets.registry import tool_ref_for_model_tool
-from toolang.setup import AgentEnvironment, AgentSetup
+from toolang.setup import (
+    AgentEnvironment,
+    AgentSetup,
+    ModelCollection,
+    ModelEntry,
+    ToolCollection,
+)
 
 
 def _provider() -> Provider:
@@ -69,6 +75,33 @@ def _provider() -> Provider:
             env=(),
             ready=True,
         ),
+    )
+
+
+def _models() -> ModelCollection:
+    info = ModelInfo(
+        ref="test/model",
+        provider="test",
+        name="model",
+        model="model",
+        adapter="test",
+    )
+    return ModelCollection(
+        (
+            ModelEntry(
+                key=info.ref,
+                ref=info.ref,
+                target=ModelTarget(
+                    ref=info.ref,
+                    provider=info.provider,
+                    name=info.name,
+                    model=info.model,
+                    adapter="test",
+                    base_url="https://models.example/v1",
+                ),
+                info=info,
+            ),
+        )
     )
 
 
@@ -120,7 +153,7 @@ class _Tracer(RunTracer):
 
 def _resources(setup: AgentSetup) -> AgentResources:
     return AgentResources(
-        models=("*[alias=default]",),
+        models=setup.models.keys(),
         tools=tuple(
             AgentToolResource(
                 model_name=name,
@@ -169,8 +202,8 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
         layout=AgentLayout.resident(root, "alice"),
         providers={provider.id: provider},
         adapters={adapter.name: adapter},
-        models=(),
-        tools={tool.name: tool},
+        models=_models(),
+        tools=ToolCollection.from_tools({tool.name: tool}),
         envs={},
         environment=AgentEnvironment(
             sandbox="docker:python:3.13-slim",
@@ -211,7 +244,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
         run_id="run_1",
         root_run_id="run_1",
         thread="term_1",
-        bindings=RunBindings(runnable="agic:chat"),
+        bindings=RunBindings(model="test/model", runnable="agic:chat"),
         input=resolve_runnable_input(
             agic,
             primary=Message.user("hello").parts,
@@ -232,16 +265,6 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
             store=_History(),
             providers=setup.providers,
             models=setup.models,
-            model_aliases={
-                "default": ModelAlias(
-                    name="default",
-                    ref="test/model",
-                    provider="test",
-                    model="model",
-                    adapter="test",
-                )
-            },
-            default_models=("*[alias=default]",),
             envs=setup.envs,
             date="2026-01-01",
             timezone="UTC",
@@ -285,8 +308,8 @@ def test_prepare_agic_keeps_declared_output_contract_out_of_instructions(
         layout=AgentLayout.resident(root, "alice"),
         providers={provider.id: provider},
         adapters={adapter.name: adapter},
-        models=(),
-        tools={},
+        models=_models(),
+        tools=ToolCollection(),
         envs={},
     )
     agic = AgicDecl(
@@ -317,7 +340,7 @@ def test_prepare_agic_keeps_declared_output_contract_out_of_instructions(
         run_id="run_1",
         root_run_id="run_1",
         thread="term_1",
-        bindings=RunBindings(runnable="agic:queries"),
+        bindings=RunBindings(model="test/model", runnable="agic:queries"),
         input=resolve_runnable_input(
             agic,
             primary=Message.user("topic").parts,
@@ -334,16 +357,6 @@ def test_prepare_agic_keeps_declared_output_contract_out_of_instructions(
         SimpleNamespace(
             setup=setup,
             store=_History(),
-            model_aliases={
-                "default": ModelAlias(
-                    name="default",
-                    ref="test/model",
-                    provider="test",
-                    model="model",
-                    adapter="test",
-                )
-            },
-            default_models=("*[alias=default]",),
             providers=setup.providers,
             models=setup.models,
             envs=setup.envs,
@@ -373,8 +386,8 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
         layout=AgentLayout.resident(root, "alice"),
         providers={provider.id: provider},
         adapters={adapter.name: adapter},
-        models=(),
-        tools={},
+        models=_models(),
+        tools=ToolCollection(),
         envs={},
     )
     agic = AgicDecl(
@@ -407,7 +420,7 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
         run_id="run_1",
         root_run_id="run_1",
         thread="term_1",
-        bindings=RunBindings(runnable="agic:review"),
+        bindings=RunBindings(model="test/model", runnable="agic:review"),
         input=resolve_runnable_input(
             agic,
             primary=(TextPart("this diagram "), image),
@@ -425,16 +438,6 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
         SimpleNamespace(
             setup=setup,
             store=_History(),
-            model_aliases={
-                "default": ModelAlias(
-                    name="default",
-                    ref="test/model",
-                    provider="test",
-                    model="model",
-                    adapter="test",
-                )
-            },
-            default_models=("*[alias=default]",),
             providers=setup.providers,
             models=setup.models,
             envs=setup.envs,
@@ -475,8 +478,8 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         layout=AgentLayout.resident(root, "alice"),
         providers={provider.id: provider},
         adapters={adapter.name: adapter},
-        models=(),
-        tools={tool.name: tool},
+        models=_models(),
+        tools=ToolCollection.from_tools({tool.name: tool}),
         envs={},
         environment=AgentEnvironment(
             sandbox="host",
@@ -510,21 +513,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
             program_source="agents/alice/agent.too",
             caps=(),
             root_config={},
-            home_config={
-                "models": {
-                    "default": "*[alias=default]",
-                    "aliases": {
-                        "default": {
-                            "ref": "test/model",
-                            "provider": "test",
-                            "model": "model",
-                            "adapter": "test",
-                            "endpoint": "https://models.example/v1",
-                            "headers": {"X-Secret": "do-not-store"},
-                        }
-                    },
-                }
-            },
+            home_config={},
             revision="0" * 64,
         ),
     )
@@ -544,7 +533,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
                     setup=setup,
                     state=state,
                     thread="term_1",
-                    bindings=RunBindings(runnable="chat"),
+                    bindings=RunBindings(model="test/model", runnable="chat"),
                     limits=setup.limits,
                     input=resolve_runnable_input(
                         agic,
