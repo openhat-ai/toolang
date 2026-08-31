@@ -55,7 +55,7 @@ from .types import (
     StepStatus,
     ThreadPeerType,
     Pointer,
-    RunOverride,
+    RunCommand,
     TypedPointer,
     validate_execution_id,
     validate_occurrence,
@@ -405,7 +405,7 @@ class RetryRequest:
     """One unresolved caller request to reopen a root run."""
 
     source: str
-    commands: tuple[RunOverride, ...]
+    commands: tuple[RunCommand, ...]
     request_id: str
     anchor: StepPath | None = None
 
@@ -431,7 +431,7 @@ class RerunRequest:
     """One unresolved caller request to start a new root from a source run."""
 
     source: str
-    commands: tuple[RunOverride, ...]
+    commands: tuple[RunCommand, ...]
     request_id: str
     model: ModelRequest | None = None
 
@@ -448,14 +448,14 @@ class RerunRequest:
 def _validate_restart_request(
     *,
     source: str,
-    commands: tuple[RunOverride, ...],
+    commands: tuple[RunCommand, ...],
     request_id: str,
 ) -> None:
     validate_execution_id(source, label="restart source run")
     if not isinstance(commands, tuple) or not all(
-        isinstance(command, RunOverride) for command in commands
+        isinstance(command, RunCommand) for command in commands
     ):
-        raise TypeError("restart request commands must be RunOverride objects")
+        raise TypeError("restart request commands must be RunCommand objects")
     if any(
         command.group == "default" and command.field == "runnable"
         for command in commands

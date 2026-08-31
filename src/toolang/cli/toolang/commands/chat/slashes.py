@@ -9,15 +9,13 @@ from typing import Any, cast
 import click
 
 from toolang.common.errors import ToolangError
-from toolang.base.types.model import ReasoningEffort
 from toolang.cli.common.model_selection import materialize_model_selection
-from toolang.execution.types import RunOverride
+from toolang.execution.policy import parse_setting_override
+from toolang.execution.types import ModelOverride, RunOverride, SessionSetting
 from .base import AppContext, ChatResult, as_text, friendly_error
 from .input import QuickCommand
 from .policy import (
-    apply_model_selection,
     materialize_runnable_list_ref,
-    reasoning_effort_from_selects,
 )
 
 SlashOutput = str | Sequence[str] | ChatResult | None
@@ -84,18 +82,21 @@ def _model(app: AppContext, _command: str, argument: str) -> SlashOutput:
     if not argument:
         raise ValueError("/model requires a model or parameter assignment.")
     client = app.get_client()
-    payload = client.list_models()
-    tokens = argument.split()
-    resolved = _resolve_model_selection(payload, tokens)
-    if resolved is None:
-        raise ValueError(
-            f"Model selection or reasoning effort is unknown or ambiguous: {argument}"
+    update = parse_setting_override("model", argument)
+    model = update.model
+    if model is None:  # pragma: no cover - parser invariant
+        raise RuntimeError("model setting did not contain a model override")
+    if model.identity not in {None, "default", "none"}:
+        payload = client.list_models()
+        resolved = _chat_resolve_model_command(payload, model.identity)
+        if resolved is None:
+            raise ValueError(
+                f"Model selection is unknown or ambiguous: {model.identity}"
+            )
+        update = RunOverride(
+            model=ModelOverride(identity=resolved[0], effort=model.effort)
         )
-    ref, effort = resolved
-    updated = apply_model_selection(app.get_selects(), ref=ref, effort=effort)
-    selects = app.get_selects()
-    selects.clear()
-    selects.update(updated)
+    app.set_setting(client.apply_setting(app.get_setting(), update))
     app.refresh_status()
     return None
 
@@ -103,16 +104,25 @@ def _model(app: AppContext, _command: str, argument: str) -> SlashOutput:
 def _runnable(app: AppContext, command: str, argument: str) -> SlashOutput:
     if not argument:
         raise ValueError(f"/{command} requires a runnable identity.")
-    client = app.get_client()
     kind = "runnable" if command == "runnable" else command
-    payload = client.list_runnables(kind)
-    tokens = argument.split()
-    if len(tokens) != 1:
-        raise ValueError(f"/{command} accepts exactly one runnable identity.")
-    resolved = _resolve_runnable_command(payload, tokens[0], kind=kind)
-    if resolved is None:
-        raise ValueError(f"Runnable selection is unknown or ambiguous: {tokens[0]}")
-    _apply_default(app, field="runnable", value=resolved)
+    update = parse_setting_override(command, argument)
+    runnable = update.runnable
+    if runnable is None:  # pragma: no cover - parser invariant
+        raise RuntimeError("runnable setting did not contain a runnable override")
+    if runnable != "default":
+        payload = app.get_client().list_runnables(kind)
+        resolved = _resolve_runnable_command(payload, runnable, kind=kind)
+        if resolved is None:
+            raise ValueError(f"Runnable selection is unknown or ambiguous: {runnable}")
+        update = RunOverride(runnable=resolved)
+    _apply_setting(app, update)
+    return None
+
+
+def _setting(app: AppContext, command: str, argument: str) -> SlashOutput:
+    if not argument:
+        raise ValueError(f"/{command} requires at least one field=value assignment.")
+    _apply_setting(app, parse_setting_override(command, argument))
     return None
 
 
@@ -172,9 +182,9 @@ SLASHES: tuple[SlashCommand, ...] = (
     SlashCommand(("help", "?"), "Show help.", _help, "/help, /?"),
     SlashCommand(
         ("model",),
-        "Switch the session model.",
+        "Set the session model or effort.",
         _model,
-        "/model MODEL [EFFORT|auto]",
+        "/model MODEL? effort=VALUE",
     ),
     SlashCommand(("agic",), "Switch the session agic.", _runnable, "/agic AGIC"),
     SlashCommand(("flow",), "Switch the session flow.", _runnable, "/flow FLOW"),
@@ -183,6 +193,18 @@ SLASHES: tuple[SlashCommand, ...] = (
         "Switch the session runnable.",
         _runnable,
         "/runnable RUNNABLE",
+    ),
+    SlashCommand(
+        ("allow",),
+        "Set session resource ceilings.",
+        _setting,
+        "/allow FIELD=QUERY...",
+    ),
+    SlashCommand(
+        ("limit",),
+        "Set session run limits.",
+        _setting,
+        "/limit FIELD=VALUE...",
     ),
     SlashCommand(
         ("steer", "s"),
@@ -227,14 +249,8 @@ def _chat_queue_help_lines() -> list[str]:
     ]
 
 
-def _apply_default(app: AppContext, *, field: str, value: str) -> None:
-    updated = app.get_client().apply_settings(
-        (RunOverride("default", field, value),),
-        app.get_selects(),
-    )
-    selects = app.get_selects()
-    selects.clear()
-    selects.update(updated)
+def _apply_setting(app: AppContext, update: RunOverride) -> None:
+    app.set_setting(app.get_client().apply_setting(app.get_setting(), update))
     app.refresh_status()
 
 
@@ -285,69 +301,21 @@ def _chat_resolve_model_command(
 
 def chat_model_label(
     models_payload: Mapping[str, Any],
-    selects: Mapping[str, object],
+    setting: SessionSetting,
 ) -> str:
-    model = as_text(selects.get("model"))
-    if model in {None, "default"}:
-        default = as_text(models_payload.get("default"))
-        if default is None:
-            return "default"
-        labels = _chat_resolve_model_command_labels(models_payload, (default,))
-        label = labels[0] if labels else default
-        effort = reasoning_effort_from_selects(selects)
-        return f"{label} · {effort.title()}" if effort is not None else label
-    labels = _chat_resolve_model_command_labels(models_payload, (model,))
-    label = labels[0] if labels else model
-    effort = reasoning_effort_from_selects(selects)
-    return f"{label} · {effort.title()}" if effort is not None else label
-
-
-def _chat_model_list_lines(payload: Mapping[str, Any]) -> list[str]:
-    default = as_text(payload.get("default"))
-    lines: list[str] = []
-    for item in _items(payload):
-        selector = as_text(item.get("selector")) or as_text(item.get("ref"))
-        if selector is None:
-            continue
-        efforts = _model_efforts(item)
-        columns = [
-            _model_label(item),
-            *(["default"] if selector == default else []),
-            *[
-                text
-                for value in (item.get("provider"), item.get("adapter"))
-                if (text := as_text(value))
-            ],
-            *(f"reasoning: {', '.join(efforts)}" for _ in (0,) if efforts),
-        ]
-        lines.append("  ".join(columns))
-    return lines or ["No available chat models."]
-
-
-def _chat_runnable_list_lines(
-    payload: Mapping[str, Any],
-    *,
-    selected: str | None,
-    show_kind: bool = False,
-) -> list[str]:
-    default = as_text(payload.get("default"))
-    lines: list[str] = []
-    for item in _items(payload):
-        name = as_text(item.get("name"))
-        if name is None:
-            continue
-        kind = as_text(item.get("kind"))
-        ref = f"{kind}:{name}" if show_kind and kind is not None else name
-        labels = [
-            label
-            for enabled, label in (
-                (ref == selected or name == selected, "current"),
-                (ref == default or name == default, "default"),
-            )
-            if enabled
-        ]
-        lines.append(f"{ref}  {' '.join(labels)}" if labels else ref)
-    return lines or ["No available items."]
+    if setting.model is None:
+        return "none"
+    labels = _chat_resolve_model_command_labels(models_payload, (setting.model.ref,))
+    label = labels[0] if labels else setting.model.ref
+    reasoning = setting.model.parameters.reasoning
+    if reasoning is None:
+        return label
+    value = (
+        reasoning.effort
+        if reasoning.effort is not None
+        else str(reasoning.budget_tokens)
+    )
+    return f"{label} · {value}"
 
 
 def _items(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -361,44 +329,3 @@ def _items(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 
 def _model_label(item: Mapping[str, Any]) -> str:
     return as_text(item.get("name")) or as_text(item.get("ref")) or "runtime model"
-
-
-def _model_efforts(item: Mapping[str, Any]) -> tuple[ReasoningEffort, ...]:
-    parameters = item.get("parameters")
-    reasoning = parameters.get("reasoning") if isinstance(parameters, Mapping) else None
-    values = reasoning.get("effort") if isinstance(reasoning, Mapping) else None
-    recognized = {"none", "minimal", "low", "medium", "high", "xhigh", "max", "default"}
-    return (
-        tuple(
-            cast(ReasoningEffort, value)
-            for value in values
-            if isinstance(value, str) and value in recognized
-        )
-        if isinstance(values, list | tuple)
-        else ()
-    )
-
-
-def _resolve_model_selection(
-    payload: Mapping[str, Any], tokens: Sequence[str]
-) -> tuple[str, ReasoningEffort | None] | None:
-    if not 1 <= len(tokens) <= 2:
-        return None
-    resolved = _chat_resolve_model_command(payload, tokens[0])
-    if resolved is None:
-        return None
-    ref, _label = resolved
-    if len(tokens) == 1 or tokens[1].lower() == "auto":
-        return ref, None
-    item = next(
-        (
-            item
-            for item in _items(payload)
-            if (as_text(item.get("selector")) or as_text(item.get("ref"))) == ref
-        ),
-        None,
-    )
-    effort = tokens[1].lower()
-    if item is None or effort not in _model_efforts(item):
-        return None
-    return ref, cast(ReasoningEffort, effort)

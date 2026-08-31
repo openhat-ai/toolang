@@ -15,23 +15,25 @@ Chat uses the same runtime units as the rest of Toolang:
 | `run` | One handling attempt inside that thread |
 | `step` | One execution unit inside the run |
 
-One terminal `ChatInput` resolves to one `QuickCommand`, one or more
-`RunOverride` values, or a policy-command sequence paired with
-`RunnableInputRaw`. Only the runnable-input branch creates a run control and a
-run in an existing thread. A client creates the thread explicitly before the
-first run.
+One terminal `ChatInput` resolves to either one `QuickCommand` or one aggregate
+`RunOverride` paired with `RunnableInputRaw`. Only the runnable-input branch
+creates a run control and a run in an existing thread. A client creates the
+thread explicitly before the first run.
 
 Terminal interactions use complete slash commands such as `/help`, `/model`,
-`/runnable`, `/show`, `/queue`, and `/steer`. Colon-prefixed lines remain the
-shared execution-policy prefix, while dollar-prefixed `Content` lines expand
-reusable prompts. See [input-syntax.md](./input-syntax.md) for the complete
-namespace contract.
+`/runnable`, `/allow`, `/limit`, `/show`, `/queue`, and `/steer`. Model,
+runnable, allow, and limit slash commands update `SessionSetting`; matching
+colon-prefixed lines form the one-run `RunOverride`. Dollar-prefixed `Content`
+lines expand reusable prompts. See [input-syntax.md](./input-syntax.md) for the
+complete namespace contract.
 
-Chat owns mutable model, reasoning-effort, runnable, allow, and limit defaults.
-Each submission snapshots that state with input-local overrides into one
-self-contained `RunRequest`; queued submissions retain their snapshot when the
-visible session changes. `/model` opens a searchable two-stage picker in the
-TUI and supports `MODEL [EFFORT|auto]` in scripted Chat.
+Chat owns mutable model, runnable, allow, and limit session defaults. Model
+parameters, including reasoning effort or token budget, live on the session's
+concrete `ModelRequest`. Each submission snapshots that state with input-local
+overrides into one self-contained `RunRequest`; queued submissions retain their
+snapshot when the visible session changes. A submitted slash setting command
+requires a body and never opens a picker. Completion may edit the command draft
+but does not submit it or mutate the session.
 
 Thread ids use one underscore-delimited normalized form:
 
@@ -201,11 +203,11 @@ chat/default runnable. Persisted state is read through the normal thread and run
 detail endpoints.
 
 `GET /api/v1/models` returns concrete refs from the server's current effective
-`AgentSetup.models` collection and structured reasoning-effort metadata; the picker never
-displays query syntax. A run resolves the submitted ref with singular-selection
-semantics, then applies its selected runnable's `models` directive. Ambiguous
-routes must be narrowed by the configured model queries before they can appear
-in the picker.
+`AgentSetup.models` collection and structured reasoning-effort metadata. A run
+resolves the submitted ref with singular-selection semantics, validates its
+typed model parameters, then applies its selected runnable's `models`
+directive. Ambiguous routes must be narrowed by the configured model queries
+before they are usable by Chat.
 
 
 ## Streaming Rule

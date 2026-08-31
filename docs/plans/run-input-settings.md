@@ -96,8 +96,9 @@ state from it, but UI dictionaries are not accepted by request construction.
 ```text
 - an optional model identity operation and model parameter operations;
 - an optional runnable identity operation;
-- an optional AgentCeiling for additional allow restrictions;
-- authored fields of RunLimits, including an explicit none value.
+- sparse allow-field replacements that materialize one additional
+  `AgentCeiling`;
+- sparse limit-field replacements, including an explicit none value.
 ```
 
 Missing means retain the effective `SessionSetting` value. The required distinctions
@@ -191,10 +192,11 @@ effort=4096 -> reasoning.budget_tokens = 4096
 effort=high -> reasoning.effort = high
 ```
 
-The parser checks `auto`, then accepts `0|[1-9][0-9]*` as a token budget. Every
-other value is a candidate effort level validated after the effective model is
-known. Signs, leading zeros, decimals, exponents, and separators are not budget
-syntax.
+The parser checks `auto`, then accepts `0|[1-9][0-9]*` as a token budget, then
+accepts a canonical reasoning-effort level. Unknown levels and signs, leading
+zeros, decimals, exponents, or separators in budget-like values are invalid.
+The selected model's advertised subset is validated after the effective model
+is known.
 
 Bare `default` selects the captured surface model. Bare `none` selects no model.
 Assigned `effort=default` and `effort=none` are effort levels, not identity
@@ -451,8 +453,8 @@ character and parameter meaning in assignment syntax.
 
 ## Implementation Touchpoints
 
-- `src/toolang/execution/types.py` for `SessionSetting`, aggregate `RunOverride`, and
-  removal of generic input policy command types;
+- `src/toolang/execution/types.py` for `SessionSetting`, aggregate `RunOverride`,
+  and isolation of retained low-level restart commands from authored input;
 - `src/toolang/execution/policy.py` for typed colon parsing, override merging,
   allow/limit materialization, and removal of `default` and collection command
   groups;

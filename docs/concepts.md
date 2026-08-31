@@ -266,10 +266,10 @@ part of a local.
 
 Toolang uses six operations at runnable boundaries:
 
-- policy parsing produces canonical `RunOverride` values
+- override parsing produces one aggregate `RunOverride`
 - runnable-input parsing produces `RunnableInputRaw(_, named)`
-- policy and runnable resolution produces one immutable `RunSpec` containing
-  a resolved `RunnableInput`
+- setting and runnable resolution materialize one `RunRequest`, then one
+  immutable `RunSpec` containing a resolved `RunnableInput`
 - content evaluation produces one ordered canonical `Percept`
 - input coercion converts that percept to the runnable's declared primary type
 - output coercion converts the runnable's final value to its declared output
@@ -277,7 +277,7 @@ Toolang uses six operations at runnable boundaries:
 
 Content evaluation applies equally to plain text, authored bodies with runtime
 values, and multimodal caller input. Runnable-input parsing, input coercion,
-and output coercion are language-owned operations. Policy parsing and
+and output coercion are language-owned operations. Override parsing and
 `RunSpec` resolution are execution-owned. None defines transport
 serialization.
 

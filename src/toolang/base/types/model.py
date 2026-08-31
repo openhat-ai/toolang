@@ -31,10 +31,22 @@ class ReasoningParameters:
     """Reasoning controls requested for one model selection."""
 
     effort: ReasoningEffort | None = None
+    budget_tokens: int | None = None
 
     def __post_init__(self) -> None:
         if self.effort is not None and self.effort not in _REASONING_EFFORTS:
             raise ValueError(f"unknown reasoning effort: {self.effort!r}")
+        if self.budget_tokens is not None:
+            if isinstance(self.budget_tokens, bool) or not isinstance(
+                self.budget_tokens, int
+            ):
+                raise TypeError("reasoning budget_tokens must be an integer")
+            if self.budget_tokens < 0:
+                raise ValueError("reasoning budget_tokens must be non-negative")
+        if self.effort is not None and self.budget_tokens is not None:
+            raise ValueError(
+                "reasoning parameters accept either effort or budget_tokens"
+            )
 
 
 @dataclass(frozen=True, slots=True)

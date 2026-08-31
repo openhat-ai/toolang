@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 import os
 from pathlib import Path
 import sys
+from typing import cast
 
 import click
 import typer
@@ -21,7 +23,17 @@ from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd, RunEvent, StepEnd
 from toolang.execution.history import RunHistory
 from toolang.execution.records import execution_error_message
-from toolang.execution.types import RunOverride, StepPath
+from toolang.execution.policy import merge_run_overrides, parse_setting_override
+from toolang.execution.types import (
+    AllowField,
+    AllowOverride,
+    LimitField,
+    LimitOverride,
+    ModelOverride,
+    RunOverride,
+    SessionSetting,
+    StepPath,
+)
 from toolang.lang.types import Array
 from toolang.cli.common.context import (
     context_layout,
@@ -50,12 +62,10 @@ from .history import ChatInputHistoryStore
 from .input import (
     QuickCommand,
     is_runnable_input,
-    is_run_overrides,
     normalize_chat_input,
     parse_chat_input,
 )
 from .local import LocalChatSession
-from .policy import apply_model_selection
 from .remote import RemoteChatError, RemoteChatSession
 from .tui import ChatTuiApp
 
@@ -87,7 +97,6 @@ def _chat_interactive(
     ctx: typer.Context,
     *,
     thread_id: str | None,
-    selector_payload: dict[str, object] | None = None,
     model_catalog: Path | None = None,
     sandbox: str | None = None,
     dev: Path | None = None,
@@ -95,28 +104,34 @@ def _chat_interactive(
     default_options: list[str] | None = None,
     limit_options: list[str] | None = None,
 ) -> None:
-    selectors = dict(selector_payload or {})
     with _chat_runtime(
         ctx,
-        selector_payload=selectors,
         model_catalog=model_catalog,
         sandbox=sandbox,
         dev=dev,
-        allow_options=allow_options,
-        default_options=default_options,
-        limit_options=limit_options,
     ) as client:
+        setting = client.initial_setting()
+        initial_update = _chat_session_override(
+            allow_options=allow_options,
+            default_options=default_options,
+            limit_options=limit_options,
+        )
+        if not initial_update.empty:
+            setting = client.apply_setting(setting, initial_update)
+        cli_defaults = user_call(resolve_default_overrides, {}, default_options)
+        if "runnable" in cli_defaults and cli_defaults["runnable"] is None:
+            setting = replace(setting, runnable=None)
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             _chat_interactive_scripted_local(
                 client=client,
                 thread_id=thread_id,
-                selector_payload=selectors,
+                setting=setting,
             )
             return
         _chat_interactive_prompt_toolkit(
             ctx,
             thread_id=thread_id,
-            selector_payload=selectors,
+            setting=setting,
             client=client,
         )
 
@@ -125,13 +140,9 @@ def _chat_interactive(
 def _chat_runtime(
     ctx: typer.Context,
     *,
-    selector_payload: dict[str, object] | None = None,
     model_catalog: Path | None = None,
     sandbox: str | None,
     dev: Path | None = None,
-    allow_options: list[str] | None = None,
-    default_options: list[str] | None = None,
-    limit_options: list[str] | None = None,
 ) -> Iterator[ChatClient]:
     """Own one local, attached, or temporary-remote Chat session."""
 
@@ -152,20 +163,6 @@ def _chat_runtime(
                         server.endpoint,
                         expected_sandbox=server.sandbox,
                     )
-                    current = dict(selector_payload or {})
-                    commands = _chat_session_commands(
-                        allow_options=allow_options,
-                        default_options=default_options,
-                        limit_options=limit_options,
-                    )
-                    updated = (
-                        remote.apply_settings(commands, current)
-                        if commands
-                        else current
-                    )
-                    if selector_payload is not None:
-                        selector_payload.clear()
-                        selector_payload.update(updated)
                 except (RemoteChatError, ValueError) as exc:
                     if remote is not None:
                         remote.close()
@@ -199,18 +196,6 @@ def _chat_runtime(
                 ),
             )
             try:
-                current = dict(selector_payload or {})
-                commands = _chat_session_commands(
-                    allow_options=allow_options,
-                    default_options=default_options,
-                    limit_options=limit_options,
-                )
-                updated = (
-                    local.apply_settings(commands, current) if commands else current
-                )
-                if selector_payload is not None:
-                    selector_payload.clear()
-                    selector_payload.update(updated)
                 yield local
             finally:
                 local.close()
@@ -218,20 +203,48 @@ def _chat_runtime(
         raise click.ClickException(str(exc)) from exc
 
 
-def _chat_session_commands(
+def _chat_session_override(
     *,
     allow_options: list[str] | None,
     default_options: list[str] | None,
     limit_options: list[str] | None,
-) -> tuple[RunOverride, ...]:
+) -> RunOverride:
     ceilings = user_call(resolve_ceiling_overrides, {}, allow_options)
     defaults = user_call(resolve_default_overrides, {}, default_options)
     limits = user_call(resolve_limit_overrides, {}, limit_options)
-    return (
-        *(RunOverride("allow", field, value) for field, value in ceilings.items()),
-        *(RunOverride("default", field, value) for field, value in defaults.items()),
-        *(RunOverride("limit", field, value) for field, value in limits.items()),
-    )
+    updates: list[RunOverride] = []
+    if ceilings:
+        updates.append(
+            RunOverride(
+                allow=tuple(
+                    AllowOverride(cast(AllowField, field), value)
+                    for field, value in ceilings.items()
+                ),
+            )
+        )
+    model = defaults.get("model") if "model" in defaults else None
+    runnable = defaults.get("runnable") if "runnable" in defaults else None
+    if "model" in defaults or "runnable" in defaults:
+        updates.append(
+            RunOverride(
+                model=(
+                    ModelOverride(identity=model if model is not None else "none")
+                    if "model" in defaults
+                    else None
+                ),
+                runnable=runnable if runnable is not None else None,
+            )
+        )
+    if limits:
+        updates.append(
+            RunOverride(
+                limits=tuple(
+                    LimitOverride(cast(LimitField, field), value)
+                    for field, value in limits.items()
+                )
+            )
+        )
+    return merge_run_overrides(updates)
 
 
 def _chat_input_history_store(ctx: typer.Context) -> ChatInputHistoryStore | None:
@@ -253,12 +266,12 @@ def _chat_interactive_prompt_toolkit(
     ctx: typer.Context,
     *,
     thread_id: str | None,
-    selector_payload: dict[str, object] | None = None,
+    setting: SessionSetting,
     client: ChatClient,
 ) -> None:
     ChatTuiApp.run(
         thread_id=thread_id,
-        selects=dict(selector_payload or {}),
+        setting=setting,
         home=_chat_home_label(ctx),
         input_history=_chat_input_history_store(ctx),
         client=client,
@@ -273,9 +286,8 @@ def _chat_interactive_scripted_local(
     *,
     client: ChatClient,
     thread_id: str | None,
-    selector_payload: dict[str, object] | None = None,
+    setting: SessionSetting,
 ) -> None:
-    selectors = dict(selector_payload or {})
     renderer = _ScriptedRunRenderer()
 
     def ensure_thread_id() -> str:
@@ -299,137 +311,102 @@ def _chat_interactive_scripted_local(
             return
         if not text.strip():
             continue
-        if _chat_handle_scripted_command(
-            text,
-            selectors,
-            client=client,
-        ):
+        source = normalize_chat_input(text)
+        try:
+            chat_input = parse_chat_input(source)
+        except ValueError as exc:
+            typer.echo(chat_friendly_error(str(exc)), err=True)
             continue
+        if isinstance(chat_input, QuickCommand):
+            setting = _chat_handle_scripted_command(
+                chat_input,
+                setting,
+                client=client,
+            )
+            continue
+        if not is_runnable_input(chat_input):
+            raise AssertionError("unknown chat input value")
+        override, runnable_input = chat_input
         errors: list[str] = []
         renderer.reset()
-        client.run(
-            ensure_thread_id(),
-            normalize_chat_input(text),
-            selectors,
-            renderer.render,
-            errors.append,
-            renderer.handle_state,
-        )
+        try:
+            request = client.build_request(
+                ensure_thread_id(),
+                override,
+                runnable_input,
+                setting,
+            )
+        except (click.ClickException, ToolangError, ValueError) as exc:
+            detail = exc.message if isinstance(exc, click.ClickException) else str(exc)
+            typer.echo(chat_friendly_error(detail), err=True)
+            continue
+        client.run(request, renderer.render, errors.append, renderer.handle_state)
         failure = errors[-1] if errors else renderer.failure
         if failure:
             typer.echo(chat_friendly_error(failure), err=True)
 
 
 def _chat_handle_scripted_command(
-    message: str,
-    selector_payload: dict[str, object],
+    chat_input: QuickCommand,
+    setting: SessionSetting,
     *,
     client: ChatClient,
-) -> bool:
-    source = normalize_chat_input(message)
-    try:
-        chat_input = parse_chat_input(source)
-    except ValueError as exc:
-        typer.echo(chat_friendly_error(str(exc)), err=True)
-        return True
-    if is_runnable_input(chat_input):
-        return False
-    if is_run_overrides(chat_input):
-        try:
-            updated = client.apply_settings(chat_input, selector_payload)
-        except (click.ClickException, ToolangError, ValueError) as exc:
-            detail = exc.message if isinstance(exc, click.ClickException) else str(exc)
-            typer.echo(chat_friendly_error(detail), err=True)
-            return True
-        selector_payload.clear()
-        selector_payload.update(updated)
-        typer.echo(chat_status_label(selector_payload))
-        return True
-    if not isinstance(chat_input, QuickCommand):
-        raise AssertionError("unknown chat input value")
+) -> SessionSetting:
     command = chat_input.name
     if command in {"help", "?"}:
         for line in chat_slashes._chat_help_lines():
             typer.echo(line)
-        return True
-    if command in {"agic", "flow", "runnable"}:
-        return _chat_handle_scripted_runnable_command(
-            command,
-            chat_input.tail,
-            selector_payload,
-            client=client,
-        )
-    if command != "model":
+        return setting
+    if command not in {"model", "agic", "flow", "runnable", "allow", "limit"}:
         typer.echo(f"Unknown command: /{command}")
-        return True
-    if chat_input.tail is None:
-        typer.echo("/model requires a model or parameter assignment.", err=True)
-        return True
+        return setting
     try:
-        payload = client.list_models()
+        update = _scripted_setting_update(command, chat_input.tail, client=client)
+        setting = client.apply_setting(setting, update)
     except (click.ClickException, ToolangError, ValueError) as exc:
-        message = exc.message if isinstance(exc, click.ClickException) else str(exc)
-        typer.echo(chat_friendly_error(message))
-        return True
-    tokens = chat_input.tail.split()
-    resolved = chat_slashes._resolve_model_selection(payload, tokens)
-    if resolved is None:
-        typer.echo(f"Model selection is unknown or ambiguous: {chat_input.tail}")
-        return True
-    try:
-        updated = apply_model_selection(
-            selector_payload,
-            ref=resolved[0],
-            effort=resolved[1],
-        )
-    except (click.ClickException, ToolangError, ValueError) as exc:
-        message = exc.message if isinstance(exc, click.ClickException) else str(exc)
-        typer.echo(chat_friendly_error(message))
-        return True
-    selector_payload.clear()
-    selector_payload.update(updated)
-    typer.echo(chat_status_label(selector_payload))
-    return True
+        detail = exc.message if isinstance(exc, click.ClickException) else str(exc)
+        typer.echo(chat_friendly_error(detail), err=True)
+        return setting
+    typer.echo(chat_status_label(setting))
+    return setting
 
 
-def _chat_handle_scripted_runnable_command(
+def _scripted_setting_update(
     command: str,
     argument: str | None,
-    selector_payload: dict[str, object],
     *,
     client: ChatClient,
-) -> bool:
+) -> RunOverride:
     if argument is None:
-        typer.echo(f"/{command} requires a runnable identity.", err=True)
-        return True
-    try:
-        payload = client.list_runnables(command)
-    except (click.ClickException, ToolangError, ValueError) as exc:
-        message = exc.message if isinstance(exc, click.ClickException) else str(exc)
-        typer.echo(chat_friendly_error(message))
-        return True
-    tokens = argument.split()
-    resolved = (
-        chat_slashes._resolve_runnable_command(payload, tokens[0], kind=command)
-        if len(tokens) == 1
-        else None
-    )
-    if resolved is None:
-        typer.echo(f"Runnable selection is unknown or ambiguous: {argument}")
-        return True
-    try:
-        updated = client.apply_settings(
-            (RunOverride("default", "runnable", resolved),),
-            selector_payload,
+        raise ValueError(f"/{command} requires a setting body")
+    update = parse_setting_override(command, argument)
+    if command == "model":
+        model = update.model
+        if model is not None and model.identity not in {None, "default", "none"}:
+            resolved = chat_slashes._chat_resolve_model_command(
+                client.list_models(), model.identity
+            )
+            if resolved is None:
+                raise ValueError(
+                    f"Model selection is unknown or ambiguous: {model.identity}"
+                )
+            return RunOverride(
+                model=ModelOverride(identity=resolved[0], effort=model.effort)
+            )
+        return update
+    if command in {"agic", "flow", "runnable"} and update.runnable != "default":
+        kind = "runnable" if command == "runnable" else command
+        resolved = chat_slashes._resolve_runnable_command(
+            client.list_runnables(kind),
+            update.runnable or "",
+            kind=kind,
         )
-    except (click.ClickException, ToolangError, ValueError) as exc:
-        message = exc.message if isinstance(exc, click.ClickException) else str(exc)
-        typer.echo(chat_friendly_error(message))
-        return True
-    selector_payload.clear()
-    selector_payload.update(updated)
-    typer.echo(chat_status_label(selector_payload))
-    return True
+        if resolved is None:
+            raise ValueError(
+                f"Runnable selection is unknown or ambiguous: {update.runnable}"
+            )
+        return RunOverride(runnable=resolved)
+    return update
 
 
 class _ScriptedRunRenderer:

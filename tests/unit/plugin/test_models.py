@@ -402,7 +402,7 @@ def test_model_reasoning_parameters_use_catalog_order_and_replace_defaults() -> 
                             "type": "effort",
                             "values": ["medium", "high", "medium", "future"],
                         },
-                        {"type": "budget", "values": [1024]},
+                        {"type": "budget_tokens", "min": 1024},
                     ]
                 },
             ),
@@ -427,12 +427,29 @@ def test_model_reasoning_parameters_use_catalog_order_and_replace_defaults() -> 
         ModelParameters(ReasoningParameters("high")),
     )
     assert selected.reasoning == {"effort": "high"}
+    budgeted = apply_model_parameters(
+        context,
+        target,
+        ModelParameters(ReasoningParameters(budget_tokens=2048)),
+    )
+    assert budgeted.reasoning == {"budget_tokens": 2048}
     with pytest.raises(ToolangError, match="allowed: medium, high"):
         apply_model_parameters(
             context,
             target,
             ModelParameters(ReasoningParameters("max")),
         )
+    with pytest.raises(ToolangError, match="budget must be at least 1024"):
+        apply_model_parameters(
+            context,
+            target,
+            ModelParameters(ReasoningParameters(budget_tokens=512)),
+        )
+
+
+def test_reasoning_parameters_reject_effort_and_budget_together() -> None:
+    with pytest.raises(ValueError, match="either effort or budget_tokens"):
+        ReasoningParameters(effort="high", budget_tokens=2048)
 
 
 def test_model_resolution_rejects_ambiguous_query() -> None:

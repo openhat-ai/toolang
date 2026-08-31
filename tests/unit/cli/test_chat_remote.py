@@ -28,7 +28,15 @@ from toolang.execution.schemas import (
     ThreadInfo,
     ThreadPeerInfo,
 )
-from toolang.execution.types import ControlRef, Local, RunOverride
+from toolang.execution.types import (
+    AllowOverride,
+    ControlRef,
+    Local,
+    ModelOverride,
+    LimitOverride,
+    RunOverride,
+)
+from toolang.lang.input import RunnableInputRaw
 
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
@@ -287,13 +295,13 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
             ]
         }
         assert session.create_thread() == "term_remote"
-        selects = session.apply_settings(
-            (
-                RunOverride("allow", "models", ("test/*",)),
-                RunOverride("default", "model", "test/model"),
-                RunOverride("limit", "cost", Decimal("2.50")),
+        setting = session.apply_setting(
+            session.initial_setting(),
+            RunOverride(
+                model=ModelOverride(identity="test/model"),
+                allow=(AllowOverride("models", ("test/*",)),),
+                limits=(LimitOverride("cost", Decimal("2.50")),),
             ),
-            {},
         )
         assert session.get_result("run_remote", thread_id=None).output == (
             TextPart("remote answer"),
@@ -301,13 +309,9 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
         assert session.get_result(None, thread_id="term_remote").run_id == (
             "run_remote"
         )
-        stored_overrides = selects["run_overrides"]
-        assert isinstance(stored_overrides, tuple)
-        assert stored_overrides == (
-            RunOverride("allow", "models", ("test/*",)),
-            RunOverride("default", "model", "test/model"),
-            RunOverride("limit", "cost", Decimal("2.50")),
-        )
+        assert setting.model is not None and setting.model.ref == "test/model"
+        assert setting.allow.models == ("test/*",)
+        assert setting.limits.cost == Decimal("2.50")
     finally:
         session.close()
 
@@ -520,10 +524,14 @@ def test_remote_chat_uses_remote_run_client_native_events() -> None:
     states: list[object] = []
     errors: list[str] = []
     try:
-        session.run(
+        request = session.build_request(
             "term_remote",
-            "hello",
-            {},
+            RunOverride(),
+            RunnableInputRaw(_="hello"),
+            session.initial_setting(),
+        )
+        session.run(
+            request,
             events.append,
             errors.append,
             states.append,
@@ -586,10 +594,14 @@ def test_remote_chat_recovers_without_replaying_or_retrying(
     states: list[object] = []
     errors: list[str] = []
     try:
-        session.run(
+        request = session.build_request(
             "term_remote",
-            "hello",
-            {},
+            RunOverride(),
+            RunnableInputRaw(_="hello"),
+            session.initial_setting(),
+        )
+        session.run(
+            request,
             events.append,
             errors.append,
             states.append,
@@ -636,10 +648,14 @@ def test_remote_chat_blocks_ambiguous_pre_acceptance_failure() -> None:
     errors: list[str] = []
     try:
         for _ in range(2):
-            session.run(
+            request = session.build_request(
                 "term_remote",
-                "hello",
-                {},
+                RunOverride(),
+                RunnableInputRaw(_="hello"),
+                session.initial_setting(),
+            )
+            session.run(
+                request,
                 lambda _event: None,
                 errors.append,
                 states.append,

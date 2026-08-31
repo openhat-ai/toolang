@@ -1,18 +1,23 @@
-"""Parse and resolve caller commands for one execution policy."""
+"""Parse and materialize session settings and input-local run overrides."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
+import re
 import shlex
+from typing import cast
 
 from toolang.base.errors import ToolangError
-from toolang.base.types.model import ModelRequest
-from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
-from toolang.common.query import (
-    resolve_query_sentinels,
+from toolang.base.types.model import (
+    ModelParameters,
+    ModelRequest,
+    ReasoningEffort,
+    ReasoningParameters,
 )
+from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
+from toolang.common.query import resolve_query_sentinels
 from toolang.lang.input import NamedInputSource, NamedInputSources
 from toolang.lang.runnable_query import RUNNABLE_SCHEMA
 from toolang.plugin.models.collections import MODEL_SCHEMA
@@ -20,75 +25,144 @@ from toolang.plugin.toolsets.collections import TOOL_SCHEMA
 from toolang.setup import AgentSetup
 from toolang.state.collections import cap_kind_definition
 from toolang.state.types import EntryKind
-from typing import cast
 
 from .types import (
-    ALLOW_POLICY_FIELDS,
-    DEFAULT_POLICY_FIELDS,
-    LIMIT_POLICY_FIELDS,
+    ALLOW_FIELDS,
+    LIMIT_FIELDS,
+    AllowField,
+    AllowOverride,
+    LimitField,
+    LimitOverride,
+    ModelEffort,
+    ModelOverride,
+    RunCommand,
     RunOverride,
+    SessionSetting,
 )
 
-_ALLOW_SHORTCUTS = ALLOW_POLICY_FIELDS
-_DEFAULT_SHORTCUTS = frozenset({"model", "agic", "flow", "runnable"})
 _CAP_KIND_BY_FIELD = {
     "psyches": "psyche",
     "skills": "skill",
     "services": "service",
     "prompts": "prompt",
 }
+_BUDGET_RE = re.compile(r"0|[1-9][0-9]*\Z")
+_REASONING_EFFORTS = frozenset(
+    {"none", "minimal", "low", "medium", "high", "xhigh", "max", "default"}
+)
 
 
-def parse_run_override(
-    line: str,
-) -> tuple[RunOverride, NamedInputSources]:
-    """Parse one canonical policy command or supported shortcut."""
+def parse_run_override(line: str) -> tuple[RunOverride, NamedInputSources]:
+    """Parse one leading colon override."""
 
     try:
-        parsed = _try_parse_command(line)
+        parsed = _try_parse_override(line)
     except ToolangError as error:
         raise ValueError(str(error)) from error
     if parsed is None:
-        raise ValueError("line is not a policy command")
+        raise ValueError("line is not a run override")
     return parsed
+
+
+def parse_setting_override(command: str, body: str) -> RunOverride:
+    """Parse one slash setting body using the shared override grammar."""
+
+    if command not in {"model", "runnable", "agic", "flow", "allow", "limit"}:
+        raise ValueError(f"unknown setting command: /{command}")
+    try:
+        tokens = shlex.split(body, comments=False, posix=True)
+    except ValueError as error:
+        raise ValueError(str(error)) from error
+    if command == "model":
+        return _model_override(tokens)
+    if command in {"runnable", "agic", "flow"}:
+        override, named = _runnable_override(command, tokens)
+        if named:
+            raise ValueError(f"/{command} does not accept named runnable input")
+        return override
+    if command == "allow":
+        return _allow_override(tokens)
+    return _limit_override(tokens)
 
 
 def parse_policy_prefix(
     source: str,
-) -> tuple[tuple[RunOverride, ...], NamedInputSources, str]:
-    """Parse the leading policy section and return its remaining source."""
+) -> tuple[RunOverride, NamedInputSources, str]:
+    """Parse one complete leading override section and its remaining source."""
 
     lines = _lines(source)
-    commands: list[RunOverride] = []
+    overrides: list[RunOverride] = []
     named: list[NamedInputSource] = []
     index = 0
     while index < len(lines):
         line = lines[index]
         if _is_blank(line.text):
-            if not commands:
+            if not overrides:
                 break
             index += 1
             continue
         try:
-            parsed = _try_parse_command(line.text)
+            parsed = _try_parse_override(line.text)
         except ToolangError as error:
             raise ValueError(str(error)) from error
         if parsed is None:
             break
-        command, command_named = parsed
-        commands.append(command)
-        named.extend(command_named)
+        override, override_named = parsed
+        overrides.append(override)
+        named.extend(override_named)
         index += 1
 
     remaining = source[lines[index].start :] if index < len(lines) else ""
-    return _normalize_commands(commands), tuple(named), remaining
+    return merge_run_overrides(overrides), tuple(named), remaining
+
+
+def merge_run_overrides(overrides: Sequence[RunOverride]) -> RunOverride:
+    """Combine a complete authored override section and reject duplicates."""
+
+    model: ModelOverride | None = None
+    runnable: str | None = None
+    allow: list[AllowOverride] = []
+    allow_positions: dict[AllowField, int] = {}
+    limits: list[LimitOverride] = []
+    limit_fields: set[str] = set()
+    for override in overrides:
+        if override.model is not None:
+            if model is not None:
+                raise ValueError("duplicate model override")
+            model = override.model
+        if override.runnable is not None:
+            if runnable is not None:
+                raise ValueError("duplicate runnable override")
+            runnable = override.runnable
+        for item in override.allow:
+            position = allow_positions.get(item.field)
+            if position is None:
+                allow_positions[item.field] = len(allow)
+                allow.append(item)
+                continue
+            previous = allow[position]
+            allow[position] = AllowOverride(
+                item.field,
+                _merge_allow_value(item.field, previous.value, item.value),
+            )
+        for item in override.limits:
+            if item.field in limit_fields:
+                raise ValueError(f"duplicate limit field: {item.field}")
+            limit_fields.add(item.field)
+            limits.append(item)
+    return RunOverride(
+        model=model,
+        runnable=runnable,
+        allow=tuple(allow),
+        limits=tuple(limits),
+    )
 
 
 def merge_commands(
-    current: Sequence[RunOverride],
-    updates: Sequence[RunOverride],
-) -> tuple[RunOverride, ...]:
-    """Apply one policy-only edit to a compact session command sequence."""
+    current: Sequence[RunCommand],
+    updates: Sequence[RunCommand],
+) -> tuple[RunCommand, ...]:
+    """Apply low-level updates to a compact retained command sequence."""
 
     merged = list(_normalize_commands(current))
     for command in _normalize_commands(updates):
@@ -100,14 +174,89 @@ def merge_commands(
     return tuple(merged)
 
 
+def commands_from_run_override(override: RunOverride) -> tuple[RunCommand, ...]:
+    """Lower policy-compatible authored fields for durable execution provenance."""
+
+    commands: list[RunCommand] = []
+    if override.model is not None and override.model.identity not in {None, "none"}:
+        commands.append(
+            RunCommand(
+                "default",
+                "model",
+                None
+                if override.model.identity == "default"
+                else override.model.identity,
+            )
+        )
+    if override.runnable is not None:
+        commands.append(
+            RunCommand(
+                "default",
+                "runnable",
+                None if override.runnable == "default" else override.runnable,
+            )
+        )
+    commands.extend(
+        RunCommand("allow", item.field, item.value) for item in override.allow
+    )
+    commands.extend(
+        RunCommand("limit", item.field, item.value) for item in override.limits
+    )
+    return tuple(commands)
+
+
+def apply_session_setting(
+    surface: SessionSetting,
+    current: SessionSetting,
+    update: RunOverride,
+) -> SessionSetting:
+    """Apply one validated slash setting body atomically to a session."""
+
+    model = _apply_model_override(current.model, surface.model, update.model)
+    runnable = current.runnable
+    if update.runnable is not None:
+        runnable = surface.runnable if update.runnable == "default" else update.runnable
+    allow = _replace_allow_fields(current.allow, update)
+    limits = _apply_limit_overrides(current.limits, update.limits)
+    return SessionSetting(model=model, runnable=runnable, allow=allow, limits=limits)
+
+
+def materialize_run_setting(
+    surface: SessionSetting,
+    session: SessionSetting,
+    override: RunOverride,
+) -> tuple[tuple[AgentCeiling, ...], SessionSetting]:
+    """Materialize one input-local override over concrete session settings."""
+
+    model = _apply_model_override(session.model, surface.model, override.model)
+    runnable = session.runnable
+    if override.runnable is not None:
+        runnable = (
+            surface.runnable if override.runnable == "default" else override.runnable
+        )
+    limits = _apply_limit_overrides(session.limits, override.limits)
+    run_ceiling = _allow_ceiling(override.allow)
+    ceilings = tuple(
+        ceiling
+        for ceiling in (session.allow, run_ceiling)
+        if ceiling is not None and _ceiling_restricts(ceiling)
+    )
+    return ceilings, SessionSetting(
+        model=model,
+        runnable=runnable,
+        allow=session.allow,
+        limits=limits,
+    )
+
+
 def resolve_commands(
     setup: AgentSetup,
     *,
     surface: RunBindings = RunBindings(),
-    session: Sequence[RunOverride] = (),
-    run: Sequence[RunOverride] = (),
+    session: Sequence[RunCommand] = (),
+    run: Sequence[RunCommand] = (),
 ) -> tuple[tuple[AgentCeiling, ...], RunBindings, RunLimits]:
-    """Resolve policy layers against one current setup snapshot."""
+    """Resolve retained low-level command layers for execution protocols."""
 
     base = RunBindings(
         model=surface.model if surface.model is not None else setup.defaults.model,
@@ -117,27 +266,22 @@ def resolve_commands(
             else setup.defaults.runnable
         ),
     )
-    return materialize_policy(
-        base,
-        setup.limits,
-        session=session,
-        run=run,
-    )
+    return materialize_policy(base, setup.limits, session=session, run=run)
 
 
 def materialize_policy(
     defaults: RunBindings,
     default_limits: RunLimits,
     *,
-    session: Sequence[RunOverride] = (),
-    run: Sequence[RunOverride] = (),
+    session: Sequence[RunCommand] = (),
+    run: Sequence[RunCommand] = (),
 ) -> tuple[tuple[AgentCeiling, ...], RunBindings, RunLimits]:
-    """Materialize session and input-local policy over concrete defaults."""
+    """Materialize retained low-level command layers over concrete defaults."""
 
     bindings = _apply_binding_commands(defaults, defaults, session)
     bindings = _apply_binding_commands(bindings, defaults, run)
-    limits = _apply_limit_commands(default_limits, session)
-    limits = _apply_limit_commands(limits, run)
+    limits = _apply_command_limits(default_limits, session)
+    limits = _apply_command_limits(limits, run)
     ceilings = tuple(
         ceiling
         for commands in (session, run)
@@ -146,7 +290,7 @@ def materialize_policy(
     return ceilings, bindings, limits
 
 
-def _try_parse_command(
+def _try_parse_override(
     line: str,
 ) -> tuple[RunOverride, NamedInputSources] | None:
     if not line.startswith(":") or line.startswith("::"):
@@ -158,72 +302,260 @@ def _try_parse_command(
     if not tokens:
         return None
     name = tokens[0][1:]
-    if name in {"allow", "default", "limit"}:
-        if len(tokens) != 2:
-            raise ValueError(f":{name} expects one field=value assignment")
-        field, raw = _assignment(tokens[1], command=f":{name}")
-        return _canonical_command(name, field, (raw,)), ()
-    if name in _DEFAULT_SHORTCUTS:
-        if len(tokens) == 1:
-            return None
-        return _default_shortcut(name, tokens[1:])
-    if name in _ALLOW_SHORTCUTS:
-        if len(tokens) == 1:
-            if name == "models":
-                return None
-            raise ValueError(f":{name} requires queries, all, or none")
-        return _canonical_command("allow", name, tuple(tokens[1:])), ()
+    body = tokens[1:]
+    if name == "model":
+        return _model_override(body), ()
+    if name in {"runnable", "agic", "flow"}:
+        return _runnable_override(name, body)
+    if name == "allow":
+        return _allow_override(body), ()
+    if name == "limit":
+        return _limit_override(body), ()
     return None
 
 
-def _canonical_command(
-    group: str,
-    field: str,
-    raw_values: tuple[str, ...],
-) -> RunOverride:
-    if group == "allow":
-        if field not in ALLOW_POLICY_FIELDS:
-            raise ValueError(f"unknown allow field: {field}")
-        value = _allow_value(field, raw_values)
-    elif group == "default":
-        if field not in DEFAULT_POLICY_FIELDS:
-            raise ValueError(f"unknown default field: {field}")
-        value = _default_value(field, raw_values[0])
-    elif group == "limit":
-        if field not in LIMIT_POLICY_FIELDS:
-            raise ValueError(f"unknown run limit: {field}")
-        value = _limit_value(field, raw_values[0])
-    else:  # pragma: no cover - callers use the closed parser grammar
-        raise ValueError(f"unknown policy command group: {group}")
-    if group == "allow":
-        return RunOverride("allow", field, value)
-    if group == "default":
-        return RunOverride("default", field, value)
-    return RunOverride("limit", field, value)
-
-
-def _default_shortcut(
-    name: str,
-    values: list[str],
-) -> tuple[RunOverride, NamedInputSources]:
-    target = values[0]
-    if name == "model":
-        if len(values) != 1:
-            raise ValueError(":model accepts no named inputs")
-        value = None if target == "default" else _default_value("model", target)
-        return RunOverride("default", "model", value), ()
-
-    if target == "default":
-        if len(values) != 1:
-            raise ValueError(f":{name} default accepts no named inputs")
-        return RunOverride("default", "runnable", None), ()
-    runnable = f"{name}:{target}" if name in {"agic", "flow"} else target
-    command = RunOverride(
-        "default",
-        "runnable",
-        _default_value("runnable", runnable),
+def _model_override(tokens: Sequence[str]) -> RunOverride:
+    if not tokens:
+        raise ValueError(":model requires an identity or effort assignment")
+    identity: str | None = None
+    effort: ModelEffort | None = None
+    for index, token in enumerate(tokens):
+        if "=" not in token:
+            if index != 0 or identity is not None:
+                raise ValueError("model identity must be the first token")
+            identity = token.lower() if token.lower() in {"default", "none"} else token
+            if identity not in {"default", "none"}:
+                ModelRequest(identity)
+            continue
+        field, raw = _assignment(token, command=":model")
+        if field != "effort":
+            raise ValueError(f"unknown model parameter: {field}")
+        if effort is not None:
+            raise ValueError("duplicate model parameter: effort")
+        effort = _effort_value(raw)
+    return RunOverride(
+        model=ModelOverride(
+            identity=identity,
+            effort=effort,
+        )
     )
-    return command, _named_inputs(values[1:])
+
+
+def _runnable_override(
+    name: str,
+    tokens: Sequence[str],
+) -> tuple[RunOverride, NamedInputSources]:
+    if not tokens:
+        raise ValueError(f":{name} requires a runnable identity")
+    target = tokens[0]
+    if name == "runnable":
+        runnable = "default" if target == "default" else target
+    else:
+        runnable = f"{name}:{target}"
+    if runnable != "default":
+        RUNNABLE_SCHEMA.parse(runnable)
+    return RunOverride(runnable=runnable), _named_inputs(tokens[1:])
+
+
+def _allow_override(tokens: Sequence[str]) -> RunOverride:
+    if not tokens:
+        raise ValueError(":allow requires at least one field=value assignment")
+    values: dict[str, tuple[str, ...] | None] = {}
+    order: list[str] = []
+    for token in tokens:
+        field, raw = _assignment(token, command=":allow")
+        if field not in ALLOW_FIELDS:
+            raise ValueError(f"unknown allow field: {field}")
+        parsed = _allow_value(field, (raw,))
+        if field not in values:
+            values[field] = parsed
+            order.append(field)
+            continue
+        values[field] = _merge_allow_value(field, values[field], parsed)
+    return RunOverride(
+        allow=tuple(
+            AllowOverride(cast(AllowField, field), values[field]) for field in order
+        )
+    )
+
+
+def _limit_override(tokens: Sequence[str]) -> RunOverride:
+    if not tokens:
+        raise ValueError(":limit requires at least one field=value assignment")
+    values: list[LimitOverride] = []
+    present: set[str] = set()
+    for token in tokens:
+        field, raw = _assignment(token, command=":limit")
+        if field not in LIMIT_FIELDS:
+            raise ValueError(f"unknown run limit: {field}")
+        if field in present:
+            raise ValueError(f"duplicate limit field: {field}")
+        present.add(field)
+        values.append(
+            LimitOverride(
+                cast(LimitField, field),
+                _limit_value(field, raw),
+            )
+        )
+    return RunOverride(limits=tuple(values))
+
+
+def _effort_value(raw: str) -> ModelEffort:
+    if raw == "auto":
+        return "auto"
+    if _BUDGET_RE.fullmatch(raw):
+        return int(raw)
+    if raw in _REASONING_EFFORTS:
+        return cast(ReasoningEffort, raw)
+    raise ValueError(f"unknown reasoning effort: {raw!r}")
+
+
+def _apply_model_override(
+    current: ModelRequest | None,
+    surface: ModelRequest | None,
+    override: ModelOverride | None,
+) -> ModelRequest | None:
+    if override is None:
+        return current
+    if override.identity == "default":
+        model = surface
+    elif override.identity == "none":
+        model = None
+    elif override.identity is not None:
+        model = ModelRequest(override.identity)
+    else:
+        model = current
+    if override.effort is None:
+        return model
+    if model is None:
+        raise ValueError("model effort requires an effective model")
+    if override.effort == "auto":
+        reasoning = None
+    elif isinstance(override.effort, int):
+        reasoning = ReasoningParameters(budget_tokens=override.effort)
+    else:
+        reasoning = ReasoningParameters(effort=override.effort)
+    return replace(model, parameters=ModelParameters(reasoning=reasoning))
+
+
+def _replace_allow_fields(current: AgentCeiling, update: RunOverride) -> AgentCeiling:
+    if not update.allow:
+        return current
+    return replace(
+        current,
+        **{item.field: item.value for item in update.allow},
+    )
+
+
+def _apply_limit_overrides(
+    current: RunLimits,
+    overrides: Sequence[LimitOverride],
+) -> RunLimits:
+    return replace(current, **{item.field: item.value for item in overrides})
+
+
+def _apply_binding_commands(
+    current: RunBindings,
+    base: RunBindings,
+    commands: Sequence[RunCommand],
+) -> RunBindings:
+    fields: dict[str, str | None] = {
+        "model": current.model,
+        "runnable": current.runnable,
+    }
+    for command in commands:
+        if command.group != "default":
+            continue
+        value = command.value
+        if value is not None and not isinstance(value, str):
+            raise TypeError(f"default {command.field} must be a string or none")
+        fields[command.field] = getattr(base, command.field) if value is None else value
+    return RunBindings(**fields)
+
+
+def _normalize_commands(commands: Sequence[RunCommand]) -> tuple[RunCommand, ...]:
+    result: list[RunCommand] = []
+    positions: dict[tuple[str, str], int] = {}
+    for command in commands:
+        key = (command.group, command.field)
+        position = positions.get(key)
+        if position is None:
+            positions[key] = len(result)
+            result.append(command)
+            continue
+        if command.group != "allow":
+            raise ValueError(f"duplicate {command.group} field: {command.field}")
+        previous = result[position]
+        if not isinstance(previous.value, tuple) or not isinstance(
+            command.value, tuple
+        ):
+            raise ValueError(f"allow {command.field} cannot combine queries with all")
+        if not previous.value or not command.value:
+            raise ValueError(f"allow {command.field} cannot combine queries with none")
+        result[position] = RunCommand(
+            "allow",
+            command.field,
+            tuple(dict.fromkeys((*previous.value, *command.value))),
+        )
+    return tuple(result)
+
+
+def _apply_command_limits(
+    current: RunLimits,
+    commands: Sequence[RunCommand],
+) -> RunLimits:
+    fields = {
+        command.field: command.value for command in commands if command.group == "limit"
+    }
+    return replace(current, **fields)
+
+
+def _command_agent_ceiling(
+    commands: Sequence[RunCommand],
+) -> AgentCeiling | None:
+    fields: dict[str, tuple[str, ...]] = {}
+    present: set[str] = set()
+    for command in commands:
+        if command.group != "allow" or command.value is None:
+            continue
+        if not isinstance(command.value, tuple):
+            raise TypeError(f"allow {command.field} must be queries, all, or none")
+        try:
+            normalized = resolve_query_sentinels(
+                command.value,
+                label=f"allow {command.field}",
+            )
+        except ToolangError as error:
+            raise ValueError(str(error)) from error
+        if normalized is None:
+            continue
+        present.add(command.field)
+        fields[command.field] = normalized
+    ceiling = AgentCeiling(
+        **{
+            field: fields.get(field) if field in present else None
+            for field in ALLOW_FIELDS
+        }
+    )
+    return ceiling if _ceiling_restricts(ceiling) else None
+
+
+def _allow_ceiling(overrides: Sequence[AllowOverride]) -> AgentCeiling | None:
+    if not overrides:
+        return None
+    return AgentCeiling(**{item.field: item.value for item in overrides})
+
+
+def _merge_allow_value(
+    field: str,
+    current: tuple[str, ...] | None,
+    update: tuple[str, ...] | None,
+) -> tuple[str, ...] | None:
+    if current is None or update is None:
+        raise ValueError(f"allow {field} cannot combine queries with all")
+    if not current or not update:
+        raise ValueError(f"allow {field} cannot combine queries with none")
+    return tuple(dict.fromkeys((*current, *update)))
 
 
 def _named_inputs(values: Sequence[str]) -> NamedInputSources:
@@ -241,7 +573,7 @@ def _assignment(value: str, *, command: str) -> tuple[str, str]:
     field = field.strip()
     raw = raw.strip()
     if not separator or not field or not raw:
-        raise ValueError(f"{command} expects one field=value assignment")
+        raise ValueError(f"{command} expects field=value assignments")
     return field, raw
 
 
@@ -270,23 +602,8 @@ def _allow_value(
     return normalized
 
 
-def _default_value(field: str, raw: str) -> str | None:
-    value = raw.strip()
-    if not value:
-        raise ValueError(f"default {field} must not be empty")
-    if value.lower() == "none":
-        return None
-    if field == "model":
-        ModelRequest(value)
-    else:
-        RUNNABLE_SCHEMA.parse(value)
-    return value
-
-
 def _limit_value(field: str, raw: str) -> int | Decimal | None:
     value = raw.strip()
-    if not value:
-        raise ValueError(f"limit {field} must not be empty")
     if value.lower() == "none":
         return None
     if field == "cost":
@@ -306,114 +623,8 @@ def _limit_value(field: str, raw: str) -> int | Decimal | None:
     return parsed
 
 
-def _normalize_commands(
-    commands: Sequence[RunOverride],
-) -> tuple[RunOverride, ...]:
-    result: list[RunOverride] = []
-    positions: dict[tuple[str, str], int] = {}
-    for command in commands:
-        key = (command.group, command.field)
-        position = positions.get(key)
-        if position is None:
-            positions[key] = len(result)
-            result.append(command)
-            continue
-        if command.group != "allow":
-            raise ValueError(f"duplicate {command.group} field: {command.field}")
-        previous = result[position]
-        if not isinstance(previous.value, tuple) or not isinstance(
-            command.value, tuple
-        ):
-            raise ValueError(f"allow {command.field} cannot combine queries with all")
-        if not previous.value or not command.value:
-            raise ValueError(f"allow {command.field} cannot combine queries with none")
-        result[position] = RunOverride(
-            "allow",
-            command.field,
-            tuple(dict.fromkeys((*previous.value, *command.value))),
-        )
-    return tuple(result)
-
-
-def _apply_binding_commands(
-    current: RunBindings,
-    base: RunBindings,
-    commands: Sequence[RunOverride],
-) -> RunBindings:
-    fields: dict[str, str | None] = {
-        "model": current.model,
-        "runnable": current.runnable,
-    }
-    for command in commands:
-        if command.group != "default":
-            continue
-        value = command.value
-        if value is not None and not isinstance(value, str):
-            raise TypeError(f"default {command.field} must be a string or none")
-        fields[command.field] = getattr(base, command.field) if value is None else value
-    return RunBindings(**fields)
-
-
-def _apply_limit_commands(
-    current: RunLimits,
-    commands: Sequence[RunOverride],
-) -> RunLimits:
-    fields: dict[str, object] = {}
-    for command in commands:
-        if command.group == "limit":
-            fields[command.field] = command.value
-    return replace(current, **fields)
-
-
-def _command_agent_ceiling(
-    commands: Sequence[RunOverride],
-) -> AgentCeiling | None:
-    fields: dict[str, tuple[str, ...]] = {}
-    present: set[str] = set()
-    for command in commands:
-        if command.group != "allow":
-            continue
-        value = command.value
-        if value is None:
-            continue
-        elif isinstance(value, tuple):
-            try:
-                normalized = resolve_query_sentinels(
-                    value,
-                    label=f"allow {command.field}",
-                )
-            except ToolangError as error:
-                raise ValueError(str(error)) from error
-            if normalized is None:
-                continue
-            present.add(command.field)
-            fields[command.field] = normalized
-        else:
-            raise TypeError(f"allow {command.field} must be queries, all, or none")
-
-    models = fields.get("models") if "models" in present else None
-    tools = fields.get("tools") if "tools" in present else None
-    ceiling = AgentCeiling(
-        models=models,
-        tools=tools,
-        psyches=fields.get("psyches") if "psyches" in present else None,
-        skills=fields.get("skills") if "skills" in present else None,
-        services=fields.get("services") if "services" in present else None,
-        prompts=fields.get("prompts") if "prompts" in present else None,
-    )
-    if all(
-        value is None
-        for value in (
-            ceiling.models,
-            ceiling.tools,
-            ceiling.psyches,
-            ceiling.skills,
-            ceiling.services,
-            ceiling.prompts,
-        )
-    ):
-        return None
-    return ceiling
+def _ceiling_restricts(ceiling: AgentCeiling) -> bool:
+    return any(getattr(ceiling, field) is not None for field in ALLOW_FIELDS)
 
 
 class _Line:

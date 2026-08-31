@@ -78,7 +78,7 @@ def _reject_materialized_run_unknowns(value: object, *, direct: bool) -> None:
             parameters_data = cast(Mapping[str, object], parameters)
             _reject_keys(
                 parameters_data.get("reasoning"),
-                {"effort"},
+                {"effort", "budget_tokens"},
                 "reasoning parameters",
             )
     policy = data.get("policy")

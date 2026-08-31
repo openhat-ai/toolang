@@ -22,7 +22,7 @@ from toolang.execution.schemas import (
     RunRequest,
     RunnableRequest,
 )
-from toolang.execution.types import RunOverride, ThreadPrefix
+from toolang.execution.types import AllowOverride, RunCommand, RunOverride, ThreadPrefix
 from toolang.lang.input import NamedInputSource, NamedInputSources, RunnableInputRaw
 from toolang.lang.types import Array
 from toolang.setup import ModelCollection, ToolCollection
@@ -61,7 +61,7 @@ def test_restart_resolution_preserves_model_unless_rerun_replaces_it(
         legacy = resolve_restart_request(
             RerunRequest(
                 "run_source",
-                (RunOverride("default", "model", "test/scripted"),),
+                (RunCommand("default", "model", "test/scripted"),),
                 "rerun_legacy",
             ),
             setup=harness.setup,
@@ -73,7 +73,7 @@ def test_restart_resolution_preserves_model_unless_rerun_replaces_it(
         with pytest.raises(ValueError, match="retry request cannot replace"):
             RetryRequest(
                 "run_source",
-                (RunOverride("default", "model", "test/scripted"),),
+                (RunCommand("default", "model", "test/scripted"),),
                 "retry_replacement",
             )
     finally:
@@ -291,7 +291,7 @@ agic default(_: Part[]):
         assert spec.authored_input == RunnableInputRaw(
             _="$review focus=security -- inspect this"
         )
-        assert spec.authored_commands == (RunOverride("limit", "time", 30),)
+        assert spec.authored_commands == (RunCommand("limit", "time", 30),)
         assert len(spec.prompt_invocations) == 1
         invocation = spec.prompt_invocations[0]
         assert invocation.name == "review"
@@ -324,7 +324,7 @@ agic default(_: Part[]):
     try:
         with pytest.raises(ToolangError, match="Prompt is unavailable: review"):
             resolve_spec(
-                (),
+                RunOverride(),
                 RunnableInputRaw(_="$review -- inspect this"),
                 setup=harness.setup,
                 state=state,
@@ -370,7 +370,9 @@ agic default(_: Part[]):
     )
     try:
         spec = resolve_spec(
-            (RunOverride("allow", "prompts", ()),),
+            RunOverride(
+                allow=(AllowOverride("prompts", ()),),
+            ),
             RunnableInputRaw(_="$review -- inspect this"),
             setup=harness.setup,
             state=state,
@@ -392,7 +394,7 @@ def test_run_default_returns_to_surface_binding_not_session_binding(
 ) -> None:
     harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
     try:
-        commands, input = parse_call(":agic default\nInput")
+        commands, input = parse_call(":runnable default\nInput")
         spec = resolve_spec(
             commands,
             input,
@@ -401,7 +403,7 @@ def test_run_default_returns_to_surface_binding_not_session_binding(
             thread="term_test",
             default_runnable="default",
             surface=RunBindings(runnable="agic:default"),
-            session_commands=(RunOverride("default", "runnable", "agic:review"),),
+            session_commands=(RunCommand("default", "runnable", "agic:review"),),
         )
 
         assert spec.bindings.runnable == "agic:default"
@@ -423,7 +425,7 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
         source: str,
         *,
         surface: RunBindings = RunBindings(),
-        session: tuple[RunOverride, ...] = (),
+        session: tuple[RunCommand, ...] = (),
         named: NamedInputSources = (),
     ):
         commands, input = parse_call(source)
@@ -443,17 +445,17 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
         bound = resolve("Input")
         session = resolve(
             "Input",
-            session=(RunOverride("default", "runnable", "agic:review"),),
+            session=(RunCommand("default", "runnable", "agic:review"),),
             named=(NamedInputSource("count", "2"),),
         )
         authored = resolve(
-            ":agic default\nInput",
-            session=(RunOverride("default", "runnable", "agic:review"),),
+            ":runnable default\nInput",
+            session=(RunCommand("default", "runnable", "agic:review"),),
         )
         selected = resolve(
-            ":agic default\nInput",
+            ":runnable default\nInput",
             surface=RunBindings(runnable="agic:default"),
-            session=(RunOverride("default", "runnable", "agic:bound"),),
+            session=(RunCommand("default", "runnable", "agic:bound"),),
         )
 
         assert bound.bindings == RunBindings(

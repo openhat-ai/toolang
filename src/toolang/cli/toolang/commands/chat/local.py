@@ -14,10 +14,10 @@ from uuid import uuid4
 
 from toolang.base.types.message import Message
 from toolang.base.types.model import ModelRequest
-from toolang.base.types.policy import AgentCeiling, RunBindings
+from toolang.base.types.policy import AgentCeiling
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
-from toolang.execution.calls import materialize_model_request, parse_call
+from toolang.execution.calls import materialize_model_request
 from toolang.execution.client import LocalRunClient, RunClient
 from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.executor import RunExecutor
@@ -35,14 +35,16 @@ from toolang.execution.executor.resources import (
 from toolang.plugin.models.resolution import model_reasoning_efforts
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import RunOverride, ThreadPrefix
+from toolang.execution.schemas import RunRequest
+from toolang.execution.types import RunOverride, SessionSetting, ThreadPrefix
+from toolang.lang.input import RunnableInputRaw
 from toolang.plugin.sandboxes.host import host_sandbox_description
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.watcher import StateWatcher
 from toolang.state.state import AgentState, StatePublication, state_program
 from toolang.execution.values import parts_from_local
 from .base import ChatExecutorMetadata, ChatResult, ChatRunState, RunAccepted
-from .policy import ChatRunDefaults, apply_session_commands, build_run_request
+from .policy import build_run_request, update_session_setting
 
 
 @dataclass(slots=True)
@@ -107,7 +109,7 @@ class LocalChatSession:
             refresh_state=self.state_watcher.refresh_result,
         )
         self.run_client: RunClient = LocalRunClient(self.executor)
-        self._defaults: ChatRunDefaults | None = None
+        self._surface: SessionSetting | None = None
         self._loop = asyncio.new_event_loop()
         self._ready = threading.Event()
         self._stop_signal: asyncio.Event | None = None
@@ -145,7 +147,7 @@ class LocalChatSession:
 
     def list_runnables(self, kind: str) -> Mapping[str, Any]:
         state = self._submit(self.state_watcher.refresh()).result()
-        default_ref = self._run_defaults().bindings.runnable
+        default_ref = self.initial_setting().runnable
         default_name, default_kind = (
             parse_runnable_ref(default_ref) if default_ref is not None else (None, None)
         )
@@ -172,7 +174,7 @@ class LocalChatSession:
 
     def list_prompts(self, runnable: str | None) -> Mapping[str, Any]:
         state = self._submit(self.state_watcher.refresh()).result()
-        selected = runnable or self._run_defaults().bindings.runnable
+        selected = runnable or self.initial_setting().runnable
         if selected is None:  # pragma: no cover - initialization invariant
             raise RuntimeError("chat has no default runnable")
         module = resolve_public_runnable_query(state, selected).module
@@ -193,12 +195,39 @@ class LocalChatSession:
     def create_thread(self) -> str:
         return self.threads.create(prefix=ThreadPrefix.TERM)
 
-    def apply_settings(
+    def initial_setting(self) -> SessionSetting:
+        if self._surface is None:
+            raise RuntimeError("local chat session settings are not initialized")
+        return self._surface
+
+    def apply_setting(
         self,
-        commands: tuple[RunOverride, ...],
-        selects: Mapping[str, object],
-    ) -> Mapping[str, object]:
-        return apply_session_commands(selects, commands)
+        setting: SessionSetting,
+        update: RunOverride,
+    ) -> SessionSetting:
+        return update_session_setting(
+            surface=self.initial_setting(),
+            current=setting,
+            update=update,
+        )
+
+    def build_request(
+        self,
+        thread_id: str,
+        override: RunOverride,
+        input: RunnableInputRaw,
+        setting: SessionSetting,
+    ) -> RunRequest:
+        return build_run_request(
+            thread_id=thread_id,
+            request_id=f"term_{uuid4().hex}",
+            input=input,
+            override=override,
+            setting=setting,
+            surface=self.initial_setting(),
+            resolve_model_ref=self._materialize_model_ref,
+            resolve_runnable_ref=self._materialize_runnable_ref,
+        )
 
     def get_result(
         self,
@@ -226,17 +255,13 @@ class LocalChatSession:
 
     def run(
         self,
-        thread_id: str,
-        message: str,
-        selects: Mapping[str, object],
+        request: RunRequest,
         on_event: Callable[[RunEvent], None],
         on_error: Callable[[str], None],
         on_state: Callable[[ChatRunState], None] | None = None,
     ) -> None:
         try:
-            self._submit(
-                self._run(thread_id, message, selects, on_event, on_state)
-            ).result()
+            self._submit(self._run(request, on_event, on_state)).result()
         except Exception as exc:
             on_error(_error_message(exc))
 
@@ -285,7 +310,7 @@ class LocalChatSession:
         state = await self.state_watcher.refresh()
         setup = await self.setup_watcher.refresh()
         validate_agent_ceiling(setup, state, AgentCeiling())
-        self._defaults = self._current_run_defaults(setup=setup, state=state)
+        self._surface = self._current_session_setting(setup=setup, state=state)
         if self._stop_signal is None:
             raise RuntimeError("local chat event loop was not initialized")
         self._watch_tasks = (
@@ -301,23 +326,10 @@ class LocalChatSession:
 
     async def _run(
         self,
-        thread_id: str,
-        message: str,
-        selects: Mapping[str, object],
+        request: RunRequest,
         on_event: Callable[[RunEvent], None],
         on_state: Callable[[ChatRunState], None] | None = None,
     ) -> None:
-        commands, input = parse_call(message)
-        request = build_run_request(
-            thread_id=thread_id,
-            request_id=f"term_{uuid4().hex}",
-            input=input,
-            input_commands=commands,
-            selects=selects,
-            defaults=self._run_defaults(),
-            resolve_model_ref=self._materialize_model_ref,
-            resolve_runnable_ref=self._materialize_runnable_ref,
-        )
         handle = await self.run_client.run(
             request,
             tracer=_CallbackTracer(on_event),
@@ -325,11 +337,6 @@ class LocalChatSession:
         if on_state is not None:
             on_state(RunAccepted(handle.run_id))
         await handle.wait()
-
-    def _run_defaults(self) -> ChatRunDefaults:
-        if self._defaults is None:
-            raise RuntimeError("local chat run defaults are not initialized")
-        return self._defaults
 
     def _materialize_model_ref(self, ref: str) -> str:
         return materialize_model_request(
@@ -342,9 +349,9 @@ class LocalChatSession:
         return resolve_public_runnable_query(state, query).ref
 
     @staticmethod
-    def _current_run_defaults(
+    def _current_session_setting(
         *, setup: AgentSetup, state: AgentState | StatePublication
-    ) -> ChatRunDefaults:
+    ) -> SessionSetting:
         model, _targets = agent_model_targets(setup, AgentCeiling())
         runnable = setup.defaults.runnable
         if runnable is None:
@@ -359,8 +366,9 @@ class LocalChatSession:
                 runnable = f"flow:{default_flow}"
         if runnable is not None:
             runnable = resolve_public_runnable_query(state, runnable).ref
-        return ChatRunDefaults(
-            bindings=RunBindings(model=model, runnable=runnable),
+        return SessionSetting(
+            model=ModelRequest(model) if model is not None else None,
+            runnable=runnable,
             limits=setup.limits,
         )
 

@@ -27,7 +27,7 @@ from toolang.execution.schemas import (
     RunDetail,
     RunRequest,
 )
-from toolang.execution.types import ControlTiming, RunOverride, validate_execution_id
+from toolang.execution.types import ControlTiming, RunCommand, validate_execution_id
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -527,28 +527,49 @@ def _valid_endpoint_host(host: str) -> bool:
 
 
 def _run_request_data(request: RunRequest) -> dict[str, object]:
-    return cast(
+    payload = cast(
         dict[str, object],
         _RUN_REQUEST_ADAPTER.dump_python(request, mode="json"),
     )
+    _omit_empty_reasoning_fields(payload.get("model"))
+    return payload
 
 
 def _restart_request_data(request: RetryRequest | RerunRequest) -> dict[str, object]:
     payload: dict[str, object] = {
         "request_id": request.request_id,
-        "commands": [_run_override_data(item) for item in request.commands],
+        "commands": [_run_command_data(item) for item in request.commands],
     }
     if isinstance(request, RetryRequest):
         payload["anchor"] = str(request.anchor) if request.anchor is not None else None
     elif request.model is not None:
-        payload["model"] = _MODEL_REQUEST_ADAPTER.dump_python(
+        model = _MODEL_REQUEST_ADAPTER.dump_python(
             request.model,
             mode="json",
         )
+        _omit_empty_reasoning_fields(model)
+        payload["model"] = model
     return payload
 
 
-def _run_override_data(command: RunOverride) -> dict[str, object]:
+def _omit_empty_reasoning_fields(value: object) -> None:
+    if not isinstance(value, dict):
+        return
+    model = cast(dict[str, object], value)
+    parameters = model.get("parameters")
+    if not isinstance(parameters, dict):
+        return
+    parameter_values = cast(dict[str, object], parameters)
+    reasoning = parameter_values.get("reasoning")
+    if not isinstance(reasoning, dict):
+        return
+    reasoning_values = cast(dict[str, object], reasoning)
+    for name in ("effort", "budget_tokens"):
+        if reasoning_values.get(name) is None:
+            reasoning_values.pop(name, None)
+
+
+def _run_command_data(command: RunCommand) -> dict[str, object]:
     value = command.value
     if isinstance(value, tuple):
         encoded: object = list(value)

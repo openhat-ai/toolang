@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +11,8 @@ import click
 import pytest
 
 from toolang.base.types.message import TextPart
+from toolang.base.types.model import ModelRequest
+from toolang.base.types.policy import RunPolicy
 from toolang.cli.common.output import shorten_home_path
 from toolang.cli.toolang.commands.chat import main as chat
 from toolang.cli.toolang.commands.chat.base import (
@@ -21,7 +22,10 @@ from toolang.cli.toolang.commands.chat.base import (
 )
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEnd, RunEvent, StepEnd
-from toolang.execution.types import Local, RunOverride, StepPath
+from toolang.execution.policy import apply_session_setting
+from toolang.execution.schemas import RunRequest, RunnableRequest
+from toolang.execution.types import Local, RunOverride, SessionSetting, StepPath
+from toolang.lang.input import RunnableInputRaw
 from toolang.up.types import AgentServerRef
 
 _HOST_DESCRIPTION = "macOS 27.0 arm64"
@@ -35,7 +39,7 @@ class _Client:
 
     def __init__(self) -> None:
         self.created = 0
-        self.starts: list[tuple[str, str, dict[str, object]]] = []
+        self.starts: list[tuple[str, str, ModelRequest | None]] = []
 
     def list_models(self) -> Mapping[str, Any]:
         return {"default": None, "items": []}
@@ -48,13 +52,37 @@ class _Client:
         self.created += 1
         return "term_created"
 
-    def apply_settings(
+    def initial_setting(self) -> SessionSetting:
+        return SessionSetting(
+            model=ModelRequest("test/model"),
+            runnable="agic:chat",
+        )
+
+    def apply_setting(
         self,
-        commands: tuple[RunOverride, ...],
-        selects: Mapping[str, object],
-    ) -> Mapping[str, object]:
-        del commands
-        return dict(selects)
+        setting: SessionSetting,
+        update: RunOverride,
+    ) -> SessionSetting:
+        return apply_session_setting(self.initial_setting(), setting, update)
+
+    def build_request(
+        self,
+        thread_id: str,
+        override: RunOverride,
+        input: RunnableInputRaw,
+        setting: SessionSetting,
+    ) -> RunRequest:
+        del override
+        return RunRequest(
+            thread_id=thread_id,
+            request_id=f"request_{len(self.starts)}",
+            runnable=RunnableRequest(
+                setting.runnable or "agic:chat",
+                input,
+            ),
+            model=setting.model,
+            policy=RunPolicy(),
+        )
 
     def get_result(
         self,
@@ -70,15 +98,15 @@ class _Client:
 
     def run(
         self,
-        thread_id: str,
-        message: str,
-        selects: Mapping[str, object],
+        request: RunRequest,
         on_event: Callable[[RunEvent], None],
         on_error: Callable[[str], None],
         on_state: Callable[[ChatRunState], None] | None = None,
     ) -> None:
         del on_event, on_error, on_state
-        self.starts.append((thread_id, message, dict(selects)))
+        self.starts.append(
+            (request.thread_id, request.runnable.input._ or "", request.model)
+        )
 
     def cancel(self, run_id: str, on_error: Callable[[str], None]) -> None:
         del run_id, on_error
@@ -95,15 +123,15 @@ class _Client:
 class _FailedRunClient(_Client):
     def run(
         self,
-        thread_id: str,
-        message: str,
-        selects: Mapping[str, object],
+        request: RunRequest,
         on_event: Callable[[RunEvent], None],
         on_error: Callable[[str], None],
         on_state: Callable[[ChatRunState], None] | None = None,
     ) -> None:
         del on_error, on_state
-        self.starts.append((thread_id, message, dict(selects)))
+        self.starts.append(
+            (request.thread_id, request.runnable.input._ or "", request.model)
+        )
         on_event(
             RunEnd(
                 run="run_failed",
@@ -123,6 +151,7 @@ def test_scripted_chat_exit_does_not_create_an_empty_thread(
     chat._chat_interactive_scripted_local(
         client=client,
         thread_id=None,
+        setting=client.initial_setting(),
     )
 
     assert client.created == 0
@@ -139,6 +168,7 @@ def test_scripted_chat_help_does_not_create_an_empty_thread(
     chat._chat_interactive_scripted_local(
         client=client,
         thread_id=None,
+        setting=client.initial_setting(),
     )
 
     assert client.created == 0
@@ -155,13 +185,13 @@ def test_scripted_chat_creates_one_thread_for_the_first_submission(
     chat._chat_interactive_scripted_local(
         client=client,
         thread_id=None,
-        selector_payload={"models": ["test/model"]},
+        setting=client.initial_setting(),
     )
 
     assert client.created == 1
     assert client.starts == [
-        ("term_created", "hello", {"models": ["test/model"]}),
-        ("term_created", "again", {"models": ["test/model"]}),
+        ("term_created", "hello", ModelRequest("test/model")),
+        ("term_created", "again", ModelRequest("test/model")),
     ]
 
 
@@ -176,6 +206,7 @@ def test_scripted_chat_reports_a_failed_run(
     chat._chat_interactive_scripted_local(
         client=client,
         thread_id="term_existing",
+        setting=client.initial_setting(),
     )
 
     assert "provider failed" in capsys.readouterr().err
@@ -216,12 +247,12 @@ def test_interactive_tty_passes_the_unmodified_thread_to_the_tui(
         _ctx: object,
         *,
         thread_id: str | None,
-        selector_payload: dict[str, object] | None,
+        setting: SessionSetting,
         client: object,
     ) -> None:
         captured.update(
             thread=thread_id,
-            selectors=selector_payload,
+            setting=setting,
             client=client,
         )
 
@@ -233,12 +264,11 @@ def test_interactive_tty_passes_the_unmodified_thread_to_the_tui(
     chat._chat_interactive(
         object(),  # type: ignore[arg-type]
         thread_id=thread_id,
-        selector_payload={"models": ["test/model"]},
     )
 
     assert captured == {
         "thread": thread_id,
-        "selectors": {"models": ["test/model"]},
+        "setting": client.initial_setting(),
         "client": client,
     }
     assert client.created == 0
@@ -257,15 +287,6 @@ def test_chat_runtime_builds_process_local_execution_resources(
             super().__init__()
             captured["layout"] = layout
             captured["kwargs"] = kwargs
-
-        def apply_settings(
-            self,
-            commands: tuple[RunOverride, ...],
-            selects: Mapping[str, object],
-        ) -> Mapping[str, object]:
-            captured["commands"] = commands
-            captured["selects"] = dict(selects)
-            return {"session": True}
 
         def close(self) -> None:
             captured["closed"] = True
@@ -299,18 +320,9 @@ def test_chat_runtime_builds_process_local_execution_resources(
     )
     monkeypatch.setattr(chat, "LocalChatSession", Session)
 
-    selectors: dict[str, object] = {"model": "existing/model"}
     with chat._chat_runtime(
         object(),  # type: ignore[arg-type]
-        selector_payload=selectors,
         sandbox="host",
-        allow_options=[
-            "models=test/model",
-            "tools=shell/*",
-            "skills=reviewer",
-        ],
-        default_options=["model=test/model", "runnable=agic:chat"],
-        limit_options=["tokens=1000", "time=60"],
     ) as client:
         assert isinstance(client, Session)
 
@@ -321,17 +333,6 @@ def test_chat_runtime_builds_process_local_execution_resources(
         "default_overrides": {},
         "limit_overrides": {"time": 30},
     }
-    assert captured["commands"] == (
-        RunOverride("allow", "models", ("test/model",)),
-        RunOverride("allow", "tools", ("shell/*",)),
-        RunOverride("allow", "skills", ("reviewer",)),
-        RunOverride("default", "model", "test/model"),
-        RunOverride("default", "runnable", "agic:chat"),
-        RunOverride("limit", "tokens", 1000),
-        RunOverride("limit", "time", 60),
-    )
-    assert captured["selects"] == {"model": "existing/model"}
-    assert selectors == {"session": True}
     assert captured["closed"] is True
 
 
@@ -365,15 +366,6 @@ def test_chat_runtime_uses_remote_execution_without_local_environment(
             captured["endpoint"] = endpoint
             captured["sandbox"] = expected_sandbox
 
-        def apply_settings(
-            self,
-            commands: tuple[RunOverride, ...],
-            selects: Mapping[str, object],
-        ) -> Mapping[str, object]:
-            captured["commands"] = commands
-            captured["selects"] = dict(selects)
-            return {"remote": True}
-
         def close(self) -> None:
             captured["closed"] = True
 
@@ -388,28 +380,15 @@ def test_chat_runtime_uses_remote_execution_without_local_environment(
             AssertionError("remote Chat must not load local runtime environment")
         ),
     )
-    selectors: dict[str, object] = {"model": "existing/model"}
-
     with chat._chat_runtime(
         object(),  # type: ignore[arg-type]
-        selector_payload=selectors,
         sandbox="docker",
-        allow_options=["models=test/*"],
-        default_options=["runnable=agic:chat"],
-        limit_options=["cost=2.50"],
     ) as client:
         assert isinstance(client, Session)
 
-    assert selectors == {"remote": True}
     assert captured == {
         "endpoint": "http://127.0.0.1:7001",
         "sandbox": "docker:python:3.13-slim",
-        "commands": (
-            RunOverride("allow", "models", ("test/*",)),
-            RunOverride("default", "runnable", "agic:chat"),
-            RunOverride("limit", "cost", Decimal("2.50")),
-        ),
-        "selects": {"model": "existing/model"},
         "closed": True,
     }
 

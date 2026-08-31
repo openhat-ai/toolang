@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
 from io import StringIO
@@ -43,7 +43,7 @@ from toolang.cli.toolang.commands.chat import (
     tui,
     widgets,
 )
-from toolang.cli.toolang.commands.chat.policy import apply_session_commands
+from toolang.cli.toolang.commands.chat.policy import update_session_setting
 from toolang.cli.toolang.commands.chat.events import ChatUIEvent
 from toolang.cli.toolang.commands.chat.base import (
     ChatClient,
@@ -74,24 +74,38 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.schemas import RunControlRefData, RunDetail
+from toolang.base.types.model import (
+    ModelParameters,
+    ModelRequest,
+    ReasoningParameters,
+)
+from toolang.base.types.policy import RunPolicy
+from toolang.execution.schemas import (
+    RunControlRefData,
+    RunDetail,
+    RunRequest,
+    RunnableRequest,
+)
 from toolang.execution.types import (
     ControlRef,
     Local,
     ModelAccounting,
     ModelCost,
     ModelCostLine,
+    ModelOverride,
     ModelStepGiven,
     ModelStepNoted,
     ModelTokenCount,
     Occurrence,
     OccurrencePosition,
     RunOverride,
+    SessionSetting,
     StepPath,
     Pointer,
     ToolStepGiven,
 )
 from toolang.lang.ast import MapStmt, RunStmt, Span
+from toolang.lang.input import RunnableInputRaw
 from tests.support import chat_tui_pty
 
 
@@ -1373,7 +1387,7 @@ def test_chat_input_completion_keeps_namespaces_separate(tmp_path) -> None:
             item.text for item in completer.get_completions(Document(source), event)
         ]
 
-    assert values("/mo") == ["/model MODEL EFFORT|auto"]
+    assert values("/mo") == []
     assert values("$rev") == ["$review focus= tone="]
     assert values(":limit ti") == [":limit time="]
     assert values("  $rev") == []
@@ -1988,203 +2002,33 @@ def test_chat_model_label_uses_default_or_selected_model() -> None:
         ],
     }
 
-    assert slashes.chat_model_label(payload, {}) == "GPT-5"
-    assert slashes.chat_model_label(payload, {"model": "openai/o3"}) == "o3"
     assert (
         slashes.chat_model_label(
             payload,
-            {"model": "openai/gpt-5", "reasoning_effort": "high"},
+            SessionSetting(model=ModelRequest("openai/gpt-5"), runnable="agic:chat"),
         )
-        == "GPT-5 · High"
+        == "GPT-5"
     )
-
-
-def test_chat_model_list_lines_render_as_columns() -> None:
-    payload = {
-        "default": "deepseek/deepseek-v4-flash",
-        "items": [
-            {
-                "name": "DeepSeek V4 Flash",
-                "ref": "deepseek/deepseek-v4-flash",
-                "provider": "deepseek",
-                "parameters": {"reasoning": {"effort": ["low", "high"]}},
-            },
-            {
-                "name": "DeepSeek V4 Pro",
-                "ref": "deepseek/deepseek-v4-pro",
-                "provider": "deepseek",
-                "parameters": {"reasoning": {"effort": []}},
-            },
-        ],
-    }
-    block = blocks.SlashBlock(
-        "/model", ["Available Models", *slashes._chat_model_list_lines(payload)]
+    assert (
+        slashes.chat_model_label(
+            payload,
+            SessionSetting(model=ModelRequest("openai/o3"), runnable="agic:chat"),
+        )
+        == "o3"
     )
-    rendered = _render_text(block.render(), width=120)
-    model_lines = [line for line in rendered.splitlines() if "DeepSeek V4" in line]
-    rendered_lines = rendered.splitlines()
-
-    assert ": Available Models" in rendered
-    assert not rendered_lines[rendered_lines.index(": Available Models") + 1].strip()
-    assert "DeepSeek V4 Flash" in rendered
-    assert "[deepseek]" not in rendered
-    assert "default" in rendered
-    assert "reasoning: low, high" in rendered
-    assert len(model_lines) == 2
-
-
-def test_model_picker_searches_and_commits_model_and_effort_atomically() -> None:
-    committed: list[tuple[str, object]] = []
-    closed: list[None] = []
-    picker = widgets.ModelPicker(
-        current=lambda: (None, None),
-        commit=lambda ref, effort: committed.append((ref, effort)),
-        close=lambda: closed.append(None),
-        invalidate=lambda: None,
+    assert (
+        slashes.chat_model_label(
+            payload,
+            SessionSetting(
+                model=ModelRequest(
+                    "openai/gpt-5",
+                    ModelParameters(ReasoningParameters(effort="high")),
+                ),
+                runnable="agic:chat",
+            ),
+        )
+        == "GPT-5 · high"
     )
-    keys = KeyBindings()
-    picker.bind(keys)
-    payload = {
-        "default": "openai/gpt-5",
-        "items": [
-            {
-                "ref": "openai/gpt-5",
-                "name": "GPT-5",
-                "provider": "openai",
-                "parameters": {"reasoning": {"effort": ["low", "high"]}},
-            },
-            {
-                "ref": "anthropic/claude-sonnet-4.5",
-                "name": "Claude Sonnet 4.5",
-                "provider": "anthropic",
-                "parameters": {"reasoning": {"effort": []}},
-            },
-        ],
-    }
-
-    def press(key: Keys) -> None:
-        bindings = [
-            binding
-            for binding in keys.get_bindings_for_keys((key,))
-            if binding.filter()
-        ]
-        assert bindings
-        bindings[-1].handler(cast(Any, None))
-
-    picker.open(payload)
-    initial = "".join(text for _style, text in picker._render())
-    assert "GPT-5" in initial
-    assert "Current" in initial
-    assert "Default" in initial
-
-    picker.buffer.text = "gpt"
-    assert [item["ref"] for item in picker._filtered_items()] == ["openai/gpt-5"]
-    press(Keys.Enter)
-    assert picker.stage == "effort"
-    assert committed == []
-
-    press(Keys.Down)
-    press(Keys.Down)
-    press(Keys.Enter)
-    assert committed == [("openai/gpt-5", "high")]
-    assert closed == [None]
-    assert picker.visible is False
-
-
-def test_model_picker_escape_cancels_without_changing_session_state() -> None:
-    committed: list[tuple[str, object]] = []
-    closed: list[None] = []
-    picker = widgets.ModelPicker(
-        current=lambda: ("openai/gpt-5", "low"),
-        commit=lambda ref, effort: committed.append((ref, effort)),
-        close=lambda: closed.append(None),
-        invalidate=lambda: None,
-    )
-    keys = KeyBindings()
-    picker.bind(keys)
-    picker.open(
-        {
-            "default": "openai/gpt-5",
-            "items": [
-                {
-                    "ref": "openai/gpt-5",
-                    "name": "GPT-5",
-                    "provider": "openai",
-                    "parameters": {"reasoning": {"effort": ["low", "default"]}},
-                }
-            ],
-        }
-    )
-
-    def press(key: Keys) -> None:
-        bindings = [
-            binding
-            for binding in keys.get_bindings_for_keys((key,))
-            if binding.filter()
-        ]
-        assert bindings
-        bindings[-1].handler(cast(Any, None))
-
-    press(Keys.Enter)
-    assert picker.stage == "effort"
-    assert committed == []
-    press(Keys.Escape)
-    assert picker.stage == "model"
-    assert picker.visible is True
-    press(Keys.Escape)
-    assert picker.visible is False
-    assert committed == []
-    assert closed == [None]
-
-
-def test_model_picker_resets_effort_when_changing_models() -> None:
-    committed: list[tuple[str, object]] = []
-    picker = widgets.ModelPicker(
-        current=lambda: ("openai/gpt-5", "high"),
-        commit=lambda ref, effort: committed.append((ref, effort)),
-        close=lambda: None,
-        invalidate=lambda: None,
-    )
-    keys = KeyBindings()
-    picker.bind(keys)
-    picker.open(
-        {
-            "default": "openai/gpt-5",
-            "items": [
-                {
-                    "ref": "openai/gpt-5",
-                    "name": "GPT-5",
-                    "provider": "openai",
-                    "parameters": {"reasoning": {"effort": ["low", "high"]}},
-                },
-                {
-                    "ref": "anthropic/claude-sonnet-4.5",
-                    "name": "Claude Sonnet 4.5",
-                    "provider": "anthropic",
-                    "parameters": {"reasoning": {"effort": ["low", "high"]}},
-                },
-            ],
-        }
-    )
-
-    def press(key: Keys) -> None:
-        bindings = [
-            binding
-            for binding in keys.get_bindings_for_keys((key,))
-            if binding.filter()
-        ]
-        assert bindings
-        bindings[-1].handler(cast(Any, None))
-
-    press(Keys.Down)
-    press(Keys.Enter)
-
-    assert picker.stage == "effort"
-    assert picker.index == 0
-
-    press(Keys.Enter)
-
-    assert committed == [("anthropic/claude-sonnet-4.5", None)]
 
 
 def test_chat_status_bar_right_aligns_the_model_without_hotkeys(
@@ -2371,7 +2215,7 @@ def test_chat_status_elapsed_time_uses_whole_seconds(
 def test_chat_tui_floors_and_freezes_status_elapsed_time() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
@@ -2396,7 +2240,7 @@ def test_chat_tui_animates_status_only_while_a_run_is_active(
     async def exercise() -> None:
         app = tui.ChatTuiApp(
             thread_id=None,
-            selects={},
+            setting=FakeClient().initial_setting(),
             home="/tmp/agent",
             input_history=None,
             client=FakeClient(),
@@ -2437,7 +2281,7 @@ def test_chat_tui_keeps_short_run_activity_visible(monkeypatch: Any) -> None:
     async def exercise() -> None:
         app = tui.ChatTuiApp(
             thread_id=None,
-            selects={},
+            setting=FakeClient().initial_setting(),
             home="/tmp/agent",
             input_history=None,
             client=FakeClient(),
@@ -2485,7 +2329,7 @@ def test_chat_tui_new_run_cancels_pending_activity_stop(monkeypatch: Any) -> Non
     async def exercise() -> None:
         app = tui.ChatTuiApp(
             thread_id=None,
-            selects={},
+            setting=FakeClient().initial_setting(),
             home="/tmp/agent",
             input_history=None,
             client=FakeClient(),
@@ -2512,13 +2356,27 @@ def test_chat_tui_new_run_cancels_pending_activity_stop(monkeypatch: Any) -> Non
 def test_chat_tui_run_lifecycle_starts_and_stops_status_activity() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
 
-    app.submit_run(QueuedCall("hello", {}))
+    app.submit_run(
+        QueuedCall(
+            "hello",
+            RunRequest(
+                thread_id="term_request",
+                request_id="term_request",
+                runnable=RunnableRequest(
+                    "agic:chat",
+                    RunnableInputRaw(_="hello"),
+                ),
+                model=ModelRequest("openai/gpt-5"),
+                policy=RunPolicy(),
+            ),
+        )
+    )
 
     assert app.run_in_flight.is_set()
     assert app.status_bar.running
@@ -2551,7 +2409,7 @@ def test_chat_status_bar_error_uses_red_foreground_without_a_background(
 def test_chat_tui_uses_truecolor_for_live_block_rendering() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
@@ -2563,7 +2421,7 @@ def test_chat_tui_uses_truecolor_for_live_block_rendering() -> None:
 def test_chat_tui_keeps_default_model_and_clears_status_error() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
@@ -2586,7 +2444,7 @@ def test_chat_tui_keeps_default_model_and_clears_status_error() -> None:
 def test_chat_tui_non_text_input_clears_status_error(key: Keys) -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
@@ -2607,7 +2465,7 @@ def test_chat_tui_non_text_input_clears_status_error(key: Keys) -> None:
 def test_chat_tui_first_escape_immediately_clears_status_error() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
@@ -2622,21 +2480,29 @@ def test_chat_tui_first_escape_immediately_clears_status_error() -> None:
     assert app.status_bar.error_message == ""
 
 
-def test_chat_tui_status_bar_compacts_the_current_default_runnable() -> None:
+def test_chat_tui_treats_kind_specific_default_as_a_runnable_name() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
-        selects={"agic": "default"},
+        setting=SessionSetting(
+            model=ModelRequest("openai/gpt-5"), runnable="agic:default"
+        ),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
 
-    assert app.status_bar.runnable_label == "agic:chat"
+    assert app.status_bar.runnable_label == "agic:default"
 
-    app.selects = {"agic": "review"}
+    app.setting = SessionSetting(
+        model=app.setting.model,
+        runnable="agic:review",
+    )
     assert app._runnable_label() == "agic:review"
 
-    app.selects = {"flow": "research"}
+    app.setting = SessionSetting(
+        model=app.setting.model,
+        runnable="flow:research",
+    )
     assert app._runnable_label() == "flow:research"
 
 
@@ -2645,7 +2511,9 @@ def test_chat_tui_uses_the_root_run_runnable_as_active_status(
 ) -> None:
     app = tui.ChatTuiApp(
         thread_id="term_status",
-        selects={"flow": "research"},
+        setting=SessionSetting(
+            model=ModelRequest("openai/gpt-5"), runnable="flow:research"
+        ),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
@@ -2668,26 +2536,18 @@ def test_chat_tui_uses_the_root_run_runnable_as_active_status(
 
 
 def test_chat_tui_applies_default_settings_while_a_run_is_active() -> None:
-    class SettingsClient(FakeClient):
-        def apply_settings(
-            self,
-            commands: tuple[RunOverride, ...],
-            selects: Mapping[str, object],
-        ) -> Mapping[str, object]:
-            return apply_session_commands(selects, commands)
-
     app = tui.ChatTuiApp(
         thread_id="term_status",
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
-        client=SettingsClient(),
+        client=FakeClient(),
     )
     app.active_run_id = "run_active"
     app.status_bar.set_active_runnable("agic:chat")
     app.status_bar.set_running(True)
 
-    app.handle_submit(":flow research")
+    app.handle_submit("/flow research")
 
     runnable_changed = "".join(text for _style, text in app.status_bar._render())
     assert app.status_bar.active_runnable_label == "agic:chat"
@@ -2695,35 +2555,38 @@ def test_chat_tui_applies_default_settings_while_a_run_is_active() -> None:
     assert runnable_changed.endswith("flow:research · GPT-5")
     assert app.queue == []
 
-    app.handle_submit(":model custom/model")
+    app.handle_submit("/model effort=high")
 
     model_changed = "".join(text for _style, text in app.status_bar._render())
     assert app.status_bar.active_runnable_label == "agic:chat"
-    assert app.status_bar.model_label == "custom/model"
-    assert model_changed.endswith("flow:research · custom/model")
+    assert app.status_bar.model_label == "GPT-5 · high"
+    assert model_changed.endswith("flow:research · GPT-5 · high")
 
-    app.handle_submit(":agic chat")
+    app.handle_submit("/agic chat")
 
     restored = "".join(text for _style, text in app.status_bar._render())
     assert restored.count("agic:chat") == 1
-    assert restored.endswith("custom/model")
+    assert restored.endswith("GPT-5 · high")
 
 
 def test_chat_default_settings_clear_explicit_model_and_runnable() -> None:
-    selects = {
-        "model": "openai/o3[openai]",
-        "agic": "review",
-    }
-
-    updated = apply_session_commands(
-        selects,
-        (
-            RunOverride("default", "model", None),
-            RunOverride("default", "runnable", None),
+    surface = SessionSetting(
+        model=ModelRequest("openai/gpt-5"),
+        runnable="agic:chat",
+    )
+    updated = update_session_setting(
+        surface=surface,
+        current=SessionSetting(
+            model=ModelRequest("openai/o3"),
+            runnable="agic:review",
+        ),
+        update=RunOverride(
+            model=ModelOverride(identity="default"),
+            runnable="default",
         ),
     )
 
-    assert updated == {}
+    assert updated == surface
 
 
 def test_chat_tui_creates_a_thread_only_for_the_first_submission(
@@ -2746,7 +2609,7 @@ def test_chat_tui_creates_a_thread_only_for_the_first_submission(
     client = LazyClient()
     app = tui.ChatTuiApp(
         thread_id=None,
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=client,
@@ -2762,72 +2625,53 @@ def test_chat_tui_creates_a_thread_only_for_the_first_submission(
     assert app.thread_id == "term_lazy"
 
 
-def test_chat_thread_creation_error_is_a_submission_error_in_scrollback(
-    monkeypatch: Any,
-) -> None:
+def test_chat_thread_creation_error_is_a_submission_error() -> None:
     class FailingClient(FakeClient):
         def create_thread(self) -> str:
             raise ValueError("thread creation failed")
 
     app = tui.ChatTuiApp(
         thread_id=None,
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=FailingClient(),
     )
-    rendered: list[str] = []
-    monkeypatch.setattr(
-        tui.rendering,
-        "write_renderable",
-        lambda value: rendered.append(_render_text(value)),
-    )
+    app.handle_submit("hello")
 
-    app.submit_run(QueuedCall("hello", {}))
-
-    output = "\n".join(rendered)
-    assert f"{rendering.ACCENT_CELL} hello" in output
-    assert ">" not in output
-    assert "• thread creation failed" in output
-    assert "run failed" not in output
-    assert app.status_bar.error_message == ""
+    assert app.status_bar.error_message == "thread creation failed"
     assert not app.status_bar.running
     assert not app.run_in_flight.is_set()
 
 
 def test_chat_queue_captures_settings_at_submission_time() -> None:
-    class SettingsClient(FakeClient):
-        def apply_settings(
-            self,
-            commands: tuple[RunOverride, ...],
-            selects: Mapping[str, object],
-        ) -> Mapping[str, object]:
-            result = dict(selects)
-            result["model"] = commands[0].value
-            return result
-
     app = tui.ChatTuiApp(
         thread_id="term_busy",
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
-        client=SettingsClient(),
+        client=FakeClient(),
     )
     app.active_run_id = "run_busy"
 
-    app.handle_submit(":model first")
+    app.handle_submit("/model effort=low")
     app.handle_submit("first call")
-    app.handle_submit(":model second")
+    app.handle_submit("/model effort=high")
     app.handle_submit("second call")
 
     assert [item.source for item in app.queue] == ["first call", "second call"]
-    assert [item.selects["model"] for item in app.queue] == ["first", "second"]
+    assert [
+        item.request.model.parameters.reasoning.effort
+        for item in app.queue
+        if item.request.model is not None
+        and item.request.model.parameters.reasoning is not None
+    ] == ["low", "high"]
 
 
 def test_chat_tui_keeps_the_queue_paused_while_remote_stream_is_disconnected() -> None:
     app = tui.ChatTuiApp(
         thread_id="term_remote",
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
@@ -2860,7 +2704,7 @@ def test_chat_tui_recovers_from_durable_terminal_truth(
     )
     app = tui.ChatTuiApp(
         thread_id="term_remote",
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
@@ -2926,13 +2770,23 @@ def test_chat_tui_blocks_mutating_input_after_ambiguous_acceptance(
     )
     app = tui.ChatTuiApp(
         thread_id="term_remote",
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
     app.run_in_flight.set()
-    app.queue.append(QueuedCall("already queued", {}))
+    app.queue.append(
+        QueuedCall(
+            "already queued",
+            FakeClient().build_request(
+                "term_remote",
+                RunOverride(),
+                RunnableInputRaw(_="already queued"),
+                FakeClient().initial_setting(),
+            ),
+        )
+    )
     message = "Restart Chat before submitting again."
 
     app.handle_ui_event(ChatUIEvent("run_state", RunBlocked(None, message)))
@@ -2943,7 +2797,7 @@ def test_chat_tui_blocks_mutating_input_after_ambiguous_acceptance(
 
     assert app.submission_blocked == message
     assert [item.source for item in app.queue] == ["already queued"]
-    assert app.selects == {}
+    assert app.setting == FakeClient().initial_setting()
     assert app.run_in_flight.is_set()
     assert app.status_bar.error_message == message
     assert any("Queue Commands" in value for value in rendered)
@@ -2961,7 +2815,7 @@ def test_chat_tui_bare_model_command_does_not_open_or_load_a_picker() -> None:
     client = CountingRemoteClient()
     app = tui.ChatTuiApp(
         thread_id="term_remote",
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=client,
@@ -2980,7 +2834,9 @@ def test_chat_tui_bare_model_command_does_not_open_or_load_a_picker() -> None:
 def test_chat_tui_uses_queued_runnable_snapshot_for_the_next_active_status() -> None:
     app = tui.ChatTuiApp(
         thread_id="term_busy",
-        selects={"agic": "chat"},
+        setting=SessionSetting(
+            model=ModelRequest("openai/gpt-5"), runnable="agic:chat"
+        ),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
@@ -2989,7 +2845,21 @@ def test_chat_tui_uses_queued_runnable_snapshot_for_the_next_active_status() -> 
     app.run_in_flight.set()
     app.status_bar.set_active_runnable("agic:chat")
     app.status_bar.set_running(True)
-    app.queue.append(QueuedCall("queued", {"flow": "research"}))
+    app.queue.append(
+        QueuedCall(
+            "queued",
+            RunRequest(
+                thread_id="term_busy",
+                request_id="term_queued",
+                runnable=RunnableRequest(
+                    "flow:research",
+                    RunnableInputRaw(_="queued"),
+                ),
+                model=ModelRequest("openai/gpt-5"),
+                policy=RunPolicy(),
+            ),
+        )
+    )
 
     app._finish_active_run()
 
@@ -3001,7 +2871,7 @@ def test_chat_tui_uses_queued_runnable_snapshot_for_the_next_active_status() -> 
 def test_chat_tui_empty_input_requires_two_interrupts_to_exit() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
@@ -3017,7 +2887,7 @@ def test_chat_tui_empty_input_requires_two_interrupts_to_exit() -> None:
 def test_chat_tui_typing_resets_pending_interrupt_exit() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
@@ -3035,7 +2905,7 @@ def test_chat_tui_clear_scrolls_one_separator_into_history_before_redrawing(
 ) -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
@@ -3091,7 +2961,7 @@ def test_chat_tui_removes_live_block_before_writing_scrollback(
 ) -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
@@ -3114,7 +2984,7 @@ def test_chat_tui_commits_live_finalization_in_one_terminal_transaction(
 ) -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
@@ -3160,7 +3030,7 @@ def test_chat_tui_replaces_failed_model_live_state_in_scrollback_transaction(
 ) -> None:
     app = tui.ChatTuiApp(
         thread_id="thread_1",
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
@@ -3218,7 +3088,7 @@ def test_chat_tui_show_command_renders_durable_markdown(
 ) -> None:
     app = tui.ChatTuiApp(
         thread_id="thread_1",
-        selects={},
+        setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
@@ -3450,9 +3320,18 @@ class FakeApp:
     active_run: str | None = None
     finished: bool = False
     presenter: ChatRunPresenter = field(default_factory=ChatRunPresenter)
+    setting: SessionSetting = field(
+        default_factory=lambda: SessionSetting(
+            model=ModelRequest("openai/gpt-5"),
+            runnable="agic:chat",
+        )
+    )
 
-    def get_selects(self) -> dict[str, object]:
-        return {}
+    def get_setting(self) -> SessionSetting:
+        return self.setting
+
+    def set_setting(self, setting: SessionSetting) -> None:
+        self.setting = setting
 
     def get_client(self) -> Any:
         raise NotImplementedError
@@ -3534,18 +3413,47 @@ class FakeClient(ChatClient):
                     {"kind": "flow", "name": "research"},
                 ],
             }
+        if kind == "agic":
+            return {"items": [{"kind": "agic", "name": "chat"}]}
+        if kind == "flow":
+            return {"items": [{"kind": "flow", "name": "research"}]}
         return {"items": []}
 
     def create_thread(self) -> str:
         return "thread_1"
 
-    def apply_settings(
+    def initial_setting(self) -> SessionSetting:
+        return SessionSetting(
+            model=ModelRequest("openai/gpt-5"),
+            runnable="agic:chat",
+        )
+
+    def apply_setting(
         self,
-        commands: tuple[RunOverride, ...],
-        selects: Mapping[str, object],
-    ) -> Mapping[str, object]:
-        del commands
-        return dict(selects)
+        setting: SessionSetting,
+        update: RunOverride,
+    ) -> SessionSetting:
+        return update_session_setting(
+            surface=self.initial_setting(),
+            current=setting,
+            update=update,
+        )
+
+    def build_request(
+        self,
+        thread_id: str,
+        override: RunOverride,
+        input: RunnableInputRaw,
+        setting: SessionSetting,
+    ) -> RunRequest:
+        del override
+        return RunRequest(
+            thread_id=thread_id,
+            request_id="term_request",
+            runnable=RunnableRequest("agic:chat", input),
+            model=setting.model,
+            policy=RunPolicy(),
+        )
 
     def get_result(
         self,
@@ -3561,14 +3469,12 @@ class FakeClient(ChatClient):
 
     def run(
         self,
-        thread_id: str,
-        message: str,
-        selects: Mapping[str, object],
+        request: RunRequest,
         on_event: Callable[[RunEvent], None],
         on_error: Callable[[str], None],
         on_state: Callable[[ChatRunState], None] | None = None,
     ) -> None:
-        del thread_id, message, selects, on_event, on_error, on_state
+        del request, on_event, on_error, on_state
 
     def cancel(
         self,

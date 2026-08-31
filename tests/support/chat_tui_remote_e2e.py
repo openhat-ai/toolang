@@ -68,7 +68,7 @@ agic chat(_: Part[]) -> Part[]:
     try:
         ChatTuiApp.run(
             thread_id=None,
-            selects={},
+            setting=session.initial_setting(),
             home=str(harness.setup.layout.home),
             input_history=None,
             client=session,

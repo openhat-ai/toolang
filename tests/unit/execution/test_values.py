@@ -35,7 +35,7 @@ from toolang.execution.types import (
     AgentResources,
     Local,
     Pointer,
-    RunOverride,
+    RunCommand,
     StepPath,
     TypedPointer,
     local_from_protocol_data,
@@ -481,8 +481,8 @@ def test_preparation_payload_round_trips_authored_prompt_facts() -> None:
             _="$review focus=security -- inspect",
             named=(NamedInputSource("tone", "$brief"),),
         ),
-        authored_commands=(RunOverride("limit", "time", 30),),
-        authored_session_commands=(RunOverride("default", "model", "test/model"),),
+        authored_commands=(RunCommand("limit", "time", 30),),
+        authored_session_commands=(RunCommand("default", "model", "test/model"),),
         prompt_invocations=(
             PromptInvocation(
                 name="review",

@@ -7,28 +7,40 @@ from toolang.base.types.model import (
     ModelRequest,
     ReasoningParameters,
 )
-from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits, RunPolicy
+from toolang.base.types.policy import AgentCeiling, RunLimits, RunPolicy
 from toolang.cli.toolang.commands.chat.policy import (
-    ChatRunDefaults,
-    apply_session_commands,
     build_run_request,
+    update_session_setting,
 )
 from toolang.execution.schemas import RunRequest, RunnableRequest
-from toolang.execution.types import RunOverride
+from toolang.execution.types import (
+    AllowOverride,
+    LimitOverride,
+    ModelOverride,
+    RunOverride,
+    SessionSetting,
+)
 from toolang.lang.input import NamedInputSource, RunnableInputRaw
 
 
+def _surface() -> SessionSetting:
+    return SessionSetting(
+        model=ModelRequest("openai/gpt-4.1"),
+        runnable="agic:chat",
+        limits=RunLimits(cost=Decimal("1.50"), time=30),
+    )
+
+
 def test_build_run_request_materializes_a_session_snapshot_without_mutation() -> None:
-    selects: dict[str, object] = {
-        "model": "openai/gpt-5",
-        "reasoning_effort": "high",
-        "run_overrides": (
-            RunOverride("default", "model", "openai/gpt-5"),
-            RunOverride("allow", "models", ("openai/*",)),
-            RunOverride("limit", "time", 60),
+    setting = SessionSetting(
+        model=ModelRequest(
+            "openai/gpt-5",
+            ModelParameters(ReasoningParameters(effort="high")),
         ),
-    }
-    before = dict(selects)
+        runnable="agic:chat",
+        allow=AgentCeiling(models=("openai/*",)),
+        limits=RunLimits(cost=Decimal("1.50"), time=60),
+    )
 
     request = build_run_request(
         thread_id="term_test",
@@ -37,19 +49,13 @@ def test_build_run_request_materializes_a_session_snapshot_without_mutation() ->
             _="hello",
             named=(NamedInputSource("tone", "brief"),),
         ),
-        input_commands=(
-            RunOverride("default", "runnable", "flow:review"),
-            RunOverride("allow", "tools", ("shell/*",)),
-            RunOverride("limit", "tokens", 2000),
+        override=RunOverride(
+            runnable="flow:review",
+            allow=(AllowOverride("tools", ("shell/*",)),),
+            limits=(LimitOverride("tokens", 2000),),
         ),
-        selects=selects,
-        defaults=ChatRunDefaults(
-            bindings=RunBindings(
-                model="openai/gpt-4.1",
-                runnable="agic:chat",
-            ),
-            limits=RunLimits(cost=Decimal("1.50"), time=30),
-        ),
+        setting=setting,
+        surface=_surface(),
         resolve_model_ref=lambda value: value,
         resolve_runnable_ref=lambda value: value,
     )
@@ -66,7 +72,7 @@ def test_build_run_request_materializes_a_session_snapshot_without_mutation() ->
         ),
         model=ModelRequest(
             "openai/gpt-5",
-            ModelParameters(ReasoningParameters("high")),
+            ModelParameters(ReasoningParameters(effort="high")),
         ),
         policy=RunPolicy(
             allow=(
@@ -80,70 +86,63 @@ def test_build_run_request_materializes_a_session_snapshot_without_mutation() ->
             ),
         ),
     )
-    assert selects == before
 
 
-def test_standalone_model_change_resets_reasoning_to_auto() -> None:
-    selected = {
-        "model": "openai/gpt-5",
-        "reasoning_effort": "high",
-    }
-
-    changed = apply_session_commands(
-        selected,
-        (RunOverride("default", "model", "anthropic/claude-sonnet-4.5"),),
+def test_model_identity_change_clears_unmentioned_parameters() -> None:
+    surface = _surface()
+    setting = SessionSetting(
+        model=ModelRequest(
+            "openai/gpt-5",
+            ModelParameters(ReasoningParameters(effort="high")),
+        ),
+        runnable=surface.runnable,
+        limits=surface.limits,
     )
 
-    assert changed["model"] == "anthropic/claude-sonnet-4.5"
-    assert "reasoning_effort" not in changed
+    changed = update_session_setting(
+        surface=surface,
+        current=setting,
+        update=RunOverride(model=ModelOverride(identity="anthropic/claude-sonnet-4.5")),
+    )
+
+    assert changed.model == ModelRequest("anthropic/claude-sonnet-4.5")
 
 
-def test_input_local_model_replacement_does_not_reuse_session_reasoning() -> None:
+def test_input_local_effort_change_reuses_session_model_identity() -> None:
     request = build_run_request(
         thread_id="term_test",
         request_id="term_request",
         input=RunnableInputRaw(_="hello"),
-        input_commands=(
-            RunOverride("default", "model", "anthropic/claude-sonnet-4.5"),
-        ),
-        selects={
-            "model": "openai/gpt-5",
-            "reasoning_effort": "high",
-        },
-        defaults=ChatRunDefaults(
-            bindings=RunBindings(
-                model="openai/gpt-4.1",
-                runnable="agic:chat",
+        override=RunOverride(model=ModelOverride(effort="low")),
+        setting=SessionSetting(
+            model=ModelRequest(
+                "openai/gpt-5",
+                ModelParameters(ReasoningParameters(effort="high")),
             ),
+            runnable="agic:chat",
             limits=RunLimits(),
         ),
+        surface=_surface(),
         resolve_model_ref=lambda value: value,
         resolve_runnable_ref=lambda value: value,
     )
 
-    assert request.model == ModelRequest("anthropic/claude-sonnet-4.5")
+    assert request.model == ModelRequest(
+        "openai/gpt-5",
+        ModelParameters(ReasoningParameters(effort="low")),
+    )
 
 
-def test_build_run_request_materializes_selector_values_to_exact_refs() -> None:
+def test_build_run_request_materializes_unqualified_runnable_to_exact_ref() -> None:
     request = build_run_request(
         thread_id="term_test",
         request_id="term_request",
         input=RunnableInputRaw(_="hello"),
-        input_commands=(
-            RunOverride("default", "model", "gpt-5[openai]"),
-            RunOverride("default", "runnable", "review"),
-        ),
-        selects={},
-        defaults=ChatRunDefaults(
-            bindings=RunBindings(
-                model="openai/gpt-4.1",
-                runnable="agic:chat",
-            ),
-            limits=RunLimits(),
-        ),
-        resolve_model_ref=lambda value: {"gpt-5[openai]": "openai/gpt-5"}[value],
+        override=RunOverride(runnable="review"),
+        setting=_surface(),
+        surface=_surface(),
+        resolve_model_ref=lambda value: value,
         resolve_runnable_ref=lambda value: {"review": "flow:review"}[value],
     )
 
-    assert request.model == ModelRequest("openai/gpt-5")
     assert request.runnable.ref == "flow:review"

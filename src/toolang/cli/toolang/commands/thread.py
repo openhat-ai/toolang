@@ -33,7 +33,7 @@ from toolang.execution.schemas import (
 )
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import (
-    RunOverride,
+    RunCommand,
     StepPath,
 )
 from toolang.up.types import AgentServerRef
@@ -344,7 +344,7 @@ def _run_retry_or_rerun(
     anchor: StepPath | None,
     sandbox: str | None,
     dev: Path | None,
-    commands: tuple[RunOverride, ...],
+    commands: tuple[RunCommand, ...],
     show_progress: bool,
     model_catalog: Path | None = None,
 ) -> RunDetail:
@@ -381,7 +381,7 @@ def _restart_commands(
     default_options: list[str] | None,
     limit_options: list[str] | None,
     model_replacement: bool,
-) -> tuple[RunOverride, ...]:
+) -> tuple[RunCommand, ...]:
     environ = load_runtime_environ(layout, base_environ=os.environ)
     cli_defaults = resolve_default_overrides({}, default_options)
     if "runnable" in cli_defaults:
@@ -396,12 +396,12 @@ def _restart_commands(
     ceilings = resolve_ceiling_overrides(environ, allow_options or ())
     limits = resolve_limit_overrides(environ, limit_options or ())
     return (
-        *(RunOverride("allow", field, value) for field, value in ceilings.items()),
+        *(RunCommand("allow", field, value) for field, value in ceilings.items()),
         *(
-            RunOverride("default", field, value)
+            RunCommand("default", field, value)
             for field, value in default_overrides.items()
         ),
-        *(RunOverride("limit", field, value) for field, value in limits.items()),
+        *(RunCommand("limit", field, value) for field, value in limits.items()),
     )
 
 
@@ -412,7 +412,7 @@ async def _execute_retry_or_rerun(
     kind: Literal["retry", "rerun"],
     source: str,
     anchor: StepPath | None,
-    commands: tuple[RunOverride, ...],
+    commands: tuple[RunCommand, ...],
     show_progress: bool,
     model_catalog: Path | None,
 ) -> RunDetail:

@@ -34,6 +34,7 @@ from toolang.execution.events import (
 from toolang.execution.runnables import parse_runnable_ref
 from toolang.common.errors import ToolangError
 from toolang.common.version import toolang_version
+from toolang.execution.types import SessionSetting
 
 from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
 from . import blocks
@@ -59,7 +60,6 @@ from .history import ChatInputHistoryStore
 from .input import (
     QuickCommand,
     is_runnable_input,
-    is_run_overrides,
     normalize_chat_input,
     parse_chat_input,
 )
@@ -98,14 +98,8 @@ def _status_spinner_index(elapsed: float) -> int:
     )
 
 
-def _selected_runnable(selects: Mapping[str, object]) -> str | None:
-    if runnable := as_text(selects.get("runnable")):
-        return runnable
-    if flow := as_text(selects.get("flow")):
-        return f"flow:{flow}"
-    if agic := as_text(selects.get("agic")):
-        return f"agic:{agic}"
-    return None
+def _selected_runnable(setting: SessionSetting) -> str | None:
+    return setting.runnable
 
 
 def _qualified_runnable_label(reference: str, payload: Mapping[str, object]) -> str:
@@ -132,8 +126,11 @@ class ChatTuiAppContext:
     def __init__(self, app: ChatTuiApp) -> None:
         self._app = app
 
-    def get_selects(self) -> dict[str, object]:
-        return self._app.selects
+    def get_setting(self) -> SessionSetting:
+        return self._app.setting
+
+    def set_setting(self, setting: SessionSetting) -> None:
+        self._app.setting = setting
 
     def get_client(self) -> ChatClient:
         return self._app.client
@@ -201,7 +198,7 @@ class ChatTuiApp:
     def run(
         *,
         thread_id: str | None,
-        selects: dict[str, object],
+        setting: SessionSetting,
         home: str,
         input_history: ChatInputHistoryStore | None,
         client: ChatClient,
@@ -211,7 +208,7 @@ class ChatTuiApp:
         asyncio.run(
             ChatTuiApp(
                 thread_id=thread_id,
-                selects=selects,
+                setting=setting,
                 home=home,
                 input_history=input_history,
                 client=client,
@@ -224,7 +221,7 @@ class ChatTuiApp:
         self,
         *,
         thread_id: str | None,
-        selects: dict[str, object],
+        setting: SessionSetting,
         home: str,
         input_history: ChatInputHistoryStore | None,
         client: ChatClient,
@@ -232,10 +229,10 @@ class ChatTuiApp:
         resource_paths: tuple[str, ...] = (),
     ) -> None:
         self.thread_id = thread_id
-        self.selects = selects
         self.home = home
         self.input_history = input_history
         self.client = client
+        self.setting = setting
         self.ui_events: asyncio.Queue[ChatUIEvent] = asyncio.Queue()
         self.queue: list[QueuedCall] = []
         self.active_run_id: str | None = None
@@ -344,7 +341,7 @@ class ChatTuiApp:
             list_prompts = getattr(self.client, "list_prompts", None)
             if not callable(list_prompts):
                 return
-            payload = list_prompts(_selected_runnable(self.selects))
+            payload = list_prompts(_selected_runnable(self.setting))
             if isinstance(payload, Mapping):
                 self.completer.set_prompts(payload)
         except (OSError, RuntimeError, ToolangError, ValueError):
@@ -385,25 +382,16 @@ class ChatTuiApp:
 
     def _model_label(self) -> str:
         try:
-            return slashes.chat_model_label(self.client.list_models(), self.selects)
+            return slashes.chat_model_label(self.client.list_models(), self.setting)
         except (click.ClickException, ToolangError, ValueError):
-            return as_text(self.selects.get("model")) or "default"
+            return self.setting.model.ref if self.setting.model is not None else "none"
 
     def _runnable_label(
         self,
-        selects: Mapping[str, object] | None = None,
+        setting: SessionSetting | None = None,
     ) -> str:
-        current = self.selects if selects is None else selects
-        flow = as_text(current.get("flow"))
-        agic = as_text(current.get("agic"))
-        runnable = as_text(current.get("runnable"))
-        reference = (
-            f"flow:{flow}"
-            if flow
-            else f"agic:{agic}"
-            if agic and agic != "default"
-            else runnable
-        )
+        current = self.setting if setting is None else setting
+        reference = current.runnable
         payload: Mapping[str, object] = {}
         if reference is None or ":" not in reference:
             try:
@@ -662,23 +650,23 @@ class ChatTuiApp:
                     blocks.SlashBlock(message, slash_result.lines).render()
                 )
             return
-        if is_run_overrides(chat_input):
-            try:
-                updated = self.client.apply_settings(
-                    chat_input,
-                    self.selects,
-                )
-            except (ToolangError, ValueError) as exc:
-                self.status_bar.set_error(friendly_error(str(exc)))
-                return
-            self.selects.clear()
-            self.selects.update(updated)
-            self.status_bar.set_status(*self._status_labels())
-            self._refresh_prompt_completions()
-            return
         if not is_runnable_input(chat_input):
             raise AssertionError("unknown chat input value")
-        queued = QueuedCall(source, dict(self.selects))
+        override, runnable_input = chat_input
+        try:
+            request = self.client.build_request(
+                self.app_context.ensure_thread_id(),
+                override,
+                runnable_input,
+                self.setting,
+            )
+        except click.ClickException as exc:
+            self._handle_run_error(exc.message)
+            return
+        except (ToolangError, ValueError) as exc:
+            self._handle_run_error(str(exc))
+            return
+        queued = QueuedCall(source, request)
         if self.active_run_id is not None or self.run_in_flight.is_set():
             self.queue.append(queued)
         else:
@@ -785,23 +773,13 @@ class ChatTuiApp:
             events.handle_run_state(state, self.app_context)
 
     def submit_run(self, call: QueuedCall) -> None:
-        self.status_bar.set_active_runnable(self._runnable_label(call.selects))
+        self.status_bar.set_active_runnable(call.request.runnable.ref)
         self.unfinalized_blocks.append(blocks.RunControlBlock.create(call.source))
         self.app.invalidate()
-        try:
-            thread_id = self.app_context.ensure_thread_id()
-        except click.ClickException as exc:
-            self._handle_run_error(exc.message)
-            return
-        except (ToolangError, ValueError) as exc:
-            self._handle_run_error(str(exc))
-            return
 
         def consume() -> None:
             self.client.run(
-                thread_id,
-                call.source,
-                call.selects,
+                call.request,
                 lambda event: self._enqueue_ui_event_from_thread(
                     ChatUIEvent("run_event", event)
                 ),

@@ -22,6 +22,8 @@ from toolang.base.types.message import (
     ToolResultPart,
     part_from_data,
 )
+from toolang.base.types.model import ModelRequest, ReasoningEffort
+from toolang.base.types.policy import AgentCeiling, RunLimits
 from toolang.base.types.run import ModelCall, ModelContinuation, ToolCall
 from toolang.lang.ast import (
     AskStmt,
@@ -47,9 +49,7 @@ from toolang.lang.types import Array, Struct, Value, validate_type, value_type
 
 _EXECUTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _LOCAL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-PolicyGroup = Literal["allow", "default", "limit"]
-PolicyValue: TypeAlias = tuple[str, ...] | str | int | Decimal | None
-ALLOW_POLICY_FIELDS = frozenset(
+ALLOW_FIELDS = frozenset(
     {
         "models",
         "tools",
@@ -59,30 +59,37 @@ ALLOW_POLICY_FIELDS = frozenset(
         "prompts",
     }
 )
-DEFAULT_POLICY_FIELDS = frozenset({"model", "runnable"})
-LIMIT_POLICY_FIELDS = frozenset(
+DEFAULT_COMMAND_FIELDS = frozenset({"model", "runnable"})
+LIMIT_FIELDS = frozenset(
     {"agic_model_calls", "agic_tool_calls", "tokens", "cost", "time"}
 )
+AllowField = Literal["models", "tools", "psyches", "skills", "services", "prompts"]
+LimitField = Literal["agic_model_calls", "agic_tool_calls", "tokens", "cost", "time"]
+AllowValue: TypeAlias = tuple[str, ...] | None
+LimitValue: TypeAlias = int | Decimal | None
+ModelEffort: TypeAlias = ReasoningEffort | int | Literal["auto"]
+PolicyGroup = Literal["allow", "default", "limit"]
+PolicyValue: TypeAlias = tuple[str, ...] | str | int | Decimal | None
 
 
 @dataclass(frozen=True, slots=True)
-class RunOverride:
-    """One canonical caller command applied to execution policy."""
+class RunCommand:
+    """One low-level command retained by execution and restart protocols."""
 
     group: PolicyGroup
     field: str
     value: PolicyValue
 
     def __post_init__(self) -> None:
-        if self.group not in {"allow", "default", "limit"}:
-            raise ValueError(f"unknown policy command group: {self.group}")
-        if not self.field or self.field != self.field.strip():
-            raise ValueError("policy command requires a canonical field")
         fields = {
-            "allow": ALLOW_POLICY_FIELDS,
-            "default": DEFAULT_POLICY_FIELDS,
-            "limit": LIMIT_POLICY_FIELDS,
-        }[self.group]
+            "allow": ALLOW_FIELDS,
+            "default": DEFAULT_COMMAND_FIELDS,
+            "limit": LIMIT_FIELDS,
+        }.get(self.group)
+        if fields is None:
+            raise ValueError(f"unknown run command group: {self.group}")
+        if not self.field or self.field != self.field.strip():
+            raise ValueError("run command requires a canonical field")
         if self.field not in fields:
             raise ValueError(f"unknown {self.group} field: {self.field}")
         if self.group == "allow":
@@ -90,21 +97,168 @@ class RunOverride:
                 isinstance(self.value, tuple)
                 and all(isinstance(item, str) for item in self.value)
             ):
-                raise TypeError("allow policy value must be queries, all, or none")
+                raise TypeError("allow command value must be queries, all, or none")
             return
         if self.group == "default":
             if self.value is not None and not isinstance(self.value, str):
-                raise TypeError("default policy value must be a string or none")
+                raise TypeError("default command value must be a string or none")
             return
         if self.field == "cost":
             if self.value is not None and not isinstance(self.value, Decimal):
-                raise TypeError("limit cost policy value must be a decimal or none")
+                raise TypeError("limit cost command value must be a decimal or none")
         elif self.value is not None and (
             isinstance(self.value, bool) or not isinstance(self.value, int)
         ):
             raise TypeError(
-                f"limit {self.field} policy value must be an integer or none"
+                f"limit {self.field} command value must be an integer or none"
             )
+
+
+@dataclass(frozen=True, slots=True)
+class ModelOverride:
+    """Sparse model identity and reasoning changes for one run."""
+
+    identity: str | None = None
+    effort: ModelEffort | None = None
+
+    def __post_init__(self) -> None:
+        if self.identity is not None:
+            if self.identity not in {"default", "none"}:
+                ModelRequest(self.identity)
+        if self.effort is not None:
+            if isinstance(self.effort, bool):
+                raise TypeError("model effort must be a level, token budget, or auto")
+            if isinstance(self.effort, int):
+                if self.effort < 0:
+                    raise ValueError("model effort token budget must be non-negative")
+            elif self.effort not in {
+                "auto",
+                "none",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max",
+                "default",
+            }:
+                raise ValueError(f"unknown model effort: {self.effort!r}")
+        if self.identity is None and self.effort is None:
+            raise ValueError("model override requires an identity or effort")
+
+
+@dataclass(frozen=True, slots=True)
+class AllowOverride:
+    """One sparse allow-field replacement."""
+
+    field: AllowField
+    value: AllowValue
+
+    def __post_init__(self) -> None:
+        if self.field not in ALLOW_FIELDS:
+            raise ValueError(f"unknown allow field: {self.field}")
+        if self.value is not None and not (
+            isinstance(self.value, tuple)
+            and all(isinstance(item, str) for item in self.value)
+        ):
+            raise TypeError("allow override must be queries, all, or none")
+
+
+@dataclass(frozen=True, slots=True)
+class LimitOverride:
+    """One sparse run-limit replacement."""
+
+    field: LimitField
+    value: LimitValue
+
+    def __post_init__(self) -> None:
+        if self.field not in LIMIT_FIELDS:
+            raise ValueError(f"unknown run limit: {self.field}")
+        if self.field == "cost":
+            if self.value is not None and not isinstance(self.value, Decimal):
+                raise TypeError("run limit cost override must be a decimal or none")
+            if isinstance(self.value, Decimal) and (
+                not self.value.is_finite() or self.value < 0
+            ):
+                raise ValueError(
+                    "run limit cost override must be finite and non-negative"
+                )
+            return
+        if self.value is not None and (
+            isinstance(self.value, bool) or not isinstance(self.value, int)
+        ):
+            raise TypeError(
+                f"run limit {self.field} override must be an integer or none"
+            )
+        if isinstance(self.value, int) and self.value < 0:
+            raise ValueError(f"run limit {self.field} override must be non-negative")
+
+
+@dataclass(frozen=True, slots=True)
+class SessionSetting:
+    """Concrete defaults for subsequent runs in one Chat session."""
+
+    model: ModelRequest | None
+    runnable: str | None
+    allow: AgentCeiling = AgentCeiling()
+    limits: RunLimits = RunLimits()
+
+    def __post_init__(self) -> None:
+        if self.model is not None and not isinstance(self.model, ModelRequest):
+            raise TypeError("session model must be a ModelRequest or none")
+        if self.runnable is not None:
+            if not isinstance(self.runnable, str):
+                raise TypeError("session runnable must be a string or none")
+            if not self.runnable or self.runnable != self.runnable.strip():
+                raise ValueError("session runnable must be canonical")
+        if not isinstance(self.allow, AgentCeiling):
+            raise TypeError("session allow must be an AgentCeiling")
+        if not isinstance(self.limits, RunLimits):
+            raise TypeError("session limits must be RunLimits")
+
+
+@dataclass(frozen=True, slots=True)
+class RunOverride:
+    """Sparse changes attached to exactly one runnable input."""
+
+    model: ModelOverride | None = None
+    runnable: str | None = None
+    allow: tuple[AllowOverride, ...] = ()
+    limits: tuple[LimitOverride, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.model is not None and not isinstance(self.model, ModelOverride):
+            raise TypeError("run model override must be a ModelOverride or none")
+        if self.runnable is not None:
+            if not isinstance(self.runnable, str):
+                raise TypeError("run runnable override must be a string or none")
+            if not self.runnable or self.runnable != self.runnable.strip():
+                raise ValueError("run runnable override must be canonical")
+        if not isinstance(self.allow, tuple) or not all(
+            isinstance(item, AllowOverride) for item in self.allow
+        ):
+            raise TypeError("run allow overrides must be AllowOverride objects")
+        allow_fields = [item.field for item in self.allow]
+        if len(allow_fields) != len(set(allow_fields)):
+            raise ValueError("run allow override fields must be unique")
+        if not isinstance(self.limits, tuple) or not all(
+            isinstance(item, LimitOverride) for item in self.limits
+        ):
+            raise TypeError("run limit overrides must be LimitOverride objects")
+        fields = [item.field for item in self.limits]
+        if len(fields) != len(set(fields)):
+            raise ValueError("run limit override fields must be unique")
+
+    @property
+    def empty(self) -> bool:
+        """Return whether no run field was authored."""
+
+        return (
+            self.model is None
+            and self.runnable is None
+            and not self.allow
+            and not self.limits
+        )
 
 
 @dataclass(frozen=True, slots=True)

@@ -19,7 +19,7 @@ import typer
 from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 
 from toolang.base.types.model import ModelRequest
-from toolang.base.types.policy import RunBindings, RunPolicy
+from toolang.base.types.policy import AgentCeiling, RunBindings, RunPolicy
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
@@ -32,14 +32,19 @@ from toolang.cli.common.model_selection import (
     materialize_model_selection,
 )
 from toolang.execution.calls import parse_call, resolve_spec
-from toolang.execution.policy import materialize_policy
+from toolang.execution.policy import materialize_policy, materialize_run_setting
 from toolang.execution.executor import LocalRunHandle, RunExecutor
 from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.records import RunRecord
 from toolang.execution.schemas import RunRequest, RunnableRequest, ThreadInfo
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import RunOverride, ThreadPrefix
+from toolang.execution.types import (
+    RunCommand,
+    RunOverride,
+    SessionSetting,
+    ThreadPrefix,
+)
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program
 from toolang.lang.includes import resolve_file_include
 from toolang.lang.input import NamedInputSource, NamedInputSources, RunnableInputRaw
@@ -194,17 +199,17 @@ def _runnable_command(
         save: str | None,
         quiet: bool,
     ) -> int:
-        commands, input, raw_named = _collect_call(
+        override, input, raw_named = _collect_call(
             runnable,
             items=items,
             stdin=stdin,
         )
-        commands = _materialize_script_runnable_commands(commands, program=program)
+        override = _materialize_script_runnable_override(override, program=program)
         return _run(
             source_path,
             runnable=runnable.name,
             runnable_kind=runnable.kind,
-            commands=commands,
+            override=override,
             input=input,
             raw_named=raw_named,
             allow_options=allow,
@@ -351,7 +356,7 @@ def _collect_call(
     *,
     items: tuple[str, ...],
     stdin: TextIO,
-) -> tuple[tuple[RunOverride, ...], RunnableInputRaw, NamedInputSources]:
+) -> tuple[RunOverride, RunnableInputRaw, NamedInputSources]:
     params = {parameter.name: parameter for parameter in runnable.params}
     raw_args: dict[str, str] = {}
     input_items: list[str] = []
@@ -368,11 +373,8 @@ def _collect_call(
         input_items.append(item)
 
     input_source = _input_source(input_items, stdin=stdin)
-    commands, input = parse_call(input_source or "")
-    has_runnable_override = any(
-        command.group == "default" and command.field == "runnable"
-        for command in commands
-    )
+    override, input = parse_call(input_source or "")
+    has_runnable_override = override.runnable is not None
     if not has_runnable_override:
         missing = [
             parameter.name
@@ -388,42 +390,26 @@ def _collect_call(
         ):
             raise _IncompleteRunnableInput
     return (
-        commands,
+        override,
         input,
         tuple(NamedInputSource(name, source) for name, source in raw_args.items()),
     )
 
 
-def _materialize_script_runnable_commands(
-    commands: tuple[RunOverride, ...],
+def _materialize_script_runnable_override(
+    override: RunOverride,
     *,
     program: Program,
-) -> tuple[RunOverride, ...]:
+) -> RunOverride:
     """Resolve input-local runnable selections against the authored program."""
 
-    materialized: list[RunOverride] = []
-    for command in commands:
-        if (
-            command.group != "default"
-            or command.field != "runnable"
-            or command.value is None
-        ):
-            materialized.append(command)
-            continue
-        if not isinstance(command.value, str):  # pragma: no cover - type invariant
-            raise TypeError("default runnable must be a string or none")
-        dataset = runnable_dataset(program)
-        matches = dataset.query(command.value)
-        if len(matches) != 1:
-            raise ValueError(f"runnable query is unknown or ambiguous: {command.value}")
-        materialized.append(
-            RunOverride(
-                "default",
-                "runnable",
-                dataset.schema.exact_match_for(matches[0]),
-            )
-        )
-    return tuple(materialized)
+    if override.runnable in {None, "default"}:
+        return override
+    dataset = runnable_dataset(program)
+    matches = dataset.query(override.runnable)
+    if len(matches) != 1:
+        raise ValueError(f"runnable query is unknown or ambiguous: {override.runnable}")
+    return replace(override, runnable=dataset.schema.exact_match_for(matches[0]))
 
 
 def _input_source(items: list[str], *, stdin: TextIO) -> str | None:
@@ -471,7 +457,7 @@ def _run(
     *,
     runnable: str,
     runnable_kind: str,
-    commands: tuple[RunOverride, ...],
+    override: RunOverride,
     input: RunnableInputRaw,
     raw_named: NamedInputSources,
     allow_options: tuple[str, ...],
@@ -523,7 +509,7 @@ def _run(
                         run_id=run_id,
                         sandbox="host",
                         runnable=runnable_ref,
-                        commands=commands,
+                        override=override,
                         input=input,
                         raw_named=raw_named,
                         allow_options=allow_options,
@@ -540,7 +526,7 @@ def _run(
                         endpoint=server.endpoint,
                         sandbox=server.sandbox,
                         runnable=runnable_ref,
-                        commands=commands,
+                        override=override,
                         input=input,
                         raw_named=raw_named,
                         allow_options=allow_options,
@@ -602,7 +588,7 @@ async def _execute_remote(
     endpoint: str,
     sandbox: str,
     runnable: str,
-    commands: tuple[RunOverride, ...],
+    override: RunOverride,
     input: RunnableInputRaw,
     raw_named: NamedInputSources,
     allow_options: tuple[str, ...],
@@ -646,26 +632,51 @@ async def _execute_remote(
                 http,
                 client.endpoint,
             )
-            ceilings, bindings, limits = materialize_policy(
-                replace(default_bindings, runnable=runnable),
+            surface_bindings = replace(default_bindings, runnable=runnable)
+            session_ceilings, bindings, limits = materialize_policy(
+                surface_bindings,
                 default_limits.limits,
                 session=session_commands,
-                run=_remote_script_commands(commands, runnable=runnable),
             )
-            model_ref = bindings.model
-            if model_ref is not None:
+            surface_setting = SessionSetting(
+                model=(
+                    ModelRequest(surface_bindings.model)
+                    if surface_bindings.model is not None
+                    else None
+                ),
+                runnable=surface_bindings.runnable,
+                limits=default_limits.limits,
+            )
+            session_setting = SessionSetting(
+                model=ModelRequest(bindings.model)
+                if bindings.model is not None
+                else None,
+                runnable=bindings.runnable,
+                allow=session_ceilings[0] if session_ceilings else AgentCeiling(),
+                limits=limits,
+            )
+            ceilings, effective = materialize_run_setting(
+                surface_setting,
+                session_setting,
+                _remote_script_override(override, runnable=runnable),
+            )
+            model = effective.model
+            if model is not None:
                 models = await _remote_script_models(http, client.endpoint)
-                model_ref = materialize_model_selection(models, model_ref)
+                model = replace(
+                    model,
+                    ref=materialize_model_selection(models, model.ref),
+                )
             thread = await _create_remote_script_thread(http, client.endpoint)
             handle = await client.run(
                 RunRequest(
                     thread_id=thread,
                     request_id=f"term_{uuid4().hex}",
                     runnable=RunnableRequest(
-                        bindings.runnable or runnable, request_input
+                        effective.runnable or runnable, request_input
                     ),
-                    model=(ModelRequest(model_ref) if model_ref is not None else None),
-                    policy=RunPolicy(allow=ceilings, limits=limits),
+                    model=model,
+                    policy=RunPolicy(allow=ceilings, limits=effective.limits),
                 ),
                 tracer=tracer,
             )
@@ -709,20 +720,17 @@ def _remote_script_input(
     return replace(input, named=input.named or raw_named)
 
 
-def _remote_script_commands(
-    commands: tuple[RunOverride, ...],
+def _remote_script_override(
+    override: RunOverride,
     *,
     runnable: str,
-) -> tuple[RunOverride, ...]:
+) -> RunOverride:
     """Keep `:runnable default` anchored to the dynamic CLI runnable."""
 
-    return tuple(
-        RunOverride("default", "runnable", runnable)
-        if command.group == "default"
-        and command.field == "runnable"
-        and command.value is None
-        else command
-        for command in commands
+    return (
+        replace(override, runnable=runnable)
+        if override.runnable == "default"
+        else override
     )
 
 
@@ -732,7 +740,7 @@ def _remote_script_session_commands(
     allow_options: tuple[str, ...],
     default_options: tuple[str, ...],
     limit_options: tuple[str, ...],
-) -> tuple[RunOverride, ...]:
+) -> tuple[RunCommand, ...]:
     """Place the explicit CLI runnable above AgentServer setup bindings."""
 
     ceilings = resolve_ceiling_overrides({}, allow_options)
@@ -743,10 +751,10 @@ def _remote_script_session_commands(
             "--default runnable does not apply when a script runnable is explicit"
         )
     return (
-        RunOverride("default", "runnable", runnable),
-        *(RunOverride("allow", field, value) for field, value in ceilings.items()),
-        *(RunOverride("default", field, value) for field, value in defaults.items()),
-        *(RunOverride("limit", field, value) for field, value in limits.items()),
+        RunCommand("default", "runnable", runnable),
+        *(RunCommand("allow", field, value) for field, value in ceilings.items()),
+        *(RunCommand("default", field, value) for field, value in defaults.items()),
+        *(RunCommand("limit", field, value) for field, value in limits.items()),
     )
 
 
@@ -896,7 +904,7 @@ async def _execute(
     run_id: str,
     sandbox: str,
     runnable: str,
-    commands: tuple[RunOverride, ...],
+    override: RunOverride,
     input: RunnableInputRaw,
     raw_named: NamedInputSources,
     allow_options: tuple[str, ...],
@@ -940,7 +948,7 @@ async def _execute(
         refresh_state=state_watcher.refresh_result,
     )
     spec = resolve_spec(
-        commands,
+        override,
         input,
         setup=setup,
         state=state,

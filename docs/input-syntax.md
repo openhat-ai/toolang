@@ -1,7 +1,7 @@
 # Input Syntax
 
-This document defines runnable input, execution policy commands, terminal-chat
-input, shared `Content` syntax, and runnable-boundary coercion.
+This document defines runnable input, Chat session settings and run overrides,
+shared `Content` syntax, and runnable-boundary coercion.
 
 ## Input Layers
 
@@ -10,93 +10,107 @@ The layers are independent values with separate parsers:
 ```text
 RunnableInputRaw = PrimaryInput? + NamedInput*
 
-ChatInput
-    = QuickCommand
-    | RunOverride+
-    | RunOverride* + RunnableInputRaw
+ChatInput = QuickCommand | RunOverride + RunnableInputRaw
 ```
 
 - `RunnableInputRaw` is language-owned syntax-valid input. It contains only one
   optional primary source and zero or more named sources.
-- `RunOverride` is execution-owned policy input. It changes `allow`,
-  `default`, or `limit` fields but contains no runnable input.
+- `SessionSetting` is Chat's concrete model, runnable, allow, and limit default
+  for subsequent runs in the current session.
+- `RunOverride` is a sparse model, runnable, allow, and limit change attached to
+  one runnable input.
 - `QuickCommand` and the `ChatInput` classification are terminal-chat
   concepts. Only one `QuickCommand` is accepted, and it must occupy the whole
   chat input.
-- The runnable branch is valid only when it contains a primary or named input.
-  A policy-only branch updates later chat runs; the same policy prefix on a
-  runnable branch applies only to that run.
+- The runnable branch is valid only when it contains primary or named input. A
+  colon override without runnable input is invalid and never changes the
+  session. Slash setting commands change `SessionSetting` without creating a
+  run.
 
-Script, task, and chore surfaces parse the run-only pair of policy commands and
+Script, task, and chore surfaces parse the run-only pair of `RunOverride` and
 `RunnableInputRaw`; they do not parse `QuickCommand`. Agic, flow, and prompt
 bodies are `Content` sources rather than caller-input envelopes.
 
 Parsing and resolution are separate. Parsing produces `RunOverride` and
-`RunnableInputRaw` without loading an agent. Execution resolution later overlays
-the current `AgentSetup`, session policy, and run policy; selects the runnable;
-evaluates content; coerces named inputs; constructs `RunnableInput`; and then
-constructs `RunSpec`.
+`RunnableInputRaw` without loading an agent. Chat overlays the immutable surface
+baseline, `SessionSetting`, and `RunOverride` into a self-contained `RunRequest`.
+Execution then validates the concrete model and runnable, evaluates content,
+coerces named inputs, and constructs `RunSpec`.
 
-## Policy Commands
+## Session Settings and Run Overrides
 
-Canonical commands map directly to execution policy fields:
+The command body is shared. `/` changes the Chat session; a leading `:` changes
+only the run in the same submission:
 
 ```text
-:allow COLLECTION=QUERY
-:default FIELD=VALUE
-:limit FIELD=VALUE
+/model BODY       :model BODY
+/runnable BODY    :runnable BODY
+/agic NAME        :agic NAME
+/flow NAME        :flow NAME
+/allow BODY       :allow BODY
+/limit BODY       :limit BODY
 ```
 
-Supported fields are:
-
-| Group | Fields |
-| --- | --- |
-| `allow` | `models`, `tools`, `psyches`, `skills`, `services`, `prompts` |
-| `default` | `model`, `runnable` |
-| `limit` | `agic_model_calls`, `agic_tool_calls`, `tokens`, `cost`, `time` |
-
-`allow` query values may use standalone `all` or `none`. `all` removes that
-field's restriction; `none` permits no value in the resulting collection. They
-cannot be mixed with a query. The four cap-kind fields remain separate through
-policy resolution, matching setup config and process overrides.
-`default ...=none` clears an explicit binding, while
-`limit ...=none` disables that limit. These values have group-specific meanings
-and are not accepted as ordinary names.
-
-The common default shortcuts are:
+Model bodies contain an optional identity followed by assignments:
 
 ```text
-:model MODEL
-:agic AGIC [NAME=VALUE ...]
-:flow FLOW [NAME=VALUE ...]
-:runnable RUNNABLE [NAME=VALUE ...]
+/model openai/gpt-5
+/model effort=high
+/model effort=4096
+/model openai/gpt-5 effort=high
+/model effort=auto
 ```
 
-They map to `default model=...` or `default runnable=...`. `:agic` and `:flow`
-qualify the runnable kind. The reserved value `default` clears that explicit
-binding and returns to the surface binding. Named values on a runnable
-shortcut belong to `RunnableInputRaw`, so the line starts a run even when there
-is no primary input.
+`effort` is input convenience. A canonical unsigned integer becomes
+`reasoning.budget_tokens`; a recognized level becomes `reasoning.effort`; and
+`auto` removes explicit reasoning. An effort or budget is validated against the
+effective model before run acceptance. Parameter-only input retains the model
+identity. Selecting an identity clears unmentioned explicit model parameters.
+Bare model `default` restores the surface model and bare model `none` selects no
+model.
 
-The allow shortcuts are:
+The generic runnable form accepts an exact kind-qualified ref or a uniquely
+resolvable unqualified ref. `agic` and `flow` are exact shorthand:
 
 ```text
-:models QUERY       :psyches QUERY
-:tools QUERY        :skills QUERY
-                    :services QUERY
-                    :prompts QUERY
+:runnable agic:review      :agic review
+:runnable flow:research    :flow research
+:runnable review
 ```
 
-Each command occupies one complete line and uses POSIX shell word quoting and
-backslash escaping without expansion, substitution, or globbing. Repeated
-`allow` commands for one field accumulate and deduplicate queries. Repeated
-`default` or `limit` fields in one input are invalid. Blank lines may appear
-between policy commands and between the policy prefix and primary input; they
-are structural and are not part of the primary source.
+`default` resets only the generic runnable form. Kind-specific commands treat it
+as a normal name. Colon runnable commands may carry named runnable input, such
+as `:agic review focus=security`; slash runnable commands may not.
+
+Allow and limit bodies accept one or more assignments:
 
 ```text
-:model openai/gpt-5
-:skills reviewer
+/allow models=openai/* tools=shell/* skills=reviewer
+:allow models=openai/* tools=shell/*
+
+/limit tokens=20000 cost=2.5 time=120
+:limit tokens=4000 time=30
+```
+
+Allow fields are `models`, `tools`, `psyches`, `skills`, `services`, and
+`prompts`. Values accept a query, `all`, or `none`. Repeated queries for one
+field accumulate and deduplicate; `all` and `none` cannot combine with another
+value. A slash assignment replaces that session field. A colon assignment adds
+another ceiling and cannot broaden the session ceiling.
+
+Limit fields are `agic_model_calls`, `agic_tool_calls`, `tokens`, `cost`, and
+`time`. Integer fields require non-negative integers; cost requires a finite
+non-negative decimal. `none` disables one limit. Duplicate limit fields in a
+submission are invalid.
+
+Colon overrides occupy complete leading lines and use POSIX shell quoting and
+backslash escaping without expansion. Blank lines between overrides and the
+primary input are structural. Model and runnable may each appear once; allow
+may span lines; limit fields may span lines but remain unique.
+
+```text
+:model effort=high
+:allow skills=reviewer tools=shell/*
 :agic review focus=security
 
 Review this API.
@@ -111,28 +125,26 @@ normalized submission:
 ```text
 /help                     /show [RUN_ID]
 /?                        /queue [ACTION]
-/model [MODEL [EFFORT|auto]]
+/model MODEL? effort=VALUE
 /steer MESSAGE
-/agic [AGIC]              /quit
-/flow [FLOW]              /exit
-/runnable [RUNNABLE]
+/agic AGIC                /quit
+/flow FLOW                /exit
+/runnable RUNNABLE
+/allow FIELD=QUERY...
+/limit FIELD=VALUE...
 ```
 
-In the interactive TUI, `/model` opens a searchable model picker and, when
-supported, a second reasoning-effort picker. Scripted Chat lists models and
-their efforts instead. `/model MODEL` selects Auto effort, `/model MODEL
-EFFORT` selects one catalog-advertised effort, and `/model MODEL auto` clears
-it. There is no `/models` command. The runnable commands use
-the same no-argument listing and one-argument selection rule. A slash command
-cannot be combined with policy or runnable input. Chat removes leading and
-trailing blank lines, then removes horizontal whitespace from the end of the
-final line. It preserves indentation on the first nonblank line and all
-internal runnable-input whitespace.
+Every setting body is required. Submitting bare `/model`, `/runnable`, `/agic`,
+`/flow`, `/allow`, or `/limit` neither lists values nor opens a picker. An
+editor completion popup may insert text into the draft, but selection never
+submits input or changes the session. A slash command cannot be combined with a
+colon override or runnable input.
 
-Colon policy directives remain canonical. Former colon quick-command spellings
-are not aliases: use `/help`, `/model`, and the other slash interactions.
-`:models QUERY` remains an allow-policy shortcut, while no-argument
-`:models` is invalid.
+Chat removes leading and trailing blank lines, then removes horizontal
+whitespace from the end of the final line. It preserves indentation on the
+first nonblank line and all internal runnable-input whitespace. Removed forms
+have no aliases: settings-only colon input, `:default`, collection shortcuts
+such as `:models`, and positional `/model REF EFFORT` are invalid.
 
 ## Runnable Input
 
@@ -144,9 +156,8 @@ selected runnable signature. Missing, duplicate, or unknown named inputs are
 rejected before a run is accepted.
 
 Run-only parsing permits an empty `RunnableInputRaw` when the selected runnable
-accepts no primary or named input. Parsing is atomic: any invalid policy
-command, named input, include, prompt, or coerced value rejects the complete
-input.
+accepts no primary or named input. Parsing is atomic: any invalid run override,
+named input, include, prompt, or coerced value rejects the complete input.
 
 ## Content
 

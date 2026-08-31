@@ -28,7 +28,7 @@ from toolang.execution.schemas import (
     RunRequest,
     RunnableRequest,
 )
-from toolang.execution.types import RunOverride, StepPath
+from toolang.execution.types import RunCommand, StepPath
 from toolang.lang.input import NamedInputSource, RunnableInputRaw
 
 
@@ -100,6 +100,55 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
     )
 
 
+def test_parse_authored_run_accepts_canonical_reasoning_budget() -> None:
+    payload = AuthoredRunRequest.model_validate(
+        {
+            "thread_id": "term_example",
+            "request_id": "term_request",
+            "runnable": {
+                "ref": "agic:chat",
+                "input": {"_": "hello", "named": []},
+            },
+            "model": {
+                "ref": "anthropic/claude",
+                "parameters": {"reasoning": {"budget_tokens": 4096}},
+            },
+            "policy": {},
+        }
+    )
+
+    request = parse_authored_run(payload)
+
+    assert request.model == ModelRequest(
+        "anthropic/claude",
+        ModelParameters(ReasoningParameters(budget_tokens=4096)),
+    )
+
+
+def test_authored_run_rejects_reasoning_effort_and_budget_together() -> None:
+    with pytest.raises(ValidationError, match="either effort or budget_tokens"):
+        AuthoredRunRequest.model_validate(
+            {
+                "thread_id": "term_example",
+                "request_id": "term_request",
+                "runnable": {
+                    "ref": "agic:chat",
+                    "input": {"_": "hello", "named": []},
+                },
+                "model": {
+                    "ref": "openai/gpt-5",
+                    "parameters": {
+                        "reasoning": {
+                            "effort": "high",
+                            "budget_tokens": 4096,
+                        }
+                    },
+                },
+                "policy": {},
+            }
+        )
+
+
 def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
     retry_payload = AuthoredRetryRequest.model_validate(
         {
@@ -119,13 +168,13 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
 
     assert parse_authored_retry("run_source", retry_payload) == RetryRequest(
         source="run_source",
-        commands=(RunOverride("limit", "cost", Decimal("2.50")),),
+        commands=(RunCommand("limit", "cost", Decimal("2.50")),),
         request_id="retry_request",
         anchor=StepPath("run_source", (1, 2)),
     )
     assert parse_authored_rerun("run_source", rerun_payload) == RerunRequest(
         source="run_source",
-        commands=(RunOverride("default", "model", "openai/test"),),
+        commands=(RunCommand("default", "model", "openai/test"),),
         request_id="rerun_request",
     )
 
