@@ -66,7 +66,7 @@ from .input import (
     parse_chat_input,
     slash_command_name,
 )
-from .policy import run_override_error
+from .policy import run_override_error, validate_model_reasoning_request
 from .presenter import ChatRunPresenter
 
 _RUN_EVENT_TYPES = (
@@ -676,6 +676,13 @@ class ChatTuiApp:
                 runnable_input,
                 self.setting,
             )
+            if (
+                request.model is not None
+                and request.model.parameters.reasoning is not None
+            ):
+                validate_model_reasoning_request(
+                    self.client.list_models(), request.model
+                )
         except click.ClickException as exc:
             self.status_bar.set_error(friendly_error(exc.message))
             return False

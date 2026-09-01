@@ -318,16 +318,17 @@ def test_quick_help_and_exit_are_declarative_commands() -> None:
 
     help_lines = slashes.outcome_lines(help_result)
     assert help_result.kind == "result"
-    assert help_lines[:7] == (
+    assert help_lines[:8] == (
         "Slash commands act immediately.",
         "Setting commands change defaults for future runs in this Chat session.",
+        "effort=auto inherits model or provider reasoning defaults.",
         "",
         "Submit one slash command by itself; it cannot be combined with run input.",
         "See :? to change settings for one run only.",
         "",
         "Available commands:",
     )
-    assert help_lines[7].startswith("/model [MODEL] [effort=VALUE]")
+    assert help_lines[8].startswith("/model [MODEL] [effort=VALUE]")
     assert "Chat commands" not in help_lines
     assert any(line.startswith("/models [QUERY]") for line in help_lines)
     assert any(line.startswith("/tools [QUERY]") for line in help_lines)
@@ -349,16 +350,17 @@ def test_run_override_help_explains_lifetime_and_uses_shared_forms() -> None:
         ":limit FIELD=VALUE...",
     )
 
-    assert lines[:7] == (
+    assert lines[:8] == (
         "Run overrides change settings for this run only.",
         "Session defaults stay unchanged.",
+        "effort=auto inherits model or provider reasoning defaults.",
         "",
         "Put one or more override lines first.",
         "Include the run input in the same submission.",
         "",
         "Available overrides:",
     )
-    assert lines[7:] == run_override_help_lines() == expected_forms
+    assert lines[8:] == run_override_help_lines() == expected_forms
     assert "Run overrides" not in lines
 
 
@@ -436,9 +438,42 @@ def test_model_identity_and_effort_update_independently() -> None:
         ModelParameters(ReasoningParameters(budget_tokens=4096)),
     )
 
-    slashes.handle(app, QuickCommand("model", "effort=auto"))
+    automatic = _outcome(slashes.handle(app, QuickCommand("model", "effort=auto")))
     assert app.setting.model == ModelRequest("openai/gpt-5")
+    assert slashes.outcome_lines(automatic) == ("Model set to openai/gpt-5 · auto",)
     assert app.status_refreshes == 4
+
+
+def test_model_rejects_known_unsupported_effort_without_changing_session() -> None:
+    app = _App()
+    previous = app.setting
+
+    result = _outcome(slashes.handle(app, QuickCommand("model", "effort=medium")))
+
+    assert result.kind == "error"
+    assert slashes.outcome_lines(result) == (
+        "Error: model openai/gpt-5 does not advertise reasoning effort "
+        "'medium' (allowed: low, high)",
+    )
+    assert app.setting == previous
+    assert app.status_refreshes == 0
+
+
+def test_model_defers_effort_validation_when_metadata_is_unavailable() -> None:
+    app = _App()
+    app.client.models = (
+        {
+            "ref": "openai/gpt-5",
+            "name": "GPT-5",
+            "provider": "openai",
+            "price": {"input": "1.25", "output": "10.00"},
+        },
+    )
+
+    result = _outcome(slashes.handle(app, QuickCommand("model", "effort=medium")))
+
+    assert result.kind == "success"
+    assert slashes.outcome_lines(result) == ("Model set to openai/gpt-5 · medium",)
 
 
 def test_model_none_clears_without_loading_resources() -> None:

@@ -21,6 +21,7 @@ from .policy import (
     materialize_runnable_list_ref,
     run_override_help_lines,
     setting_slash_usage,
+    validate_model_reasoning_request,
 )
 from .shortcuts import help_lines as shortcut_help_lines
 from .tables import table_lines
@@ -162,6 +163,7 @@ def _help(_app: AppContext, _command: str, _argument: str) -> SlashOutcome:
     return _result(
         "Slash commands act immediately.",
         "Setting commands change defaults for future runs in this Chat session.",
+        "effort=auto inherits model or provider reasoning defaults.",
         "",
         "Submit one slash command by itself; it cannot be combined with run input.",
         "See :? to change settings for one run only.",
@@ -177,6 +179,7 @@ def run_override_help() -> SlashOutcome:
     return _result(
         "Run overrides change settings for this run only.",
         "Session defaults stay unchanged.",
+        "effort=auto inherits model or provider reasoning defaults.",
         "",
         "Put one or more override lines first.",
         "Include the run input in the same submission.",
@@ -205,6 +208,7 @@ def _model(app: AppContext, _command: str, argument: str) -> SlashOutcome:
     client = app.get_client()
     update = parse_setting_override("model", argument)
     model = update.model
+    payload: Mapping[str, Any] | None = None
     if model is None:  # pragma: no cover - parser invariant
         raise RuntimeError("model setting did not contain a model override")
     if model.identity not in {None, "default", "none"}:
@@ -218,8 +222,16 @@ def _model(app: AppContext, _command: str, argument: str) -> SlashOutcome:
             model=ModelOverride(identity=resolved[0], effort=model.effort)
         )
     setting = _candidate_setting(app, update)
+    effort_applicable: bool | None = None
+    if setting.model is not None:
+        if payload is None:
+            payload = client.list_models()
+        validate_model_reasoning_request(payload, setting.model)
+        effort_applicable = model_effort_applicability(payload, setting.model.ref)
     _commit_setting(app, setting)
-    return _success(_model_setting_summary(setting))
+    return _success(
+        _model_setting_summary(setting, effort_applicable=effort_applicable)
+    )
 
 
 def _runnable(app: AppContext, command: str, argument: str) -> SlashOutcome:
@@ -530,14 +542,17 @@ def _setting_value(value: object) -> str:
     return "none" if value is None else str(value)
 
 
-def _model_setting_summary(setting: SessionSetting) -> str:
+def _model_setting_summary(
+    setting: SessionSetting,
+    *,
+    effort_applicable: bool | None = None,
+) -> str:
     model = setting.model
     if model is None:
         return "Model cleared"
-    effort = model_reasoning_value(model)
-    if effort is None:
-        return f"Model set to {model.ref}"
-    return f"Model set to {model.ref} · {effort}"
+    return (
+        f"Model set to {model_status_label(model, effort_applicable=effort_applicable)}"
+    )
 
 
 def _model_efforts(item: Mapping[str, Any]) -> str:

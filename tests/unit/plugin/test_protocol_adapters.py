@@ -488,6 +488,28 @@ def test_messages_payload_supports_effort_with_a_token_budget() -> None:
     assert payload["output_config"] == {"effort": "high"}
 
 
+def test_messages_canonical_reasoning_replaces_raw_reasoning_options() -> None:
+    payload = messages_payload(
+        ModelTarget(
+            ref="anthropic/claude",
+            provider="anthropic",
+            name="claude",
+            model="claude",
+            adapter="messages",
+            options={
+                "thinking": {"type": "disabled"},
+                "output_config": {"effort": "low", "verbosity": "low"},
+            },
+            reasoning={"effort": "high"},
+        ),
+        ModelCall(instructions="", messages=[Message.user("hello")]),
+        stream=False,
+    )
+
+    assert payload["thinking"] == {"type": "adaptive"}
+    assert payload["output_config"] == {"effort": "high", "verbosity": "low"}
+
+
 def test_generate_content_auth_uses_header_instead_of_url_query() -> None:
     target = ModelTarget(
         ref="google/gemini",
@@ -523,6 +545,35 @@ def test_generate_content_rejects_overlapping_effort_and_budget() -> None:
             target,
             ModelCall(instructions="", messages=[Message.user("hello")]),
         )
+
+
+def test_generate_content_canonical_reasoning_replaces_raw_reasoning_control() -> None:
+    payload = generate_content_payload(
+        ModelTarget(
+            ref="google/gemini",
+            provider="google",
+            name="gemini",
+            model="gemini",
+            adapter="generate_content",
+            options={
+                "generationConfig": {
+                    "thinkingConfig": {
+                        "includeThoughts": True,
+                        "thinkingBudget": 2048,
+                    }
+                }
+            },
+            reasoning={"effort": "high"},
+        ),
+        ModelCall(instructions="", messages=[Message.user("hello")]),
+    )
+
+    assert payload["generationConfig"] == {
+        "thinkingConfig": {
+            "includeThoughts": True,
+            "thinkingLevel": "HIGH",
+        }
+    }
 
 
 @pytest.mark.parametrize(
@@ -569,6 +620,28 @@ def test_chat_completions_maps_known_reasoning_dialects(
     for key, value in expected.items():
         assert payload[key] == value
     assert "budget_tokens" not in json.dumps(payload)
+
+
+def test_deepseek_canonical_reasoning_replaces_raw_reasoning_controls() -> None:
+    payload = chat_completions.chat_completion_payload(
+        ModelTarget(
+            ref="deepseek/model",
+            provider="deepseek",
+            name="model",
+            model="model",
+            adapter="chat_completions",
+            options={
+                "thinking": {"type": "disabled"},
+                "reasoning_effort": "low",
+            },
+            reasoning={"effort": "high"},
+        ),
+        ModelCall(instructions="", messages=[Message.user("hello")]),
+        stream=False,
+    )
+
+    assert payload["thinking"] == {"type": "enabled"}
+    assert payload["reasoning_effort"] == "high"
 
 
 def test_chat_completions_rejects_unsupported_or_overlapping_reasoning() -> None:
