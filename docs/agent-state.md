@@ -92,7 +92,8 @@ Locks and temporary paths are writer implementation details. Old
 `layer.json` is a complete root or home layer identity document. It contains:
 
 - schema and scope;
-- the source metadata tree used for change detection;
+- a portable source manifest of sorted logical paths, canonical byte sizes, and
+  SHA-256 digests;
 - parsed config;
 - configured and referenced resolutions;
 - State capabilities;
@@ -117,7 +118,9 @@ State revision = sha256(layers.json bytes)
 ```
 
 Revision values are lowercase 64-character SHA-256 hex strings. State does not
-persist a Toolang version or observation timestamp as identity metadata.
+persist an absolute source path, filesystem identity, Toolang version, or
+observation timestamp as identity metadata. State-owned config is canonicalized
+before hashing, so Setup-only config changes do not alter the source manifest.
 
 Normal loading trusts a revision to be complete and reads its persisted
 documents directly. It does not hash document or materialized file content.
@@ -151,16 +154,19 @@ duplicated in `layer.json`.
 
 ## Prepare, Publish, and Load
 
-Normal preparation compares source metadata with the published layer. An
-unchanged layer is loaded directly, so unchanged remote refs are not polled.
-An explicit refresh resolves remote refs again.
+Normal preparation hashes the selected source bytes and compares the portable
+manifest with the published layer. An unchanged layer is loaded directly, so
+Programs are not parsed, capabilities are not materialized, and unchanged
+remote refs are not polled. This remains true when the root and home are mounted
+at different absolute paths. An explicit refresh resolves remote refs again.
 
 When rebuilding a layer, a writer:
 
-1. acquires the layer writer lock and checks source metadata again;
+1. acquires the layer writer lock and checks the source manifest again;
 2. captures authored files and parses config and modules;
 3. resolves and materializes configured and referenced capabilities;
-4. verifies source metadata did not change during preparation;
+4. verifies the process-local source observation did not change during
+   preparation;
 5. writes a complete temporary revision directory;
 6. atomically installs the immutable revision; and
 7. atomically publishes the layer `current` pointer.
@@ -184,11 +190,19 @@ revision available; startup fails only when neither a valid candidate nor a
 loadable new-format published State exists.
 
 The watcher permits one filesystem monitor and one serialized check/publication
-path. Filesystem events and periodic metadata checks submit work to that path.
-`refresh()` submits one additional check and waits for that specific check to
-finish; concurrent calls do not run checks in parallel or merely join an older
-check. An internal `current` publication whose revision is already current does
-not produce another candidate check.
+path. It retains process-local path and stat observations separately from the
+portable manifests. Periodic checks compare observations without reading file
+contents; changed files alone are rehashed. Filesystem events and explicit
+refreshes invalidate affected digests, so a byte change is detected even when
+size and modification time are preserved. `refresh()` submits one additional
+check and waits for that specific check to finish; concurrent calls do not run
+checks in parallel or merely join an older check. An internal `current`
+publication whose revision is already current does not produce another
+candidate check.
+
+A legacy source metadata tree remains decodable only when loading an exact
+historical layer. It never matches current authored source; a legacy current
+layer is rebuilt with the portable manifest schema.
 
 The complete check and publication transaction also holds an agent-scoped file
 lock, so multiple processes cannot interleave checks for the same agent or let

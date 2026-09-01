@@ -12,6 +12,7 @@ import pytest
 from toolang.base.errors import SandboxLaunchError
 from toolang.base.types.progress import ProgressEvent, ProgressSink
 from toolang.base.types.sandbox import (
+    SandboxMount,
     SandboxPlan,
     SandboxRef,
     SandboxRequest,
@@ -516,6 +517,9 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
 
     monkeypatch.setattr(sandbox, "_wait_ready", ready)
     spec = _launch_spec(tmp_path)
+    external_program = tmp_path / "external-agent.too"
+    external_program.write_text("agent alice\n", encoding="utf-8")
+    spec.serve.layout.program.symlink_to(external_program)
     spec.serve.layout.root_config.write_text(
         "[plugin.sandbox.fake]\ncurrent = true\n",
         encoding="utf-8",
@@ -530,6 +534,14 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
     request = cast(SandboxRequest, prepare[2])
     assert request.hosted_root == Path("/runtime")
     assert request.hosted_home == Path("/runtime/agents/alice")
+    assert (
+        SandboxMount(
+            external_program,
+            request.hosted_home / "agent.too",
+            read_only=True,
+        )
+        in request.mounts
+    )
     assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) == handle.state
     assert [(event.kind, event.stage, event.status) for event in events] == [
         ("runtime", "create", "running"),

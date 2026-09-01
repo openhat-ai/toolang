@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 import threading
 
@@ -20,7 +21,7 @@ def test_current_requires_initial_refresh(tmp_path: Path) -> None:
         watcher.current()
 
 
-def test_watcher_publishes_a_prepared_initial_state_without_reloading_it(
+def test_watcher_publishes_a_prepared_initial_state_without_reloading_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -36,15 +37,41 @@ def test_watcher_publishes_a_prepared_initial_state_without_reloading_it(
         "load_agent_state",
         lambda _layout: pytest.fail("prepared initial State must not be reloaded"),
     )
-    monkeypatch.setattr(
-        state_watcher,
-        "load_layer_source",
-        lambda *_args: pytest.fail("prepared initial State needs no watcher baseline"),
-    )
-
     watcher = state_watcher.StateWatcher(layout, initial_state=durable)
 
     assert watcher.current().state is durable
+
+
+def test_initial_state_timeout_hashes_once_without_preparing_again(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        toolang_root = tmp_path / "toolang"
+        home = toolang_root / "agents" / "alice"
+        home.mkdir(parents=True)
+        (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+        layout = AgentLayout.resident(toolang_root, "alice")
+        durable = prepare_agent_state(layout)
+        watcher = state_watcher.StateWatcher(layout, initial_state=durable)
+
+        async def one_timeout(*_args: object, **_kwargs: object):
+            yield set()
+
+        monkeypatch.setattr(state_watcher, "awatch", one_timeout)
+
+        def fail_prepare(*_args: object, **_kwargs: object) -> None:
+            raise AssertionError("warm watcher must not prepare an unchanged State")
+
+        monkeypatch.setattr(state_watcher, "prepare_agent_state", fail_prepare)
+
+        observed = [
+            state async for state in watcher.updates(stop_signal=asyncio.Event())
+        ]
+
+        assert observed == []
+
+    asyncio.run(run())
 
 
 def test_timeout_check_recovers_change_before_watch_registration(
@@ -80,6 +107,46 @@ def test_timeout_check_recovers_change_before_watch_registration(
     asyncio.run(run())
 
 
+def test_timeout_check_recovers_change_after_preparation_returns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        toolang_root = tmp_path / "toolang"
+        home = toolang_root / "agents" / "alice"
+        home.mkdir(parents=True)
+        program = home / "agent.too"
+        program.write_text("agic answer:\n  First.\n", encoding="utf-8")
+        layout = AgentLayout.resident(toolang_root, "alice")
+        watcher = state_watcher.StateWatcher(layout)
+        original_prepare = state_watcher.prepare_agent_state
+
+        def prepare_then_change(selected: AgentLayout, *, force: bool = False):
+            candidate = original_prepare(selected, force=force)
+            program.write_text("agic answer:\n  Changed late.\n", encoding="utf-8")
+            return candidate
+
+        monkeypatch.setattr(
+            state_watcher,
+            "prepare_agent_state",
+            prepare_then_change,
+        )
+        initial = await watcher.refresh()
+        monkeypatch.setattr(state_watcher, "prepare_agent_state", original_prepare)
+
+        async def one_timeout(*_args: object, **_kwargs: object):
+            yield set()
+
+        monkeypatch.setattr(state_watcher, "awatch", one_timeout)
+        updates = watcher.updates(stop_signal=asyncio.Event())
+        changed = await anext(updates)
+
+        assert changed.revision != initial.revision
+        assert changed.modules["agent"].agics[0].messages[0].content == "Changed late."
+
+    asyncio.run(run())
+
+
 def test_timeout_check_skips_full_prepare_when_metadata_is_current(
     tmp_path: Path,
     monkeypatch,
@@ -102,11 +169,76 @@ def test_timeout_check_skips_full_prepare_when_metadata_is_current(
             raise AssertionError("unchanged timeout must not load full Agent State")
 
         monkeypatch.setattr(state_watcher, "prepare_agent_state", fail_prepare)
+        source_reads: list[Path] = []
+        original_read = Path.read_bytes
+
+        def count_source_reads(path: Path) -> bytes:
+            if path.is_relative_to(toolang_root) and ".state" not in path.parts:
+                source_reads.append(path)
+            return original_read(path)
+
+        monkeypatch.setattr(Path, "read_bytes", count_source_reads)
 
         observed = [
             state async for state in watcher.updates(stop_signal=asyncio.Event())
         ]
         assert observed == []
+        assert source_reads == []
+
+    asyncio.run(run())
+
+
+def test_explicit_refresh_detects_content_change_with_preserved_metadata(
+    tmp_path: Path,
+) -> None:
+    async def run() -> None:
+        toolang_root = tmp_path / "toolang"
+        home = toolang_root / "agents" / "alice"
+        home.mkdir(parents=True)
+        program = home / "agent.too"
+        program.write_text("agic answer:\n  First.\n", encoding="utf-8")
+        original = program.stat()
+        watcher = state_watcher.StateWatcher(
+            AgentLayout.resident(toolang_root, "alice")
+        )
+        initial = await watcher.refresh()
+        program.write_text("agic answer:\n  Other.\n", encoding="utf-8")
+        os.utime(program, ns=(original.st_atime_ns, original.st_mtime_ns))
+
+        changed = await watcher.refresh()
+
+        assert program.stat().st_size == original.st_size
+        assert changed.revision != initial.revision
+
+    asyncio.run(run())
+
+
+def test_source_event_detects_content_change_with_preserved_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        toolang_root = tmp_path / "toolang"
+        home = toolang_root / "agents" / "alice"
+        home.mkdir(parents=True)
+        program = home / "agent.too"
+        program.write_text("agic answer:\n  First.\n", encoding="utf-8")
+        original = program.stat()
+        watcher = state_watcher.StateWatcher(
+            AgentLayout.resident(toolang_root, "alice")
+        )
+        initial = await watcher.refresh()
+        program.write_text("agic answer:\n  Other.\n", encoding="utf-8")
+        os.utime(program, ns=(original.st_atime_ns, original.st_mtime_ns))
+
+        async def one_event(*_args: object, **_kwargs: object):
+            yield {(state_watcher.Change.modified, str(program))}
+
+        monkeypatch.setattr(state_watcher, "awatch", one_event)
+        updates = watcher.updates(stop_signal=asyncio.Event())
+        changed = await anext(updates)
+
+        assert changed.revision != initial.revision
 
     asyncio.run(run())
 
@@ -209,7 +341,7 @@ def test_rejected_candidate_does_not_retry_partially_published_layers(
     asyncio.run(run())
 
 
-def test_concurrent_refresh_requests_each_run_one_serialized_check(
+def test_concurrent_refresh_requests_run_their_serialized_checks(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -351,10 +483,15 @@ def test_invalid_flow_candidate_retains_last_valid_state_until_repaired(
         assert watcher.diagnostics()[0].layer == "flow-extension"
         assert watcher.diagnostics()[0].authored_path == "flows/research.too"
 
+        retried = await watcher.refresh_result()
+
+        assert retried.publication is initial
+        assert retried.diagnostics == refresh.diagnostics
+
         flow.write_text("flow research:\n  pass\n", encoding="utf-8")
         repaired = await watcher.refresh()
 
-        assert repaired.revision != initial.revision
+        assert repaired is initial
         assert "research" in repaired.runnables
         assert watcher.diagnostics() == ()
 

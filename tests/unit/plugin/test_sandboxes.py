@@ -469,39 +469,21 @@ def test_docker_background_sandbox_uses_docker_output_and_durable_diagnostics(
     assert 'source "$GUEST_ENV"' not in shell
 
 
-def test_docker_sandbox_mounts_roaming_source_links_as_guest_files(
+def test_docker_sandbox_orders_nested_mounts_after_the_agent_home(
     tmp_path: Path,
 ) -> None:
     request = _request(tmp_path)
-    source = tmp_path / "demo.too"
-    source.write_text("agent demo\n", encoding="utf-8")
-    config = tmp_path / "toolang.toml"
-    config.write_text("[sandbox]\n", encoding="utf-8")
-    (request.local_home / "agent.too").symlink_to(source)
-    (request.local_home / "config.toml").symlink_to(config)
-
-    plan = create_sandbox("docker", config={}).prepare(None, request)
-
-    source_mount = next(
-        item
-        for item in plan.mounts
-        if item.hosted_path == request.hosted_home / "agent.too"
-    )
-    config_mount = next(
-        item
-        for item in plan.mounts
-        if item.hosted_path == request.hosted_home / "config.toml"
-    )
-    assert source_mount == SandboxMount(
-        source,
+    nested = SandboxMount(
+        tmp_path / "external-agent.too",
         request.hosted_home / "agent.too",
         read_only=True,
     )
-    assert config_mount == SandboxMount(
-        config,
-        request.hosted_home / "config.toml",
-        read_only=True,
-    )
+    request = replace(request, mounts=(*request.mounts, nested))
+
+    plan = create_sandbox("docker", config={}).prepare(None, request)
+
+    home = SandboxMount(request.local_home, request.hosted_home)
+    assert plan.mounts.index(home) < plan.mounts.index(nested)
 
 
 def test_docker_background_log_must_be_inside_the_agent_home(

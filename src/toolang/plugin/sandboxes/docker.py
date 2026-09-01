@@ -109,27 +109,21 @@ _STARTUP_EVENT_TRANSITIONS = {
 }
 
 
-def _linked_agent_file_mounts(
-    request: SandboxRequest,
-) -> tuple[SandboxMount, ...]:
-    """Keep source-local roaming agent links readable in the guest."""
+def _request_mounts(request: SandboxRequest) -> tuple[SandboxMount, ...]:
+    """Place nested home mounts after the home mount they override."""
 
-    mounts: list[SandboxMount] = []
-    for name in ("agent.too", "config.toml"):
-        local_path = request.local_home / name
-        if not local_path.is_symlink():
-            continue
-        target = local_path.resolve(strict=True)
-        if not target.is_file():
-            raise ValueError(f"linked agent file is not a regular file: {local_path}")
-        mounts.append(
-            SandboxMount(
-                target,
-                request.hosted_home / name,
-                read_only=True,
-            )
-        )
-    return tuple(mounts)
+    nested_home = tuple(
+        mount
+        for mount in request.mounts
+        if mount.hosted_path != request.hosted_home
+        and mount.hosted_path.is_relative_to(request.hosted_home)
+    )
+    outer = tuple(mount for mount in request.mounts if mount not in nested_home)
+    return (
+        *outer,
+        SandboxMount(request.local_home, request.hosted_home),
+        *nested_home,
+    )
 
 
 def _hosted_model_catalog_mounts(
@@ -318,9 +312,7 @@ class DockerSandbox:
         )
 
         mounts = [
-            *request.mounts,
-            SandboxMount(request.local_home, request.hosted_home),
-            *_linked_agent_file_mounts(request),
+            *_request_mounts(request),
             *model_catalog_mounts,
             SandboxMount(
                 guest_env_path,

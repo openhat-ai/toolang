@@ -4,6 +4,7 @@ from concurrent.futures import ProcessPoolExecutor
 from hashlib import sha256
 import json
 import multiprocessing
+import os
 from pathlib import Path
 import shutil
 import time
@@ -17,6 +18,7 @@ from toolang.execution.runnables import (
     resolve_bound_runnable,
     resolve_state_runnable,
 )
+from toolang.lang.ast import Program
 from toolang.state import prepare as state_prepare
 from toolang.state import state as cap_state
 from toolang.state.cache import (
@@ -123,7 +125,7 @@ def test_prepare_materialize_stays_open_across_source_retry(
     prompt.write_text("First version\n", encoding="utf-8")
     layout = _layout(toolang_root)
     events: list[ProgressEvent] = []
-    scan_scope_source = state_prepare._scan_scope_source
+    observe_scope_source = state_prepare._observe_scope_source
     root_scans = 0
 
     def scan_with_one_change(
@@ -136,9 +138,9 @@ def test_prepare_materialize_stays_open_across_source_retry(
             root_scans += 1
             if root_scans == 2:
                 prompt.write_text("Second version\n", encoding="utf-8")
-        return scan_scope_source(selected, scope=scope)
+        return observe_scope_source(selected, scope=scope)
 
-    monkeypatch.setattr(state_prepare, "_scan_scope_source", scan_with_one_change)
+    monkeypatch.setattr(state_prepare, "_observe_scope_source", scan_with_one_change)
 
     state_prepare.prepare_root(layout, progress=events.append)
 
@@ -147,7 +149,7 @@ def test_prepare_materialize_stays_open_across_source_retry(
         ("materialize", "running"),
         ("materialize", "ok"),
     ]
-    assert root_scans == 4
+    assert root_scans == 5
 
 
 def test_prepare_root_home_snapshot_root_and_home(tmp_path: Path) -> None:
@@ -329,6 +331,115 @@ def test_prepare_root_home_reuses_unchanged_revisions(tmp_path: Path) -> None:
     assert state.revision_dir.is_dir()
 
 
+def test_prepare_reuses_portable_state_after_root_and_home_remount(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host_root = tmp_path / "host"
+    guest_root = tmp_path / "guest"
+    prompt = host_root / "prompts" / "review.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text("Review carefully.\n", encoding="utf-8")
+    home = host_root / "agents" / "alice"
+    home.mkdir(parents=True)
+    program = home / "agent.too"
+    program.write_text("agic answer:\n  Ready.\n", encoding="utf-8")
+    host_layout = _layout(host_root)
+    expected = prepare_agent_state(host_layout)
+    shutil.copytree(host_root, guest_root, copy_function=shutil.copy2)
+    guest_program = guest_root / "agents" / "alice" / "agent.too"
+    guest_prompt = guest_root / "prompts" / "review.md"
+    for path in (guest_program, guest_prompt):
+        changed = path.stat().st_mtime_ns + 2_000_000_000
+        os.utime(path, ns=(changed, changed))
+    guest_layout = _layout(guest_root)
+    root_current = guest_layout.root_state / "current"
+    home_current = guest_layout.home_state / "current"
+    agent_current = guest_layout.agent_state / "current"
+    pointer_inodes = tuple(
+        path.stat().st_ino for path in (root_current, home_current, agent_current)
+    )
+
+    def fail_prepare(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("remounted State must not rebuild a matching layer")
+
+    def fail_parse(_cls: type[Program], _source: str) -> Program:
+        raise AssertionError("remounted State must not parse persisted Programs")
+
+    monkeypatch.setattr(state_prepare, "_prepare_layer", fail_prepare)
+    monkeypatch.setattr(Program, "from_source", classmethod(fail_parse))
+
+    actual = prepare_agent_state(guest_layout)
+
+    assert actual.revision == expected.revision
+    assert actual.root_revision == expected.root_revision
+    assert actual.home_revision == expected.home_revision
+    assert (
+        tuple(
+            path.stat().st_ino for path in (root_current, home_current, agent_current)
+        )
+        == pointer_inodes
+    )
+    assert all(
+        Path(cap.path).is_relative_to(guest_root) for cap in actual.caps.values()
+    )
+
+
+def test_prepare_ignores_metadata_only_source_changes(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    home.mkdir(parents=True)
+    program = home / "agent.too"
+    program.write_text("agic answer:\n  Ready.\n", encoding="utf-8")
+    layout = _layout(toolang_root)
+    first = prepare_agent_state(layout)
+    changed = program.stat().st_mtime_ns + 2_000_000_000
+    os.utime(program, ns=(changed, changed))
+
+    second = prepare_agent_state(layout)
+
+    assert second.revision == first.revision
+    assert second.home_revision == first.home_revision
+
+
+def test_force_prepare_ignores_metadata_only_source_changes(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    home.mkdir(parents=True)
+    program = home / "agent.too"
+    program.write_text("agic answer:\n  Ready.\n", encoding="utf-8")
+    layout = _layout(toolang_root)
+    first = prepare_agent_state(layout)
+    changed = program.stat().st_mtime_ns + 2_000_000_000
+    os.utime(program, ns=(changed, changed))
+
+    second = prepare_agent_state(layout, force=True)
+
+    assert second.revision == first.revision
+    assert second.home_revision == first.home_revision
+
+
+def test_prepare_detects_content_change_with_preserved_size_and_mtime(
+    tmp_path: Path,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    home.mkdir(parents=True)
+    program = home / "agent.too"
+    program.write_text("agic answer:\n  First.\n", encoding="utf-8")
+    original = program.stat()
+    layout = _layout(toolang_root)
+    first = prepare_agent_state(layout)
+    program.write_text("agic answer:\n  Other.\n", encoding="utf-8")
+    os.utime(program, ns=(original.st_atime_ns, original.st_mtime_ns))
+
+    second = prepare_agent_state(layout)
+
+    assert program.stat().st_size == original.st_size
+    assert second.revision != first.revision
+    assert second.home_revision != first.home_revision
+
+
 def test_setup_only_config_changes_keep_state_revisions_and_artifacts(
     tmp_path: Path,
 ) -> None:
@@ -396,6 +507,24 @@ def test_prepare_rebuilds_a_current_layer_from_an_older_schema(
     current_dir = layer_revision_dir(layout, "home", current_home.revision)
     document = json.loads((current_dir / "layer.json").read_text(encoding="utf-8"))
     document["schema"] = LAYER_SCHEMA - 1
+    document["source"] = {
+        "root": {
+            "children": [
+                {
+                    "children": [],
+                    "mtime_ns": 0,
+                    "name": "agent.too",
+                    "size": 0,
+                    "type": "file",
+                }
+            ],
+            "mtime_ns": 0,
+            "name": ".",
+            "size": 0,
+            "type": "directory",
+        },
+        "schema": 2,
+    }
     encoded = canonical_json(document)
     stale_revision = sha256(encoded).hexdigest()
     stale_dir = layer_revision_dir(layout, "home", stale_revision)

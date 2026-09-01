@@ -18,7 +18,7 @@ from toolang.common.layout import AgentLayout
 
 from ..common.immutable import freeze_mapping
 from ..lang.ast import Program, program_from_data
-from .source import SourceTree
+from .source import SOURCE_SCHEMA, LegacySourceTree, SourceManifest, SourceRecord
 from .state import (
     CapResolution,
     StateCap,
@@ -28,7 +28,7 @@ from .state import (
 )
 
 LayerScope = Literal["root", "home"]
-LAYER_SCHEMA = 3
+LAYER_SCHEMA = 4
 AGENT_STATE_SCHEMA = 1
 _LAYER_FILE = "layer.json"
 _LAYERS_FILE = "layers.json"
@@ -43,7 +43,7 @@ class RootLayer:
     revision: str
     revision_dir: Path
     schema: int
-    source: SourceTree
+    source: SourceRecord
     resolutions: tuple[CapResolution, ...]
     config: Mapping[str, object]
     caps: tuple[StateCap, ...]
@@ -52,6 +52,8 @@ class RootLayer:
         _require_revision(self.revision)
         if self.revision_dir.name != self.revision:
             raise ValueError("root State layer directory does not match its revision")
+        if self.schema == LAYER_SCHEMA and not isinstance(self.source, SourceManifest):
+            raise ValueError("current root State layer requires a source manifest")
         object.__setattr__(self, "config", freeze_mapping(self.config))
 
 
@@ -62,7 +64,7 @@ class HomeLayer:
     revision: str
     revision_dir: Path
     schema: int
-    source: SourceTree
+    source: SourceRecord
     resolutions: tuple[CapResolution, ...]
     config: Mapping[str, object]
     caps: tuple[StateCap, ...]
@@ -75,6 +77,8 @@ class HomeLayer:
         _require_revision(self.revision)
         if self.revision_dir.name != self.revision:
             raise ValueError("home State layer directory does not match its revision")
+        if self.schema == LAYER_SCHEMA and not isinstance(self.source, SourceManifest):
+            raise ValueError("current home State layer requires a source manifest")
         object.__setattr__(self, "config", freeze_mapping(self.config))
         object.__setattr__(self, "modules", freeze_mapping(self.modules))
         object.__setattr__(self, "module_sources", freeze_mapping(self.module_sources))
@@ -134,11 +138,11 @@ def load_layer_source(
     layout: AgentLayout,
     scope: LayerScope,
     revision: str,
-) -> SourceTree:
-    """Load the source tree recorded by one trusted State layer."""
+) -> SourceRecord:
+    """Load the source identity recorded by one trusted State layer."""
 
     document, _ = _load_layer(layout, scope, revision)
-    return _source_tree(document)
+    return _source_record(document)
 
 
 def load_root_layer(
@@ -153,7 +157,7 @@ def load_root_layer(
         revision=effective,
         revision_dir=revision_dir,
         schema=_schema(document),
-        source=_source_tree(document),
+        source=_source_record(document),
         resolutions=_resolutions(document),
         config=_config(document),
         caps=_caps(document, revision_dir=revision_dir),
@@ -176,7 +180,7 @@ def load_home_layer(
         revision=effective,
         revision_dir=revision_dir,
         schema=_schema(document),
-        source=_source_tree(document),
+        source=_source_record(document),
         resolutions=_resolutions(document),
         config=_config(document),
         caps=_caps(document, revision_dir=revision_dir),
@@ -191,7 +195,7 @@ def write_layer(
     *,
     layout: AgentLayout,
     scope: LayerScope,
-    source: SourceTree,
+    source: SourceManifest,
     resolutions: tuple[CapResolution, ...],
     config: Mapping[str, object],
     caps: tuple[StateCap, ...],
@@ -385,7 +389,7 @@ def agent_layers_document(
 def _layer_document(
     *,
     scope: LayerScope,
-    source: SourceTree,
+    source: SourceManifest,
     resolutions: tuple[CapResolution, ...],
     config: Mapping[str, object],
     caps: tuple[StateCap, ...],
@@ -465,7 +469,9 @@ def _validate_layer_dir(
         raise ValueError(
             f"State layer scope mismatch: expected {scope!r}, found {document['scope']!r}"
         )
-    _source_tree(document)
+    source = _source_record(document)
+    if not isinstance(source, SourceManifest):
+        raise ValueError("current State layer requires a source manifest")
     _config(document)
     manifest = _validate_file_manifest(revision_dir, document)
     resolutions = _resolutions(document)
@@ -761,13 +767,17 @@ def _resolutions(document: Mapping[str, object]) -> tuple[CapResolution, ...]:
     return result
 
 
-def _source_tree(document: Mapping[str, object]) -> SourceTree:
+def _source_record(document: Mapping[str, object]) -> SourceRecord:
     raw = document.get("source")
     if not isinstance(raw, dict):
         raise TypeError("State layer source must be an object")
-    return SourceTree.from_data(
-        {str(key): value for key, value in cast(dict[object, object], raw).items()}
-    )
+    data = {str(key): value for key, value in cast(dict[object, object], raw).items()}
+    schema = data.get("schema")
+    if not isinstance(schema, int) or isinstance(schema, bool):
+        raise TypeError("State layer source schema must be an integer")
+    if schema == SOURCE_SCHEMA:
+        return SourceManifest.from_data(data)
+    return LegacySourceTree.from_data(data)
 
 
 def _config(document: Mapping[str, object]) -> dict[str, object]:
