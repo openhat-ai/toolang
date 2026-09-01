@@ -2,9 +2,16 @@
 
 ## Status
 
-The original slash-feedback scope was approved by the human on 2026-09-01.
-The status-diagnostic extension added on 2026-09-01 is pending human
-confirmation. Implementation is tracked separately.
+Approved on 2026-09-01. Definition issue: #431. Implemented by #434.
+
+The resource-table and normal model-status presentation was subsequently
+refined by
+[Concise Chat Resource Tables and Model Status](chat-resource-table-presentation.md),
+implemented by #441. That later definition is authoritative where its table
+or normal-status presentation differs from this plan. #443 subsequently
+corrected reasoning-effort delivery without changing the slash outcome,
+input-routing, status-diagnostic, resource-query, or session-coherence
+contracts defined here.
 
 ## Goal
 
@@ -147,9 +154,10 @@ Model set to openai/gpt-5 · high
 
 /models openrouter/*[reasoning]
 Found 2 models
-MODEL                         STATE    EFFORT
-openrouter/openai/gpt-5                low, medium, high
-openrouter/openai/o3                   low, medium, high
+MODEL                         PRICE ($/1M)      EFFORT
+────────────────────────────  ────────────────  ──────────────────
+openrouter/openai/gpt-5       $ 1.25 / $10.00   low, medium, high
+openrouter/openai/o3          $ 2.00 / $ 8.00   low, medium, high
 ```
 
 The summary itself must be unambiguous: use an action phrase such as `Model set
@@ -375,12 +383,15 @@ active.
 ## Resource Results
 
 Discovery results use compact, copyable identities rather than exposing
-provider brackets or internal keys:
+provider brackets or internal keys. The later
+[resource-table definition](chat-resource-table-presentation.md) owns the final
+columns, layout, truncation, and normal model-status presentation:
 
-- models: canonical `provider/model`, `current` or `default` state, and
-  advertised reasoning effort levels;
-- tools: canonical `toolset/tool`, plugin, and concise description;
-- caps: kind-qualified query identity, scope, and concise description.
+- models: canonical `provider/model`, input/output price, advertised reasoning
+  effort levels, and a trailing `*` on the configured session default;
+- tools: canonical `toolset/tool` and concise description, excluding private
+  toolsets from this presentation only;
+- caps: kind-qualified query identity, scope, form, and concise description.
 
 The table summary reports how many resources were found. Ordering is the base
 collection's stable order; query syntax does not express priority. Empty
@@ -438,9 +449,10 @@ Model cleared: deepseek/abc is outside allow.models
 
 /models openrouter/*[reasoning]
 Found 2 models
-MODEL                         STATE    EFFORT
-openrouter/openai/gpt-5                low, medium, high
-openrouter/openai/o3                   low, medium, high
+MODEL                         PRICE ($/1M)      EFFORT
+────────────────────────────  ────────────────  ──────────────────
+openrouter/openai/gpt-5       $ 1.25 / $10.00   low, medium, high
+openrouter/openai/o3          $ 2.00 / $ 8.00   low, medium, high
 
 /model openrouter/openai/gpt-5 effort=high
 Model set to openrouter/openai/gpt-5 · high
@@ -466,8 +478,8 @@ query fields. Existing no-query response behavior remains compatible.
 
 The same model discovery contract supplies model-command resolution and
 session reconciliation. Local and remote clients must therefore agree on
-canonical refs, query errors, empty matches, current/default markers, and
-advertised effort values.
+canonical refs, query errors, empty matches, and the presentation metadata
+required by the later resource-table definition.
 
 ## Scope
 
@@ -514,7 +526,9 @@ Excluded:
   help forms, and the `:?` purpose-and-constraint introduction.
 - `src/toolang/cli/toolang/commands/chat/{local,remote}.py`: snapshot-owned
   resource queries and transport parity.
-- `src/toolang/cli/toolang/commands/chat/{blocks,tui,main}.py`: centralized Rich
+- `src/toolang/cli/toolang/commands/chat/tables.py` and `blocks.py`: structured,
+  width-aware table layout and Rich outcome projection.
+- `src/toolang/cli/toolang/commands/chat/{tui,main}.py`: centralized interactive
   and plain-text outcome projection; remove the scripted command fork; clear and
   record recognized slash commands or accepted runs; route unrecognized slash
   syntax and rejected run input to status without losing the editable source.
@@ -561,8 +575,9 @@ Excluded:
    support checks.
 8. `/models`, `/tools`, and `/caps` list all effective base resources with no
    query, apply valid advanced queries through the owning definitions, preserve
-   base order, show copyable identities and `Found N ...` summaries, and treat
-   zero matches as a successful `No ... found` result.
+   base order, show copyable identities and `Found N ...` summaries according
+   to the later resource-table definition, and treat zero matches as a
+   successful `No ... found` result.
 9. Combined cap queries support qualified and unqualified identities and common
    predicates without introducing a `caps` schema.
 10. Remote API query parameters and the new tool endpoint match local results,
