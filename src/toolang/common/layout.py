@@ -91,7 +91,17 @@ class AgentLayout:
 
     @property
     def model_cache(self) -> Path:
+        """Return the shared root model-cache directory."""
+
+        return self.root_model_cache
+
+    @property
+    def root_model_cache(self) -> Path:
         return self.root_setup / "models"
+
+    @property
+    def home_model_cache(self) -> Path:
+        return self.home_setup / "models"
 
     @property
     def root_state(self) -> Path:

@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 from decimal import Decimal
 import json
 from pathlib import Path
+import shutil
 from typing import Any
 
 import pytest
@@ -20,10 +21,14 @@ from toolang.plugin.models.adapters.chat_completions import (
 )
 from toolang.plugin.models.catalog import ModelsDevModelCatalog
 from toolang.plugin.models.local import LlamaCppModelCatalog, OllamaModelCatalog
-from toolang.setup import SetupWatcher
+from toolang.plugin.models import collections as model_collections
+from toolang.setup import AgentSetup, SetupWatcher
 from toolang.setup import catalog as catalog_module
 from toolang.setup import watcher as watcher_module
-from toolang.setup.catalog import load_catalog_inspection
+from toolang.setup.catalog import (
+    load_cached_catalog_queries,
+    load_catalog_inspection,
+)
 from toolang.setup.watcher import DEFAULT_INTERVAL_MS
 
 
@@ -64,9 +69,12 @@ def test_setup_watcher_persists_secret_free_model_projection(
     assert tuple(setup.providers) == ("test",)
     assert setup.models.refs() == ("test/one", "test/two")
     assert all(entry.target.adapter == "responses" for entry in setup.models.entries)
-    cache = tmp_path / ".setup" / "models" / "projection.json"
-    assert cache.is_file()
-    assert "secret" not in cache.read_text(encoding="utf-8")
+    cache_files = (
+        *_catalog_cache_files(tmp_path),
+        *_context_cache_files(tmp_path, "alice"),
+    )
+    assert len(cache_files) == 2
+    assert all("secret" not in path.read_text(encoding="utf-8") for path in cache_files)
 
 
 def test_setup_watcher_keeps_runtime_sandbox_separate_from_dotenv(
@@ -240,6 +248,192 @@ def test_setup_watcher_warm_process_reuses_persistent_projection(
     assert actual.models.refs() == expected.models.refs()
 
 
+def test_setup_watcher_reuses_portable_cache_after_root_remount(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host_root = tmp_path / "host"
+    guest_root = tmp_path / "guest"
+    host_root.mkdir()
+    guest_root.mkdir()
+    _write_catalog(host_root / "models.json", ("one", "two"))
+    expected = asyncio.run(
+        _watcher(
+            monkeypatch,
+            host_root,
+            envs={"TEST_API_KEY": "secret"},
+        ).refresh()
+    )
+    assert all(
+        str(host_root) not in cache.read_text(encoding="utf-8")
+        for cache in (
+            *_catalog_cache_files(host_root),
+            *_context_cache_files(host_root, "alice"),
+        )
+    )
+    shutil.copy2(host_root / "models.json", guest_root / "models.json")
+    shutil.copytree(host_root / ".setup", guest_root / ".setup")
+    source_home_cache = host_root / "agents" / "alice" / ".setup"
+    target_home_cache = guest_root / "agents" / "alice" / ".setup"
+    target_home_cache.parent.mkdir(parents=True)
+    shutil.copytree(source_home_cache, target_home_cache)
+
+    async def reject_static(_self: object) -> ModelCatalogSnapshot:
+        raise AssertionError("remounted cache must avoid static parsing")
+
+    def reject_projection(_model: Model) -> ModelInfo:
+        raise AssertionError("remounted cache must avoid raw model projection")
+
+    def reject_query_view(_entry: object) -> model_collections.ModelQueryView:
+        raise AssertionError("remounted cache must reuse model query facts")
+
+    monkeypatch.setattr(ModelsDevModelCatalog, "snapshot", reject_static)
+    monkeypatch.setattr(watcher_module, "model_info_from_catalog", reject_projection)
+    monkeypatch.setattr(model_collections, "_model_entry_view", reject_query_view)
+
+    actual = asyncio.run(
+        SetupWatcher(AgentLayout.resident(guest_root, "alice")).refresh()
+    )
+
+    assert actual.models.refs() == expected.models.refs()
+
+
+def test_setup_watcher_keeps_allow_model_cache_variants(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "models.json", ("one", "two"))
+    _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    layout = AgentLayout.resident(tmp_path, "alice")
+    one = SetupWatcher(layout, allow_overrides={"models": ("test/one",)})
+    two = SetupWatcher(layout, allow_overrides={"models": ("test/two",)})
+
+    assert asyncio.run(one.refresh()).models.refs() == ("test/one",)
+    assert asyncio.run(two.refresh()).models.refs() == ("test/two",)
+    assert len(_context_cache_files(tmp_path, "alice")) == 2
+
+    def reject_projection(_model: Model) -> ModelInfo:
+        raise AssertionError("an earlier allow variant must remain reusable")
+
+    monkeypatch.setattr(watcher_module, "model_info_from_catalog", reject_projection)
+    warm = SetupWatcher(layout, allow_overrides={"models": ("test/one",)})
+
+    assert asyncio.run(warm.refresh()).models.refs() == ("test/one",)
+
+
+def test_model_context_ignores_defaults_limits_and_tool_allow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "models.json", ("one",))
+    _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    layout = AgentLayout.resident(tmp_path, "alice")
+    asyncio.run(SetupWatcher(layout).refresh())
+    config = {
+        "allow": {"tools": ["alpha/*"]},
+        "default": {"model": "test/one"},
+        "limit": {"tokens": 123},
+    }
+    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
+
+    def reject_projection(_model: Model) -> ModelInfo:
+        raise AssertionError("non-model Setup policy must reuse the model context")
+
+    monkeypatch.setattr(watcher_module, "model_info_from_catalog", reject_projection)
+
+    setup = asyncio.run(SetupWatcher(layout).refresh())
+
+    assert setup.defaults.model == "test/one"
+    assert setup.limits.tokens == 123
+    assert len(_context_cache_files(tmp_path, "alice")) == 1
+
+
+def test_setup_watcher_keeps_explicit_catalog_cache_variants(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_path = tmp_path / "first.json"
+    second_path = tmp_path / "second.json"
+    _write_catalog(first_path, ("one",))
+    _write_catalog(second_path, ("two",))
+    _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    layout = AgentLayout.resident(tmp_path, "alice")
+
+    assert asyncio.run(
+        SetupWatcher(layout, model_catalog=first_path).refresh()
+    ).models.refs() == ("test/one",)
+    assert asyncio.run(
+        SetupWatcher(layout, model_catalog=second_path).refresh()
+    ).models.refs() == ("test/two",)
+    assert len(_catalog_cache_files(tmp_path)) == 2
+    assert len(_context_cache_files(tmp_path, "alice")) == 2
+
+    def reject_projection(_model: Model) -> ModelInfo:
+        raise AssertionError("an earlier catalog variant must remain reusable")
+
+    monkeypatch.setattr(watcher_module, "model_info_from_catalog", reject_projection)
+
+    assert asyncio.run(
+        SetupWatcher(layout, model_catalog=first_path).refresh()
+    ).models.refs() == ("test/one",)
+
+
+def test_setup_watcher_allows_equivalent_concurrent_cache_writers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "models.json", ("one", "two"))
+    _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    layout = AgentLayout.resident(tmp_path, "alice")
+
+    async def refresh_both() -> tuple[AgentSetup, AgentSetup]:
+        first, second = await asyncio.gather(
+            SetupWatcher(layout).refresh(),
+            SetupWatcher(layout).refresh(),
+        )
+        return first, second
+
+    first, second = asyncio.run(refresh_both())
+
+    assert first.models.refs() == second.models.refs() == ("test/one", "test/two")
+    assert len(_catalog_cache_files(tmp_path)) == 1
+    assert len(_context_cache_files(tmp_path, "alice")) == 1
+
+
+def test_model_cache_separates_root_and_agent_contexts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "models.json", ("one",))
+    envs = {"TEST_API_KEY": "secret"}
+    _watcher(monkeypatch, tmp_path, envs=envs)
+    monkeypatch.setattr(catalog_module, "load_setup_config", lambda _layout: {})
+    monkeypatch.setattr(catalog_module, "load_root_setup_envs", lambda _layout: envs)
+    monkeypatch.setattr(
+        catalog_module,
+        "load_model_adapters",
+        lambda _config: {
+            "chat_completions": ChatCompletionsModelAdapter(),
+            "responses": ResponsesModelAdapter(),
+        },
+    )
+
+    asyncio.run(SetupWatcher(AgentLayout.resident(tmp_path, "alice")).refresh())
+    asyncio.run(SetupWatcher(AgentLayout.resident(tmp_path, "bob")).refresh())
+    root = asyncio.run(
+        load_catalog_inspection(
+            AgentLayout.resident(tmp_path, "default"),
+            agent_context=False,
+        )
+    )
+
+    assert root.models.refs() == ("test/one",)
+    assert len(_catalog_cache_files(tmp_path)) == 1
+    assert len(_root_context_cache_files(tmp_path)) == 1
+    assert len(_context_cache_files(tmp_path, "alice")) == 1
+    assert len(_context_cache_files(tmp_path, "bob")) == 1
+
+
 def test_setup_watcher_model_cache_preserves_decimal_catalog_values(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -274,7 +468,7 @@ def test_setup_watcher_retries_transient_model_cache_write_failure(
 ) -> None:
     _write_catalog(tmp_path / "models.json", ("one",))
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
-    original_store = watcher._model_cache.store
+    original_store = watcher._model_cache.store_context
     store_calls = 0
 
     def flaky_store(**kwargs: object) -> None:
@@ -284,34 +478,36 @@ def test_setup_watcher_retries_transient_model_cache_write_failure(
             raise OSError("temporary cache failure")
         original_store(**kwargs)
 
-    monkeypatch.setattr(watcher._model_cache, "store", flaky_store)
+    monkeypatch.setattr(watcher._model_cache, "store_context", flaky_store)
 
     asyncio.run(watcher.refresh())
-    asyncio.run(watcher.refresh())
-    cache = tmp_path / ".setup" / "models" / "projection.json"
-    assert not cache.exists()
+    assert not _context_cache_files(tmp_path, "alice")
 
     asyncio.run(watcher.refresh())
 
     assert store_calls == 2
-    assert cache.is_file()
+    assert len(_context_cache_files(tmp_path, "alice")) == 1
 
 
-def test_catalog_inspection_reuses_setup_model_cache(
+def test_catalog_inspection_reuses_catalog_artifact_and_its_projection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one", "two"))
+    path = tmp_path / "models.json"
+    _write_catalog(path, ("one", "two"))
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            '"input": 1,',
+            '"input": 0.12345678901234567890123456789,',
+        ),
+        encoding="utf-8",
+    )
     envs = {"TEST_API_KEY": "secret"}
     watcher = _watcher(monkeypatch, tmp_path, envs=envs)
-    asyncio.run(watcher.refresh())
     asyncio.run(watcher.refresh())
 
     async def reject_static(_self: object) -> ModelCatalogSnapshot:
         raise AssertionError("inspection must not reread the source catalog")
-
-    def reject_projection(_model: Model) -> ModelInfo:
-        raise AssertionError("inspection must reuse the derived projection")
 
     adapters = {
         "chat_completions": ChatCompletionsModelAdapter(),
@@ -322,13 +518,68 @@ def test_catalog_inspection_reuses_setup_model_cache(
     monkeypatch.setattr(catalog_module, "load_agent_config", lambda _layout: {})
     monkeypatch.setattr(catalog_module, "load_setup_envs", lambda _layout: envs)
     monkeypatch.setattr(catalog_module, "load_model_adapters", lambda _config: adapters)
-    monkeypatch.setattr(catalog_module, "model_info_from_catalog", reject_projection)
+    first = asyncio.run(
+        load_catalog_inspection(AgentLayout.resident(tmp_path, "alice"))
+    )
+    projection_calls = 0
+    original_projection = catalog_module.model_info_from_catalog
 
+    def count_projection(model: Model) -> ModelInfo:
+        nonlocal projection_calls
+        projection_calls += 1
+        return original_projection(model)
+
+    monkeypatch.setattr(catalog_module, "model_info_from_catalog", count_projection)
     inspection = asyncio.run(
         load_catalog_inspection(AgentLayout.resident(tmp_path, "alice"))
     )
 
+    assert first.models.refs() == ("test/one", "test/two")
     assert inspection.models.refs() == ("test/one", "test/two")
+    assert first.catalog_models.items[0].cost.input == Decimal(
+        "0.12345678901234567890123456789"
+    )
+    assert inspection.catalog_models.items[0].cost.input == (
+        first.catalog_models.items[0].cost.input
+    )
+    assert projection_calls == 0
+
+
+def test_cached_catalog_query_miss_skips_full_catalog_hydration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "models.json", ("one", "two"))
+    envs = {"TEST_API_KEY": "secret"}
+    _watcher(monkeypatch, tmp_path, envs=envs)
+    adapters = {
+        "chat_completions": ChatCompletionsModelAdapter(),
+        "responses": ResponsesModelAdapter(),
+    }
+    monkeypatch.setattr(catalog_module, "load_setup_config", lambda _layout: {})
+    monkeypatch.setattr(catalog_module, "load_agent_config", lambda _layout: {})
+    monkeypatch.setattr(catalog_module, "load_setup_envs", lambda _layout: envs)
+    monkeypatch.setattr(catalog_module, "load_model_adapters", lambda _config: adapters)
+    layout = AgentLayout.resident(tmp_path, "alice")
+    asyncio.run(load_catalog_inspection(layout))
+
+    async def reject_static(_self: object) -> ModelCatalogSnapshot:
+        raise AssertionError("cached query lookup must not hydrate the static catalog")
+
+    def reject_projection(_model: Model) -> ModelInfo:
+        raise AssertionError("cached query lookup must not derive model facts")
+
+    monkeypatch.setattr(ModelsDevModelCatalog, "snapshot", reject_static)
+    monkeypatch.setattr(catalog_module, "model_info_from_catalog", reject_projection)
+
+    dataset = asyncio.run(load_cached_catalog_queries(layout))
+
+    assert dataset is not None
+    assert dataset.query("does-not-exist") == ()
+
+    monkeypatch.setattr(catalog_module, "load_setup_envs", lambda _layout: {})
+
+    assert asyncio.run(load_cached_catalog_queries(layout)) is None
 
 
 @pytest.mark.parametrize(
@@ -338,7 +589,7 @@ def test_catalog_inspection_reuses_setup_model_cache(
         '{"schema": 999}',
     ),
 )
-def test_setup_watcher_treats_invalid_model_cache_as_a_miss(
+def test_setup_watcher_treats_invalid_context_cache_as_a_miss(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     cache_content: str,
@@ -346,23 +597,22 @@ def test_setup_watcher_treats_invalid_model_cache_as_a_miss(
     _write_catalog(tmp_path / "models.json", ("one",))
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     asyncio.run(watcher.refresh())
-    asyncio.run(watcher.refresh())
-    cache = tmp_path / ".setup" / "models" / "projection.json"
+    cache = _context_cache_files(tmp_path, "alice")[0]
     cache.write_text(cache_content, encoding="utf-8")
-    parse_calls = 0
-    original_snapshot = ModelsDevModelCatalog.snapshot
+    projection_calls = 0
+    original_projection = watcher_module.model_info_from_catalog
 
-    async def count_parse(self: ModelsDevModelCatalog) -> ModelCatalogSnapshot:
-        nonlocal parse_calls
-        parse_calls += 1
-        return await original_snapshot(self)
+    def count_projection(model: Model) -> ModelInfo:
+        nonlocal projection_calls
+        projection_calls += 1
+        return original_projection(model)
 
-    monkeypatch.setattr(ModelsDevModelCatalog, "snapshot", count_parse)
+    monkeypatch.setattr(watcher_module, "model_info_from_catalog", count_projection)
     fresh = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
 
     asyncio.run(fresh.refresh())
 
-    assert parse_calls == 1
+    assert projection_calls == 1
 
 
 def test_setup_watcher_treats_stale_model_cache_as_a_miss(
@@ -438,16 +688,16 @@ def test_large_model_cache_avoids_duplicate_derived_rows(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    model_ids = tuple(f"model-{index}" for index in range(513))
+    model_ids = tuple(f"model-{index}" for index in range(7_250))
     _write_catalog(tmp_path / "models.json", model_ids)
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     expected = asyncio.run(watcher.refresh())
-    asyncio.run(watcher.refresh())
-    cache = tmp_path / ".setup" / "models" / "projection.json"
+    cache = _context_cache_files(tmp_path, "alice")[0]
 
-    payload = json.loads(cache.read_text(encoding="utf-8"))
+    payload = json.loads(cache.read_text(encoding="utf-8"))["payload"]
 
-    assert payload["projection"]["models"] is None
+    assert len(payload["models"]) == len(model_ids)
+    assert len(payload["queries"]) == len(model_ids)
 
     async def reject_static(_self: object) -> ModelCatalogSnapshot:
         raise AssertionError("large warm refresh must reuse the normalized catalog")
@@ -466,7 +716,7 @@ def test_large_model_cache_avoids_duplicate_derived_rows(
 
     setup = asyncio.run(warm.refresh())
 
-    assert projection_calls == len(model_ids)
+    assert projection_calls == 0
     assert len(setup.models.entries) == len(model_ids)
     assert setup.models.entries[0].info.input_price == (
         expected.models.entries[0].info.input_price
@@ -493,9 +743,12 @@ def test_model_cache_rejects_catalog_headers_that_can_contain_secrets(
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
 
     asyncio.run(watcher.refresh())
-    asyncio.run(watcher.refresh())
 
-    assert not (tmp_path / ".setup" / "models" / "projection.json").exists()
+    assert not _catalog_cache_files(tmp_path)
+    assert all(
+        "secret" not in cache.read_text(encoding="utf-8")
+        for cache in _context_cache_files(tmp_path, "alice")
+    )
 
 
 def test_setup_watcher_detects_local_models_without_force(
@@ -969,4 +1222,28 @@ def _write_catalog(path: Path, model_ids: tuple[str, ...]) -> None:
             }
         ),
         encoding="utf-8",
+    )
+
+
+def _catalog_cache_files(root: Path) -> tuple[Path, ...]:
+    return tuple(
+        sorted(
+            (root / ".setup" / "models" / "catalogs" / "revs").glob("*/catalog.json")
+        )
+    )
+
+
+def _context_cache_files(root: Path, agent: str) -> tuple[Path, ...]:
+    return tuple(
+        sorted(
+            (root / "agents" / agent / ".setup" / "models" / "contexts" / "revs").glob(
+                "*/models.json"
+            )
+        )
+    )
+
+
+def _root_context_cache_files(root: Path) -> tuple[Path, ...]:
+    return tuple(
+        sorted((root / ".setup" / "models" / "contexts" / "revs").glob("*/models.json"))
     )

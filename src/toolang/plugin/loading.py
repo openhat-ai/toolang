@@ -30,6 +30,24 @@ class LoadedPlugin:
     source: PluginSource
 
 
+@dataclass(frozen=True, slots=True)
+class PluginProvenance:
+    """Stable installed-code identity for one plugin entry point."""
+
+    name: str
+    value: str
+    distribution: str | None
+    version: str | None
+
+    def to_data(self) -> dict[str, str | None]:
+        return {
+            "name": self.name,
+            "value": self.value,
+            "distribution": self.distribution,
+            "version": self.version,
+        }
+
+
 def list_plugin_names(*, group: str) -> list[str]:
     """Return installed plugin entry point names for one family."""
 
@@ -48,6 +66,45 @@ def list_plugin_infos(*, group: str) -> list[PluginInfo]:
             for entry_point in entry_points(group=group)
         ),
         key=lambda item: item.name,
+    )
+
+
+def plugin_provenance(*, group: str) -> tuple[PluginProvenance, ...]:
+    """Return deterministic entry-point provenance for cache invalidation."""
+
+    values: list[PluginProvenance] = []
+    for entry_point in entry_points(group=group):
+        dist = getattr(entry_point, "dist", None)
+        metadata = getattr(dist, "metadata", None)
+        distribution = None
+        if metadata is not None:
+            raw_name = metadata.get("Name")
+            if isinstance(raw_name, str) and raw_name.strip():
+                distribution = raw_name.strip()
+        raw_version = getattr(dist, "version", None)
+        version = (
+            raw_version.strip()
+            if isinstance(raw_version, str) and raw_version.strip()
+            else None
+        )
+        values.append(
+            PluginProvenance(
+                name=entry_point.name,
+                value=entry_point.value,
+                distribution=distribution,
+                version=version,
+            )
+        )
+    return tuple(
+        sorted(
+            values,
+            key=lambda item: (
+                item.name,
+                item.value,
+                item.distribution or "",
+                item.version or "",
+            ),
+        )
     )
 
 

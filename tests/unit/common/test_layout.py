@@ -12,6 +12,8 @@ def test_resident_layout_derives_agent_paths(tmp_path: Path) -> None:
     assert layout.placement == "resident"
     assert layout.home == layout.root / "agents" / "alice"
     assert layout.model_cache == layout.root / ".setup" / "models"
+    assert layout.root_model_cache == layout.root / ".setup" / "models"
+    assert layout.home_model_cache == layout.home / ".setup" / "models"
     assert layout.root_state == layout.root / ".state" / "root"
     assert layout.home_state == layout.home / ".state" / "home"
     assert layout.agent_state == layout.home / ".state" / "agent"

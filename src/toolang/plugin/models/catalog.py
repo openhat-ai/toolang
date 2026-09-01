@@ -116,6 +116,7 @@ def resolve_model_catalog_path(
     *,
     explicit: Path | None = None,
     environ: Mapping[str, str] | None = None,
+    include_agent: bool = True,
 ) -> Path:
     """Resolve one complete catalog using explicit, home, root, package precedence."""
 
@@ -129,7 +130,12 @@ def resolve_model_catalog_path(
         path = Path(configured).expanduser().resolve(strict=False)
         _require_catalog_candidate(path, label=MODEL_CATALOG_ENV)
         return path
-    for path in (layout.home / "models.json", layout.root / "models.json"):
+    candidates = (
+        (layout.home / "models.json", layout.root / "models.json")
+        if include_agent
+        else (layout.root / "models.json",)
+    )
+    for path in candidates:
         if path.is_file() or path.is_symlink():
             return path.resolve(strict=False)
     _require_catalog_candidate(PACKAGED_MODEL_CATALOG, label="packaged model catalog")

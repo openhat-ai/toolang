@@ -65,6 +65,14 @@ def load_setup_envs(layout: AgentLayout) -> dict[str, str]:
     return envs
 
 
+def load_root_setup_envs(layout: AgentLayout) -> dict[str, str]:
+    """Load root dotenv defaults below the process environment."""
+
+    envs = _load_dotenv(layout.root_env)
+    envs.update(os.environ)
+    return envs
+
+
 def load_setup_dotenvs(layout: AgentLayout) -> dict[str, str]:
     """Load the merged root and agent dotenv values without process values."""
 
@@ -100,6 +108,27 @@ def project_setup_config(config: Mapping[str, object]) -> dict[str, object]:
             str(name): _mutable_value(value)
             for name, value in plugin_mapping.items()
             if name in _SETUP_PLUGIN_FAMILIES
+        }
+        if plugin:
+            projected["plugin"] = plugin
+    elif raw_plugin is not None:
+        projected["plugin"] = raw_plugin
+    return projected
+
+
+def project_model_setup_config(config: Mapping[str, object]) -> dict[str, object]:
+    """Return only authored fields that affect a derived model context."""
+
+    projected = {
+        name: _mutable_value(config[name]) for name in ("models",) if name in config
+    }
+    raw_plugin = config.get("plugin")
+    if isinstance(raw_plugin, Mapping):
+        plugin_mapping = cast(Mapping[str, object], raw_plugin)
+        plugin = {
+            str(name): _mutable_value(value)
+            for name, value in plugin_mapping.items()
+            if name in {"model_catalog", "model_adapter"}
         }
         if plugin:
             projected["plugin"] = plugin

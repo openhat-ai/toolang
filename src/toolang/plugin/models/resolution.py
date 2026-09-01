@@ -143,6 +143,7 @@ def build_model_collection(
     models: Sequence[ModelInfo],
     envs: Mapping[str, str],
     provider_configs: Mapping[str, ProviderConfig] | None = None,
+    query_views: Sequence[ModelQueryView] | None = None,
 ) -> ModelCollection:
     """Compile available catalog routes into one immutable effective collection."""
 
@@ -166,7 +167,7 @@ def build_model_collection(
                 info=candidate.info,
             )
         )
-    return ModelCollection(entries)
+    return ModelCollection(entries, query_views=query_views)
 
 
 def resolve_model(

@@ -21,6 +21,7 @@ from toolang.base.protocols.sandbox import Sandbox
 from toolang.base.types.progress import ProgressEvent
 from toolang.base.types.sandbox import SandboxMount, SandboxRef, SandboxRequest
 from toolang.common.layout import AgentLayout
+from toolang.plugin.models.catalog import MODEL_CATALOG_ENV
 from toolang.plugin.sandboxes import _docker_cli as docker_cli
 from toolang.plugin.sandboxes import _docker_guest as docker_guest
 from toolang.plugin.sandboxes import docker as docker_sandbox
@@ -387,6 +388,64 @@ def test_docker_sandbox_prepares_and_launches(
         "TOOLANG_SANDBOX": "docker:python:3.13-slim",
     }
     assert run_call["log_path"] is None
+
+
+def test_docker_sandbox_mounts_external_model_catalog_at_guest_path(
+    tmp_path: Path,
+) -> None:
+    external = tmp_path.parent / f"{tmp_path.name}-models.json"
+    external.write_text("{}", encoding="utf-8")
+    request = _request(tmp_path)
+    request = replace(
+        request,
+        envs={**request.envs, MODEL_CATALOG_ENV: str(external)},
+    )
+
+    plan = create_sandbox("docker", config={}).prepare(None, request)
+    source_mount = next(
+        mount for mount in plan.mounts if mount.local_path == external.resolve()
+    )
+    guest_env_mount = next(
+        mount
+        for mount in plan.mounts
+        if mount.hosted_path == request.hosted_home / ".env"
+    )
+    guest_envs = dotenv_values(guest_env_mount.local_path, interpolate=False)
+
+    assert source_mount.read_only is True
+    assert source_mount.hosted_path.is_relative_to(
+        request.hosted_root / ".inputs" / "models"
+    )
+    assert guest_envs[MODEL_CATALOG_ENV] == str(source_mount.hosted_path)
+    assert str(external) not in guest_env_mount.local_path.read_text(encoding="utf-8")
+
+
+def test_docker_sandbox_rewrites_root_model_catalog_and_mounts_it_read_only(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "models.json"
+    source.write_text("{}", encoding="utf-8")
+    request = _request(tmp_path)
+    request = replace(
+        request,
+        dotenv_envs={**request.dotenv_envs, MODEL_CATALOG_ENV: str(source)},
+    )
+
+    plan = create_sandbox("docker", config={}).prepare(None, request)
+    expected = request.hosted_root / "models.json"
+    source_mount = next(
+        mount for mount in plan.mounts if mount.local_path == source.resolve()
+    )
+    guest_env_mount = next(
+        mount
+        for mount in plan.mounts
+        if mount.hosted_path == request.hosted_home / ".env"
+    )
+
+    assert source_mount == SandboxMount(source.resolve(), expected, read_only=True)
+    assert dotenv_values(guest_env_mount.local_path, interpolate=False)[
+        MODEL_CATALOG_ENV
+    ] == str(expected)
 
 
 def test_docker_background_sandbox_uses_docker_output_and_durable_diagnostics(
