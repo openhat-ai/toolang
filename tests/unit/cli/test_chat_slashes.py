@@ -4,6 +4,7 @@ from collections.abc import Collection, Mapping, Sequence
 from typing import Any, cast
 
 import pytest
+from prompt_toolkit.utils import get_cwidth
 
 from toolang.base.types.message import TextPart
 from toolang.base.types.model import ModelParameters, ModelRequest, ReasoningParameters
@@ -32,23 +33,37 @@ class _Client:
                 "ref": "openai/gpt-5",
                 "name": "GPT-5",
                 "provider": "openai",
-                "parameters": {"reasoning": {"effort": ["low", "high"]}},
+                "parameters": {
+                    "reasoning": {
+                        "effort": ["low", "high"],
+                        "applicable": True,
+                    }
+                },
+                "price": {"input": "1.25", "output": "10.00"},
             },
             {
                 "ref": "openrouter/openai/o3",
                 "name": "OpenRouter o3",
                 "provider": "openrouter",
-                "parameters": {"reasoning": {"effort": ["low", "medium", "high"]}},
+                "parameters": {
+                    "reasoning": {
+                        "effort": ["low", "medium", "high"],
+                        "applicable": True,
+                    }
+                },
+                "price": {"input": "0.30", "output": "0.88"},
             },
         )
         self.tools: tuple[dict[str, Any], ...] = (
             {
                 "ref": "shell/run",
+                "toolset": "shell",
                 "plugin": "shell",
                 "description": "Run a shell command.",
             },
             {
                 "ref": "filesystem/read",
+                "toolset": "filesystem",
                 "plugin": "filesystem",
                 "description": "Read a file.",
             },
@@ -58,13 +73,17 @@ class _Client:
                 "identity": "skill/reviewer",
                 "kind": "skill",
                 "scope": "home",
+                "form": "authored",
                 "description": "Review code.",
+                "summary": "Review code.",
             },
             {
                 "identity": "prompt/summary",
                 "kind": "prompt",
                 "scope": "root",
+                "form": "configured",
                 "description": "Summarize input.",
+                "summary": "Summarize input.",
             },
         )
         self.runnables: dict[str, Mapping[str, Any]] = {
@@ -591,6 +610,80 @@ def test_resource_commands_forward_the_whole_query_and_return_tables(
     assert result.content.summary == summary
     assert result.content.headers[0] == header
     assert app.client.resource_calls[-1] == (command, None, (query,))
+
+
+def test_models_table_formats_prices_efforts_and_default_marker() -> None:
+    app = _App()
+
+    result = _outcome(slashes.handle(app, QuickCommand("models")))
+
+    assert slashes.outcome_lines(result) == (
+        "Found 2 models",
+        "  MODEL                 PRICE ($/1M)     EFFORT",
+        "  ────────────────────  ───────────────  ─────────────────",
+        "  openai/gpt-5*         $ 1.25 / $10.00  low, high",
+        "  openrouter/openai/o3  $ 0.30 / $ 0.88  low, medium, high",
+    )
+
+
+def test_resource_tables_fit_unicode_cells_without_wrapping() -> None:
+    outcome = slashes.SlashOutcome(
+        "result",
+        slashes.SlashTable(
+            "Found 1 model",
+            ("MODEL", "PRICE ($/1M)", "EFFORT"),
+            (("提供者/非常长的模型*", "$ 1.25 / $10.00", "low, medium, high"),),
+            shrink_order=(2, 0, 1),
+            protected_suffixes=("*", None, None),
+        ),
+    )
+
+    lines = slashes.outcome_lines(outcome, width=38)
+
+    assert all("\n" not in line and get_cwidth(line) <= 38 for line in lines[1:])
+    assert lines[1].strip().endswith("EFFORT")
+    assert lines[-1].split("  ", 2)[1].endswith("*")
+    assert "…" in lines[-1]
+
+
+def test_tools_table_hides_private_toolsets_after_query() -> None:
+    app = _App()
+    app.client.tools += (
+        {
+            "ref": "_internal/read",
+            "toolset": "_internal",
+            "plugin": "internal",
+            "description": "Read internal state.",
+        },
+        {
+            "ref": "filesystem/_private",
+            "toolset": "filesystem",
+            "plugin": "filesystem",
+            "description": "A public tool with a private-looking name.",
+        },
+    )
+
+    result = _outcome(slashes.handle(app, QuickCommand("tools")))
+
+    assert isinstance(result.content, slashes.SlashTable)
+    assert result.content.summary == "Found 3 tools"
+    assert all(not row[0].startswith("_internal/") for row in result.content.rows)
+    assert any(row[0] == "filesystem/_private" for row in result.content.rows)
+
+    hidden_only = _outcome(slashes.handle(app, QuickCommand("tools", "_internal/*")))
+    assert slashes.outcome_lines(hidden_only) == ("No tools found",)
+
+
+def test_caps_table_uses_form_and_display_summary() -> None:
+    app = _App()
+
+    result = _outcome(slashes.handle(app, QuickCommand("caps", "skill/*")))
+
+    assert isinstance(result.content, slashes.SlashTable)
+    assert result.content.headers == ("CAP", "SCOPE", "FORM", "DESCRIPTION")
+    assert result.content.rows == (
+        ("skill/reviewer", "home", "authored", "Review code."),
+    )
 
 
 def test_resource_command_without_matches_is_a_result() -> None:

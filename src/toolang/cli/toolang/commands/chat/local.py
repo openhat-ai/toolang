@@ -31,7 +31,10 @@ from toolang.execution.executor.resources import (
     snapshot_model_selection,
     validate_agent_ceiling,
 )
-from toolang.plugin.models.resolution import model_reasoning_efforts
+from toolang.plugin.models.resolution import (
+    model_reasoning_effort_applicable,
+    model_reasoning_efforts,
+)
 from toolang.plugin.toolsets.collections import tool_dataset
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
@@ -42,9 +45,11 @@ from toolang.plugin.sandboxes.host import host_sandbox_description
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.watcher import StateWatcher
 from toolang.state.collections import cap_dataset, query_cap_views
+from toolang.state.schemas import CapInfo
 from toolang.state.types import EntryKind
 from toolang.state.state import (
     AgentState,
+    StateCap,
     StatePublication,
     state_module_caps,
     state_program,
@@ -158,8 +163,15 @@ class LocalChatSession:
                     "provider": target.provider,
                     "parameters": {
                         "reasoning": {
-                            "effort": list(model_reasoning_efforts(selection, target))
+                            "effort": list(model_reasoning_efforts(selection, target)),
+                            "applicable": model_reasoning_effort_applicable(
+                                selection, target
+                            ),
                         }
+                    },
+                    "price": {
+                        "input": _price_per_million(entry.info.input_price),
+                        "output": _price_per_million(entry.info.output_price),
                     },
                 }
                 for entry in models.entries
@@ -179,6 +191,7 @@ class LocalChatSession:
             "items": [
                 {
                     "ref": f"{item.toolset}/{item.name}",
+                    "toolset": item.toolset,
                     "plugin": item.plugin,
                     "description": item.description,
                 }
@@ -226,12 +239,9 @@ class LocalChatSession:
             raise ValueError(f"unknown cap kind: {kind}")
         return {
             "items": [
-                {
-                    "identity": f"{item.kind}/{item.name}",
-                    "kind": item.kind,
-                    "scope": item.scope,
-                    "description": item.description or "",
-                }
+                _local_cap_item(
+                    cast(StateCap, item.record), agent_name=self.layout.name
+                )
                 for item in selected
             ]
         }
@@ -542,6 +552,22 @@ def _close_event_loop(loop: asyncio.AbstractEventLoop) -> None:
     loop.run_until_complete(loop.shutdown_asyncgens())
     loop.run_until_complete(loop.shutdown_default_executor())
     loop.close()
+
+
+def _price_per_million(value: float | None) -> Decimal | None:
+    return None if value is None else Decimal(str(value)) * Decimal(1_000_000)
+
+
+def _local_cap_item(cap: StateCap, *, agent_name: str) -> dict[str, object]:
+    info = CapInfo.from_cap(cap, agent_name=agent_name)
+    return {
+        "identity": f"{info.kind}/{info.name}",
+        "kind": info.kind,
+        "scope": info.scope,
+        "form": info.form,
+        "description": info.description or "",
+        "summary": info.summary or "",
+    }
 
 
 def _error_message(exc: Exception) -> str:

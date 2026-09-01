@@ -200,11 +200,13 @@ class AppContext(Protocol):
 
 
 def chat_status_label(setting: SessionSetting) -> str:
-    model_label = setting.model.ref if setting.model is not None else "none"
+    model_label = setting.model.ref if setting.model is not None else "[model not set]"
     reasoning = (
         setting.model.parameters.reasoning if setting.model is not None else None
     )
-    if reasoning is not None:
+    if reasoning is not None and (
+        reasoning.effort is not None or reasoning.budget_tokens is not None
+    ):
         value = (
             reasoning.effort
             if reasoning.effort is not None

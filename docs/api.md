@@ -864,14 +864,22 @@ run starts, not by this inspection endpoint. The response includes:
   - `name`
   - `provider`
   - `parameters.reasoning.effort`
+  - `parameters.reasoning.applicable`
+  - `price.input`
+  - `price.output`
 
 `ref` is the exact catalog route identity, including nested model ids, and does
 not include query predicates. Reasoning efforts are distinct recognized catalog
 values in catalog order; an unsupported model returns an empty list.
+`parameters.reasoning.applicable` is true when the model advertises either
+effort-level or token-budget control; a toggle by itself is not applicable.
+`price.input` and `price.output` are base token prices converted to USD per one
+million tokens and are `null` when the corresponding catalog price is absent.
 
 `GET /api/v1/models` accepts repeatable `query` parameters evaluated by the
 runtime model collection. `GET /api/v1/tools` uses the same convention and
-returns effective tool `ref`, `plugin`, and `description` fields. Omitting
+returns effective tool `ref`, structured `toolset`, `plugin`, and `description`
+fields. Omitting
 `query` lists the complete effective collection; valid empty matches return an
 empty `items` list.
 
@@ -896,6 +904,12 @@ The cap summary and collection endpoints accept repeatable `query` parameters.
 The summary applies each query independently through the psyche, skill,
 service, and prompt collection definitions, then returns the existing grouped
 response and counts.
+
+Cap list items include `form` and the additive `summary` display field.
+`summary` is at most 256 Unicode code points and selects the first nonblank
+title metadata, description metadata, or body paragraph. It does not replace
+`description` for collection query matching. Clients can render cap discovery
+without issuing one detail request per item.
 
 Detail:
 

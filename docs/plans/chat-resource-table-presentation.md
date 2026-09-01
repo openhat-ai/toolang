@@ -2,7 +2,7 @@
 
 ## Status
 
-Pending human confirmation. Definition issue: #438.
+Approved on 2026-09-01. Definition issue: #438.
 
 ## Goal
 

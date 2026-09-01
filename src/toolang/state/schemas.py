@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 from .state import (
     StateCap,
@@ -15,6 +16,8 @@ from .state import (
     entry_scope,
 )
 from .types import CapForm, CapScope, EntryKind, SourceOrigin
+
+_CAP_SUMMARY_MAX_CODEPOINTS = 256
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +34,7 @@ class CapInfo:
     definition_file: str
     editable: bool
     line: int | None = None
+    summary: str | None = None
 
     @classmethod
     def from_cap(cls, cap: StateCap, *, agent_name: str) -> CapInfo:
@@ -41,6 +45,7 @@ class CapInfo:
             kind=cap.kind,
             name=cap.name,
             description=str(description) if description is not None else None,
+            summary=cap_display_summary(cap),
             scope=entry_scope(cap, agent_name=agent_name),
             origin=entry_origin(cap),
             form=entry_form(cap),
@@ -77,6 +82,7 @@ class CapDetail(CapInfo):
             kind=info.kind,
             name=info.name,
             description=info.description,
+            summary=info.summary,
             scope=info.scope,
             origin=info.origin,
             form=info.form,
@@ -87,3 +93,26 @@ class CapDetail(CapInfo):
             content=cap.read_text() if content_path.is_file() else None,
             files=files,
         )
+
+
+def cap_display_summary(cap: StateCap) -> str | None:
+    """Return a bounded one-line capability summary for list displays."""
+
+    for name in ("title", "description"):
+        value = cap.meta.get(name)
+        if isinstance(value, str) and (summary := _normalize_summary(value)):
+            return _bound_summary(summary)
+    for paragraph in re.split(r"\n\s*\n", cap.read_content()):
+        if summary := _normalize_summary(paragraph):
+            return _bound_summary(summary)
+    return None
+
+
+def _normalize_summary(value: str) -> str:
+    return " ".join(value.split())
+
+
+def _bound_summary(value: str) -> str:
+    if len(value) <= _CAP_SUMMARY_MAX_CODEPOINTS:
+        return value
+    return f"{value[: _CAP_SUMMARY_MAX_CODEPOINTS - 1].rstrip()}…"

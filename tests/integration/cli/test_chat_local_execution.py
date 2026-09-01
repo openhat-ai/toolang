@@ -237,14 +237,15 @@ def test_local_chat_queries_resources_and_reconciles_model_ceiling(
         runnable="agic:chat",
     )
     try:
-        assert [item["ref"] for item in session.list_models(("test/*",))["items"]] == [
-            TEST_MODEL_REF
-        ]
+        model_items = session.list_models(("test/*",))["items"]
+        assert [item["ref"] for item in model_items] == [TEST_MODEL_REF]
+        assert model_items[0]["price"] == {"input": None, "output": None}
+        assert model_items[0]["parameters"]["reasoning"]["applicable"] is False
         assert session.list_models(("missing/*",))["items"] == []
         assert session.list_models(())["items"] == []
-        assert [item["ref"] for item in session.list_tools(("test/*",))["items"]] == [
-            "test/test__lookup"
-        ]
+        tool_items = session.list_tools(("test/*",))["items"]
+        assert [item["ref"] for item in tool_items] == ["test/test__lookup"]
+        assert tool_items[0]["toolset"] == "test"
         assert session.list_tools(())["items"] == []
 
         disabled = session.apply_setting(

@@ -7,6 +7,7 @@ from toolang.state.collections import (
     query_cap_views,
 )
 from toolang.state.state import CapSource, StateCap
+from toolang.state.schemas import cap_display_summary
 from toolang.state.types import EntryKind
 
 
@@ -26,6 +27,49 @@ def _cap(kind: EntryKind, name: str) -> StateCap:
         ),
         meta={},
     )
+
+
+def test_cap_display_summary_uses_metadata_then_bounded_content(tmp_path) -> None:
+    definition = tmp_path / "summary.too"
+    definition.write_text(
+        "First body paragraph.\n\nSecond body paragraph.",
+        encoding="utf-8",
+    )
+    source = CapSource(
+        origin="local",
+        form="authored",
+        path="prompts/summary.too",
+        updated_at="2026-08-30T00:00:00Z",
+        fingerprint="0" * 64,
+    )
+
+    titled = StateCap(
+        kind="prompt",
+        name="summary",
+        shape="file",
+        ref="root://prompts/summary",
+        path=str(definition),
+        source=source,
+        meta={"title": "  Preferred\n title  ", "description": "Description"},
+    )
+    from_content = StateCap(
+        kind="prompt",
+        name="summary",
+        shape="file",
+        ref="root://prompts/summary",
+        path=str(definition),
+        source=source,
+        meta={},
+    )
+
+    assert cap_display_summary(titled) == "Preferred title"
+    assert cap_display_summary(from_content) == "First body paragraph."
+
+    definition.write_text("x" * 300, encoding="utf-8")
+    bounded = cap_display_summary(from_content)
+    assert bounded is not None
+    assert len(bounded) == 256
+    assert bounded.endswith("…")
 
 
 def test_cap_query_fans_out_over_four_base_collections() -> None:

@@ -251,6 +251,7 @@ class ChatTuiApp:
         self.completer = ChatInputCompleter(
             resource_paths=(lambda: list(resource_paths)) if resource_paths else None
         )
+        self._model_effort_applicability: dict[str, bool] = {}
 
         self.queue_panel = widgets.QueuePanel(
             lambda: [item.source for item in self.queue]
@@ -380,16 +381,24 @@ class ChatTuiApp:
     def _model_label(self) -> str:
         model = self.setting.model
         if model is None:
-            return "none"
-        reasoning = model.parameters.reasoning
-        if reasoning is None:
-            return model.ref
-        value = (
-            reasoning.effort
-            if reasoning.effort is not None
-            else str(reasoning.budget_tokens)
-        )
-        return f"{model.ref} · {value}"
+            return "[model not set]"
+        value = slashes.model_reasoning_value(model)
+        if value is not None:
+            return f"{model.ref} · {value}"
+        applicable = self._selected_model_effort_applicable(model.ref)
+        return f"{model.ref} · auto" if applicable else model.ref
+
+    def _selected_model_effort_applicable(self, ref: str) -> bool | None:
+        if ref in self._model_effort_applicability:
+            return self._model_effort_applicability[ref]
+        try:
+            payload = self.client.list_models((ref,))
+        except (OSError, RuntimeError, ToolangError, ValueError):
+            return None
+        applicable = slashes.model_effort_applicability(payload, ref)
+        if applicable is not None:
+            self._model_effort_applicability[ref] = applicable
+        return applicable
 
     def _runnable_label(
         self,
@@ -699,15 +708,16 @@ class ChatTuiApp:
                 )
             )
             return
-        self._stage_scrollback(
-            (
-                blocks.SlashBlock(
-                    message,
-                    slashes.outcome_lines(outcome),
-                    outcome.kind,
-                ).render(),
-            )
+        renderable = (
+            blocks.SlashTableBlock(message, content).render()
+            if isinstance(content, slashes.SlashTable)
+            else blocks.SlashBlock(
+                message,
+                slashes.outcome_lines(outcome),
+                outcome.kind,
+            ).render()
         )
+        self._stage_scrollback((renderable,))
 
     def _handle_run_error(self, message: str) -> None:
         friendly = friendly_error(message)

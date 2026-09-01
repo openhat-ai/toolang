@@ -45,6 +45,7 @@ from toolang.execution.types import ControlRef, Local
 from toolang.plugin.models.discovery import missing_provider_env_vars
 from toolang.plugin.models.resolution import (
     apply_model_parameters,
+    model_reasoning_effort_applicable,
     model_reasoning_efforts,
     resolve_model,
     resolve_model_request,
@@ -420,6 +421,7 @@ def test_model_reasoning_parameters_use_catalog_order_and_replace_defaults() -> 
     )
 
     assert model_reasoning_efforts(context, target) == ("medium", "high")
+    assert model_reasoning_effort_applicable(context, target)
     assert apply_model_parameters(context, target, ModelParameters()) == target
     selected = apply_model_parameters(
         context,
@@ -445,6 +447,30 @@ def test_model_reasoning_parameters_use_catalog_order_and_replace_defaults() -> 
             target,
             ModelParameters(ReasoningParameters(budget_tokens=512)),
         )
+
+
+def test_toggle_only_reasoning_does_not_make_effort_applicable() -> None:
+    provider = _FakeModels(
+        name="openai",
+        models=(
+            ModelInfo(
+                ref="openai/toggle-only",
+                provider="openai",
+                name="Toggle only",
+                model="toggle-only",
+                metadata={"reasoning_options": [{"type": "toggle"}]},
+            ),
+        ),
+    )
+    context = _SelectionContext(
+        model_providers={"openai": provider},
+        model_aliases={},
+        default_models=(),
+        model_environ={},
+    )
+    target = resolve_unique_model_query(context, query="openai/toggle-only")
+
+    assert not model_reasoning_effort_applicable(context, target)
 
 
 def test_reasoning_parameters_reject_effort_and_budget_together() -> None:

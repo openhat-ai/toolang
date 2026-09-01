@@ -536,7 +536,7 @@ class StatusBar:
             if default_runnable is not None
             else None
         )
-        model_label = truncate(self.model_label, fitted_model_width)
+        model_label = _truncate_model_label(self.model_label, fitted_model_width)
         segments = [
             (marker_style, marker),
             ("class:status", " "),
@@ -574,3 +574,14 @@ class StatusBar:
 def _reduce_status_width(width: int, overflow: int) -> tuple[int, int]:
     reduction = min(max(width - 1, 0), overflow)
     return width - reduction, overflow - reduction
+
+
+def _truncate_model_label(label: str, width: int) -> str:
+    if get_cwidth(label) <= width or " · " not in label:
+        return truncate(label, width)
+    model, separator, effort = label.rpartition(" · ")
+    suffix = f"{separator}{effort}"
+    suffix_width = get_cwidth(suffix)
+    if suffix_width >= width:
+        return truncate(label, width)
+    return f"{truncate(model, width - suffix_width)}{suffix}"

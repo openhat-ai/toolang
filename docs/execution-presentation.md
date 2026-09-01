@@ -466,8 +466,13 @@ follows the runnable below one elapsed second and is replaced by the whole-secon
 duration at one second; `0s` is never shown. If the current default runnable
 differs, it appears on the right as
 `DEFAULT_RUNNABLE · MODEL`; otherwise the right side contains only `MODEL`.
-`MODEL` is always the current default model, not an active model step, and
-remains right-aligned against the terminal edge as defaults change. Setting
+`MODEL` is always the current default model, not an active model step. It is
+the canonical ref, `[model not set]` when absent, `MODEL · VALUE` for an
+explicit effort or token budget, and `MODEL · auto` when reasoning effort or
+budget applies without an explicit value. Models without applicable reasoning
+control omit the suffix. The segment remains right-aligned against the terminal
+edge as defaults change; constrained layouts elide the model ref before an
+applicable effort suffix. Setting
 commands remain available while running and update these default values
 immediately without changing the active run. Hotkey hints are omitted. Runnable
 and model text inherit the terminal's default foreground without dim styling.
@@ -480,3 +485,11 @@ through `◐`, `◓`, `◑`, and `◒` every 300 milliseconds during a Run. The 
 through an internal named style switch.
 Short Runs retain the running state long enough to avoid flashing. This
 transient UI state is never committed to execution scrollback.
+
+Submitted `/models`, `/caps`, and `/tools` results retain structured columns
+through scrollback rendering. Their headers use normal terminal text and a dim
+`─` separator row. Each table derives widths from only that result, uses two
+spaces between columns and a two-space output indent, measures Unicode display
+cells, and keeps every header and data row on one physical line. Flexible cells
+are elided with `…` in command-specific order rather than wrapped. Scripted Chat
+uses the same layout with its current terminal width.

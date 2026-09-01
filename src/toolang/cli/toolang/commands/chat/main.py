@@ -75,6 +75,7 @@ from .local import LocalChatSession
 from .presenter import ChatRunPresenter
 from .policy import run_override_error
 from .remote import RemoteChatError, RemoteChatSession
+from .rendering import terminal_width
 from .tui import ChatTuiApp
 
 
@@ -458,7 +459,7 @@ def _echo_scripted_outcome(outcome: chat_slashes.SlashOutcome) -> None:
         if text:
             typer.echo(text)
         return
-    for line in chat_slashes.outcome_lines(outcome):
+    for line in chat_slashes.outcome_lines(outcome, width=terminal_width()):
         typer.echo(line, err=outcome.kind == "error")
 
 
