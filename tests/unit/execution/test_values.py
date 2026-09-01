@@ -523,7 +523,6 @@ def test_preparation_payload_round_trips_authored_prompt_facts() -> None:
             PromptInvocation(
                 name="review",
                 arguments=(("focus", "security"),),
-                input_scope="inline",
                 parent=None,
                 cap_ref="prompt:review",
                 content_hash="1" * 64,
@@ -537,6 +536,11 @@ def test_preparation_payload_round_trips_authored_prompt_facts() -> None:
         "primary": "$review focus=security -- inspect",
         "named": [{"name": "tone", "source": "$brief"}],
     }
+    prompt_data = cast(list[dict[str, object]], data["prompt_invocations"])
+    assert "input_scope" not in prompt_data[0]
+    assert control_payload_from_data("run", data) == payload
+
+    prompt_data[0]["input_scope"] = "inline"
     assert control_payload_from_data("run", data) == payload
 
 

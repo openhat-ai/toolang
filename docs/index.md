@@ -28,6 +28,7 @@ Use this directory for:
 | [program.md](./program.md) | Program declarations, runnable signatures, agics, flows, directives, and surface rules |
 | [flow-syntax.md](./flow-syntax.md) | Flow declarations, statements, result binding, and clauses |
 | [input-syntax.md](./input-syntax.md) | Policy commands, chat and runnable input, Content evaluation, and coercion |
+| [call-input.md](./call-input.md) | Shared line, stream, and fenced input for runnable and prompt calls |
 | [layout.md](./layout.md) | Layout and storage, including Toolang root, agent home, and runtime room paths |
 | [agent-state.md](./agent-state.md) | Immutable Agent State layers, revisions, publication, loading, and watching |
 | [caps.md](./caps.md) | Capability model, including form, scope, origin, refs, precedence, and effective-cap rules |

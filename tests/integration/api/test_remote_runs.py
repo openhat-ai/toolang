@@ -267,7 +267,6 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         prompt = fallback_control.payload.prompt_invocations[0]
         assert prompt.name == "review"
         assert prompt.arguments == (("focus", "security"),)
-        assert prompt.input_scope == "tail"
         assert prompt.parent is None
         assert prompt.cap_ref
         assert len(prompt.content_hash) == 64
@@ -278,7 +277,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         assert [
             invocation.call.messages for invocation in harness.adapter.invocations
         ] == [
-            [Message.user("brief security included")],
+            [Message.user("brief security @note.txt")],
             [Message.user("direct hello")],
         ]
         assert setup.reads == 7

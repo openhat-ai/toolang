@@ -28,7 +28,7 @@ from toolang.execution.types import (
     RunOverride,
     SessionSetting,
 )
-from toolang.lang.input import NamedInputSource
+from toolang.lang.input import CallInput, NamedInputSource
 from toolang.setup import AgentSetup, ModelCollection, ToolCollection
 
 
@@ -97,7 +97,7 @@ def test_runnable_override_returns_named_input_sources() -> None:
 
 
 def test_prefix_merges_allow_lines_and_multiple_fields() -> None:
-    override, named, primary = parse_policy_prefix(
+    override, call_input = parse_policy_prefix(
         ":allow models=openai/* tools=shell/*\n"
         ":allow models=deepseek/* skills=reviewer\n\nRun this."
     )
@@ -109,8 +109,7 @@ def test_prefix_merges_allow_lines_and_multiple_fields() -> None:
             AllowOverride("skills", ("reviewer",)),
         )
     )
-    assert named == ()
-    assert primary == "Run this."
+    assert call_input == CallInput(_="Run this.")
 
 
 @pytest.mark.parametrize(
@@ -168,11 +167,11 @@ def test_repeated_allow_sentinels_are_idempotent(
         )
         == expected
     )
-    override, _named, primary = parse_policy_prefix(
+    override, call_input = parse_policy_prefix(
         f":allow models={sentinel}\n:allow models={sentinel}\n\nRun"
     )
     assert override == expected
-    assert primary == "Run"
+    assert call_input == CallInput(_="Run")
 
 
 @pytest.mark.parametrize("sentinel", ["all", "none"])

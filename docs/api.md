@@ -95,9 +95,9 @@ Typical usage:
 ```bash
 toolang new alice
 toolang list
-PY_LOG=toolang.execution=info toolang ./examples/script-playground.too summarize "Summarize this workspace"
+PY_LOG=toolang.execution=info toolang ./examples/script-playground.too summarize -- "Summarize this workspace"
 toolang ./examples/script-playground.too --help
-toolang ./examples/script-playground.too summarize "Summarize this workspace"
+toolang ./examples/script-playground.too summarize -- "Summarize this workspace"
 toolang ./examples/file-agent.too --inbox ./inbox
 toolang run alice
 toolang run alice --sandbox docker
@@ -208,7 +208,7 @@ Foreground runtime port selection depends on the agent mode:
 A script run uses one local `.too` source path directly:
 
 ```bash
-toolang SCRIPT RUNNABLE [OPTIONS] [ARGS] [INPUT]...
+toolang SCRIPT RUNNABLE [OPTIONS] [NAME=VALUE]... [-- INPUT... | - | ---]
 ```
 
 Script progress, inspection output, and chat TUI activity use the shared
@@ -220,8 +220,8 @@ Arguments:
 
 - `SCRIPT` is the local Toolang script or agent file
 - `RUNNABLE` is the uniquely named public agic or flow to run
-- `ARGS` provide named runnable parameters, written as `NAME=VALUE`
-- `INPUT` values form the primary source of one `RunnableInputRaw`; script mode
+- `NAME=VALUE` provides one named runnable parameter before Call Input
+- `--`, `-`, and `---` select line, stream, and fenced Call Input; script mode
   parses policy prefixes but does not accept chat quick commands
 
 Behavior:
@@ -263,7 +263,7 @@ Behavior:
   directives
 - `NAME=VALUE` supplies one named argument and is coerced using its declared
   parameter type
-- `INPUT` rules:
+- line-input rules after `--`:
   - adjacent ordinary shell words are joined with spaces into one text item
   - `TEXT` adds one text part; use `@@TEXT` for literal text beginning with `@`
   - `@PATH` adds one path-based percept part; text-like paths become text parts
@@ -271,8 +271,13 @@ Behavior:
   - `.mp3` and `.wav` infer audio parts
   - supported document extensions infer document parts
   - unsupported video, archive, executable, and binary formats are rejected
-  - omitting input reads non-interactive stdin; `-` explicitly selects stdin
-- `--` ends option parsing so later arguments stay `INPUT` values
+  - unmarked command-line words are not primary input
+- `-` reads stream input through stdin EOF and may be empty
+- `---` reads stdin through an exact closing `---` line and may be empty; only
+  whitespace may follow the closing fence
+- omitting input reads non-interactive stdin as an implicit stream when available
+- `--` ends option parsing and introduces line input
+- complete Call Input syntax is defined in [call-input.md](./call-input.md)
 - `--option` is reserved for Toolang runtime options
 - `PY_LOG` uses env_logger-style directive formatting and does not affect stdout
 - key execution events are recorded in `runs.db` for script runs just like chat,

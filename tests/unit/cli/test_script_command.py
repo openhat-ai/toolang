@@ -79,6 +79,7 @@ def test_script_binds_options_arguments_and_primary_input(
             "-",
             "count=2.5",
             "enabled=true",
+            "--",
             "hello",
             "world",
         ],
@@ -207,6 +208,106 @@ def test_script_supports_explicit_stdin_marker(
     assert input._ == "from stdin"
 
 
+def test_script_supports_fenced_stdin_input(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = _write_source(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_run(_source_path: Path, **kwargs) -> int:
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(script, "_run", fake_run)
+
+    result = script.dispatch(
+        [],
+        [str(source), "demo", "count=2", "---"],
+        prog_name="toolang",
+        stdin=StringIO("from\nstdin\n---\n"),
+    )
+
+    assert result == 0
+    input = captured["input"]
+    assert isinstance(input, RunnableInputRaw)
+    assert input._ == "from\nstdin\n"
+
+
+@pytest.mark.parametrize(
+    ("stdin", "message"),
+    [
+        ("from stdin", "Unclosed fenced input"),
+        ("from stdin\n---\ntrailing", "cannot be followed"),
+    ],
+)
+def test_script_rejects_invalid_fenced_stdin_input(
+    tmp_path: Path,
+    capsys,
+    stdin: str,
+    message: str,
+) -> None:
+    source = _write_source(tmp_path)
+
+    result = script.dispatch(
+        [],
+        [str(source), "demo", "count=2", "---"],
+        prog_name="toolang",
+        stdin=StringIO(stdin),
+    )
+
+    assert result == 1
+    assert message in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("marker", "stdin"),
+    [("-", ""), ("---", "---")],
+)
+def test_script_preserves_explicit_empty_call_input(
+    tmp_path: Path,
+    monkeypatch,
+    marker: str,
+    stdin: str,
+) -> None:
+    source = _write_source(tmp_path)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda _source_path, **kwargs: captured.update(kwargs) or 0,
+    )
+
+    result = script.dispatch(
+        [],
+        [str(source), "demo", "count=2", marker],
+        prog_name="toolang",
+        stdin=StringIO(stdin),
+    )
+
+    assert result == 0
+    assert captured["input"] == RunnableInputRaw(_="")
+
+
+def test_script_rejects_unmarked_command_line_primary_input(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    source = _write_source(tmp_path)
+
+    result = script.dispatch(
+        [],
+        [str(source), "demo", "count=2", "Review this"],
+        prog_name="toolang",
+        stdin=StringIO(),
+    )
+
+    assert result == 2
+    assert "primary input requires '--', '-', or '---'" in strip_ansi(
+        capsys.readouterr().err
+    )
+
+
 def test_script_keeps_assignments_after_separator_as_input(
     tmp_path: Path,
     monkeypatch,
@@ -258,7 +359,7 @@ def test_script_includes_an_image(
 
     result = script.dispatch(
         [],
-        [str(source), "demo", "count=2", "@sample.png"],
+        [str(source), "demo", "count=2", "--", "@sample.png"],
         prog_name="toolang",
         stdin=StringIO(),
     )
@@ -283,7 +384,7 @@ def test_script_shows_runnable_help_for_a_missing_required_parameter(
 
     result = script.dispatch(
         [],
-        [str(source), "demo", "hello"],
+        [str(source), "demo", "--", "hello"],
         prog_name="toolang",
         stdin=StringIO(),
     )
@@ -503,7 +604,7 @@ def test_script_accepts_explicit_runnable_queries(
 
     result = script.dispatch(
         [],
-        [str(source), query, "count=2", "hello"],
+        [str(source), query, "count=2", "--", "hello"],
         prog_name="toolang",
         stdin=StringIO(),
     )
@@ -544,7 +645,7 @@ def test_script_accepts_sandbox_option_at_the_runnable_level(
 
     result = script.dispatch(
         [],
-        [str(source), "demo", "count=2", "--sandbox=host", "hello"],
+        [str(source), "demo", "count=2", "--sandbox=host", "--", "hello"],
         prog_name="toolang",
         stdin=StringIO(),
     )

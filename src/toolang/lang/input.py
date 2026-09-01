@@ -53,11 +53,12 @@ class NamedInputSource:
 
 
 NamedInputSources: TypeAlias = tuple[NamedInputSource, ...]
+CallInputForm = Literal["line", "stream", "fenced"]
 
 
 @dataclass(frozen=True, slots=True)
-class RunnableInputRaw:
-    """Structured primary and named source text awaiting input resolution."""
+class CallInput:
+    """Structured primary and named source text supplied to one call."""
 
     _: str | None = None
     named: NamedInputSources = ()
@@ -72,6 +73,11 @@ class RunnableInputRaw:
         names = tuple(item.name for item in self.named)
         if len(names) != len(set(names)):
             raise ValueError("named input sources must be unique")
+
+
+@dataclass(frozen=True, slots=True)
+class RunnableInputRaw(CallInput):
+    """Unresolved Call Input supplied to one runnable."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,9 +102,6 @@ class RunnableInput:
         object.__setattr__(self, "named", MappingProxyType(named))
 
 
-PromptInputScope = Literal["none", "tail", "inline", "fenced"]
-
-
 @dataclass(frozen=True, slots=True)
 class PromptDefinitionIdentity:
     """Immutable identity for one prompt definition available to Content."""
@@ -121,7 +124,6 @@ class PromptInvocation:
 
     name: str
     arguments: tuple[tuple[str, str], ...]
-    input_scope: PromptInputScope
     parent: int | None
     cap_ref: str
     content_hash: str
@@ -134,8 +136,6 @@ class PromptInvocation:
             raise ValueError("prompt invocation arguments require canonical names")
         if len(names) != len(set(names)):
             raise ValueError("prompt invocation arguments must be unique")
-        if self.input_scope not in {"none", "tail", "inline", "fenced"}:
-            raise ValueError("prompt invocation requires a valid input scope")
         if self.parent is not None and self.parent < 0:
             raise ValueError("prompt invocation parent must be non-negative")
         PromptDefinitionIdentity(self.cap_ref, self.content_hash)
@@ -147,6 +147,91 @@ class InputResolution:
 
     parts: tuple[Part, ...]
     prompts: tuple[PromptInvocation, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CallInputHeader:
+    """One call header split from its optional primary-input marker."""
+
+    arguments: str
+    form: CallInputForm | None = None
+    line: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.arguments, str):
+            raise TypeError("call input header arguments must be text")
+        if self.form not in {None, "line", "stream", "fenced"}:
+            raise ValueError("call input header requires a valid form")
+        if self.form == "line":
+            if self.line is None or not self.line.strip():
+                raise ValueError("line call input requires nonempty text")
+        elif self.line is not None:
+            raise ValueError("only line call input may carry header-line text")
+
+
+def parse_call_input_header(source: str, *, label: str = "call") -> CallInputHeader:
+    """Split arguments and one unquoted Call Input marker from a call header."""
+
+    if not isinstance(source, str):
+        raise TypeError("call input header must be text")
+    for start, end, token in _unquoted_plain_tokens(source):
+        if token not in {"---", "--", "-"}:
+            continue
+        arguments = source[:start].rstrip()
+        remainder = source[end:]
+        if token == "--":
+            line = remainder.lstrip(" \t")
+            if not line.strip():
+                raise ToolangError(f"Line input for {label} requires nonempty text.")
+            return CallInputHeader(arguments, "line", line)
+        if remainder.strip(" \t"):
+            form = "stream" if token == "-" else "fenced"
+            raise ToolangError(
+                f"{form.capitalize()} input marker for {label} must end the call header."
+            )
+        return CallInputHeader(
+            arguments,
+            "stream" if token == "-" else "fenced",
+        )
+    return CallInputHeader(source.strip())
+
+
+def capture_call_input(
+    header: CallInputHeader,
+    following: str,
+    *,
+    label: str = "call",
+    root: bool = False,
+) -> tuple[str | None, str]:
+    """Capture one parsed Call Input and return unconsumed enclosing text."""
+
+    if not isinstance(header, CallInputHeader):
+        raise TypeError("call input capture requires a CallInputHeader")
+    if not isinstance(following, str):
+        raise TypeError("call input following source must be text")
+    if header.form is None:
+        return None, following
+    if header.form == "line":
+        assert header.line is not None
+        return header.line, following
+    if header.form == "stream":
+        return following, ""
+
+    lines = following.splitlines(keepends=True)
+    closing_index = next(
+        (index for index, line in enumerate(lines) if _split_line(line)[0] == "---"),
+        None,
+    )
+    if closing_index is None:
+        raise ToolangError(f"Unclosed fenced input for {label}.")
+    captured = "".join(lines[:closing_index])
+    _, closing_break = _split_line(lines[closing_index])
+    trailing = closing_break + "".join(lines[closing_index + 1 :])
+    if root and trailing.strip():
+        raise ToolangError(
+            f"Root fenced input for {label} cannot be followed by other content."
+        )
+    return captured, trailing
 
 
 def resolve_runnable_input(
@@ -207,8 +292,8 @@ def parse_input(
 ) -> RunnableInputRaw:
     """Parse runnable input without resolving includes or declared types."""
 
-    primary = source if source and source.strip() else None
-    if primary is not None:
+    primary = source
+    if primary:
         first = primary.splitlines()[0]
         if first.startswith(":") and not first.startswith("::"):
             raise ValueError("primary input must escape a leading colon as ::")
@@ -271,9 +356,6 @@ def resolve_input_parts_with_provenance(
         include=include,
         prompt_definitions=prompt_definitions,
         invocations=invocations,
-        parent_invocation=None,
-        prompt_stack=(),
-        depth=0,
     )
     return InputResolution(parts, tuple(invocations))
 
@@ -487,14 +569,189 @@ def _resolve_parts_body(
     include: IncludeResolver | None,
     prompt_definitions: Mapping[str, PromptDefinitionIdentity] | None,
     invocations: list[PromptInvocation],
-    parent_invocation: int | None,
-    prompt_stack: tuple[str, ...],
-    depth: int,
 ) -> tuple[Part, ...]:
-    if depth > 16:
-        raise ToolangError("Prompt composition exceeded the maximum depth of 16.")
     rendered, slots = _render_body(body, values=values, types=types)
-    lines = rendered.splitlines(keepends=True)
+    expanded = _expand_prompt_text(
+        rendered,
+        slots=slots,
+        program=program,
+        prompt_definitions=prompt_definitions,
+        invocations=invocations,
+    )
+    return _parse_content_body(expanded, slots=slots, include=include)
+
+
+def _expand_prompt_text(
+    body: str,
+    *,
+    slots: Sequence[Part],
+    program: Program | None,
+    prompt_definitions: Mapping[str, PromptDefinitionIdentity] | None,
+    invocations: list[PromptInvocation],
+) -> str:
+    lines = body.splitlines(keepends=True)
+    output: list[str] = []
+    markdown_fence: tuple[str, int] | None = None
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        text, line_break = _split_line(line)
+        if markdown_fence is not None:
+            output.append(line)
+            if _closes_markdown_fence(text, markdown_fence):
+                markdown_fence = None
+            index += 1
+            continue
+
+        opened_fence = _opens_markdown_fence(text)
+        if opened_fence is not None:
+            output.append(line)
+            markdown_fence = opened_fence
+            index += 1
+            continue
+
+        call = _prompt_call(text)
+        if call is None:
+            output.append(line)
+            index += 1
+            continue
+
+        prompt_name = call.name
+        prompt, bindings = _resolve_prompt_call(
+            program,
+            prompt_name=prompt_name,
+            raw_args=call.raw_args,
+        )
+        bindings = {
+            name: _prompt_text(
+                value,
+                slots,
+                label=f"Argument {name} for prompt ${prompt_name}",
+            )
+            for name, value in bindings.items()
+        }
+        if prompt_definitions is None:
+            identity = prompt_definition_identity(prompt)
+        else:
+            identity = prompt_definitions.get(prompt_name)
+            if identity is None:
+                raise ToolangError(f"Prompt is unavailable: {prompt_name}")
+
+        following = "".join(lines[index + 1 :])
+        prompt_input, trailing = capture_call_input(
+            call.header,
+            following,
+            label=f"prompt ${prompt_name}",
+        )
+        call_input = CallInput(
+            _=prompt_input,
+            named=tuple(
+                NamedInputSource(parameter.name, bindings[parameter.name])
+                for parameter in prompt.params
+            ),
+        )
+        prompt_bindings = {item.name: item.source for item in call_input.named}
+        invocations.append(
+            PromptInvocation(
+                name=prompt_name,
+                arguments=tuple(prompt_bindings.items()),
+                parent=None,
+                cap_ref=identity.ref,
+                content_hash=identity.content_hash,
+            )
+        )
+
+        prompt_text = call_input._ or ""
+        form = call.input_form or "primary"
+        prompt_text = _prompt_text(
+            prompt_text,
+            slots,
+            label=f"{form.capitalize()} input for prompt ${prompt_name}",
+        )
+        _reject_nested_prompt_call(
+            prompt_text,
+            program=program,
+            label=f"input for prompt ${prompt_name}",
+        )
+
+        rendered_prompt = render_text_template(
+            prompt.body,
+            {"_": prompt_text, **prompt_bindings},
+        ).strip()
+        _reject_nested_prompt_call(
+            rendered_prompt,
+            program=program,
+            label=f"result of prompt ${prompt_name}",
+        )
+        output.append(rendered_prompt)
+        if call.input_form == "stream":
+            return "".join(output)
+        if call.input_form == "fenced":
+            output.append(
+                _expand_prompt_text(
+                    trailing,
+                    slots=slots,
+                    program=program,
+                    prompt_definitions=prompt_definitions,
+                    invocations=invocations,
+                )
+            )
+            return "".join(output)
+        if line_break:
+            output.append(line_break)
+        index += 1
+    return "".join(output)
+
+
+def _prompt_text(value: str, slots: Sequence[Part], *, label: str) -> str:
+    """Resolve authored part slots while preserving the prompt Text boundary."""
+
+    parts = _text_parts(value, slots)
+    text_parts: list[TextPart] = []
+    for part in parts:
+        if not isinstance(part, TextPart):
+            raise ToolangError(f"{label} must be text-only.")
+        text_parts.append(part)
+    return "".join(part.text for part in text_parts)
+
+
+def _reject_nested_prompt_call(
+    value: str,
+    *,
+    program: Program | None,
+    label: str,
+) -> None:
+    """Reject prompt-call syntax inside a prompt's textual boundary."""
+
+    prompt_names = (
+        {cap.name for cap in program.caps if cap.kind == "prompt"}
+        if program is not None
+        else set()
+    )
+    markdown_fence: tuple[str, int] | None = None
+    for line in value.splitlines():
+        if markdown_fence is not None:
+            if _closes_markdown_fence(line, markdown_fence):
+                markdown_fence = None
+            continue
+        opened_fence = _opens_markdown_fence(line)
+        if opened_fence is not None:
+            markdown_fence = opened_fence
+            continue
+        match = _PROMPT_CALL_RE.fullmatch(line)
+        if match is not None and match.group(1) in prompt_names:
+            raise ToolangError(
+                f"Nested prompt call ${match.group(1)} is not allowed in {label}."
+            )
+
+
+def _parse_content_body(
+    body: str,
+    *,
+    slots: Sequence[Part],
+    include: IncludeResolver | None,
+) -> tuple[Part, ...]:
+    lines = body.splitlines(keepends=True)
     output: list[Part] = []
     markdown_fence: tuple[str, int] | None = None
     index = 0
@@ -530,123 +787,9 @@ def _resolve_parts_body(
             index += 1
             continue
 
-        call = _prompt_call(text)
-        if call is not None:
-            prompt_name = call.name
-            prompt, bindings = _resolve_prompt_call(
-                program,
-                prompt_name=prompt_name,
-                raw_args=call.raw_args,
-                prompt_stack=prompt_stack,
-            )
-            if prompt_definitions is None:
-                identity = prompt_definition_identity(prompt)
-            else:
-                identity = prompt_definitions.get(prompt_name)
-                if identity is None:
-                    raise ToolangError(f"Prompt is unavailable: {prompt_name}")
-            invocation_index = len(invocations)
-            invocations.append(
-                PromptInvocation(
-                    name=prompt_name,
-                    arguments=tuple(
-                        (parameter.name, bindings[parameter.name])
-                        for parameter in prompt.params
-                    ),
-                    input_scope=call.scope,
-                    parent=parent_invocation,
-                    cap_ref=identity.ref,
-                    content_hash=identity.content_hash,
-                )
-            )
-            attached_body = ""
-            consumed = 1
-            following_break = line_break
-            if call.scope == "tail":
-                if not line_break or index + 1 >= len(lines):
-                    raise ToolangError(
-                        f"Tail prompt ${prompt_name} requires a following line."
-                    )
-                attached_body = "".join(lines[index + 1 :])
-                consumed = len(lines) - index
-                following_break = ""
-            elif call.scope == "inline":
-                assert call.inline is not None
-                prompt_input = _inline_prompt_input(
-                    call.inline,
-                    slots,
-                    prompt_name=prompt_name,
-                )
-            elif call.scope == "fenced":
-                if not line_break or index + 1 >= len(lines):
-                    raise ToolangError(
-                        f"Fenced prompt ${prompt_name} requires a following line."
-                    )
-                assert call.fence is not None
-                closing_index = _find_prompt_fence(
-                    lines,
-                    start=index + 1,
-                    fence=call.fence,
-                )
-                if closing_index is None:
-                    raise ToolangError(f"Unclosed prompt fence for ${prompt_name}.")
-                attached_body = "".join(lines[index + 1 : closing_index])
-                _, following_break = _split_line(lines[closing_index])
-                consumed = closing_index - index + 1
-            if call.scope != "inline":
-                prompt_input = _resolve_parts_body(
-                    attached_body,
-                    program=program,
-                    values=values,
-                    types=types,
-                    include=include,
-                    prompt_definitions=prompt_definitions,
-                    invocations=invocations,
-                    parent_invocation=invocation_index,
-                    prompt_stack=prompt_stack,
-                    depth=depth + 1,
-                )
-            _extend_parts(
-                output,
-                _resolve_prompt_parts(
-                    program,
-                    prompt,
-                    bindings=bindings,
-                    input=prompt_input,
-                    include=include,
-                    prompt_definitions=prompt_definitions,
-                    invocations=invocations,
-                    parent_invocation=invocation_index,
-                    prompt_stack=prompt_stack,
-                    depth=depth + 1,
-                ),
-            )
-            if following_break:
-                _append_part(output, TextPart(following_break))
-            index += consumed
-            continue
-
         _extend_parts(output, _text_parts(line, slots))
         index += 1
     return tuple(output)
-
-
-def _inline_prompt_input(
-    source: str,
-    slots: Sequence[Part],
-    *,
-    prompt_name: str,
-) -> tuple[Part, ...]:
-    parts = tuple(_text_parts(source, slots))
-    text_parts = tuple(part for part in parts if isinstance(part, TextPart))
-    if len(text_parts) != len(parts):
-        raise ToolangError(f"Inline prompt ${prompt_name} requires text-only input.")
-    text = "".join(part.text for part in text_parts)
-    if not text.strip():
-        raise ToolangError(
-            f"Inline prompt ${prompt_name} requires nonempty text input."
-        )
-    return (TextPart(text),)
 
 
 def _render_body(
@@ -680,51 +823,14 @@ def _render_body(
     return render_text_template(template, context), tuple(slots)
 
 
-def _resolve_prompt_parts(
-    program: Program | None,
-    prompt: CapDecl,
-    *,
-    bindings: Mapping[str, str],
-    input: tuple[Part, ...],
-    include: IncludeResolver | None,
-    prompt_definitions: Mapping[str, PromptDefinitionIdentity] | None,
-    invocations: list[PromptInvocation],
-    parent_invocation: int,
-    prompt_stack: tuple[str, ...],
-    depth: int,
-) -> tuple[Part, ...]:
-    prompt_name = prompt.name
-    return _strip_text_boundaries(
-        _resolve_parts_body(
-            prompt.body,
-            program=program,
-            values={"_": input, **bindings},
-            types={
-                "_": "Part[]",
-                **{parameter.name: "Text" for parameter in prompt.params},
-            },
-            include=include,
-            prompt_definitions=prompt_definitions,
-            invocations=invocations,
-            parent_invocation=parent_invocation,
-            prompt_stack=(*prompt_stack, prompt_name),
-            depth=depth,
-        )
-    )
-
-
 def _resolve_prompt_call(
     program: Program | None,
     *,
     prompt_name: str,
     raw_args: str,
-    prompt_stack: tuple[str, ...],
 ) -> tuple[CapDecl, dict[str, str]]:
     if program is None:
         raise ToolangError(f"Prompt not found: {prompt_name}")
-    if prompt_name in prompt_stack:
-        chain = " -> ".join((*prompt_stack, prompt_name))
-        raise ToolangError(f"Prompt cycle: {chain}")
     prompt = next(
         (
             item
@@ -766,9 +872,11 @@ def prompt_definition_identity(
 class _PromptCall:
     name: str
     raw_args: str
-    scope: PromptInputScope
-    fence: str | None = None
-    inline: str | None = None
+    header: CallInputHeader
+
+    @property
+    def input_form(self) -> CallInputForm | None:
+        return self.header.form
 
 
 def _prompt_call(line: str) -> _PromptCall | None:
@@ -777,32 +885,12 @@ def _prompt_call(line: str) -> _PromptCall | None:
         return None
     prompt_name = match.group(1)
     raw = match.group(2) or ""
-    for start, end, token in _unquoted_plain_tokens(raw):
-        if token != "--":
-            continue
-        inline = raw[end:].lstrip(" \t")
-        if not inline:
-            raise ToolangError(f"Inline prompt ${prompt_name} requires nonempty text.")
-        return _PromptCall(
-            prompt_name,
-            raw[:start].rstrip(),
-            "inline",
-            inline=inline,
-        )
-    terminal = _unquoted_terminal_token(raw)
-    if terminal is None:
-        return _PromptCall(prompt_name, raw.strip(), "none")
-    start, token = terminal
-    if token == "-":
-        return _PromptCall(prompt_name, raw[:start].rstrip(), "tail")
-    if len(token) >= 3 and set(token) == {"`"}:
-        return _PromptCall(
-            prompt_name,
-            raw[:start].rstrip(),
-            "fenced",
-            fence=token,
-        )
-    return _PromptCall(prompt_name, raw.strip(), "none")
+    header = parse_call_input_header(raw, label=f"prompt ${prompt_name}")
+    return _PromptCall(
+        prompt_name,
+        header.arguments,
+        header,
+    )
 
 
 def _unquoted_plain_tokens(value: str) -> tuple[tuple[int, int, str], ...]:
@@ -844,46 +932,6 @@ def _unquoted_plain_tokens(value: str) -> tuple[tuple[int, int, str], ...]:
     return tuple(result)
 
 
-def _unquoted_terminal_token(value: str) -> tuple[int, str] | None:
-    quote: str | None = None
-    escaped = False
-    token_start: int | None = None
-    token_is_plain = True
-    last: tuple[int, str] | None = None
-    for index, character in enumerate(value):
-        if escaped:
-            escaped = False
-            token_is_plain = False
-            continue
-        if character == "\\":
-            if token_start is None:
-                token_start = index
-            escaped = True
-            continue
-        if character in {'"', "'"}:
-            if token_start is None:
-                token_start = index
-            token_is_plain = False
-            quote = (
-                None if quote == character else character if quote is None else quote
-            )
-            continue
-        if quote is None and character in " \t":
-            if token_start is not None:
-                if token_is_plain:
-                    last = (token_start, value[token_start:index])
-                else:
-                    last = None
-                token_start = None
-                token_is_plain = True
-            continue
-        if token_start is None:
-            token_start = index
-    if token_start is not None:
-        return (token_start, value[token_start:]) if token_is_plain else None
-    return last
-
-
 def _split_line(line: str) -> tuple[str, str]:
     if line.endswith("\r\n"):
         return line[:-2], "\r\n"
@@ -914,19 +962,6 @@ def _closes_markdown_fence(
         and set(match.group(1)) == {marker}
         and len(match.group(1)) >= minimum
     )
-
-
-def _find_prompt_fence(
-    lines: Sequence[str],
-    *,
-    start: int,
-    fence: str,
-) -> int | None:
-    for index in range(start, len(lines)):
-        text, _ = _split_line(lines[index])
-        if text == fence:
-            return index
-    return None
 
 
 def _include_reference(line: str) -> str:
@@ -973,15 +1008,6 @@ def _append_part(output: list[Part], part: Part) -> None:
         output[-1] = TextPart(output[-1].text + part.text)
         return
     output.append(part)
-
-
-def _strip_text_boundaries(parts: tuple[Part, ...]) -> tuple[Part, ...]:
-    result = list(parts)
-    if result and isinstance(result[0], TextPart):
-        result[0] = TextPart(result[0].text.lstrip())
-    if result and isinstance(result[-1], TextPart):
-        result[-1] = TextPart(result[-1].text.rstrip())
-    return tuple(part for part in result if not isinstance(part, TextPart) or part.text)
 
 
 def _replace_direct_value(template: str, name: str, value: str) -> str:

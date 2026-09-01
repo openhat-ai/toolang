@@ -3,6 +3,9 @@
 Status: Approved for implementation on 2026-08-29; legacy aliases were removed
 from the approved scope on 2026-08-29.
 
+> The prompt-input forms and prompt-composition rules in this historical plan
+> are superseded by [Define Call Input](./call-input.md).
+
 ## Work Type
 
 Feature definition for terminal-chat commands, execution-policy directives,

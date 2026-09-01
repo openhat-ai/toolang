@@ -267,7 +267,18 @@ def test_resolve_spec_binds_policy_primary_and_typed_named_inputs(
         harness.store.close()
 
 
-def test_resolve_spec_preserves_authored_prompt_input_and_provenance(tmp_path) -> None:
+@pytest.mark.parametrize(
+    "prompt_source",
+    [
+        "$review focus=security -- inspect this",
+        "$review focus=security -\ninspect this",
+        "$review focus=security ---\ninspect this\n---",
+    ],
+)
+def test_resolve_spec_preserves_authored_prompt_input_and_provenance(
+    tmp_path,
+    prompt_source: str,
+) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -282,9 +293,7 @@ agic default(_: Part[]):
         responses=[],
     )
     try:
-        commands, input = parse_call(
-            ":limit time=30\n\n$review focus=security -- inspect this"
-        )
+        commands, input = parse_call(f":limit time=30\n\n{prompt_source}")
         spec = resolve_spec(
             commands,
             input,
@@ -297,15 +306,12 @@ agic default(_: Part[]):
         assert spec.input.primary == Array(
             "Part[]", (TextPart("security inspect this"),)
         )
-        assert spec.authored_input == RunnableInputRaw(
-            _="$review focus=security -- inspect this"
-        )
+        assert spec.authored_input == RunnableInputRaw(_=prompt_source)
         assert spec.authored_commands == (RunCommand("limit", "time", 30),)
         assert len(spec.prompt_invocations) == 1
         invocation = spec.prompt_invocations[0]
         assert invocation.name == "review"
         assert invocation.arguments == (("focus", "security"),)
-        assert invocation.input_scope == "inline"
         assert invocation.parent is None
         assert invocation.cap_ref
         assert len(invocation.content_hash) == 64
