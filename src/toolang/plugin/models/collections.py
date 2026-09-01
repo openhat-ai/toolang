@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
 from types import MappingProxyType
@@ -165,11 +165,29 @@ class ModelCollection:
     _by_ref: Mapping[str, ModelEntry]
     _matcher: QueryDataset[ModelQueryView]
 
-    def __init__(self, entries: Sequence[ModelEntry] = ()) -> None:
+    def __init__(
+        self,
+        entries: Sequence[ModelEntry] = (),
+        *,
+        query_views: Sequence[ModelQueryView] | None = None,
+    ) -> None:
         values = tuple(entries)
         _validate_model_entries(values)
+        if query_views is None:
+            views = tuple(_model_entry_view(entry) for entry in values)
+        else:
+            raw_views = tuple(query_views)
+            if tuple(view.key for view in raw_views) != tuple(
+                entry.key for entry in values
+            ):
+                raise ValueError("model query views must match collection entry keys")
+            views = tuple(
+                replace(view, record=entry)
+                for entry, view in zip(values, raw_views, strict=True)
+            )
         matcher = MODEL_DEFINITION.dataset(
-            tuple(_model_entry_view(entry) for entry in values)
+            views,
+            _prevalidated=query_views is not None,
         )
         self._initialize(values, matcher=matcher)
 
@@ -252,7 +270,7 @@ class ModelCollection:
     def compact(self) -> ModelCollection:
         """Fix this subset as a standalone publication matcher."""
 
-        return ModelCollection(self.entries)
+        return ModelCollection(self.entries, query_views=self.query_views())
 
     def contains(self, ref: str) -> bool:
         """Return whether one exact public ref is available."""
@@ -268,6 +286,12 @@ class ModelCollection:
         """Return stable resource keys in collection order."""
 
         return tuple(entry.key for entry in self.entries)
+
+    def query_views(self) -> tuple[ModelQueryView, ...]:
+        """Return query facts aligned with the effective collection entries."""
+
+        by_key = {view.key: view for view in self._matcher.items}
+        return tuple(by_key[entry.key] for entry in self.entries)
 
     def __bool__(self) -> bool:
         return bool(self.entries)
@@ -319,21 +343,38 @@ def catalog_model_dataset(
     include_local: bool = True,
     available: set[str] | None = None,
     adapters: Mapping[str, str] | None = None,
+    query_views: Sequence[ModelQueryView] | None = None,
 ) -> QueryDataset[ModelQueryView]:
     """Materialize one model catalog snapshot for generic querying."""
 
     available_identities = available or set()
     adapter_by_identity = adapters or {}
-    items = tuple(
-        _catalog_model_view(
-            model,
-            available=model.identity in available_identities,
-            adapter=adapter_by_identity.get(model.identity),
-        )
-        for model in snapshot.models
-        if include_local or not model.local
+    models = tuple(
+        model for model in snapshot.models if include_local or not model.local
     )
-    return MODEL_DEFINITION.dataset(items)
+    if query_views is None:
+        items = tuple(
+            _catalog_model_view(
+                model,
+                available=model.identity in available_identities,
+                adapter=adapter_by_identity.get(model.identity),
+            )
+            for model in models
+        )
+    else:
+        raw_views = tuple(query_views)
+        if tuple(view.key for view in raw_views) != tuple(
+            model.identity for model in models
+        ):
+            raise ValueError("catalog query views must match catalog model identities")
+        items = tuple(
+            replace(view, record=model)
+            for model, view in zip(models, raw_views, strict=True)
+        )
+    return MODEL_DEFINITION.dataset(
+        items,
+        _prevalidated=query_views is not None,
+    )
 
 
 def catalog_provider_views(

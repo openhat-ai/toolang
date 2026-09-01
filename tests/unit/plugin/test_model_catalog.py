@@ -177,6 +177,7 @@ def test_catalog_source_precedence_and_explicit_failure(tmp_path: Path) -> None:
         path.write_text(json.dumps(_catalog_data()), encoding="utf-8")
 
     assert resolve_model_catalog_path(layout) == home.resolve()
+    assert resolve_model_catalog_path(layout, include_agent=False) == root.resolve()
     assert (
         resolve_model_catalog_path(layout, environ={"TOOLANG_MODEL_CATALOG": str(root)})
         == root.resolve()

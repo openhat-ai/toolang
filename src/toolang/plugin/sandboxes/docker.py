@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -27,6 +28,7 @@ from toolang.base.types.sandbox import (
     SandboxRequest,
 )
 from toolang.common.progress import emit_progress
+from toolang.plugin.models.catalog import MODEL_CATALOG_ENV
 
 from ._docker_cli import (
     DEFAULT_HOST_GATEWAY,
@@ -130,6 +132,45 @@ def _linked_agent_file_mounts(
     return tuple(mounts)
 
 
+def _hosted_model_catalog_mounts(
+    request: SandboxRequest,
+    dotenv_envs: dict[str, str],
+    process_envs: dict[str, str],
+) -> tuple[SandboxMount, ...]:
+    """Rewrite selected catalog paths and mount host-external sources read-only."""
+
+    mounts: dict[tuple[Path, Path], SandboxMount] = {}
+    local_root = request.local_root.resolve()
+    local_home = request.local_home.resolve()
+    for section in (dotenv_envs, process_envs):
+        raw_path = section.get(MODEL_CATALOG_ENV)
+        if raw_path is None or not raw_path.strip():
+            continue
+        local_path = Path(raw_path).expanduser().resolve(strict=True)
+        if not local_path.is_file():
+            raise ValueError(f"model catalog is not a regular file: {local_path}")
+        try:
+            relative = local_path.relative_to(local_home)
+        except ValueError:
+            pass
+        else:
+            section[MODEL_CATALOG_ENV] = str(request.hosted_home / relative)
+            continue
+        try:
+            relative = local_path.relative_to(local_root)
+        except ValueError:
+            digest = sha256(str(local_path).encode("utf-8")).hexdigest()[:12]
+            hosted_path = (
+                request.hosted_root / ".inputs" / "models" / f"catalog-{digest}.json"
+            )
+        else:
+            hosted_path = request.hosted_root / relative
+        section[MODEL_CATALOG_ENV] = str(hosted_path)
+        mount = SandboxMount(local_path, hosted_path, read_only=True)
+        mounts[(local_path, hosted_path)] = mount
+    return tuple(mounts.values())
+
+
 @dataclass(slots=True)
 class DockerSandbox:
     """Stage and run the AgentServer as a Docker container's main workload."""
@@ -228,6 +269,11 @@ class DockerSandbox:
         image = _image(spec, self._default_image)
         runtime_dir = request.hosted_home / ".runtime" / "sandbox"
         dotenv_envs, process_envs = self._guest_environment_sections(request)
+        model_catalog_mounts = _hosted_model_catalog_mounts(
+            request,
+            dotenv_envs,
+            process_envs,
+        )
         validate_guest_environment(dotenv_envs)
         validate_guest_environment(process_envs)
         hosted_log_path = prepare_background_log(request)
@@ -275,6 +321,7 @@ class DockerSandbox:
             *request.mounts,
             SandboxMount(request.local_home, request.hosted_home),
             *_linked_agent_file_mounts(request),
+            *model_catalog_mounts,
             SandboxMount(
                 guest_env_path,
                 request.hosted_home / ".env",

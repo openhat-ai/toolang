@@ -15,6 +15,7 @@ from toolang.base.types.model import ModelCatalogSnapshot, ModelInfo
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.plugin.config import merge_plugin_configs
+from toolang.plugin.loading import plugin_provenance
 from toolang.plugin.models.catalog import (
     MergedModelCatalog,
     ModelsDevModelCatalog,
@@ -23,8 +24,10 @@ from toolang.plugin.models.catalog import (
 )
 from toolang.plugin.models.cache import (
     CachedModelProjection,
-    FileFingerprint,
+    CatalogSource,
+    FileObservation,
     ModelProjectionCache,
+    capture_catalog_source,
     environment_readiness,
     hydrate_model_infos,
     model_projection_key,
@@ -34,6 +37,7 @@ from toolang.plugin.models.config import (
     configure_catalog_providers,
     parse_provider_configs,
 )
+from toolang.plugin.models.collections import ModelQueryView
 from toolang.plugin.models.loading import load_model_adapters, load_model_catalogs
 from toolang.plugin.models.provider_resolver import resolve_catalog_providers
 from toolang.plugin.models.resolution import build_model_collection
@@ -44,6 +48,7 @@ from .config import (
     load_agent_config,
     load_setup_config,
     load_setup_envs,
+    project_model_setup_config,
     project_setup_config,
     resolve_run_defaults,
     resolve_run_limits,
@@ -90,18 +95,18 @@ class _Candidate:
     adapters: dict[str, ModelAdapter]
     tools: dict[str, AgentTool]
     catalogs: dict[str, ModelCatalog]
-    source: FileFingerprint
+    observation: FileObservation
+    source: CatalogSource
     static: ModelCatalogSnapshot
     additional: tuple[tuple[str, ModelCatalogSnapshot], ...]
-    cache_entry: CachedModelProjection | None
 
 
 @dataclass(frozen=True, slots=True)
 class _PendingModelCache:
-    source: FileFingerprint
-    static: ModelCatalogSnapshot
     projection_key: str
     model_infos: tuple[ModelInfo, ...]
+    query_views: tuple[ModelQueryView, ...]
+    environment_names: tuple[str, ...]
 
 
 class SetupWatcher:
@@ -135,10 +140,22 @@ class SetupWatcher:
         self._additional_catalogs: (
             tuple[tuple[str, ModelCatalogSnapshot], ...] | None
         ) = None
-        self._catalog_identity: FileFingerprint | None = None
+        self._catalog_identity: FileObservation | None = None
+        self._catalog_source: CatalogSource | None = None
         self._cache_entry: CachedModelProjection | None = None
+        self._pending_catalog_cache: (
+            tuple[CatalogSource, ModelCatalogSnapshot] | None
+        ) = None
         self._pending_model_cache: _PendingModelCache | None = None
-        self._model_cache = ModelProjectionCache(layout.model_cache)
+        self._model_cache = ModelProjectionCache(
+            layout.root_model_cache,
+            layout.home_model_cache,
+        )
+        self._model_plugin_provenance = tuple(
+            item.to_data()
+            for group in ("toolang.model_catalog", "toolang.model_adapter")
+            for item in plugin_provenance(group=group)
+        )
         self._setup: AgentSetup | None = None
         self._diagnostics: tuple[SetupDiagnostic, ...] = ()
         self._refresh_lock = asyncio.Lock()
@@ -215,33 +232,39 @@ class SetupWatcher:
         models_dev = catalogs.get("models_dev")
         if models_dev is None:
             raise RuntimeError("models_dev catalog plugin is not installed")
-        source = FileFingerprint.capture(catalog_path)
         max_source_bytes = (
             models_dev.max_bytes
             if isinstance(models_dev, ModelsDevModelCatalog)
             else None
         )
-        source_cacheable = max_source_bytes is None or source.size <= max_source_bytes
-        cache_entry = (
-            self._cache_entry
-            if source_cacheable and self._catalog_identity == source
-            else None
-        )
-        if cache_entry is None and source_cacheable:
-            cache_entry = self._model_cache.load(
-                source,
-                max_source_bytes=max_source_bytes,
+        observation = FileObservation.capture(catalog_path)
+        if max_source_bytes is not None and observation.size > max_source_bytes:
+            raise ValueError(
+                f"model catalog exceeds {max_source_bytes} bytes: {observation.path}"
             )
         if (
-            source_cacheable
-            and self._catalog_identity == source
+            observation == self._catalog_identity
+            and self._catalog_source is not None
             and self._static_catalog is not None
         ):
+            source = self._catalog_source
             static = self._static_catalog
-        elif cache_entry is not None:
-            static = cache_entry.static
         else:
-            static = await models_dev.snapshot()
+            observation, source = await asyncio.to_thread(
+                capture_catalog_source,
+                catalog_path,
+                max_source_bytes=max_source_bytes,
+            )
+            static = await asyncio.to_thread(
+                self._model_cache.load_catalog,
+                source,
+                source_path=catalog_path,
+            )
+            if static is None:
+                static = await models_dev.snapshot()
+                if static.revision != source.digest:
+                    raise ValueError("models_dev revision does not match its source")
+                await self._store_catalog_cache(source, static)
         ordered_catalogs = _ordered_additional_catalogs(catalogs)
         additional_snapshots = tuple(
             await asyncio.gather(*(catalog.snapshot() for catalog in ordered_catalogs))
@@ -263,13 +286,13 @@ class SetupWatcher:
             adapters=adapters,
             tools=tools,
             catalogs=catalogs,
+            observation=observation,
             source=source,
             static=static,
             additional=additional,
-            cache_entry=cache_entry,
         )
         if self._candidate_is_unchanged(candidate):
-            await self._persist_pending_model_cache(candidate.source)
+            await self._persist_pending_model_cache()
             self._commit_candidate(candidate)
             self._diagnostics = ()
             return self.current()
@@ -281,30 +304,32 @@ class SetupWatcher:
             provider_configs=provider_configs,
         )
         projection_key = _projection_key(
-            source=source,
             additional=additional,
-            config_value=config_value,
+            config_value=tuple(
+                project_model_setup_config(config) for config in configs
+            ),
             merged=merged,
             envs=inputs.envs,
-            adapters=adapters,
             provider_configs=provider_configs,
+            allow_models=allow.models,
+            plugin_provenance=self._model_plugin_provenance,
+            scope=f"agent:{self.layout.name}",
         )
-        model_infos = None
-        if (
-            cache_entry is not None
-            and cache_entry.projection_key == projection_key
-            and cache_entry.model_infos is not None
-        ):
-            model_infos = hydrate_model_infos(
-                cache_entry.model_infos,
-                resolved_catalog,
+        cache_entry = (
+            self._cache_entry
+            if self._cache_entry is not None and self._cache_entry.key == projection_key
+            else await asyncio.to_thread(
+                self._model_cache.load_context,
+                projection_key,
             )
-        projection_cache_hit = model_infos is not None
-        cache_entry_valid = (
-            cache_entry is not None
-            and cache_entry.projection_key == projection_key
-            and (cache_entry.model_infos is None or projection_cache_hit)
         )
+        model_infos = (
+            hydrate_model_infos(cache_entry.model_infos, resolved_catalog)
+            if cache_entry is not None
+            else None
+        )
+        if cache_entry is not None and model_infos is None:
+            cache_entry = None
         if model_infos is None:
             model_infos = tuple(
                 model_info_from_catalog(model) for model in resolved_catalog.models
@@ -321,6 +346,8 @@ class SetupWatcher:
             allow=allow,
             defaults=defaults,
             limits=limits,
+            query_views=(cache_entry.query_views if cache_entry is not None else None),
+            apply_model_allow=cache_entry is None,
         )
         if self._setup is not None and _setups_equal(setup, self._setup):
             setup = self._setup
@@ -328,26 +355,31 @@ class SetupWatcher:
             self._setup = setup
         self._commit_candidate(candidate)
         self._diagnostics = ()
-        cached_infos = (
-            cache_entry.model_infos
-            if projection_cache_hit
-            and cache_entry is not None
-            and cache_entry.model_infos is not None
-            else model_infos
-        )
-        self._cache_entry = CachedModelProjection(
-            source=source,
-            static=static,
-            projection_key=projection_key,
-            model_infos=cached_infos,
-        )
-        if not cache_entry_valid:
+        if cache_entry is None:
+            model_infos = tuple(entry.info for entry in setup.models.entries)
+            query_views = setup.models.query_views()
+            self._cache_entry = CachedModelProjection(
+                key=projection_key,
+                model_infos=model_infos,
+                query_views=query_views,
+            )
             self._pending_model_cache = _PendingModelCache(
-                source=source,
-                static=static,
                 projection_key=projection_key,
                 model_infos=model_infos,
+                query_views=query_views,
+                environment_names=tuple(
+                    sorted(
+                        _projection_environment_readiness(
+                            merged,
+                            inputs.envs,
+                            provider_configs,
+                        )
+                    )
+                ),
             )
+            await self._persist_pending_model_cache()
+        else:
+            self._cache_entry = cache_entry
         return setup
 
     def _load_inputs(self) -> _LoadedInputs:
@@ -410,7 +442,7 @@ class SetupWatcher:
             self._setup is not None
             and candidate.config_value == self._config
             and candidate.inputs.envs == self._setup.envs
-            and candidate.source == self._catalog_identity
+            and candidate.observation == self._catalog_identity
             and candidate.adapter_configs == self._adapter_configs
             and candidate.toolset_configs == self._toolset_configs
             and candidate.catalog_configs == self._catalog_configs
@@ -426,24 +458,49 @@ class SetupWatcher:
         self._adapters = candidate.adapters
         self._tools = candidate.tools
         self._catalogs = candidate.catalogs
-        self._catalog_identity = candidate.source
+        self._catalog_identity = candidate.observation
+        self._catalog_source = candidate.source
         self._static_catalog = candidate.static
         self._additional_catalogs = candidate.additional
-        if candidate.cache_entry is not None:
-            self._cache_entry = candidate.cache_entry
 
-    async def _persist_pending_model_cache(self, source: FileFingerprint) -> None:
+    async def _store_catalog_cache(
+        self,
+        source: CatalogSource,
+        static: ModelCatalogSnapshot,
+    ) -> None:
+        self._pending_catalog_cache = (source, static)
+        await self._persist_pending_model_cache()
+
+    async def _persist_pending_model_cache(self) -> None:
+        pending_catalog = self._pending_catalog_cache
+        if pending_catalog is not None:
+            source, static = pending_catalog
+            self._pending_catalog_cache = None
+            try:
+                await asyncio.to_thread(
+                    self._model_cache.store_catalog,
+                    source=source,
+                    snapshot=static,
+                )
+            except asyncio.CancelledError:
+                self._pending_catalog_cache = pending_catalog
+                raise
+            except Exception:
+                self._pending_catalog_cache = pending_catalog
+                logger.exception(
+                    "setup.catalog_cache_write_failed agent=%s", self.layout.name
+                )
         pending = self._pending_model_cache
-        if pending is None or pending.source != source:
+        if pending is None:
             return
         self._pending_model_cache = None
         try:
             await asyncio.to_thread(
-                self._model_cache.store,
-                source=pending.source,
-                static=pending.static,
-                projection_key=pending.projection_key,
+                self._model_cache.store_context,
+                key=pending.projection_key,
                 model_infos=pending.model_infos,
+                query_views=pending.query_views,
+                environment_names=pending.environment_names,
             )
         except asyncio.CancelledError:
             self._pending_model_cache = pending
@@ -541,14 +598,17 @@ def _build_setup(
     allow: AgentCeiling,
     defaults: RunDefaults,
     limits: RunLimits,
+    query_views: tuple[ModelQueryView, ...] | None = None,
+    apply_model_allow: bool = True,
 ) -> AgentSetup:
     models = build_model_collection(
         providers=resolved_catalog.providers,
         models=model_infos,
         envs=envs,
         provider_configs=provider_configs,
+        query_views=query_views,
     )
-    if allow.models is not None:
+    if apply_model_allow and allow.models is not None:
         models = models.match(allow.models).compact()
     tool_collection = ToolCollection.from_tools(tools)
     if allow.tools is not None:
@@ -585,28 +645,40 @@ def _build_setup(
 
 def _projection_key(
     *,
-    source: FileFingerprint,
     additional: tuple[tuple[str, ModelCatalogSnapshot], ...],
     config_value: object,
     merged: ModelCatalogSnapshot,
     envs: Mapping[str, str],
-    adapters: Mapping[str, ModelAdapter],
     provider_configs: Mapping[str, ProviderConfig],
+    allow_models: tuple[str, ...] | None,
+    plugin_provenance: tuple[object, ...],
+    scope: str,
 ) -> str:
-    readiness = environment_readiness(merged, envs)
-    for config in provider_configs.values():
-        if config.key_env is not None:
-            readiness[config.key_env] = bool(envs.get(config.key_env, "").strip())
+    readiness = _projection_environment_readiness(merged, envs, provider_configs)
     return model_projection_key(
-        source=source,
+        kind="runtime",
+        scope=scope,
         catalog_revisions=(
             ("models_dev", merged.revision),
             *((name, snapshot.revision) for name, snapshot in additional),
         ),
         setup_config=config_value,
         environment_readiness=readiness,
-        adapters=tuple(adapters),
+        plugin_provenance=plugin_provenance,
+        allow_models=allow_models,
     )
+
+
+def _projection_environment_readiness(
+    merged: ModelCatalogSnapshot,
+    envs: Mapping[str, str],
+    provider_configs: Mapping[str, ProviderConfig],
+) -> dict[str, bool]:
+    readiness = environment_readiness(merged, envs)
+    for config in provider_configs.values():
+        if config.key_env is not None:
+            readiness[config.key_env] = bool(envs.get(config.key_env, "").strip())
+    return readiness
 
 
 def _ordered_additional_catalogs(

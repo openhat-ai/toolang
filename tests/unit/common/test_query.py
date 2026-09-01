@@ -369,6 +369,29 @@ def test_one_component_identity_treats_separators_as_data() -> None:
     assert [item.key for item in dataset.query('"https://example.test/a/b"')] == ["b"]
 
 
+def test_identity_matches_includes_bound_components() -> None:
+    schema = CollectionSchema.from_type(
+        "skills",
+        RefView,
+        key="key",
+        identity=IdentitySpec(
+            paths=("ref",),
+            labels=("skill", "skill"),
+            separator="/",
+            bound=("skill",),
+        ),
+        exclude=("key", "ref"),
+    )
+
+    assert schema.identity_matches(("build",), schema.parse("skill/build").matches[0])
+    assert schema.identity_matches(("build",), schema.parse("build").matches[0])
+    assert not schema.identity_matches(
+        ("build",), schema.parse("prompt/build").matches[0]
+    )
+    with pytest.raises(ToolangError, match="expected 1 identity components"):
+        schema.identity_matches(("skill", "build"), schema.parse("build").matches[0])
+
+
 def test_matches_preserve_base_order_and_deduplicate(
     models: QueryDataset[ModelView],
 ) -> None:

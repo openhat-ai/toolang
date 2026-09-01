@@ -385,6 +385,22 @@ class CollectionSchema(Generic[_T]):
 
         return format_identity(self.identity_for(item), exact=True)
 
+    def identity_matches(
+        self,
+        components: Sequence[str],
+        match: Match,
+    ) -> bool:
+        """Return whether canonical identity components satisfy one match."""
+
+        provided = tuple(components)
+        if len(provided) != len(self.identity.paths):
+            raise ToolangError(
+                f"collection {self.name!r} expected "
+                f"{len(self.identity.paths)} identity components"
+            )
+        values = (*self.identity.bound, *provided)
+        return _identity_matches(values, self.identity, match)
+
     def to_data(self) -> dict[str, object]:
         """Return a deterministic machine-readable query schema."""
 
@@ -456,10 +472,17 @@ class CollectionDefinition(Generic[_T]):
         *,
         overlays: Mapping[Hashable, Mapping[str, object]] | None = None,
         complete: bool = True,
+        _prevalidated: bool = False,
     ) -> QueryDataset[_T]:
         """Bind the definition to one immutable base snapshot."""
 
-        return QueryDataset(self.schema, items, overlays=overlays, complete=complete)
+        return QueryDataset(
+            self.schema,
+            items,
+            overlays=overlays,
+            complete=complete,
+            _prevalidated=_prevalidated,
+        )
 
 
 class QueryDataset(Generic[_T]):
@@ -474,6 +497,7 @@ class QueryDataset(Generic[_T]):
         *,
         overlays: Mapping[Hashable, Mapping[str, object]] | None = None,
         complete: bool = True,
+        _prevalidated: bool = False,
     ) -> None:
         if not complete:
             raise ToolangError(
@@ -503,6 +527,8 @@ class QueryDataset(Generic[_T]):
             seen.add(key)
             keys.append(key)
             schema.identity_components(item)
+            if _prevalidated:
+                continue
             for field in schema.fields.values():
                 values = self._field_values(item, key, field)
                 for value in values:

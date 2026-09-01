@@ -37,6 +37,11 @@ merge multiple static files and does not download catalog data during startup.
 Users can replace a root or home file with any externally downloaded complete
 snapshot.
 
+When no agent is selected, inspection uses only the root source and root model
+context; it does not read an implicit `agents/default`. In a Docker guest, an
+external `--models` source is mounted read-only and
+`TOOLANG_MODEL_CATALOG` is rewritten to its guest path.
+
 The importer keeps models.dev provider and model fields at the top level,
 preserves unknown additive fields, parses prices as decimal values, and rejects
 an invalid complete snapshot. `Provider.to_data()` and `Model.to_data()` emit
@@ -63,10 +68,23 @@ Built-in implementations are:
 
 A catalog plugin receives concrete configuration from its factory call. It
 must not read global CLI state or install packages. Local catalog plugins probe
-only their configured/default endpoint, use short timeouts, and keep results in
-the current setup snapshot. There is no TTL, disk, or last-good model cache.
-The setup watcher re-probes dynamic catalogs on every refresh while reusing an
-unchanged parsed static file.
+only their configured/default endpoint and use short timeouts. The setup watcher
+re-probes dynamic catalogs every five seconds and publishes their current result;
+callers only read the published Setup. Persistent caching applies to the static
+catalog and derived model query facts, not to dynamic probe results or a fallback
+runtime snapshot.
+
+The static file is cached by a portable content revision below root `.setup`.
+Each root or agent model context has its own content-addressed projection below
+the owning `.setup`, including all model sizes and query facts. A compact
+`identity.json` beside each projection supports query miss checks without
+loading the full model context. Cache identities cover model-affecting
+configuration, plugin provenance, environment readiness, catalog revisions,
+and effective `allow.models`; they contain neither absolute paths nor
+environment values. A cache produced on the host is therefore reusable when
+the same root and home are mounted at different guest paths. Invalid or unsafe
+entries are misses, and a cache write failure does not reject a valid in-memory
+Setup.
 
 External catalog entry points are opt-in. Configure one by its entry-point name:
 
