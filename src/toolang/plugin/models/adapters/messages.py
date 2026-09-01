@@ -240,14 +240,13 @@ def messages_payload(
             }
             for tool in request.tools
         ]
+    payload.update(options)
     _apply_reasoning(payload, target.reasoning)
     _apply_structured_output(
         payload,
-        options,
         request.output_schema,
         native_schema=native_schema,
     )
-    payload.update(options)
     return payload
 
 
@@ -401,32 +400,24 @@ def _merge_continuation(
 
 def _apply_structured_output(
     payload: dict[str, object],
-    options: dict[str, Any],
     schema: dict[str, object] | None,
     *,
     native_schema: dict[str, object] | None,
 ) -> None:
     if schema is None:
         return
-    raw_options = options.pop("output_config", None)
-    if raw_options is not None and not isinstance(raw_options, Mapping):
-        raise ToolangError(
-            "Messages output_config format conflicts with normalized structured output"
-        )
-    option_config = (
-        dict(cast(Mapping[str, object], raw_options)) if raw_options is not None else {}
-    )
-    if "format" in option_config:
-        raise ToolangError(
-            "Messages output_config format conflicts with normalized structured output"
-        )
     raw_current = payload.get("output_config")
+    if raw_current is not None and not isinstance(raw_current, Mapping):
+        raise ToolangError(
+            "Messages output_config format conflicts with normalized structured output"
+        )
     current = (
-        dict(cast(Mapping[str, object], raw_current))
-        if isinstance(raw_current, Mapping)
-        else {}
+        dict(cast(Mapping[str, object], raw_current)) if raw_current is not None else {}
     )
-    current.update(option_config)
+    if "format" in current:
+        raise ToolangError(
+            "Messages output_config format conflicts with normalized structured output"
+        )
     if native_schema is not None:
         current["format"] = {
             "type": "json_schema",
@@ -558,12 +549,25 @@ def _apply_reasoning(
         raise ToolangError("enabled Messages reasoning conflicts with effort 'none'")
     if (enabled is False or effort == "none") and budget is not None:
         raise ToolangError("disabled Messages reasoning conflicts with a token budget")
+    payload.pop("thinking", None)
+    raw_output_config = payload.get("output_config")
+    if raw_output_config is not None and not isinstance(raw_output_config, Mapping):
+        raise ToolangError("Messages output_config must be an object")
+    output_config = (
+        dict(cast(Mapping[str, object], raw_output_config))
+        if raw_output_config is not None
+        else {}
+    )
+    output_config.pop("effort", None)
     if enabled is False or effort == "none":
         payload["thinking"] = {"type": "disabled"}
-        return
-    if isinstance(budget, int) and not isinstance(budget, bool):
+    elif isinstance(budget, int) and not isinstance(budget, bool):
         payload["thinking"] = {"type": "enabled", "budget_tokens": budget}
     elif enabled is True or isinstance(effort, str):
         payload["thinking"] = {"type": "adaptive"}
-    if isinstance(effort, str):
-        payload["output_config"] = {"effort": effort}
+    if isinstance(effort, str) and effort != "none":
+        output_config["effort"] = effort
+    if output_config:
+        payload["output_config"] = output_config
+    else:
+        payload.pop("output_config", None)

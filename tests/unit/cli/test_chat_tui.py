@@ -3223,6 +3223,50 @@ def test_chat_tui_request_build_failure_retains_input_and_active_run(
     assert app.run_in_flight.is_set()
 
 
+def test_chat_tui_rejects_known_unsupported_colon_effort_in_status() -> None:
+    class UnsupportedEffortClient(FakeClient):
+        def build_request(
+            self,
+            thread_id: str,
+            override: RunOverride,
+            input: RunnableInputRaw,
+            setting: SessionSetting,
+        ) -> RunRequest:
+            del override, setting
+            return RunRequest(
+                thread_id=thread_id,
+                request_id="term_request",
+                runnable=RunnableRequest("agic:chat", input),
+                model=ModelRequest(
+                    "openai/gpt-5",
+                    ModelParameters(ReasoningParameters(effort="medium")),
+                ),
+                policy=RunPolicy(),
+            )
+
+    source = ":model effort=medium\nhello"
+    app = tui.ChatTuiApp(
+        thread_id="term_remote",
+        setting=FakeClient().initial_setting(),
+        home="/tmp/agent",
+        input_history=None,
+        client=UnsupportedEffortClient(),
+    )
+    app.prompt.buffer.text = source
+    app.prompt.buffer.cursor_position = 8
+
+    consumed = app.handle_submit(source)
+
+    assert consumed is False
+    assert app.prompt.buffer.text == source
+    assert app.prompt.buffer.cursor_position == 8
+    assert app.status_bar.error_message == (
+        "model openai/gpt-5 does not advertise reasoning effort "
+        "'medium' (allowed: low, high)"
+    )
+    assert app.unfinalized_blocks == []
+
+
 def test_chat_tui_uses_queued_runnable_snapshot_for_the_next_active_status() -> None:
     app = tui.ChatTuiApp(
         thread_id="term_busy",

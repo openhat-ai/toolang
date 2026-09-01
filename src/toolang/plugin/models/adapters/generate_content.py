@@ -577,6 +577,8 @@ def _apply_reasoning(
         raise ToolangError(
             "Generate Content accepts either reasoning effort or budget_tokens"
         )
+    thinking.pop("thinkingBudget", None)
+    thinking.pop("thinkingLevel", None)
     if enabled is False or effort == "none":
         thinking["thinkingBudget"] = 0
     elif isinstance(budget, int) and not isinstance(budget, bool):

@@ -1533,6 +1533,152 @@ def test_chat_completions_adapter_invokes_openai_compatible_client(monkeypatch) 
     assert result.usage == ModelUsage(input_tokens=11, output_tokens=7)
 
 
+@pytest.mark.parametrize(
+    (
+        "provider",
+        "options",
+        "reasoning",
+        "expected_effort",
+        "expected_extra_body",
+    ),
+    (
+        (
+            "openrouter",
+            {},
+            {"effort": "low"},
+            None,
+            {"reasoning": {"effort": "low"}},
+        ),
+        (
+            "deepseek",
+            {"extra_body": {"thinking": {"type": "disabled"}}},
+            {"enabled": True, "effort": "high"},
+            "high",
+            {"thinking": {"type": "enabled"}},
+        ),
+    ),
+)
+def test_chat_completions_sends_provider_reasoning_as_sdk_extra_body(
+    monkeypatch,
+    provider: str,
+    options: dict[str, object],
+    reasoning: dict[str, object],
+    expected_effort: str | None,
+    expected_extra_body: dict[str, object],
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _Completions:
+        async def create(
+            self,
+            *,
+            model: str,
+            messages: list[dict[str, object]],
+            stream: bool,
+            reasoning_effort: str | None = None,
+            extra_body: dict[str, object] | None = None,
+        ):
+            captured.update(
+                model=model,
+                messages=messages,
+                stream=stream,
+                reasoning_effort=reasoning_effort,
+                extra_body=extra_body,
+            )
+            return SimpleNamespace(
+                choices=(SimpleNamespace(message=SimpleNamespace(content="done")),),
+                usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+            )
+
+    monkeypatch.setattr(
+        chat_completions_models,
+        "create_client",
+        lambda target: SimpleNamespace(
+            chat=SimpleNamespace(completions=_Completions())
+        ),
+    )
+    target = ModelTarget(
+        ref=f"{provider}/model",
+        provider=provider,
+        name="model",
+        model="model",
+        adapter="chat_completions",
+        base_url="https://example.com/v1",
+        options=options,
+        reasoning=reasoning,
+    )
+
+    asyncio.run(
+        chat_completions_models.invoke_chat_completion(
+            target,
+            ModelCall(instructions="", messages=[Message.user("hello")]),
+        )
+    )
+
+    assert captured["reasoning_effort"] == expected_effort
+    assert captured["extra_body"] == expected_extra_body
+
+
+def test_chat_completions_stream_sends_openrouter_reasoning_as_sdk_extra_body(
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _Stream:
+        async def __aiter__(self):
+            if False:  # pragma: no cover - establishes an async iterator
+                yield None
+
+        async def close(self) -> None:
+            return None
+
+    class _Completions:
+        async def create(
+            self,
+            *,
+            model: str,
+            messages: list[dict[str, object]],
+            stream: bool,
+            stream_options: dict[str, object],
+            extra_body: dict[str, object],
+        ):
+            captured.update(
+                model=model,
+                messages=messages,
+                stream=stream,
+                stream_options=stream_options,
+                extra_body=extra_body,
+            )
+            return _Stream()
+
+    monkeypatch.setattr(
+        chat_completions_models,
+        "create_client",
+        lambda target: SimpleNamespace(
+            chat=SimpleNamespace(completions=_Completions())
+        ),
+    )
+
+    asyncio.run(
+        chat_completions_models.stream_chat_completion(
+            ModelTarget(
+                ref="openrouter/model",
+                provider="openrouter",
+                name="model",
+                model="model",
+                adapter="chat_completions",
+                base_url="https://openrouter.ai/api/v1",
+                reasoning={"effort": "low"},
+            ),
+            ModelCall(instructions="", messages=[Message.user("hello")]),
+            on_event=_ignore_event,
+        )
+    )
+
+    assert captured["stream"] is True
+    assert captured["extra_body"] == {"reasoning": {"effort": "low"}}
+
+
 def test_chat_completions_adapter_replays_deepseek_reasoning_content() -> None:
     response = SimpleNamespace(
         choices=(

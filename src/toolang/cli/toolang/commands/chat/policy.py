@@ -6,6 +6,7 @@ from collections.abc import Callable, Collection, Mapping
 from dataclasses import replace
 from typing import cast
 
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunPolicy
 from toolang.execution.policy import (
     SETTING_OVERRIDE_FORMS,
@@ -49,6 +50,57 @@ def run_override_error(source: str, message: str) -> str:
         return "Add runnable input after the override · See :? for help"
     detail = message.rstrip(" .")
     return f"{detail} · See :? for help"
+
+
+def validate_model_reasoning_request(
+    models_payload: Mapping[str, object],
+    model: ModelRequest | None,
+) -> None:
+    """Reject reasoning values known to be unsupported by Chat model metadata."""
+
+    if model is None or model.parameters.reasoning is None:
+        return
+    reasoning = model.parameters.reasoning
+    raw_items = models_payload.get("items")
+    items = raw_items if isinstance(raw_items, list | tuple) else ()
+    item: Mapping[str, object] | None = None
+    for raw in items:
+        if not isinstance(raw, Mapping):
+            continue
+        candidate = cast(Mapping[str, object], raw)
+        if candidate.get("ref") == model.ref:
+            item = candidate
+            break
+    if item is None:
+        return
+    raw_parameters = item.get("parameters")
+    parameters = (
+        cast(Mapping[str, object], raw_parameters)
+        if isinstance(raw_parameters, Mapping)
+        else {}
+    )
+    raw_metadata = parameters.get("reasoning")
+    metadata = (
+        cast(Mapping[str, object], raw_metadata)
+        if isinstance(raw_metadata, Mapping)
+        else {}
+    )
+    if reasoning.effort is not None:
+        raw_efforts = metadata.get("effort")
+        if not isinstance(raw_efforts, list | tuple):
+            return
+        efforts = tuple(value for value in raw_efforts if isinstance(value, str))
+        if reasoning.effort not in efforts:
+            joined = ", ".join(efforts) or "none"
+            raise ValueError(
+                f"model {model.ref} does not advertise reasoning effort "
+                f"{reasoning.effort!r} (allowed: {joined})"
+            )
+        return
+    if reasoning.budget_tokens is not None and metadata.get("applicable") is False:
+        raise ValueError(
+            f"model {model.ref} does not advertise this reasoning token budget"
+        )
 
 
 def build_run_request(
