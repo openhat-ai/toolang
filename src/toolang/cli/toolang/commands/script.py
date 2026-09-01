@@ -324,8 +324,11 @@ def _input_argument(parameter: Parameter) -> TyperArgument:
         param_decls=["input"],
         type=str,
         required=not parameter.optional,
-        metavar="INPUT...",
-        help=f"Primary {type_name} input. Repeat content items or omit to read stdin.",
+        metavar="-- INPUT... | - | ---",
+        help=(
+            f"Primary {type_name} input. Use line, stream, or fenced form; "
+            "omit to read stdin."
+        ),
         expose_value=False,
     )
 
@@ -371,7 +374,15 @@ def _collect_call(
     params = {parameter.name: parameter for parameter in runnable.params}
     raw_args: dict[str, str] = {}
     input_items: list[str] = []
+    input_started = False
     for item in items:
+        if input_started:
+            input_items.append(item.removeprefix(_LITERAL_ITEM_PREFIX))
+            continue
+        if item in {_LINE_INPUT_MARKER, "-", _FENCED_INPUT_MARKER}:
+            input_started = True
+            input_items.append(item)
+            continue
         if item.startswith(_LITERAL_ITEM_PREFIX):
             input_items.append(item.removeprefix(_LITERAL_ITEM_PREFIX))
             continue
@@ -432,7 +443,10 @@ def _input_source(items: list[str], *, stdin: TextIO) -> CallInput | None:
     if items and items[0] == _LINE_INPUT_MARKER:
         if len(items) == 1:
             raise click.UsageError("line input marker '--' requires nonempty text")
-        return CallInput(_=_join_input_items(items[1:]))
+        value = _join_input_items(items[1:])
+        if not value.strip():
+            raise click.UsageError("line input marker '--' requires nonempty text")
+        return CallInput(_=value)
     if items == ["-"]:
         value = stdin.read()
         return CallInput(_=value)

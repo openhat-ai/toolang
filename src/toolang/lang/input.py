@@ -668,9 +668,12 @@ def _expand_prompt_text(
             slots,
             label=f"{form.capitalize()} input for prompt ${prompt_name}",
         )
+        if call.input_form == "line" and not prompt_text.strip():
+            raise ToolangError(
+                f"Line input for prompt ${prompt_name} requires nonempty text."
+            )
         _reject_nested_prompt_call(
             prompt_text,
-            program=program,
             label=f"input for prompt ${prompt_name}",
         )
 
@@ -680,23 +683,16 @@ def _expand_prompt_text(
         ).strip()
         _reject_nested_prompt_call(
             rendered_prompt,
-            program=program,
             label=f"result of prompt ${prompt_name}",
         )
         output.append(rendered_prompt)
         if call.input_form == "stream":
             return "".join(output)
         if call.input_form == "fenced":
-            output.append(
-                _expand_prompt_text(
-                    trailing,
-                    slots=slots,
-                    program=program,
-                    prompt_definitions=prompt_definitions,
-                    invocations=invocations,
-                )
-            )
-            return "".join(output)
+            lines = trailing.splitlines(keepends=True)
+            markdown_fence = None
+            index = 0
+            continue
         if line_break:
             output.append(line_break)
         index += 1
@@ -718,16 +714,10 @@ def _prompt_text(value: str, slots: Sequence[Part], *, label: str) -> str:
 def _reject_nested_prompt_call(
     value: str,
     *,
-    program: Program | None,
     label: str,
 ) -> None:
     """Reject prompt-call syntax inside a prompt's textual boundary."""
 
-    prompt_names = (
-        {cap.name for cap in program.caps if cap.kind == "prompt"}
-        if program is not None
-        else set()
-    )
     markdown_fence: tuple[str, int] | None = None
     for line in value.splitlines():
         if markdown_fence is not None:
@@ -739,7 +729,7 @@ def _reject_nested_prompt_call(
             markdown_fence = opened_fence
             continue
         match = _PROMPT_CALL_RE.fullmatch(line)
-        if match is not None and match.group(1) in prompt_names:
+        if match is not None:
             raise ToolangError(
                 f"Nested prompt call ${match.group(1)} is not allowed in {label}."
             )

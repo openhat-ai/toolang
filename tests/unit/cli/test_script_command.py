@@ -289,6 +289,25 @@ def test_script_preserves_explicit_empty_call_input(
     assert captured["input"] == RunnableInputRaw(_="")
 
 
+@pytest.mark.parametrize("value", ("", "   "))
+def test_script_rejects_empty_line_input(
+    tmp_path: Path,
+    capsys,
+    value: str,
+) -> None:
+    source = _write_source(tmp_path)
+
+    result = script.dispatch(
+        [],
+        [str(source), "demo", "count=2", "--", value],
+        prog_name="toolang",
+        stdin=StringIO(),
+    )
+
+    assert result == 2
+    assert "line input marker '--' requires nonempty text" in capsys.readouterr().err
+
+
 def test_script_rejects_unmarked_command_line_primary_input(
     tmp_path: Path,
     capsys,
@@ -482,11 +501,12 @@ def test_script_uses_typer_help_and_authored_docs(
     )
     output = capsys.readouterr()
     stdout = strip_ansi(output.out)
+    normalized = " ".join(stdout.split())
 
     assert result == 0
     assert (
         "Usage: toolang demo.too demo [OPTIONS] "
-        "count=Number [enabled=Boolean] INPUT..." in stdout
+        "count=Number [enabled=Boolean] -- INPUT... | - | ---" in normalized
     )
     assert "Run the documented demo." in stdout
     assert "Arguments" in stdout
@@ -957,6 +977,32 @@ def test_script_rejects_stdin_marker_mixed_with_input(
 
     assert result == 2
     assert "stdin marker '-' must be the only primary input" in output.err
+
+
+@pytest.mark.parametrize(
+    ("marker", "message"),
+    (
+        ("-", "stdin marker '-' must be the only primary input"),
+        ("---", "call input marker must precede the primary input"),
+    ),
+)
+def test_script_rejects_named_input_after_stream_or_fenced_marker(
+    tmp_path: Path,
+    capsys,
+    marker: str,
+    message: str,
+) -> None:
+    source = _write_source(tmp_path)
+
+    result = script.dispatch(
+        [],
+        [str(source), "demo", marker, "count=2"],
+        prog_name="toolang",
+        stdin=StringIO("stdin\n---\n"),
+    )
+
+    assert result == 2
+    assert message in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("status", ("failed", "canceled"))

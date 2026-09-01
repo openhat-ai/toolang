@@ -360,11 +360,37 @@ def test_line_prompt_consumes_only_nonempty_current_line_text() -> None:
     )
 
     assert resolve_input_parts(
-        "$wrap -- $literal @literal /literal :literal\nOutside",
+        "$wrap -- literal $literal @literal /literal :literal\nOutside",
         program=program,
-    ) == (TextPart("[$literal @literal /literal :literal]\nOutside"),)
+    ) == (TextPart("[literal $literal @literal /literal :literal]\nOutside"),)
     with pytest.raises(ToolangError, match="requires nonempty text"):
         resolve_input_parts("$wrap --   ", program=program)
+
+
+@pytest.mark.parametrize("value", ("", "   "))
+def test_line_prompt_revalidates_interpolated_text(value: str) -> None:
+    from toolang.lang.ast import CapDecl, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="wrap",
+                params=(),
+                body="[{{_}}]",
+                span=Span(1),
+            ),
+        ),
+    )
+
+    with pytest.raises(ToolangError, match="requires nonempty text"):
+        resolve_input_parts(
+            "$wrap -- {{_}}",
+            program=program,
+            values={"_": (TextPart(value),)},
+            types={"_": "Part[]"},
+        )
 
 
 def test_prompt_expansion_stays_text_until_the_final_content_parse() -> None:
@@ -425,6 +451,29 @@ def test_runnable_input_allows_sibling_prompt_calls() -> None:
     assert all(len(invocation.content_hash) == 64 for invocation in resolved.prompts)
 
 
+def test_many_fenced_prompt_calls_do_not_consume_the_python_stack() -> None:
+    from toolang.lang.ast import CapDecl, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="wrap",
+                params=(),
+                body="[{{_}}]",
+                span=Span(1),
+            ),
+        ),
+    )
+    source = "$wrap ---\nvalue\n---\n" * 1_100
+
+    resolved = resolve_input_parts_with_provenance(source, program=program)
+
+    assert len(resolved.prompts) == 1_100
+    assert resolved.parts == (TextPart("[value\n]\n" * 1_100),)
+
+
 @pytest.mark.parametrize(
     "source",
     (
@@ -460,6 +509,26 @@ def test_prompt_input_rejects_nested_prompt_calls(source: str) -> None:
         resolve_input_parts(source, program=program)
 
 
+def test_prompt_input_rejects_an_unknown_nested_prompt_call() -> None:
+    from toolang.lang.ast import CapDecl, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="outer",
+                params=(),
+                body="{{_}}",
+                span=Span(1),
+            ),
+        ),
+    )
+
+    with pytest.raises(ToolangError, match=r"Nested prompt call \$missing"):
+        resolve_input_parts("$outer -- $missing -- target", program=program)
+
+
 def test_prompt_result_rejects_nested_prompt_calls() -> None:
     from toolang.lang.ast import CapDecl, Program
 
@@ -484,6 +553,26 @@ def test_prompt_result_rejects_nested_prompt_calls() -> None:
     )
 
     with pytest.raises(ToolangError, match=r"Nested prompt call \$inner"):
+        resolve_input_parts("$outer -- target", program=program)
+
+
+def test_prompt_result_rejects_an_unknown_nested_prompt_call() -> None:
+    from toolang.lang.ast import CapDecl, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="outer",
+                params=(),
+                body="$missing -- {{_}}",
+                span=Span(1),
+            ),
+        ),
+    )
+
+    with pytest.raises(ToolangError, match=r"Nested prompt call \$missing"):
         resolve_input_parts("$outer -- target", program=program)
 
 
