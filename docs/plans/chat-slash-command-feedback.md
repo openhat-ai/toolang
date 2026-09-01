@@ -14,9 +14,9 @@ without leaving Chat.
 
 ## Success Criteria
 
-- Every submitted slash command that keeps Chat open writes its command and an
-  explicitly labeled outcome to scrollback instead of using the transient
-  status bar.
+- Every submitted slash command that keeps Chat open writes its command and a
+  clear outcome summary to scrollback instead of using the transient status
+  bar.
 - Missing required arguments show the command's canonical usage, including for
   `/model`, `/agic`, and `/flow`.
 - A session model is never retained outside the session's `allow.models`
@@ -111,8 +111,9 @@ another scrollback interaction is useful.
 
 The TUI appends one immutable scrollback interaction containing the submitted
 command and its outcome. The command keeps the existing slash-command accent.
-The body always starts with one of four visible, textual labels so meaning does
-not depend on color:
+The body starts with a concise line that describes the concrete effect or
+result. Successful and read-only outcomes do not print generic `Success:` or
+`Result:` prefixes:
 
 ```text
 /model
@@ -122,19 +123,24 @@ Usage: /model [MODEL] [effort=VALUE]
 Error: Unknown command: /missing
 
 /model openai/gpt-5 effort=high
-Success: Model set to openai/gpt-5 · high
+Model set to openai/gpt-5 · high
 
 /models openrouter/*[reasoning]
-Result: 1 model matched
+Found 2 models
 MODEL                         STATE    EFFORT
 openrouter/openai/gpt-5                low, medium, high
+openrouter/openai/o3                   low, medium, high
 ```
 
-`Success:` is styled as a confirmed mutation or accepted action, `Result:` as
-read-only output, `Usage:` as guidance, and `Error:` as a failure. A table or
-durable run result follows its `Result:` summary. The status bar is refreshed
-after a successful setting mutation but is not the command's confirmation.
-Outcomes remain in scrollback after later input and runs.
+The summary itself must be unambiguous: use an action phrase such as `Model set
+to ...`, `Allowed 2 models`, or `Steer accepted`, and a result phrase such as
+`Found 2 models` or `Chat commands`. Summaries describe the user's operation,
+not the underlying query mechanism, so they do not say only that items
+`matched`. Styling may distinguish outcome kinds but must not carry their
+meaning alone. `Usage:` remains explicit guidance and `Error:` remains an
+explicit failure. A table or durable run result follows its summary. The status
+bar is refreshed after a successful setting mutation but is not the command's
+confirmation. Outcomes remain in scrollback after later input and runs.
 
 Insufficient arguments return `usage`, while a supplied but invalid argument
 returns `error`. This rule applies to every registered command, not only the
@@ -151,8 +157,8 @@ three initially reported cases. In particular:
 ```
 
 An empty resource query is valid and lists all items. A valid query with no
-matches is a read-only result such as `Result: No models matched query`; an
-invalid query is an error.
+matches is a read-only result such as `No models found`; an invalid query is an
+error.
 
 Scripted Chat projects the same outcomes to plain text. It no longer owns a
 separate subset of slash commands or separate exception formatting.
@@ -167,9 +173,9 @@ provider brackets or internal keys:
 - tools: canonical `toolset/tool`, plugin, and concise description;
 - caps: kind-qualified query identity, scope, and concise description.
 
-The table footer reports the match count. Ordering is the base collection's
-stable order; query syntax does not express priority. Empty collections and
-empty matches use explicit result messages rather than errors.
+The table summary reports how many resources were found. Ordering is the base
+collection's stable order; query syntax does not express priority. Empty
+collections and empty matches use explicit result messages rather than errors.
 
 Filtering must use the owning collection definitions:
 
@@ -208,20 +214,27 @@ rules:
    continues to use the existing model-support validation. A cleared model
    cannot accept model parameters.
 
+A successful `/allow` reports the effective count for every field changed by
+that command, rather than echoing the authored query. For example, one command
+may report `Allowed 2 models, 5 tools`; `models=none` reports `Allowed 0 models`.
+These counts describe the resulting session ceiling and use the same effective
+resource snapshot as reconciliation.
+
 Example:
 
 ```text
 /allow models=openrouter/*
-Success: Allow set to models=openrouter/*
-Model: none (cleared because deepseek/abc is outside allow.models)
+Allowed 2 models
+Model cleared: deepseek/abc is outside allow.models
 
 /models openrouter/*[reasoning]
-Result: 1 model matched
+Found 2 models
 MODEL                         STATE    EFFORT
 openrouter/openai/gpt-5                low, medium, high
+openrouter/openai/o3                   low, medium, high
 
 /model openrouter/openai/gpt-5 effort=high
-Success: Model set to openrouter/openai/gpt-5 · high
+Model set to openrouter/openai/gpt-5 · high
 ```
 
 Changing `tools`, `psyches`, `skills`, `services`, or `prompts` preserves the
@@ -293,9 +306,10 @@ Excluded:
 
 ## Acceptance Tests
 
-1. TUI submissions append explicitly labeled success, result, usage, and error
+1. TUI submissions append clearly summarized success, result, usage, and error
    outcomes to scrollback and do not use the status bar for synchronous slash
-   feedback; later input does not erase them.
+   feedback; later input does not erase them. Success and result summaries do
+   not print generic kind labels.
 2. Unknown commands and slash parsing/body failures use the registered error
    presentation. `/model`, `/agic`, `/flow`, and every other missing required
    body use registered usage text.
@@ -306,15 +320,16 @@ Excluded:
    inspection, discovery, and show return `result`; failures use the same
    outcome dispatcher; `/exit` remains silent.
 5. Narrowing `allow.models` preserves an allowed `ModelRequest`, clears an
-   excluded model and effort, and reports the clearing. Invalid queries leave
-   the complete prior setting unchanged.
+   excluded model and effort, reports effective counts for every changed allow
+   field, and reports the clearing. Invalid queries leave the complete prior
+   setting unchanged.
 6. Explicit model selection outside the current model ceiling fails atomically;
    allowed identity changes and effort-only changes retain existing reasoning
    support checks.
 7. `/models`, `/tools`, and `/caps` list all effective base resources with no
    query, apply valid advanced queries through the owning definitions, preserve
-   base order, show copyable identities and counts, and treat zero matches as a
-   successful result.
+   base order, show copyable identities and `Found N ...` summaries, and treat
+   zero matches as a successful `No ... found` result.
 8. Combined cap queries support qualified and unqualified identities and common
    predicates without introducing a `caps` schema.
 9. Remote API query parameters and the new tool endpoint match local results,
