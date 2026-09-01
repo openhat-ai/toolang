@@ -247,6 +247,7 @@ class ChatTuiApp:
         self._status_activity_started_at: float | None = None
         self._status_completed_elapsed_seconds: int | None = None
         self._status_stop_handle: asyncio.TimerHandle | None = None
+        self._footer_row_floor = 0
         self.presenter = ChatRunPresenter(max_width=progress_max_width)
         self.completer = ChatInputCompleter(
             resource_paths=(lambda: list(resource_paths)) if resource_paths else None
@@ -267,12 +268,21 @@ class ChatTuiApp:
         self._refresh_prompt_completions()
         keys = KeyBindings()
         self.prompt.bind(keys)
+        input_area = HSplit(
+            [
+                Window(
+                    height=self._input_spacer_rows,
+                    always_hide_cursor=True,
+                ),
+                self.prompt.container(),
+                self.status_bar.container(),
+            ]
+        )
         body = HSplit(
             [
                 DynamicContainer(self._live_blocks_container),
                 self.queue_panel.container(),
-                self.prompt.container(),
-                self.status_bar.container(),
+                input_area,
             ]
         )
         self.app = Application(
@@ -302,9 +312,7 @@ class ChatTuiApp:
         self.app.key_processor.after_key_press += self._clear_status_error_on_escape
         self.app_context: AppContext = ChatTuiAppContext(self)
 
-    def _live_blocks_container(self) -> HSplit | Window:
-        if not self.unfinalized_blocks:
-            return Window(height=0)
+    def _live_blocks_container(self) -> Window:
         return Window(
             FormattedTextControl(
                 lambda: rendering.renderables_to_prompt_toolkit(
@@ -325,6 +333,17 @@ class ChatTuiApp:
             rendering.renderables_height(self._live_renderables()),
             self._available_live_rows(),
         )
+
+    def _input_spacer_rows(self) -> int:
+        live_rows = self._live_area_height()
+        fixed_footer_rows = self.queue_panel.rows() + self.prompt.rows() + 1
+        terminal_rows = self.app.output.get_size().rows
+        required_rows = min(terminal_rows, live_rows + fixed_footer_rows)
+        self._footer_row_floor = min(
+            terminal_rows,
+            max(self._footer_row_floor, required_rows),
+        )
+        return max(0, self._footer_row_floor - live_rows - fixed_footer_rows)
 
     def _available_live_rows(self) -> int:
         terminal_rows = self.app.output.get_size().rows
@@ -506,8 +525,14 @@ class ChatTuiApp:
         pending = self._pending_scrollback.copy()
 
         if self.app.is_running and pending:
-            self.app.renderer.erase(leave_alternate_screen=False)
+            self._footer_row_floor = max(
+                0,
+                self._footer_row_floor - rendering.renderables_height(pending),
+            )
+            renderer = self.app.renderer
+            renderer.erase(leave_alternate_screen=False)
             self._write_scrollback(pending)
+            renderer.request_absolute_cursor_position()
         elif pending:
             rendering.write_renderables(pending)
         del self._pending_scrollback[: len(pending)]
@@ -600,6 +625,7 @@ class ChatTuiApp:
             )
             return
         self.status_bar.clear_transient_error()
+        self._footer_row_floor = 0
         renderer = self.app.renderer
         output = self.app.output
         renderer.erase()

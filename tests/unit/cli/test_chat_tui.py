@@ -9,16 +9,20 @@ import threading
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 
-from prompt_toolkit.application.current import set_app
+from prompt_toolkit.application.current import create_app_session, set_app
 from prompt_toolkit.completion import CompleteEvent
+from prompt_toolkit.data_structures import Size
 from prompt_toolkit.document import Document
+from prompt_toolkit.input import DummyInput
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyPress
 from prompt_toolkit.layout import HSplit, VSplit, Window
 from prompt_toolkit.layout.controls import BufferControl
 from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
+from prompt_toolkit.layout.screen import Screen
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.output.color_depth import ColorDepth
+from prompt_toolkit.output import DummyOutput
 from prompt_toolkit.utils import get_cwidth
 from rich.color import Color, ColorType
 from rich.console import RenderableType
@@ -114,6 +118,18 @@ from tests.support import chat_tui_pty
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
 _HOST_DESCRIPTION = "macOS 27.0 arm64"
 _HOST_SANDBOX_VALUE = f"host · {_HOST_DESCRIPTION}"
+
+
+class _TerminalOutput(DummyOutput):
+    def get_size(self) -> Size:
+        return Size(rows=30, columns=100)
+
+
+def _render_chat_layout(app: tui.ChatTuiApp) -> Screen:
+    app.app.renderer.render(app.app, app.app.layout)
+    screen = app.app.renderer.last_rendered_screen
+    assert screen is not None
+    return screen
 
 
 def _parts(*parts: Part) -> Local:
@@ -1633,6 +1649,59 @@ def test_chat_live_viewport_keeps_latest_rows_and_reports_hidden_rows() -> None:
         "line 8",
         "line 9",
     ]
+
+
+def test_chat_input_area_absorbs_live_progress_contraction() -> None:
+    async def exercise() -> None:
+        with create_app_session(input=DummyInput(), output=_TerminalOutput()):
+            app = tui.ChatTuiApp(
+                thread_id=None,
+                setting=FakeClient().initial_setting(),
+                home="/tmp/agent",
+                input_history=None,
+                client=FakeClient(),
+            )
+            app.unfinalized_blocks.append(
+                blocks.ExecutionProgressBlock(
+                    ProgressBlock(
+                        "step:run_1.0",
+                        tuple(ProgressRow(f"line {index}") for index in range(8)),
+                    )
+                )
+            )
+
+            with set_app(app.app):
+                expanded = _render_chat_layout(app)
+                expanded_row = expanded.get_cursor_position(
+                    app.app.layout.current_window
+                ).y
+
+                app.unfinalized_blocks[:] = [
+                    blocks.ExecutionProgressBlock(
+                        ProgressBlock(
+                            "step:run_1.0",
+                            (ProgressRow("remaining live row"),),
+                        )
+                    )
+                ]
+                contracted = _render_chat_layout(app)
+                contracted_row = contracted.get_cursor_position(
+                    app.app.layout.current_window
+                ).y
+                assert contracted_row == expanded_row
+                contracted_spacer_rows = app._input_spacer_rows()
+
+                app.unfinalized_blocks.clear()
+                empty = _render_chat_layout(app)
+                empty_row = empty.get_cursor_position(app.app.layout.current_window).y
+                assert empty_row == expanded_row
+                empty_spacer_rows = app._input_spacer_rows()
+
+            await app.app.cancel_and_wait_for_background_tasks()
+            assert contracted_spacer_rows == 7
+            assert empty_spacer_rows == 8
+
+    asyncio.run(exercise())
 
 
 def test_chat_progress_marker_style_does_not_leak_to_active_text() -> None:
@@ -3379,9 +3448,11 @@ def test_chat_tui_clear_scrolls_one_separator_into_history_before_redrawing(
         "request_absolute_cursor_position",
         lambda: actions.append("request_cursor_position"),
     )
+    app._footer_row_floor = 12
 
     app._handle_clear()
 
+    assert app._footer_row_floor == 0
     assert actions == [
         "erase",
         ("write_raw", "\r\n" * 4),
@@ -3442,6 +3513,12 @@ def test_chat_tui_commits_live_finalization_in_one_terminal_transaction(
             f"erase:{leave_alternate_screen}"
         ),
     )
+    monkeypatch.setattr(
+        app.app.renderer,
+        "request_absolute_cursor_position",
+        lambda: order.append("request_cursor_position"),
+    )
+    app._footer_row_floor = 4
 
     def write_scrollback(renderables: list[RenderableType | None]) -> None:
         assert block not in app.unfinalized_blocks
@@ -3456,7 +3533,13 @@ def test_chat_tui_commits_live_finalization_in_one_terminal_transaction(
 
     app._commit_ui_update()
 
-    assert order == ["erase:False", "write", "invalidate"]
+    assert order == [
+        "erase:False",
+        "write",
+        "request_cursor_position",
+        "invalidate",
+    ]
+    assert app._footer_row_floor == 3
     assert app._pending_scrollback == []
     assert block not in app.unfinalized_blocks
 
