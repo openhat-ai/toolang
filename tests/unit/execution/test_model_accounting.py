@@ -47,6 +47,19 @@ def test_accounting_prices_cache_and_reasoning_without_double_counting() -> None
     assert cache_hit_ratio(accounting) == Decimal("0.65")
 
 
+def test_accounting_accepts_fractional_float_rates_from_effective_resources() -> None:
+    accounting = build_model_accounting(
+        _target(),
+        ModelUsage(input_tokens=1000, output_tokens=100),
+        _catalog({"input": 0.14, "output": 0.28}),
+    )
+
+    assert accounting is not None and accounting.estimate is not None
+    assert accounting.estimate.amount == "0.000168"
+    assert accounting.estimate.complete is True
+    assert [line.rate for line in accounting.estimate.lines] == ["0.14", "0.28"]
+
+
 def test_accounting_prices_cache_writes_as_a_distinct_input_meter() -> None:
     accounting = build_model_accounting(
         _target(),
