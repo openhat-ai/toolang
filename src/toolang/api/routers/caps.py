@@ -1,7 +1,7 @@
 """Capability inspection and management routes."""
 
 from collections.abc import Mapping
-from typing import Literal
+from typing import Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
@@ -13,7 +13,9 @@ from toolang.up import AgentCore
 from toolang.catalog import cap as caps, templates
 from toolang.catalog import config as cap_config
 from toolang.catalog.types import CapKind
+from toolang.common.errors import ToolangError
 from toolang.state import state as cap_state
+from toolang.state.collections import cap_dataset, query_cap_views
 from toolang.state.schemas import CapDetail, CapInfo
 from toolang.state.state import StateCap, StatePublication, CapScope
 
@@ -195,12 +197,32 @@ def delete_configured_cap(
 
 
 @router.get("/caps", summary="Get Caps Summary")
-def caps_summary(core: AgentCoreDep) -> dict[str, object]:
+def caps_summary(
+    core: AgentCoreDep,
+    query: list[str] | None = Query(default=None),
+) -> dict[str, object]:
     state = core.state.current()
+    entries = tuple(
+        entry
+        for kind in COLLECTION_TO_KIND.values()
+        for entry in _state_cap_index(state, kind).values()
+    )
+    try:
+        selected = query_cap_views(
+            entries,
+            agent_name=core.layout.name,
+            queries=query,
+        )
+    except (ToolangError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     collections = {
         "psyches": _CAP_INFOS.dump_python(
             _cap_infos(
-                tuple(_state_cap_index(state, "psyche").values()),
+                tuple(
+                    cast(StateCap, item.record)
+                    for item in selected
+                    if item.kind == "psyche"
+                ),
                 agent_name=core.layout.name,
                 kind="psyche",
             ),
@@ -208,7 +230,11 @@ def caps_summary(core: AgentCoreDep) -> dict[str, object]:
         ),
         "skills": _CAP_INFOS.dump_python(
             _cap_infos(
-                tuple(_state_cap_index(state, "skill").values()),
+                tuple(
+                    cast(StateCap, item.record)
+                    for item in selected
+                    if item.kind == "skill"
+                ),
                 agent_name=core.layout.name,
                 kind="skill",
             ),
@@ -216,7 +242,11 @@ def caps_summary(core: AgentCoreDep) -> dict[str, object]:
         ),
         "services": _CAP_INFOS.dump_python(
             _cap_infos(
-                tuple(_state_cap_index(state, "service").values()),
+                tuple(
+                    cast(StateCap, item.record)
+                    for item in selected
+                    if item.kind == "service"
+                ),
                 agent_name=core.layout.name,
                 kind="service",
             ),
@@ -224,7 +254,11 @@ def caps_summary(core: AgentCoreDep) -> dict[str, object]:
         ),
         "prompts": _CAP_INFOS.dump_python(
             _cap_infos(
-                tuple(_state_cap_index(state, "prompt").values()),
+                tuple(
+                    cast(StateCap, item.record)
+                    for item in selected
+                    if item.kind == "prompt"
+                ),
                 agent_name=core.layout.name,
                 kind="prompt",
             ),
@@ -242,11 +276,27 @@ def caps_summary(core: AgentCoreDep) -> dict[str, object]:
 @router.get("/services", summary="List Services", response_model=list[CapInfo])
 @router.get("/skills", summary="List Skills", response_model=list[CapInfo])
 @router.get("/psyches", summary="List Psyches", response_model=list[CapInfo])
-def cap_list(core: AgentCoreDep, request: Request) -> list[CapInfo]:
+def cap_list(
+    core: AgentCoreDep,
+    request: Request,
+    query: list[str] | None = Query(default=None),
+) -> list[CapInfo]:
     kind = _collection_kind(str(request.url.path).rsplit("/", 1)[-1])
+    entries = tuple(_state_cap_index(core.state.current(), kind).values())
+    try:
+        selected = tuple(
+            cast(StateCap, item.record)
+            for item in cap_dataset(
+                entries,
+                agent_name=core.layout.name,
+                kind=kind,
+            ).query(query)
+        )
+    except (ToolangError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return list(
         _cap_infos(
-            tuple(_state_cap_index(core.state.current(), kind).values()),
+            selected,
             agent_name=core.layout.name,
             kind=kind,
         )

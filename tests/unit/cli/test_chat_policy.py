@@ -10,6 +10,7 @@ from toolang.base.types.model import (
 from toolang.base.types.policy import AgentCeiling, RunLimits, RunPolicy
 from toolang.cli.toolang.commands.chat.policy import (
     build_run_request,
+    run_override_error,
     update_session_setting,
 )
 from toolang.execution.schemas import RunRequest, RunnableRequest
@@ -146,3 +147,18 @@ def test_build_run_request_materializes_unqualified_runnable_to_exact_ref() -> N
     )
 
     assert request.runnable.ref == "flow:review"
+
+
+def test_run_override_errors_add_contextual_help_guidance() -> None:
+    assert run_override_error(":", "missing") == (
+        "Enter a run override after : · See :? for help"
+    )
+    assert run_override_error(":unknown value", "invalid") == (
+        "Unknown run override :unknown · See :? for help"
+    )
+    assert run_override_error(
+        ":model effort=high", "colon override requires runnable input"
+    ) == ("Add runnable input after the override · See :? for help")
+    assert run_override_error(":model effort=extreme\nhello", "invalid effort.") == (
+        "invalid effort · See :? for help"
+    )

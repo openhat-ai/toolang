@@ -23,7 +23,7 @@ from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd, RunEvent, StepEnd
 from toolang.execution.history import RunHistory
 from toolang.execution.records import execution_error_message
-from toolang.execution.policy import merge_run_overrides, parse_setting_override
+from toolang.execution.policy import merge_run_overrides
 from toolang.execution.types import (
     AllowField,
     AllowOverride,
@@ -48,24 +48,32 @@ from toolang.cli.common.agent_server import (
     acquire_agent_server,
 )
 from toolang.cli.common.execution_progress.config import resolve_progress_max_width
+from toolang.cli.common.human_values import parts_response_text
 from toolang.cli.common.output import shorten_home_path
 from . import slashes as chat_slashes
 from .base import (
+    AppContext,
     ChatClient,
     ChatRunState,
+    QueuedCall,
     RunBlocked,
     RunRecovered,
-    chat_status_label,
     friendly_error as chat_friendly_error,
 )
+from .blocks import MutableBlock
 from .history import ChatInputHistoryStore
 from .input import (
     QuickCommand,
+    RunOverrideHelp,
     is_runnable_input,
+    is_slash_input,
     normalize_chat_input,
     parse_chat_input,
+    slash_command_name,
 )
 from .local import LocalChatSession
+from .presenter import ChatRunPresenter
+from .policy import run_override_error
 from .remote import RemoteChatError, RemoteChatSession
 from .tui import ChatTuiApp
 
@@ -289,13 +297,14 @@ def _chat_interactive_scripted_local(
     setting: SessionSetting,
 ) -> None:
     renderer = _ScriptedRunRenderer()
+    context = _ScriptedAppContext(client, setting=setting, thread_id=thread_id)
 
     def ensure_thread_id() -> str:
-        nonlocal thread_id
-        if thread_id is None:
-            thread_id = client.create_thread()
-            typer.echo(f"thread {thread_id}")
-        return thread_id
+        existing = context.get_thread_id()
+        resolved = context.ensure_thread_id()
+        if existing is None:
+            typer.echo(f"thread {resolved}")
+        return resolved
 
     if thread_id is not None:
         typer.echo(f"thread {thread_id}")
@@ -307,22 +316,45 @@ def _chat_interactive_scripted_local(
         except KeyboardInterrupt:
             typer.echo()
             return
-        if text.strip() in {"/exit", "/quit"}:
-            return
         if not text.strip():
             continue
         source = normalize_chat_input(text)
         try:
             chat_input = parse_chat_input(source)
         except ValueError as exc:
-            typer.echo(chat_friendly_error(str(exc)), err=True)
+            if is_slash_input(source):
+                command = slash_command_name(source) or ""
+                if chat_slashes.is_registered(command):
+                    _echo_scripted_outcome(chat_slashes.error_outcome(str(exc)))
+                else:
+                    typer.echo(
+                        chat_slashes.unrecognized_diagnostic(command),
+                        err=True,
+                    )
+            else:
+                error = chat_friendly_error(str(exc))
+                typer.echo(
+                    run_override_error(source, error)
+                    if source.startswith(":")
+                    else error,
+                    err=True,
+                )
             continue
         if isinstance(chat_input, QuickCommand):
-            setting = _chat_handle_scripted_command(
-                chat_input,
-                setting,
-                client=client,
-            )
+            if not chat_slashes.is_registered(chat_input.name):
+                typer.echo(
+                    chat_slashes.unrecognized_diagnostic(chat_input.name),
+                    err=True,
+                )
+                continue
+            outcome = chat_slashes.handle(context, chat_input)
+            if outcome is not None:
+                _echo_scripted_outcome(outcome)
+            if context.exit_requested:
+                return
+            continue
+        if isinstance(chat_input, RunOverrideHelp):
+            _echo_scripted_outcome(chat_slashes.run_override_help())
             continue
         if not is_runnable_input(chat_input):
             raise AssertionError("unknown chat input value")
@@ -334,7 +366,7 @@ def _chat_interactive_scripted_local(
                 ensure_thread_id(),
                 override,
                 runnable_input,
-                setting,
+                context.get_setting(),
             )
         except (click.ClickException, ToolangError, ValueError) as exc:
             detail = exc.message if isinstance(exc, click.ClickException) else str(exc)
@@ -346,67 +378,88 @@ def _chat_interactive_scripted_local(
             typer.echo(chat_friendly_error(failure), err=True)
 
 
-def _chat_handle_scripted_command(
-    chat_input: QuickCommand,
-    setting: SessionSetting,
-    *,
-    client: ChatClient,
-) -> SessionSetting:
-    command = chat_input.name
-    if command in {"help", "?"}:
-        for line in chat_slashes._chat_help_lines():
-            typer.echo(line)
-        return setting
-    if command not in {"model", "agic", "flow", "runnable", "allow", "limit"}:
-        typer.echo(f"Unknown command: /{command}")
-        return setting
-    try:
-        update = _scripted_setting_update(command, chat_input.tail, client=client)
-        setting = client.apply_setting(setting, update)
-    except (click.ClickException, ToolangError, ValueError) as exc:
-        detail = exc.message if isinstance(exc, click.ClickException) else str(exc)
-        typer.echo(chat_friendly_error(detail), err=True)
-        return setting
-    typer.echo(chat_status_label(setting))
-    return setting
+class _ScriptedAppContext(AppContext):
+    """Minimal slash-command context for line-oriented Chat."""
+
+    def __init__(
+        self,
+        client: ChatClient,
+        *,
+        setting: SessionSetting,
+        thread_id: str | None,
+    ) -> None:
+        self.client = client
+        self.setting = setting
+        self.thread_id = thread_id
+        self.queue: list[QueuedCall] = []
+        self.live_blocks: list[MutableBlock] = []
+        self.presenter = ChatRunPresenter()
+        self.exit_requested = False
+
+    def get_setting(self) -> SessionSetting:
+        return self.setting
+
+    def set_setting(self, setting: SessionSetting) -> None:
+        self.setting = setting
+
+    def get_client(self) -> ChatClient:
+        return self.client
+
+    def get_queue(self) -> list[QueuedCall]:
+        return self.queue
+
+    def get_active_run(self) -> str | None:
+        return None
+
+    def get_thread_id(self) -> str | None:
+        return self.thread_id
+
+    def ensure_thread_id(self) -> str:
+        if self.thread_id is None:
+            self.thread_id = self.client.create_thread()
+        return self.thread_id
+
+    def set_active_run(self, run_id: str | None) -> None:
+        del run_id
+
+    def get_live_blocks(self) -> list[MutableBlock]:
+        return self.live_blocks
+
+    def get_presenter(self) -> ChatRunPresenter:
+        return self.presenter
+
+    def finalize_block(self, block: MutableBlock) -> None:
+        if block in self.live_blocks:
+            self.live_blocks.remove(block)
+
+    def finish_run(self) -> None:
+        return None
+
+    def refresh_status(self) -> None:
+        return None
+
+    def replace_input(self, text: str) -> None:
+        del text
+        raise ValueError("Queue editing is unavailable in scripted Chat")
+
+    def request_steer(self, message: str) -> None:
+        del message
+        raise ValueError("No active run to steer")
+
+    def request_exit(self) -> None:
+        self.exit_requested = True
 
 
-def _scripted_setting_update(
-    command: str,
-    argument: str | None,
-    *,
-    client: ChatClient,
-) -> RunOverride:
-    if argument is None:
-        raise ValueError(f"/{command} requires a setting body")
-    update = parse_setting_override(command, argument)
-    if command == "model":
-        model = update.model
-        if model is not None and model.identity not in {None, "default", "none"}:
-            resolved = chat_slashes._chat_resolve_model_command(
-                client.list_models(), model.identity
-            )
-            if resolved is None:
-                raise ValueError(
-                    f"Model selection is unknown or ambiguous: {model.identity}"
-                )
-            return RunOverride(
-                model=ModelOverride(identity=resolved[0], effort=model.effort)
-            )
-        return update
-    if command in {"agic", "flow", "runnable"} and update.runnable != "default":
-        kind = "runnable" if command == "runnable" else command
-        resolved = chat_slashes._resolve_runnable_command(
-            client.list_runnables(kind),
-            update.runnable or "",
-            kind=kind,
-        )
-        if resolved is None:
-            raise ValueError(
-                f"Runnable selection is unknown or ambiguous: {update.runnable}"
-            )
-        return RunOverride(runnable=resolved)
-    return update
+def _echo_scripted_outcome(outcome: chat_slashes.SlashOutcome) -> None:
+    content = outcome.content
+    if isinstance(content, chat_slashes.SlashRunResult):
+        typer.echo(f"{content.result.run_id} result")
+        text = parts_response_text(content.result.output)
+        if text:
+            typer.echo(text)
+        return
+    for line in chat_slashes.outcome_lines(outcome):
+        typer.echo(line, err=outcome.kind == "error")
 
 
 class _ScriptedRunRenderer:

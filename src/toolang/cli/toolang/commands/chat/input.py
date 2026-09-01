@@ -19,29 +19,15 @@ class QuickCommand:
     tail: str | None = None
 
 
-ChatInput: TypeAlias = QuickCommand | tuple[RunOverride, RunnableInputRaw]
+@dataclass(frozen=True, slots=True)
+class RunOverrideHelp:
+    """The special `:?` terminal-chat help interaction."""
 
-_QUICK_COMMANDS = frozenset(
-    {
-        "?",
-        "agic",
-        "allow",
-        "exit",
-        "flow",
-        "help",
-        "model",
-        "limit",
-        "q",
-        "queue",
-        "quit",
-        "runnable",
-        "s",
-        "show",
-        "steer",
-    }
+
+ChatInput: TypeAlias = (
+    QuickCommand | RunOverrideHelp | tuple[RunOverride, RunnableInputRaw]
 )
-_QUICK_WITHOUT_TAIL = frozenset({"?", "exit", "help", "quit"})
-_QUICK_REQUIRING_TAIL = frozenset({"s", "steer"})
+
 _LEADING_BLANK_LINES_RE = re.compile(r"\A(?:[ \t]*(?:\r\n|\n))+")
 _TRAILING_BLANK_LINES_RE = re.compile(r"(?:(?:\r\n|\n)[ \t]*)+\Z")
 
@@ -60,6 +46,8 @@ def parse_chat_input(chat_input: str) -> ChatInput:
     body = normalize_chat_input(chat_input)
     if not body:
         raise ValueError("chat input is empty")
+    if body == ":?":
+        return RunOverrideHelp()
 
     first, separator, rest = body.partition("\n")
     first = first.removesuffix("\r")
@@ -95,13 +83,26 @@ def is_runnable_input(
     )
 
 
+def is_slash_input(value: str) -> bool:
+    """Return whether normalized input is intended as a slash command."""
+
+    return value.startswith("/") and not value.startswith("//")
+
+
+def slash_command_name(value: str) -> str | None:
+    """Return the structural slash name from one normalized input."""
+
+    if not is_slash_input(value):
+        return None
+    first = value.splitlines()[0]
+    name, _tail = _command_parts(first)
+    return name
+
+
 def _parse_slash(line: str) -> QuickCommand | None:
     if not line.startswith("/") or line.startswith("//"):
         return None
     name, tail = _command_parts(line)
-    if name not in _QUICK_COMMANDS:
-        raise ValueError(f"unknown command: /{name}")
-    _validate_quick(name, tail)
     return QuickCommand(name=name, tail=tail)
 
 
@@ -112,17 +113,13 @@ def _command_parts(line: str) -> tuple[str, str | None]:
     return head.removeprefix("/"), raw_tail.strip(" \t") or None
 
 
-def _validate_quick(name: str, tail: str | None) -> None:
-    if name in _QUICK_WITHOUT_TAIL and tail is not None:
-        raise ValueError(f"/{name} does not accept an argument")
-    if name in _QUICK_REQUIRING_TAIL and tail is None:
-        raise ValueError(f"/{name} requires an argument")
-
-
 __all__ = [
     "ChatInput",
     "QuickCommand",
+    "RunOverrideHelp",
     "is_runnable_input",
+    "is_slash_input",
     "normalize_chat_input",
     "parse_chat_input",
+    "slash_command_name",
 ]

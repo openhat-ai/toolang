@@ -4,8 +4,10 @@ import pytest
 
 from toolang.cli.toolang.commands.chat.input import (
     QuickCommand,
+    RunOverrideHelp,
     normalize_chat_input,
     parse_chat_input,
+    slash_command_name,
 )
 from toolang.execution.types import ModelOverride, LimitOverride, RunOverride
 from toolang.lang.input import NamedInputSource, RunnableInputRaw
@@ -25,10 +27,32 @@ from toolang.lang.input import NamedInputSource, RunnableInputRaw
         ("/limit time=30", QuickCommand("limit", "time=30")),
         ("/queue edit 2", QuickCommand("queue", "edit 2")),
         ("/steer revise this", QuickCommand("steer", "revise this")),
+        ("/steer", QuickCommand("steer")),
+        ("/models", QuickCommand("models")),
+        ("/review", QuickCommand("review")),
+        ("/help unexpected", QuickCommand("help", "unexpected")),
+        (":?", RunOverrideHelp()),
     ],
 )
-def test_parse_single_quick_command(source: str, expected: QuickCommand) -> None:
+def test_parse_single_chat_interaction(source: str, expected: object) -> None:
     assert parse_chat_input(source) == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("/", ""),
+        ("/unknown value", "unknown"),
+        ("/help\nInput", "help"),
+        ("//help", None),
+        (":model effort=high", None),
+    ],
+)
+def test_structural_slash_name_is_available_before_body_validation(
+    source: str,
+    expected: str | None,
+) -> None:
+    assert slash_command_name(source) == expected
 
 
 def test_colon_override_without_runnable_input_is_invalid() -> None:
@@ -85,15 +109,11 @@ def test_chat_normalization_preserves_first_indentation_and_internal_blanks() ->
     [
         ("", "empty"),
         (" \t\n", "empty"),
-        ("/models", "unknown command"),
-        ("/review", "unknown command"),
         (":help", "escape a leading colon"),
         (":model", "requires"),
         (":models", "escape a leading colon"),
         (":queue edit 2", "escape a leading colon"),
         (":unknown", "escape a leading colon"),
-        ("/steer", "requires an argument"),
-        ("/help unexpected", "does not accept an argument"),
         ("/help\nInput", "cannot be combined"),
         (":model openai/one\n:model openai/two", "duplicate model override"),
         (":agic review\n/help", "cannot be combined"),

@@ -19,11 +19,17 @@ from toolang.base.types.message import Message, TextPart
 from toolang.base.types.policy import RunDefaults
 from toolang.base.types.run import ModelCallResult
 from toolang.catalog import CapsManager, JobsManager
+from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.execution.schemas import RunDetail
 from toolang.execution.values import parts_from_local
+from toolang.state.state import CapSource, StateCap, publish_state_resources
 from toolang.up import AgentCore, process as agents
-from tests.support.execution_harness import ExecutionHarness, TEST_MODEL_REF
+from tests.support.execution_harness import (
+    ExecutionHarness,
+    RecordingTool,
+    TEST_MODEL_REF,
+)
 
 
 class _Snapshot:
@@ -37,8 +43,142 @@ class _Snapshot:
         raise AssertionError("ordinary API requests must not refresh publications")
 
 
+class _BrokenSnapshot:
+    def current(self) -> object:
+        raise ToolangError("snapshot unavailable")
+
+
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
 _HOST_DESCRIPTION = "macOS 27.0 arm64"
+
+
+def test_resource_discovery_endpoints_filter_effective_collections(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+prompt review:
+  params = focus
+
+  Review {{focus}}.
+
+agic chat:
+  hello
+""",
+        responses=(),
+        tools={
+            "test__lookup": RecordingTool(
+                "test__lookup",
+                output={"ok": True},
+                description="Look up a test value.",
+            )
+        },
+    )
+    harness.store.close()
+    prompt = StateCap(
+        kind="prompt",
+        name="review",
+        shape="file",
+        ref="inline://prompts/review",
+        path="files/caps/inline/agent/prompt/review.md",
+        source=CapSource(
+            origin="local",
+            form="inline",
+            path="agent.too",
+            updated_at="2026-09-01T00:00:00Z",
+            fingerprint="0" * 64,
+        ),
+        meta={"description": "Review input."},
+    )
+    core = AgentCore(harness.setup.layout)
+    core.setup = _Snapshot(harness.setup)
+    core.state = _Snapshot(
+        publish_state_resources(
+            replace(harness.state, module_caps={"agent": (prompt,)}),
+            agent_name=harness.setup.layout.name,
+        )
+    )
+    app = create_app(
+        core,
+        CapsManager(core.layout),
+        JobsManager(core.layout),
+        cors_allowed_origins=(),
+    )
+
+    try:
+        with TestClient(app) as client:
+            models = client.get(
+                "/api/v1/models",
+                params=[("query", "missing/*"), ("query", "test/*")],
+            )
+            no_models = client.get(
+                "/api/v1/models",
+                params={"query": "missing/*"},
+            )
+            tools = client.get(
+                "/api/v1/tools",
+                params={"query": "test/*"},
+            )
+            caps = client.get(
+                "/api/v1/caps",
+                params={"query": "prompt/review"},
+            )
+            prompts = client.get(
+                "/api/v1/prompts",
+                params={"query": "review"},
+            )
+            invalid = client.get(
+                "/api/v1/models",
+                params={"query": "*[unknown=true]"},
+            )
+            invalid_tools = client.get(
+                "/api/v1/tools",
+                params={"query": "*[unknown=true]"},
+            )
+
+        assert [item["ref"] for item in models.json()["items"]] == [TEST_MODEL_REF]
+        assert no_models.json()["items"] == []
+        assert tools.json() == {
+            "items": [
+                {
+                    "ref": "test/test__lookup",
+                    "plugin": "test",
+                    "description": "Look up a test value.",
+                }
+            ]
+        }
+        assert caps.json()["counts"] == {
+            "psyches": 0,
+            "skills": 0,
+            "services": 0,
+            "prompts": 1,
+        }
+        assert [item["name"] for item in caps.json()["prompts"]] == ["review"]
+        assert [item["name"] for item in prompts.json()] == ["review"]
+        assert invalid.status_code == 400
+        assert invalid_tools.status_code == 400
+    finally:
+        asyncio.run(core.close())
+
+
+@pytest.mark.parametrize("endpoint", (agent_router.models, agent_router.tools))
+def test_resource_query_does_not_mask_snapshot_failures_as_client_errors(
+    endpoint: Any,
+    tmp_path: Path,
+) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    core = AgentCore(layout)
+    core.setup = _BrokenSnapshot()
+
+    try:
+        with pytest.raises(HTTPException) as caught:
+            endpoint(core, query=["test/*"])
+
+        assert caught.value.status_code == 500
+        assert caught.value.detail == "snapshot unavailable"
+    finally:
+        asyncio.run(core.close())
 
 
 def test_remote_chat_defaults_and_latest_result_endpoints(

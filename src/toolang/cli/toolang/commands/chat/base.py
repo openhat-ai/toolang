@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import ast
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 import json
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
@@ -98,7 +98,21 @@ class ChatClient(Protocol):
     @property
     def executor_metadata(self) -> ChatExecutorMetadata: ...
 
-    def list_models(self) -> Mapping[str, Any]: ...
+    def list_models(
+        self,
+        queries: Sequence[str] | None = None,
+    ) -> Mapping[str, Any]: ...
+
+    def list_tools(
+        self,
+        queries: Sequence[str] | None = None,
+    ) -> Mapping[str, Any]: ...
+
+    def list_caps(
+        self,
+        kind: str | None = None,
+        queries: Sequence[str] | None = None,
+    ) -> Mapping[str, Any]: ...
 
     def list_runnables(self, kind: str) -> Mapping[str, Any]: ...
 
@@ -110,6 +124,8 @@ class ChatClient(Protocol):
         self,
         setting: SessionSetting,
         update: RunOverride,
+        *,
+        allowed_model_refs: Collection[str] | None = None,
     ) -> SessionSetting: ...
 
     def build_request(
@@ -170,13 +186,9 @@ class AppContext(Protocol):
 
     def ensure_thread_id(self) -> str: ...
 
-    def is_busy(self) -> bool: ...
-
     def finalize_block(self, block: "MutableBlock") -> None: ...
 
     def finish_run(self) -> None: ...
-
-    def set_status_error(self, message: str) -> None: ...
 
     def refresh_status(self) -> None: ...
 

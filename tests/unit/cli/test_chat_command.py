@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -41,8 +41,27 @@ class _Client:
         self.created = 0
         self.starts: list[tuple[str, str, ModelRequest | None]] = []
 
-    def list_models(self) -> Mapping[str, Any]:
+    def list_models(
+        self,
+        queries: Sequence[str] | None = None,
+    ) -> Mapping[str, Any]:
+        del queries
         return {"default": None, "items": []}
+
+    def list_tools(
+        self,
+        queries: Sequence[str] | None = None,
+    ) -> Mapping[str, Any]:
+        del queries
+        return {"items": []}
+
+    def list_caps(
+        self,
+        kind: str | None = None,
+        queries: Sequence[str] | None = None,
+    ) -> Mapping[str, Any]:
+        del kind, queries
+        return {"items": []}
 
     def list_runnables(self, kind: str) -> Mapping[str, Any]:
         del kind
@@ -62,7 +81,10 @@ class _Client:
         self,
         setting: SessionSetting,
         update: RunOverride,
+        *,
+        allowed_model_refs: Collection[str] | None = None,
     ) -> SessionSetting:
+        del allowed_model_refs
         return apply_session_setting(self.initial_setting(), setting, update)
 
     def build_request(
@@ -173,6 +195,62 @@ def test_scripted_chat_help_does_not_create_an_empty_thread(
 
     assert client.created == 0
     assert client.starts == []
+
+
+def test_scripted_chat_projects_shared_slash_outcomes(
+    monkeypatch: Any,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = _Client()
+    inputs = iter(("/model effort=high", "/model", "/models", "/exit"))
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
+
+    chat._chat_interactive_scripted_local(
+        client=client,
+        thread_id=None,
+        setting=client.initial_setting(),
+    )
+
+    output = capsys.readouterr().out
+    assert "Model set to test/model · high" in output
+    assert "Usage: /model [MODEL] [effort=VALUE]" in output
+    assert "No models found" in output
+    assert "Success:" not in output
+    assert "Result:" not in output
+    assert client.created == 0
+
+
+def test_scripted_chat_projects_unrecognized_diagnostics_and_both_help_surfaces(
+    monkeypatch: Any,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = _Client()
+    inputs = iter(
+        ("/", "/missing", ":", ":missing value", ":?", "/keys", "/?", "/exit")
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
+
+    chat._chat_interactive_scripted_local(
+        client=client,
+        thread_id=None,
+        setting=client.initial_setting(),
+    )
+
+    captured = capsys.readouterr()
+    assert "Enter a command after / · See /? for help" in captured.err
+    assert "Unknown command /missing · See /? for help" in captured.err
+    assert "Enter a run override after : · See :? for help" in captured.err
+    assert "Unknown run override :missing · See :? for help" in captured.err
+    assert "Run overrides change settings for this run only." in captured.out
+    assert "These shortcuts control interactive Chat." in captured.out
+    assert "Slash commands act immediately." in captured.out
+    assert "Available overrides:" in captured.out
+    assert "Available shortcuts:" in captured.out
+    assert "Available commands:" in captured.out
+    assert "Chat Commands" not in captured.out
+    assert "Run Overrides" not in captured.out
+    assert "Chat shortcuts" not in captured.out
+    assert client.created == 0
 
 
 def test_scripted_chat_creates_one_thread_for_the_first_submission(

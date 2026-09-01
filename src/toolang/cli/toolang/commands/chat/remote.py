@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass, replace
 import json
@@ -48,6 +48,8 @@ from .base import (
 from .policy import (
     build_run_request,
     materialize_runnable_list_ref,
+    reconcile_session_model,
+    session_model_reconciliation_required,
     update_session_setting,
 )
 
@@ -120,8 +122,47 @@ class RemoteChatSession:
             self.close()
             raise
 
-    def list_models(self) -> Mapping[str, Any]:
-        return cast(Mapping[str, Any], self._submit(self._list_models()).result())
+    def list_models(
+        self,
+        queries: Sequence[str] | None = None,
+    ) -> Mapping[str, Any]:
+        if queries is not None and not queries:
+            model = self._session_defaults().model
+            return {"default": model.ref if model is not None else None, "items": []}
+        return cast(
+            Mapping[str, Any],
+            self._submit(self._list_models(queries)).result(),
+        )
+
+    def list_tools(
+        self,
+        queries: Sequence[str] | None = None,
+    ) -> Mapping[str, Any]:
+        if queries is not None and not queries:
+            return {"items": []}
+        return cast(
+            Mapping[str, Any],
+            self._submit(self._list_tools(queries)).result(),
+        )
+
+    def list_caps(
+        self,
+        kind: str | None = None,
+        queries: Sequence[str] | None = None,
+    ) -> Mapping[str, Any]:
+        if kind is not None and kind not in {
+            "psyche",
+            "skill",
+            "service",
+            "prompt",
+        }:
+            raise ValueError(f"unknown cap kind: {kind}")
+        if queries is not None and not queries:
+            return {"items": []}
+        return cast(
+            Mapping[str, Any],
+            self._submit(self._list_caps(kind, queries)).result(),
+        )
 
     def list_runnables(self, kind: str) -> Mapping[str, Any]:
         return cast(
@@ -145,10 +186,18 @@ class RemoteChatSession:
         self,
         setting: SessionSetting,
         update: RunOverride,
+        *,
+        allowed_model_refs: Collection[str] | None = None,
     ) -> SessionSetting:
         return cast(
             SessionSetting,
-            self._submit(self._apply_setting(setting, update)).result(),
+            self._submit(
+                self._apply_setting(
+                    setting,
+                    update,
+                    allowed_model_refs=allowed_model_refs,
+                )
+            ).result(),
         )
 
     def build_request(
@@ -283,16 +332,87 @@ class RemoteChatSession:
         )
         self._surface = _session_setting(defaults)
 
-    async def _list_models(self) -> dict[str, object]:
+    async def _list_models(
+        self,
+        queries: Sequence[str] | None = None,
+    ) -> dict[str, object]:
         payload = await self._request_json(
             "GET",
             "/api/v1/models",
             operation="models",
+            params=_query_params(queries),
         )
         result = _catalog_payload(payload, operation="models", item_kind="model")
         model = self._session_defaults().model
         result["default"] = model.ref if model is not None else None
         return result
+
+    async def _list_tools(
+        self,
+        queries: Sequence[str] | None = None,
+    ) -> dict[str, object]:
+        payload = await self._request_json(
+            "GET",
+            "/api/v1/tools",
+            operation="tools",
+            params=_query_params(queries),
+        )
+        return _items_payload(payload, operation="tools", required="ref")
+
+    async def _list_caps(
+        self,
+        kind: str | None,
+        queries: Sequence[str] | None = None,
+    ) -> dict[str, object]:
+        if kind is not None and kind not in {
+            "psyche",
+            "skill",
+            "service",
+            "prompt",
+        }:
+            raise ValueError(f"unknown cap kind: {kind}")
+        path = "/api/v1/caps" if kind is None else f"/api/v1/{kind}s"
+        payload = await self._request_json(
+            "GET",
+            path,
+            operation="caps" if kind is None else f"{kind}s",
+            params=_query_params(queries),
+        )
+        raw_items: list[object]
+        if kind is None:
+            body = _mapping(payload, operation="caps")
+            raw_items = [
+                item
+                for collection in ("psyches", "skills", "services", "prompts")
+                for item in _object_list(body.get(collection), operation="caps")
+            ]
+        else:
+            raw_items = _object_list(payload, operation=f"{kind}s")
+        items: list[dict[str, object]] = []
+        for raw in raw_items:
+            item = _mapping(raw, operation="cap item")
+            item_kind = item.get("kind")
+            name = item.get("name")
+            if (
+                not isinstance(item_kind, str)
+                or not isinstance(name, str)
+                or not item_kind
+                or not name
+                or item_kind not in {"psyche", "skill", "service", "prompt"}
+                or (kind is not None and item_kind != kind)
+            ):
+                raise _RemoteChatProtocolError(
+                    "remote chat caps returned invalid items"
+                )
+            items.append(
+                {
+                    "identity": f"{item_kind}/{name}",
+                    "kind": item_kind,
+                    "scope": item.get("scope"),
+                    "description": item.get("description") or "",
+                }
+            )
+        return {"items": items}
 
     async def _list_runnables(self, kind: str) -> dict[str, object]:
         if kind in {"agic", "flow"}:
@@ -383,13 +503,33 @@ class RemoteChatSession:
         self,
         setting: SessionSetting,
         update: RunOverride,
+        *,
+        allowed_model_refs: Collection[str] | None = None,
     ) -> SessionSetting:
         if self._blocked_message is not None:
             raise RemoteChatError(self._blocked_message)
-        return update_session_setting(
+        candidate = update_session_setting(
             surface=self._session_defaults(),
             current=setting,
             update=update,
+        )
+        if not session_model_reconciliation_required(update):
+            return candidate
+        if allowed_model_refs is None:
+            payload = (
+                {"items": []}
+                if candidate.allow.models == ()
+                else await self._list_models(candidate.allow.models)
+            )
+            allowed_model_refs = frozenset(
+                cast(str, item["ref"])
+                for item in cast(list[dict[str, object]], payload["items"])
+                if isinstance(item.get("ref"), str)
+            )
+        return reconcile_session_model(
+            candidate,
+            update,
+            allowed_refs=allowed_model_refs,
         )
 
     async def _get_result(
@@ -745,6 +885,43 @@ def _catalog_payload(
             )
         items.append(dict(item))
     return {"default": default, "items": items}
+
+
+def _items_payload(
+    payload: object,
+    *,
+    operation: str,
+    required: str,
+) -> dict[str, object]:
+    body = _mapping(payload, operation=operation)
+    if set(body) != {"items"}:
+        raise _RemoteChatProtocolError(f"remote chat {operation} returned invalid data")
+    items: list[dict[str, object]] = []
+    for raw in _object_list(body.get("items"), operation=operation):
+        item = _mapping(raw, operation=f"{operation} item")
+        value = item.get(required)
+        if not isinstance(value, str) or not value:
+            raise _RemoteChatProtocolError(
+                f"remote chat {operation} returned invalid items"
+            )
+        items.append(dict(item))
+    return {"items": items}
+
+
+def _object_list(value: object, *, operation: str) -> list[object]:
+    if not isinstance(value, list):
+        raise _RemoteChatProtocolError(
+            f"remote chat {operation} returned invalid items"
+        )
+    return cast(list[object], value)
+
+
+def _query_params(
+    queries: Sequence[str] | None,
+) -> list[tuple[str, str]] | None:
+    if queries is None:
+        return None
+    return [("query", query) for query in queries]
 
 
 def _prompt_completion_payload(payload: object) -> dict[str, object]:

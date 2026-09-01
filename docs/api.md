@@ -823,6 +823,7 @@ script runs and TUI execution do not consume this endpoint.
 - `GET /healthz`
 - `GET /api/v1/profile`
 - `GET /api/v1/models`
+- `GET /api/v1/tools`
 - `GET /api/v1/agics`
 - `GET /api/v1/flows`
 
@@ -868,6 +869,12 @@ run starts, not by this inspection endpoint. The response includes:
 not include query predicates. Reasoning efforts are distinct recognized catalog
 values in catalog order; an unsupported model returns an empty list.
 
+`GET /api/v1/models` accepts repeatable `query` parameters evaluated by the
+runtime model collection. `GET /api/v1/tools` uses the same convention and
+returns effective tool `ref`, `plugin`, and `description` fields. Omitting
+`query` lists the complete effective collection; valid empty matches return an
+empty `items` list.
+
 `GET /api/v1/agics` and `GET /api/v1/flows` list the agent's runnable
 definitions.
 
@@ -884,6 +891,11 @@ Collections:
 - `GET /api/v1/skills`
 - `GET /api/v1/services`
 - `GET /api/v1/prompts`
+
+The cap summary and collection endpoints accept repeatable `query` parameters.
+The summary applies each query independently through the psyche, skill,
+service, and prompt collection definitions, then returns the existing grouped
+response and counts.
 
 Detail:
 

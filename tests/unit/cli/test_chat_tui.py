@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from io import StringIO
@@ -39,6 +39,7 @@ from toolang.cli.toolang.commands.chat import (
     completion,
     events,
     rendering,
+    shortcuts,
     slashes,
     tui,
     widgets,
@@ -1360,8 +1361,46 @@ def test_chat_prompt_submission_preserves_first_nonblank_line_indentation() -> N
     cast(Any, binding.handler)(None)
 
     assert submitted == [ChatUIEvent("submit", "  $review")]
+    assert prompt.history.get_strings() == []
+    assert prompt.buffer.text == "\n \t\n  $review\n\n"
+
+    prompt.accept_submission("  $review")
+
     assert prompt.history.get_strings() == ["  $review"]
     assert prompt.buffer.text == ""
+
+
+def test_chat_prompt_rejected_submission_preserves_input_cursor_and_history() -> None:
+    submitted: list[ChatUIEvent] = []
+    prompt = widgets.PromptBox(submitted.append, lambda: None)
+    keys = KeyBindings()
+    prompt.bind(keys)
+    prompt.buffer.text = "/unknown value"
+    prompt.buffer.cursor_position = 4
+
+    binding = next(item for item in keys.bindings if item.keys == (Keys.ControlM,))
+    cast(Any, binding.handler)(None)
+
+    assert submitted == [ChatUIEvent("submit", "/unknown value")]
+    assert prompt.buffer.text == "/unknown value"
+    assert prompt.buffer.cursor_position == 4
+    assert prompt.history.get_strings() == []
+
+
+def test_chat_prompt_bindings_cover_documented_shortcut_metadata() -> None:
+    prompt = widgets.PromptBox(lambda _event: None, lambda: None)
+    keys = KeyBindings()
+    prompt.bind(keys)
+    actual = {binding.keys for binding in keys.bindings}
+
+    for shortcut in shortcuts.CHAT_SHORTCUTS:
+        for raw_binding in (*shortcut.bindings, *shortcut.optional_bindings):
+            expected = KeyBindings()
+            try:
+                expected.add(*raw_binding)(lambda _event: None)
+            except ValueError:
+                continue
+            assert expected.bindings[0].keys in actual, shortcut.name
 
 
 def test_chat_input_completion_keeps_namespaces_separate(tmp_path) -> None:
@@ -1618,7 +1657,7 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     block = blocks.SlashBlock(
         "/?",
         [
-            "Chat Commands",
+            "Slash commands act immediately.",
             "",
             "/help, /?                         Show help.",
             "/model [MODEL]                    List or switch models.",
@@ -1634,7 +1673,7 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     assert rendered_lines[1].startswith(f"{rendering.ACCENT_CELL} /?")
     assert ">" not in rendered_lines[1]
     assert not rendered_lines[2].strip()
-    assert ": Chat Commands" in rendered
+    assert "  Slash commands act immediately." in rendered
     assert "/model [MODEL]" in rendered
     assert "List or switch models." in rendered
     assert rendered.endswith("\n")
@@ -1669,6 +1708,19 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     assert argument.style.color is None
     assert argument.style.dim is True
     assert all(segment.style is None or not segment.style.bold for segment in segments)
+
+
+def test_chat_slash_summary_uses_two_space_indent_without_marker() -> None:
+    block = blocks.SlashBlock(
+        "/model openai/gpt-5 effort=high",
+        ("Model set to openai/gpt-5 · high",),
+        "success",
+    )
+
+    lines = _render_text(block.render(), width=69).splitlines()
+    summary = next(line for line in lines if "Model set to" in line)
+
+    assert summary == "  Model set to openai/gpt-5 · high"
 
 
 def test_chat_header_uses_wide_local_executor_layout() -> None:
@@ -2392,18 +2444,48 @@ def test_chat_status_bar_error_uses_red_foreground_without_a_background(
 ) -> None:
     monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 40))
     status = widgets.StatusBar("agic:chat", "runtime model")
-    status.set_error("No active run to steer.")
+    status.set_error("No active run to steer")
 
     rendered = status._render()
     text = "".join(fragment for _style, fragment in rendered)
 
     assert rendered == [
-        ("class:status.error.marker", widgets._STATUS_IDLE_MARKER),
-        ("class:status.error", " No active run to steer."),
-        ("class:status", " " * 15),
+        ("class:status.error.marker", "!"),
+        ("class:status.error", " No active run to steer"),
+        ("class:status", " " * 16),
     ]
-    assert text.startswith(f"{widgets._STATUS_IDLE_MARKER} No active run to steer.")
+    assert text.startswith("! No active run to steer")
     assert len(text) == 40
+
+
+def test_chat_status_bar_error_is_single_line_and_truncated_to_width(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 18))
+    status = widgets.StatusBar("agic:chat", "runtime model")
+    status.set_error("First line\nsecond line that must not render")
+
+    text = "".join(fragment for _style, fragment in status._render())
+
+    assert text == "! First line seco…"
+    assert "\n" not in text
+    assert get_cwidth(text) == 18
+
+
+def test_chat_status_bar_persistent_error_survives_transient_updates() -> None:
+    status = widgets.StatusBar("agic:chat", "openai/gpt-5")
+    status.set_error("Connection lost · Reconnecting…", persistent=True)
+
+    status.set_error("Temporary input problem")
+    status.clear_transient_error()
+    status.set_status("flow:research", "openai/o3")
+
+    assert status.error_message == "Connection lost · Reconnecting…"
+    status.clear_persistent_error()
+    assert status.error_message == ""
+    text = "".join(fragment for _style, fragment in status._render())
+    assert text.startswith("■ flow:research")
+    assert text.endswith("openai/o3")
 
 
 def test_chat_tui_uses_truecolor_for_live_block_rendering() -> None:
@@ -2420,7 +2502,11 @@ def test_chat_tui_uses_truecolor_for_live_block_rendering() -> None:
 
 def test_chat_tui_keeps_default_refs_without_listing_resources() -> None:
     class DefaultOnlyClient(FakeClient):
-        def list_models(self) -> dict[str, object]:
+        def list_models(
+            self,
+            queries: Sequence[str] | None = None,
+        ) -> dict[str, object]:
+            del queries
             raise AssertionError("status must not enumerate models")
 
         def list_runnables(self, kind: str) -> dict[str, object]:
@@ -2448,8 +2534,7 @@ def test_chat_tui_keeps_default_refs_without_listing_resources() -> None:
     assert app.status_bar.error_message == ""
 
 
-@pytest.mark.parametrize("key", [Keys.Enter, Keys.Up])
-def test_chat_tui_non_text_input_clears_status_error(key: Keys) -> None:
+def test_chat_tui_empty_enter_preserves_status_error() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
@@ -2461,7 +2546,28 @@ def test_chat_tui_non_text_input_clears_status_error(key: Keys) -> None:
 
     key_bindings = app.app.key_bindings
     assert key_bindings is not None
-    bindings = key_bindings.get_bindings_for_keys((key,))
+    bindings = key_bindings.get_bindings_for_keys((Keys.Enter,))
+
+    assert bindings
+    active = [binding for binding in bindings if binding.filter()]
+    assert active
+    active[-1].handler(cast(Any, None))
+    assert app.status_bar.error_message == "Model selector matched no models"
+
+
+def test_chat_tui_navigation_clears_transient_status_error() -> None:
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        setting=FakeClient().initial_setting(),
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    app.status_bar.set_error("Model selector matched no models")
+
+    key_bindings = app.app.key_bindings
+    assert key_bindings is not None
+    bindings = key_bindings.get_bindings_for_keys((Keys.Up,))
 
     assert bindings
     active = [binding for binding in bindings if binding.filter()]
@@ -2698,7 +2804,7 @@ def test_chat_tui_keeps_the_queue_paused_while_remote_stream_is_disconnected() -
     assert app.active_run_id == "run_remote"
     assert app.run_in_flight.is_set()
     assert [item.source for item in app.queue] == ["queued call"]
-    assert app.status_bar.error_message == "waiting for durable state"
+    assert app.status_bar.error_message == "Connection lost · Reconnecting…"
 
 
 def test_chat_tui_recovers_from_durable_terminal_truth(
@@ -2707,8 +2813,8 @@ def test_chat_tui_recovers_from_durable_terminal_truth(
     rendered: list[str] = []
     monkeypatch.setattr(
         tui.rendering,
-        "write_renderable",
-        lambda value: rendered.append(_render_text(value)),
+        "write_renderables",
+        lambda values: rendered.extend(_render_text(value) for value in values),
     )
     app = tui.ChatTuiApp(
         thread_id="term_remote",
@@ -2728,6 +2834,11 @@ def test_chat_tui_recovers_from_durable_terminal_truth(
             RunDisconnected("run_remote", "waiting for durable state"),
         )
     )
+    app.prompt.buffer.text = "draft"
+    assert app.status_bar.error_message == "Connection lost · Reconnecting…"
+    app.handle_submit("/model effort=high")
+    assert app.status_bar.error_message == "Connection lost · Reconnecting…"
+    assert app.status_bar.model_label == "openai/gpt-5 · high"
     detail = RunDetail(
         id="run_remote",
         parent=None,
@@ -2807,18 +2918,23 @@ def test_chat_tui_blocks_mutating_input_after_ambiguous_acceptance(
     assert [item.source for item in app.queue] == ["already queued"]
     assert app.setting == FakeClient().initial_setting()
     assert app.run_in_flight.is_set()
-    assert app.status_bar.error_message == message
-    assert any("Queue Commands" in value for value in rendered)
+    assert app.status_bar.error_message == f"Submissions paused: {message}"
+    assert any("Queue commands" in value for value in rendered)
     assert any("durable result" in value for value in rendered)
 
 
-def test_chat_tui_bare_model_command_does_not_open_or_load_a_picker() -> None:
+def test_chat_tui_bare_model_command_does_not_open_or_load_a_picker(
+    monkeypatch: Any,
+) -> None:
     class CountingRemoteClient(FakeClient):
         model_reads = 0
 
-        def list_models(self) -> dict[str, object]:
+        def list_models(
+            self,
+            queries: Sequence[str] | None = None,
+        ) -> dict[str, object]:
             self.model_reads += 1
-            return super().list_models()
+            return super().list_models(queries)
 
     client = CountingRemoteClient()
     app = tui.ChatTuiApp(
@@ -2828,15 +2944,174 @@ def test_chat_tui_bare_model_command_does_not_open_or_load_a_picker() -> None:
         input_history=None,
         client=client,
     )
+    rendered: list[str] = []
+    monkeypatch.setattr(
+        tui.rendering,
+        "write_renderables",
+        lambda values, **_kwargs: rendered.extend(
+            _render_text(value) for value in values
+        ),
+    )
     initial_reads = client.model_reads
 
     app.handle_submit("/model")
 
-    assert (
-        app.status_bar.error_message
-        == "/model requires a model or parameter assignment."
-    )
+    assert app.status_bar.error_message == ""
+    assert any("Usage: /model [MODEL] [effort=VALUE]" in value for value in rendered)
     assert client.model_reads == initial_reads
+
+
+def test_chat_tui_routes_slash_shaped_parse_errors_to_scrollback(
+    monkeypatch: Any,
+) -> None:
+    app = tui.ChatTuiApp(
+        thread_id="term_remote",
+        setting=FakeClient().initial_setting(),
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    rendered: list[str] = []
+    monkeypatch.setattr(
+        tui.rendering,
+        "write_renderables",
+        lambda values, **_kwargs: rendered.extend(
+            _render_text(value) for value in values
+        ),
+    )
+
+    app.handle_submit("/help\nInput")
+
+    assert app.status_bar.error_message == ""
+    assert any(
+        "Error: quick command cannot be combined with other input" in value
+        for value in rendered
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("/", "Enter a command after / · See /? for help"),
+        ("/missing value", "Unknown command /missing · See /? for help"),
+        (":", "Enter a run override after : · See :? for help"),
+        (":missing value", "Unknown run override :missing · See :? for help"),
+        (
+            ":model effort=high",
+            "Add runnable input after the override · See :? for help",
+        ),
+    ],
+)
+def test_chat_tui_rejected_command_shaped_input_stays_editable_in_status(
+    source: str,
+    expected: str,
+    monkeypatch: Any,
+) -> None:
+    rendered: list[str] = []
+    monkeypatch.setattr(
+        tui.rendering,
+        "write_renderables",
+        lambda values, **_kwargs: rendered.extend(
+            _render_text(value) for value in values
+        ),
+    )
+    app = tui.ChatTuiApp(
+        thread_id="term_remote",
+        setting=FakeClient().initial_setting(),
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    app.prompt.buffer.text = source
+    app.prompt.buffer.cursor_position = max(0, len(source) - 1)
+    cursor = app.prompt.buffer.cursor_position
+
+    app.handle_ui_event(ChatUIEvent("submit", source))
+
+    assert app.prompt.buffer.text == source
+    assert app.prompt.buffer.cursor_position == cursor
+    assert app.prompt.history.get_strings() == []
+    assert app.status_bar.error_message == expected
+    assert rendered == []
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("/model", "Usage: /model [MODEL] [effort=VALUE]"),
+        ("/help\nInput", "Error: quick command cannot be combined with other input"),
+        ("/?", "Slash commands act immediately."),
+        (":?", "Run overrides change settings for this run only."),
+        ("/keys", "These shortcuts control interactive Chat."),
+    ],
+)
+def test_chat_tui_recognized_help_usage_and_errors_enter_scrollback(
+    source: str,
+    expected: str,
+    monkeypatch: Any,
+) -> None:
+    rendered: list[str] = []
+    monkeypatch.setattr(
+        tui.rendering,
+        "write_renderables",
+        lambda values, **_kwargs: rendered.extend(
+            _render_text(value) for value in values
+        ),
+    )
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        setting=FakeClient().initial_setting(),
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    app.prompt.buffer.text = source
+
+    app.handle_ui_event(ChatUIEvent("submit", source))
+
+    assert app.prompt.buffer.text == ""
+    assert app.prompt.history.get_strings() == [source]
+    assert app.status_bar.error_message == ""
+    assert any(expected in value for value in rendered)
+    assert app.thread_id is None
+
+
+@pytest.mark.parametrize("source", (":model effort=high\nhello", "hello"))
+def test_chat_tui_request_build_failure_retains_input_and_active_run(
+    source: str,
+) -> None:
+    class FailingRequestClient(FakeClient):
+        def build_request(
+            self,
+            thread_id: str,
+            override: RunOverride,
+            input: RunnableInputRaw,
+            setting: SessionSetting,
+        ) -> RunRequest:
+            del thread_id, override, input, setting
+            raise ValueError("selected model is unavailable")
+
+    app = tui.ChatTuiApp(
+        thread_id="term_remote",
+        setting=FakeClient().initial_setting(),
+        home="/tmp/agent",
+        input_history=None,
+        client=FailingRequestClient(),
+    )
+    app.active_run_id = "run_active"
+    app.run_in_flight.set()
+    app.prompt.buffer.text = source
+    app.prompt.buffer.cursor_position = 8
+    cursor = app.prompt.buffer.cursor_position
+
+    app.handle_ui_event(ChatUIEvent("submit", source))
+
+    assert app.prompt.buffer.text == source
+    assert app.prompt.buffer.cursor_position == cursor
+    assert app.prompt.history.get_strings() == []
+    assert app.status_bar.error_message == "selected model is unavailable"
+    assert app.active_run_id == "run_active"
+    assert app.run_in_flight.is_set()
 
 
 def test_chat_tui_uses_queued_runnable_snapshot_for_the_next_active_status() -> None:
@@ -2887,7 +3162,7 @@ def test_chat_tui_empty_input_requires_two_interrupts_to_exit() -> None:
 
     assert app.handle_ui_event(ChatUIEvent("interrupt")) is False
     assert app.interrupt_exit_pending
-    assert app.status_bar.error_message == "Press Ctrl-C again to exit."
+    assert app.status_bar.error_message == "Press Ctrl-C again to exit"
 
     assert app.handle_ui_event(ChatUIEvent("interrupt")) is True
 
@@ -2978,11 +3253,11 @@ def test_chat_tui_removes_live_block_before_writing_scrollback(
     block.update(_run_end(status="canceled"))
     app.unfinalized_blocks.append(block)
 
-    def write_renderable(renderable: RenderableType | None, **kwargs: object) -> None:
-        del renderable, kwargs
+    def write_renderables(renderables: Sequence[RenderableType | None]) -> None:
+        del renderables
         assert block not in app.unfinalized_blocks
 
-    monkeypatch.setattr(tui.rendering, "write_renderable", write_renderable)
+    monkeypatch.setattr(tui.rendering, "write_renderables", write_renderables)
 
     tui.ChatTuiAppContext(app).finalize_block(block)
 
@@ -3031,6 +3306,49 @@ def test_chat_tui_commits_live_finalization_in_one_terminal_transaction(
     assert order == ["erase:False", "write", "invalidate"]
     assert app._pending_scrollback == []
     assert block not in app.unfinalized_blocks
+
+
+def test_chat_tui_commits_slash_outcome_in_scrollback_transaction(
+    monkeypatch: Any,
+) -> None:
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        setting=FakeClient().initial_setting(),
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    order: list[str] = []
+    monkeypatch.setattr(
+        type(app.app),
+        "is_running",
+        property(lambda _application: True),
+    )
+    monkeypatch.setattr(
+        app.app.renderer,
+        "erase",
+        lambda *, leave_alternate_screen: order.append(
+            f"erase:{leave_alternate_screen}"
+        ),
+    )
+
+    def write_scrollback(renderables: Sequence[RenderableType | None]) -> None:
+        assert len(renderables) == 1
+        assert "Usage: /model" in _render_text(renderables[0])
+        order.append("write")
+
+    monkeypatch.setattr(app, "_write_scrollback", write_scrollback)
+    monkeypatch.setattr(app.app, "invalidate", lambda: order.append("invalidate"))
+
+    app.handle_submit("/model")
+
+    assert order == []
+    assert len(app._pending_scrollback) == 1
+
+    app._commit_ui_update()
+
+    assert order == ["erase:False", "write", "invalidate"]
+    assert app._pending_scrollback == []
 
 
 def test_chat_tui_replaces_failed_model_live_state_in_scrollback_transaction(
@@ -3365,9 +3683,6 @@ class FakeApp:
     def ensure_thread_id(self) -> str:
         return "thread_1"
 
-    def is_busy(self) -> bool:
-        return self.active_run is not None
-
     def finalize_block(self, block: blocks.MutableBlock) -> None:
         if block in self.live_blocks:
             self.live_blocks.remove(block)
@@ -3376,9 +3691,6 @@ class FakeApp:
     def finish_run(self) -> None:
         self.active_run = None
         self.finished = True
-
-    def set_status_error(self, message: str) -> None:
-        del message
 
     def refresh_status(self) -> None:
         pass
@@ -3399,7 +3711,11 @@ class FakeClient(ChatClient):
         sandbox_detail=_HOST_DESCRIPTION,
     )
 
-    def list_models(self) -> dict[str, object]:
+    def list_models(
+        self,
+        queries: Sequence[str] | None = None,
+    ) -> dict[str, object]:
+        del queries
         return {
             "default": "openai/gpt-5",
             "items": [
@@ -3411,6 +3727,21 @@ class FakeClient(ChatClient):
                 }
             ],
         }
+
+    def list_tools(
+        self,
+        queries: Sequence[str] | None = None,
+    ) -> dict[str, object]:
+        del queries
+        return {"items": []}
+
+    def list_caps(
+        self,
+        kind: str | None = None,
+        queries: Sequence[str] | None = None,
+    ) -> dict[str, object]:
+        del kind, queries
+        return {"items": []}
 
     def list_runnables(self, kind: str) -> dict[str, object]:
         if kind == "runnable":
@@ -3440,7 +3771,10 @@ class FakeClient(ChatClient):
         self,
         setting: SessionSetting,
         update: RunOverride,
+        *,
+        allowed_model_refs: Collection[str] | None = None,
     ) -> SessionSetting:
+        del allowed_model_refs
         return update_session_setting(
             surface=self.initial_setting(),
             current=setting,

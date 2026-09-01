@@ -59,10 +59,14 @@ from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
 from .input import (
     QuickCommand,
+    RunOverrideHelp,
     is_runnable_input,
+    is_slash_input,
     normalize_chat_input,
     parse_chat_input,
+    slash_command_name,
 )
+from .policy import run_override_error
 from .presenter import ChatRunPresenter
 
 _RUN_EVENT_TYPES = (
@@ -85,6 +89,10 @@ _BLOCKED_READ_ONLY_COMMANDS = frozenset(
         "agic",
         "flow",
         "runnable",
+        "models",
+        "tools",
+        "caps",
+        "keys",
         "show",
         "exit",
         "quit",
@@ -161,23 +169,13 @@ class ChatTuiAppContext:
             raise RuntimeError("failed to create chat thread")
         return thread_id
 
-    def is_busy(self) -> bool:
-        return self.get_active_run() is not None or self._app.run_in_flight.is_set()
-
     def finalize_block(self, block: blocks.MutableBlock) -> None:
         live_blocks = self.get_live_blocks()
         live_blocks[:] = [item for item in live_blocks if item is not block]
-        renderable = block.render()
-        if self._app.app.is_running:
-            self._app._pending_scrollback.append(renderable)
-        else:
-            rendering.write_renderable(renderable)
+        self._app._stage_scrollback((block.render(),))
 
     def finish_run(self) -> None:
         self._app._finish_active_run()
-
-    def set_status_error(self, message: str) -> None:
-        self._app.status_bar.set_error(message)
 
     def refresh_status(self) -> None:
         self._app.status_bar.set_status(*self._app._status_labels())
@@ -238,7 +236,6 @@ class ChatTuiApp:
         self.active_run_id: str | None = None
         self.cancel_sent_run_id: str | None = None
         self.submission_blocked: str | None = None
-        self.transport_notice: str | None = None
         self.interrupt_exit_pending = False
         self.unfinalized_blocks: list[blocks.MutableBlock] = []
         self._pending_scrollback: list[RenderableType | None] = []
@@ -409,11 +406,7 @@ class ChatTuiApp:
 
     def _clear_status_error(self) -> None:
         self.interrupt_exit_pending = False
-        if self.transport_notice is not None:
-            self.status_bar.set_error(self.transport_notice)
-            return
-        if self.status_bar.error_message:
-            self.status_bar.clear_error()
+        if self.status_bar.clear_transient_error():
             self._invalidate_ui()
 
     def _clear_status_error_on_escape(self, key_processor: KeyProcessor) -> None:
@@ -528,10 +521,21 @@ class ChatTuiApp:
             output.show_cursor()
             output.flush()
 
+    def _stage_scrollback(
+        self,
+        renderables: Sequence[RenderableType | None],
+    ) -> None:
+        if self.app.is_running:
+            self._pending_scrollback.extend(renderables)
+        else:
+            rendering.write_renderables(renderables)
+
     def handle_ui_event(self, event: ChatUIEvent) -> bool:
         kind = event.type
         if kind == "submit":
-            self.handle_submit(str(event.value))
+            message = str(event.value)
+            if self.handle_submit(message):
+                self.prompt.accept_submission(normalize_chat_input(message))
         elif kind == "run_event" and _is_run_event(event.value):
             self.handle_run_event(event.value)
         elif kind == "run_error":
@@ -570,7 +574,7 @@ class ChatTuiApp:
                 self.app.exit()
             return True
         self.interrupt_exit_pending = True
-        self.status_bar.set_error("Press Ctrl-C again to exit.")
+        self.status_bar.set_error("Press Ctrl-C again to exit")
         return False
 
     def _handle_eof(self) -> None:
@@ -583,9 +587,11 @@ class ChatTuiApp:
 
     def _handle_clear(self) -> None:
         if self.active_run_id is not None or self.run_in_flight.is_set():
-            self.status_bar.set_error("Cannot clear while a run is active.")
+            self.status_bar.set_error(
+                "Wait for the active run to finish before clearing"
+            )
             return
-        self.status_bar.clear_error()
+        self.status_bar.clear_transient_error()
         renderer = self.app.renderer
         output = self.app.output
         renderer.erase()
@@ -602,56 +608,56 @@ class ChatTuiApp:
         self.cancel_sent_run_id = None
         self.unfinalized_blocks.clear()
         self.run_in_flight.clear()
-        self.transport_notice = None
         self._set_status_running(False)
-        self.status_bar.clear_error()
+        self.status_bar.clear_transient_error()
+        if self.submission_blocked is None:
+            self.status_bar.clear_persistent_error()
         if self.queue:
             self.submit_run(self.queue.pop(0))
 
-    def handle_submit(self, message: str) -> None:
+    def handle_submit(self, message: str) -> bool:
+        """Handle one Enter attempt and return whether Chat consumed the input."""
+
         self.interrupt_exit_pending = False
-        if self.transport_notice is None:
-            self.status_bar.clear_error()
+        self.status_bar.clear_transient_error()
         source = normalize_chat_input(message)
+        if not source:
+            return False
         try:
             chat_input = parse_chat_input(source)
         except ValueError as exc:
-            self.status_bar.set_error(friendly_error(str(exc)))
-            return
+            if is_slash_input(source):
+                command = slash_command_name(source) or ""
+                if slashes.is_registered(command):
+                    self._write_slash_outcome(
+                        source,
+                        slashes.error_outcome(str(exc)),
+                    )
+                    return True
+                self.status_bar.set_error(slashes.unrecognized_diagnostic(command))
+                return False
+            error = friendly_error(str(exc))
+            self.status_bar.set_error(
+                run_override_error(source, error) if source.startswith(":") else error
+            )
+            return False
         if self.submission_blocked is not None and not _blocked_input_allowed(
             chat_input
         ):
-            self.status_bar.set_error(self.submission_blocked)
-            return
+            return False
         if isinstance(chat_input, QuickCommand):
-            slash_result = slashes.handle(self.app_context, chat_input)
-            if slash_result.result is not None:
-                result = slash_result.result
-                rendering.write_renderables(
-                    [
-                        *(
-                            [
-                                blocks.SlashBlock(
-                                    message,
-                                    slash_result.lines,
-                                ).render()
-                            ]
-                            if slash_result.lines is not None
-                            else []
-                        ),
-                        blocks.SlashResultBlock(
-                            message=message,
-                            run_id=result.run_id,
-                            parts=result.output,
-                        ).render(),
-                    ]
+            if not slashes.is_registered(chat_input.name):
+                self.status_bar.set_error(
+                    slashes.unrecognized_diagnostic(chat_input.name)
                 )
-                return
-            if slash_result.lines is not None:
-                rendering.write_renderable(
-                    blocks.SlashBlock(message, slash_result.lines).render()
-                )
-            return
+                return False
+            outcome = slashes.handle(self.app_context, chat_input)
+            if outcome is not None:
+                self._write_slash_outcome(source, outcome)
+            return True
+        if isinstance(chat_input, RunOverrideHelp):
+            self._write_slash_outcome(source, slashes.run_override_help())
+            return True
         if not is_runnable_input(chat_input):
             raise AssertionError("unknown chat input value")
         override, runnable_input = chat_input
@@ -663,16 +669,45 @@ class ChatTuiApp:
                 self.setting,
             )
         except click.ClickException as exc:
-            self._handle_run_error(exc.message)
-            return
+            self.status_bar.set_error(friendly_error(exc.message))
+            return False
         except (ToolangError, ValueError) as exc:
-            self._handle_run_error(str(exc))
-            return
+            self.status_bar.set_error(friendly_error(str(exc)))
+            return False
         queued = QueuedCall(source, request)
         if self.active_run_id is not None or self.run_in_flight.is_set():
             self.queue.append(queued)
         else:
             self.submit_run(queued)
+        return True
+
+    def _write_slash_outcome(
+        self,
+        message: str,
+        outcome: slashes.SlashOutcome,
+    ) -> None:
+        content = outcome.content
+        if isinstance(content, slashes.SlashRunResult):
+            result = content.result
+            self._stage_scrollback(
+                (
+                    blocks.SlashResultBlock(
+                        message=message,
+                        run_id=result.run_id,
+                        parts=result.output,
+                    ).render(),
+                )
+            )
+            return
+        self._stage_scrollback(
+            (
+                blocks.SlashBlock(
+                    message,
+                    slashes.outcome_lines(outcome),
+                    outcome.kind,
+                ).render(),
+            )
+        )
 
     def _handle_run_error(self, message: str) -> None:
         friendly = friendly_error(message)
@@ -681,13 +716,10 @@ class ChatTuiApp:
 
     def _handle_cancel_error(self, message: str) -> None:
         friendly = friendly_error(message)
-        if self.active_run_id is None:
-            self.status_bar.set_error(friendly)
-        else:
-            self.status_bar.set_error(f"cancel failed: {friendly}")
+        self.status_bar.set_error(f"Could not cancel the run: {friendly}")
 
     def _handle_steer_error(self, message: str) -> None:
-        self.status_bar.set_error(f"steer failed: {friendly_error(message)}")
+        self.status_bar.set_error(f"Could not steer the run: {friendly_error(message)}")
 
     def _request_run_cancel(self) -> None:
         if self.submission_blocked is not None:
@@ -695,7 +727,7 @@ class ChatTuiApp:
             return
         if self.active_run_id is None:
             return
-        self.status_bar.clear_error()
+        self.status_bar.clear_transient_error()
         if self.cancel_sent_run_id == self.active_run_id:
             return
         self.cancel_sent_run_id = self.active_run_id
@@ -720,9 +752,9 @@ class ChatTuiApp:
             self.status_bar.set_error(self.submission_blocked)
             return
         if self.active_run_id is None:
-            self.status_bar.set_error("No active run to steer.")
+            self.status_bar.set_error("Start a run before steering")
             return
-        self.status_bar.clear_error()
+        self.status_bar.clear_transient_error()
         run_id = self.active_run_id
         self.unfinalized_blocks.insert(
             max(len(self.unfinalized_blocks) - 1, 0),
@@ -754,24 +786,32 @@ class ChatTuiApp:
                 self.submission_blocked = (
                     "Remote run identity changed. Restart Chat before submitting again."
                 )
-                self.status_bar.set_error(self.submission_blocked)
+                self.status_bar.set_error(
+                    f"Submissions paused: {self.submission_blocked}",
+                    persistent=True,
+                )
                 return
             self.active_run_id = state.run_id
             return
         if isinstance(state, RunDisconnected):
             self.active_run_id = state.run_id
-            self.transport_notice = state.message
-            self.status_bar.set_error(state.message)
+            self.status_bar.set_error(
+                "Connection lost · Reconnecting…",
+                persistent=True,
+            )
             return
         if isinstance(state, RunBlocked):
             if state.run_id is not None:
                 self.active_run_id = state.run_id
             self.submission_blocked = state.message
-            self.transport_notice = state.message
-            self.status_bar.set_error(state.message)
+            self.status_bar.set_error(
+                f"Submissions paused: {friendly_error(state.message)}",
+                persistent=True,
+            )
             return
         if isinstance(state, RunRecovered):
-            self.transport_notice = None
+            if self.submission_blocked is None:
+                self.status_bar.clear_persistent_error()
             events.handle_run_state(state, self.app_context)
 
     def submit_run(self, call: QueuedCall) -> None:
@@ -810,6 +850,8 @@ def _is_run_state(value: object) -> TypeGuard[ChatRunState]:
 
 
 def _blocked_input_allowed(value: object) -> bool:
+    if isinstance(value, RunOverrideHelp):
+        return True
     if not isinstance(value, QuickCommand):
         return False
     if value.name == "queue":

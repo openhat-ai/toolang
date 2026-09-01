@@ -331,6 +331,135 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
     assert not any(path.endswith("/validate") for _method, path, _body in requests)
 
 
+def test_remote_chat_resource_queries_and_model_reconciliation() -> None:
+    queries: list[tuple[str, tuple[str, ...]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        query = tuple(request.url.params.get_list("query"))
+        if path == "/healthz":
+            return httpx.Response(200, json={"ok": True})
+        if path == "/api/v1/profile":
+            return httpx.Response(200, json=_profile())
+        if path == "/api/v1/runs/defaults":
+            return httpx.Response(200, json=_run_defaults())
+        if path == "/api/v1/models":
+            queries.append(("models", query))
+            items = (
+                [
+                    {
+                        "ref": "openrouter/openai/o3",
+                        "name": "o3",
+                        "provider": "openrouter",
+                        "parameters": {"reasoning": {"effort": ["low", "high"]}},
+                    }
+                ]
+                if query == ("openrouter/*",)
+                else _models()["items"]
+            )
+            return httpx.Response(
+                200,
+                json={"default": "test/model", "items": items},
+            )
+        if path == "/api/v1/tools":
+            queries.append(("tools", query))
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "ref": "filesystem/read",
+                            "plugin": "filesystem",
+                            "description": "Read a file.",
+                        }
+                    ]
+                },
+            )
+        if path == "/api/v1/caps":
+            queries.append(("caps", query))
+            return httpx.Response(
+                200,
+                json={
+                    "agent": "alice",
+                    "psyches": [],
+                    "skills": [
+                        {
+                            "kind": "skill",
+                            "name": "reviewer",
+                            "scope": "home",
+                            "description": "Review code.",
+                        }
+                    ],
+                    "services": [],
+                    "prompts": [],
+                    "counts": {
+                        "psyches": 0,
+                        "skills": 1,
+                        "services": 0,
+                        "prompts": 0,
+                    },
+                },
+            )
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+    session = remote.RemoteChatSession(
+        "http://runtime.test:7001",
+        expected_sandbox="host",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        assert [
+            item["ref"] for item in session.list_models(("openrouter/*",))["items"]
+        ] == ["openrouter/openai/o3"]
+        assert session.list_models(())["items"] == []
+        assert session.list_tools(("filesystem/*",))["items"][0]["ref"] == (
+            "filesystem/read"
+        )
+        assert session.list_tools(())["items"] == []
+        assert session.list_caps(None, ("skill/*",))["items"] == [
+            {
+                "identity": "skill/reviewer",
+                "kind": "skill",
+                "scope": "home",
+                "description": "Review code.",
+            }
+        ]
+
+        narrowed = session.apply_setting(
+            session.initial_setting(),
+            RunOverride(allow=(AllowOverride("models", ("openrouter/*",)),)),
+        )
+        assert narrowed.model is None
+        assert narrowed.allow.models == ("openrouter/*",)
+
+        disabled = session.apply_setting(
+            session.initial_setting(),
+            RunOverride(allow=(AllowOverride("models", ()),)),
+        )
+        assert disabled.model is None
+        assert disabled.allow.models == ()
+
+        with pytest.raises(
+            ValueError,
+            match="model is outside session allow.models: test/model",
+        ):
+            session.apply_setting(
+                narrowed,
+                RunOverride(model=ModelOverride(identity="test/model")),
+            )
+        assert narrowed.model is None
+    finally:
+        session.close()
+
+    assert queries == [
+        ("models", ("openrouter/*",)),
+        ("tools", ("filesystem/*",)),
+        ("caps", ("skill/*",)),
+        ("models", ("openrouter/*",)),
+        ("models", ("openrouter/*",)),
+    ]
+
+
 @pytest.mark.parametrize(
     ("profile_payload", "expected_sandbox", "message"),
     (

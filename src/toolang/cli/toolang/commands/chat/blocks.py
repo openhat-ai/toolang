@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 import re
-from typing import Any
+from typing import Any, Literal
 
 from rich import box
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
@@ -558,12 +558,13 @@ def _versions_confirmed_equal(executor_version: str, tui_version: str) -> bool:
 class SlashBlock:
     message: str
     body: Sequence[str]
+    kind: Literal["success", "result", "usage", "error"] = "result"
 
     def render(self) -> RenderableType:
         lines = _slash_control_lines(self.message)
         if self.body:
             first, *rest = self.body
-            lines.append(Text.from_markup(f"[dim]:[/] [none]{escape(first)}[/]"))
+            lines.append(self._summary_line(first))
             lines.append(Text())
             if rest and not rest[0].strip():
                 rest = rest[1:]
@@ -571,11 +572,22 @@ class SlashBlock:
         lines.append(Text("\n"))
         return Group(*lines)
 
+    def _summary_line(self, line: str) -> Text:
+        styles = {
+            "success": "green",
+            "result": "none",
+            "usage": "yellow",
+            "error": "red",
+        }
+        text = Text("  ")
+        text.append(line, style=styles[self.kind])
+        return text
+
     @staticmethod
     def _body_line(line: str) -> Text:
         if not line.strip():
             return Text()
-        if line.startswith("/"):
+        if line.startswith(("/", ":")):
             return SlashBlock._command_line(line)
         columns = _split_columns(line)
         if len(columns) > 1:
@@ -616,15 +628,16 @@ class SlashBlock:
         for index, token in enumerate(usage.split(" ")):
             if index:
                 text.append(" ")
-            style = "cyan" if token.startswith("/") else "dim"
-            if token.startswith("/"):
+            is_command = token.startswith(("/", ":"))
+            style = "cyan" if is_command else "dim"
+            if is_command:
                 command, separator, rest = token.partition(",")
                 text.append(command, style=style)
                 if separator:
                     text.append(separator, style="dim")
                     text.append(
                         rest,
-                        style="cyan" if rest.startswith("/") else "dim",
+                        style=("cyan" if rest.startswith(("/", ":")) else "dim"),
                     )
             else:
                 text.append(token, style=style)
