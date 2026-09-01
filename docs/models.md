@@ -76,13 +76,15 @@ runtime snapshot.
 
 The static file is cached by a portable content revision below root `.setup`.
 Each root or agent model context has its own content-addressed projection below
-the owning `.setup`, including all model sizes and query facts. Cache identities
-cover model-affecting configuration, plugin provenance, environment readiness,
-catalog revisions, and effective `allow.models`; they contain neither absolute
-paths nor environment values. A cache produced on the host is therefore reusable
-when the same root and home are mounted at different guest paths. Invalid or
-unsafe entries are misses, and a cache write failure does not reject a valid
-in-memory Setup.
+the owning `.setup`, including all model sizes and query facts. A compact
+`identity.json` beside each projection supports query miss checks without
+loading the full model context. Cache identities cover model-affecting
+configuration, plugin provenance, environment readiness, catalog revisions,
+and effective `allow.models`; they contain neither absolute paths nor
+environment values. A cache produced on the host is therefore reusable when
+the same root and home are mounted at different guest paths. Invalid or unsafe
+entries are misses, and a cache write failure does not reject a valid in-memory
+Setup.
 
 External catalog entry points are opt-in. Configure one by its entry-point name:
 

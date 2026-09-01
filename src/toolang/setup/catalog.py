@@ -16,6 +16,7 @@ from toolang.common.query import MatchUnion, QueryDataset
 from toolang.plugin.config import merge_plugin_configs
 from toolang.plugin.loading import plugin_provenance
 from toolang.plugin.models.cache import (
+    CatalogSource,
     ModelProjectionCache,
     capture_catalog_source,
     environment_readiness,
@@ -29,7 +30,6 @@ from toolang.plugin.models.catalog import (
     resolve_model_catalog_path,
 )
 from toolang.plugin.models.collections import (
-    MODEL_DEFINITION,
     ModelCollection,
     ModelQueryView,
     catalog_model_dataset,
@@ -84,6 +84,39 @@ class _SnapshotCatalog(ModelCatalog):
         return self.value
 
 
+@dataclass(frozen=True, slots=True)
+class _CatalogLoad:
+    layout: AgentLayout
+    agent_context: bool
+    configs: tuple[dict[str, object], ...]
+    envs: dict[str, str]
+    config_value: tuple[dict[str, object], ...]
+    catalog_path: Path
+    ordered: tuple[ModelCatalog, ...]
+    source: CatalogSource
+    additional_snapshots: tuple[ModelCatalogSnapshot, ...]
+    cache: ModelProjectionCache
+    plugin_provenance: tuple[dict[str, str | None], ...]
+
+    @property
+    def scope(self) -> str:
+        return f"agent:{self.layout.name}" if self.agent_context else "root"
+
+    @property
+    def catalog_revisions(self) -> tuple[tuple[str, str], ...]:
+        return (
+            (self.ordered[0].name, self.source.digest),
+            *(
+                (catalog.name, snapshot.revision)
+                for catalog, snapshot in zip(
+                    self.ordered[1:],
+                    self.additional_snapshots,
+                    strict=True,
+                )
+            ),
+        )
+
+
 async def load_catalog_inspection(
     layout: AgentLayout,
     *,
@@ -92,11 +125,50 @@ async def load_catalog_inspection(
 ) -> CatalogInspection:
     """Load raw catalogs once without constructing an AgentSetup."""
 
+    load = await _prepare_catalog_load(
+        layout,
+        model_catalog=model_catalog,
+        agent_context=agent_context,
+    )
+    return await _materialize_catalog_inspection(load)
+
+
+async def load_matching_catalog_inspection(
+    layout: AgentLayout,
+    *,
+    queries: MatchUnion,
+    model_catalog: Path | None = None,
+    agent_context: bool = True,
+) -> CatalogInspection | None:
+    """Load inspection unless a current cached context proves no identity match."""
+
+    load = await _prepare_catalog_load(
+        layout,
+        model_catalog=model_catalog,
+        agent_context=agent_context,
+    )
+    misses = await asyncio.to_thread(
+        load.cache.catalog_identity_misses,
+        kind="inspection",
+        scope=load.scope,
+        catalog_revisions=load.catalog_revisions,
+        setup_config=load.config_value,
+        environ=load.envs,
+        plugin_provenance=load.plugin_provenance,
+        allow_models=None,
+        queries=queries,
+    )
+    return None if misses is True else await _materialize_catalog_inspection(load)
+
+
+async def _prepare_catalog_load(
+    layout: AgentLayout,
+    *,
+    model_catalog: Path | None,
+    agent_context: bool,
+) -> _CatalogLoad:
     configs, envs = _context_inputs(layout, agent_context=agent_context)
     config_value = tuple(project_model_setup_config(config) for config in configs)
-    adapters = load_model_adapters(
-        merge_plugin_configs(configs, family="model_adapter")
-    )
     catalog_path = resolve_model_catalog_path(
         layout,
         explicit=model_catalog,
@@ -117,6 +189,41 @@ async def load_catalog_inspection(
         layout.root_model_cache,
         layout.home_model_cache if agent_context else layout.root_model_cache,
     )
+    additional_snapshots = tuple(
+        await asyncio.gather(*(catalog.snapshot() for catalog in ordered[1:]))
+    )
+    return _CatalogLoad(
+        layout=layout,
+        agent_context=agent_context,
+        configs=configs,
+        envs=envs,
+        config_value=config_value,
+        catalog_path=catalog_path,
+        ordered=ordered,
+        source=source,
+        additional_snapshots=additional_snapshots,
+        cache=cache,
+        plugin_provenance=_model_plugin_provenance(),
+    )
+
+
+async def _materialize_catalog_inspection(
+    load: _CatalogLoad,
+) -> CatalogInspection:
+    """Hydrate a prepared catalog load into the complete inspection view."""
+
+    layout = load.layout
+    configs = load.configs
+    envs = load.envs
+    config_value = load.config_value
+    catalog_path = load.catalog_path
+    ordered = load.ordered
+    source = load.source
+    cache = load.cache
+    adapters = load_model_adapters(
+        merge_plugin_configs(configs, family="model_adapter")
+    )
+    models_dev = ordered[0]
     static = await asyncio.to_thread(
         cache.load_catalog,
         source,
@@ -124,6 +231,8 @@ async def load_catalog_inspection(
     )
     if static is None:
         static = await models_dev.snapshot()
+        if static.revision != source.digest:
+            raise ValueError("models_dev revision does not match its source")
         try:
             await asyncio.to_thread(
                 cache.store_catalog,
@@ -132,11 +241,7 @@ async def load_catalog_inspection(
             )
         except Exception:
             logger.exception("catalog.static_cache_write_failed")
-    additional = ordered[1:]
-    additional_snapshots = await asyncio.gather(
-        *(catalog.snapshot() for catalog in additional)
-    )
-    snapshots = (static, *additional_snapshots)
+    snapshots = (static, *load.additional_snapshots)
     merged = await MergedModelCatalog(
         tuple(
             _SnapshotCatalog(snapshot, catalog.name)
@@ -162,14 +267,11 @@ async def load_catalog_inspection(
             readiness[config.key_env] = bool(envs.get(config.key_env, "").strip())
     context_key = model_projection_key(
         kind="inspection",
-        scope=f"agent:{layout.name}" if agent_context else "root",
-        catalog_revisions=tuple(
-            (catalog.name, snapshot.revision)
-            for catalog, snapshot in zip(ordered, snapshots, strict=True)
-        ),
+        scope=load.scope,
+        catalog_revisions=load.catalog_revisions,
         setup_config=config_value,
         environment_readiness=readiness,
-        plugin_provenance=_model_plugin_provenance(),
+        plugin_provenance=load.plugin_provenance,
         allow_models=None,
     )
     cached = await asyncio.to_thread(cache.load_context, context_key)
@@ -213,11 +315,7 @@ async def load_catalog_inspection(
         models=models,
         catalog_models=catalog_models,
     )
-    if (
-        cached is None
-        or cached_catalog_queries is None
-        or cached.environment_names != tuple(sorted(readiness))
-    ):
+    if cached is None or cached_catalog_queries is None:
         try:
             await asyncio.to_thread(
                 cache.store_context,
@@ -230,74 +328,6 @@ async def load_catalog_inspection(
         except Exception:
             logger.exception("catalog.model_cache_write_failed agent=%s", layout.name)
     return inspection
-
-
-async def load_cached_catalog_queries(
-    layout: AgentLayout,
-    *,
-    model_catalog: Path | None = None,
-    agent_context: bool = True,
-    queries: MatchUnion | None = None,
-) -> QueryDataset[ModelQueryView] | None:
-    """Load a validated cached catalog query dataset without catalog hydration."""
-
-    context_directory = (
-        layout.home_model_cache if agent_context else layout.root_model_cache
-    )
-    if not any((context_directory / "contexts" / "revs").glob("*/models.json")):
-        return None
-    configs, envs = _context_inputs(layout, agent_context=agent_context)
-    config_value = tuple(project_model_setup_config(config) for config in configs)
-    catalog_path = resolve_model_catalog_path(
-        layout,
-        explicit=model_catalog,
-        environ=envs,
-        include_agent=agent_context,
-    )
-    ordered = _load_ordered_catalogs(configs, envs, catalog_path=catalog_path)
-    models_dev = ordered[0]
-    max_source_bytes = (
-        models_dev.max_bytes if isinstance(models_dev, ModelsDevModelCatalog) else None
-    )
-    _, source = await asyncio.to_thread(
-        capture_catalog_source,
-        catalog_path,
-        max_source_bytes=max_source_bytes,
-    )
-    additional = ordered[1:]
-    additional_snapshots = await asyncio.gather(
-        *(catalog.snapshot() for catalog in additional)
-    )
-    cache = ModelProjectionCache(
-        layout.root_model_cache,
-        layout.home_model_cache if agent_context else layout.root_model_cache,
-    )
-    views = await asyncio.to_thread(
-        cache.find_catalog_queries,
-        kind="inspection",
-        scope=f"agent:{layout.name}" if agent_context else "root",
-        catalog_revisions=(
-            ("models_dev", source.digest),
-            *(
-                (catalog.name, snapshot.revision)
-                for catalog, snapshot in zip(
-                    additional,
-                    additional_snapshots,
-                    strict=True,
-                )
-            ),
-        ),
-        setup_config=config_value,
-        environ=envs,
-        plugin_provenance=_model_plugin_provenance(),
-        allow_models=None,
-        queries=queries,
-    )
-    return (
-        MODEL_DEFINITION.dataset(views, _prevalidated=True)
-        if views is not None
-        else None
-    )
 
 
 def _context_inputs(
@@ -354,6 +384,6 @@ def _model_plugin_provenance() -> tuple[dict[str, str | None], ...]:
 
 __all__ = [
     "CatalogInspection",
-    "load_cached_catalog_queries",
     "load_catalog_inspection",
+    "load_matching_catalog_inspection",
 ]

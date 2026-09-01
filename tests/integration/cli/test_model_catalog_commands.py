@@ -111,6 +111,33 @@ def test_models_query_exports_a_valid_complete_catalog(
     assert tuple(providers["test"].models) == ("two",)
 
 
+def test_models_table_reports_invalid_query_without_a_traceback(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+    _disable_local_discovery(monkeypatch)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "models",
+            "--models",
+            str(catalog),
+            "--query",
+            "*[missing=value]",
+        ],
+        env={},
+    )
+
+    assert result.exit_code == 1
+    assert "unknown models query field 'missing'" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
 def test_models_accepts_month_precision_catalog_dates(
     tmp_path: Path,
     monkeypatch,

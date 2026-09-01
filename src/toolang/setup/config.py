@@ -130,6 +130,17 @@ def project_model_setup_config(config: Mapping[str, object]) -> dict[str, object
             for name, value in plugin_mapping.items()
             if name in {"model_catalog", "model_adapter"}
         }
+        catalogs = plugin.get("model_catalog")
+        if isinstance(catalogs, dict):
+            catalog_mapping = cast(dict[str, object], catalogs)
+            models_dev = catalog_mapping.get("models_dev")
+            if isinstance(models_dev, dict):
+                models_dev_mapping = cast(dict[str, object], models_dev)
+                models_dev_mapping.pop("path", None)
+                if not models_dev_mapping:
+                    catalog_mapping.pop("models_dev")
+            if not catalog_mapping:
+                plugin.pop("model_catalog")
         if plugin:
             projected["plugin"] = plugin
     elif raw_plugin is not None:

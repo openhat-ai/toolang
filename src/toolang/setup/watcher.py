@@ -262,6 +262,8 @@ class SetupWatcher:
             )
             if static is None:
                 static = await models_dev.snapshot()
+                if static.revision != source.digest:
+                    raise ValueError("models_dev revision does not match its source")
                 await self._store_catalog_cache(source, static)
         ordered_catalogs = _ordered_additional_catalogs(catalogs)
         additional_snapshots = tuple(

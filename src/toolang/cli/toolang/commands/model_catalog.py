@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import Annotated, cast
 
+import click
 from rich.text import Text
 import typer
 
@@ -20,8 +21,8 @@ from toolang.cli.common.context import (
 )
 from toolang.cli.common.output import echo_table
 from toolang.cli.common.query import query_items
+from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
-from toolang.common.query import MatchUnion, QueryDataset
 from toolang.plugin.loading import list_plugin_infos
 from toolang.plugin.models.catalog import (
     catalog_json_dumps,
@@ -39,8 +40,8 @@ from toolang.plugin.models.discovery import (
 )
 from toolang.setup.catalog import (
     CatalogInspection,
-    load_cached_catalog_queries,
     load_catalog_inspection,
+    load_matching_catalog_inspection,
 )
 
 
@@ -62,16 +63,14 @@ def models_command(
 ) -> None:
     """List or export model catalog entries."""
 
-    if query and not json_:
-        cached = _cached_catalog_queries(
-            ctx,
-            model_catalog=model_catalog,
-            queries=MODEL_SCHEMA.parse(query),
-        )
-        if cached is not None and not query_items(cached, query):
-            typer.echo("No models matched query.")
-            return
-    inspection = _inspection(ctx, model_catalog=model_catalog)
+    inspection = (
+        _matching_inspection(ctx, model_catalog=model_catalog, query=query)
+        if query and not json_
+        else _inspection(ctx, model_catalog=model_catalog)
+    )
+    if inspection is None:
+        typer.echo("No models matched query.")
+        return
     snapshot = inspection.snapshot
     dataset = inspection.catalog_models
     selected_views = cast(tuple[ModelQueryView, ...], query_items(dataset, query))
@@ -213,25 +212,25 @@ def _inspection(
     )
 
 
-def _cached_catalog_queries(
+def _matching_inspection(
     ctx: typer.Context,
     *,
-    model_catalog: Path | None = None,
-    queries: MatchUnion | None = None,
-) -> QueryDataset[ModelQueryView] | None:
+    model_catalog: Path | None,
+    query: Sequence[str],
+) -> CatalogInspection | None:
     agent = context_agent(ctx)
+    try:
+        queries = MODEL_SCHEMA.parse(query)
+    except ToolangError as error:
+        raise click.ClickException(str(error)) from error
     return asyncio.run(
-        load_cached_catalog_queries(
+        load_matching_catalog_inspection(
             AgentLayout.resident(context_root(ctx), agent or "default"),
             model_catalog=resolve_model_catalog_option(model_catalog),
             agent_context=agent is not None,
             queries=queries,
         )
     )
-
-
-def _layout(ctx: typer.Context) -> AgentLayout:
-    return AgentLayout.resident(context_root(ctx), context_agent(ctx) or "default")
 
 
 def _catalog_summary(

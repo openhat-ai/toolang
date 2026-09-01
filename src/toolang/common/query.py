@@ -392,12 +392,13 @@ class CollectionSchema(Generic[_T]):
     ) -> bool:
         """Return whether canonical identity components satisfy one match."""
 
-        values = tuple(components)
-        if len(values) != len(self.identity.paths):
+        provided = tuple(components)
+        if len(provided) != len(self.identity.paths):
             raise ToolangError(
                 f"collection {self.name!r} expected "
                 f"{len(self.identity.paths)} identity components"
             )
+        values = (*self.identity.bound, *provided)
         return _identity_matches(values, self.identity, match)
 
     def to_data(self) -> dict[str, object]:

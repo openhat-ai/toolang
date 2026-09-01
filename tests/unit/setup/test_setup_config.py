@@ -11,6 +11,7 @@ from toolang.setup.config import (
     load_agent_config,
     load_setup_config,
     load_setup_envs,
+    project_model_setup_config,
     resolve_run_defaults,
     resolve_run_limits,
     resolve_setup_allow,
@@ -80,6 +81,34 @@ def test_setup_envs_treat_dotenv_values_as_literals(
     envs = load_setup_envs(layout)
 
     assert envs["LITERAL"] == "${HOME}/agent"
+
+
+def test_model_setup_projection_excludes_selected_catalog_path() -> None:
+    config = {
+        "plugin": {
+            "model_catalog": {
+                "models_dev": {"path": "/host/root/models.json", "max_bytes": 100},
+                "company": {"url": "https://catalog.test/models.json"},
+            },
+            "model_adapter": {"responses": {"profile": "default"}},
+        }
+    }
+
+    assert project_model_setup_config(config) == {
+        "plugin": {
+            "model_catalog": {
+                "models_dev": {"max_bytes": 100},
+                "company": {"url": "https://catalog.test/models.json"},
+            },
+            "model_adapter": {"responses": {"profile": "default"}},
+        }
+    }
+    assert (
+        project_model_setup_config(
+            {"plugin": {"model_catalog": {"models_dev": {"path": "/guest/models"}}}}
+        )
+        == {}
+    )
 
 
 def test_setup_policy_overlays_root_agent_and_frozen_overrides() -> None:

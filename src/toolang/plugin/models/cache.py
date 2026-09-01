@@ -10,7 +10,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import re
-from typing import cast
+from typing import Any, cast
 
 from pydantic_core import from_json
 
@@ -32,23 +32,90 @@ from toolang.plugin.models.collections import (
     ModelRouteView,
 )
 
-CACHE_SCHEMA = 2
+CACHE_SCHEMA = 3
 CATALOG_PARSER_SCHEMA = 1
 _CATALOG_FILE = "catalog.json"
 _CONTEXT_FILE = "models.json"
+_CONTEXT_IDENTITY_FILE = "identity.json"
 _MAX_CACHE_BYTES = 128 * 1024 * 1024
 _REVISION_RE = re.compile(r"^sha256:([0-9a-f]{64})$")
+_CONTEXT_FIELDS = frozenset(
+    {
+        "schema",
+        "kind",
+        "key",
+        "models",
+        "queries",
+        "catalog_queries",
+    }
+)
+_CATALOG_FIELDS = frozenset({"schema", "kind", "key", "source", "snapshot"})
+_MODEL_INFO_FIELDS = frozenset(
+    {
+        "ref",
+        "provider",
+        "name",
+        "model",
+        "selectors",
+        "adapter",
+        "scope",
+        "tags",
+        "tools",
+        "streaming",
+        "context_window",
+        "max_output_tokens",
+        "input_price",
+        "output_price",
+        "details",
+        "metadata",
+    }
+)
+_MODEL_QUERY_FIELDS = frozenset(
+    {
+        "key",
+        "provider",
+        "model",
+        "name",
+        "description",
+        "family",
+        "scope",
+        "available",
+        "adapter",
+        "catalog",
+        "alias",
+        "route",
+        "tags",
+        "streaming",
+        "attachment",
+        "reasoning",
+        "tool_call",
+        "structured_output",
+        "temperature",
+        "open_weights",
+        "status",
+        "release_date",
+        "last_updated",
+        "modalities",
+        "limit",
+        "cost",
+        "parameters",
+    }
+)
+_UNCACHED_MODEL_METADATA_FIELDS = frozenset({"experimental", "provider"})
 _SENSITIVE_HEADER_NAME_RE = re.compile(
     r"(?:authorization|cookie|credential|key|secret|token)",
     re.IGNORECASE,
 )
 _SECRET_VALUE_RE = re.compile(
-    r'(?:bearer\s+[A-Za-z0-9._~+/-]{8,}|https?://[^/\s"@:]+:[^@\s"]+@)',
+    r'(?:bearer\s+[A-Za-z0-9._~+/-]{8,}|https?://[^/\s"@:]+:[^@\s"]+@|'
+    r"[?&](?:api[-_]?key|access[-_]?token|credential|secret|token)="
+    r'[^&\s"]+)',
     re.IGNORECASE,
 )
 _SECRET_FIELD_MARKERS = (
     '"api_key"',
     '"api-key"',
+    '"apikey"',
     '"authorization"',
     '"cookie"',
     '"credential"',
@@ -62,9 +129,11 @@ _SECRET_FIELD_MARKERS = (
     '"x_api_key"',
     '"x-api-key"',
     '_password"',
+    '_key"',
     '_secret"',
     '_token"',
     '-password"',
+    '-key"',
     '-secret"',
     '-token"',
 )
@@ -129,7 +198,6 @@ class CachedModelProjection:
     model_infos: tuple[ModelInfo, ...]
     query_views: tuple[ModelQueryView, ...]
     catalog_query_views: tuple[ModelQueryView, ...] = ()
-    environment_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _revision_hex(self.key)
@@ -146,6 +214,9 @@ class CachedModelProjection:
         catalog_keys = tuple(view.key for view in self.catalog_query_views)
         if len(catalog_keys) != len(set(catalog_keys)):
             raise ValueError("cached catalog projection contains duplicate keys")
+        for view in (*self.query_views, *self.catalog_query_views):
+            if view.key != f"{view.provider}/{view.model}":
+                raise ValueError("cached model query identity does not match its key")
 
 
 class ModelProjectionCache:
@@ -170,6 +241,7 @@ class ModelProjectionCache:
                 kind="catalog",
                 key=source.artifact_key,
             )
+            _require_fields(document, _CATALOG_FIELDS, label="catalog cache")
             raw_source = document.get("source")
             if not isinstance(raw_source, Mapping):
                 return None
@@ -182,6 +254,11 @@ class ModelProjectionCache:
             if not isinstance(raw_snapshot, Mapping):
                 return None
             snapshot_data = cast(Mapping[str, object], raw_snapshot)
+            _require_fields(
+                snapshot_data,
+                frozenset({"revision", "data"}),
+                label="catalog snapshot",
+            )
             revision = snapshot_data.get("revision")
             data = snapshot_data.get("data")
             if not isinstance(revision, str) or revision != source.digest:
@@ -203,11 +280,21 @@ class ModelProjectionCache:
     ) -> None:
         """Store one normalized static catalog artifact."""
 
+        if snapshot.revision != source.digest:
+            raise ValueError("catalog snapshot revision does not match its source")
+        if any(provider.local for provider in snapshot.providers.values()) or any(
+            model.local for model in snapshot.models
+        ):
+            raise ValueError("static catalog artifact cannot contain local models")
+
         document = {
             "source": source.to_data(),
             "snapshot": {
                 "revision": snapshot.revision,
-                "data": snapshot.to_data(),
+                "data": {
+                    provider_id: provider.to_data()
+                    for provider_id, provider in sorted(snapshot.providers.items())
+                },
             },
         }
         _store_document(
@@ -223,6 +310,7 @@ class ModelProjectionCache:
         path = self._context_path(key)
         try:
             document = _load_document(path, kind="context", key=key)
+            _require_fields(document, _CONTEXT_FIELDS, label="model context")
             raw_models = document.get("models")
             if not isinstance(raw_models, list):
                 return None
@@ -243,7 +331,7 @@ class ModelProjectionCache:
             )
             if len(queries) != len(raw_queries):
                 return None
-            raw_catalog_queries = document.get("catalog_queries", [])
+            raw_catalog_queries = document.get("catalog_queries")
             if not isinstance(raw_catalog_queries, list):
                 return None
             catalog_queries = tuple(
@@ -253,17 +341,11 @@ class ModelProjectionCache:
             )
             if len(catalog_queries) != len(raw_catalog_queries):
                 return None
-            raw_environment_names = document.get("environment_names", [])
-            if not isinstance(raw_environment_names, list) or any(
-                not isinstance(name, str) for name in raw_environment_names
-            ):
-                return None
             return CachedModelProjection(
                 key=key,
                 model_infos=infos,
                 query_views=queries,
                 catalog_query_views=catalog_queries,
-                environment_names=tuple(cast(list[str], raw_environment_names)),
             )
         except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
             return None
@@ -279,21 +361,44 @@ class ModelProjectionCache:
     ) -> None:
         """Store all safe facts for one derived model context."""
 
+        projection = CachedModelProjection(
+            key=key,
+            model_infos=tuple(model_infos),
+            query_views=tuple(query_views),
+            catalog_query_views=tuple(catalog_query_views),
+        )
         _store_document(
             self._context_path(key),
             kind="context",
             key=key,
             document={
-                "models": [_cache_model_info_data(info) for info in model_infos],
-                "queries": [_model_query_view_cache_data(view) for view in query_views],
-                "catalog_queries": [
-                    _model_query_view_cache_data(view) for view in catalog_query_views
+                "models": [
+                    _cache_model_info_data(info) for info in projection.model_infos
                 ],
+                "queries": [
+                    _model_query_view_cache_data(view)
+                    for view in projection.query_views
+                ],
+                "catalog_queries": [
+                    _model_query_view_cache_data(view)
+                    for view in projection.catalog_query_views
+                ],
+            },
+        )
+        _store_document(
+            self._context_identity_path(key),
+            kind="context_identity",
+            key=key,
+            document={
                 "environment_names": sorted(set(environment_names)),
+                "models": [
+                    [view.provider, view.model]
+                    for view in projection.catalog_query_views
+                ],
             },
         )
 
-    def find_catalog_queries(
+    def catalog_identity_misses(
         self,
         *,
         kind: str,
@@ -303,24 +408,18 @@ class ModelProjectionCache:
         environ: Mapping[str, str],
         plugin_provenance: Sequence[object],
         allow_models: Sequence[str] | None,
-        queries: MatchUnion | None = None,
-    ) -> tuple[ModelQueryView, ...] | None:
-        """Find cached catalog query facts without hydrating the full context."""
+        queries: MatchUnion,
+    ) -> bool | None:
+        """Check a matching context's identities without hydrating its models."""
 
         directory = self._context_directory / "contexts" / "revs"
-        for path in sorted(directory.glob(f"*/{_CONTEXT_FILE}")):
+        for path in sorted(directory.glob(f"*/{_CONTEXT_IDENTITY_FILE}")):
             revision = path.parent.name
             if re.fullmatch(r"[0-9a-f]{64}", revision) is None:
                 continue
             key = f"sha256:{revision}"
             try:
-                document = _load_document(path, kind="context", key=key)
-                raw_names = document.get("environment_names")
-                if not isinstance(raw_names, list) or any(
-                    not isinstance(name, str) for name in raw_names
-                ):
-                    continue
-                names = cast(list[str], raw_names)
+                identities, names = _load_context_catalog_identity(path, key=key)
                 expected = model_projection_key(
                     kind=kind,
                     scope=scope,
@@ -334,25 +433,13 @@ class ModelProjectionCache:
                 )
                 if expected != key:
                     continue
-                raw_queries = document.get("catalog_queries")
-                if not isinstance(raw_queries, list) or not raw_queries:
-                    continue
-                identities = _cached_catalog_identities(raw_queries)
-                if identities is None:
-                    continue
-                if queries is not None and not any(
+                if not identities:
+                    return True
+                return not any(
                     MODEL_SCHEMA.identity_matches(identity, match)
                     for identity in identities
                     for match in queries.matches
-                ):
-                    return ()
-                decoded = tuple(
-                    _model_query_view_from_cache_data(cast(Mapping[str, object], item))
-                    for item in raw_queries
-                    if isinstance(item, Mapping)
                 )
-                if len(decoded) == len(raw_queries):
-                    return decoded
             except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
                 continue
         return None
@@ -364,6 +451,16 @@ class ModelProjectionCache:
     def _context_path(self, key: str) -> Path:
         revision = _revision_hex(key)
         return self._context_directory / "contexts" / "revs" / revision / _CONTEXT_FILE
+
+    def _context_identity_path(self, key: str) -> Path:
+        revision = _revision_hex(key)
+        return (
+            self._context_directory
+            / "contexts"
+            / "revs"
+            / revision
+            / _CONTEXT_IDENTITY_FILE
+        )
 
 
 def capture_catalog_source(
@@ -434,6 +531,9 @@ def hydrate_model_infos(
         metadata = dict(info.metadata)
         metadata["resolved_api"] = model.resolved.api
         metadata["resolved_ready"] = model.resolved.ready
+        metadata["experimental"] = (
+            dict(model.experimental) if model.experimental is not None else None
+        )
         hydrated.append(
             replace(
                 info,
@@ -461,19 +561,50 @@ def _cache_model_info_data(info: ModelInfo) -> dict[str, object]:
         data["metadata"] = {
             str(key): value
             for key, value in metadata.items()
-            if key not in {"resolved_api", "resolved_ready"}
+            if key
+            not in {
+                "resolved_api",
+                "resolved_ready",
+                *_UNCACHED_MODEL_METADATA_FIELDS,
+            }
         }
     data["adapter"] = "unresolved"
     return data
 
 
 def _model_info_from_cache_data(data: Mapping[str, object]) -> ModelInfo:
-    normalized = dict(data)
-    for field in ("input_price", "output_price"):
-        value = normalized.get(field)
-        if isinstance(value, Decimal):
-            normalized[field] = float(value)
-    return ModelInfo.from_data(normalized)
+    _require_fields(data, _MODEL_INFO_FIELDS, label="cached model info")
+    metadata = data.get("metadata")
+    if not isinstance(metadata, Mapping) or any(
+        not isinstance(name, str) for name in metadata
+    ):
+        raise TypeError("cached model metadata must be an object")
+    info = ModelInfo(
+        ref=_text(data, "ref"),
+        provider=_text(data, "provider"),
+        name=_text(data, "name"),
+        model=_text(data, "model"),
+        selectors=_strings(data, "selectors"),
+        adapter=_text(data, "adapter"),
+        scope=_optional_text(data, "scope"),
+        tags=_strings(data, "tags"),
+        tools=_bool(data, "tools"),
+        streaming=_bool(data, "streaming"),
+        context_window=_optional_int(data, "context_window"),
+        max_output_tokens=_optional_int(data, "max_output_tokens"),
+        input_price=_optional_float(data, "input_price"),
+        output_price=_optional_float(data, "output_price"),
+        details=_optional_text(data, "details"),
+        metadata={str(name): value for name, value in metadata.items()},
+    )
+    forbidden_metadata = {
+        "resolved_api",
+        "resolved_ready",
+        *_UNCACHED_MODEL_METADATA_FIELDS,
+    }
+    if info.adapter != "unresolved" or forbidden_metadata.intersection(info.metadata):
+        raise ValueError("cached model info contains runtime-bound data")
+    return info
 
 
 def _model_query_view_cache_data(view: ModelQueryView) -> dict[str, object]:
@@ -528,12 +659,21 @@ def _model_query_view_cache_data(view: ModelQueryView) -> dict[str, object]:
 def _model_query_view_from_cache_data(
     data: Mapping[str, object],
 ) -> ModelQueryView:
-    route = _mapping(data, "route")
-    modalities = _mapping(data, "modalities")
-    limit = _mapping(data, "limit")
-    cost = _mapping(data, "cost")
-    parameters = _mapping(data, "parameters")
-    reasoning = _mapping(parameters, "reasoning")
+    _require_fields(data, _MODEL_QUERY_FIELDS, label="cached model query")
+    route = _mapping(
+        data,
+        "route",
+        fields=frozenset({"provider", "adapter", "scope"}),
+    )
+    modalities = _mapping(
+        data,
+        "modalities",
+        fields=frozenset({"input", "output"}),
+    )
+    limit = _mapping(data, "limit", fields=frozenset({"context", "output"}))
+    cost = _mapping(data, "cost", fields=frozenset({"input", "output"}))
+    parameters = _mapping(data, "parameters", fields=frozenset({"reasoning"}))
+    reasoning = _mapping(parameters, "reasoning", fields=frozenset({"effort"}))
     return ModelQueryView(
         key=_text(data, "key"),
         record=None,
@@ -581,28 +721,58 @@ def _model_query_view_from_cache_data(
     )
 
 
-def _cached_catalog_identities(
-    raw_queries: Sequence[object],
-) -> tuple[tuple[str, str], ...] | None:
+def _catalog_identity_from_cache_data(
+    data: Mapping[str, object],
+    *,
+    key: str,
+) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
+    _require_fields(
+        data,
+        frozenset({"environment_names", "key", "kind", "models", "schema"}),
+        label="catalog identity",
+    )
+    if (
+        data.get("schema") != CACHE_SCHEMA
+        or data.get("kind") != "context_identity"
+        or data.get("key") != key
+    ):
+        raise ValueError("catalog identity does not match its context")
+    raw_environment_names = data.get("environment_names")
+    if not isinstance(raw_environment_names, list) or any(
+        not isinstance(name, str) for name in raw_environment_names
+    ):
+        raise TypeError("catalog identity environment names must be strings")
+    environment_names = tuple(cast(list[str], raw_environment_names))
+    if environment_names != tuple(sorted(set(environment_names))) or any(
+        not name for name in environment_names
+    ):
+        raise ValueError(
+            "catalog identity environment names must be unique and ordered"
+        )
+    raw_models = data.get("models")
+    if not isinstance(raw_models, list):
+        raise TypeError("catalog identity models must be an array")
     identities: list[tuple[str, str]] = []
-    for raw_item in raw_queries:
-        if not isinstance(raw_item, Mapping):
-            return None
-        item = cast(Mapping[str, object], raw_item)
-        provider = item.get("provider")
-        model = item.get("model")
+    for raw_item in raw_models:
         if (
-            not isinstance(provider, str)
-            or not provider
-            or not isinstance(model, str)
-            or not model
+            not isinstance(raw_item, list)
+            or len(raw_item) != 2
+            or not isinstance(raw_item[0], str)
+            or not isinstance(raw_item[1], str)
         ):
-            return None
+            raise TypeError("catalog identity model entries must be string pairs")
+        provider = raw_item[0]
+        model = raw_item[1]
+        if not provider or not model:
+            raise ValueError("catalog identity model entries must be non-empty")
         identities.append((provider, model))
-    return tuple(identities)
+    if len(identities) != len(set(identities)):
+        raise ValueError("catalog identity contains duplicate models")
+    return tuple(identities), environment_names
 
 
 def _catalog_source_from_data(data: Mapping[object, object]) -> CatalogSource:
+    _require_fields(data, frozenset({"sha256", "size"}), label="catalog source")
     digest = data.get("sha256")
     size = data.get("size")
     if not isinstance(digest, str):
@@ -612,11 +782,29 @@ def _catalog_source_from_data(data: Mapping[object, object]) -> CatalogSource:
     return CatalogSource(digest=digest, size=size)
 
 
-def _mapping(data: Mapping[str, object], name: str) -> Mapping[str, object]:
+def _mapping(
+    data: Mapping[str, object],
+    name: str,
+    *,
+    fields: frozenset[str],
+) -> Mapping[str, object]:
     value = data.get(name)
     if not isinstance(value, Mapping):
         raise TypeError(f"cached model {name} must be an object")
-    return cast(Mapping[str, object], value)
+    result = cast(Mapping[str, object], value)
+    _require_fields(result, fields, label=f"cached model {name}")
+    return result
+
+
+def _require_fields(
+    data: Mapping[Any, object],
+    expected: frozenset[str],
+    *,
+    label: str,
+) -> None:
+    actual = {str(name) for name in data}
+    if actual != expected:
+        raise ValueError(f"{label} fields do not match schema")
 
 
 def _text(data: Mapping[str, object], name: str) -> str:
@@ -680,6 +868,15 @@ def _optional_decimal(data: Mapping[str, object], name: str) -> Decimal | None:
     return Decimal(str(value))
 
 
+def _optional_float(data: Mapping[str, object], name: str) -> float | None:
+    value = data.get(name)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, Decimal | int | float):
+        raise TypeError(f"cached model {name} must be a number or null")
+    return float(value)
+
+
 def _optional_date(data: Mapping[str, object], name: str) -> date | None:
     value = _optional_text(data, name)
     return date.fromisoformat(value) if value is not None else None
@@ -709,6 +906,15 @@ def _store_document(
         atomic_write_text(path, content)
 
 
+def _load_context_catalog_identity(
+    path: Path,
+    *,
+    key: str,
+) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
+    document = _load_document(path, kind="context_identity", key=key)
+    return _catalog_identity_from_cache_data(document, key=key)
+
+
 def _load_document(path: Path, *, kind: str, key: str) -> dict[str, object]:
     if path.stat().st_size > _MAX_CACHE_BYTES:
         raise ValueError("model cache entry exceeds its size limit")
@@ -726,6 +932,7 @@ def _load_document(path: Path, *, kind: str, key: str) -> dict[str, object]:
     )
     if not isinstance(raw, Mapping):
         raise TypeError("model cache entry must be an object")
+    _require_fields(raw, frozenset({"digest", "payload"}), label="cache envelope")
     digest = raw.get("digest")
     payload = raw.get("payload")
     if not isinstance(digest, str) or not isinstance(payload, Mapping):
@@ -776,7 +983,7 @@ def _serialized_data_is_unsafe(
     lowered = content.casefold()
     if any(_json_field_occurs(lowered, marker) for marker in _SECRET_FIELD_MARKERS):
         return True
-    if "bearer " in lowered or _contains_url_userinfo(content):
+    if _SECRET_VALUE_RE.search(content) is not None or _contains_url_userinfo(content):
         return True
     if not _json_field_occurs(lowered, '"headers"'):
         return False
