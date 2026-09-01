@@ -2,32 +2,45 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 
+import pytest
+
+from toolang.state import source as state_source
 from toolang.state.source import (
-    SourceTree,
+    SOURCE_SCHEMA,
+    SourceChangedError,
+    SourceManifest,
+    build_source_manifest,
     is_source_path,
+    observe_source,
+    read_root_source,
     scan_home_source,
+    scan_root_source,
     scan_source,
 )
 
 
-def test_source_tree_round_trips_nested_metadata(tmp_path: Path) -> None:
+def test_source_manifest_round_trips_nested_content(tmp_path: Path) -> None:
     source = tmp_path / "source"
     skill = source / "skills" / "pdf" / "scripts"
     skill.mkdir(parents=True)
     (source / "skills" / "pdf" / "SKILL.md").write_text("# PDF\n", encoding="utf-8")
     (skill / "convert.py").write_text("pass\n", encoding="utf-8")
 
-    tree = scan_source(source, ("skills", "config.toml"))
-    snapshot = tmp_path / "source.json"
-    tree.save(snapshot)
+    manifest = scan_source(source, ("skills", "config.toml"))
+    loaded = SourceManifest.from_data(manifest.to_data())
 
-    assert SourceTree.load(snapshot) == tree
-    assert tree.root.children[0].name == "skills"
-    assert tree.root.children[0].children[0].name == "pdf"
+    assert loaded == manifest
+    assert [item.path for item in manifest.files] == [
+        "skills/pdf/SKILL.md",
+        "skills/pdf/scripts/convert.py",
+    ]
 
 
-def test_source_tree_changes_when_nested_file_metadata_changes(tmp_path: Path) -> None:
+def test_source_manifest_changes_when_nested_file_content_changes(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "source"
     nested = source / "skills" / "pdf" / "scripts" / "convert.py"
     nested.parent.mkdir(parents=True)
@@ -40,17 +53,17 @@ def test_source_tree_changes_when_nested_file_metadata_changes(tmp_path: Path) -
     assert after != before
 
 
-def test_source_tree_keeps_empty_non_config_files(tmp_path: Path) -> None:
+def test_source_manifest_keeps_empty_non_config_files(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
     (source / "agent.too").touch()
 
-    tree = scan_source(source, ("agent.too",), project_configs=True)
+    manifest = scan_source(source, ("agent.too",), project_configs=True)
 
-    assert [item.name for item in tree.root.children] == ["agent.too"]
+    assert [(item.path, item.size) for item in manifest.files] == [("agent.too", 0)]
 
 
-def test_source_tree_is_intentionally_coarse_for_preserved_metadata(
+def test_source_manifest_detects_content_change_with_preserved_metadata(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "source"
@@ -65,10 +78,24 @@ def test_source_tree_is_intentionally_coarse_for_preserved_metadata(
     after = scan_source(source, ("agent.too",))
 
     assert program.stat().st_size == original.st_size
+    assert after != before
+
+
+def test_source_manifest_ignores_metadata_only_changes(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    program = source / "agent.too"
+    program.write_text("agent alice\n", encoding="utf-8")
+    before = scan_source(source, ("agent.too",))
+
+    changed = program.stat().st_mtime_ns + 1_000_000_000
+    os.utime(program, ns=(changed, changed))
+    after = scan_source(source, ("agent.too",))
+
     assert after == before
 
 
-def test_source_tree_follows_symbolic_linked_files(tmp_path: Path) -> None:
+def test_source_manifest_follows_symbolic_linked_files(tmp_path: Path) -> None:
     source = tmp_path / "source"
     target = tmp_path / "roaming.too"
     source.mkdir()
@@ -79,7 +106,168 @@ def test_source_tree_follows_symbolic_linked_files(tmp_path: Path) -> None:
     target.write_text("agent changed\n", encoding="utf-8")
     after = scan_source(source, ("agent.too",))
 
-    assert before.root.children[0].name == "agent.too"
+    assert before.files[0].path == "agent.too"
+    assert after != before
+
+
+def test_source_manifest_is_portable_across_absolute_roots(tmp_path: Path) -> None:
+    host = tmp_path / "host"
+    guest = tmp_path / "guest"
+    (host / "skills" / "pdf").mkdir(parents=True)
+    (host / "skills" / "pdf" / "SKILL.md").write_text("# PDF\n", encoding="utf-8")
+    shutil.copytree(host, guest)
+
+    assert scan_source(host, ("skills",)) == scan_source(guest, ("skills",))
+
+
+@pytest.mark.parametrize(
+    "data, message",
+    (
+        (
+            {
+                "files": [{"path": "../escape", "sha256": "0" * 64, "size": 1}],
+                "schema": SOURCE_SCHEMA,
+            },
+            "portable and relative",
+        ),
+        (
+            {
+                "files": [{"path": ".", "sha256": "0" * 64, "size": 1}],
+                "schema": SOURCE_SCHEMA,
+            },
+            "portable and relative",
+        ),
+        (
+            {
+                "files": [{"path": "flows\\escape.too", "sha256": "0" * 64, "size": 1}],
+                "schema": SOURCE_SCHEMA,
+            },
+            "portable and relative",
+        ),
+        (
+            {
+                "files": [{"path": "agent.too", "sha256": "invalid", "size": 1}],
+                "schema": SOURCE_SCHEMA,
+            },
+            "SHA-256",
+        ),
+        (
+            {
+                "files": [
+                    {"path": "b", "sha256": "0" * 64, "size": 1},
+                    {"path": "a", "sha256": "0" * 64, "size": 1},
+                ],
+                "schema": SOURCE_SCHEMA,
+            },
+            "sorted and unique",
+        ),
+    ),
+)
+def test_source_manifest_rejects_unsafe_or_noncanonical_data(
+    data: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        SourceManifest.from_data(data)
+
+
+def test_source_manifest_rejects_symbolic_link_directories(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    target = tmp_path / "external"
+    source.mkdir()
+    target.mkdir()
+    (source / "skills").symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symbolic-link directories"):
+        scan_source(source, ("skills",))
+
+
+def test_home_source_rejects_symbolic_linked_flow_directory(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    home = root / "agents" / "alice"
+    external = tmp_path / "external-flows"
+    home.mkdir(parents=True)
+    external.mkdir()
+    (external / "research.too").write_text("flow:\n  pass\n", encoding="utf-8")
+    (home / "flows").symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symbolic-link directories"):
+        scan_home_source(root, "alice")
+
+
+def test_home_source_rejects_directory_in_agent_file_slot(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    program = root / "agents" / "alice" / "agent.too"
+    program.mkdir(parents=True)
+    (program / "nested.too").write_text("agent alice\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be a file"):
+        scan_home_source(root, "alice")
+
+
+def test_root_source_rejects_file_in_cap_directory_slot(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    root.mkdir()
+    (root / "prompts").write_text("not a directory\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be a directory"):
+        scan_root_source(root)
+
+
+def test_empty_projected_config_still_checks_for_concurrent_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "toolang"
+    root.mkdir()
+    config = root / "config.toml"
+    config.write_text("[default]\nmodel = 'one'\n", encoding="utf-8")
+
+    def change_during_projection(_content: bytes) -> bytes:
+        config.write_text("[prompts]\nreview = 'acme/review'\n", encoding="utf-8")
+        return b""
+
+    monkeypatch.setattr(
+        state_source,
+        "canonical_state_config",
+        change_during_projection,
+    )
+
+    with pytest.raises(SourceChangedError, match="changed while reading"):
+        read_root_source(root)
+
+
+def test_manifest_builder_reuses_only_unchanged_file_digests(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    one = source / "one.txt"
+    two = source / "two.txt"
+    one.write_text("one", encoding="utf-8")
+    two.write_text("two", encoding="utf-8")
+    before_observation = observe_source(source, ("one.txt", "two.txt"))
+    before = build_source_manifest(before_observation, project_configs=False)
+    two.write_text("changed", encoding="utf-8")
+    after_observation = observe_source(source, ("one.txt", "two.txt"))
+    reads: list[Path] = []
+    original_read = Path.read_bytes
+
+    def count_read(path: Path) -> bytes:
+        reads.append(path)
+        return original_read(path)
+
+    monkeypatch.setattr(Path, "read_bytes", count_read)
+
+    after = build_source_manifest(
+        after_observation,
+        project_configs=False,
+        previous_observation=before_observation,
+        previous_manifest=before,
+    )
+
+    assert reads == [two]
     assert after != before
 
 
@@ -99,7 +287,7 @@ def test_home_source_discovers_only_direct_lowercase_too_flows(tmp_path: Path) -
 
     source = scan_home_source(root, "alice")
 
-    assert [item.name for item in source.root.children] == ["flows/research.too"]
+    assert [item.path for item in source.files] == ["flows/research.too"]
     assert is_source_path(root, "alice", direct)
     assert not is_source_path(root, "alice", nested / "hidden.too")
     assert not is_source_path(root, "alice", root_flow)

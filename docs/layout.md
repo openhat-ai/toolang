@@ -167,8 +167,12 @@ State directories:
 | Agent composition | `${TOOLANG_ROOT}/agents/<agent>/.state/agent/` |
 
 Each directory stores a current-revision pointer, a writer lock, and immutable
-revision directories. See [agent-state.md](./agent-state.md) for the canonical
-documents, revision calculation, validation, and publication rules.
+revision directories. Layer source identities contain only logical paths,
+canonical byte sizes, and content digests, so the same revisions remain usable
+when root and home are mounted at different absolute paths. Sandbox preparation
+mounts symbolic-linked State source files read-only at their logical guest
+paths. See [agent-state.md](./agent-state.md) for the canonical documents,
+revision calculation, validation, and publication rules.
 
 
 ## Durable State

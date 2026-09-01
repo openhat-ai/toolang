@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import fcntl
@@ -18,7 +18,7 @@ from toolang.common.layout import AgentLayout
 
 from ..common.immutable import freeze_mapping
 from ..lang.ast import Program, program_from_data
-from .source import SourceTree
+from .source import SOURCE_SCHEMA, LegacySourceTree, SourceManifest, SourceRecord
 from .state import (
     CapResolution,
     StateCap,
@@ -28,7 +28,7 @@ from .state import (
 )
 
 LayerScope = Literal["root", "home"]
-LAYER_SCHEMA = 3
+LAYER_SCHEMA = 4
 AGENT_STATE_SCHEMA = 1
 _LAYER_FILE = "layer.json"
 _LAYERS_FILE = "layers.json"
@@ -43,7 +43,7 @@ class RootLayer:
     revision: str
     revision_dir: Path
     schema: int
-    source: SourceTree
+    source: SourceRecord
     resolutions: tuple[CapResolution, ...]
     config: Mapping[str, object]
     caps: tuple[StateCap, ...]
@@ -52,6 +52,8 @@ class RootLayer:
         _require_revision(self.revision)
         if self.revision_dir.name != self.revision:
             raise ValueError("root State layer directory does not match its revision")
+        if self.schema == LAYER_SCHEMA and not isinstance(self.source, SourceManifest):
+            raise ValueError("current root State layer requires a source manifest")
         object.__setattr__(self, "config", freeze_mapping(self.config))
 
 
@@ -62,7 +64,7 @@ class HomeLayer:
     revision: str
     revision_dir: Path
     schema: int
-    source: SourceTree
+    source: SourceRecord
     resolutions: tuple[CapResolution, ...]
     config: Mapping[str, object]
     caps: tuple[StateCap, ...]
@@ -75,6 +77,8 @@ class HomeLayer:
         _require_revision(self.revision)
         if self.revision_dir.name != self.revision:
             raise ValueError("home State layer directory does not match its revision")
+        if self.schema == LAYER_SCHEMA and not isinstance(self.source, SourceManifest):
+            raise ValueError("current home State layer requires a source manifest")
         object.__setattr__(self, "config", freeze_mapping(self.config))
         object.__setattr__(self, "modules", freeze_mapping(self.modules))
         object.__setattr__(self, "module_sources", freeze_mapping(self.module_sources))
@@ -134,11 +138,11 @@ def load_layer_source(
     layout: AgentLayout,
     scope: LayerScope,
     revision: str,
-) -> SourceTree:
-    """Load the source tree recorded by one trusted State layer."""
+) -> SourceRecord:
+    """Load the source identity recorded by one trusted State layer."""
 
     document, _ = _load_layer(layout, scope, revision)
-    return _source_tree(document)
+    return _source_record(document)
 
 
 def load_root_layer(
@@ -153,7 +157,7 @@ def load_root_layer(
         revision=effective,
         revision_dir=revision_dir,
         schema=_schema(document),
-        source=_source_tree(document),
+        source=_source_record(document),
         resolutions=_resolutions(document),
         config=_config(document),
         caps=_caps(document, revision_dir=revision_dir),
@@ -176,7 +180,7 @@ def load_home_layer(
         revision=effective,
         revision_dir=revision_dir,
         schema=_schema(document),
-        source=_source_tree(document),
+        source=_source_record(document),
         resolutions=_resolutions(document),
         config=_config(document),
         caps=_caps(document, revision_dir=revision_dir),
@@ -191,7 +195,7 @@ def write_layer(
     *,
     layout: AgentLayout,
     scope: LayerScope,
-    source: SourceTree,
+    source: SourceManifest,
     resolutions: tuple[CapResolution, ...],
     config: Mapping[str, object],
     caps: tuple[StateCap, ...],
@@ -221,7 +225,11 @@ def write_layer(
     target = layer_revision_dir(layout, scope, revision)
     revs = target.parent
     revs.mkdir(parents=True, exist_ok=True)
-    if target.exists() or target.is_symlink():
+
+    def validate(path: Path) -> bool:
+        return _is_valid_layer_dir(path, scope=scope, revision=revision)
+
+    if _path_exists(target) and validate(target):
         return revision
     staging = revs / f".{revision}.tmp-{uuid4().hex}"
     try:
@@ -233,10 +241,9 @@ def write_layer(
             destination = files_dir / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(content)
-        os.replace(staging, target)
+        _install_revision(staging, target, validate=validate)
     finally:
-        if staging.exists():
-            shutil.rmtree(staging)
+        _remove_path(staging)
     return revision
 
 
@@ -267,17 +274,20 @@ def _persist_agent_revision(
     target = agent_revision_dir(layout, revision)
     revs = target.parent
     revs.mkdir(parents=True, exist_ok=True)
-    if target.exists() or target.is_symlink():
+
+    def validate(path: Path) -> bool:
+        return _is_valid_agent_dir(path, revision=revision)
+
+    if _path_exists(target) and validate(target):
         _write_revision(agent_current_path(layout), revision)
         return revision
     staging = revs / f".{revision}.tmp-{uuid4().hex}"
     try:
         staging.mkdir()
         (staging / _LAYERS_FILE).write_bytes(encoded)
-        os.replace(staging, target)
+        _install_revision(staging, target, validate=validate)
     finally:
-        if staging.exists():
-            shutil.rmtree(staging)
+        _remove_path(staging)
     _write_revision(agent_current_path(layout), revision)
     return revision
 
@@ -385,7 +395,7 @@ def agent_layers_document(
 def _layer_document(
     *,
     scope: LayerScope,
-    source: SourceTree,
+    source: SourceManifest,
     resolutions: tuple[CapResolution, ...],
     config: Mapping[str, object],
     caps: tuple[StateCap, ...],
@@ -465,7 +475,9 @@ def _validate_layer_dir(
         raise ValueError(
             f"State layer scope mismatch: expected {scope!r}, found {document['scope']!r}"
         )
-    _source_tree(document)
+    source = _source_record(document)
+    if not isinstance(source, SourceManifest):
+        raise ValueError("current State layer requires a source manifest")
     _config(document)
     manifest = _validate_file_manifest(revision_dir, document)
     resolutions = _resolutions(document)
@@ -573,6 +585,77 @@ def _validate_agent_dir(
     _revision_field(document, "root_revision")
     _revision_field(document, "home_revision")
     return document
+
+
+def _is_valid_layer_dir(
+    path: Path,
+    *,
+    scope: LayerScope,
+    revision: str,
+) -> bool:
+    try:
+        _validate_layer_dir(path, scope=scope, revision=revision)
+    except (OSError, KeyError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _is_valid_agent_dir(path: Path, *, revision: str) -> bool:
+    try:
+        _validate_agent_dir(path, revision=revision)
+    except (OSError, KeyError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _install_revision(
+    staging: Path,
+    target: Path,
+    *,
+    validate: Callable[[Path], bool],
+) -> None:
+    """Install staging, replacing an invalid same-revision entry if necessary."""
+
+    while True:
+        if not _path_exists(target):
+            try:
+                os.replace(staging, target)
+            except OSError:
+                if _path_exists(target):
+                    continue
+                raise
+            return
+        if validate(target):
+            return
+        displaced = target.with_name(f".{target.name}.invalid-{uuid4().hex}")
+        try:
+            os.replace(target, displaced)
+        except FileNotFoundError:
+            continue
+        try:
+            if _path_exists(target):
+                continue
+            try:
+                os.replace(staging, target)
+            except OSError:
+                if _path_exists(target):
+                    continue
+                os.replace(displaced, target)
+                raise
+            return
+        finally:
+            _remove_path(displaced)
+
+
+def _path_exists(path: Path) -> bool:
+    return path.exists() or path.is_symlink()
+
+
+def _remove_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    elif path.exists():
+        shutil.rmtree(path)
 
 
 def _validate_file_manifest(
@@ -761,13 +844,17 @@ def _resolutions(document: Mapping[str, object]) -> tuple[CapResolution, ...]:
     return result
 
 
-def _source_tree(document: Mapping[str, object]) -> SourceTree:
+def _source_record(document: Mapping[str, object]) -> SourceRecord:
     raw = document.get("source")
     if not isinstance(raw, dict):
         raise TypeError("State layer source must be an object")
-    return SourceTree.from_data(
-        {str(key): value for key, value in cast(dict[object, object], raw).items()}
-    )
+    data = {str(key): value for key, value in cast(dict[object, object], raw).items()}
+    schema = data.get("schema")
+    if not isinstance(schema, int) or isinstance(schema, bool):
+        raise TypeError("State layer source schema must be an integer")
+    if schema == SOURCE_SCHEMA:
+        return SourceManifest.from_data(data)
+    return LegacySourceTree.from_data(data)
 
 
 def _config(document: Mapping[str, object]) -> dict[str, object]:

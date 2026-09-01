@@ -27,8 +27,15 @@ from .cache import (
     load_layer_source,
 )
 from .prepare import load_agent_state, prepare_agent_state
-from .source import SourceTree, scan_home_source, scan_root_source
-from toolang.state.source import is_source_path
+from .source import (
+    SourceManifest,
+    SourceObservation,
+    home_source_manifest,
+    observe_home_source,
+    observe_root_source,
+    root_source_manifest,
+    source_path_scope,
+)
 
 DEFAULT_INTERVAL_MS = 1_000.0
 DEFAULT_DEBOUNCE_MS = 500.0
@@ -40,6 +47,8 @@ _RELEVANT_CHANGES = {Change.added, Change.modified, Change.deleted}
 class _CheckRequest:
     requested: bool
     force: bool
+    invalidated_root: frozenset[str]
+    invalidated_home: frozenset[str]
     future: asyncio.Future[StateRefresh]
 
 
@@ -72,34 +81,22 @@ class StateWatcher:
         self._allow_overrides = dict(allow_overrides or {})
         self._publications: dict[str, StatePublication] = {}
         self._publication: StatePublication | None = None
-        self._checked_root_source: SourceTree | None = None
-        self._checked_home_source: SourceTree | None = None
+        self._checked_root_observation: SourceObservation | None = None
+        self._checked_home_observation: SourceObservation | None = None
+        self._checked_root_source: SourceManifest | None = None
+        self._checked_home_source: SourceManifest | None = None
         self._checked_layer_revisions: tuple[str | None, str | None] | None = None
         if initial_state is not None:
             self._publication = self._publish(initial_state)
+            self._record_persisted_baseline(initial_state)
         else:
             try:
                 state = load_agent_state(layout)
-                root_source = load_layer_source(
-                    layout,
-                    "root",
-                    state.root_revision,
-                )
-                home_source = load_layer_source(
-                    layout,
-                    "home",
-                    state.home_revision,
-                )
             except (FileNotFoundError, KeyError, TypeError, ValueError):
                 pass
             else:
                 self._publication = self._publish(state)
-                self._checked_root_source = root_source
-                self._checked_home_source = home_source
-                self._checked_layer_revisions = (
-                    state.root_revision,
-                    state.home_revision,
-                )
+                self._record_persisted_baseline(state)
         self._diagnostics: tuple[StateDiagnostic, ...] = ()
         self._check_requests: deque[_CheckRequest] = deque()
         self._check_task: asyncio.Task[None] | None = None
@@ -137,6 +134,8 @@ class StateWatcher:
         *,
         requested: bool,
         force: bool = False,
+        invalidated_root: frozenset[str] = frozenset(),
+        invalidated_home: frozenset[str] = frozenset(),
     ) -> StateRefresh:
         loop = asyncio.get_running_loop()
         task = self._check_task
@@ -147,6 +146,8 @@ class StateWatcher:
             _CheckRequest(
                 requested=requested,
                 force=force,
+                invalidated_root=invalidated_root,
+                invalidated_home=invalidated_home,
                 future=future,
             )
         )
@@ -171,6 +172,8 @@ class StateWatcher:
                     state = await self._perform_check(
                         requested=request.requested,
                         force=request.force,
+                        invalidated_root=request.invalidated_root,
+                        invalidated_home=request.invalidated_home,
                     )
                 except asyncio.CancelledError:
                     request.future.cancel()
@@ -191,12 +194,17 @@ class StateWatcher:
         *,
         requested: bool,
         force: bool = False,
+        invalidated_root: frozenset[str] = frozenset(),
+        invalidated_home: frozenset[str] = frozenset(),
     ) -> StateRefresh:
         """Run the sole candidate check and publication path."""
 
         try:
-            root_source = scan_root_source(self.layout.root)
-            home_source = scan_home_source(self.layout.root, self.layout.name)
+            root_observation = observe_root_source(self.layout.root)
+            home_observation = observe_home_source(
+                self.layout.root,
+                self.layout.name,
+            )
         except Exception as exc:
             if self._publication is None:
                 raise
@@ -206,11 +214,53 @@ class StateWatcher:
                 self.layout.name,
             )
             return StateRefresh(self._publication, self._diagnostics)
-        if not requested and not self._needs_check(
-            root_source=root_source,
-            home_source=home_source,
+        if (
+            not requested
+            and not invalidated_root
+            and not invalidated_home
+            and not self._observation_needs_check(
+                root_observation=root_observation,
+                home_observation=home_observation,
+            )
         ):
             return StateRefresh(self.current(), self._diagnostics)
+        if requested:
+            invalidated_root = frozenset(item.path for item in root_observation.files)
+            invalidated_home = frozenset(item.path for item in home_observation.files)
+        try:
+            root_source = root_source_manifest(
+                root_observation,
+                previous_observation=self._checked_root_observation,
+                previous_manifest=self._checked_root_source,
+                invalidated=invalidated_root,
+            )
+            home_source = home_source_manifest(
+                home_observation,
+                previous_observation=self._checked_home_observation,
+                previous_manifest=self._checked_home_source,
+                invalidated=invalidated_home,
+            )
+        except Exception as exc:
+            if self._publication is None:
+                raise
+            self._diagnostics = (_candidate_diagnostic(exc),)
+            return StateRefresh(self._publication, self._diagnostics)
+        if (
+            not requested
+            and not force
+            and not self._manifest_needs_check(
+                root_source=root_source,
+                home_source=home_source,
+            )
+        ):
+            self._record_checked_candidate(
+                root_observation,
+                home_observation,
+                root_source,
+                home_source,
+            )
+            self._diagnostics = ()
+            return StateRefresh(self.current())
         try:
             candidate = await asyncio.to_thread(
                 prepare_agent_state,
@@ -218,7 +268,12 @@ class StateWatcher:
                 force=force,
             )
         except StatePreparationError as exc:
-            self._record_checked_candidate(root_source, home_source)
+            self._record_checked_candidate(
+                root_observation,
+                home_observation,
+                root_source,
+                home_source,
+            )
             self._diagnostics = exc.diagnostics
             if self._publication is None:
                 raise
@@ -229,7 +284,12 @@ class StateWatcher:
             )
             return StateRefresh(self._publication, self._diagnostics)
         except Exception as exc:
-            self._record_checked_candidate(root_source, home_source)
+            self._record_checked_candidate(
+                root_observation,
+                home_observation,
+                root_source,
+                home_source,
+            )
             if self._publication is None:
                 raise
             self._diagnostics = (_candidate_diagnostic(exc),)
@@ -239,16 +299,26 @@ class StateWatcher:
             )
             return StateRefresh(self._publication, self._diagnostics)
         self._publication = self._publish(candidate)
-        self._checked_root_source = load_layer_source(
+        loaded_root_source = load_layer_source(
             self.layout,
             "root",
             candidate.root_revision,
         )
-        self._checked_home_source = load_layer_source(
+        loaded_home_source = load_layer_source(
             self.layout,
             "home",
             candidate.home_revision,
         )
+        if not isinstance(loaded_root_source, SourceManifest) or not isinstance(
+            loaded_home_source, SourceManifest
+        ):
+            raise ValueError("prepared State layers require portable source manifests")
+        # Retain the observations that led to preparation. A source change after
+        # preparation returned must remain visible to the next watcher check.
+        self._checked_root_observation = root_observation
+        self._checked_home_observation = home_observation
+        self._checked_root_source = loaded_root_source
+        self._checked_home_source = loaded_home_source
         self._checked_layer_revisions = (
             candidate.root_revision,
             candidate.home_revision,
@@ -290,14 +360,39 @@ class StateWatcher:
                     for kind, path in changes
                     if kind in _RELEVANT_CHANGES
                     and (
-                        is_source_path(self.layout.root, self.layout.name, Path(path))
+                        source_path_scope(
+                            self.layout.root,
+                            self.layout.name,
+                            Path(path),
+                        )
+                        is not None
                         or _is_state_current_path(self.layout, Path(path))
                     )
                 }
                 if changes and not paths:
                     continue
+                invalidated_root: set[str] = set()
+                invalidated_home: set[str] = set()
+                for path in paths:
+                    source = source_path_scope(
+                        self.layout.root,
+                        self.layout.name,
+                        path,
+                    )
+                    if source is None:
+                        continue
+                    scope, relative = source
+                    (invalidated_root if scope == "root" else invalidated_home).add(
+                        relative
+                    )
                 previous = self.current().state.revision
-                publication = (await self._request_check(requested=False)).publication
+                publication = (
+                    await self._request_check(
+                        requested=False,
+                        invalidated_root=frozenset(invalidated_root),
+                        invalidated_home=frozenset(invalidated_home),
+                    )
+                ).publication
                 if publication.state.revision != previous:
                     yield publication
         finally:
@@ -319,11 +414,31 @@ class StateWatcher:
         ):
             pass
 
-    def _needs_check(
+    def _observation_needs_check(
         self,
         *,
-        root_source: SourceTree,
-        home_source: SourceTree,
+        root_observation: SourceObservation,
+        home_observation: SourceObservation,
+    ) -> bool:
+        if self._publication is None:
+            return True
+        state = self._publication.state
+        try:
+            return (
+                load_current_agent_revision(self.layout) != state.revision
+                or _current_layer_revisions(self.layout)
+                != self._checked_layer_revisions
+                or root_observation != self._checked_root_observation
+                or home_observation != self._checked_home_observation
+            )
+        except (FileNotFoundError, TypeError, ValueError):
+            return True
+
+    def _manifest_needs_check(
+        self,
+        *,
+        root_source: SourceManifest,
+        home_source: SourceManifest,
     ) -> bool:
         if self._publication is None:
             return True
@@ -351,11 +466,42 @@ class StateWatcher:
         self._publications[state.revision] = publication
         return publication
 
+    def _record_persisted_baseline(self, state: AgentState) -> None:
+        """Load portable manifests without reconstructing the supplied State."""
+
+        try:
+            root_source = load_layer_source(
+                self.layout,
+                "root",
+                state.root_revision,
+            )
+            home_source = load_layer_source(
+                self.layout,
+                "home",
+                state.home_revision,
+            )
+        except (FileNotFoundError, KeyError, TypeError, ValueError):
+            return
+        if not isinstance(root_source, SourceManifest) or not isinstance(
+            home_source, SourceManifest
+        ):
+            return
+        self._checked_root_source = root_source
+        self._checked_home_source = home_source
+        self._checked_layer_revisions = (
+            state.root_revision,
+            state.home_revision,
+        )
+
     def _record_checked_candidate(
         self,
-        root_source: SourceTree,
-        home_source: SourceTree,
+        root_observation: SourceObservation,
+        home_observation: SourceObservation,
+        root_source: SourceManifest,
+        home_source: SourceManifest,
     ) -> None:
+        self._checked_root_observation = root_observation
+        self._checked_home_observation = home_observation
         self._checked_root_source = root_source
         self._checked_home_source = home_source
         self._checked_layer_revisions = _current_layer_revisions(self.layout)

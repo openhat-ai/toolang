@@ -28,11 +28,17 @@ from .state import (
     layer_remote_cache,
 )
 from .source import (
+    SourceChangedError,
     SourceFile,
+    SourceManifest,
+    SourceObservation,
     SourceSnapshot,
     ProgramSource,
+    observe_home_source,
+    observe_root_source,
     read_authored_source,
     read_root_source,
+    source_manifest_from_snapshot,
 )
 from .cache import (
     LAYER_SCHEMA,
@@ -48,6 +54,7 @@ from .cache import (
     load_root_layer,
     layer_lock,
     publish_layer_current,
+    validate_layer_revision,
     write_layer,
 )
 from .state import (
@@ -56,7 +63,7 @@ from .state import (
     CapScope,
     MaterializedFile,
 )
-from .source import SourceTree, scan_home_source, scan_root_source
+from .source import scan_home_source, scan_root_source
 
 _MAX_SOURCE_SNAPSHOT_ATTEMPTS = 3
 _ERROR_LINE_RE = re.compile(r"\bline (\d+)\b", re.IGNORECASE)
@@ -249,7 +256,7 @@ def prepare_home(
 def _matching_root(
     layout: AgentLayout,
     *,
-    source: SourceTree,
+    source: SourceManifest,
     force: bool,
 ) -> RootLayer | None:
     if force:
@@ -261,6 +268,7 @@ def _matching_root(
             return None
         if layer.source != source:
             return None
+        validate_layer_revision(layout, "root", revision)
         return layer
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
@@ -269,7 +277,7 @@ def _matching_root(
 def _matching_home(
     layout: AgentLayout,
     *,
-    source: SourceTree,
+    source: SourceManifest,
     force: bool,
 ) -> HomeLayer | None:
     if force:
@@ -281,6 +289,7 @@ def _matching_home(
             return None
         if layer.source != source:
             return None
+        validate_layer_revision(layout, "home", revision)
         return layer
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
@@ -344,12 +353,18 @@ def _prepare_layer_revision(
     progress: ProgressSink | None,
 ) -> tuple[str, int]:
     for _ in range(_MAX_SOURCE_SNAPSHOT_ATTEMPTS):
-        source = _scan_scope_source(layout, scope=scope)
-        authored = (
-            read_root_source(layout.root)
-            if scope == "root"
-            else read_authored_source(layout.root, layout.name)
-        )
+        observation = _observe_scope_source(layout, scope=scope)
+        try:
+            authored = (
+                read_root_source(layout.root)
+                if scope == "root"
+                else read_authored_source(layout.root, layout.name)
+            )
+        except SourceChangedError:
+            continue
+        source = source_manifest_from_snapshot(authored, scope=scope)
+        if observation != _observe_scope_source(layout, scope=scope):
+            continue
         previous_entries = (
             _previous_state_caps(
                 layout,
@@ -451,7 +466,7 @@ def _prepare_layer_revision(
                 entry for entries in module_caps.values() for entry in entries
             )
         resolutions = _cap_resolutions((*entries, *module_entries), files)
-        if source != _scan_scope_source(layout, scope=scope):
+        if observation != _observe_scope_source(layout, scope=scope):
             continue
         revision = write_layer(
             layout=layout,
@@ -481,28 +496,32 @@ def _previous_state_caps(
     scope: LayerScope,
 ) -> tuple[StateCap, ...]:
     try:
+        revision = load_current_revision(layout, scope)
+        validate_layer_revision(layout, scope, revision)
         if scope == "root":
-            return load_root_layer(layout).caps
-        return load_home_layer(layout).caps
+            return load_root_layer(layout, revision).caps
+        return load_home_layer(layout, revision).caps
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return ()
 
 
 def _previous_home_layer(layout: AgentLayout) -> HomeLayer | None:
     try:
-        return load_home_layer(layout)
+        revision = load_current_revision(layout, "home")
+        validate_layer_revision(layout, "home", revision)
+        return load_home_layer(layout, revision)
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
 
 
-def _scan_scope_source(
+def _observe_scope_source(
     layout: AgentLayout,
     *,
     scope: LayerScope,
-) -> SourceTree:
+) -> SourceObservation:
     if scope == "root":
-        return scan_root_source(layout.root)
-    return scan_home_source(layout.root, layout.name)
+        return observe_root_source(layout.root)
+    return observe_home_source(layout.root, layout.name)
 
 
 def _require_root(layout: AgentLayout) -> None:
