@@ -362,9 +362,9 @@ def _usage_meters(usage: ModelUsage) -> tuple[ModelUsageMeter, ...]:
 
 def _rate(rates: Mapping[str, object], name: str) -> Decimal | None:
     value = rates.get(name)
-    if isinstance(value, bool) or not isinstance(value, int | Decimal):
+    if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
         return None
-    return Decimal(value)
+    return Decimal(str(value))
 
 
 def _append_line(
