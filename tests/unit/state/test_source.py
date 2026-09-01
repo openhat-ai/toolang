@@ -6,13 +6,17 @@ import shutil
 
 import pytest
 
+from toolang.state import source as state_source
 from toolang.state.source import (
     SOURCE_SCHEMA,
+    SourceChangedError,
     SourceManifest,
     build_source_manifest,
     is_source_path,
     observe_source,
+    read_root_source,
     scan_home_source,
+    scan_root_source,
     scan_source,
 )
 
@@ -128,6 +132,20 @@ def test_source_manifest_is_portable_across_absolute_roots(tmp_path: Path) -> No
         ),
         (
             {
+                "files": [{"path": ".", "sha256": "0" * 64, "size": 1}],
+                "schema": SOURCE_SCHEMA,
+            },
+            "portable and relative",
+        ),
+        (
+            {
+                "files": [{"path": "flows\\escape.too", "sha256": "0" * 64, "size": 1}],
+                "schema": SOURCE_SCHEMA,
+            },
+            "portable and relative",
+        ),
+        (
+            {
                 "files": [{"path": "agent.too", "sha256": "invalid", "size": 1}],
                 "schema": SOURCE_SCHEMA,
             },
@@ -162,6 +180,61 @@ def test_source_manifest_rejects_symbolic_link_directories(tmp_path: Path) -> No
 
     with pytest.raises(ValueError, match="symbolic-link directories"):
         scan_source(source, ("skills",))
+
+
+def test_home_source_rejects_symbolic_linked_flow_directory(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    home = root / "agents" / "alice"
+    external = tmp_path / "external-flows"
+    home.mkdir(parents=True)
+    external.mkdir()
+    (external / "research.too").write_text("flow:\n  pass\n", encoding="utf-8")
+    (home / "flows").symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symbolic-link directories"):
+        scan_home_source(root, "alice")
+
+
+def test_home_source_rejects_directory_in_agent_file_slot(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    program = root / "agents" / "alice" / "agent.too"
+    program.mkdir(parents=True)
+    (program / "nested.too").write_text("agent alice\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be a file"):
+        scan_home_source(root, "alice")
+
+
+def test_root_source_rejects_file_in_cap_directory_slot(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    root.mkdir()
+    (root / "prompts").write_text("not a directory\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be a directory"):
+        scan_root_source(root)
+
+
+def test_empty_projected_config_still_checks_for_concurrent_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "toolang"
+    root.mkdir()
+    config = root / "config.toml"
+    config.write_text("[default]\nmodel = 'one'\n", encoding="utf-8")
+
+    def change_during_projection(_content: bytes) -> bytes:
+        config.write_text("[prompts]\nreview = 'acme/review'\n", encoding="utf-8")
+        return b""
+
+    monkeypatch.setattr(
+        state_source,
+        "canonical_state_config",
+        change_during_projection,
+    )
+
+    with pytest.raises(SourceChangedError, match="changed while reading"):
+        read_root_source(root)
 
 
 def test_manifest_builder_reuses_only_unchanged_file_digests(

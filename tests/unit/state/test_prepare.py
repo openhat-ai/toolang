@@ -26,6 +26,7 @@ from toolang.state.cache import (
     LayerScope,
     _agent_check_lock,
     _persist_agent_revision,
+    agent_revision_dir,
     canonical_json,
     load_home_layer,
     load_root_layer,
@@ -343,7 +344,10 @@ def test_prepare_reuses_portable_state_after_root_and_home_remount(
     home = host_root / "agents" / "alice"
     home.mkdir(parents=True)
     program = home / "agent.too"
-    program.write_text("agic answer:\n  Ready.\n", encoding="utf-8")
+    program.write_text(
+        "prompt review:\n  Review.\n\nagic answer:\n  Ready.\n",
+        encoding="utf-8",
+    )
     host_layout = _layout(host_root)
     expected = prepare_agent_state(host_layout)
     shutil.copytree(host_root, guest_root, copy_function=shutil.copy2)
@@ -407,7 +411,10 @@ def test_force_prepare_ignores_metadata_only_source_changes(tmp_path: Path) -> N
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
     program = home / "agent.too"
-    program.write_text("agic answer:\n  Ready.\n", encoding="utf-8")
+    program.write_text(
+        "prompt review:\n  Review.\n\nagic answer:\n  Ready.\n",
+        encoding="utf-8",
+    )
     layout = _layout(toolang_root)
     first = prepare_agent_state(layout)
     changed = program.stat().st_mtime_ns + 2_000_000_000
@@ -553,6 +560,42 @@ def test_prepare_rebuilds_a_current_layer_from_an_older_schema(
     )
     assert prepared_document["schema"] == LAYER_SCHEMA
     assert load_agent_state(layout).revision == prepared_state.revision
+
+
+def test_prepare_repairs_a_corrupt_content_addressed_layer(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    layout = _layout(toolang_root)
+    first = prepare_agent_state(layout)
+    revision_dir = layer_revision_dir(layout, "home", first.home_revision)
+    layer_path = revision_dir / "layer.json"
+    document = json.loads(layer_path.read_text(encoding="utf-8"))
+    document["source"]["files"] = [{"path": "../escape", "sha256": "0" * 64}]
+    layer_path.write_bytes(canonical_json(document))
+
+    repaired = prepare_agent_state(layout)
+
+    assert repaired.revision == first.revision
+    assert repaired.home_revision == first.home_revision
+    assert load_agent_state(layout).revision == first.revision
+
+
+def test_prepare_repairs_a_corrupt_agent_composition(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    layout = _layout(toolang_root)
+    first = prepare_agent_state(layout)
+    layers_path = agent_revision_dir(layout, first.revision) / "layers.json"
+    layers_path.write_text("not JSON\n", encoding="utf-8")
+
+    repaired = prepare_agent_state(layout)
+
+    assert repaired.revision == first.revision
+    assert load_agent_state(layout).revision == first.revision
 
 
 def test_prepare_materializes_inline_caps_as_independent_files(

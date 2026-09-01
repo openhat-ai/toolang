@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
 from hashlib import sha256
@@ -59,6 +58,8 @@ from .types import (
     CapForm,
     SourceOrigin,
 )
+
+_PORTABLE_SOURCE_UPDATED_AT = "1970-01-01T00:00:00+00:00"
 
 CAP_KINDS: tuple[EntryKind, ...] = CATALOG_CAP_KINDS
 EMBEDDED_CAP_KINDS = frozenset({"psyche", "service", "prompt"})
@@ -1217,7 +1218,6 @@ class _RemoteEntryRequest:
     name: str | None
     relative_config_path: Path
     source_fingerprint: str
-    source_mtime_ns: int
     form: Literal["configured", "referenced"]
     source_line: int | None = None
 
@@ -1673,12 +1673,11 @@ def _snapshot_source_record(
         digest.update(b"\0")
         digest.update(item.digest.encode("utf-8"))
         digest.update(b"\n")
-    latest_mtime_ns = max(item.mtime_ns for item in files)
     return CapSource(
         origin="local",
         form="authored",
         path=root_relative_path.as_posix(),
-        updated_at=_mtime_text(latest_mtime_ns),
+        updated_at=_PORTABLE_SOURCE_UPDATED_AT,
         fingerprint=digest.hexdigest(),
     )
 
@@ -1692,44 +1691,9 @@ def _snapshot_file_source_record(
         origin="local",
         form="authored",
         path=root_relative_path.as_posix(),
-        updated_at=_mtime_text(item.mtime_ns),
+        updated_at=_PORTABLE_SOURCE_UPDATED_AT,
         fingerprint=item.digest,
     )
-
-
-def _mtime_text(mtime_ns: int) -> str:
-    return datetime.fromtimestamp(
-        mtime_ns / 1_000_000_000,
-        tz=timezone.utc,
-    ).isoformat()
-
-
-def _source_record(
-    *,
-    root_relative_path: Path,
-    absolute_path: Path,
-    origin: SourceOrigin,
-    form: CapForm,
-    shape: Literal["file", "dir"],
-    line: int | None = None,
-) -> CapSource:
-    fingerprint = (
-        _dir_fingerprint(absolute_path)
-        if shape == "dir"
-        else _file_fingerprint(absolute_path)
-    )
-    return CapSource(
-        origin=origin,
-        form=form,
-        path=root_relative_path.as_posix(),
-        updated_at=_updated_at(absolute_path, shape=shape),
-        fingerprint=fingerprint,
-        line=line,
-    )
-
-
-def _file_fingerprint(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _ensure_no_conflicts(entries: tuple[StateCap, ...]) -> None:
@@ -1749,28 +1713,6 @@ def _dedupe_entries(entries: tuple[StateCap, ...]) -> tuple[StateCap, ...]:
     for entry in sorted(entries, key=_entry_sort_key):
         by_ref.setdefault(entry.ref, entry)
     return tuple(sorted(by_ref.values(), key=_entry_sort_key))
-
-
-def _dir_fingerprint(path: Path) -> str:
-    digest = hashlib.sha256()
-    files = sorted(item for item in path.rglob("*") if item.is_file())
-    for item in files:
-        digest.update(item.relative_to(path).as_posix().encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(hashlib.sha256(item.read_bytes()).hexdigest().encode("utf-8"))
-        digest.update(b"\n")
-    return digest.hexdigest()
-
-
-def _updated_at(path: Path, *, shape: Literal["file", "dir"]) -> str:
-    if shape == "file":
-        return datetime.fromtimestamp(
-            path.stat().st_mtime_ns / 1_000_000_000, tz=timezone.utc
-        ).isoformat()
-    timestamps = [item.stat().st_mtime_ns for item in path.rglob("*") if item.is_file()]
-    timestamps.append(path.stat().st_mtime_ns)
-    latest = max(timestamps)
-    return datetime.fromtimestamp(latest / 1_000_000_000, tz=timezone.utc).isoformat()
 
 
 def _load_meta_text(text: str) -> dict[str, object]:
@@ -1868,7 +1810,6 @@ def _collect_remote_entry_requests(
                     name=entry.name,
                     relative_config_path=Path(config_file.relative_path),
                     source_fingerprint=config_file.digest,
-                    source_mtime_ns=config_file.mtime_ns,
                     form="configured",
                 )
             )
@@ -1890,7 +1831,6 @@ def _collect_program_use_entries(
     program_source = program_source or authored.load_program()
     program = program_source.parse()
     relative_program_path = Path(program_source.source_path)
-    program_file = authored.program_file(program_source)
     requests: list[_RemoteEntryRequest] = []
     for use in program.withs:
         kind = use.cap_kind
@@ -1906,7 +1846,6 @@ def _collect_program_use_entries(
                 name=None,
                 relative_config_path=relative_program_path,
                 source_fingerprint=program_source.digest,
-                source_mtime_ns=(program_file.mtime_ns if program_file else 0),
                 form="referenced",
                 source_line=use.span.line,
             )
@@ -1933,7 +1872,6 @@ def _collect_program_embedded_entries(
     program_source = program_source or authored.load_program()
     program = program_source.parse()
     relative_program_path = Path(program_source.source_path)
-    program_path = authored.toolang_root / relative_program_path
     entries: list[StateCap] = []
     files: dict[str, bytes] = {}
     seen: dict[tuple[EntryKind, str], int] = {}
@@ -1955,7 +1893,7 @@ def _collect_program_embedded_entries(
             kind=kind,
             cap=cap,
             relative_program_path=relative_program_path,
-            program_path=program_path,
+            source_fingerprint=program_source.digest,
             source_line=cap.span.line,
         )
         entries.append(entry)
@@ -1974,7 +1912,7 @@ def _embedded_entry_from_cap(
     kind: EntryKind,
     cap: CapDecl,
     relative_program_path: Path,
-    program_path: Path,
+    source_fingerprint: str,
     source_line: int,
 ) -> tuple[StateCap, dict[str, bytes]]:
     relative_entry_path = _relative_embedded_entry_path(kind=kind, name=cap.name)
@@ -1986,12 +1924,12 @@ def _embedded_entry_from_cap(
             shape="file",
             ref=f"inline://{DIR_NAME_BY_KIND[kind]}/{cap.name}",
             path=relative_entry_path.as_posix(),
-            source=_source_record(
-                root_relative_path=relative_program_path,
-                absolute_path=program_path,
+            source=CapSource(
                 origin="local",
                 form="inline",
-                shape="file",
+                path=relative_program_path.as_posix(),
+                updated_at=_PORTABLE_SOURCE_UPDATED_AT,
+                fingerprint=source_fingerprint,
                 line=source_line,
             ),
             meta=_load_meta_text(content.decode("utf-8")),
@@ -2023,7 +1961,6 @@ def _remote_entry_from_ref(
     name: str | None,
     relative_config_path: Path,
     source_fingerprint: str,
-    source_mtime_ns: int,
     form: Literal["configured", "referenced"],
     source_line: int | None = None,
     materialize: bool,
@@ -2037,7 +1974,6 @@ def _remote_entry_from_ref(
         name=name,
         relative_config_path=relative_config_path,
         source_fingerprint=source_fingerprint,
-        source_mtime_ns=source_mtime_ns,
         form=form,
         source_line=source_line,
     )
@@ -2110,7 +2046,7 @@ def _remote_entry_from_ref(
                 origin="remote",
                 form=form,
                 path=relative_config_path.as_posix(),
-                updated_at=_mtime_text(source_mtime_ns),
+                updated_at=_PORTABLE_SOURCE_UPDATED_AT,
                 fingerprint=source_fingerprint,
                 declared_ref=ref,
                 line=source_line,
@@ -2254,7 +2190,6 @@ def _remote_entry_from_request(
         name=request.name,
         relative_config_path=request.relative_config_path,
         source_fingerprint=request.source_fingerprint,
-        source_mtime_ns=request.source_mtime_ns,
         form=request.form,
         source_line=request.source_line,
         materialize=materialize,

@@ -207,22 +207,13 @@ def scan_source(
 def scan_root_source(toolang_root: Path) -> SourceManifest:
     """Capture root config and authored cap paths."""
 
-    return scan_source(
-        toolang_root,
-        ("config.toml", *CAP_DIRECTORY_NAMES),
-        project_configs=True,
-    )
+    return root_source_manifest(observe_root_source(toolang_root))
 
 
 def scan_home_source(toolang_root: Path, agent_name: str) -> SourceManifest:
     """Capture one agent program, config, and authored cap paths."""
 
-    home = toolang_root / "agents" / agent_name
-    return scan_source(
-        home,
-        _home_source_paths(home),
-        project_configs=True,
-    )
+    return home_source_manifest(observe_home_source(toolang_root, agent_name))
 
 
 def observe_source(base: Path, paths: Sequence[str]) -> SourceObservation:
@@ -303,6 +294,9 @@ def build_source_manifest(
 def observe_root_source(toolang_root: Path) -> SourceObservation:
     """Observe root config and capability files without reading bytes."""
 
+    _require_source_shape(toolang_root / "config.toml", shape="file")
+    for directory_name in CAP_DIRECTORY_NAMES:
+        _require_source_shape(toolang_root / directory_name, shape="directory")
     return observe_source(toolang_root, ("config.toml", *CAP_DIRECTORY_NAMES))
 
 
@@ -310,6 +304,10 @@ def observe_home_source(toolang_root: Path, agent_name: str) -> SourceObservatio
     """Observe one agent home's State files without reading bytes."""
 
     home = toolang_root / "agents" / agent_name
+    for name in ("agent.too", "config.toml"):
+        _require_source_shape(home / name, shape="file")
+    for directory_name in ("flows", *CAP_DIRECTORY_NAMES):
+        _require_source_shape(home / directory_name, shape="directory")
     return observe_source(home, _home_source_paths(home))
 
 
@@ -401,12 +399,28 @@ def _portable_relative_path(value: str) -> Path:
     path = Path(value)
     if (
         not value
+        or not path.parts
         or path.is_absolute()
         or ".." in path.parts
+        or "\\" in value
         or path.as_posix() != value
     ):
         raise ValueError(f"source path must be portable and relative: {value!r}")
     return path
+
+
+def _require_source_shape(
+    path: Path,
+    *,
+    shape: Literal["file", "directory"],
+) -> None:
+    if not path.exists() and not path.is_symlink():
+        return
+    if shape == "directory" and path.is_symlink():
+        raise ValueError(f"source does not support symbolic-link directories: {path}")
+    matches = path.is_file() if shape == "file" else path.is_dir()
+    if not matches:
+        raise ValueError(f"source must be a {shape}: {path}")
 
 
 def _integer_field(data: Mapping[str, object], key: str) -> int:
@@ -446,7 +460,6 @@ class SourceFile:
     origin: str
     content: bytes
     digest: str
-    mtime_ns: int
     size: int
 
     def read_text(self) -> str:
@@ -725,8 +738,9 @@ def _collect_file(
     category: str,
     origin: str,
 ) -> list[SourceFile]:
-    if not path.is_file():
+    if not path.exists() and not path.is_symlink():
         return []
+    _require_source_shape(path, shape="file")
     before = _observe_file(
         path,
         relative_path=path.relative_to(toolang_root).as_posix(),
@@ -734,11 +748,11 @@ def _collect_file(
     content = path.read_bytes()
     if category == "config":
         content = canonical_state_config(content)
-        if not content:
-            return []
     after = _observe_file(path, relative_path=before.path)
     if before != after:
         raise SourceChangedError(f"source changed while reading: {path}")
+    if category == "config" and not content:
+        return []
     return [
         SourceFile(
             path=path,
@@ -747,8 +761,6 @@ def _collect_file(
             origin=origin,
             content=content,
             digest=sha256(content).hexdigest(),
-            # Filesystem time is observation-only and must not enter State identity.
-            mtime_ns=0,
             size=len(content),
         )
     ]
@@ -761,10 +773,11 @@ def _collect_directory(
     category: str,
     origin: str,
 ) -> list[SourceFile]:
-    if not directory.exists():
+    if not directory.exists() and not directory.is_symlink():
         return []
+    _require_source_shape(directory, shape="directory")
     files: list[SourceFile] = []
-    for path in sorted(item for item in directory.rglob("*") if item.is_file()):
+    for path in _selected_files(directory):
         files.extend(
             _collect_file(toolang_root, path, category=category, origin=origin)
         )
@@ -772,8 +785,9 @@ def _collect_directory(
 
 
 def _direct_flow_files(directory: Path) -> tuple[Path, ...]:
-    if not directory.is_dir():
+    if not directory.exists() and not directory.is_symlink():
         return ()
+    _require_source_shape(directory, shape="directory")
     return tuple(
         path
         for path in sorted(directory.iterdir(), key=lambda item: item.name)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import fcntl
@@ -225,7 +225,11 @@ def write_layer(
     target = layer_revision_dir(layout, scope, revision)
     revs = target.parent
     revs.mkdir(parents=True, exist_ok=True)
-    if target.exists() or target.is_symlink():
+
+    def validate(path: Path) -> bool:
+        return _is_valid_layer_dir(path, scope=scope, revision=revision)
+
+    if _path_exists(target) and validate(target):
         return revision
     staging = revs / f".{revision}.tmp-{uuid4().hex}"
     try:
@@ -237,10 +241,9 @@ def write_layer(
             destination = files_dir / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(content)
-        os.replace(staging, target)
+        _install_revision(staging, target, validate=validate)
     finally:
-        if staging.exists():
-            shutil.rmtree(staging)
+        _remove_path(staging)
     return revision
 
 
@@ -271,17 +274,20 @@ def _persist_agent_revision(
     target = agent_revision_dir(layout, revision)
     revs = target.parent
     revs.mkdir(parents=True, exist_ok=True)
-    if target.exists() or target.is_symlink():
+
+    def validate(path: Path) -> bool:
+        return _is_valid_agent_dir(path, revision=revision)
+
+    if _path_exists(target) and validate(target):
         _write_revision(agent_current_path(layout), revision)
         return revision
     staging = revs / f".{revision}.tmp-{uuid4().hex}"
     try:
         staging.mkdir()
         (staging / _LAYERS_FILE).write_bytes(encoded)
-        os.replace(staging, target)
+        _install_revision(staging, target, validate=validate)
     finally:
-        if staging.exists():
-            shutil.rmtree(staging)
+        _remove_path(staging)
     _write_revision(agent_current_path(layout), revision)
     return revision
 
@@ -579,6 +585,77 @@ def _validate_agent_dir(
     _revision_field(document, "root_revision")
     _revision_field(document, "home_revision")
     return document
+
+
+def _is_valid_layer_dir(
+    path: Path,
+    *,
+    scope: LayerScope,
+    revision: str,
+) -> bool:
+    try:
+        _validate_layer_dir(path, scope=scope, revision=revision)
+    except (OSError, KeyError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _is_valid_agent_dir(path: Path, *, revision: str) -> bool:
+    try:
+        _validate_agent_dir(path, revision=revision)
+    except (OSError, KeyError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _install_revision(
+    staging: Path,
+    target: Path,
+    *,
+    validate: Callable[[Path], bool],
+) -> None:
+    """Install staging, replacing an invalid same-revision entry if necessary."""
+
+    while True:
+        if not _path_exists(target):
+            try:
+                os.replace(staging, target)
+            except OSError:
+                if _path_exists(target):
+                    continue
+                raise
+            return
+        if validate(target):
+            return
+        displaced = target.with_name(f".{target.name}.invalid-{uuid4().hex}")
+        try:
+            os.replace(target, displaced)
+        except FileNotFoundError:
+            continue
+        try:
+            if _path_exists(target):
+                continue
+            try:
+                os.replace(staging, target)
+            except OSError:
+                if _path_exists(target):
+                    continue
+                os.replace(displaced, target)
+                raise
+            return
+        finally:
+            _remove_path(displaced)
+
+
+def _path_exists(path: Path) -> bool:
+    return path.exists() or path.is_symlink()
+
+
+def _remove_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    elif path.exists():
+        shutil.rmtree(path)
 
 
 def _validate_file_manifest(
