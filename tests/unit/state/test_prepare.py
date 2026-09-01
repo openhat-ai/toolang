@@ -32,6 +32,7 @@ from toolang.state.cache import (
     load_root_layer,
     layer_revision_dir,
     publish_layer_current,
+    validate_agent_revision,
 )
 from toolang.state.errors import StatePreparationError
 from toolang.state.prepare import (
@@ -582,6 +583,27 @@ def test_prepare_repairs_a_corrupt_content_addressed_layer(tmp_path: Path) -> No
     assert load_agent_state(layout).revision == first.revision
 
 
+def test_prepare_repairs_corrupt_materialized_layer_content(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    home.mkdir(parents=True)
+    program = home / "agent.too"
+    program.write_text("agent alice\n", encoding="utf-8")
+    layout = _layout(toolang_root)
+    first = prepare_agent_state(layout)
+    materialized = (
+        layer_revision_dir(layout, "home", first.home_revision) / "files" / "agent.too"
+    )
+    materialized.write_text("corrupt\n", encoding="utf-8")
+
+    repaired = prepare_agent_state(layout)
+
+    assert repaired.revision == first.revision
+    assert repaired.home_revision == first.home_revision
+    assert materialized.read_bytes() == program.read_bytes()
+    validate_agent_revision(layout, repaired.revision)
+
+
 def test_prepare_repairs_a_corrupt_agent_composition(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
@@ -899,6 +921,54 @@ def test_local_change_reuses_unchanged_remote_materialization(
     assert len(cached_terminals) == 1
     assert cached_terminals[0].label == "Skipped updating prompt rewrite"
     assert cached_terminals[0].detail == "cached"
+
+
+def test_local_change_does_not_reuse_corrupt_remote_materialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    toolang_root.mkdir()
+    (toolang_root / "config.toml").write_text(
+        '[prompts]\nrewrite = { ref = "acme/rewrite" }\n',
+        encoding="utf-8",
+    )
+    home = toolang_root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda _owner, _repo: "main"
+    )
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        cap_state,
+        "_remote_materialized_files",
+        lambda *, relative_entry_path, **_kwargs: {
+            str(relative_entry_path): b"---\ndescription: Rewrite\n---\nFirst.\n"
+        },
+    )
+    layout = _layout(toolang_root)
+    first, _ = prepare_root_home(layout)
+    Path(first.caps[0].path).write_text("corrupt\n", encoding="utf-8")
+    local = toolang_root / "prompts" / "local.md"
+    local.parent.mkdir()
+    local.write_text("---\ndescription: Local\n---\nLocal.\n", encoding="utf-8")
+    calls = 0
+
+    def rematerialize(*, relative_entry_path: Path, **_kwargs: object):
+        nonlocal calls
+        calls += 1
+        return {
+            str(relative_entry_path): b"---\ndescription: Rewrite\n---\nRepaired.\n"
+        }
+
+    monkeypatch.setattr(cap_state, "_remote_materialized_files", rematerialize)
+
+    second, _ = prepare_root_home(layout)
+
+    remote = next(entry for entry in second.caps if entry.name == "rewrite")
+    assert calls == 1
+    assert Path(remote.path).read_text(encoding="utf-8").endswith("Repaired.\n")
 
 
 def test_declared_ref_change_refreshes_remote_materialization(

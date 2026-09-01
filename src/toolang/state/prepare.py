@@ -54,6 +54,7 @@ from .cache import (
     load_root_layer,
     layer_lock,
     publish_layer_current,
+    validate_layer_revision,
     write_layer,
 )
 from .state import (
@@ -267,6 +268,7 @@ def _matching_root(
             return None
         if layer.source != source:
             return None
+        validate_layer_revision(layout, "root", revision)
         return layer
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
@@ -287,6 +289,7 @@ def _matching_home(
             return None
         if layer.source != source:
             return None
+        validate_layer_revision(layout, "home", revision)
         return layer
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
@@ -493,16 +496,20 @@ def _previous_state_caps(
     scope: LayerScope,
 ) -> tuple[StateCap, ...]:
     try:
+        revision = load_current_revision(layout, scope)
+        validate_layer_revision(layout, scope, revision)
         if scope == "root":
-            return load_root_layer(layout).caps
-        return load_home_layer(layout).caps
+            return load_root_layer(layout, revision).caps
+        return load_home_layer(layout, revision).caps
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return ()
 
 
 def _previous_home_layer(layout: AgentLayout) -> HomeLayer | None:
     try:
-        return load_home_layer(layout)
+        revision = load_current_revision(layout, "home")
+        validate_layer_revision(layout, "home", revision)
+        return load_home_layer(layout, revision)
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
 

@@ -540,18 +540,6 @@ class SourceSnapshot:
         )
         return (agent, *flows)
 
-    def program_file(self, source: ProgramSource) -> SourceFile | None:
-        """Return the captured authored file for one program source."""
-
-        return next(
-            (
-                item
-                for item in self.program_files
-                if item.relative_path == source.source_path
-            ),
-            None,
-        )
-
     @property
     def config_paths(self) -> tuple[str, ...]:
         return tuple(
