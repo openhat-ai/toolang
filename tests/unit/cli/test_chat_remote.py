@@ -421,7 +421,9 @@ def test_remote_chat_resource_queries_and_model_reconciliation() -> None:
                 "identity": "skill/reviewer",
                 "kind": "skill",
                 "scope": "home",
+                "form": None,
                 "description": "Review code.",
+                "summary": "Review code.",
             }
         ]
 

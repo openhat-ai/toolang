@@ -344,6 +344,32 @@ def model_reasoning_efforts(
     return tuple(result)
 
 
+def model_reasoning_effort_applicable(
+    context: SupportsModelSelection | ModelCollection,
+    target: ModelTarget,
+) -> bool:
+    """Return whether input-level effort or budget control applies."""
+
+    if model_reasoning_efforts(context, target):
+        return True
+    if isinstance(context, ModelCollection):
+        ref = model_target_ref(target)
+        info = context.resolve(ref).info if context.contains(ref) else None
+    else:
+        info = _find_model_info_by_ref(
+            context.models,
+            provider=target.provider,
+            ref=target.ref,
+        )
+    if info is None:
+        return False
+    raw_options = info.metadata.get("reasoning_options")
+    return isinstance(raw_options, list | tuple) and any(
+        isinstance(option, Mapping) and option.get("type") == "budget_tokens"
+        for option in raw_options
+    )
+
+
 def apply_model_parameters(
     context: SupportsModelSelection | ModelCollection,
     target: ModelTarget,

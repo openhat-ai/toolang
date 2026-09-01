@@ -48,9 +48,10 @@ from .rendering import (
     RUN_CONTROL_ACCENT,
     STEER_CONTROL_ACCENT,
     bar,
-    display_len,
     terminal_width,
 )
+from .slashes import SlashTable
+from .tables import table_lines
 
 _HEADER_MIN_WIDE_WIDTH = 69
 _HEADER_HORIZONTAL_PADDING = 2
@@ -589,9 +590,6 @@ class SlashBlock:
             return Text()
         if line.startswith(("/", ":")):
             return SlashBlock._command_line(line)
-        columns = _split_columns(line)
-        if len(columns) > 1:
-            return SlashBlock._table_line(columns)
         return Text.from_markup(f"[none]  {escape(line)}[/]")
 
     @staticmethod
@@ -604,23 +602,6 @@ class SlashBlock:
         if summary:
             text.append(" " * max(2, 34 - text.cell_len))
             text.append(summary, style="none")
-        return text
-
-    @staticmethod
-    def _table_line(columns: Sequence[str]) -> Text:
-        text = Text("  ")
-        first, *rest = columns
-        badge = rest[0] if rest and rest[0] in {"current", "default"} else ""
-        details = rest[1:] if badge else rest
-        text.append(first, style="cyan")
-        text.append(" " * max(2, 40 - display_len(first)))
-        if badge:
-            text.append(badge, style="yellow" if badge == "default" else "dim")
-        text.append(" " * max(2, 9 - display_len(badge)))
-        for index, column in enumerate(details):
-            text.append(column, style="dim")
-            if index < len(details) - 1:
-                text.append("  ", style="none")
         return text
 
     @staticmethod
@@ -643,5 +624,44 @@ class SlashBlock:
                 text.append(token, style=style)
 
 
-def _split_columns(line: str) -> list[str]:
-    return [part for part in re.split(r" {2,}", line.strip()) if part]
+@dataclass(frozen=True, slots=True)
+class SlashTableBlock:
+    """Render one submitted slash command with a structured result table."""
+
+    message: str
+    table: SlashTable
+
+    def render(self) -> RenderableType:
+        summary = Text("  ")
+        summary.append(self.table.summary)
+        return Group(
+            *_slash_control_lines(self.message),
+            summary,
+            Text(),
+            _SlashTableRows(self.table),
+            Text("\n"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _SlashTableRows:
+    table: SlashTable
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        del console
+        lines = table_lines(
+            self.table.headers,
+            self.table.rows,
+            width=max(1, options.max_width - 2),
+            shrink_order=self.table.shrink_order,
+            protected_suffixes=self.table.protected_suffixes,
+        )
+        for index, line in enumerate(lines):
+            rendered = Text("  ")
+            rendered.append(line, style="dim" if index == 1 else "none")
+            rendered.no_wrap = True
+            yield rendered

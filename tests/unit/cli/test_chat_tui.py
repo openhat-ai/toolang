@@ -34,6 +34,7 @@ from toolang.base.types.message import (
     ToolResultPart,
 )
 from toolang.base.types.run import ModelCall, ToolCall
+from toolang.common.errors import ToolangError
 from toolang.cli.toolang.commands.chat import (
     blocks,
     completion,
@@ -1723,6 +1724,33 @@ def test_chat_slash_summary_uses_two_space_indent_without_marker() -> None:
     assert summary == "  Model set to openai/gpt-5 · high"
 
 
+def test_chat_slash_table_uses_neutral_headers_and_one_line_rows() -> None:
+    block = blocks.SlashTableBlock(
+        "/models",
+        slashes.SlashTable(
+            "Found 1 model",
+            ("MODEL", "PRICE ($/1M)", "EFFORT"),
+            (("openai/a-very-long-model*", "$ 1.25 / $10.00", "low, high"),),
+            shrink_order=(2, 0, 1),
+            protected_suffixes=("*", None, None),
+        ),
+    )
+
+    rendered = _render_text(block.render(), width=42)
+    lines = rendered.splitlines()
+    table_lines = [line for line in lines if line.startswith("  ")]
+    segments = rendering.render_segments(block.render(), width=42)
+    model_header = next(
+        segment for segment in segments if segment.text.startswith("MODEL")
+    )
+
+    assert any("PRICE ($/1M)" in line and "EFFORT" in line for line in table_lines)
+    assert any("─" in line for line in table_lines)
+    assert any(line.rstrip().endswith("*") or "*  " in line for line in table_lines)
+    assert all(get_cwidth(line) <= 42 for line in table_lines)
+    assert model_header.style is None or model_header.style.color is None
+
+
 def test_chat_header_uses_wide_local_executor_layout() -> None:
     block = blocks.HeaderBlock(
         home="/tmp/toolang/agents/alice",
@@ -2035,7 +2063,7 @@ def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
     assert separators[0].style is not None and separators[0].style.dim
 
 
-def test_chat_model_label_uses_default_or_selected_model() -> None:
+def test_chat_model_label_uses_canonical_ref_and_reasoning_status() -> None:
     payload = {
         "default": "openai/gpt-5",
         "items": [
@@ -2043,13 +2071,18 @@ def test_chat_model_label_uses_default_or_selected_model() -> None:
                 "ref": "openai/gpt-5",
                 "name": "GPT-5",
                 "provider": "openai",
-                "parameters": {"reasoning": {"effort": ["low", "high"]}},
+                "parameters": {
+                    "reasoning": {
+                        "effort": ["low", "high"],
+                        "applicable": True,
+                    }
+                },
             },
             {
                 "ref": "openai/o3",
                 "name": "o3",
                 "provider": "openai",
-                "parameters": {"reasoning": {"effort": ["high"]}},
+                "parameters": {"reasoning": {"effort": ["high"], "applicable": False}},
             },
         ],
     }
@@ -2059,14 +2092,14 @@ def test_chat_model_label_uses_default_or_selected_model() -> None:
             payload,
             SessionSetting(model=ModelRequest("openai/gpt-5"), runnable="agic:chat"),
         )
-        == "GPT-5"
+        == "openai/gpt-5 · auto"
     )
     assert (
         slashes.chat_model_label(
             payload,
             SessionSetting(model=ModelRequest("openai/o3"), runnable="agic:chat"),
         )
-        == "o3"
+        == "openai/o3"
     )
     assert (
         slashes.chat_model_label(
@@ -2079,8 +2112,34 @@ def test_chat_model_label_uses_default_or_selected_model() -> None:
                 runnable="agic:chat",
             ),
         )
-        == "GPT-5 · high"
+        == "openai/gpt-5 · high"
     )
+    assert (
+        slashes.chat_model_label(
+            payload,
+            SessionSetting(model=None, runnable="agic:chat"),
+        )
+        == "[model not set]"
+    )
+
+
+@pytest.mark.parametrize(
+    ("reasoning", "expected"),
+    [
+        (ReasoningParameters(effort="none"), "openai/gpt-5 · none"),
+        (ReasoningParameters(budget_tokens=4096), "openai/gpt-5 · 4096"),
+    ],
+)
+def test_chat_model_label_preserves_explicit_reasoning_values(
+    reasoning: ReasoningParameters,
+    expected: str,
+) -> None:
+    setting = SessionSetting(
+        model=ModelRequest("openai/gpt-5", ModelParameters(reasoning)),
+        runnable="agic:chat",
+    )
+
+    assert slashes.chat_model_label({"items": []}, setting) == expected
 
 
 def test_chat_status_bar_right_aligns_the_model_without_hotkeys(
@@ -2189,6 +2248,21 @@ def test_chat_status_bar_truncates_labels_without_moving_the_model_edge(
     assert get_cwidth(text) == 40
     assert text.endswith("openai/gpt-5")
     assert "· openai/gpt-5" in text
+
+
+def test_chat_status_bar_truncates_model_before_effort_suffix(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 28))
+    status = widgets.StatusBar(
+        "agic:chat",
+        "openai/a-very-long-model · high",
+    )
+
+    text = "".join(fragment for _style, fragment in status._render())
+
+    assert get_cwidth(text) == 28
+    assert text.endswith("… · high")
 
 
 def test_chat_status_palette_uses_state_colors_for_markers() -> None:
@@ -2500,31 +2574,46 @@ def test_chat_tui_uses_truecolor_for_live_block_rendering() -> None:
     assert app.app.color_depth == ColorDepth.DEPTH_24_BIT
 
 
-def test_chat_tui_keeps_default_refs_without_listing_resources() -> None:
+def test_chat_tui_resolves_only_the_selected_model_for_status() -> None:
     class DefaultOnlyClient(FakeClient):
+        model_queries: list[Sequence[str] | None] = []
+
         def list_models(
             self,
             queries: Sequence[str] | None = None,
         ) -> dict[str, object]:
-            del queries
-            raise AssertionError("status must not enumerate models")
+            self.model_queries.append(queries)
+            assert queries == ("openai/gpt-5",)
+            return {
+                "default": "openai/gpt-5",
+                "items": [
+                    {
+                        "ref": "openai/gpt-5",
+                        "parameters": {
+                            "reasoning": {"effort": ["low"], "applicable": True}
+                        },
+                    }
+                ],
+            }
 
         def list_runnables(self, kind: str) -> dict[str, object]:
             del kind
             raise AssertionError("status must not enumerate runnables")
 
+    client = DefaultOnlyClient()
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
-        client=DefaultOnlyClient(),
+        client=client,
     )
 
-    assert app.status_bar.model_label == "openai/gpt-5"
+    assert app.status_bar.model_label == "openai/gpt-5 · auto"
     assert app.status_bar.runnable_label == "agic:chat"
+    assert client.model_queries == [("openai/gpt-5",)]
     app.handle_run_event(_model_step_begin(model="deepseek/deepseek-chat"))
-    assert app.status_bar.model_label == "openai/gpt-5"
+    assert app.status_bar.model_label == "openai/gpt-5 · auto"
 
     app.status_bar.set_error("Model selector matched no models")
     assert app.status_bar.error_message
@@ -2532,6 +2621,26 @@ def test_chat_tui_keeps_default_refs_without_listing_resources() -> None:
     app.prompt.buffer.text = "retry"
 
     assert app.status_bar.error_message == ""
+
+
+def test_chat_tui_omits_effort_when_model_metadata_lookup_fails() -> None:
+    class UnavailableCatalogClient(FakeClient):
+        def list_models(
+            self,
+            queries: Sequence[str] | None = None,
+        ) -> dict[str, object]:
+            assert queries == ("openai/gpt-5",)
+            raise ToolangError("catalog unavailable")
+
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        setting=FakeClient().initial_setting(),
+        home="/tmp/agent",
+        input_history=None,
+        client=UnavailableCatalogClient(),
+    )
+
+    assert app.status_bar.model_label == "openai/gpt-5"
 
 
 def test_chat_tui_empty_enter_preserves_status_error() -> None:

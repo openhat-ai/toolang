@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, TypeAlias, cast
 
 import click
 
 from toolang.cli.common.model_selection import materialize_model_selection
+from toolang.base.types.model import ModelRequest
 from toolang.common.errors import ToolangError
 from toolang.execution.policy import parse_setting_override
 from toolang.execution.types import ModelOverride, RunOverride, SessionSetting
@@ -21,6 +23,7 @@ from .policy import (
     setting_slash_usage,
 )
 from .shortcuts import help_lines as shortcut_help_lines
+from .tables import table_lines
 
 SlashOutcomeKind = Literal["success", "result", "usage", "error"]
 SlashArgument = Literal["none", "optional", "required"]
@@ -41,6 +44,8 @@ class SlashTable:
     summary: str
     headers: tuple[str, ...]
     rows: tuple[tuple[str, ...], ...]
+    shrink_order: tuple[int, ...] = ()
+    protected_suffixes: tuple[str | None, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,30 +124,26 @@ def error_outcome(message: str) -> SlashOutcome:
     return SlashOutcome("error", SlashText(f"Error: {friendly_error(message)}"))
 
 
-def outcome_lines(outcome: SlashOutcome) -> tuple[str, ...]:
+def outcome_lines(
+    outcome: SlashOutcome,
+    *,
+    width: int | None = None,
+) -> tuple[str, ...]:
     """Project one outcome to deterministic plain-text lines."""
 
     content = outcome.content
     if isinstance(content, SlashText):
         return (content.summary, *content.details)
     if isinstance(content, SlashTable):
-        widths = tuple(
-            max(len(header), *(len(row[index]) for row in content.rows))
-            for index, header in enumerate(content.headers)
+        lines = table_lines(
+            content.headers,
+            content.rows,
+            width=None if width is None else max(1, width - 2),
+            shrink_order=content.shrink_order,
+            protected_suffixes=content.protected_suffixes,
         )
-        table = (
-            _plain_table_row(content.headers, widths),
-            *(_plain_table_row(row, widths) for row in content.rows),
-        )
-        return (content.summary, *table)
+        return (content.summary, *(f"  {line}" for line in lines))
     return (f"{content.result.run_id} result",)
-
-
-def _plain_table_row(values: Sequence[str], widths: Sequence[int]) -> str:
-    return "  ".join(
-        value if index == len(values) - 1 else value.ljust(widths[index])
-        for index, value in enumerate(values)
-    ).rstrip()
 
 
 def _usage(command: SlashCommand) -> SlashOutcome:
@@ -269,40 +270,40 @@ def _resources(app: AppContext, command: str, argument: str) -> SlashOutcome:
         items = _items(payload)
         if not items:
             return _result("No models found")
-        current = app.get_setting().model
-        current_ref = current.ref if current is not None else None
-        default = as_text(payload.get("default"))
+        configured = app.get_setting().model
+        default = configured.ref if configured is not None else None
+        prices = _model_prices(items)
         rows = tuple(
             (
-                as_text(item.get("ref")) or "-",
-                (
-                    "current"
-                    if as_text(item.get("ref")) == current_ref
-                    else "default"
-                    if as_text(item.get("ref")) == default
-                    else ""
-                ),
+                f"{as_text(item.get('ref')) or '-'}"
+                f"{'*' if as_text(item.get('ref')) == default else ''}",
+                price,
                 _model_efforts(item),
             )
-            for item in items
+            for item, price in zip(items, prices, strict=True)
         )
         return SlashOutcome(
             "result",
             SlashTable(
                 _found(len(rows), "model"),
-                ("MODEL", "STATE", "EFFORT"),
+                ("MODEL", "PRICE ($/1M)", "EFFORT"),
                 rows,
+                shrink_order=(2, 0, 1),
+                protected_suffixes=("*", None, None),
             ),
         )
     if command == "tools":
-        items = _items(client.list_tools(queries))
+        items = [
+            item
+            for item in _items(client.list_tools(queries))
+            if not (as_text(item.get("toolset")) or "").startswith("_")
+        ]
         if not items:
             return _result("No tools found")
         rows = tuple(
             (
                 as_text(item.get("ref")) or "-",
-                as_text(item.get("plugin")) or "-",
-                as_text(item.get("description")) or "",
+                as_text(item.get("description")) or "-",
             )
             for item in items
         )
@@ -310,8 +311,9 @@ def _resources(app: AppContext, command: str, argument: str) -> SlashOutcome:
             "result",
             SlashTable(
                 _found(len(rows), "tool"),
-                ("TOOL", "PLUGIN", "DESCRIPTION"),
+                ("TOOL", "DESCRIPTION"),
                 rows,
+                shrink_order=(1, 0),
             ),
         )
     items = _items(client.list_caps(None, queries))
@@ -321,7 +323,8 @@ def _resources(app: AppContext, command: str, argument: str) -> SlashOutcome:
         (
             as_text(item.get("identity")) or "-",
             as_text(item.get("scope")) or "-",
-            as_text(item.get("description")) or "",
+            as_text(item.get("form")) or "-",
+            as_text(item.get("summary")) or "-",
         )
         for item in items
     )
@@ -329,8 +332,9 @@ def _resources(app: AppContext, command: str, argument: str) -> SlashOutcome:
         "result",
         SlashTable(
             _found(len(rows), "cap"),
-            ("CAP", "SCOPE", "DESCRIPTION"),
+            ("CAP", "SCOPE", "FORM", "DESCRIPTION"),
             rows,
+            shrink_order=(3, 0, 1, 2),
         ),
     )
 
@@ -530,14 +534,9 @@ def _model_setting_summary(setting: SessionSetting) -> str:
     model = setting.model
     if model is None:
         return "Model cleared"
-    reasoning = model.parameters.reasoning
-    if reasoning is None:
+    effort = model_reasoning_value(model)
+    if effort is None:
         return f"Model set to {model.ref}"
-    effort = (
-        reasoning.effort
-        if reasoning.effort is not None
-        else str(reasoning.budget_tokens)
-    )
     return f"Model set to {model.ref} · {effort}"
 
 
@@ -553,6 +552,36 @@ def _model_efforts(item: Mapping[str, Any]) -> str:
         return "-"
     values = tuple(value for value in efforts if isinstance(value, str) and value)
     return ", ".join(values) or "-"
+
+
+def _model_prices(items: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
+    components = tuple(_model_price_components(item) for item in items)
+    input_width = max(6, *(len(input_value) for input_value, _ in components))
+    output_width = max(6, *(len(output_value) for _, output_value in components))
+    return tuple(
+        f"{input_value.rjust(input_width)} / {output_value.rjust(output_width)}"
+        for input_value, output_value in components
+    )
+
+
+def _model_price_components(item: Mapping[str, Any]) -> tuple[str, str]:
+    price = item.get("price")
+    if not isinstance(price, Mapping):
+        return "-", "-"
+    return _price_component(price.get("input")), _price_component(price.get("output"))
+
+
+def _price_component(value: object) -> str:
+    if value is None or isinstance(value, bool):
+        return "-"
+    try:
+        price = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return "-"
+    if not price.is_finite():
+        return "-"
+    number = f"{price:.2f}"
+    return f"${number.rjust(5)}"
 
 
 def _found(count: int, noun: str) -> str:
@@ -600,19 +629,64 @@ def chat_model_label(
     models_payload: Mapping[str, Any],
     setting: SessionSetting,
 ) -> str:
-    if setting.model is None:
-        return "none"
-    resolved = _chat_resolve_model_command(models_payload, setting.model.ref)
-    label = resolved[1] if resolved is not None else setting.model.ref
-    reasoning = setting.model.parameters.reasoning
-    if reasoning is None:
-        return label
-    value = (
-        reasoning.effort
-        if reasoning.effort is not None
-        else str(reasoning.budget_tokens)
+    applicable = (
+        model_effort_applicability(models_payload, setting.model.ref)
+        if setting.model is not None
+        else None
     )
-    return f"{label} · {value}"
+    return model_status_label(setting.model, effort_applicable=applicable)
+
+
+def model_status_label(
+    model: ModelRequest | None,
+    *,
+    effort_applicable: bool | None = None,
+) -> str:
+    """Return the canonical compact model status segment."""
+
+    if model is None:
+        return "[model not set]"
+    value = model_reasoning_value(model)
+    if value is not None:
+        return f"{model.ref} · {value}"
+    return f"{model.ref} · auto" if effort_applicable is True else model.ref
+
+
+def model_effort_applicability(
+    models_payload: Mapping[str, Any],
+    ref: str,
+) -> bool | None:
+    """Return effort applicability for one exact model ref in a list payload."""
+
+    item = next(
+        (item for item in _items(models_payload) if as_text(item.get("ref")) == ref),
+        None,
+    )
+    return model_effort_applicable(item) if item is not None else None
+
+
+def model_reasoning_value(model: ModelRequest) -> str | None:
+    """Return one explicit effort level or token budget for display."""
+
+    reasoning = model.parameters.reasoning
+    if reasoning is None:
+        return None
+    if reasoning.effort is not None:
+        return reasoning.effort
+    return str(reasoning.budget_tokens) if reasoning.budget_tokens is not None else None
+
+
+def model_effort_applicable(item: Mapping[str, Any]) -> bool | None:
+    """Read validated effort applicability from one model list item."""
+
+    parameters = item.get("parameters")
+    if not isinstance(parameters, Mapping):
+        return None
+    reasoning = parameters.get("reasoning")
+    if not isinstance(reasoning, Mapping):
+        return None
+    applicable = reasoning.get("applicable")
+    return applicable if isinstance(applicable, bool) else None
 
 
 def _items(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:

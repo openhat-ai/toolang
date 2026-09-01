@@ -30,6 +30,22 @@ special `:?` interaction explains leading run overrides without creating a
 run. Dollar-prefixed `Content` lines expand reusable prompts. See
 [input-syntax.md](./input-syntax.md) for the complete namespace contract.
 
+The three plural discovery commands produce compact, structured tables:
+
+- `/models [QUERY]` shows `MODEL`, `PRICE ($/1M)`, and `EFFORT`. The configured
+  session model has a trailing `*`; price is base input/output USD per million
+  tokens; advertised effort levels retain catalog order.
+- `/caps [QUERY]` shows `CAP`, `SCOPE`, `FORM`, and `DESCRIPTION`. Description
+  display falls back from title metadata to description metadata and then the
+  first content paragraph.
+- `/tools [QUERY]` shows `TOOL` and `DESCRIPTION`. Tools in a structured
+  toolset whose name starts with `_` are hidden from this display only.
+
+Each result derives its own display-cell column widths. A neutral separator
+follows the header, every row remains one terminal line, and flexible cells use
+`…` when the current output width cannot contain their full values. This
+presentation does not change query matching or resource allow semantics.
+
 Chat owns mutable model, runnable, allow, and limit session defaults. Model
 parameters, including reasoning effort or token budget, live on the session's
 concrete `ModelRequest`. Each submission snapshots that state with input-local
@@ -206,7 +222,8 @@ chat/default runnable. Persisted state is read through the normal thread and run
 detail endpoints.
 
 `GET /api/v1/models` returns concrete refs from the server's current effective
-`AgentSetup.models` collection and structured reasoning-effort metadata. A run
+`AgentSetup.models` collection, base per-million input/output prices, and
+structured reasoning-effort metadata. A run
 resolves the submitted ref with singular-selection semantics, validates its
 typed model parameters, then applies its selected runnable's `models`
 directive. Ambiguous routes must be narrowed by the configured model queries
@@ -300,6 +317,15 @@ labels. Setting commands refresh the status bar after committing the new
 session value, but the status bar is not their confirmation channel. Slash
 summary and detail rows align with other output using a two-space indent and no
 leading marker column.
+
+The status bar's right side shows the canonical session model ref without a
+field label. No effective model appears as `[model not set]`. An explicit
+effort level or token budget appears as `MODEL · VALUE`; a model that advertises
+effort-level or token-budget control but has no explicit session value appears
+as `MODEL · auto`. Models without either control, toggle-only models, and models
+whose metadata cannot be resolved show only `MODEL`. Status metadata lookup is
+limited to the exact selected model and does not block Chat when it fails. At
+narrow widths the model ref is elided before an applicable effort suffix.
 
 `/?`, `:?`, and `/keys` are read-only scrollback interactions. Their purpose and
 composition constraint appear before copyable forms. Keyboard help is generated

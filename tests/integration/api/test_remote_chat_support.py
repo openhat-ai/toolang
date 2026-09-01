@@ -138,11 +138,15 @@ agic chat:
             )
 
         assert [item["ref"] for item in models.json()["items"]] == [TEST_MODEL_REF]
+        model_item = models.json()["items"][0]
+        assert model_item["price"] == {"input": None, "output": None}
+        assert model_item["parameters"]["reasoning"]["applicable"] is False
         assert no_models.json()["items"] == []
         assert tools.json() == {
             "items": [
                 {
                     "ref": "test/test__lookup",
+                    "toolset": "test",
                     "plugin": "test",
                     "description": "Look up a test value.",
                 }
@@ -155,6 +159,8 @@ agic chat:
             "prompts": 1,
         }
         assert [item["name"] for item in caps.json()["prompts"]] == ["review"]
+        assert caps.json()["prompts"][0]["summary"] == "Review input."
+        assert caps.json()["prompts"][0]["form"] == "inline"
         assert [item["name"] for item in prompts.json()] == ["review"]
         assert invalid.status_code == 400
         assert invalid_tools.status_code == 400

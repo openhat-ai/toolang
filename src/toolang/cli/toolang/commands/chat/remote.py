@@ -409,7 +409,9 @@ class RemoteChatSession:
                     "identity": f"{item_kind}/{name}",
                     "kind": item_kind,
                     "scope": item.get("scope"),
+                    "form": item.get("form"),
                     "description": item.get("description") or "",
+                    "summary": item.get("summary") or item.get("description") or "",
                 }
             )
         return {"items": items}

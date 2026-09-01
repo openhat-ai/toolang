@@ -1,6 +1,7 @@
 """Formal agent inspection routes."""
 
 import re
+from decimal import Decimal
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
@@ -17,7 +18,10 @@ from toolang.execution.calls import prompt_definitions
 from toolang.execution.schemas import ThreadInfo
 from toolang.execution.types import ModelStepNoted
 from toolang.execution.executor.resources import snapshot_model_selection
-from toolang.plugin.models.resolution import model_reasoning_efforts
+from toolang.plugin.models.resolution import (
+    model_reasoning_effort_applicable,
+    model_reasoning_efforts,
+)
 from toolang.plugin.toolsets.collections import tool_dataset
 from toolang.up import AgentCore, process as agents
 from toolang.state.state import state_program
@@ -63,6 +67,9 @@ def models(
                 ref=ref,
                 target=target,
                 efforts=model_reasoning_efforts(selection, target),
+                effort_applicable=model_reasoning_effort_applicable(selection, target),
+                input_price=entry.info.input_price,
+                output_price=entry.info.output_price,
             )
             for entry in selected.entries
             for ref, target in ((entry.ref, entry.target),)
@@ -87,6 +94,7 @@ def tools(
         "items": [
             {
                 "ref": f"{item.toolset}/{item.name}",
+                "toolset": item.toolset,
                 "plugin": item.plugin,
                 "description": item.description,
             }
@@ -313,14 +321,33 @@ def _runtime_sandbox_spec(runtime_state: dict[str, object]) -> str:
 
 
 def _model_item(
-    *, ref: str, target: Any, efforts: tuple[str, ...]
+    *,
+    ref: str,
+    target: Any,
+    efforts: tuple[str, ...],
+    effort_applicable: bool,
+    input_price: float | None,
+    output_price: float | None,
 ) -> dict[str, object]:
     return {
         "ref": ref,
         "name": target.name,
         "provider": target.provider,
-        "parameters": {"reasoning": {"effort": list(efforts)}},
+        "parameters": {
+            "reasoning": {
+                "effort": list(efforts),
+                "applicable": effort_applicable,
+            }
+        },
+        "price": {
+            "input": _price_per_million(input_price),
+            "output": _price_per_million(output_price),
+        },
     }
+
+
+def _price_per_million(value: float | None) -> Decimal | None:
+    return None if value is None else Decimal(str(value)) * Decimal(1_000_000)
 
 
 def _runnable_defaults(
