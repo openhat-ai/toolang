@@ -303,9 +303,8 @@ def test_script_rejects_unmarked_command_line_primary_input(
     )
 
     assert result == 2
-    assert "primary input requires '--', '-', or '---'" in strip_ansi(
-        capsys.readouterr().err
-    )
+    error = " ".join(strip_ansi(capsys.readouterr().err).split())
+    assert "primary input requires '--', '-', or '---'" in error
 
 
 def test_script_keeps_assignments_after_separator_as_input(
