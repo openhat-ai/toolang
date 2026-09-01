@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -53,8 +54,7 @@ async def acquire_run_client(
     )
     state = StateWatcher(layout)
     try:
-        await state.refresh()
-        await setup.refresh()
+        await asyncio.gather(state.refresh(), setup.refresh())
         executor = RunExecutor(
             store,
             IdIssuer(layout.id_state),

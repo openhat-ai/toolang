@@ -508,7 +508,7 @@ def test_remote_chat_uses_local_host_description_when_profile_does_not_supply_it
         session.close()
 
 
-def test_remote_chat_uses_remote_run_client_native_events() -> None:
+def test_remote_chat_repeated_concrete_runs_do_not_list_models() -> None:
     detail = _detail()
     requests: list[str] = []
 
@@ -537,18 +537,22 @@ def test_remote_chat_uses_remote_run_client_native_events() -> None:
     states: list[object] = []
     errors: list[str] = []
     try:
-        request = session.build_request(
-            "term_remote",
+        for override in (
             RunOverride(),
-            RunnableInputRaw(_="hello"),
-            session.initial_setting(),
-        )
-        session.run(
-            request,
-            events.append,
-            errors.append,
-            states.append,
-        )
+            RunOverride(model=ModelOverride(identity="test/model(variant)")),
+        ):
+            request = session.build_request(
+                "term_remote",
+                override,
+                RunnableInputRaw(_="hello"),
+                session.initial_setting(),
+            )
+            session.run(
+                request,
+                events.append,
+                errors.append,
+                states.append,
+            )
     finally:
         session.close()
 
@@ -558,11 +562,13 @@ def test_remote_chat_uses_remote_run_client_native_events() -> None:
         endpoint="http://runtime.test:7001",
         version="v0.3.9",
     )
-    assert [type(item) for item in events] == [RunBegin, RunEnd]
-    assert states == [RunAccepted("run_remote")]
+    assert [type(item) for item in events] == [RunBegin, RunEnd, RunBegin, RunEnd]
+    assert states == [RunAccepted("run_remote"), RunAccepted("run_remote")]
     assert errors == []
-    assert requests.count("/api/v1/models") == 1
-    assert requests.count("/api/v1/runs/authored/stream") == 1
+    assert requests.count("/api/v1/models") == 0
+    assert requests.count("/api/v1/agics") == 0
+    assert requests.count("/api/v1/flows") == 0
+    assert requests.count("/api/v1/runs/authored/stream") == 2
 
 
 def test_remote_chat_recovers_without_replaying_or_retrying(

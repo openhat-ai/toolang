@@ -20,7 +20,7 @@ from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.base import ChatExecutorMetadata
 from toolang.execution.events import RunEvent
 from toolang.execution.schemas import RunRequest, RunnableRequest
-from toolang.execution.types import RunOverride
+from toolang.execution.types import RunOverride, SessionSetting
 from toolang.lang.input import RunnableInputRaw
 from toolang.state.state import publish_state_resources
 from toolang.state.watcher import StateRefresh
@@ -169,6 +169,37 @@ agic chat(_: Part[]) -> Part[]:
     assert defaults.runnable == "agic:chat"
 
 
+def test_local_chat_model_list_retains_the_session_default(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic chat(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=(),
+    )
+    session: Any = object.__new__(local.LocalChatSession)
+    session.setup_watcher = type(
+        "SetupWatcher",
+        (),
+        {"current": lambda _self: harness.setup},
+    )()
+    session._surface = SessionSetting(
+        model=ModelRequest("session/model"),
+        runnable="agic:chat",
+    )
+    try:
+        payload = session.list_models()
+    finally:
+        harness.store.close()
+
+    assert payload["default"] == "session/model"
+    assert [item["ref"] for item in payload["items"]] == [TEST_MODEL_REF]
+
+
 def test_local_chat_owner_loop_control_does_not_wait_on_itself() -> None:
     class RunClient:
         async def cancel(self, _run_id: str, **_kwargs: object) -> None:
@@ -227,6 +258,8 @@ agic chat(_: Part[]) -> Part[]:
         harness.state,
         agent_name=harness.setup.layout.name,
     )
+    setup_refreshes = 0
+    state_refreshes = 0
 
     class SetupWatcher:
         def __init__(self, _layout: object, **_kwargs: object) -> None:
@@ -236,7 +269,9 @@ agic chat(_: Part[]) -> Part[]:
             return harness.setup
 
         async def refresh(self, *, force: bool = False):
+            nonlocal setup_refreshes
             del force
+            setup_refreshes += 1
             return harness.setup
 
         async def run(self, *, stop_signal: asyncio.Event) -> None:
@@ -250,7 +285,9 @@ agic chat(_: Part[]) -> Part[]:
             return self.state
 
         async def refresh(self, *, force: bool = False):
+            nonlocal state_refreshes
             del force
+            state_refreshes += 1
             return self.state
 
         async def refresh_result(self, *, force: bool = False):
@@ -284,6 +321,11 @@ agic chat(_: Part[]) -> Part[]:
             sandbox_selector="host",
             sandbox_detail="macOS 27.0 arm64",
         )
+        assert session.list_runnables("agic") == {
+            "default": "chat",
+            "items": [{"name": "chat"}, {"name": "default"}],
+        }
+        assert session.list_prompts(None) == {"items": []}
         thread_id = session.create_thread()
         request = session.build_request(
             thread_id,
@@ -317,6 +359,8 @@ agic chat(_: Part[]) -> Part[]:
             TextPart("hello back"),
         )
         assert harness.adapter.invocations[0].call.messages == [Message.user("hello")]
+        assert setup_refreshes == 1
+        assert state_refreshes == 1
         assert set(event_threads) == {session._thread.ident}
         assert threading.get_ident() != session._thread.ident
     finally:

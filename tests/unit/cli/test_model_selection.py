@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from toolang.cli.common.model_selection import (
+    is_concrete_model_ref,
     materialize_model_selection,
 )
 
@@ -26,6 +27,40 @@ _MODELS = {
         },
     ],
 }
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "openai/gpt-5",
+        "openrouter/openai/gpt-5",
+        "provider/model:variant",
+        "provider/model(variant)",
+        "provider/model=variant",
+    ),
+)
+def test_concrete_model_ref_recognizes_canonical_routes(value: str) -> None:
+    assert is_concrete_model_ref(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "gpt-5",
+        "openai/*",
+        "openai/gpt-?",
+        "openai/gpt-5[reasoning]",
+        " openai/gpt-5",
+        "openai/gpt-5 ",
+        '"openai/gpt-5"',
+        "/gpt-5",
+        "openai/",
+    ),
+)
+def test_concrete_model_ref_rejects_queries_and_noncanonical_values(
+    value: str,
+) -> None:
+    assert not is_concrete_model_ref(value)
 
 
 def test_model_list_materializes_a_unique_human_facing_value() -> None:

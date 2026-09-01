@@ -31,6 +31,9 @@ class _Snapshot:
     def current(self) -> Any:
         return self.value
 
+    async def refresh(self) -> object:
+        raise AssertionError("remote run acceptance must not refresh publications")
+
 
 def test_remote_chat_session_executes_against_the_agent_api(tmp_path: Path) -> None:
     harness = ExecutionHarness.create(

@@ -150,7 +150,7 @@ def test_chat_tui_updates_defaults_while_a_run_is_active(tmp_path: Path) -> None
         session.wait_for("◧ agic:chat running")
 
         session.send(b"/flow relay\r")
-        running = session.wait_for("flow:relay · scripted")
+        running = session.wait_for("flow:relay · test/scripted")
 
         assert "agic:chat" in running
         assert "Traceback" not in running

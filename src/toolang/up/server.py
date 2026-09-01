@@ -28,10 +28,7 @@ from toolang.catalog import CapsManager, JobsManager
 from toolang.common.config import resolve_ui_base_url
 from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.common.layout import AgentLayout
-from toolang.execution.executor.resources import (
-    agent_model_targets,
-    validate_agent_ceiling,
-)
+from toolang.execution.executor.resources import validate_agent_ceiling
 from toolang.plugin.sandboxes.host import HOST_SANDBOX_DESCRIPTION_ENV
 from toolang.setup import AgentSetup
 from toolang.setup.config import load_setup_config
@@ -188,8 +185,7 @@ def serve(
         default_overrides=spec.default_overrides,
         limit_overrides=spec.limit_overrides,
     )
-    asyncio.run(core.state.refresh())
-    asyncio.run(core.setup.refresh())
+    asyncio.run(_refresh_core(core))
     state = core.state.current()
     ceiling = AgentCeiling()
     _validate_file_agic(state.state, enabled=bool(spec.file_inboxes))
@@ -388,8 +384,17 @@ def _model_count(
     *,
     ceiling: AgentCeiling,
 ) -> int:
-    _default, targets = agent_model_targets(setup, ceiling)
-    return len(targets)
+    if ceiling.models is None:
+        return len(setup.models)
+    if not ceiling.models:
+        return 0
+    return len(setup.models.match(ceiling.models))
+
+
+async def _refresh_core(core: AgentCore) -> None:
+    """Initialize independent Setup and State publications concurrently."""
+
+    await asyncio.gather(core.state.refresh(), core.setup.refresh())
 
 
 def _cap_count(state: AgentState | StatePublication, kind: str) -> int:

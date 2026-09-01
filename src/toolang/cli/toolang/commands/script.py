@@ -29,6 +29,7 @@ from toolang.cli.common.policy import (
     resolve_limit_overrides,
 )
 from toolang.cli.common.model_selection import (
+    is_concrete_model_ref,
     materialize_model_selection,
 )
 from toolang.execution.calls import parse_call, resolve_spec
@@ -661,7 +662,7 @@ async def _execute_remote(
                 _remote_script_override(override, runnable=runnable),
             )
             model = effective.model
-            if model is not None:
+            if model is not None and not is_concrete_model_ref(model.ref):
                 models = await _remote_script_models(http, client.endpoint)
                 model = replace(
                     model,
@@ -919,7 +920,7 @@ async def _execute(
             "--default runnable does not apply when a script runnable is explicit"
         )
     allow_overrides = resolve_ceiling_overrides(environ, allow_options)
-    setup = await SetupWatcher(
+    setup_watcher = SetupWatcher(
         layout,
         sandbox=sandbox,
         allow_overrides={
@@ -932,7 +933,7 @@ async def _execute(
             **cli_defaults,
         },
         limit_overrides=resolve_limit_overrides(environ, limit_options),
-    ).refresh()
+    )
     state_watcher = StateWatcher(
         layout,
         allow_overrides={
@@ -940,8 +941,10 @@ async def _execute(
             for name, value in allow_overrides.items()
             if name in {"psyches", "skills", "services", "prompts"}
         },
+        initial_state=state.state if isinstance(state, StatePublication) else state,
     )
-    state = await state_watcher.refresh()
+    setup = await setup_watcher.refresh()
+    state = state_watcher.current()
     executor = RunExecutor(
         store,
         ids,

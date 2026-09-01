@@ -2299,22 +2299,15 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
     assert [run.id for run in rewound.runs] == ["run_first"]
 
 
-def test_tools_uses_setup_snapshot(tmp_path: Path, monkeypatch) -> None:
+def test_tools_uses_tool_only_snapshot(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "toolang"
     layout = AgentLayout.resident(root, "default")
     tool = _FakeTool()
-    setup = AgentSetup(
-        layout=layout,
-        providers={},
-        adapters={},
-        models=ModelCollection(),
-        tools=ToolCollection.from_tools({"shell__echo": tool}),
-        envs={},
-    )
+    tools = ToolCollection.from_tools({"shell__echo": tool})
     monkeypatch.setattr(
         plugin_commands,
-        "_setup",
-        lambda _layout, *, force=False: setup,
+        "load_setup_tools",
+        lambda actual_layout: tools if actual_layout == layout else None,
     )
     monkeypatch.setattr(
         plugin_commands,

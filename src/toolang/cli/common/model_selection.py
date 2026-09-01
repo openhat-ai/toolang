@@ -5,6 +5,19 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, cast
 
+from toolang.base.types.model import ModelRequest
+
+
+def is_concrete_model_ref(value: str) -> bool:
+    """Return whether a selection is already one unambiguous model ref."""
+
+    try:
+        ModelRequest(value)
+    except (TypeError, ValueError):
+        return False
+    provider, separator, model = value.partition("/")
+    return bool(separator and provider and model)
+
 
 def materialize_model_selection(
     payload: Mapping[str, Any],

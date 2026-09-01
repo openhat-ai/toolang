@@ -2418,19 +2418,27 @@ def test_chat_tui_uses_truecolor_for_live_block_rendering() -> None:
     assert app.app.color_depth == ColorDepth.DEPTH_24_BIT
 
 
-def test_chat_tui_keeps_default_model_and_clears_status_error() -> None:
+def test_chat_tui_keeps_default_refs_without_listing_resources() -> None:
+    class DefaultOnlyClient(FakeClient):
+        def list_models(self) -> dict[str, object]:
+            raise AssertionError("status must not enumerate models")
+
+        def list_runnables(self, kind: str) -> dict[str, object]:
+            del kind
+            raise AssertionError("status must not enumerate runnables")
+
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
         home="/tmp/agent",
         input_history=None,
-        client=FakeClient(),
+        client=DefaultOnlyClient(),
     )
 
-    assert app.status_bar.model_label == "GPT-5"
+    assert app.status_bar.model_label == "openai/gpt-5"
     assert app.status_bar.runnable_label == "agic:chat"
     app.handle_run_event(_model_step_begin(model="deepseek/deepseek-chat"))
-    assert app.status_bar.model_label == "GPT-5"
+    assert app.status_bar.model_label == "openai/gpt-5"
 
     app.status_bar.set_error("Model selector matched no models")
     assert app.status_bar.error_message
@@ -2552,21 +2560,21 @@ def test_chat_tui_applies_default_settings_while_a_run_is_active() -> None:
     runnable_changed = "".join(text for _style, text in app.status_bar._render())
     assert app.status_bar.active_runnable_label == "agic:chat"
     assert app.status_bar.runnable_label == "flow:research"
-    assert runnable_changed.endswith("flow:research · GPT-5")
+    assert runnable_changed.endswith("flow:research · openai/gpt-5")
     assert app.queue == []
 
     app.handle_submit("/model effort=high")
 
     model_changed = "".join(text for _style, text in app.status_bar._render())
     assert app.status_bar.active_runnable_label == "agic:chat"
-    assert app.status_bar.model_label == "GPT-5 · high"
-    assert model_changed.endswith("flow:research · GPT-5 · high")
+    assert app.status_bar.model_label == "openai/gpt-5 · high"
+    assert model_changed.endswith("flow:research · openai/gpt-5 · high")
 
     app.handle_submit("/agic chat")
 
     restored = "".join(text for _style, text in app.status_bar._render())
     assert restored.count("agic:chat") == 1
-    assert restored.endswith("GPT-5 · high")
+    assert restored.endswith("openai/gpt-5 · high")
 
 
 def test_chat_default_settings_clear_explicit_model_and_runnable() -> None:

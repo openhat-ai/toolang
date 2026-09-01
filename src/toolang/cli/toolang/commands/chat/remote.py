@@ -19,6 +19,7 @@ from toolang.base.types.message import Message
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunPolicy
 from toolang.cli.common.model_selection import (
+    is_concrete_model_ref,
     materialize_model_selection,
 )
 from toolang.common.errors import ToolangError
@@ -439,7 +440,7 @@ class RemoteChatSession:
             resolve_model_ref=lambda selector: selector,
             resolve_runnable_ref=lambda selector: selector,
         )
-        if request.model is not None:
+        if request.model is not None and not is_concrete_model_ref(request.model.ref):
             models = await self._list_models()
             request = replace(
                 request,
