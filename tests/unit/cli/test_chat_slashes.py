@@ -626,6 +626,24 @@ def test_models_table_formats_prices_efforts_and_default_marker() -> None:
     )
 
 
+def test_models_table_distinguishes_zero_and_missing_prices() -> None:
+    app = _App()
+    app.client.models = (
+        {
+            "ref": "openai/gpt-5",
+            "name": "GPT-5",
+            "provider": "openai",
+            "parameters": {"reasoning": {"effort": [], "applicable": False}},
+            "price": {"input": 0, "output": None},
+        },
+    )
+
+    result = _outcome(slashes.handle(app, QuickCommand("models")))
+
+    assert isinstance(result.content, slashes.SlashTable)
+    assert result.content.rows == (("openai/gpt-5*", "$ 0.00 /      -", "-"),)
+
+
 def test_resource_tables_fit_unicode_cells_without_wrapping() -> None:
     outcome = slashes.SlashOutcome(
         "result",

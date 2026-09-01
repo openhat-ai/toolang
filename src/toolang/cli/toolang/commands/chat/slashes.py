@@ -629,14 +629,27 @@ def chat_model_label(
     models_payload: Mapping[str, Any],
     setting: SessionSetting,
 ) -> str:
-    if setting.model is None:
+    applicable = (
+        model_effort_applicability(models_payload, setting.model.ref)
+        if setting.model is not None
+        else None
+    )
+    return model_status_label(setting.model, effort_applicable=applicable)
+
+
+def model_status_label(
+    model: ModelRequest | None,
+    *,
+    effort_applicable: bool | None = None,
+) -> str:
+    """Return the canonical compact model status segment."""
+
+    if model is None:
         return "[model not set]"
-    label = setting.model.ref
-    value = model_reasoning_value(setting.model)
+    value = model_reasoning_value(model)
     if value is not None:
-        return f"{label} · {value}"
-    applicable = model_effort_applicability(models_payload, setting.model.ref)
-    return f"{label} · auto" if applicable is True else label
+        return f"{model.ref} · {value}"
+    return f"{model.ref} · auto" if effort_applicable is True else model.ref
 
 
 def model_effort_applicability(

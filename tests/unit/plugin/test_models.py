@@ -473,6 +473,33 @@ def test_toggle_only_reasoning_does_not_make_effort_applicable() -> None:
     assert not model_reasoning_effort_applicable(context, target)
 
 
+def test_budget_only_reasoning_makes_effort_applicable() -> None:
+    provider = _FakeModels(
+        name="deepseek",
+        models=(
+            ModelInfo(
+                ref="deepseek/reasoner",
+                provider="deepseek",
+                name="Reasoner",
+                model="reasoner",
+                metadata={
+                    "reasoning_options": [{"type": "budget_tokens", "min": 1024}]
+                },
+            ),
+        ),
+    )
+    context = _SelectionContext(
+        model_providers={"deepseek": provider},
+        model_aliases={},
+        default_models=(),
+        model_environ={},
+    )
+    target = resolve_unique_model_query(context, query="deepseek/reasoner")
+
+    assert model_reasoning_efforts(context, target) == ()
+    assert model_reasoning_effort_applicable(context, target)
+
+
 def test_reasoning_parameters_reject_effort_and_budget_together() -> None:
     with pytest.raises(ValueError, match="either effort or budget_tokens"):
         ReasoningParameters(effort="high", budget_tokens=2048)

@@ -380,13 +380,12 @@ class ChatTuiApp:
 
     def _model_label(self) -> str:
         model = self.setting.model
-        if model is None:
-            return "[model not set]"
-        value = slashes.model_reasoning_value(model)
-        if value is not None:
-            return f"{model.ref} · {value}"
-        applicable = self._selected_model_effort_applicable(model.ref)
-        return f"{model.ref} · auto" if applicable else model.ref
+        applicable = (
+            self._selected_model_effort_applicable(model.ref)
+            if model is not None and slashes.model_reasoning_value(model) is None
+            else None
+        )
+        return slashes.model_status_label(model, effort_applicable=applicable)
 
     def _selected_model_effort_applicable(self, ref: str) -> bool | None:
         if ref in self._model_effort_applicability:
