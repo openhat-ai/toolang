@@ -80,6 +80,11 @@ the query independently to the four cap collections and concatenates their
 results. Use `skill/reviewer` to select one kind or `reviewer` to match that
 name across kinds.
 
+Terminal Chat exposes the same effective collections through `/models [QUERY]`,
+`/tools [QUERY]`, and `/caps [QUERY]`. The complete command tail is one query;
+omitting it lists all effective items. These inspection commands do not apply
+or change the session's `/allow` ceiling.
+
 ## Ordering and Set Operations
 
 Results retain base-collection order. Reordering matches or repeated `--query`

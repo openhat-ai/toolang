@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 import re
 import shlex
+from types import MappingProxyType
 from typing import cast
 
 from toolang.base.errors import ToolangError
@@ -49,6 +50,17 @@ _BUDGET_RE = re.compile(r"0|[1-9][0-9]*\Z")
 _REASONING_EFFORTS = frozenset(
     {"none", "minimal", "low", "medium", "high", "xhigh", "max", "default"}
 )
+# Setting name -> (standalone setting body, independently useful override bodies).
+SETTING_OVERRIDE_FORMS: Mapping[str, tuple[str, tuple[str, ...]]] = MappingProxyType(
+    {
+        "model": ("[MODEL] [effort=VALUE]", ("MODEL", "effort=VALUE")),
+        "agic": ("AGIC", ("AGIC",)),
+        "flow": ("FLOW", ("FLOW",)),
+        "runnable": ("RUNNABLE", ("RUNNABLE",)),
+        "allow": ("FIELD=QUERY...", ("FIELD=QUERY...",)),
+        "limit": ("FIELD=VALUE...", ("FIELD=VALUE...",)),
+    }
+)
 
 
 def parse_run_override(line: str) -> tuple[RunOverride, NamedInputSources]:
@@ -66,7 +78,7 @@ def parse_run_override(line: str) -> tuple[RunOverride, NamedInputSources]:
 def parse_setting_override(command: str, body: str) -> RunOverride:
     """Parse one slash setting body using the shared override grammar."""
 
-    if command not in {"model", "runnable", "agic", "flow", "allow", "limit"}:
+    if command not in SETTING_OVERRIDE_FORMS:
         raise ValueError(f"unknown setting command: /{command}")
     try:
         tokens = shlex.split(body, comments=False, posix=True)
@@ -302,6 +314,8 @@ def _try_parse_override(
         return None
     name = tokens[0][1:]
     body = tokens[1:]
+    if name not in SETTING_OVERRIDE_FORMS:
+        return None
     if name == "model":
         return _model_override(body), ()
     if name in {"runnable", "agic", "flow"}:
@@ -310,7 +324,7 @@ def _try_parse_override(
         return _allow_override(body), ()
     if name == "limit":
         return _limit_override(body), ()
-    return None
+    raise AssertionError(f"unhandled setting override: {name}")
 
 
 def _model_override(tokens: Sequence[str]) -> RunOverride:

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 import threading
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from toolang.base.types.message import Message
@@ -28,11 +28,11 @@ from toolang.execution.runnables import (
     resolve_public_runnable_query,
 )
 from toolang.execution.executor.resources import (
-    agent_model_targets,
     snapshot_model_selection,
     validate_agent_ceiling,
 )
 from toolang.plugin.models.resolution import model_reasoning_efforts
+from toolang.plugin.toolsets.collections import tool_dataset
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.schemas import RunRequest
@@ -41,10 +41,22 @@ from toolang.lang.input import RunnableInputRaw
 from toolang.plugin.sandboxes.host import host_sandbox_description
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.watcher import StateWatcher
-from toolang.state.state import AgentState, StatePublication, state_program
+from toolang.state.collections import cap_dataset, query_cap_views
+from toolang.state.types import EntryKind
+from toolang.state.state import (
+    AgentState,
+    StatePublication,
+    state_module_caps,
+    state_program,
+)
 from toolang.execution.values import parts_from_local
 from .base import ChatExecutorMetadata, ChatResult, ChatRunState, RunAccepted
-from .policy import build_run_request, update_session_setting
+from .policy import (
+    build_run_request,
+    reconcile_session_model,
+    session_model_reconciliation_required,
+    update_session_setting,
+)
 
 
 @dataclass(slots=True)
@@ -124,11 +136,19 @@ class LocalChatSession:
             self.close()
             raise
 
-    def list_models(self) -> Mapping[str, Any]:
+    def list_models(
+        self,
+        queries: Sequence[str] | None = None,
+    ) -> Mapping[str, Any]:
         setup = self.setup_watcher.current()
-        _setup_default, targets = agent_model_targets(setup, AgentCeiling())
-        selection = snapshot_model_selection(setup)
         session_model = self.initial_setting().model
+        if queries is not None and not queries:
+            return {
+                "default": session_model.ref if session_model is not None else None,
+                "items": [],
+            }
+        models = setup.models.match(queries)
+        selection = snapshot_model_selection(setup)
         return {
             "default": session_model.ref if session_model is not None else None,
             "items": [
@@ -142,8 +162,78 @@ class LocalChatSession:
                         }
                     },
                 }
-                for ref, target in targets
+                for entry in models.entries
+                for ref, target in ((entry.ref, entry.target),)
             ],
+        }
+
+    def list_tools(
+        self,
+        queries: Sequence[str] | None = None,
+    ) -> Mapping[str, Any]:
+        if queries is not None and not queries:
+            return {"items": []}
+        tools = self.setup_watcher.current().tools
+        selected = tool_dataset(tools).query(queries)
+        return {
+            "items": [
+                {
+                    "ref": f"{item.toolset}/{item.name}",
+                    "plugin": item.plugin,
+                    "description": item.description,
+                }
+                for item in selected
+            ]
+        }
+
+    def list_caps(
+        self,
+        kind: str | None = None,
+        queries: Sequence[str] | None = None,
+    ) -> Mapping[str, Any]:
+        state = self.state_watcher.current()
+        entries = state_module_caps(state, "agent")
+        if kind is None:
+            matched = (
+                query_cap_views(
+                    entries,
+                    agent_name=self.layout.name,
+                    queries=queries,
+                )
+                if queries is None or queries
+                else ()
+            )
+            selected = tuple(
+                item
+                for item_kind in ("psyche", "skill", "service", "prompt")
+                for item in matched
+                if item.kind == item_kind
+            )
+        elif kind in {"psyche", "skill", "service", "prompt"}:
+            dataset = cap_dataset(
+                entries,
+                agent_name=self.layout.name,
+                kind=cast(EntryKind, kind),
+            )
+            selected = (
+                dataset.query(None)
+                if queries is None
+                else dataset.query(queries)
+                if queries
+                else ()
+            )
+        else:
+            raise ValueError(f"unknown cap kind: {kind}")
+        return {
+            "items": [
+                {
+                    "identity": f"{item.kind}/{item.name}",
+                    "kind": item.kind,
+                    "scope": item.scope,
+                    "description": item.description or "",
+                }
+                for item in selected
+            ]
         }
 
     def list_runnables(self, kind: str) -> Mapping[str, Any]:
@@ -205,11 +295,27 @@ class LocalChatSession:
         self,
         setting: SessionSetting,
         update: RunOverride,
+        *,
+        allowed_model_refs: Collection[str] | None = None,
     ) -> SessionSetting:
-        return update_session_setting(
+        candidate = update_session_setting(
             surface=self.initial_setting(),
             current=setting,
             update=update,
+        )
+        if not session_model_reconciliation_required(update):
+            return candidate
+        if allowed_model_refs is None:
+            payload = self.list_models(candidate.allow.models)
+            allowed_model_refs = frozenset(
+                str(item["ref"])
+                for item in payload["items"]
+                if isinstance(item, Mapping) and isinstance(item.get("ref"), str)
+            )
+        return reconcile_session_model(
+            candidate,
+            update,
+            allowed_refs=allowed_model_refs,
         )
 
     def build_request(

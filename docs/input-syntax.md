@@ -10,7 +10,7 @@ The layers are independent values with separate parsers:
 ```text
 RunnableInputRaw = PrimaryInput? + NamedInput*
 
-ChatInput = QuickCommand | RunOverride + RunnableInputRaw
+ChatInput = QuickCommand | RunOverrideHelp | RunOverride + RunnableInputRaw
 ```
 
 - `RunnableInputRaw` is language-owned syntax-valid input. It contains only one
@@ -22,6 +22,8 @@ ChatInput = QuickCommand | RunOverride + RunnableInputRaw
 - `QuickCommand` and the `ChatInput` classification are terminal-chat
   concepts. Only one `QuickCommand` is accepted, and it must occupy the whole
   chat input.
+- `RunOverrideHelp` is the terminal-chat-only `:?` interaction. It describes
+  colon syntax without creating a run.
 - The runnable branch is valid only when it contains primary or named input. A
   colon override without runnable input is invalid and never changes the
   session. Slash setting commands change `SessionSetting` without creating a
@@ -132,6 +134,9 @@ normalized submission:
 /runnable RUNNABLE
 /allow FIELD=QUERY...
 /limit FIELD=VALUE...
+/models [QUERY]           /tools [QUERY]
+/caps [QUERY]             /keys
+:?
 ```
 
 Every setting body is required. Submitting bare `/model`, `/runnable`, `/agic`,
@@ -139,6 +144,26 @@ Every setting body is required. Submitting bare `/model`, `/runnable`, `/agic`,
 editor completion popup may insert text into the draft, but selection never
 submits input or changes the session. A slash command cannot be combined with a
 colon override or runnable input.
+
+`/models`, `/tools`, and `/caps` inspect effective base resources. Their
+optional body is one collection query, including any spaces; it is not split
+into positional arguments. With no query they list the complete collection.
+`/caps` applies the query independently to psyches, skills, services, and
+prompts before combining the results.
+
+Every submitted slash command that keeps Chat open writes its outcome to
+scrollback. State changes use concrete confirmations such as `Model set to ...`
+or `Allowed 2 models`; read-only commands use summaries such as `Found 2
+models`. Missing required bodies use `Usage:` and command failures use `Error:`.
+Successful setting changes also refresh the status bar's current session
+values.
+
+`/?` explains slash commands, `:?` explains one-run overrides, and `/keys`
+lists Toolang-owned interactive shortcuts. These are submitted read-only
+interactions and remain in scrollback. A bare or unknown slash command and any
+rejected runnable submission remain editable in the input box; their diagnostic
+appears in the status bar. Known slash-command usage and errors are completed
+command outcomes, so they enter scrollback and clear the input.
 
 Chat removes leading and trailing blank lines, then removes horizontal
 whitespace from the end of the final line. It preserves indentation on the

@@ -21,11 +21,14 @@ creates a run control and a run in an existing thread. A client creates the
 thread explicitly before the first run.
 
 Terminal interactions use complete slash commands such as `/help`, `/model`,
-`/runnable`, `/allow`, `/limit`, `/show`, `/queue`, and `/steer`. Model,
-runnable, allow, and limit slash commands update `SessionSetting`; matching
-colon-prefixed lines form the one-run `RunOverride`. Dollar-prefixed `Content`
-lines expand reusable prompts. See [input-syntax.md](./input-syntax.md) for the
-complete namespace contract.
+`/runnable`, `/allow`, `/limit`, `/models`, `/tools`, `/caps`, `/show`,
+`/queue`, `/steer`, and `/keys`. Model, runnable, allow, and limit slash commands
+update `SessionSetting`; matching colon-prefixed lines form the one-run
+`RunOverride`. The plural resource commands query effective collections without
+changing the session. `/?` explains the immediate slash surface, while the
+special `:?` interaction explains leading run overrides without creating a
+run. Dollar-prefixed `Content` lines expand reusable prompts. See
+[input-syntax.md](./input-syntax.md) for the complete namespace contract.
 
 Chat owns mutable model, runnable, allow, and limit session defaults. Model
 parameters, including reasoning effort or token budget, live on the session's
@@ -276,12 +279,32 @@ their owning visible operation rather than finalized in completion order. See
 language and the TUI's existing control-bar, streaming, alignment, and
 scrollback constraints.
 
-The input-box status bar is for transient editor and control feedback that has
-no submitted timeline owner. Runnable input owns a scrollback block as soon as
-it is submitted. If it is rejected before `RunBegin`, its diagnostic is
-finalized in scrollback without a run id or run-status summary. After
-`RunBegin`, terminal diagnostics and status summaries belong to the accepted
-run and are finalized through its native events.
+The input-box status bar is for editable rejected input, local controls, and
+unresolved asynchronous state. A bare or unknown slash command and any run
+rejected before dispatch or queue insertion retain their text and cursor so the
+user can edit or retry them. Their transient diagnostic clears on the next edit,
+Esc, recognized command, or accepted run. Empty Enter is a no-op. Connection and
+submission-safety diagnostics are persistent: they survive edits, command
+results, and setting refreshes until the corresponding recovery state or Chat
+restart. Persistent diagnostics take precedence over transient ones.
+
+Status diagnostics occupy one physical line, use a visible `!` marker, and are
+elided at the terminal edge. Once a runnable input is accepted, its terminal
+diagnostics and status summaries belong to the run and are finalized through
+native events.
+
+A submitted slash command likewise owns an immutable scrollback interaction.
+Its summary states the concrete effect or result without a generic `Success:`
+or `Result:` prefix; usage and errors retain explicit `Usage:` and `Error:`
+labels. Setting commands refresh the status bar after committing the new
+session value, but the status bar is not their confirmation channel. Slash
+summary and detail rows align with other output using a two-space indent and no
+leading marker column.
+
+`/?`, `:?`, and `/keys` are read-only scrollback interactions. Their purpose and
+composition constraint appear before copyable forms. Keyboard help is generated
+from the same Toolang-owned shortcut metadata used to bind interactive Chat;
+ordinary terminal cursor and text-editing keys are intentionally omitted.
 
 Thread and run detail endpoints are inspection surfaces used to:
 

@@ -20,6 +20,7 @@ from toolang.cli.common.execution_progress.formatting import truncate
 from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
 from .input import normalize_chat_input
+from . import shortcuts
 from .rendering import (
     ACCENT_CELL,
     INPUT_BACKGROUND,
@@ -228,67 +229,77 @@ class PromptBox:
         )
 
     def bind(self, keys: KeyBindings) -> None:
-        @keys.add("enter")
         def submit(_event) -> None:
-            self._notify_input()
             message = normalize_chat_input(self.buffer.text)
             if not message:
                 return
-            self._record_history(message)
-            self.buffer.text = ""
-            self.history_index = None
-            self.history_draft = ""
+            self._notify_input()
             self.emit(ChatUIEvent("submit", message))
             self.invalidate()
 
-        @keys.add("c-c")
         def interrupt(_event) -> None:
             self.emit(ChatUIEvent("interrupt"))
 
-        @keys.add("c-d")
         def eof(_event) -> None:
             self._notify_input()
             self.emit(ChatUIEvent("eof"))
 
-        @keys.add("c-q")
         def quit_app(_event) -> None:
             self.emit(ChatUIEvent("quit"))
 
-        @keys.add("c-l")
         def clear_screen(_event) -> None:
             self._notify_input()
             self.emit(ChatUIEvent("clear"))
 
-        @keys.add("c-j")
-        @keys.add("escape", "enter")
         def insert_newline(_event) -> None:
             self._insert_newline()
 
-        @keys.add("escape")
         def dismiss_status_error(_event) -> None:
             self._notify_input()
 
-        @keys.add("escape", "escape", eager=True)
         def cancel_run(_event) -> None:
             self._notify_input()
             self.emit(ChatUIEvent("cancel"))
 
-        @keys.add("up")
-        @keys.add("c-p")
         def previous_history(_event) -> None:
             self._notify_input()
             self._previous_history()
 
-        @keys.add("down")
-        @keys.add("c-n")
         def next_history(_event) -> None:
             self._notify_input()
             self._next_history()
 
-        try:
-            keys.add("s-enter")(lambda _event: self._insert_newline())
-        except ValueError:
-            pass
+        bindings = (
+            (shortcuts.SUBMIT, submit),
+            (shortcuts.INTERRUPT, interrupt),
+            (shortcuts.EOF, eof),
+            (shortcuts.QUIT, quit_app),
+            (shortcuts.CLEAR, clear_screen),
+            (shortcuts.INSERT_NEWLINE, insert_newline),
+            (shortcuts.DISMISS_STATUS, dismiss_status_error),
+            (shortcuts.PREVIOUS_HISTORY, previous_history),
+            (shortcuts.NEXT_HISTORY, next_history),
+        )
+        for shortcut, handler in bindings:
+            for binding in shortcut.bindings:
+                keys.add(*binding)(handler)
+        for binding in shortcuts.CANCEL_RUN.bindings:
+            keys.add(*binding, eager=True)(cancel_run)
+        for binding in shortcuts.SHIFT_NEWLINE.optional_bindings:
+            try:
+                keys.add(*binding)(insert_newline)
+            except ValueError:
+                pass
+
+    def accept_submission(self, message: str) -> None:
+        """Record accepted input and clear it if the draft has not changed."""
+
+        self._record_history(message)
+        self.history_index = None
+        self.history_draft = ""
+        if normalize_chat_input(self.buffer.text) == message:
+            self.buffer.text = ""
+        self.invalidate()
 
     def _insert_newline(self) -> None:
         self.buffer.insert_text("\n")
@@ -398,7 +409,8 @@ class StatusBar:
         self.runnable_label = runnable_label
         self.model_label = model_label
         self.active_runnable_label: str | None = None
-        self.error_message = ""
+        self._transient_error = ""
+        self._persistent_error = ""
         self.running = False
         self._spinner_index = 0
         self._elapsed_seconds = 0
@@ -420,11 +432,24 @@ class StatusBar:
     def set_active_runnable(self, runnable_label: str | None) -> None:
         self.active_runnable_label = runnable_label
 
-    def set_error(self, message: str) -> None:
-        self.error_message = message
+    @property
+    def error_message(self) -> str:
+        return self._persistent_error or self._transient_error
 
-    def clear_error(self) -> None:
-        self.error_message = ""
+    def set_error(self, message: str, *, persistent: bool = False) -> None:
+        if persistent:
+            self._persistent_error = message
+        else:
+            self._transient_error = message
+
+    def clear_transient_error(self) -> bool:
+        if not self._transient_error:
+            return False
+        self._transient_error = ""
+        return True
+
+    def clear_persistent_error(self) -> None:
+        self._persistent_error = ""
 
     def set_running(self, running: bool) -> None:
         self.running = running
@@ -455,11 +480,16 @@ class StatusBar:
 
     def _render(self) -> list[tuple[str, str]]:
         if self.error_message:
-            marker = _STATUS_IDLE_MARKER
-            message = f" {self.error_message}"
+            marker = "!"
+            terminal_width = self._terminal_width()
+            remaining_width = max(0, terminal_width - get_cwidth(marker))
+            detail = " ".join(self.error_message.split())
+            message = (
+                f" {truncate(detail, remaining_width - 1)}" if remaining_width else ""
+            )
             padding = " " * max(
                 0,
-                self._terminal_width() - get_cwidth(f"{marker}{message}"),
+                terminal_width - get_cwidth(f"{marker}{message}"),
             )
             return [
                 ("class:status.error.marker", marker),

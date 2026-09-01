@@ -7,7 +7,6 @@ from fastapi import APIRouter, HTTPException, Query
 
 from toolang.api.app import AgentCoreDep
 from toolang.api.schemas import RuntimeIdentityPayload, RuntimeSandboxPayload
-from toolang.base.types.policy import AgentCeiling
 from toolang.common.errors import ToolangError
 from toolang.common.version import toolang_version
 from toolang.execution.runnables import (
@@ -17,11 +16,9 @@ from toolang.execution.runnables import (
 from toolang.execution.calls import prompt_definitions
 from toolang.execution.schemas import ThreadInfo
 from toolang.execution.types import ModelStepNoted
-from toolang.execution.executor.resources import (
-    agent_model_targets,
-    snapshot_model_selection,
-)
+from toolang.execution.executor.resources import snapshot_model_selection
 from toolang.plugin.models.resolution import model_reasoning_efforts
+from toolang.plugin.toolsets.collections import tool_dataset
 from toolang.up import AgentCore, process as agents
 from toolang.state.state import state_program
 
@@ -46,23 +43,55 @@ def profile(core: AgentCoreDep) -> dict[str, object]:
 
 
 @router.get("/models", summary="List Agent Models")
-def models(core: AgentCoreDep) -> dict[str, object]:
+def models(
+    core: AgentCoreDep,
+    query: list[str] | None = Query(default=None),
+) -> dict[str, object]:
     try:
         setup = core.setup.current()
-        resolved_default, targets = agent_model_targets(setup, AgentCeiling())
         selection = snapshot_model_selection(setup)
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    try:
+        selected = setup.models.match(query) if query is not None else setup.models
+    except (ToolangError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
-        "default": resolved_default,
+        "default": setup.defaults.model,
         "items": [
             _model_item(
                 ref=ref,
                 target=target,
                 efforts=model_reasoning_efforts(selection, target),
             )
-            for ref, target in targets
+            for entry in selected.entries
+            for ref, target in ((entry.ref, entry.target),)
         ],
+    }
+
+
+@router.get("/tools", summary="List Agent Tools")
+def tools(
+    core: AgentCoreDep,
+    query: list[str] | None = Query(default=None),
+) -> dict[str, object]:
+    try:
+        dataset = tool_dataset(core.setup.current().tools)
+    except (ToolangError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    try:
+        selected = dataset.query(query) if query is not None else dataset.items
+    except (ToolangError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "items": [
+            {
+                "ref": f"{item.toolset}/{item.name}",
+                "plugin": item.plugin,
+                "description": item.description,
+            }
+            for item in selected
+        ]
     }
 
 

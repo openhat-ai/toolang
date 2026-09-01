@@ -10,17 +10,28 @@ import threading
 from typing import Any
 
 from anyio import to_process
+import pytest
 
-from tests.support.execution_harness import ExecutionHarness, TEST_MODEL_REF
+from tests.support.execution_harness import (
+    ExecutionHarness,
+    RecordingTool,
+    TEST_MODEL_REF,
+)
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunPolicy
 from toolang.base.types.run import ModelCallResult
 from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.base import ChatExecutorMetadata
+from toolang.common.errors import ToolangError
 from toolang.execution.events import RunEvent
 from toolang.execution.schemas import RunRequest, RunnableRequest
-from toolang.execution.types import RunOverride, SessionSetting
+from toolang.execution.types import (
+    AllowOverride,
+    ModelOverride,
+    RunOverride,
+    SessionSetting,
+)
 from toolang.lang.input import RunnableInputRaw
 from toolang.state.state import publish_state_resources
 from toolang.state.watcher import StateRefresh
@@ -198,6 +209,77 @@ agic chat(_: Part[]) -> Part[]:
 
     assert payload["default"] == "session/model"
     assert [item["ref"] for item in payload["items"]] == [TEST_MODEL_REF]
+
+
+def test_local_chat_queries_resources_and_reconciles_model_ceiling(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic chat:\n  hello\n",
+        responses=(),
+        tools={
+            "test__lookup": RecordingTool(
+                "test__lookup",
+                output={"ok": True},
+            )
+        },
+    )
+
+    class Snapshot:
+        def current(self):
+            return harness.setup
+
+    session: Any = object.__new__(local.LocalChatSession)
+    session.setup_watcher = Snapshot()
+    session._surface = SessionSetting(
+        model=ModelRequest(TEST_MODEL_REF),
+        runnable="agic:chat",
+    )
+    try:
+        assert [item["ref"] for item in session.list_models(("test/*",))["items"]] == [
+            TEST_MODEL_REF
+        ]
+        assert session.list_models(("missing/*",))["items"] == []
+        assert session.list_models(())["items"] == []
+        assert [item["ref"] for item in session.list_tools(("test/*",))["items"]] == [
+            "test/test__lookup"
+        ]
+        assert session.list_tools(())["items"] == []
+
+        disabled = session.apply_setting(
+            session.initial_setting(),
+            RunOverride(allow=(AllowOverride("models", ()),)),
+        )
+        assert disabled.model is None
+        assert disabled.allow.models == ()
+
+        narrowed = session.apply_setting(
+            session.initial_setting(),
+            RunOverride(allow=(AllowOverride("models", ("missing/*",)),)),
+        )
+        assert narrowed.model is None
+        assert narrowed.allow.models == ("missing/*",)
+
+        with pytest.raises(
+            ValueError,
+            match=f"model is outside session allow.models: {TEST_MODEL_REF}",
+        ):
+            session.apply_setting(
+                narrowed,
+                RunOverride(model=ModelOverride(identity=TEST_MODEL_REF)),
+            )
+        assert narrowed.model is None
+
+        current = session.initial_setting()
+        with pytest.raises((ToolangError, ValueError), match="unknown"):
+            session.apply_setting(
+                current,
+                RunOverride(allow=(AllowOverride("models", ("*[unknown=true]",)),)),
+            )
+        assert current == session.initial_setting()
+    finally:
+        harness.store.close()
 
 
 def test_local_chat_owner_loop_control_does_not_wait_on_itself() -> None:

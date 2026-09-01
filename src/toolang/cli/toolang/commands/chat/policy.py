@@ -2,16 +2,53 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import replace
 from typing import cast
 
 from toolang.base.types.policy import RunPolicy
-from toolang.execution.policy import apply_session_setting, materialize_run_setting
+from toolang.execution.policy import (
+    SETTING_OVERRIDE_FORMS,
+    apply_session_setting,
+    materialize_run_setting,
+)
 from toolang.execution.runnables import parse_runnable_ref
 from toolang.execution.schemas import RunRequest, RunnableRequest
 from toolang.execution.types import RunOverride, SessionSetting
 from toolang.lang.input import RunnableInputRaw
+
+
+def setting_slash_usage(name: str) -> str:
+    """Return canonical slash usage for one shared setting body."""
+
+    setting_body, _override_bodies = SETTING_OVERRIDE_FORMS[name]
+    return f"/{name} {setting_body}"
+
+
+def run_override_help_lines() -> tuple[str, ...]:
+    """Return canonical colon override forms."""
+
+    return tuple(
+        f":{name} {body}"
+        for name, (_setting_body, override_bodies) in SETTING_OVERRIDE_FORMS.items()
+        for body in override_bodies
+    )
+
+
+def run_override_error(source: str, message: str) -> str:
+    """Add concise Chat guidance to one rejected colon override."""
+
+    first = source.splitlines()[0].strip()
+    if first == ":":
+        return "Enter a run override after : · See :? for help"
+    head = first.split(maxsplit=1)[0] if first else ""
+    name = head.removeprefix(":")
+    if name and name not in SETTING_OVERRIDE_FORMS:
+        return f"Unknown run override :{name} · See :? for help"
+    if "colon override requires runnable input" in message.casefold():
+        return "Add runnable input after the override · See :? for help"
+    detail = message.rstrip(" .")
+    return f"{detail} · See :? for help"
 
 
 def build_run_request(
@@ -54,6 +91,32 @@ def update_session_setting(
     """Apply one slash setting update without presentation state."""
 
     return apply_session_setting(surface, current, update)
+
+
+def reconcile_session_model(
+    setting: SessionSetting,
+    update: RunOverride,
+    *,
+    allowed_refs: Collection[str],
+) -> SessionSetting:
+    """Keep one selected model coherent with the candidate session ceiling."""
+
+    model = setting.model
+    if model is None or model.ref in allowed_refs:
+        return setting
+    if update.model is not None and update.model.identity is not None:
+        raise ValueError(f"model is outside session allow.models: {model.ref}")
+    if any(item.field == "models" for item in update.allow):
+        return replace(setting, model=None)
+    raise ValueError(f"session model is outside allow.models: {model.ref}")
+
+
+def session_model_reconciliation_required(update: RunOverride) -> bool:
+    """Return whether one update can change model/ceiling coherence."""
+
+    return (
+        update.model is not None and update.model.identity not in {None, "none"}
+    ) or any(item.field == "models" for item in update.allow)
 
 
 def materialize_runnable_list_ref(
