@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import os
 from pathlib import Path
 import tempfile
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import click
 from rich import box
@@ -19,7 +19,8 @@ from rich.text import Text
 import typer
 from typer import rich_utils
 
-from toolang.up import process as agents
+if TYPE_CHECKING:
+    from toolang.up.process import AgentStatus
 
 TableJustify = Literal["default", "left", "center", "right", "full"]
 TableCell = str | Text
@@ -227,7 +228,7 @@ def runnable_label(kind: str | None, name: str | None) -> str:
     )
 
 
-def active_agent_error(status: agents.AgentStatus) -> str:
+def active_agent_error(status: AgentStatus) -> str:
     message = f"Agent {status.name} already {status.status}"
     detail = (
         (status.webui_url or status.api_url) if status.status == "running" else None

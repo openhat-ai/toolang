@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from importlib import import_module, metadata
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -13,6 +14,7 @@ import typer
 from typer.testing import CliRunner
 
 from toolang.cli.caps.main import app as caps_app
+from toolang.cli.common.lazy import LazyCommand
 from toolang.cli.toolang.main import app as toolang_app
 from tests import PROJECT_ROOT
 
@@ -21,6 +23,8 @@ def _command_paths(app: typer.Typer) -> tuple[tuple[str, ...], ...]:
     paths: list[tuple[str, ...]] = []
 
     def collect(command: click.Command, prefix: tuple[str, ...]) -> None:
+        if isinstance(command, LazyCommand):
+            command = command.load()
         if not isinstance(command, click.Group):
             return
         for name, child in command.commands.items():
@@ -91,6 +95,61 @@ def test_installed_console_scripts_execute(script: str, prefix: str) -> None:
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.startswith(prefix)
+
+
+def test_toolang_version_does_not_load_runtime_command_modules() -> None:
+    probe = """
+import json
+import sys
+from toolang.cli.toolang.main import main
+
+status = main(["--version"])
+loaded = sorted(
+    name
+    for name in sys.modules
+    if name == "fastapi"
+    or name == "toolang.up.core"
+    or name == "toolang.execution.executor"
+    or name == "toolang.cli.toolang.commands.script"
+    or name == "toolang.cli.toolang.commands.model_catalog"
+    or name == "toolang.cli.toolang.commands.chat.main"
+)
+print(json.dumps(loaded), file=sys.stderr)
+raise SystemExit(status)
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=PROJECT_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.startswith("toolang ")
+    assert json.loads(completed.stderr) == []
+
+
+def test_importing_up_submodule_does_not_load_agent_core() -> None:
+    probe = """
+import json
+import sys
+import toolang.up.logging
+
+print(json.dumps("toolang.up.core" in sys.modules))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=PROJECT_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) is False
 
 
 @pytest.mark.parametrize(

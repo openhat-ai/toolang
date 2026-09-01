@@ -8,12 +8,9 @@ from pathlib import Path
 from typing import Literal
 
 from toolang.common.layout import AgentLayout, AgentPlacement
-from toolang.up import process as agents
-from ..caps.commands import CAP_KINDS
+from toolang.catalog.types import CAP_KINDS
 from ..common.output import echo_error
-from ..common.progress import make_cli_progress
 from ..common.routing import explicit_agent, extract_root_args
-from .commands import runtime, script
 
 TargetPosition = Literal["none", "before", "after"]
 Preparation = Literal["layout", "program"]
@@ -215,10 +212,14 @@ def dispatch_roaming(
             _selected_command_args(body, position, target=layout.name),
             layout,
         )
+    from .commands import runtime
+
     if runtime.is_roaming_file_request(body[1:]):
         if global_args:
             return _unsupported_global_options()
         return runtime.run_roaming_file(source, body[1:])
+    from .commands import script
+
     return script.dispatch(global_args, body, prog_name=prog_name)
 
 
@@ -233,6 +234,9 @@ def dispatch_visiting(
     selected = _selected_visiting(body)
     if selected is None:
         return None
+    from toolang.up import process as agents
+    from ..common.progress import make_cli_progress
+
     selector, command, position = selected
     spec = command_spec(command)
     if not spec.accepts(position, "visiting"):
@@ -361,6 +365,8 @@ def _selected_command_args(
 
 def _roaming_layout(source: Path, prepare: Preparation | None) -> AgentLayout:
     if prepare == "program":
+        from toolang.up import process as agents
+
         return agents.materialize_roaming_program(source)
     return AgentLayout.roaming(source)
 
@@ -381,6 +387,8 @@ def _source_path(token: str) -> Path | None:
 
 
 def _is_visiting(token: str) -> bool:
+    from toolang.up import process as agents
+
     try:
         return agents.parse_agent_selector(token).form != "name"
     except ValueError:

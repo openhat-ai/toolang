@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from pathlib import Path
 import os
@@ -17,12 +17,10 @@ from typer.core import TyperGroup
 from ...catalog.agent import LocalAgents
 from ...common.layout import AgentLayout
 from ...common import version as _version
-from ...up.logging import configure_logging
-from ..caps import commands as cap_commands
 from ..common.context import CliContext, resolve_root
+from ..common.lazy import LazyCommand, lazy_typer_command, lazy_typer_group
 from ..common.output import echo_error
 from ..common.routing import (
-    OptionalPrefixAgentGroup,
     OptionalPrefixAgentListCommand,
     RequiredPrefixAgentCommand,
     RunAgentCommand,
@@ -32,16 +30,7 @@ from ..common.routing import (
     extract_root_args,
 )
 from . import routing
-from .commands import agent as agent_commands
-from .commands import chat as chat_commands
-from .commands import inspect as inspect_commands
-from .commands import plugin as plugin_commands
-from .commands import program as program_commands
-from .commands import query as query_commands
-from .commands import runtime as runtime_commands
-from .commands import job as job_commands
-from .commands import model_catalog as model_catalog_commands
-from .commands import thread as thread_commands
+from .commands.metadata import QUERY_HELP
 
 _PREFIX_AGENT: ContextVar[str | None] = ContextVar(
     "toolang_cli_prefix_agent", default=None
@@ -86,16 +75,24 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "toolsets",
     "sandboxes",
 )
+_HIDDEN_COMMAND_ORDER = ("query", "fmt", "parse", "serve", "channel")
 _VISIBLE_COMMAND_ORDER = (
     *_AGENT_PANEL_COMMAND_ORDER,
     *_CAPS_PANEL_COMMAND_ORDER,
     *_CONTROL_PANEL_COMMAND_ORDER,
     *_INSPECTION_PANEL_COMMAND_ORDER,
 )
-_REGISTERED_COMMANDS: set[str] = set()
+_REGISTERED_COMMANDS: dict[str, Callable[[], LazyCommand]] = {}
 
 
 class _ToolangGroup(TyperGroup):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        commands = dict(kwargs.pop("commands", None) or {})
+        commands.update(
+            (name, factory()) for name, factory in _REGISTERED_COMMANDS.items()
+        )
+        super().__init__(*args, commands=commands, **kwargs)
+
     def list_commands(self, ctx: click.Context) -> list[str]:
         names = TyperGroup.list_commands(self, ctx)
         visible = [name for name in _VISIBLE_COMMAND_ORDER if name in names]
@@ -120,20 +117,26 @@ app = typer.Typer(
 )
 
 
-def _registered_command(name: str, **kwargs: Any) -> Any:
+def _registered_command(name: str, target: str, **kwargs: Any) -> None:
     routing.command_spec(name)
     if name in _REGISTERED_COMMANDS:
         raise RuntimeError(f"top-level command registered more than once: {name}")
-    _REGISTERED_COMMANDS.add(name)
-    return app.command(name, **kwargs)
+
+    def create() -> LazyCommand:
+        return lazy_typer_command(name, target, **kwargs)
+
+    _REGISTERED_COMMANDS[name] = create
 
 
-def _registered_group(group: typer.Typer, *, name: str, **kwargs: Any) -> None:
+def _registered_group(target: str, *, name: str, **kwargs: Any) -> None:
     routing.command_spec(name)
     if name in _REGISTERED_COMMANDS:
         raise RuntimeError(f"top-level command registered more than once: {name}")
-    _REGISTERED_COMMANDS.add(name)
-    app.add_typer(group, name=name, **kwargs)
+
+    def create() -> LazyCommand:
+        return lazy_typer_group(name, target, **kwargs)
+
+    _REGISTERED_COMMANDS[name] = create
 
 
 @app.callback()
@@ -157,6 +160,8 @@ def callback(
 
     del version
     try:
+        from ...up.logging import configure_logging
+
         configure_logging(spec=None, environ=os.environ)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -167,7 +172,6 @@ def callback(
     )
 
 
-@_registered_command("hidden", help="Show hidden commands.", hidden=True)
 def hidden_commands(ctx: typer.Context) -> None:
     console = rich_utils._get_rich_console()
     console.print(
@@ -178,11 +182,17 @@ def hidden_commands(ctx: typer.Context) -> None:
     if not isinstance(group, click.Group):
         typer.echo("No hidden commands.")
         return
-    hidden_commands = [
-        command
-        for name, command in group.commands.items()
-        if command.hidden and name != "hidden"
-    ]
+    hidden_order = {name: index for index, name in enumerate(_HIDDEN_COMMAND_ORDER)}
+    hidden_commands = sorted(
+        (
+            command
+            for name, command in group.commands.items()
+            if command.hidden and name != "hidden"
+        ),
+        key=lambda command: hidden_order.get(
+            command.name or "", len(_HIDDEN_COMMAND_ORDER)
+        ),
+    )
     if not hidden_commands:
         typer.echo("No hidden commands.")
         return
@@ -214,224 +224,266 @@ def _print_hidden_command_panel(
 
 
 _registered_command(
+    "hidden",
+    "toolang.cli.toolang.main:hidden_commands",
+    help="Show hidden commands.",
+    hidden=True,
+)
+
+
+_registered_command(
     "new",
+    "toolang.cli.toolang.commands.agent:new_agent",
     help="Create an agent.",
     no_args_is_help=True,
     rich_help_panel=AGENT_COMMAND_PANEL,
-)(agent_commands.new_agent)
+)
 _registered_command(
     "clone",
+    "toolang.cli.toolang.commands.agent:clone_agent",
     help="Clone an agent.",
     no_args_is_help=True,
     rich_help_panel=AGENT_COMMAND_PANEL,
-)(agent_commands.clone_agent)
+)
 _registered_command(
     "remove",
+    "toolang.cli.toolang.commands.agent:remove_agent",
     help="Remove an agent.",
     no_args_is_help=True,
     rich_help_panel=AGENT_COMMAND_PANEL,
-)(agent_commands.remove_agent)
+)
 _registered_command(
     "list",
+    "toolang.cli.toolang.commands.agent:list_agents",
     help="Show agents and their status.",
     rich_help_panel=AGENT_COMMAND_PANEL,
-)(agent_commands.list_agents)
+)
 _registered_command(
     "info",
+    "toolang.cli.toolang.commands.agent:info_agent",
     help="Show agent info.",
     no_args_is_help=True,
     cls=RuntimeAgentCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
-)(agent_commands.info_agent)
+)
 _registered_command(
     "run",
+    "toolang.cli.toolang.commands.runtime:run",
     help="Run an agent in the foreground.",
     no_args_is_help=True,
     cls=RunAgentCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
-)(runtime_commands.run)
+)
 _registered_command(
     "start",
+    "toolang.cli.toolang.commands.runtime:start",
     help="Start an agent.",
     no_args_is_help=True,
     cls=StartAgentCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
-)(runtime_commands.start)
+)
 _registered_command(
     "stop",
+    "toolang.cli.toolang.commands.runtime:stop",
     help="Stop an agent.",
     no_args_is_help=True,
     cls=RuntimeAgentCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
-)(runtime_commands.stop)
+)
 _registered_group(
-    job_commands.chore_app,
+    "toolang.cli.toolang.commands.job:chore_app",
     name="chore",
+    help="Manage agent chores.",
     no_args_is_help=True,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_group(
-    job_commands.task_app,
+    "toolang.cli.toolang.commands.job:task_app",
     name="task",
+    help="Manage agent tasks.",
     no_args_is_help=True,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 
 _registered_command(
     "chat",
+    "toolang.cli.toolang.commands.chat:chat_command",
     help="Start an interactive TUI.",
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
-)(chat_commands.chat_command)
+)
 _registered_command(
     "inspect",
+    "toolang.cli.toolang.commands.inspect:inspect_command",
     help="Inspect execution subjects.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
-)(inspect_commands.inspect_command)
+)
 _registered_command(
     "steer",
+    "toolang.cli.toolang.commands.thread:steer_command",
     help="Steer an active run.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
-)(thread_commands.steer_command)
+)
 _registered_command(
     "cancel",
+    "toolang.cli.toolang.commands.thread:cancel_command",
     help="Cancel an active run.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
-)(thread_commands.cancel_command)
+)
 _registered_command(
     "retry",
+    "toolang.cli.toolang.commands.thread:retry_command",
     help="Retry a run from a failed step.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
-)(thread_commands.retry_command)
+)
 _registered_command(
     "rerun",
+    "toolang.cli.toolang.commands.thread:rerun_command",
     help="Rerun an earlier run as a new one.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
-)(thread_commands.rerun_command)
+)
 _registered_command(
     "rewind",
+    "toolang.cli.toolang.commands.thread:rewind_command",
     help="Rewind a thread to an earlier run.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
-)(thread_commands.rewind_command)
+)
 _registered_command(
     "fork",
+    "toolang.cli.toolang.commands.thread:fork_command",
     help="Fork a thread from an earlier run.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
-)(thread_commands.fork_command)
+)
 
 _registered_command(
     "models",
+    "toolang.cli.toolang.commands.model_catalog:models_command",
     help="List models.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
-)(model_catalog_commands.models_command)
+)
 _registered_command(
     "providers",
+    "toolang.cli.toolang.commands.model_catalog:providers_command",
     help="List model providers.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
-)(model_catalog_commands.providers_command)
+)
 _registered_group(
-    plugin_commands.channel_app,
+    "toolang.cli.toolang.commands.plugin:channel_app",
     name="channel",
+    help="List available channels.",
     no_args_is_help=True,
     hidden=True,
 )
 _registered_command(
     "tools",
+    "toolang.cli.toolang.commands.plugin:list_tools",
     help="List tools.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
-)(plugin_commands.list_tools)
+)
 _registered_command(
     "catalogs",
+    "toolang.cli.toolang.commands.plugin:list_catalogs",
     help="List installed model catalogs.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
-)(plugin_commands.list_catalogs)
+)
 _registered_command(
     "adapters",
+    "toolang.cli.toolang.commands.model_catalog:adapters_command",
     help="List installed model adapters.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
-)(model_catalog_commands.adapters_command)
+)
 _registered_command(
     "toolsets",
+    "toolang.cli.toolang.commands.plugin:list_toolsets",
     help="List installed toolsets.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
-)(plugin_commands.list_toolsets)
+)
 _registered_command(
     "sandboxes",
+    "toolang.cli.toolang.commands.plugin:list_sandboxes",
     help="List installed sandboxes.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
-)(plugin_commands.list_sandboxes)
+)
 
-_cap_apps = cap_commands.create_cap_apps(group_cls=OptionalPrefixAgentGroup)
 _registered_group(
-    _cap_apps["psyche"],
+    "toolang.cli.toolang.commands.caps:psyche_app",
     name="psyche",
+    help="Manage psyche caps.",
     no_args_is_help=True,
     rich_help_panel=CAPS_COMMAND_PANEL,
 )
 _registered_group(
-    _cap_apps["skill"],
+    "toolang.cli.toolang.commands.caps:skill_app",
     name="skill",
+    help="Manage skill caps.",
     no_args_is_help=True,
     rich_help_panel=CAPS_COMMAND_PANEL,
 )
 _registered_group(
-    _cap_apps["service"],
+    "toolang.cli.toolang.commands.caps:service_app",
     name="service",
+    help="Manage service caps.",
     no_args_is_help=True,
     rich_help_panel=CAPS_COMMAND_PANEL,
 )
 _registered_group(
-    _cap_apps["prompt"],
+    "toolang.cli.toolang.commands.caps:prompt_app",
     name="prompt",
+    help="Manage prompt caps.",
     no_args_is_help=True,
     rich_help_panel=CAPS_COMMAND_PANEL,
 )
 _registered_command(
     "caps",
+    "toolang.cli.caps.commands:list_caps",
     help="List caps.",
     cls=OptionalPrefixAgentListCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
-)(cap_commands.list_caps)
+)
 
 _registered_command(
     "query",
-    help=query_commands.QUERY_HELP,
+    "toolang.cli.toolang.commands.query:query_command",
+    help=QUERY_HELP,
     hidden=True,
-)(query_commands.query_command)
+)
 _registered_command(
     "fmt",
+    "toolang.cli.toolang.commands.program:fmt",
     help="Format .too files.",
     hidden=True,
     no_args_is_help=True,
-)(program_commands.fmt)
+)
 _registered_command(
     "parse",
+    "toolang.cli.toolang.commands.program:parse_program",
     help="Parse a .too file and print its AST.",
     hidden=True,
     no_args_is_help=True,
-)(program_commands.parse_program)
+)
 _registered_command(
     "serve",
+    "toolang.cli.toolang.commands.runtime:serve",
     help="Run an AgentServer process.",
     hidden=True,
     no_args_is_help=True,
-)(runtime_commands.serve)
+)
 
-routing.validate_command_registration(_REGISTERED_COMMANDS)
+routing.validate_command_registration(set(_REGISTERED_COMMANDS))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
