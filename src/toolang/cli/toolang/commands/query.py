@@ -11,26 +11,9 @@ from toolang.common.query import CollectionSchema
 from toolang.plugin.models.collections import MODEL_SCHEMA
 from toolang.plugin.toolsets.collections import TOOL_SCHEMA
 from toolang.state.collections import cap_kind_definition
+from .metadata import QUERY_HELP
 
 COLLECTIONS = ("models", "tools", "psyches", "skills", "services", "prompts")
-
-QUERY_HELP = """Show collection-query syntax and fields.
-
-QUERY = MATCH ("," MATCH)*
-MATCH = IDENTITY-PATTERN? PREDICATE-BLOCK?
-
-An identity pattern and its predicates are intersected. Predicates in one
-block are intersected. Comma-separated matches and repeated --query options
-form a stable, deduplicated union.
-
-Bare identities are case-sensitive globs; JSON-quoted identities are exact.
-Boolean fields accept positive or negated flags inside a predicate block.
-Other predicates use =, !=, ~=, !~=, <, <=, >, >=, in, or not in as allowed
-by the field type.
-
-Collections: models, tools, psyches, skills, services, prompts.
-Run `too query COLLECTION` for its identity and predicate fields.
-"""
 
 
 def query_command(
