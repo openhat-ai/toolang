@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed for human approval in issue #431. Implementation is not started.
+Approved by the human on 2026-09-01. Implementation is tracked separately.
 
 ## Goal
 
