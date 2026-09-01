@@ -8,13 +8,15 @@ shared `Content` syntax, and runnable-boundary coercion.
 The layers are independent values with separate parsers:
 
 ```text
-RunnableInputRaw = PrimaryInput? + NamedInput*
+CallInput = PrimaryInput? + NamedInput*
+RunnableInputRaw : CallInput
 
 ChatInput = QuickCommand | RunOverrideHelp | RunOverride + RunnableInputRaw
 ```
 
-- `RunnableInputRaw` is language-owned syntax-valid input. It contains only one
-  optional primary source and zero or more named sources.
+- `CallInput` is language-owned syntax-valid input with one optional primary
+  source and zero or more named sources. `RunnableInputRaw` preserves the
+  public runnable boundary; prompt calls use `CallInput` directly.
 - `SessionSetting` is Chat's concrete model, runnable, allow, and limit default
   for subsequent runs in the current session.
 - `RunOverride` is a sparse model, runnable, allow, and limit change attached to
@@ -180,6 +182,10 @@ its generated CLI. Resolution evaluates each source and coerces it against the
 selected runnable signature. Missing, duplicate, or unknown named inputs are
 rejected before a run is accepted.
 
+Runnable calls use the shared line, stream, and fenced capture syntax defined
+in [call-input.md](./call-input.md). The capture form is parser-only state and
+is not stored in `RunnableInputRaw`.
+
 Plain run-only parsing permits an empty `RunnableInputRaw` when the selected
 runnable accepts no primary or named input. A colon override still requires
 primary or named runnable input. Parsing is atomic: any invalid run override,
@@ -222,62 +228,16 @@ resources; a UI file picker inserts the same syntax.
 
 ### Prompts
 
-```text
-PromptCall = PromptHeader | TailPrompt | InlinePrompt | FencedPrompt(n)
-PromptHeader = "$" PromptName (Space Argument)*
+Prompt arguments use `name=value`. A prompt call may omit primary input or use
+the shared line (`--`), stream (`-`), or fenced (`---`) Call Input forms. The
+complete syntax, boundaries, Script and Chat integration, and examples are in
+[call-input.md](./call-input.md).
 
-TailPrompt
-    = PromptHeader Space "-" LineBreak RemainingContent
-
-InlinePrompt
-    = PromptHeader Space "--" Space InlineText
-
-FencedPrompt(n)
-    = PromptHeader Space Fence(n) LineBreak FencedContent(n) FenceLine(n)
-
-Fence(n)     = exactly n backticks, n >= 3
-FenceLine(n) = Fence(n) followed by LineBreak or EOF
-```
-
-No prompt input; later lines remain in the enclosing content:
-
-```text
-$common a=b c=d
-```
-
-Use all remaining content in the current scope:
-
-```text
-$common a=b c=d -
-Review this file:
-@./api.md
-```
-
-Use the nonempty remainder of the current line as literal text input:
-
-```text
-$common a=b c=d -- Review this file
-```
-
-Use only a matching fenced block:
-
-````text
-$common a=b c=d ```
-Review this file:
-@./api.md
-```
-
-Continue outside the prompt.
-````
-
-`RemainingContent` ends with the current content scope. Inline input consumes
-only its current line, requires non-whitespace text, and does not recognize
-embedded markers. `FencedContent(n)` is the exact text before the first
-complete line equal to `Fence(n)` and may be empty. The `-`, `--`, or opening
-fence delimiter must be an unquoted standalone token after all `name=value`
-arguments. Tail and fenced bodies recursively evaluate nested `$` and `@`
-lines. Fence lines are excluded; an unclosed fence is invalid. Prompt calls
-evaluate from the innermost call outward.
+Prompt templates expand to Text before the complete runnable input is parsed
+once as Content. A prompt result can therefore be one fragment of a larger
+input. Runnable input may contain prompt calls, but prompt input and prompt
+results cannot contain another prompt call. The capture form is not persisted
+with prompt provenance.
 
 Slash-prefixed prompt calls are not supported. In terminal Chat, a leading
 slash belongs to the interaction namespace; on other `Content` surfaces it is
@@ -293,7 +253,7 @@ too run alice '$review focus=security'
 ```text
 Text        -> text Part
 IncludeRef  -> one Part
-PromptCall  -> Part[]
+PromptCall  -> Text
 Content     -> Part[]
 ```
 
@@ -315,7 +275,6 @@ output may also be one Markdown code block labeled `json`.
 
 Run preparation persists both authored and effective facts. The authored
 policy and `RunnableInputRaw` sources retain `$prompt` syntax for transcript and
-history views. Ordered prompt provenance records canonical arguments, input
-scope, nesting parent, cap ref, and definition hash. Resolved locals drive
-conversation recall and retry/rerun, while model steps retain the exact
-normalized `ModelCall` sent to the adapter.
+history views. Ordered prompt provenance records canonical arguments, cap ref,
+and definition hash. Resolved locals drive conversation recall and retry/rerun,
+while model steps retain the exact normalized `ModelCall` sent to the adapter.

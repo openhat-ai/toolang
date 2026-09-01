@@ -5,9 +5,12 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 import threading
 
-from toolang.base.types.message import Message
+import pytest
+
+from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
 from toolang.catalog.job import AuthoredJobs, JobFile
+from toolang.catalog.types import JobKind
 from toolang.execution.records import CreateControlPayload, RunControlPayload
 from toolang.execution.types import Local
 from toolang.work.authoring import new_job_file
@@ -15,6 +18,7 @@ from toolang.work.records import JobRecord
 from toolang.work.scheduler import JobScheduler
 from toolang.work.state import load_ready_jobs
 from toolang.work.store import JobStore
+from toolang.lang.types import Array
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -43,6 +47,22 @@ def _create_task(
     return catalog.create(
         new_job_file(
             kind="task",
+            job_id=job_id,
+            title=None,
+            body=body,
+        )
+    )
+
+
+def _create_job(
+    catalog: AuthoredJobs,
+    kind: JobKind,
+    job_id: str,
+    body: str,
+) -> JobFile:
+    return catalog.create(
+        new_job_file(
+            kind=kind,
             job_id=job_id,
             title=None,
             body=body,
@@ -179,6 +199,47 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
 
     try:
         asyncio.run(scenario())
+    finally:
+        harness.store.close()
+
+
+@pytest.mark.parametrize("kind", ("task", "chore"))
+def test_job_runnable_call_input_expands_a_prompt_call(
+    tmp_path,
+    kind: JobKind,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path / "toolang",
+        source="""
+prompt wrap:
+  <{{_}}>
+
+agic review(_: Part[], focus: Text):
+  recall = none
+  context: none
+  instruct: none
+  user: {{focus}} {{_}}
+""",
+        responses=[],
+    )
+    _create_job(
+        AuthoredJobs(harness.setup.layout.home),
+        kind,
+        "nested-input",
+        ":agic review focus=nested ---\nBefore\n$wrap -- target\nAfter\n---",
+    )
+    scheduler = _scheduler(harness)
+
+    try:
+        (job,) = load_ready_jobs(harness.setup.layout)
+        spec = scheduler._build_spec(job)
+
+        assert spec.input.primary == Array(
+            "Part[]",
+            (TextPart("Before\n<target>\nAfter\n"),),
+        )
+        assert spec.input.named == {"focus": "nested"}
+        assert [invocation.name for invocation in spec.prompt_invocations] == ["wrap"]
     finally:
         harness.store.close()
 

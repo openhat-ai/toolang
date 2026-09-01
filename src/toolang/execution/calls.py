@@ -62,8 +62,8 @@ def parse_call(source: str) -> tuple[RunOverride, RunnableInputRaw]:
     """Parse one run-only source into an aggregate override and runnable input."""
 
     body = _strip_final_line_break(source)
-    override, named, primary = parse_policy_prefix(body)
-    input = parse_input(primary or None, named=named)
+    override, call_input = parse_policy_prefix(body)
+    input = parse_input(call_input._, named=call_input.named)
     if not override.empty and input._ is None and not input.named:
         raise ValueError("colon override requires runnable input")
     return override, input
@@ -337,7 +337,10 @@ def _resolve_concrete_spec(
             named=named,
             structs={struct.name: struct for struct in program.structs},
         ),
-        authored_input=RunnableInputRaw(_=input._, named=raw_named),
+        authored_input=RunnableInputRaw(
+            _=input._,
+            named=raw_named,
+        ),
         authored_commands=authored_commands,
         authored_session_commands=authored_session_commands,
         prompt_invocations=tuple(invocations),

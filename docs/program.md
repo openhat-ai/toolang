@@ -521,11 +521,11 @@ It is invoked with dollar-prefixed content syntax:
 $review path=src/app.py focus="only errors"
 ```
 
-`PromptCall` empty, inline, remaining, and fenced input forms, include
-references, and escaping are defined in
-[input-syntax.md](./input-syntax.md). A dollar prompt call invokes one reusable
-prompt template during content evaluation. Slash is reserved for terminal Chat
-commands and does not invoke prompts.
+Prompt Call Input, include references, and escaping are defined in
+[call-input.md](./call-input.md) and [input-syntax.md](./input-syntax.md). A
+dollar prompt call invokes one reusable prompt template during content
+evaluation. Slash is reserved for terminal Chat commands and does not invoke
+prompts.
 
 
 ## Service Caps

@@ -28,7 +28,8 @@ update `SessionSetting`; matching colon-prefixed lines form the one-run
 changing the session. `/?` explains the immediate slash surface, while the
 special `:?` interaction explains leading run overrides without creating a
 run. Dollar-prefixed `Content` lines expand reusable prompts. See
-[input-syntax.md](./input-syntax.md) for the complete namespace contract.
+[input-syntax.md](./input-syntax.md) for the namespace contract and
+[call-input.md](./call-input.md) for runnable and prompt Call Input forms.
 
 The three plural discovery commands produce compact, structured tables:
 

@@ -48,7 +48,15 @@ from toolang.execution.types import (
 )
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program
 from toolang.lang.includes import resolve_file_include
-from toolang.lang.input import NamedInputSource, NamedInputSources, RunnableInputRaw
+from toolang.lang.input import (
+    CallInput,
+    CallInputHeader,
+    NamedInputSource,
+    NamedInputSources,
+    RunnableInputRaw,
+    capture_call_input,
+    parse_input,
+)
 from toolang.state.runnable_collections import runnable_dataset
 from toolang.setup import SetupWatcher
 from toolang.state.prepare import prepare_agent_state
@@ -67,7 +75,9 @@ from ...common.execution_progress.config import resolve_progress_max_width
 from ...common.script_progress import ScriptRunPresenter
 
 Runnable = AgicDecl | FlowDecl
-_LITERAL_ITEM_PREFIX = "\ue002"
+_LINE_INPUT_MARKER = "\ue002"
+_FENCED_INPUT_MARKER = "\ue003"
+_LITERAL_ITEM_PREFIX = "\ue004"
 _UNPERSISTED_THREAD = "<unpersisted-script-thread>"
 _RUNNABLES_PANEL = "Runnables"
 _THREAD_INFO_ADAPTER = TypeAdapter(ThreadInfo)
@@ -314,8 +324,11 @@ def _input_argument(parameter: Parameter) -> TyperArgument:
         param_decls=["input"],
         type=str,
         required=not parameter.optional,
-        metavar="INPUT...",
-        help=f"Primary {type_name} input. Repeat content items or omit to read stdin.",
+        metavar="-- INPUT... | - | ---",
+        help=(
+            f"Primary {type_name} input. Use line, stream, or fenced form; "
+            "omit to read stdin."
+        ),
         expose_value=False,
     )
 
@@ -361,7 +374,15 @@ def _collect_call(
     params = {parameter.name: parameter for parameter in runnable.params}
     raw_args: dict[str, str] = {}
     input_items: list[str] = []
+    input_started = False
     for item in items:
+        if input_started:
+            input_items.append(item.removeprefix(_LITERAL_ITEM_PREFIX))
+            continue
+        if item in {_LINE_INPUT_MARKER, "-", _FENCED_INPUT_MARKER}:
+            input_started = True
+            input_items.append(item)
+            continue
         if item.startswith(_LITERAL_ITEM_PREFIX):
             input_items.append(item.removeprefix(_LITERAL_ITEM_PREFIX))
             continue
@@ -373,8 +394,13 @@ def _collect_call(
             continue
         input_items.append(item)
 
-    input_source = _input_source(input_items, stdin=stdin)
-    override, input = parse_call(input_source or "")
+    call_input = _input_source(input_items, stdin=stdin)
+    call_source = (
+        call_input._ if call_input is not None and call_input._ is not None else ""
+    )
+    override, input = parse_call(call_source)
+    if call_input is not None and override.empty and not input.named:
+        input = parse_input(call_input._)
     has_runnable_override = override.runnable is not None
     if not has_runnable_override:
         missing = [
@@ -413,42 +439,64 @@ def _materialize_script_runnable_override(
     return replace(override, runnable=dataset.schema.exact_match_for(matches[0]))
 
 
-def _input_source(items: list[str], *, stdin: TextIO) -> str | None:
+def _input_source(items: list[str], *, stdin: TextIO) -> CallInput | None:
+    if items and items[0] == _LINE_INPUT_MARKER:
+        if len(items) == 1:
+            raise click.UsageError("line input marker '--' requires nonempty text")
+        value = _join_input_items(items[1:])
+        if not value.strip():
+            raise click.UsageError("line input marker '--' requires nonempty text")
+        return CallInput(_=value)
     if items == ["-"]:
         value = stdin.read()
-        return value if value else None
+        return CallInput(_=value)
+    if items == [_FENCED_INPUT_MARKER]:
+        value, _trailing = capture_call_input(
+            CallInputHeader("", "fenced"),
+            stdin.read(),
+            label="Script runnable call",
+            root=True,
+        )
+        return CallInput(_=value)
     if "-" in items:
         raise click.UsageError("stdin marker '-' must be the only primary input")
+    if _LINE_INPUT_MARKER in items or _FENCED_INPUT_MARKER in items:
+        raise click.UsageError("call input marker must precede the primary input")
     if items:
-        lines: list[str] = []
-        words: list[str] = []
-
-        def flush_words() -> None:
-            if words:
-                lines.append(" ".join(words))
-                words.clear()
-
-        for item in items:
-            if item.startswith("@") or "\n" in item:
-                flush_words()
-                lines.append(item)
-            else:
-                words.append(item)
-        flush_words()
-        return "\n".join(lines)
+        raise click.UsageError("primary input requires '--', '-', or '---'")
     if not stdin.isatty():
         value = stdin.read()
-        return value if value else None
+        return CallInput(_=value) if value else None
     return None
+
+
+def _join_input_items(items: list[str]) -> str:
+    lines: list[str] = []
+    words: list[str] = []
+
+    def flush_words() -> None:
+        if words:
+            lines.append(" ".join(words))
+            words.clear()
+
+    for item in items:
+        if item.startswith("@") or "\n" in item:
+            flush_words()
+            lines.append(item)
+        else:
+            words.append(item)
+    flush_words()
+    return "\n".join(lines)
 
 
 def _protect_literal_items(argv: list[str]) -> list[str]:
     try:
         separator = argv.index("--")
     except ValueError:
-        return argv
+        return [_FENCED_INPUT_MARKER if item == "---" else item for item in argv]
     return [
         *argv[: separator + 1],
+        _LINE_INPUT_MARKER,
         *(f"{_LITERAL_ITEM_PREFIX}{item}" for item in argv[separator + 1 :]),
     ]
 

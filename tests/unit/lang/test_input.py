@@ -18,14 +18,18 @@ from toolang.base.types.message import (
 from toolang.lang.ast import AgicDecl, Field, Parameter, Span, StructDecl
 from toolang.lang.errors import ToolangOutputError
 from toolang.lang.input import (
+    CallInput,
+    CallInputHeader,
     NamedInputSource,
     RunnableInput,
     RunnableInputRaw,
     coerce_input,
     coerce_output,
+    capture_call_input,
     decode_json_input,
     output_json_schema,
     parse_input,
+    parse_call_input_header,
     resolve_input_parts,
     resolve_input_parts_with_provenance,
     resolve_runnable_input,
@@ -110,7 +114,56 @@ def test_parse_input_preserves_primary_and_validates_named_sources() -> None:
             NamedInputSource("count", "2"),
         ),
     )
-    assert parse_input(" \t\n") == RunnableInputRaw()
+    assert parse_input(" \t\n") == RunnableInputRaw(_=" \t\n")
+
+
+def test_raw_runnable_input_uses_the_shared_call_input_shape() -> None:
+    assert isinstance(RunnableInputRaw(_="run"), CallInput)
+    assert CallInput(_="prompt")._ == "prompt"
+    assert RunnableInputRaw(_="") != RunnableInputRaw()
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("name=value -- line text", CallInputHeader("name=value", "line", "line text")),
+        ("name=value -", CallInputHeader("name=value", "stream")),
+        ("name=value ---", CallInputHeader("name=value", "fenced")),
+        ('name="---" dash=\\-', CallInputHeader('name="---" dash=\\-')),
+    ],
+)
+def test_call_input_header_recognizes_only_unquoted_standalone_markers(
+    source: str,
+    expected: CallInputHeader,
+) -> None:
+    assert parse_call_input_header(source) == expected
+
+
+def test_call_input_capture_keeps_form_as_parser_only_state() -> None:
+    captured, trailing = capture_call_input(
+        CallInputHeader("", "fenced"),
+        "inside\n---\noutside",
+    )
+
+    assert captured == "inside\n"
+    assert trailing == "\noutside"
+    assert CallInput(_=captured) == CallInput(_="inside\n")
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        ("--", "requires nonempty"),
+        ("- trailing", "must end"),
+        ("--- trailing", "must end"),
+    ],
+)
+def test_call_input_header_rejects_invalid_marker_boundaries(
+    source: str,
+    message: str,
+) -> None:
+    with pytest.raises(ToolangError, match=message):
+        parse_call_input_header(source)
 
 
 @pytest.mark.parametrize(
@@ -218,7 +271,7 @@ def test_prompt_without_input_leaves_following_content_outside() -> None:
     )
 
 
-def test_tail_prompt_consumes_all_remaining_content() -> None:
+def test_stream_prompt_consumes_all_remaining_content() -> None:
     from toolang.lang.ast import CapDecl, Program
 
     program = Program(
@@ -237,9 +290,12 @@ def test_tail_prompt_consumes_all_remaining_content() -> None:
     assert resolve_input_parts("$wrap -\nOne\nTwo", program=program) == (
         TextPart("Before One\nTwo after"),
     )
+    assert resolve_input_parts("$wrap -", program=program) == (
+        TextPart("Before  after"),
+    )
 
 
-def test_fenced_prompt_consumes_only_its_exact_backtick_scope() -> None:
+def test_fenced_prompt_consumes_only_its_exact_hyphen_scope() -> None:
     from toolang.lang.ast import CapDecl, Program
 
     program = Program(
@@ -256,12 +312,15 @@ def test_fenced_prompt_consumes_only_its_exact_backtick_scope() -> None:
     )
 
     assert resolve_input_parts(
-        "$wrap ```\nInside\n```\nOutside",
+        "$wrap ---\nInside\n---\nOutside",
         program=program,
     ) == (TextPart("[Inside\n]\nOutside"),)
+    assert resolve_input_parts("$wrap ---\n---", program=program) == (TextPart("[]"),)
 
-    with pytest.raises(ToolangError, match="Unclosed prompt fence"):
-        resolve_input_parts("$wrap ````\nInside\n```", program=program)
+    with pytest.raises(ToolangError, match="Unclosed fenced input"):
+        resolve_input_parts("$wrap ---\nInside\n----", program=program)
+    with pytest.raises(ToolangError, match="name=value syntax"):
+        resolve_input_parts("$wrap ```\nInside\n```", program=program)
 
 
 def test_prompt_arguments_require_named_syntax() -> None:
@@ -284,7 +343,7 @@ def test_prompt_arguments_require_named_syntax() -> None:
         resolve_input_parts("$review security", program=program)
 
 
-def test_inline_prompt_consumes_only_nonempty_current_line_text() -> None:
+def test_line_prompt_consumes_only_nonempty_current_line_text() -> None:
     from toolang.lang.ast import CapDecl, Program
 
     program = Program(
@@ -301,14 +360,40 @@ def test_inline_prompt_consumes_only_nonempty_current_line_text() -> None:
     )
 
     assert resolve_input_parts(
-        "$wrap -- $literal @literal /literal :literal\nOutside",
+        "$wrap -- literal $literal @literal /literal :literal\nOutside",
         program=program,
-    ) == (TextPart("[$literal @literal /literal :literal]\nOutside"),)
+    ) == (TextPart("[literal $literal @literal /literal :literal]\nOutside"),)
     with pytest.raises(ToolangError, match="requires nonempty text"):
         resolve_input_parts("$wrap --   ", program=program)
 
 
-def test_inline_prompt_rejects_multimodal_template_slots() -> None:
+@pytest.mark.parametrize("value", ("", "   "))
+def test_line_prompt_revalidates_interpolated_text(value: str) -> None:
+    from toolang.lang.ast import CapDecl, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="wrap",
+                params=(),
+                body="[{{_}}]",
+                span=Span(1),
+            ),
+        ),
+    )
+
+    with pytest.raises(ToolangError, match="requires nonempty text"):
+        resolve_input_parts(
+            "$wrap -- {{_}}",
+            program=program,
+            values={"_": (TextPart(value),)},
+            types={"_": "Part[]"},
+        )
+
+
+def test_prompt_expansion_stays_text_until_the_final_content_parse() -> None:
     from toolang.lang.ast import CapDecl, Program
 
     program = Program(
@@ -318,28 +403,20 @@ def test_inline_prompt_rejects_multimodal_template_slots() -> None:
                 kind="prompt",
                 name="outer",
                 params=(),
-                body="$inner -- {{_}}",
-                span=Span(1),
-            ),
-            CapDecl(
-                kind="prompt",
-                name="inner",
-                params=(),
                 body="inner {{_}}",
-                span=Span(2),
+                span=Span(1),
             ),
         ),
     )
 
-    with pytest.raises(ToolangError, match="requires text-only input"):
-        resolve_input_parts(
-            "$outer -\n@diagram.png",
-            program=program,
-            include=lambda _reference: ImagePart(file_id="image-1"),
-        )
+    assert resolve_input_parts(
+        "$outer -\n@diagram.png",
+        program=program,
+        include=lambda _reference: ImagePart(file_id="image-1"),
+    ) == (TextPart("inner @diagram.png"),)
 
 
-def test_prompt_resolution_records_ordered_nested_provenance() -> None:
+def test_runnable_input_allows_sibling_prompt_calls() -> None:
     from toolang.lang.ast import CapDecl, Parameter, Program
 
     program = Program(
@@ -363,18 +440,140 @@ def test_prompt_resolution_records_ordered_nested_provenance() -> None:
     )
 
     resolved = resolve_input_parts_with_provenance(
-        "$outer focus=security -\n$inner -- target",
+        "$outer focus=security -- target\n$inner -- next",
         program=program,
     )
 
-    assert resolved.parts == (TextPart("security inner target"),)
+    assert resolved.parts == (TextPart("security target\ninner next"),)
     assert [invocation.name for invocation in resolved.prompts] == ["outer", "inner"]
     assert resolved.prompts[0].arguments == (("focus", "security"),)
-    assert resolved.prompts[0].input_scope == "tail"
-    assert resolved.prompts[0].parent is None
-    assert resolved.prompts[1].input_scope == "inline"
-    assert resolved.prompts[1].parent == 0
+    assert all(invocation.parent is None for invocation in resolved.prompts)
     assert all(len(invocation.content_hash) == 64 for invocation in resolved.prompts)
+
+
+def test_many_fenced_prompt_calls_do_not_consume_the_python_stack() -> None:
+    from toolang.lang.ast import CapDecl, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="wrap",
+                params=(),
+                body="[{{_}}]",
+                span=Span(1),
+            ),
+        ),
+    )
+    source = "$wrap ---\nvalue\n---\n" * 1_100
+
+    resolved = resolve_input_parts_with_provenance(source, program=program)
+
+    assert len(resolved.prompts) == 1_100
+    assert resolved.parts == (TextPart("[value\n]\n" * 1_100),)
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        "$outer -- $inner -- target",
+        "$outer -\n$inner -- target",
+        "$outer ---\n$inner -- target\n---",
+    ),
+)
+def test_prompt_input_rejects_nested_prompt_calls(source: str) -> None:
+    from toolang.lang.ast import CapDecl, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="outer",
+                params=(),
+                body="{{_}}",
+                span=Span(1),
+            ),
+            CapDecl(
+                kind="prompt",
+                name="inner",
+                params=(),
+                body="inner {{_}}",
+                span=Span(2),
+            ),
+        ),
+    )
+
+    with pytest.raises(ToolangError, match=r"Nested prompt call \$inner"):
+        resolve_input_parts(source, program=program)
+
+
+def test_prompt_input_rejects_an_unknown_nested_prompt_call() -> None:
+    from toolang.lang.ast import CapDecl, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="outer",
+                params=(),
+                body="{{_}}",
+                span=Span(1),
+            ),
+        ),
+    )
+
+    with pytest.raises(ToolangError, match=r"Nested prompt call \$missing"):
+        resolve_input_parts("$outer -- $missing -- target", program=program)
+
+
+def test_prompt_result_rejects_nested_prompt_calls() -> None:
+    from toolang.lang.ast import CapDecl, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="outer",
+                params=(),
+                body="$inner -- {{_}}",
+                span=Span(1),
+            ),
+            CapDecl(
+                kind="prompt",
+                name="inner",
+                params=(),
+                body="inner {{_}}",
+                span=Span(2),
+            ),
+        ),
+    )
+
+    with pytest.raises(ToolangError, match=r"Nested prompt call \$inner"):
+        resolve_input_parts("$outer -- target", program=program)
+
+
+def test_prompt_result_rejects_an_unknown_nested_prompt_call() -> None:
+    from toolang.lang.ast import CapDecl, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="outer",
+                params=(),
+                body="$missing -- {{_}}",
+                span=Span(1),
+            ),
+        ),
+    )
+
+    with pytest.raises(ToolangError, match=r"Nested prompt call \$missing"):
+        resolve_input_parts("$outer -- target", program=program)
 
 
 def test_explicit_prompt_publication_rejects_an_unavailable_prompt() -> None:

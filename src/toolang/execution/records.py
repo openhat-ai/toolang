@@ -1816,7 +1816,6 @@ def _prompt_invocations_from_data(value: object) -> tuple[PromptInvocation, ...]
             PromptInvocation(
                 name=str(invocation.get("name", "")),
                 arguments=tuple(arguments),
-                input_scope=cast(Any, invocation.get("input_scope")),
                 parent=parent,
                 cap_ref=str(invocation.get("cap_ref", "")),
                 content_hash=str(invocation.get("content_hash", "")),
@@ -1831,7 +1830,6 @@ def _prompt_invocation_to_data(invocation: PromptInvocation) -> dict[str, object
         "arguments": [
             {"name": name, "value": value} for name, value in invocation.arguments
         ],
-        "input_scope": invocation.input_scope,
         "parent": invocation.parent,
         "cap_ref": invocation.cap_ref,
         "content_hash": invocation.content_hash,

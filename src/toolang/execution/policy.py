@@ -18,7 +18,14 @@ from toolang.base.types.model import (
 )
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.query import resolve_query_sentinels
-from toolang.lang.input import NamedInputSource, NamedInputSources
+from toolang.lang.input import (
+    CallInput,
+    CallInputHeader,
+    NamedInputSource,
+    NamedInputSources,
+    capture_call_input,
+    parse_call_input_header,
+)
 from toolang.lang.runnable_query import RUNNABLE_SCHEMA
 from toolang.plugin.models.collections import MODEL_SCHEMA
 from toolang.plugin.toolsets.collections import TOOL_SCHEMA
@@ -72,7 +79,10 @@ def parse_run_override(line: str) -> tuple[RunOverride, NamedInputSources]:
         raise ValueError(str(error)) from error
     if parsed is None:
         raise ValueError("line is not a run override")
-    return parsed
+    override, named, header = parsed
+    if header is not None and header.form is not None:
+        raise ValueError("run override parsing does not accept attached call input")
+    return override, named
 
 
 def parse_setting_override(command: str, body: str) -> RunOverride:
@@ -98,7 +108,7 @@ def parse_setting_override(command: str, body: str) -> RunOverride:
 
 def parse_policy_prefix(
     source: str,
-) -> tuple[RunOverride, NamedInputSources, str]:
+) -> tuple[RunOverride, CallInput]:
     """Parse one complete leading override section and its remaining source."""
 
     lines = _lines(source)
@@ -118,13 +128,36 @@ def parse_policy_prefix(
             raise ValueError(str(error)) from error
         if parsed is None:
             break
-        override, override_named = parsed
+        override, override_named, call_header = parsed
         overrides.append(override)
         named.extend(override_named)
         index += 1
+        if call_header is not None and call_header.form is not None:
+            following = source[lines[index].start :] if index < len(lines) else ""
+            try:
+                primary, trailing = capture_call_input(
+                    call_header,
+                    following,
+                    label="runnable call",
+                    root=True,
+                )
+            except ToolangError as error:
+                raise ValueError(str(error)) from error
+            if call_header.form == "line" and trailing.strip():
+                raise ValueError(
+                    "Root line input for runnable call cannot be followed by "
+                    "other content."
+                )
+            return (
+                merge_run_overrides(overrides),
+                CallInput(_=primary, named=tuple(named)),
+            )
 
     remaining = source[lines[index].start :] if index < len(lines) else ""
-    return merge_run_overrides(overrides), tuple(named), remaining
+    return (
+        merge_run_overrides(overrides),
+        CallInput(_=remaining or None, named=tuple(named)),
+    )
 
 
 def merge_run_overrides(overrides: Sequence[RunOverride]) -> RunOverride:
@@ -303,7 +336,7 @@ def materialize_policy(
 
 def _try_parse_override(
     line: str,
-) -> tuple[RunOverride, NamedInputSources] | None:
+) -> tuple[RunOverride, NamedInputSources, CallInputHeader | None] | None:
     if not line.startswith(":") or line.startswith("::"):
         return None
     try:
@@ -317,13 +350,20 @@ def _try_parse_override(
     if name not in SETTING_OVERRIDE_FORMS:
         return None
     if name == "model":
-        return _model_override(body), ()
+        return _model_override(body), (), None
     if name in {"runnable", "agic", "flow"}:
-        return _runnable_override(name, body)
+        raw_body = line[len(tokens[0]) :].lstrip(" \t")
+        header = parse_call_input_header(raw_body, label=f":{name} runnable call")
+        try:
+            runnable_tokens = shlex.split(header.arguments, comments=False, posix=True)
+        except ValueError as error:
+            raise ValueError(str(error)) from error
+        override, named = _runnable_override(name, runnable_tokens)
+        return override, named, header
     if name == "allow":
-        return _allow_override(body), ()
+        return _allow_override(body), (), None
     if name == "limit":
-        return _limit_override(body), ()
+        return _limit_override(body), (), None
     raise AssertionError(f"unhandled setting override: {name}")
 
 

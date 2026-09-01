@@ -57,12 +57,16 @@ def parse_chat_input(chat_input: str) -> ChatInput:
             raise ValueError("quick command cannot be combined with other input")
         return quick
 
-    override, named, primary_source = parse_policy_prefix(body)
+    override, call_input = parse_policy_prefix(body)
+    primary_source = call_input._ or ""
     if primary_source.startswith("/") and not primary_source.startswith("//"):
         combined = _parse_slash(primary_source.splitlines()[0])
         if combined is not None:
             raise ValueError("slash command cannot be combined with other input")
-    runnable_input = parse_input(primary_source or None, named=named)
+    runnable_input = parse_input(
+        call_input._,
+        named=call_input.named,
+    )
     if runnable_input._ is None and not runnable_input.named:
         if not override.empty:
             raise ValueError("colon override requires runnable input")

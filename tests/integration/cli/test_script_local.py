@@ -116,7 +116,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
     elif save_mode == "missing-parent":
         destination = tmp_path / "missing" / "result.txt"
         args.extend(("--save", str(destination)))
-    args.append("hello")
+    args.extend(("--", "hello"))
     result = script.dispatch([], args, prog_name="toolang")
     output = capsys.readouterr()
 
@@ -194,7 +194,7 @@ def test_local_script_renders_composite_flow_progress(
 
     result = script.dispatch(
         [],
-        [str(source), "research", "agent framework"],
+        [str(source), "research", "--", "agent framework"],
         prog_name="toolang",
     )
     output = capsys.readouterr()
