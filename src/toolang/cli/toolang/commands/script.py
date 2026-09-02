@@ -19,7 +19,7 @@ import typer
 from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 
 from toolang.base.model_settings import parse_model_body
-from toolang.base.types.model import ModelOverride, ModelRequest
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunBindings, RunPolicy
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
@@ -209,7 +209,6 @@ def _runnable_command(
         items: tuple[str, ...],
         allow: tuple[str, ...],
         model: str | None,
-        default: tuple[str, ...],
         limit: tuple[str, ...],
         sandbox: str | None,
         dev: Path | None,
@@ -231,7 +230,6 @@ def _runnable_command(
             raw_named=raw_named,
             allow_options=allow,
             model_body=model,
-            default_options=default,
             limit_options=limit,
             sandbox=sandbox,
             dev=dev,
@@ -261,13 +259,6 @@ def _runnable_command(
             default=None,
             metavar="MODEL_BODY",
             help="Set the model identity and parameters for this run.",
-        ),
-        TyperOption(
-            param_decls=["--default"],
-            type=str,
-            multiple=True,
-            default=(),
-            hidden=True,
         ),
         TyperOption(
             param_decls=["--sandbox"],
@@ -525,7 +516,6 @@ def _run(
     raw_named: NamedInputSources,
     allow_options: tuple[str, ...],
     model_body: str | None,
-    default_options: tuple[str, ...],
     limit_options: tuple[str, ...],
     sandbox: str | None,
     dev: Path | None,
@@ -544,7 +534,6 @@ def _run(
         session_override = _script_session_override(
             model_body=model_body,
             allow_options=allow_options,
-            default_options=default_options,
             limit_options=limit_options,
         )
         with acquire_agent_server(
@@ -644,31 +633,12 @@ def _script_session_override(
     *,
     model_body: str | None,
     allow_options: tuple[str, ...],
-    default_options: tuple[str, ...],
     limit_options: tuple[str, ...],
 ) -> RunOverride:
     ceilings = resolve_ceiling_overrides({}, allow_options)
-    defaults = resolve_default_overrides({}, default_options)
     limits = resolve_limit_overrides({}, limit_options)
-    if "runnable" in defaults:
-        raise ValueError(
-            "--default runnable does not apply when a script runnable is explicit"
-        )
-    compatibility_model = defaults.get("model")
-    if compatibility_model is not None and not isinstance(
-        compatibility_model, ModelOverride
-    ):
-        raise TypeError("--default model must resolve to a model override")
-    if model_body is not None and compatibility_model is not None:
-        raise ValueError("--model cannot be combined with --default model=...")
-    if compatibility_model is not None:
-        typer.echo("warning: --default model=... is deprecated; use --model", err=True)
     return RunOverride(
-        model=(
-            parse_model_body(model_body)
-            if model_body is not None
-            else compatibility_model
-        ),
+        model=parse_model_body(model_body) if model_body is not None else None,
         allow=tuple(
             AllowOverride(cast(AllowField, field), value)
             for field, value in ceilings.items()
