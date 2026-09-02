@@ -15,6 +15,7 @@ from toolang.base.types.progress import ProgressEvent
 from toolang.common.layout import AgentLayout
 from toolang.cli.toolang.commands import script
 from toolang.cli.toolang.commands.chat import main as chat_commands
+from toolang.cli.toolang.commands.workspace import workspace_app
 from toolang.execution.types import SessionSetting
 from toolang.cli.toolang.routing import (
     COMMAND_SPECS,
@@ -60,6 +61,7 @@ def test_cli_command_registry_matches_the_typer_surface() -> None:
         ("info", {"before", "after"}, {"resident", "roaming", "visiting"}),
         ("retry", {"before"}, {"resident", "roaming", "visiting"}),
         ("task", {"before"}, {"resident"}),
+        ("workspace", {"before"}, {"resident"}),
         ("skill", {"none", "before"}, {"resident"}),
         ("catalogs", {"none"}, set()),
         ("toolsets", {"none"}, set()),
@@ -174,10 +176,9 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "run",
             "start",
             "stop",
-            "chore",
-            "task",
         ),
         "Cap Commands": ("psyche", "skill", "service", "prompt"),
+        "Work Commands": ("chore", "task", "workspace"),
         "Control Commands": (
             "chat",
             "steer",
@@ -211,6 +212,17 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
         assert {
             getattr(group.commands[name], "rich_help_panel", None) for name in names
         } == {panel}
+
+
+def test_workspace_commands_follow_the_public_order() -> None:
+    group = typer.main.get_command(workspace_app())
+
+    assert isinstance(group, click.Group)
+    assert tuple(group.list_commands(click.Context(group))) == (
+        "list",
+        "add",
+        "remove",
+    )
 
 
 def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
@@ -438,6 +450,7 @@ def test_cli_bare_resident_target_shows_its_command_help(
     panels = (
         "Agent Commands",
         "Cap Commands",
+        "Work Commands",
         "Control Commands",
         "Inspection Commands",
     )

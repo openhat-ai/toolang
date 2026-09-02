@@ -12,6 +12,7 @@ from pathlib import Path
 from watchfiles import Change, awatch
 
 from toolang.common.layout import AgentLayout
+from .config import ConfiguredWorkspaces
 from .state import (
     AgentState,
     StatePublication,
@@ -41,6 +42,10 @@ DEFAULT_INTERVAL_MS = 1_000.0
 DEFAULT_DEBOUNCE_MS = 500.0
 logger = logging.getLogger(__name__)
 _RELEVANT_CHANGES = {Change.added, Change.modified, Change.deleted}
+
+
+class _WorkspaceConfigError(ValueError):
+    """A local workspace configuration cannot be published."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,8 +264,14 @@ class StateWatcher:
                 root_source,
                 home_source,
             )
+            try:
+                publication = self._publish(self.current().state)
+            except _WorkspaceConfigError as exc:
+                self._diagnostics = (_candidate_diagnostic(exc),)
+                return StateRefresh(self.current(), self._diagnostics)
+            self._publication = publication
             self._diagnostics = ()
-            return StateRefresh(self.current())
+            return StateRefresh(publication)
         try:
             candidate = await asyncio.to_thread(
                 prepare_agent_state,
@@ -298,7 +309,24 @@ class StateWatcher:
                 self.layout.name,
             )
             return StateRefresh(self._publication, self._diagnostics)
-        self._publication = self._publish(candidate)
+        try:
+            publication = self._publish(candidate)
+        except _WorkspaceConfigError as exc:
+            self._record_checked_candidate(
+                root_observation,
+                home_observation,
+                root_source,
+                home_source,
+            )
+            if self._publication is None:
+                raise
+            self._diagnostics = (_candidate_diagnostic(exc),)
+            logger.warning(
+                "watch.rejected agent=%s diagnostics=1",
+                self.layout.name,
+            )
+            return StateRefresh(self._publication, self._diagnostics)
+        self._publication = publication
         loaded_root_source = load_layer_source(
             self.layout,
             "root",
@@ -385,7 +413,7 @@ class StateWatcher:
                     (invalidated_root if scope == "root" else invalidated_home).add(
                         relative
                     )
-                previous = self.current().state.revision
+                previous = self.current()
                 publication = (
                     await self._request_check(
                         requested=False,
@@ -393,7 +421,7 @@ class StateWatcher:
                         invalidated_home=frozenset(invalidated_home),
                     )
                 ).publication
-                if publication.state.revision != previous:
+                if publication is not previous:
                     yield publication
         finally:
             self._monitoring = False
@@ -455,13 +483,18 @@ class StateWatcher:
             return True
 
     def _publish(self, state: AgentState) -> StatePublication:
+        try:
+            workspaces = ConfiguredWorkspaces(self.layout.config).list()
+        except (OSError, UnicodeError, ValueError) as exc:
+            raise _WorkspaceConfigError(str(exc)) from exc
         existing = self._publications.get(state.revision)
-        if existing is not None:
+        if existing is not None and existing.workspaces == workspaces:
             return existing
         publication = publish_state_resources(
             state,
             agent_name=self.layout.name,
             allow_overrides=self._allow_overrides,
+            workspaces=workspaces,
         )
         self._publications[state.revision] = publication
         return publication

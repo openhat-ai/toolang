@@ -540,6 +540,128 @@ def test_watcher_loads_an_older_persisted_state_after_publishing_a_new_one(
     assert loaded.modules["agent"].agics[0].messages[0].content == "First."
 
 
+def test_workspace_change_republishes_resources_without_changing_state_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        toolang_root = tmp_path / "toolang"
+        home = toolang_root / "agents" / "alice"
+        home.mkdir(parents=True)
+        (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+        config = home / "config.toml"
+        config.write_text(
+            f'[workspaces]\none = "{tmp_path / "one"}"\n',
+            encoding="utf-8",
+        )
+        layout = AgentLayout.resident(toolang_root, "alice")
+        watcher = state_watcher.StateWatcher(layout)
+        initial = await watcher.refresh()
+        config.write_text(
+            (f'[workspaces]\ntwo = "{tmp_path / "two"}"\none = "{tmp_path / "one"}"\n'),
+            encoding="utf-8",
+        )
+
+        async def workspace_event(*_args: object, **_kwargs: object):
+            yield {(state_watcher.Change.modified, str(config))}
+
+        monkeypatch.setattr(state_watcher, "awatch", workspace_event)
+        updates = watcher.updates(stop_signal=asyncio.Event())
+        changed = await anext(updates)
+
+        assert changed.revision == initial.revision
+        assert initial.workspaces == {"one": str(tmp_path / "one")}
+        assert changed.workspaces == {
+            "one": str(tmp_path / "one"),
+            "two": str(tmp_path / "two"),
+        }
+        assert tuple(changed.workspaces) == ("one", "two")
+        assert watcher.load(changed.revision) is changed
+        with pytest.raises(TypeError):
+            changed.workspaces["three"] = str(tmp_path / "three")  # type: ignore[index]
+
+    asyncio.run(run())
+
+
+def test_invalid_workspace_change_keeps_last_publication_and_recovers(
+    tmp_path: Path,
+) -> None:
+    async def run() -> None:
+        toolang_root = tmp_path / "toolang"
+        home = toolang_root / "agents" / "alice"
+        home.mkdir(parents=True)
+        (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+        config = home / "config.toml"
+        config.write_text(
+            f'[workspaces]\none = "{tmp_path / "one"}"\n',
+            encoding="utf-8",
+        )
+        watcher = state_watcher.StateWatcher(
+            AgentLayout.resident(toolang_root, "alice")
+        )
+        initial = await watcher.refresh()
+        config.write_text(
+            (
+                f'[workspaces]\nroot = "{tmp_path / "repo"}"\n'
+                f'child = "{tmp_path / "repo" / "child"}"\n'
+            ),
+            encoding="utf-8",
+        )
+
+        rejected = await watcher.refresh_result()
+
+        assert rejected.publication is initial
+        assert len(rejected.diagnostics) == 1
+        assert "workspace roots must not overlap" in rejected.diagnostics[0].message
+
+        config.write_text(
+            f'[workspaces]\ntwo = "{tmp_path / "two"}"\n',
+            encoding="utf-8",
+        )
+        recovered = await watcher.refresh_result()
+
+        assert recovered.publication is not initial
+        assert recovered.publication.revision == initial.revision
+        assert recovered.publication.workspaces == {"two": str(tmp_path / "two")}
+        assert recovered.diagnostics == ()
+
+    asyncio.run(run())
+
+
+def test_workspace_republication_does_not_hide_internal_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        toolang_root = tmp_path / "toolang"
+        home = toolang_root / "agents" / "alice"
+        home.mkdir(parents=True)
+        (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+        config = home / "config.toml"
+        config.write_text(
+            f'[workspaces]\none = "{tmp_path / "one"}"\n',
+            encoding="utf-8",
+        )
+        watcher = state_watcher.StateWatcher(
+            AgentLayout.resident(toolang_root, "alice")
+        )
+        await watcher.refresh()
+        config.write_text(
+            f'[workspaces]\ntwo = "{tmp_path / "two"}"\n',
+            encoding="utf-8",
+        )
+
+        def fail_publication(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("publication failed")
+
+        monkeypatch.setattr(state_watcher, "publish_state_resources", fail_publication)
+
+        with pytest.raises(RuntimeError, match="publication failed"):
+            await watcher.refresh()
+
+    asyncio.run(run())
+
+
 def test_state_watcher_publishes_filtered_caps_once_per_revision_and_override(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

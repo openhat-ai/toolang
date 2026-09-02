@@ -177,8 +177,8 @@ class PrefixAgentCommand(TyperCommand):
         formatter.write_usage(prefix_path, " ".join(pieces))
 
 
-class PrefixAgentJobGroup(TyperGroup):
-    """Render required AGENT between the CLI root and group name."""
+class RequiredPrefixAgentGroup(TyperGroup):
+    """Render required AGENT between the CLI root and a command group."""
 
     prefix_agent_metavar = "AGENT"
 
@@ -195,6 +195,10 @@ class PrefixAgentJobGroup(TyperGroup):
         for param in self.get_params(ctx):
             pieces.extend(param.get_usage_pieces(ctx))
         formatter.write_usage(prefix_path, " ".join(pieces))
+
+
+class PrefixAgentJobGroup(RequiredPrefixAgentGroup):
+    """Render required AGENT for the existing task and chore groups."""
 
 
 class OptionalPrefixAgentGroup(TyperGroup):
