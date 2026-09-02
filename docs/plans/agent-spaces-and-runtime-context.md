@@ -11,8 +11,8 @@ Approved for implementation in the phases below.
   this layer.
 - **psyche**: resident behavior guidance, below protocol and instruct but above
   workspace rules. The complete effective psyche is always in instructions.
-- **workspace rule**: path-scoped `AGENTS.md` content recalled before a tool may
-  access the matching workspace path.
+- **workspace rules**: the complete content of one path-scoped `AGENTS.md`,
+  recalled before a tool may access the matching workspace path.
 - **skill**: progressively disclosed guidance recalled by a model command.
 - **service**: an external service, its guidance, and its discovered tools.
 - **context**: current data with no instruction authority.
@@ -25,12 +25,12 @@ Approved for implementation in the phases below.
   input.
 - **line**: root-to-current-Run identities and resolved inputs. It is context
   data, not a history partition.
-- **recall**: provision a complete rule, guidance, or runtime catalog body,
+- **recall**: provision complete rules, guidance, or a runtime catalog body,
   whether for the first time, after a change, or after compaction forgot it.
 - **support**: runtime-only provenance proving that a complete, current recalled
   body is present in selected messages.
 
-Instruction authority is `protocol > instruct > psyche > workspace rule >
+Instruction authority is `protocol > instruct > psyche > workspace rules >
 skill/service guidance`. Context has no instruction authority. State concepts
 such as cap form, scope, origin, and host paths remain inspectable facts, not
 model vocabulary.
@@ -65,7 +65,7 @@ Included:
 - runspace layout, selection, inheritance, memo context, and persistence;
 - workspace configuration, CLI, State publication, and filesystem access;
 - instruction layers, cap catalogs, directives, and canonical ModelCalls;
-- rule and guidance recall protocols;
+- rules and guidance recall protocols;
 - a first compaction module with structured `near` and empty `far`;
 - `line`, child/parallel isolation, retry, inspection, and offline tests.
 
@@ -113,7 +113,7 @@ user: <context>{{context}}</context>
       {{user_input_with_expanded_prompts}}
 assistant: ...
 tool: ...
-user: <rule workspace="toolang" path="/execution">...</rule>
+user: <rules workspace="toolang" path="/execution">...</rules>
 ```
 
 The comments above label partitions; they are not messages or wrapper text.
@@ -220,7 +220,7 @@ invalid. Omission means `auto`.
 In the first version, `auto` and explicit `near` enable near history. `far` is
 always empty. `memory` is parsed, persisted, and inspectable but has no behavior.
 Therefore `far` alone or `memory` alone recalls no history. Recall policy never
-removes the active Run's required messages and does not disable rule or guidance
+removes the active Run's required messages and does not disable rules or guidance
 recall.
 
 ## Runspaces and Workspaces
@@ -272,11 +272,12 @@ persisted. Containers expose available workspaces at deterministic guest paths
 and require restart for mount changes.
 
 A future Chat/TUI session cwd may affect only human `@file` lookup and
-completion. It is not Run state, a tool default, an access grant, or a rule
-selector. Authored task/chore/prompt resources must stay below their owning
-package and reject absolute paths, parent traversal, and symlink escape.
+completion. It is not Run state, a tool default, an access grant, or a
+workspace-rules selector. Authored task/chore/prompt resources must stay below
+their owning package and reject absolute paths, parent traversal, and symlink
+escape.
 
-## Filesystem Access and Rule Recall
+## Filesystem Access and Rules Recall
 
 ```text
 allowed roots = selected runspace + configured workspaces
@@ -295,30 +296,30 @@ compaction, rules, or access state. Every local-path read or write tool and
 shell `cwd` uses preflight; tools without local path arguments do not.
 
 For a workspace target, preflight finds the `AGENTS.md` chain from workspace
-root to the target directory. A rule identity is `(workspace name, virtual
-path)`; the path is rooted at `/` inside that workspace. The current content
-digest selects its revision. The complete chain is recalled root-to-leaf, with
-deeper rules applying more specifically. Runspaces use `MEMO.md` and do not
-discover `AGENTS.md`.
+root to the target directory. Each rules body is identified by `(workspace
+name, virtual path)`; the path is rooted at `/` inside that workspace. Its
+current content digest selects the revision. The complete chain is recalled
+root-to-leaf, with deeper rules applying more specifically. Runspaces use
+`MEMO.md` and do not discover `AGENTS.md`.
 
 If every required revision is supported by `near + run`, the runtime invokes
 the plugin. Otherwise the whole tool-call batch is atomic: no plugin runs, every
 call receives an error result, and the runtime appends each missing complete
-rule as a separate user message:
+rules body as a separate user message:
 
 ```text
 assistant: fs.read(...)
 tool: {"error":"operation not executed; retry required"}
-user: <rule workspace="toolang" path="/execution">
-      {{complete_rule}}
-      </rule>
+user: <rules workspace="toolang" path="/execution">
+      {{complete_rules}}
+      </rules>
 
 assistant: fs.read(...)
 tool: {{actual_result}}
 ```
 
 The model retries or changes its action; the runtime never retries
-automatically. Multi-path calls recall the ordered union of rule chains.
+automatically. Multi-path calls recall the ordered union of rules bodies.
 Invalid UTF-8 and oversized rules fail instead of becoming lossy summaries.
 When a visible source changes, its new complete revision is recalled by the
 same protocol. A watcher may append that recall before the next model call, but
@@ -361,7 +362,7 @@ introduced.
 `src/toolang/execution/compaction.py` is a pure execution module. It has no
 store, filesystem, watcher, cap, service, or plugin dependency. Compaction sees
 messages, costs, atomic grouping, and opaque support assertions; it does not
-parse XML or understand rule/skill/service semantics.
+parse XML or understand rules/skill/service semantics.
 
 Its small public surface is:
 
@@ -403,10 +404,10 @@ No group is split or summarized. In particular, assistant/tool protocol groups
 and their runtime recall messages remain atomic. Support is retained only with
 the complete selected group that proves it. `far` never satisfies visibility.
 
-This deliberately allows forgetting: after a rule or guidance body leaves
+This deliberately allows forgetting: after a rules body or guidance body leaves
 near, the next relevant preflight or model command recalls it again. Future far
 summarization may consume omitted history without changing the result shape or
-the rule that only structured `near + run` support proves visibility.
+the invariant that only structured `near + run` support proves visibility.
 
 ## Run Trees and Persistence
 
@@ -423,7 +424,7 @@ owning feature explicitly publishes them.
 Each model step persists its exact canonical ModelCall, result, compaction
 diagnostics, and structured support. Replay and inspection use stored facts.
 Retry builds a new ModelCall from durable Run state plus current setup, so it
-revalidates workspaces and rule revisions instead of reusing old access paths.
+revalidates workspaces and rules digests instead of reusing old access paths.
 
 ## Implementation Phases
 
@@ -434,7 +435,7 @@ revalidates workspaces and rule revisions instead of reusing old access paths.
    enforce directive and canonical ModelCall guarantees.
 4. Add compaction types/module, budgeted near selection, structured support,
    persistence, and inspection. Keep far empty.
-5. Add generic local-path preflight and workspace rule recall.
+5. Add generic local-path preflight and workspace rules recall.
 6. Add skill/service guidance recall and service-tool discovery integration.
 
 Each phase is an independently verifiable implementation pull request.
@@ -458,12 +459,12 @@ Each phase is an independently verifiable implementation pull request.
 | --- | --- |
 | First ModelCall | Complete protocol, selected instruct/psyche/catalogs, current context/input, exact tools and output contract fit the total budget. |
 | `instruct = none` | Protocol, psyche, catalogs, tools, and output contract remain; only instruct is absent. |
-| Workspace read without visible rule | No call in the batch executes; tool errors request retry; complete applicable rules follow as runtime user messages. |
+| Workspace read without supported rules | No call in the batch executes; tool errors request retry; complete applicable rules follow as runtime user messages. |
 | Retried workspace read | Current digests are supported by `near + run`; the plugin executes once. |
-| Nested or multi-path workspace call | The ordered union of applicable rule chains is recalled once, without host paths in model tags. |
-| Rule changes or leaves near | Old/missing support does not count; the complete current revision is recalled before execution. |
+| Nested or multi-path workspace call | The ordered union of applicable rules bodies is recalled once, without host paths in model tags. |
+| Rules change or leave near | Old/missing support does not count; the complete current revision is recalled before execution. |
 | Skill/service use | The model selects a catalog ref; recall yields a tool acknowledgement plus a complete tagged user message; service tools appear on the next call. |
-| `recall = none`, `far`, or `memory` in V1 | Historical near is absent and far is empty; active Run messages and rule/guidance recall still work. |
+| `recall = none`, `far`, or `memory` in V1 | Historical near is absent and far is empty; active Run messages and rules/guidance recall still work. |
 | Near budget cuts a tool exchange | The whole group is retained or omitted; roles, call/result correlation, and support remain valid. |
 | Child and parallel Runs | Each sees the captured history, its own run/line, and no sibling messages. |
 | Workspace removed before retry | Historical calls remain inspectable; the new attempt fails current authorization. |
