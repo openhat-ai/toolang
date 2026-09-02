@@ -11,7 +11,8 @@ import threading
 import time
 from typing import Any, Literal, cast
 
-from toolang.base.types.model import ModelRequest, ModelTarget
+from toolang.base.model_settings import apply_model_override
+from toolang.base.types.model import ModelOverride, ModelRequest, ModelTarget
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
 from toolang.base.types.message import Message, TextPart
@@ -48,7 +49,12 @@ from toolang.state.prepare import load_agent_state
 from toolang.setup import AgentSetup
 
 from ..accounting import selected_usd_cost
-from ..calls import IncludeResolver, resolve_restart_request, resolve_run_request
+from ..calls import (
+    IncludeResolver,
+    materialize_model_request,
+    resolve_restart_request,
+    resolve_run_request,
+)
 from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin, StepEnd
 from ..records import (
     PreparationControlPayload,
@@ -391,8 +397,11 @@ class RunExecutor:
             ceiling = resolved.ceiling
             model_request = resolved.model
             model = model_request.ref if model_request is not None else None
+            model_override = resolved.model_override
             limits = resolved.limits
             request_id = request.request_id
+        else:
+            model_override = None
         if setup is None or state is None:
             raise TypeError("rerun requires resolved setup and state")
         loop = asyncio.get_running_loop()
@@ -404,6 +413,7 @@ class RunExecutor:
             ceiling=ceiling,
             model=model,
             model_request=model_request,
+            model_override=model_override,
             limits=limits if limits is not None else setup.limits,
         )
         runnable, input, agent_resources, resources = _prepare_run_spec(spec)
@@ -574,6 +584,7 @@ class RunExecutor:
         ceiling: AgentCeiling,
         model: str | None,
         model_request: ModelRequest | None = None,
+        model_override: ModelOverride | None = None,
         limits: RunLimits,
     ) -> RunSpec:
         run = self.store.get_run(run_id=run_id)
@@ -601,6 +612,22 @@ class RunExecutor:
             if model is not None
             else persisted_model_request or persisted_model
         )
+        default_model_request = setup.defaults.model
+        if default_model_request is None:
+            fallback = setup.models.effective_default(None)
+            default_model_request = (
+                ModelRequest(fallback) if fallback is not None else None
+            )
+        selected_model_request = apply_model_override(
+            selected_model_request,
+            default_model_request,
+            model_override,
+        )
+        if selected_model_request is not None:
+            selected_model_request = materialize_model_request(
+                selected_model_request,
+                setup=setup,
+            )
         return RunSpec(
             setup=setup,
             state=state,

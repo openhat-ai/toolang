@@ -17,6 +17,7 @@ from toolang.api.schemas import (
     AuthoredRunRequest,
 )
 from toolang.base.types.model import (
+    ModelOverride,
     ModelParameters,
     ModelRequest,
     ReasoningParameters,
@@ -197,6 +198,18 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
         source="run_source",
         commands=(RunCommand("default", "model", "openai/test"),),
         request_id="rerun_request",
+    )
+    model_override_payload = AuthoredRerunRequest.model_validate(
+        {
+            "request_id": "rerun_model_parameters",
+            "model_override": {"effort": "high"},
+        }
+    )
+    assert parse_authored_rerun("run_source", model_override_payload) == RerunRequest(
+        source="run_source",
+        commands=(),
+        request_id="rerun_model_parameters",
+        model_override=ModelOverride(effort="high"),
     )
 
     with pytest.raises(ValidationError):

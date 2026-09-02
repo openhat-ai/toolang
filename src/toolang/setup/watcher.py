@@ -11,7 +11,7 @@ from pathlib import Path
 
 from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.base.protocols.tool import AgentTool
-from toolang.base.types.model import ModelCatalogSnapshot, ModelInfo
+from toolang.base.types.model import ModelCatalogSnapshot, ModelInfo, ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.plugin.config import merge_plugin_configs
@@ -40,7 +40,10 @@ from toolang.plugin.models.config import (
 from toolang.plugin.models.collections import ModelQueryView
 from toolang.plugin.models.loading import load_model_adapters, load_model_catalogs
 from toolang.plugin.models.provider_resolver import resolve_catalog_providers
-from toolang.plugin.models.resolution import build_model_collection
+from toolang.plugin.models.resolution import (
+    apply_model_parameters,
+    build_model_collection,
+)
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.loading import load_tools
 
@@ -119,7 +122,7 @@ class SetupWatcher:
         sandbox: str = "host",
         model_catalog: Path | None = None,
         allow_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
-        default_overrides: Mapping[str, str | None] | None = None,
+        default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
         limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     ) -> None:
         self.layout = layout
@@ -614,7 +617,8 @@ def _build_setup(
     if allow.tools is not None:
         tool_collection = tool_collection.match(allow.tools).compact()
     if defaults.model is not None:
-        models.resolve(defaults.model)
+        entry = models.resolve(defaults.model.ref)
+        apply_model_parameters(models, entry.target, defaults.model.parameters)
     all_providers = dict(resolved_catalog.providers)
     provider_models: dict[str, set[str]] = {}
     for entry in models.entries:

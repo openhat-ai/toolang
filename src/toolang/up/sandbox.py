@@ -18,6 +18,7 @@ from weakref import WeakKeyDictionary
 
 from toolang.base.errors import SandboxLaunchError
 from toolang.base.protocols.sandbox import Sandbox
+from toolang.base.types.model import ModelOverride
 from toolang.base.types.progress import (
     ProgressEvent,
     ProgressSink,
@@ -98,7 +99,7 @@ async def resolve_launch(
     endpoint_host: str | None = None,
     port: int | None = None,
     ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
-    default_overrides: Mapping[str, str | None] | None = None,
+    default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
     limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     file_inboxes: Sequence[Path] | None = None,
     dev: Path | None = None,

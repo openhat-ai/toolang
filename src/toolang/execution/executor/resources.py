@@ -50,7 +50,7 @@ def agent_model_targets(
     if ceiling.models is not None:
         models = models.match(ceiling.models) if ceiling.models else ModelCollection()
     targets = tuple((entry.ref, entry.target) for entry in models.entries)
-    default = setup.defaults.model
+    default = setup.defaults.model.ref if setup.defaults.model is not None else None
     if default is not None and not models.contains(default):
         raise ToolangError("default model is outside the selectable model collection")
     return default, targets

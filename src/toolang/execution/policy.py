@@ -5,17 +5,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
-import re
 import shlex
 from types import MappingProxyType
 from typing import cast
 
 from toolang.base.errors import ToolangError
-from toolang.base.types.model import (
-    ModelRequest,
-    ReasoningEffort,
-    ReasoningParameters,
-)
+from toolang.base.model_settings import apply_model_override, parse_model_body
+from toolang.base.types.model import ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.query import resolve_query_sentinels
 from toolang.lang.input import (
@@ -40,8 +36,6 @@ from .types import (
     AllowOverride,
     LimitField,
     LimitOverride,
-    ModelEffort,
-    ModelOverride,
     RunCommand,
     RunOverride,
     SessionSetting,
@@ -53,10 +47,6 @@ _CAP_KIND_BY_FIELD = {
     "services": "service",
     "prompts": "prompt",
 }
-_BUDGET_RE = re.compile(r"0|[1-9][0-9]*\Z")
-_REASONING_EFFORTS = frozenset(
-    {"none", "minimal", "low", "medium", "high", "xhigh", "max", "default"}
-)
 # Setting name -> (standalone setting body, independently useful override bodies).
 SETTING_OVERRIDE_FORMS: Mapping[str, tuple[str, tuple[str, ...]]] = MappingProxyType(
     {
@@ -98,7 +88,7 @@ def parse_setting_override(command: str, body: str) -> RunOverride:
     except ValueError as error:
         raise ValueError(str(error)) from error
     if command == "model":
-        return _model_override(tokens)
+        return RunOverride(model=parse_model_body(body))
     if command in {"runnable", "agic", "flow"}:
         override, named = _runnable_override(command, tokens)
         if named:
@@ -259,7 +249,7 @@ def apply_session_setting(
 ) -> SessionSetting:
     """Apply one validated slash setting body atomically to a session."""
 
-    model = _apply_model_override(current.model, surface.model, update.model)
+    model = apply_model_override(current.model, surface.model, update.model)
     runnable = current.runnable
     if update.runnable is not None:
         runnable = surface.runnable if update.runnable == "default" else update.runnable
@@ -275,7 +265,7 @@ def materialize_run_setting(
 ) -> tuple[tuple[AgentCeiling, ...], SessionSetting]:
     """Materialize one input-local override over concrete session settings."""
 
-    model = _apply_model_override(session.model, surface.model, override.model)
+    model = apply_model_override(session.model, surface.model, override.model)
     runnable = session.runnable
     if override.runnable is not None:
         runnable = (
@@ -306,7 +296,13 @@ def resolve_commands(
     """Resolve retained low-level command layers for execution protocols."""
 
     base = RunBindings(
-        model=surface.model if surface.model is not None else setup.defaults.model,
+        model=(
+            surface.model
+            if surface.model is not None
+            else setup.defaults.model.ref
+            if setup.defaults.model is not None
+            else None
+        ),
         runnable=(
             surface.runnable
             if surface.runnable is not None
@@ -353,7 +349,8 @@ def _try_parse_override(
     if name not in SETTING_OVERRIDE_FORMS:
         return None
     if name == "model":
-        return _model_override(body), (), None
+        raw_body = line[len(tokens[0]) :].lstrip(" \t")
+        return RunOverride(model=parse_model_body(raw_body)), (), None
     if name in {"runnable", "agic", "flow"}:
         raw_body = line[len(tokens[0]) :].lstrip(" \t")
         header = parse_call_input_header(raw_body, label=f":{name} runnable call")
@@ -368,39 +365,6 @@ def _try_parse_override(
     if name == "limit":
         return _limit_override(body), (), None
     raise AssertionError(f"unhandled setting override: {name}")
-
-
-def _model_override(tokens: Sequence[str]) -> RunOverride:
-    if not tokens:
-        raise ValueError(":model requires an identity or effort assignment")
-    identity: str | None = None
-    effort: ModelEffort | None = None
-    for index, token in enumerate(tokens):
-        if "=" not in token:
-            if index != 0 or identity is not None:
-                raise ValueError("model identity must be the first token")
-            sentinel = token.lower()
-            if sentinel == "none":
-                raise ValueError(
-                    "model identity 'none' was removed; use :model unset for "
-                    "a model-free run"
-                )
-            identity = sentinel if sentinel in {"default", "unset"} else token
-            if identity not in {"default", "unset"}:
-                ModelRequest(identity)
-            continue
-        field, raw = _assignment(token, command=":model")
-        if field != "effort":
-            raise ValueError(f"unknown model parameter: {field}")
-        if effort is not None:
-            raise ValueError("duplicate model parameter: effort")
-        effort = _effort_value(raw)
-    return RunOverride(
-        model=ModelOverride(
-            identity=identity,
-            effort=effort,
-        )
-    )
 
 
 def _runnable_override(
@@ -460,47 +424,6 @@ def _limit_override(tokens: Sequence[str]) -> RunOverride:
             )
         )
     return RunOverride(limits=tuple(values))
-
-
-def _effort_value(raw: str) -> ModelEffort:
-    if raw == "auto":
-        return "auto"
-    if _BUDGET_RE.fullmatch(raw):
-        return int(raw)
-    if raw in _REASONING_EFFORTS:
-        return cast(ReasoningEffort, raw)
-    raise ValueError(f"unknown reasoning effort: {raw!r}")
-
-
-def _apply_model_override(
-    current: ModelRequest | None,
-    surface: ModelRequest | None,
-    override: ModelOverride | None,
-) -> ModelRequest | None:
-    if override is None:
-        return current
-    if override.identity == "default":
-        model = surface
-    elif override.identity == "unset":
-        model = None
-    elif override.identity is not None:
-        model = ModelRequest(override.identity)
-    else:
-        model = current
-    if override.effort is None:
-        return model
-    if model is None:
-        raise ValueError("model effort requires an effective model")
-    if override.effort == "auto":
-        reasoning = None
-    elif isinstance(override.effort, int):
-        reasoning = ReasoningParameters(budget_tokens=override.effort)
-    else:
-        reasoning = ReasoningParameters(effort=override.effort)
-    return replace(
-        model,
-        parameters=replace(model.parameters, reasoning=reasoning),
-    )
 
 
 def _replace_allow_fields(current: AgentCeiling, update: RunOverride) -> AgentCeiling:

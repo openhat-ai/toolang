@@ -57,6 +57,7 @@ from .policy import (
 _RUN_DETAIL_ADAPTER = TypeAdapter(RunDetail)
 _THREAD_INFO_ADAPTER = TypeAdapter(ThreadInfo)
 _RUN_POLICY_ADAPTER = TypeAdapter(RunPolicy)
+_MODEL_REQUEST_ADAPTER = TypeAdapter(ModelRequest)
 _RECOVERY_DELAYS = (0.5, 1.0, 2.0)
 _RECOVERY_INTERVAL = 5.0
 
@@ -992,14 +993,18 @@ def _session_setting(payload: object) -> SessionSetting:
         raise _RemoteChatProtocolError("remote chat run defaults returned invalid data")
     model = body.get("model")
     runnable = body.get("runnable")
-    if model is not None and (not isinstance(model, str) or not model):
-        raise _RemoteChatProtocolError(
-            "remote chat run defaults returned an invalid model"
-        )
     if runnable is not None and (not isinstance(runnable, str) or not runnable):
         raise _RemoteChatProtocolError(
             "remote chat run defaults returned an invalid runnable"
         )
+    try:
+        model_request = (
+            _MODEL_REQUEST_ADAPTER.validate_python(model) if model is not None else None
+        )
+    except ValidationError as exc:
+        raise _RemoteChatProtocolError(
+            "remote chat run defaults returned an invalid model"
+        ) from exc
     try:
         policy = _RUN_POLICY_ADAPTER.validate_python(body.get("policy"))
     except ValidationError as exc:
@@ -1007,7 +1012,7 @@ def _session_setting(payload: object) -> SessionSetting:
             "remote chat run defaults returned invalid policy"
         ) from exc
     return SessionSetting(
-        model=ModelRequest(model) if model is not None else None,
+        model=model_request,
         runnable=runnable,
         limits=policy.limits,
     )

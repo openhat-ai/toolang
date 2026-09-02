@@ -14,6 +14,7 @@ from pydantic import TypeAdapter
 
 from toolang.base.types.message import Message
 from toolang.base.types.model import (
+    ModelOverride,
     ModelParameters,
     ModelRequest,
     ReasoningParameters,
@@ -27,6 +28,7 @@ from toolang.execution.events import (
     run_event_to_data,
 )
 from toolang.execution.records import SteerControlPayload, CancelControlPayload
+from toolang.execution import remote
 from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.schemas import (
     ControlInfo,
@@ -356,6 +358,21 @@ def test_remote_client_reuses_the_run_stream_protocol_for_restarts(
         await http.aclose()
 
     asyncio.run(scenario())
+
+
+def test_remote_rerun_serializes_a_sparse_model_override() -> None:
+    assert remote._restart_request_data(
+        RerunRequest(
+            source="run_source",
+            commands=(),
+            request_id="rerun_request",
+            model_override=ModelOverride(effort="high"),
+        )
+    ) == {
+        "request_id": "rerun_request",
+        "commands": [],
+        "model_override": {"identity": None, "effort": "high"},
+    }
 
 
 @pytest.mark.parametrize(

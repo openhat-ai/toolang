@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import os
 from pathlib import Path
 
 import httpx
@@ -20,6 +21,12 @@ from toolang.state.watcher import StateWatcher
 from toolang.up.types import AgentServerRef
 
 from .remote_runtime import inspect_remote_runtime
+from .context import load_runtime_environ
+from .policy import (
+    resolve_ceiling_overrides,
+    resolve_default_overrides,
+    resolve_limit_overrides,
+)
 
 
 @asynccontextmanager
@@ -47,12 +54,28 @@ async def acquire_run_client(
         return
 
     store = RunStore(layout.run_store)
+    environ = load_runtime_environ(layout, base_environ=os.environ)
+    allow_overrides = resolve_ceiling_overrides(environ)
     setup = SetupWatcher(
         layout,
         sandbox="host",
         model_catalog=model_catalog,
+        allow_overrides={
+            name: value
+            for name, value in allow_overrides.items()
+            if name in {"models", "tools"}
+        },
+        default_overrides=resolve_default_overrides(environ),
+        limit_overrides=resolve_limit_overrides(environ),
     )
-    state = StateWatcher(layout)
+    state = StateWatcher(
+        layout,
+        allow_overrides={
+            name: value
+            for name, value in allow_overrides.items()
+            if name in {"psyches", "skills", "services", "prompts"}
+        },
+    )
     try:
         await asyncio.gather(state.refresh(), setup.refresh())
         executor = RunExecutor(

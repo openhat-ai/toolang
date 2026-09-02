@@ -11,7 +11,11 @@ import click
 import pytest
 
 from toolang.base.types.message import TextPart
-from toolang.base.types.model import ModelRequest
+from toolang.base.types.model import (
+    ModelParameters,
+    ModelRequest,
+    ReasoningParameters,
+)
 from toolang.base.types.policy import RunPolicy
 from toolang.cli.common.output import shorten_home_path
 from toolang.cli.toolang.commands.chat import main as chat
@@ -38,13 +42,16 @@ _HOST_DESCRIPTION = "macOS 27.0 arm64"
 
 
 def test_chat_default_model_none_clears_the_configured_preference() -> None:
-    update = chat._chat_session_override(
+    update, clear_runnable = chat._chat_session_override(
         allow_options=None,
+        model_body=None,
+        runnable=None,
         default_options=["model=none"],
         limit_options=None,
     )
 
     assert update.model == ModelOverride(identity="unset")
+    assert not clear_runnable
 
 
 class _Client:
@@ -367,6 +374,85 @@ def test_interactive_tty_passes_the_unmodified_thread_to_the_tui(
         "client": client,
     }
     assert client.created == 0
+
+
+def test_chat_invocation_model_body_and_runnable_initialize_the_session(
+    monkeypatch: Any,
+) -> None:
+    client = _Client()
+    captured: dict[str, object] = {}
+
+    @contextmanager
+    def runtime(*_args: object, **_kwargs: object) -> Iterator[_Client]:
+        yield client
+
+    def open_tui(
+        _ctx: object,
+        *,
+        thread_id: str | None,
+        setting: SessionSetting,
+        client: object,
+    ) -> None:
+        del thread_id, client
+        captured["setting"] = setting
+
+    monkeypatch.setattr(chat.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(chat.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(chat, "_chat_runtime", runtime)
+    monkeypatch.setattr(chat, "_chat_interactive_prompt_toolkit", open_tui)
+
+    chat._chat_interactive(
+        object(),  # type: ignore[arg-type]
+        thread_id=None,
+        model_body="test/other effort=high",
+        runnable="flow:review",
+    )
+
+    assert captured["setting"] == SessionSetting(
+        model=ModelRequest(
+            "test/other",
+            ModelParameters(reasoning=ReasoningParameters(effort="high")),
+        ),
+        runnable="flow:review",
+    )
+
+
+def test_chat_hidden_default_model_compatibility_warns_once(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    override, clear_runnable = chat._chat_session_override(
+        allow_options=None,
+        model_body=None,
+        runnable=None,
+        default_options=["model=test/model effort=high"],
+        limit_options=None,
+    )
+
+    assert override.model is not None
+    assert override.model.identity == "test/model"
+    assert override.model.effort == "high"
+    assert not clear_runnable
+    assert capsys.readouterr().err.count("deprecated") == 1
+
+    cleared, clear_runnable = chat._chat_session_override(
+        allow_options=None,
+        model_body=None,
+        runnable=None,
+        default_options=["runnable=none"],
+        limit_options=None,
+    )
+    assert cleared.empty
+    assert clear_runnable
+    assert capsys.readouterr().err.count("deprecated") == 1
+
+    with pytest.raises(ValueError, match="cannot be combined"):
+        chat._chat_session_override(
+            allow_options=None,
+            model_body="test/model",
+            runnable=None,
+            default_options=["model=test/model"],
+            limit_options=None,
+        )
 
 
 def test_chat_runtime_builds_process_local_execution_resources(

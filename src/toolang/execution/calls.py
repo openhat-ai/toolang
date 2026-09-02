@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from toolang.base.types.message import Part
-from toolang.base.types.model import ModelRequest
+from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.lang.input import (
     NamedInputSources,
@@ -30,6 +30,7 @@ from toolang.state.state import (
 from toolang.plugin.models.resolution import apply_model_parameters
 
 from .policy import (
+    apply_session_setting,
     commands_from_run_override,
     materialize_run_setting,
     parse_policy_prefix,
@@ -55,6 +56,7 @@ class RestartSpec:
     state: AgentState | StatePublication
     ceiling: AgentCeiling
     model: ModelRequest | None
+    model_override: ModelOverride | None
     limits: RunLimits
 
 
@@ -118,7 +120,7 @@ def resolve_restart_request(
     ceilings, bindings, limits = resolve_commands(setup, run=request.commands)
     if len(ceilings) > 1:  # pragma: no cover - one request contributes one layer
         raise RuntimeError("restart request resolved multiple run ceilings")
-    model = _rerun_model_request(request, bindings)
+    model = _rerun_model_request(request, bindings, setup=setup)
     if model is not None:
         model = (
             require_exact_model_request(model, setup=setup)
@@ -130,6 +132,9 @@ def resolve_restart_request(
         state=state,
         ceiling=ceilings[0] if ceilings else AgentCeiling(),
         model=model,
+        model_override=(
+            request.model_override if isinstance(request, RerunRequest) else None
+        ),
         limits=limits,
     )
 
@@ -137,6 +142,8 @@ def resolve_restart_request(
 def _rerun_model_request(
     request: RetryRequest | RerunRequest,
     bindings: RunBindings,
+    *,
+    setup: AgentSetup,
 ) -> ModelRequest | None:
     """Return only an explicit rerun replacement, never a setup default."""
 
@@ -144,11 +151,22 @@ def _rerun_model_request(
         return None
     if request.model is not None:
         return request.model
-    replaces_model = any(
-        command.group == "default" and command.field == "model"
-        for command in request.commands
+    model_command = next(
+        (
+            command
+            for command in request.commands
+            if command.group == "default" and command.field == "model"
+        ),
+        None,
     )
-    if not replaces_model or bindings.model is None:
+    if model_command is None:
+        return None
+    if model_command.value is None:
+        if setup.defaults.model is not None:
+            return setup.defaults.model
+        fallback = setup.models.effective_default(None)
+        return ModelRequest(fallback) if fallback is not None else None
+    if bindings.model is None:
         return None
     return ModelRequest(bindings.model)
 
@@ -163,6 +181,7 @@ def resolve_spec(
     default_runnable: str,
     surface: RunBindings = RunBindings(),
     session_commands: Sequence[RunCommand] = (),
+    session_override: RunOverride = RunOverride(),
     surface_named: Mapping[str, object] | None = None,
     surface_named_sources: NamedInputSources = (),
     include: IncludeResolver | None = None,
@@ -178,9 +197,7 @@ def resolve_spec(
         model=(
             ModelRequest(surface.model)
             if surface.model is not None
-            else ModelRequest(setup.defaults.model)
-            if setup.defaults.model is not None
-            else None
+            else setup.defaults.model
         ),
         runnable=(
             surface.runnable
@@ -189,11 +206,29 @@ def resolve_spec(
         ),
         limits=setup.limits,
     )
+    model_command = next(
+        (
+            command
+            for command in session_commands
+            if command.group == "default" and command.field == "model"
+        ),
+        None,
+    )
+    session_model = surface_setting.model
+    if model_command is not None and model_command.value is not None:
+        session_model = (
+            ModelRequest(bindings.model) if bindings.model is not None else None
+        )
     session_setting = SessionSetting(
-        model=ModelRequest(bindings.model) if bindings.model is not None else None,
+        model=session_model,
         runnable=bindings.runnable,
         allow=session_ceilings[0] if session_ceilings else AgentCeiling(),
         limits=limits,
+    )
+    session_setting = apply_session_setting(
+        surface_setting,
+        session_setting,
+        session_override,
     )
     ceilings, effective = materialize_run_setting(
         surface_setting,
@@ -223,7 +258,10 @@ def resolve_spec(
         surface_named_sources=surface_named_sources,
         include=include,
         authored_commands=commands_from_run_override(override),
-        authored_session_commands=tuple(session_commands),
+        authored_session_commands=(
+            *session_commands,
+            *commands_from_run_override(session_override),
+        ),
     )
 
 

@@ -60,8 +60,9 @@ def models(
         selected = setup.models.match(query) if query is not None else setup.models
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    preferred = setup.defaults.model.ref if setup.defaults.model is not None else None
     return {
-        "default": selected.effective_default(setup.defaults.model),
+        "default": selected.effective_default(preferred),
         "items": [
             _model_item(
                 ref=ref,

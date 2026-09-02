@@ -121,7 +121,7 @@ toolang alice inspect run_ppkp9e94 steps
 toolang alice inspect run_ppkp9e94.0/output/value
 toolang alice inspect run_ppkp9e94.0 call
 toolang alice retry run_ppkp9e94 --limit tokens=200000 --limit time=900
-toolang alice rerun run_ppkp9e94 --default model=openai/gpt-5
+toolang alice rerun run_ppkp9e94 --model 'openai/gpt-5 effort=high'
 toolang alice steer run_ppkp9e94 "Use the smaller patch"
 toolang alice cancel term_3nprht9x
 toolang alice rewind run_ppkp9e94
@@ -240,7 +240,8 @@ Behavior:
   already-running compatible AgentServer is attached instead
 - `--dev PATH` installs Toolang in a newly started guest from one wheel; a
   directory selects its newest Toolang wheel recursively
-- `--default model=REF` supplies one exact invocation model binding
+- `--model MODEL_BODY` supplies an invocation model identity and typed
+  parameters, for example `--model 'openai/gpt-5 effort=high'`
 - `--limit FIELD=VALUE` overrides one run-limit field; it may be repeated
 - `--allow COLLECTION=QUERY` sets one of `models`, `tools`, `psyches`, `skills`,
   `services`, or `prompts` and may be repeated
@@ -550,7 +551,7 @@ tools = ["shell/*"]
 skills = ["reviewer"]
 
 [default]
-model = "gateway/chat"
+model = "gateway/chat effort=high"
 runnable = "agic:chat"
 
 [limit]
@@ -562,10 +563,18 @@ time = 900
 ```
 
 Limit fields are non-negative. Quoted `"none"` disables a limit. Empty allow
-arrays deny all resources in that field; `"none"` clears a default binding.
-Text CLI/environment values use `none` for an empty allow set, a cleared
-binding, or an unlimited limit, according to the target field. `all` removes
-an allow restriction. Empty text is always invalid.
+arrays deny all resources in that field. Text CLI/environment values use
+`none` for an empty allow set, a cleared runnable, or an unlimited limit,
+according to the target field. Models use canonical `unset`; legacy `none` in
+Setup default sources is normalized to it. `all` removes an allow restriction.
+Empty text is always invalid.
+
+Default model values use one shared model body across TOML,
+`TOOLANG_DEFAULT_MODEL`, and startup `--default model=BODY`. A body contains an
+optional exact identity followed by typed assignments such as `effort=high`,
+`effort=4096`, or `effort=auto`. Setup publishes the resulting complete model
+request only after validating it against the effective model. Script, Chat,
+and rerun invocation options use `--model BODY` above that Setup default.
 
 The precedence order is built-in values, root config, agent-home config,
 runtime environment, CLI, then any request-level binding or limit fields.
@@ -1044,8 +1053,8 @@ that needs another presentation shape adapts these events client-side; the API
 does not maintain a second chat event vocabulary.
 
 The CLI command for interactive chat is `toolang <agent> chat [thread]
-[--sandbox <selector>] [--allow COLLECTION=QUERY] [--limit FIELD=VALUE]
-[--default FIELD=VALUE]`.
+[--sandbox <selector>] [--model MODEL_BODY] [--runnable RUNNABLE]
+[--allow COLLECTION=QUERY] [--limit FIELD=VALUE]`.
 Without a thread id, the TUI creates a terminal chat thread on first input. With
 a thread id, it continues that thread. A stopped resident, roaming agent, or
 visiting agent uses embedded execution through `LocalRunClient`. A healthy
@@ -1245,9 +1254,11 @@ terminal root run. Retry reopens that run from an optional canonical step-path
 `anchor`; omitting it selects the latest retryable step. Rerun starts a new root
 run from the source invocation and replaces the source in the visible thread
 projection. Both accept optional `request_id` and partial `limits`; only rerun
-accepts an optional exact `model` replacement, while retry preserves the
-persisted model request. Both return `202 Accepted` and execute on the server's
-owner event loop.
+accepts either an optional exact `model` replacement or a sparse
+`model_override` with `identity` and `effort`, while retry preserves the
+persisted model request. The two rerun fields are mutually exclusive, and a
+sparse override is applied to the source run's complete persisted request.
+Both return `202 Accepted` and execute on the server's owner event loop.
 
 Thread `rewind` and `fork` request bodies take an optional `run_id` anchor and
 `request_id`. An omitted run id selects the last visible run. Task and chore
@@ -1311,10 +1322,10 @@ catalog route and replaces that target's complete reasoning choice. Named input
 names must be unique. Unknown fields and invalid combinations return `422`; a
 missing thread returns `404`.
 
-`GET /api/v1/runs/defaults` returns one concrete `model`, `runnable`, and
-materialized `policy` for clients to adopt as session-owned defaults. Changing
-client session state does not call a validation endpoint; validation occurs on
-the next complete run submission.
+`GET /api/v1/runs/defaults` returns one concrete `model` request, including its
+typed `parameters`, plus `runnable` and materialized `policy` for clients to
+adopt as session-owned defaults. Changing client session state does not call a
+validation endpoint; validation occurs on the next complete run submission.
 
 `GET /api/v1/threads/{thread_id}/result` returns the newest succeeded root
 `RunDetail` with a nonempty resolved output. An unknown thread and a known

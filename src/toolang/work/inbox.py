@@ -132,7 +132,11 @@ async def run(
                         thread=submission.record.thread_id,
                         bindings=RunBindings(
                             runnable=runnable_ref,
-                            model=setup.defaults.model,
+                            model=(
+                                setup.defaults.model.ref
+                                if setup.defaults.model is not None
+                                else None
+                            ),
                         ),
                         limits=setup.limits,
                         input=resolve_runnable_input(

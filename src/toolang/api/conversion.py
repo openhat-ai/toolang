@@ -61,6 +61,7 @@ def parse_authored_rerun(
             commands=tuple(_parse_run_command(item) for item in payload.commands),
             request_id=payload.request_id,
             model=payload.model,
+            model_override=payload.model_override,
         )
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

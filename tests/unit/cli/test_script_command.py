@@ -11,6 +11,7 @@ import pytest
 from click.utils import strip_ansi
 
 from toolang.base.errors import ToolangError
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.progress import ProgressEvent
 from toolang.cli.toolang.commands import script
 from toolang.common.layout import AgentLayout
@@ -53,8 +54,8 @@ def test_script_binds_options_arguments_and_primary_input(
         [
             str(source),
             "demo",
-            "--default",
-            "model=openai/gpt",
+            "--model",
+            "openai/gpt effort=high",
             "--allow",
             "models=openai/*,deepseek/*",
             "--allow",
@@ -91,7 +92,8 @@ def test_script_binds_options_arguments_and_primary_input(
     assert captured["source_path"] == source.resolve()
     assert captured["runnable"] == "demo"
     assert captured["runnable_kind"] == "agic"
-    assert captured["default_options"] == ("model=openai/gpt",)
+    assert captured["model_body"] == "openai/gpt effort=high"
+    assert captured["default_options"] == ()
     assert captured["allow_options"] == (
         "models=openai/*,deepseek/*",
         "models=openai/*",
@@ -115,6 +117,42 @@ def test_script_binds_options_arguments_and_primary_input(
     input = captured["input"]
     assert isinstance(input, RunnableInputRaw)
     assert input._ == "hello world"
+
+
+def test_script_model_body_builds_one_invocation_session_layer(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    override = script._script_session_override(
+        model_body="test/model effort=4096",
+        allow_options=("models=test/*",),
+        default_options=(),
+        limit_options=("tokens=1000",),
+    )
+
+    assert override.model is not None
+    assert override.model.identity == "test/model"
+    assert override.model.effort == 4096
+    assert override.allow[0].field == "models"
+    assert override.limits[0].value == 1000
+    assert capsys.readouterr().err == ""
+
+    compatibility = script._script_session_override(
+        model_body=None,
+        allow_options=(),
+        default_options=("model=test/model effort=high",),
+        limit_options=(),
+    )
+    assert compatibility.model is not None
+    assert compatibility.model.effort == "high"
+    assert capsys.readouterr().err.count("deprecated") == 1
+
+    with pytest.raises(ValueError, match="cannot be combined"):
+        script._script_session_override(
+            model_body="test/model",
+            allow_options=(),
+            default_options=("model=test/model",),
+            limit_options=(),
+        )
 
 
 def test_script_reads_primary_input_from_stdin(
@@ -473,8 +511,7 @@ def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> Non
                     override=override,
                     input=input,
                     raw_named=(NamedInputSource("count", "1"),),
-                    allow_options=(),
-                    default_options=(),
+                    session_override=RunOverride(),
                     quiet=True,
                 )
             )
@@ -522,9 +559,10 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "--verbose" not in stdout
     assert "-v" not in stdout
     positions = tuple(
-        stdout.index(option) for option in ("--allow", "--limit", "--default")
+        stdout.index(option) for option in ("--allow", "--limit", "--model")
     )
     assert positions == tuple(sorted(positions))
+    assert "--default" not in stdout
 
 
 def test_script_hides_default_and_generated_agics(
@@ -725,6 +763,7 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
         input=RunnableInputRaw(_="hello"),
         raw_named=(NamedInputSource("count", "2"),),
         allow_options=(),
+        model_body=None,
         default_options=(),
         limit_options=(),
         sandbox="docker",
@@ -786,6 +825,7 @@ def test_embedded_script_prepare_failure_uses_the_operational_failure_block(
         input=RunnableInputRaw(_="hello"),
         raw_named=(NamedInputSource("count", "2"),),
         allow_options=(),
+        model_body=None,
         default_options=(),
         limit_options=(),
         sandbox="host",
@@ -862,9 +902,9 @@ def test_remote_script_cancellation_cancels_the_accepted_run(
         "_remote_script_defaults",
         lambda *_args, **_kwargs: asyncio.sleep(
             0,
-            result=(
-                script.RunBindings(model="test/scripted", runnable="agic:demo"),
-                script.RunPolicy(),
+            result=script.SessionSetting(
+                model=ModelRequest("test/scripted"),
+                runnable="agic:demo",
             ),
         ),
     )
@@ -880,9 +920,7 @@ def test_remote_script_cancellation_cancels_the_accepted_run(
                 override=RunOverride(),
                 input=RunnableInputRaw(_="hello"),
                 raw_named=(NamedInputSource("count", "2"),),
-                allow_options=(),
-                default_options=(),
-                limit_options=(),
+                session_override=RunOverride(),
                 quiet=True,
             )
         )

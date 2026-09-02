@@ -21,6 +21,7 @@ ReasoningEffort: TypeAlias = Literal[
     "max",
     "default",
 ]
+ModelEffort: TypeAlias = ReasoningEffort | int | Literal["auto"]
 _REASONING_EFFORTS = frozenset(
     {"none", "minimal", "low", "medium", "high", "xhigh", "max", "default"}
 )
@@ -93,6 +94,36 @@ class ModelRequest:
             raise ValueError(f"model request ref must be exact: {self.ref!r}")
         if not isinstance(self.parameters, ModelParameters):
             raise TypeError("model request parameters must be ModelParameters")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelOverride:
+    """Sparse model identity and typed parameter changes from one input source."""
+
+    identity: str | None = None
+    effort: ModelEffort | None = None
+
+    def __post_init__(self) -> None:
+        if self.identity is not None:
+            if self.identity == "none":
+                raise ValueError(
+                    "model identity 'none' was removed; use 'unset' for a "
+                    "model-free selection"
+                )
+            if self.identity not in {"default", "unset"}:
+                ModelRequest(self.identity)
+        if self.effort is not None:
+            if isinstance(self.effort, bool):
+                raise TypeError("model effort must be a level, token budget, or auto")
+            if isinstance(self.effort, int):
+                if self.effort < 0:
+                    raise ValueError("model effort token budget must be non-negative")
+            elif self.effort not in {*_REASONING_EFFORTS, "auto"}:
+                raise ValueError(f"unknown model effort: {self.effort!r}")
+        if self.identity is None and self.effort is None:
+            raise ValueError("model override requires an identity or effort")
+        if self.identity == "unset" and self.effort is not None:
+            raise ValueError("model unset cannot combine with parameters")
 
 
 @dataclass(frozen=True, slots=True)

@@ -18,8 +18,9 @@ from pydantic import TypeAdapter, ValidationError
 import typer
 from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 
-from toolang.base.types.model import ModelRequest
-from toolang.base.types.policy import AgentCeiling, RunBindings, RunPolicy
+from toolang.base.model_settings import parse_model_body
+from toolang.base.types.model import ModelOverride, ModelRequest
+from toolang.base.types.policy import RunBindings, RunPolicy
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
@@ -33,7 +34,7 @@ from toolang.cli.common.model_selection import (
     materialize_model_selection,
 )
 from toolang.execution.calls import parse_call, resolve_spec
-from toolang.execution.policy import materialize_policy, materialize_run_setting
+from toolang.execution.policy import apply_session_setting, materialize_run_setting
 from toolang.execution.executor import LocalRunHandle, RunExecutor
 from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.records import RunRecord
@@ -41,7 +42,10 @@ from toolang.execution.schemas import RunRequest, RunnableRequest, ThreadInfo
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import (
-    RunCommand,
+    AllowField,
+    AllowOverride,
+    LimitField,
+    LimitOverride,
     RunOverride,
     SessionSetting,
     ThreadPrefix,
@@ -82,6 +86,7 @@ _UNPERSISTED_THREAD = "<unpersisted-script-thread>"
 _RUNNABLES_PANEL = "Runnables"
 _THREAD_INFO_ADAPTER = TypeAdapter(ThreadInfo)
 _RUN_POLICY_ADAPTER = TypeAdapter(RunPolicy)
+_MODEL_REQUEST_ADAPTER = TypeAdapter(ModelRequest)
 
 
 class _HelpArgument(TyperArgument):
@@ -203,6 +208,7 @@ def _runnable_command(
     def callback(
         items: tuple[str, ...],
         allow: tuple[str, ...],
+        model: str | None,
         default: tuple[str, ...],
         limit: tuple[str, ...],
         sandbox: str | None,
@@ -224,6 +230,7 @@ def _runnable_command(
             input=input,
             raw_named=raw_named,
             allow_options=allow,
+            model_body=model,
             default_options=default,
             limit_options=limit,
             sandbox=sandbox,
@@ -249,11 +256,18 @@ def _runnable_command(
             help="Set FIELD=VALUE. Repeat for another field.",
         ),
         TyperOption(
+            param_decls=["--model"],
+            type=str,
+            default=None,
+            metavar="MODEL_BODY",
+            help="Set the model identity and parameters for this run.",
+        ),
+        TyperOption(
             param_decls=["--default"],
             type=str,
             multiple=True,
             default=(),
-            help="Set FIELD=VALUE. Repeat for another field.",
+            hidden=True,
         ),
         TyperOption(
             param_decls=["--sandbox"],
@@ -510,6 +524,7 @@ def _run(
     input: RunnableInputRaw,
     raw_named: NamedInputSources,
     allow_options: tuple[str, ...],
+    model_body: str | None,
     default_options: tuple[str, ...],
     limit_options: tuple[str, ...],
     sandbox: str | None,
@@ -526,7 +541,12 @@ def _run(
     runnable_ref = f"{runnable_kind}:{runnable}"
     try:
         layout = agents.materialize_roaming_program(source_path)
-        _reject_runnable_option(default_options)
+        session_override = _script_session_override(
+            model_body=model_body,
+            allow_options=allow_options,
+            default_options=default_options,
+            limit_options=limit_options,
+        )
         with acquire_agent_server(
             layout,
             sandbox=sandbox,
@@ -561,9 +581,7 @@ def _run(
                         override=override,
                         input=input,
                         raw_named=raw_named,
-                        allow_options=allow_options,
-                        default_options=default_options,
-                        limit_options=limit_options,
+                        session_override=session_override,
                         quiet=quiet,
                     )
                 )
@@ -578,9 +596,7 @@ def _run(
                         override=override,
                         input=input,
                         raw_named=raw_named,
-                        allow_options=allow_options,
-                        default_options=default_options,
-                        limit_options=limit_options,
+                        session_override=session_override,
                         quiet=quiet,
                         on_accept=accepted.append,
                     )
@@ -624,11 +640,44 @@ def _run(
     )
 
 
-def _reject_runnable_option(default_options: tuple[str, ...]) -> None:
-    if "runnable" in resolve_default_overrides({}, default_options):
+def _script_session_override(
+    *,
+    model_body: str | None,
+    allow_options: tuple[str, ...],
+    default_options: tuple[str, ...],
+    limit_options: tuple[str, ...],
+) -> RunOverride:
+    ceilings = resolve_ceiling_overrides({}, allow_options)
+    defaults = resolve_default_overrides({}, default_options)
+    limits = resolve_limit_overrides({}, limit_options)
+    if "runnable" in defaults:
         raise ValueError(
             "--default runnable does not apply when a script runnable is explicit"
         )
+    compatibility_model = defaults.get("model")
+    if compatibility_model is not None and not isinstance(
+        compatibility_model, ModelOverride
+    ):
+        raise TypeError("--default model must resolve to a model override")
+    if model_body is not None and compatibility_model is not None:
+        raise ValueError("--model cannot be combined with --default model=...")
+    if compatibility_model is not None:
+        typer.echo("warning: --default model=... is deprecated; use --model", err=True)
+    return RunOverride(
+        model=(
+            parse_model_body(model_body)
+            if model_body is not None
+            else compatibility_model
+        ),
+        allow=tuple(
+            AllowOverride(cast(AllowField, field), value)
+            for field, value in ceilings.items()
+        ),
+        limits=tuple(
+            LimitOverride(cast(LimitField, field), value)
+            for field, value in limits.items()
+        ),
+    )
 
 
 async def _execute_remote(
@@ -640,9 +689,7 @@ async def _execute_remote(
     override: RunOverride,
     input: RunnableInputRaw,
     raw_named: NamedInputSources,
-    allow_options: tuple[str, ...],
-    default_options: tuple[str, ...],
-    limit_options: tuple[str, ...],
+    session_override: RunOverride,
     quiet: bool,
     on_accept: Callable[[str], None] | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
@@ -651,12 +698,6 @@ async def _execute_remote(
 
     environ = load_runtime_environ(layout, base_environ=os.environ)
     request_input = _remote_script_input(input, raw_named=raw_named)
-    session_commands = _remote_script_session_commands(
-        runnable=runnable,
-        allow_options=allow_options,
-        default_options=default_options,
-        limit_options=limit_options,
-    )
     tracer = (
         ScriptRunPresenter(
             run_id=None,
@@ -677,32 +718,15 @@ async def _execute_remote(
                 client.endpoint,
                 expected_sandbox=sandbox,
             )
-            default_bindings, default_limits = await _remote_script_defaults(
+            surface_setting = await _remote_script_defaults(
                 http,
                 client.endpoint,
             )
-            surface_bindings = replace(default_bindings, runnable=runnable)
-            session_ceilings, bindings, limits = materialize_policy(
-                surface_bindings,
-                default_limits.limits,
-                session=session_commands,
-            )
-            surface_setting = SessionSetting(
-                model=(
-                    ModelRequest(surface_bindings.model)
-                    if surface_bindings.model is not None
-                    else None
-                ),
-                runnable=surface_bindings.runnable,
-                limits=default_limits.limits,
-            )
-            session_setting = SessionSetting(
-                model=ModelRequest(bindings.model)
-                if bindings.model is not None
-                else None,
-                runnable=bindings.runnable,
-                allow=session_ceilings[0] if session_ceilings else AgentCeiling(),
-                limits=limits,
+            surface_setting = replace(surface_setting, runnable=runnable)
+            session_setting = apply_session_setting(
+                surface_setting,
+                surface_setting,
+                session_override,
             )
             ceilings, effective = materialize_run_setting(
                 surface_setting,
@@ -783,30 +807,6 @@ def _remote_script_override(
     )
 
 
-def _remote_script_session_commands(
-    *,
-    runnable: str,
-    allow_options: tuple[str, ...],
-    default_options: tuple[str, ...],
-    limit_options: tuple[str, ...],
-) -> tuple[RunCommand, ...]:
-    """Place the explicit CLI runnable above AgentServer setup bindings."""
-
-    ceilings = resolve_ceiling_overrides({}, allow_options)
-    defaults = resolve_default_overrides({}, default_options)
-    limits = resolve_limit_overrides({}, limit_options)
-    if "runnable" in defaults:
-        raise ValueError(
-            "--default runnable does not apply when a script runnable is explicit"
-        )
-    return (
-        RunCommand("default", "runnable", runnable),
-        *(RunCommand("allow", field, value) for field, value in ceilings.items()),
-        *(RunCommand("default", field, value) for field, value in defaults.items()),
-        *(RunCommand("limit", field, value) for field, value in limits.items()),
-    )
-
-
 async def _create_remote_script_thread(
     client: httpx.AsyncClient,
     endpoint: str,
@@ -855,7 +855,7 @@ async def _create_remote_script_thread(
 async def _remote_script_defaults(
     client: httpx.AsyncClient,
     endpoint: str,
-) -> tuple[RunBindings, RunPolicy]:
+) -> SessionSetting:
     try:
         response = await client.get(f"{endpoint}/api/v1/runs/defaults")
         response.raise_for_status()
@@ -868,12 +868,17 @@ async def _remote_script_defaults(
             raise ValueError
         model = payload.get("model")
         runnable = payload.get("runnable")
-        if model is not None and not isinstance(model, str):
-            raise ValueError
         if not isinstance(runnable, str):
             raise ValueError
+        model_request = (
+            _MODEL_REQUEST_ADAPTER.validate_python(model) if model is not None else None
+        )
         policy = _RUN_POLICY_ADAPTER.validate_python(payload.get("policy"))
-        return RunBindings(model=model, runnable=runnable), policy
+        return SessionSetting(
+            model=model_request,
+            runnable=runnable,
+            limits=policy.limits,
+        )
     except (
         httpx.HTTPError,
         UnicodeDecodeError,
@@ -956,18 +961,11 @@ async def _execute(
     override: RunOverride,
     input: RunnableInputRaw,
     raw_named: NamedInputSources,
-    allow_options: tuple[str, ...],
-    default_options: tuple[str, ...],
+    session_override: RunOverride,
     quiet: bool,
-    limit_options: tuple[str, ...] = (),
 ) -> RunRecord:
     environ = load_runtime_environ(layout, base_environ=os.environ)
-    cli_defaults = resolve_default_overrides({}, default_options)
-    if "runnable" in cli_defaults:
-        raise ValueError(
-            "--default runnable does not apply when a script runnable is explicit"
-        )
-    allow_overrides = resolve_ceiling_overrides(environ, allow_options)
+    allow_overrides = resolve_ceiling_overrides(environ)
     setup_watcher = SetupWatcher(
         layout,
         sandbox=sandbox,
@@ -978,9 +976,8 @@ async def _execute(
         },
         default_overrides={
             **resolve_default_overrides(environ),
-            **cli_defaults,
         },
-        limit_overrides=resolve_limit_overrides(environ, limit_options),
+        limit_overrides=resolve_limit_overrides(environ),
     )
     state_watcher = StateWatcher(
         layout,
@@ -993,6 +990,9 @@ async def _execute(
     )
     setup = await setup_watcher.refresh()
     state = state_watcher.current()
+    fallback_model = (
+        setup.models.effective_default(None) if setup.defaults.model is None else None
+    )
     executor = RunExecutor(
         store,
         ids,
@@ -1005,7 +1005,8 @@ async def _execute(
         state=state,
         thread=_UNPERSISTED_THREAD,
         default_runnable=runnable,
-        surface=RunBindings(runnable=runnable),
+        surface=RunBindings(model=fallback_model, runnable=runnable),
+        session_override=session_override,
         surface_named_sources=raw_named,
         include=lambda reference: resolve_file_include(
             reference,

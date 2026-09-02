@@ -12,7 +12,8 @@ import tomllib
 from typing import cast
 
 from dotenv import dotenv_values
-from toolang.base.types.model import ModelRequest
+from toolang.base.model_settings import apply_model_override, parse_model_body
+from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
@@ -189,33 +190,42 @@ def resolve_setup_allow(
 def resolve_run_defaults(
     configs: Sequence[Mapping[str, object]],
     *,
-    overrides: Mapping[str, str | None] | None = None,
+    overrides: Mapping[str, ModelOverride | str | None] | None = None,
 ) -> RunDefaults:
     """Resolve layered ``[default]`` configuration and frozen overrides."""
 
-    fields: dict[str, str | None] = {}
+    model: ModelRequest | None = None
+    runnable: str | None = None
     for config in configs:
         raw_default = _table(config, "default")
         if raw_default is None:
             continue
         _reject_unknown(raw_default, _DEFAULT_FIELDS, "default field")
-        fields.update(
-            {
-                str(name): _default_value(str(name), value)
-                for name, value in raw_default.items()
-            }
-        )
+        if "model" in raw_default:
+            body = _default_text("model", raw_default["model"])
+            if body.lower() == "none":
+                body = "unset"
+            model = apply_model_override(model, model, parse_model_body(body))
+        if "runnable" in raw_default:
+            runnable = _default_value("runnable", raw_default["runnable"])
     resolved_overrides = overrides or {}
     _reject_unknown(resolved_overrides, _DEFAULT_FIELDS, "default field")
-    fields.update(resolved_overrides)
-    defaults = RunDefaults(**fields)
-    if defaults.model is not None:
-        ModelRequest(defaults.model)
-    if defaults.runnable is not None and not _RUNNABLE_REF_RE.fullmatch(
-        defaults.runnable
-    ):
-        raise ValueError(f"invalid default runnable ref: {defaults.runnable!r}")
-    return defaults
+    if "model" in resolved_overrides:
+        raw_model = resolved_overrides["model"]
+        override = (
+            raw_model
+            if isinstance(raw_model, ModelOverride)
+            else parse_model_body("unset" if raw_model is None else raw_model)
+        )
+        model = apply_model_override(model, model, override)
+    if "runnable" in resolved_overrides:
+        raw_runnable = resolved_overrides["runnable"]
+        if isinstance(raw_runnable, ModelOverride):
+            raise TypeError("default runnable override must be a string or none")
+        runnable = raw_runnable
+    if runnable is not None and not _RUNNABLE_REF_RE.fullmatch(runnable):
+        raise ValueError(f"invalid default runnable ref: {runnable!r}")
+    return RunDefaults(model=model, runnable=runnable)
 
 
 def resolve_run_limits(
@@ -285,12 +295,17 @@ def _validate_setup_allow_syntax(ceiling: AgentCeiling) -> None:
 
 
 def _default_value(name: str, value: object) -> str | None:
+    normalized = _default_text(name, value)
+    return None if normalized.lower() == "none" else normalized
+
+
+def _default_text(name: str, value: object) -> str:
     if not isinstance(value, str):
         raise TypeError(f"default {name} must be a string")
     normalized = value.strip()
     if not normalized:
         raise ValueError(f"default {name} must not be empty")
-    return None if normalized.lower() == "none" else normalized
+    return normalized
 
 
 def _load_toml(path: Path) -> dict[str, object]:

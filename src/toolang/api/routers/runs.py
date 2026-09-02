@@ -26,6 +26,7 @@ from toolang.api.schemas import (
     RunRetryRequest,
     RunSteerRequest,
 )
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunBindings
 from toolang.common.errors import ToolangError
 from toolang.execution.calls import require_exact_model_request
@@ -303,7 +304,10 @@ async def run_defaults(core: AgentCoreDep) -> dict[str, object]:
 
     setup = core.setup.current()
     state = core.state.current()
-    model = setup.models.effective_default(setup.defaults.model)
+    model = setup.defaults.model
+    if model is None:
+        fallback = setup.models.effective_default(None)
+        model = ModelRequest(fallback) if fallback is not None else None
     runnable = setup.defaults.runnable
     if runnable is None:
         default_agic, default_flow = runnable_binding_defaults(

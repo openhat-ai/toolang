@@ -22,7 +22,7 @@ from toolang.base.types.message import (
     ToolResultPart,
     part_from_data,
 )
-from toolang.base.types.model import ModelRequest, ReasoningEffort
+from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunLimits
 from toolang.base.types.run import ModelCall, ModelContinuation, ToolCall
 from toolang.lang.ast import (
@@ -67,7 +67,6 @@ AllowField = Literal["models", "tools", "psyches", "skills", "services", "prompt
 LimitField = Literal["agic_model_calls", "agic_tool_calls", "tokens", "cost", "time"]
 AllowValue: TypeAlias = tuple[str, ...] | None
 LimitValue: TypeAlias = int | Decimal | None
-ModelEffort: TypeAlias = ReasoningEffort | int | Literal["auto"]
 PolicyGroup = Literal["allow", "default", "limit"]
 PolicyValue: TypeAlias = tuple[str, ...] | str | int | Decimal | None
 
@@ -112,44 +111,6 @@ class RunCommand:
             raise TypeError(
                 f"limit {self.field} command value must be an integer or none"
             )
-
-
-@dataclass(frozen=True, slots=True)
-class ModelOverride:
-    """Sparse model identity and reasoning changes for one run."""
-
-    identity: str | None = None
-    effort: ModelEffort | None = None
-
-    def __post_init__(self) -> None:
-        if self.identity is not None:
-            if self.identity == "none":
-                raise ValueError(
-                    "model identity 'none' was removed; use 'unset' for a "
-                    "model-free run"
-                )
-            if self.identity not in {"default", "unset"}:
-                ModelRequest(self.identity)
-        if self.effort is not None:
-            if isinstance(self.effort, bool):
-                raise TypeError("model effort must be a level, token budget, or auto")
-            if isinstance(self.effort, int):
-                if self.effort < 0:
-                    raise ValueError("model effort token budget must be non-negative")
-            elif self.effort not in {
-                "auto",
-                "none",
-                "minimal",
-                "low",
-                "medium",
-                "high",
-                "xhigh",
-                "max",
-                "default",
-            }:
-                raise ValueError(f"unknown model effort: {self.effort!r}")
-        if self.identity is None and self.effort is None:
-            raise ValueError("model override requires an identity or effort")
 
 
 @dataclass(frozen=True, slots=True)

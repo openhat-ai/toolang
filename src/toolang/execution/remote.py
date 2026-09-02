@@ -17,7 +17,7 @@ from httpx_sse import SSEError, ServerSentEvent, aconnect_sse
 from pydantic import TypeAdapter, ValidationError
 
 from toolang.base.types.message import Message
-from toolang.base.types.model import ModelRequest
+from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.execution.client import RunHandle
 from toolang.execution.events import RunBegin, RunEnd, RunTracer, run_event_from_data
 from toolang.execution.schemas import (
@@ -36,6 +36,7 @@ _RUN_DETAIL_ADAPTER = TypeAdapter(RunDetail)
 _CONTROL_INFO_ADAPTER = TypeAdapter(ControlInfo)
 _RUN_REQUEST_ADAPTER = TypeAdapter(RunRequest)
 _MODEL_REQUEST_ADAPTER = TypeAdapter(ModelRequest)
+_MODEL_OVERRIDE_ADAPTER = TypeAdapter(ModelOverride)
 
 
 class RemoteRunClientError(RuntimeError):
@@ -543,6 +544,11 @@ def _restart_request_data(request: RetryRequest | RerunRequest) -> dict[str, obj
     elif request.model is not None:
         payload["model"] = _MODEL_REQUEST_ADAPTER.dump_python(
             request.model,
+            mode="json",
+        )
+    elif request.model_override is not None:
+        payload["model_override"] = _MODEL_OVERRIDE_ADAPTER.dump_python(
+            request.model_override,
             mode="json",
         )
     return payload

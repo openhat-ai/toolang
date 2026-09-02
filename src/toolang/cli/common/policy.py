@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 
+from toolang.base.model_settings import compose_model_overrides, parse_model_body
+from toolang.base.types.model import ModelOverride
 from toolang.common.errors import ToolangError
 from toolang.common.query import resolve_query_sentinels
 
@@ -54,15 +56,31 @@ def resolve_ceiling_overrides(
 def resolve_default_overrides(
     environ: Mapping[str, str],
     options: Sequence[str] | None = None,
-) -> dict[str, str | None]:
+) -> dict[str, ModelOverride | str | None]:
     """Resolve frozen environment and CLI run-default overrides."""
 
-    resolved: dict[str, str | None] = {}
+    environment_values: dict[str, str | None] = {}
     for name in _DEFAULT_FIELDS:
         raw = environ.get(f"TOOLANG_DEFAULT_{name.upper()}")
         if raw is not None:
-            resolved[name] = _parse_default_value(name, raw, source="environment")
-    resolved.update(_parse_default_options(options or ()))
+            environment_values[name] = _parse_default_value(
+                name, raw, source="environment"
+            )
+    option_values = _parse_default_options(options or ())
+    resolved: dict[str, ModelOverride | str | None] = {
+        name: value
+        for name, value in {**environment_values, **option_values}.items()
+        if name != "model"
+    }
+    model_overrides = tuple(
+        parse_model_body(value)
+        for values in (environment_values, option_values)
+        if isinstance((value := values.get("model")), str)
+    )
+    if model_overrides:
+        model = compose_model_overrides(model_overrides)
+        if model is not None:
+            resolved["model"] = model
     return resolved
 
 
@@ -156,6 +174,8 @@ def _parse_default_value(name: str, value: str, *, source: str) -> str | None:
     normalized = value.strip()
     if not normalized:
         raise ValueError(f"{source} default {name} must not be empty")
+    if name == "model":
+        return "unset" if normalized.lower() == "none" else normalized
     return None if normalized.lower() == "none" else normalized
 
 
