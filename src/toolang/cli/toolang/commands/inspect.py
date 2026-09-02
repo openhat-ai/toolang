@@ -24,6 +24,7 @@ from toolang.cli.common.execution_progress.formatting import (
     one_line as _one_line,
     token_fact as _token_fact,
 )
+from toolang.execution.accounting import token_meter_quantity
 from toolang.execution.history import RunHistory
 from toolang.execution.inspection import (
     ChildOccurrenceTotals,
@@ -1254,7 +1255,14 @@ def _call_summary_renderables(
 def _model_usage_fact(noted: ModelStepNoted) -> str:
     accounting = noted.accounting
     if accounting is not None:
-        return _token_fact(accounting.input_tokens, accounting.output_tokens)
+        return _token_fact(
+            accounting.input_tokens,
+            accounting.output_tokens,
+            reasoning_tokens=token_meter_quantity(
+                accounting,
+                "output.reasoning",
+            ),
+        )
     if noted.tokens is not None:
         return _token_fact(noted.tokens.input, noted.tokens.output)
     return ""

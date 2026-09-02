@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal, ROUND_HALF_UP
+
 from toolang.base.types.message import (
     Part,
     ToolResultPart,
@@ -97,6 +99,20 @@ def count(value: int, noun: str) -> str:
     return f"{value} {noun}{'' if value == 1 else 's'}"
 
 
+def execution_count_fact(runs: int, model_calls: int, tool_calls: int) -> str:
+    """Return one compact fact for execution activity counts."""
+
+    return " ".join(
+        fact
+        for fact in (
+            count(runs, "run") if runs else "",
+            count(model_calls, "model") if model_calls else "",
+            count(tool_calls, "tool") if tool_calls else "",
+        )
+        if fact
+    )
+
+
 def elapsed(started_at: str, finished_at: str) -> str:
     if not started_at or not finished_at:
         return ""
@@ -116,7 +132,7 @@ def elapsed(started_at: str, finished_at: str) -> str:
     if duration < 60:
         return f"{duration:.1f}s"
     minutes, seconds = divmod(round(duration), 60)
-    return f"{minutes}m {seconds:02d}s"
+    return f"{minutes}m{seconds:02d}s"
 
 
 def compact_count(value: int) -> str:
@@ -132,12 +148,39 @@ def token_fact(
     output_tokens: int,
     *,
     cache_read_tokens: int | None = None,
+    reasoning_tokens: int | None = None,
+    reasoning_complete: bool = True,
 ) -> str:
     cache = ""
     if cache_read_tokens is not None and input_tokens > 0:
         ratio = cache_read_tokens / input_tokens * 100
         cache = f"({ratio:.1f}%)"
-    return f"↑{compact_count(input_tokens)}{cache} ↓{compact_count(output_tokens)}"
+    reasoning = (
+        f"({compact_count(reasoning_tokens)}{'' if reasoning_complete else '+'})"
+        if reasoning_tokens is not None
+        else ""
+    )
+    return (
+        f"↑{compact_count(input_tokens)}{cache} "
+        f"↓{compact_count(output_tokens)}{reasoning}"
+    )
+
+
+def cost_fact(amount: Decimal, *, approximate: bool) -> str:
+    """Return one compact USD cost with adaptive nonzero precision."""
+
+    if amount == 0:
+        return ""
+    if amount < 0:
+        raise ValueError("model cost must be non-negative")
+    prefix = "≈$" if approximate else "$"
+    for places in (2, 4):
+        quantum = Decimal(1).scaleb(-places)
+        rounded = amount.quantize(quantum, rounding=ROUND_HALF_UP)
+        if rounded:
+            rendered = f"{rounded:f}".rstrip("0").rstrip(".")
+            return f"{prefix}{rendered}"
+    return "≲$0.0001" if approximate else "<$0.0001"
 
 
 def tool_label(given: StepGiven) -> str:

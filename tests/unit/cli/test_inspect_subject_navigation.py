@@ -9,6 +9,7 @@ from toolang.base.types.run import ModelCall
 from toolang.base.types.tool import ToolDefinition
 import toolang.cli.toolang.commands.inspect as inspect_commands
 from toolang.execution.records import model_call_to_data
+from toolang.execution.types import ModelAccounting, ModelStepNoted, ModelUsageMeter
 
 
 @pytest.mark.parametrize(
@@ -251,6 +252,26 @@ def test_model_call_human_view_omits_empty_sections() -> None:
     call = ModelCall(instructions="", messages=[], output_schema=None)
 
     assert inspect_commands._model_call_renderables(model_call_to_data(call)) == ()
+
+
+def test_model_call_usage_shows_known_reasoning_breakdown() -> None:
+    usage = inspect_commands._model_usage_fact(
+        ModelStepNoted(
+            accounting=ModelAccounting(
+                input_tokens=12_400,
+                output_tokens=2_300,
+                meters=(
+                    ModelUsageMeter(
+                        name="output.reasoning",
+                        quantity="1800",
+                        unit="token",
+                    ),
+                ),
+            )
+        )
+    )
+
+    assert usage == "↑12.4k ↓2.3k(1.8k)"
 
 
 def test_model_call_human_view_shows_every_tool_signature() -> None:

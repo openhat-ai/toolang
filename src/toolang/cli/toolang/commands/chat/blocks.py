@@ -23,7 +23,6 @@ from toolang.execution.types import ExecutionError
 from toolang.cli.common.execution_progress import ProgressBlock
 from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
 from toolang.cli.common.execution_progress.formatting import (
-    count,
     display_width,
     elapsed,
     output_parts,
@@ -341,13 +340,8 @@ class RunSummaryBlock(MutableBlock):
         duration = elapsed(self.started_at, self.finished_at)
         facts = self.metrics.facts(
             duration=duration,
-            include_runs=False,
+            run_count=max(self.metrics.runs - 1, 0),
         )
-        if self.metrics.runs > 1:
-            facts.insert(
-                1 if duration else 0,
-                count(self.metrics.runs - 1, "run"),
-            )
         return facts
 
 

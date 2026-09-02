@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Literal
 
+from .accounting import token_meter_quantity
 from .inspection import ExecutionSnapshot, step_operation
 from .records import (
     ControlRecord,
@@ -35,7 +36,9 @@ class TreeMetrics:
     tool_calls: int
     input_tokens: int | None
     output_tokens: int | None
+    reasoning_tokens: int | None
     usage_complete: bool
+    reasoning_complete: bool
     cost_usd: str | None
     cost_complete: bool
     cost_approximate: bool
@@ -106,6 +109,8 @@ class _MetricAccumulator:
     token_known: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    reasoning_known: int = 0
+    reasoning_tokens: int = 0
     cost_known: int = 0
     cost_complete: int = 0
     cost_usd: Decimal = Decimal(0)
@@ -118,6 +123,8 @@ class _MetricAccumulator:
         self.token_known += other.token_known
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
+        self.reasoning_known += other.reasoning_known
+        self.reasoning_tokens += other.reasoning_tokens
         self.cost_known += other.cost_known
         self.cost_complete += other.cost_complete
         self.cost_usd += other.cost_usd
@@ -271,7 +278,9 @@ def tree_to_data(tree: ExecutionTree) -> list[dict[str, object]]:
                 "tool_calls": node.metrics.tool_calls,
                 "input_tokens": node.metrics.input_tokens,
                 "output_tokens": node.metrics.output_tokens,
+                "reasoning_tokens": node.metrics.reasoning_tokens,
                 "usage_complete": node.metrics.usage_complete,
+                "reasoning_complete": node.metrics.reasoning_complete,
                 "cost_usd": node.metrics.cost_usd,
                 "cost_complete": node.metrics.cost_complete,
                 "cost_approximate": node.metrics.cost_approximate,
@@ -343,6 +352,10 @@ def _record_metrics(record: RunRecord | StepRecord) -> _MetricAccumulator:
         accumulator.token_known = 1
         accumulator.input_tokens = noted.accounting.input_tokens
         accumulator.output_tokens = noted.accounting.output_tokens
+        reasoning = token_meter_quantity(noted.accounting, "output.reasoning")
+        if reasoning is not None:
+            accumulator.reasoning_known = 1
+            accumulator.reasoning_tokens = reasoning
     elif noted.tokens is not None:
         accumulator.token_known = 1
         accumulator.input_tokens = noted.tokens.input
@@ -390,6 +403,7 @@ def _node_from_record(
     is_run = isinstance(record, RunRecord)
     model_calls = accumulator.model_calls
     tokens = accumulator.token_known > 0 or model_calls == 0
+    reasoning = accumulator.reasoning_known > 0 or model_calls == 0
     cost = accumulator.cost_known > 0
     return ExecutionTreeNode(
         pointer=_record_pointer(record),
@@ -409,7 +423,9 @@ def _node_from_record(
             tool_calls=accumulator.tool_calls,
             input_tokens=accumulator.input_tokens if tokens else None,
             output_tokens=accumulator.output_tokens if tokens else None,
+            reasoning_tokens=(accumulator.reasoning_tokens if reasoning else None),
             usage_complete=accumulator.token_known == model_calls,
+            reasoning_complete=accumulator.reasoning_known == model_calls,
             cost_usd=_decimal_text(accumulator.cost_usd) if cost else None,
             cost_complete=accumulator.cost_complete == model_calls,
             cost_approximate=accumulator.cost_approximate,

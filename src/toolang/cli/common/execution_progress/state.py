@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
 from toolang.base.types.message import Part
 from toolang.execution.accounting import (
     selected_cost_is_approximate,
     selected_usd_cost,
+    token_meter_quantity,
 )
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from toolang.execution.types import (
@@ -19,7 +20,7 @@ from toolang.execution.types import (
 )
 from toolang.lang.ast import FlowStmt
 
-from .formatting import count, flow_statement, token_fact
+from .formatting import cost_fact, execution_count_fact, flow_statement, token_fact
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +185,8 @@ class Metrics:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_unknown_calls: int = 0
+    reasoning_tokens: int = 0
+    reasoning_known_calls: int = 0
     cost: Decimal = Decimal("0")
     cost_known: bool = False
     cost_approximate: bool = False
@@ -200,6 +203,7 @@ class Metrics:
                 self.input_tokens,
                 self.output_tokens,
                 self.cache_read_tokens,
+                self.reasoning_tokens,
                 self.cost_known,
             )
         )
@@ -212,6 +216,8 @@ class Metrics:
         self.output_tokens += other.output_tokens
         self.cache_read_tokens += other.cache_read_tokens
         self.cache_unknown_calls += other.cache_unknown_calls
+        self.reasoning_tokens += other.reasoning_tokens
+        self.reasoning_known_calls += other.reasoning_known_calls
         self.cost += other.cost
         self.cost_known = self.cost_known or other.cost_known
         self.cost_approximate = self.cost_approximate or other.cost_approximate
@@ -224,18 +230,15 @@ class Metrics:
                 accounting = noted.accounting
                 self.input_tokens += accounting.input_tokens
                 self.output_tokens += accounting.output_tokens
-                cache = next(
-                    (
-                        meter
-                        for meter in accounting.meters
-                        if meter.name == "input.cache_read"
-                    ),
-                    None,
-                )
+                cache = token_meter_quantity(accounting, "input.cache_read")
                 if cache is None:
                     self.cache_unknown_calls += 1
                 else:
-                    self.cache_read_tokens += int(Decimal(cache.quantity))
+                    self.cache_read_tokens += cache
+                reasoning = token_meter_quantity(accounting, "output.reasoning")
+                if reasoning is not None:
+                    self.reasoning_tokens += reasoning
+                    self.reasoning_known_calls += 1
                 selected = selected_usd_cost(accounting)
                 if selected is not None:
                     self.cost += selected
@@ -261,14 +264,16 @@ class Metrics:
         duration: str = "",
         include_runs: bool = True,
         include_cost: bool = True,
+        run_count: int | None = None,
     ) -> list[str]:
         facts = [duration]
-        if include_runs and self.runs:
-            facts.append(count(self.runs, "run"))
-        if self.model_calls:
-            facts.append(count(self.model_calls, "model call"))
-        if self.tool_calls:
-            facts.append(count(self.tool_calls, "tool call"))
+        activity = execution_count_fact(
+            (self.runs if run_count is None else run_count) if include_runs else 0,
+            self.model_calls,
+            self.tool_calls,
+        )
+        if activity:
+            facts.append(activity)
         usage = (
             token_fact(
                 self.input_tokens,
@@ -278,16 +283,18 @@ class Metrics:
                     if self.cache_unknown_calls == 0 and self.input_tokens > 0
                     else None
                 ),
+                reasoning_tokens=(
+                    self.reasoning_tokens if self.reasoning_known_calls else None
+                ),
+                reasoning_complete=(self.reasoning_known_calls == self.model_calls),
             )
             if self.input_tokens or self.output_tokens
             else ""
         )
-        cost = ""
-        if include_cost and self.cost_known:
-            rounded = self.cost.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
-            prefix = "~$" if self.cost_approximate else "$"
-            amount = f"{rounded:f}".rstrip("0").rstrip(".") or "0"
-            cost = f"{prefix}{amount}"
-        if usage or cost:
-            facts.append(" ".join(value for value in (usage, cost) if value))
+        cost = (
+            cost_fact(self.cost, approximate=self.cost_approximate)
+            if include_cost and self.cost_known
+            else ""
+        )
+        facts.extend(value for value in (usage, cost) if value)
         return [fact for fact in facts if fact]

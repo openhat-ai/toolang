@@ -416,6 +416,11 @@ message and tool counts and result Pointers are not appended. Result is last.
 The JSON view keeps the complete normalized call and exact `output_schema`
 value, including `null` for unstructured and historical calls.
 
+The model-call summary usage line uses
+`↑INPUT(CACHE%) ↓OUTPUT(REASONING)`. Output is inclusive and already contains
+reasoning. An explicit zero reasoning meter renders `(0)`; a missing meter
+omits the output parenthetical.
+
 `call` on a tool Step shows a summary, its persisted plugin, normalized
 invocation, and the stored result payload without truncation when present. Tool
 results retain the same fenced, structured Human layout used inside model
@@ -445,6 +450,13 @@ JSON is a flat depth-first array with `pointer`, `record_kind`, `step_kind`,
 and metrics. This is a transactionally consistent structural snapshot, not
 event replay or a live trace; exact interleaving is unavailable because
 execution events are not persisted as a journal.
+
+Tree metrics include `reasoning_tokens` and `reasoning_complete` alongside the
+inclusive input/output totals. Every counted model call must have an integral
+`output.reasoning` token meter for the reasoning aggregate to be complete. A
+partial numeric value is a known lower bound, all-unknown reasoning is `null`,
+and zero model calls produce `reasoning_tokens: 0` with
+`reasoning_complete: true`. Consumers must not add reasoning tokens to output.
 
 Human output is the default. Record and container tables use the CLI's
 horizontal-rule Rich style. Run collections order identity, runnable, status,
