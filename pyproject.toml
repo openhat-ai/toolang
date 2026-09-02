@@ -42,6 +42,7 @@ dependencies = [
     "prompt-toolkit>=3.0,<4",
     "python-dotenv>=1.0,<2",
     "python-frontmatter>=1.1.0",
+    "pyyaml>=6,<7",
     "rich>=14,<15",
     "tomlkit>=0.13,<1",
     "tree-sitter>=0.24,<0.26",

@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+import frontmatter
 import pytest
 
 from toolang.base.errors import ToolFailure
@@ -74,6 +75,33 @@ def test_compact_toolset_exposes_five_closed_schemas() -> None:
             ]
 
 
+def test_compact_tools_bound_invalid_identifiers_and_error_fields(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path / "toolang")
+    long_key = "k" * 1_000
+    long_field = "field_" + "x" * 1_000
+
+    key_error = _error(
+        _tools()["get"],
+        {"kind": "prompt", "key": long_key},
+        context,
+    )
+    field_error = _error(
+        _tools()["create"],
+        {
+            "kind": "task",
+            "content": {"body": "Keep this bounded.", long_field: "value"},
+        },
+        context,
+    )
+
+    assert key_error["code"] == "invalid_request"
+    assert len(key_error["key"]) == 128
+    assert len(field_error["issues"][0]["path"]) == 256
+    assert len(str(field_error)) < 2_000
+
+
 def test_compact_tools_create_list_get_and_update_ready_jobs(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     context = _context(root)
@@ -135,6 +163,76 @@ def test_compact_tools_create_list_get_and_update_ready_jobs(tmp_path: Path) -> 
     )
     assert invalid_schedule["code"] == "invalid_content"
     assert len(_invoke(tools["list"], {"kind": "chore"}, context)["items"]) == 1
+
+
+def test_invalid_job_content_does_not_allocate_an_id(tmp_path: Path) -> None:
+    context = _context(tmp_path / "toolang")
+
+    error = _error(
+        _tools()["create"],
+        {
+            "kind": "chore",
+            "content": {"body": "Invalid.", "schedule": "not-an-rrule"},
+        },
+        context,
+    )
+
+    assert error["code"] == "invalid_content"
+    assert not context.home.joinpath(".runtime", "ids.json").exists()
+    assert not context.home.joinpath("chores").exists()
+
+
+def test_compact_tools_report_invalid_authored_frontmatter_without_echoing_it(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path / "toolang")
+    prompt_path = context.home / "prompts" / "broken.md"
+    prompt_path.parent.mkdir()
+    prompt_path.write_text(
+        "---\nprivate_marker: [\n---\nDo not echo this.\n",
+        encoding="utf-8",
+    )
+    task_path = context.home / "tasks" / "broken.md"
+    task_path.parent.mkdir()
+    task_path.write_text(
+        "---\nprivate_marker: [\n---\nDo not echo this either.\n",
+        encoding="utf-8",
+    )
+
+    prompt_error = _error(
+        _tools()["get"],
+        {"kind": "prompt", "key": "broken"},
+        context,
+    )
+    task_error = _error(_tools()["list"], {"kind": "task"}, context)
+
+    assert prompt_error["code"] == "invalid_content"
+    assert prompt_error["issues"] == [
+        {
+            "code": "invalid-frontmatter",
+            "path": "key",
+            "message": "authored front matter is invalid",
+        }
+    ]
+    assert task_error["code"] == "invalid_content"
+    assert task_error["issues"][0]["path"] == "kind"
+    assert "private_marker" not in str(prompt_error)
+    assert "private_marker" not in str(task_error)
+
+
+def test_compact_job_conflicts_do_not_expose_storage_paths(tmp_path: Path) -> None:
+    context = _context(tmp_path / "toolang")
+    tasks = context.home / "tasks"
+    tasks.mkdir()
+    content = "---\nid: duplicate\n---\nDo work.\n"
+    tasks.joinpath("one.md").write_text(content, encoding="utf-8")
+    tasks.joinpath("two.md").write_text(content, encoding="utf-8")
+
+    error = _error(_tools()["list"], {"kind": "task"}, context)
+
+    assert error["code"] == "conflict"
+    assert error["message"] == "authored task conflicts with existing content"
+    assert str(tmp_path) not in str(error)
 
 
 def test_compact_job_tools_use_only_ready_documents(tmp_path: Path) -> None:
@@ -229,6 +327,38 @@ def test_compact_cap_tools_round_trip_all_content_and_stay_home_only(
     deleted = _invoke(tools["delete"], {"kind": "skill", "key": "reviewer"}, context)
     assert deleted == {"kind": "skill", "key": "reviewer", "deleted": True}
     assert not (context.home / "skills" / "reviewer").exists()
+
+
+def test_compact_service_update_replaces_legacy_protocol_metadata(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path / "toolang")
+    path = context.home / "services" / "legacy.md"
+    path.parent.mkdir()
+    path.write_text(
+        "---\n"
+        "description: Legacy service.\n"
+        "protocol: stdio\n"
+        "target: legacy-command\n"
+        "---\n"
+        "Legacy.\n",
+        encoding="utf-8",
+    )
+
+    updated = _invoke(
+        _tools()["update"],
+        {
+            "kind": "service",
+            "key": "legacy",
+            "content": {"transport": "http", "target": "https://example.com/mcp"},
+        },
+        context,
+    )
+    metadata = frontmatter.load(path).metadata
+
+    assert updated["changed"] is True
+    assert metadata["transport"] == "http"
+    assert "protocol" not in metadata
 
 
 def test_compact_update_supports_digest_preconditions_and_noop(tmp_path: Path) -> None:
@@ -560,21 +690,153 @@ def test_compact_flow_tools_reject_symlinked_storage(tmp_path: Path) -> None:
 
     error = _error(_tools()["list"], {"kind": "flow"}, context)
 
-    assert error["code"] == "invalid_request"
+    assert error["code"] == "storage_error"
     assert external.joinpath("research.too").is_file()
 
+    context.home.joinpath("flows").unlink()
+    context.home.joinpath("flows").mkdir()
+    context.home.joinpath("flows", "linked.too").symlink_to(external / "research.too")
+    create_error = _error(
+        _tools()["create"],
+        {
+            "kind": "flow",
+            "key": "new_flow",
+            "content": {"source": "flow:\n  pass\n"},
+        },
+        context,
+    )
 
-def test_compact_flow_delete_can_remove_invalid_manual_source(tmp_path: Path) -> None:
+    assert create_error["code"] == "storage_error"
+    assert not context.home.joinpath("flows", "new_flow.too").exists()
+
+
+def test_compact_flow_update_and_delete_can_recover_invalid_bytes(
+    tmp_path: Path,
+) -> None:
     root = tmp_path / "toolang"
     context = _context(root)
-    path = context.home / "flows" / "broken.too"
-    path.parent.mkdir()
-    path.write_text("not a program", encoding="utf-8")
+    updated_path = context.home / "flows" / "updated.too"
+    updated_path.parent.mkdir()
+    updated_path.write_bytes(b"\xff")
 
-    deleted = _invoke(_tools()["delete"], {"kind": "flow", "key": "broken"}, context)
+    updated = _invoke(
+        _tools()["update"],
+        {
+            "kind": "flow",
+            "key": "updated",
+            "content": {"source": "flow:\n  pass\n"},
+        },
+        context,
+    )
 
+    deleted_path = context.home / "flows" / "deleted.too"
+    deleted_path.write_bytes(b"\xff")
+
+    deleted = _invoke(_tools()["delete"], {"kind": "flow", "key": "deleted"}, context)
+
+    assert updated["changed"] is True
+    assert updated_path.read_text(encoding="utf-8") == "flow:\n  pass\n"
     assert deleted["deleted"] is True
-    assert not path.exists()
+    assert not deleted_path.exists()
+
+
+def test_compact_tools_reject_symlinked_cap_job_and_runtime_storage(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "toolang"
+
+    cap_context = _context(root, "caps")
+    external_caps = tmp_path / "external-caps"
+    external_caps.mkdir()
+    external_caps.joinpath("secret.md").write_text("Secret.\n", encoding="utf-8")
+    cap_context.home.joinpath("psyches").symlink_to(
+        external_caps,
+        target_is_directory=True,
+    )
+    cap_error = _error(_tools()["list"], {"kind": "psyche"}, cap_context)
+    flow_created = _invoke(
+        _tools()["create"],
+        {
+            "kind": "flow",
+            "key": "isolated",
+            "content": {"source": "flow:\n  pass\n"},
+        },
+        cap_context,
+    )
+
+    job_context = _context(root, "jobs")
+    external_jobs = tmp_path / "external-jobs"
+    external_jobs.mkdir()
+    job_context.home.joinpath("tasks").symlink_to(
+        external_jobs,
+        target_is_directory=True,
+    )
+    job_error = _error(_tools()["list"], {"kind": "task"}, job_context)
+
+    runtime_context = _context(root, "runtime")
+    external_runtime = tmp_path / "external-runtime"
+    external_runtime.mkdir()
+    runtime_context.home.joinpath(".runtime").symlink_to(
+        external_runtime,
+        target_is_directory=True,
+    )
+    runtime_error = _error(
+        _tools()["create"],
+        {"kind": "task", "content": {"body": "Do not create."}},
+        runtime_context,
+    )
+
+    assert cap_error["code"] == "storage_error"
+    assert flow_created["created"] is True
+    assert job_error["code"] == "storage_error"
+    assert runtime_error["code"] == "storage_error"
+    assert external_caps.joinpath("secret.md").read_text(encoding="utf-8") == (
+        "Secret.\n"
+    )
+    assert list(external_jobs.iterdir()) == []
+    assert list(external_runtime.iterdir()) == []
+
+
+def test_compact_skill_delete_rejects_nested_symlinks(tmp_path: Path) -> None:
+    context = _context(tmp_path / "toolang")
+    tools = _tools()
+    _invoke(
+        tools["create"],
+        {
+            "kind": "skill",
+            "key": "review",
+            "content": {"description": "Review.", "body": "Review code."},
+        },
+        context,
+    )
+    external = tmp_path / "external.txt"
+    external.write_text("Keep.\n", encoding="utf-8")
+    context.home.joinpath("skills", "review", "external.txt").symlink_to(external)
+
+    error = _error(tools["delete"], {"kind": "skill", "key": "review"}, context)
+
+    assert error["code"] == "storage_error"
+    assert context.home.joinpath("skills", "review", "SKILL.md").is_file()
+    assert external.read_text(encoding="utf-8") == "Keep.\n"
+
+
+def test_compact_tool_rejects_symlinked_agent_home(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    target = root / "agents" / "bob"
+    target.mkdir(parents=True)
+    target.joinpath("agent.too").write_text("agent bob\n", encoding="utf-8")
+    home = root / "agents" / "alice"
+    home.symlink_to(target, target_is_directory=True)
+    context = ToolContext(
+        run_id="run-1",
+        home=home,
+        room=home / ".runtime" / "tools" / "_me",
+        wd=home,
+    )
+
+    error = _error(_tools()["list"], {"kind": "task"}, context)
+
+    assert error["code"] == "invalid_request"
 
 
 def test_compact_tool_rejects_non_agent_home_with_structured_error(

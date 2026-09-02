@@ -9,13 +9,13 @@ from pathlib import Path
 from typing import Any, NoReturn, cast
 
 import frontmatter
+from yaml import YAMLError
 
 from toolang.base.errors import ToolFailure
 from toolang.base.types.tool import ToolContext
 from toolang.catalog import cap as caps
 from toolang.catalog.errors import (
     CatalogConflictError,
-    CatalogError,
     CatalogNotFoundError,
 )
 from toolang.catalog.job import AuthoredJobs, JobFile
@@ -40,6 +40,11 @@ from .schemas import (
     fail,
     issue,
 )
+from .storage import (
+    UnsafeAuthoringPathError,
+    validate_cap_storage,
+    validate_job_storage,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,8 +57,8 @@ class AgentStateScope:
 def execute(request: ResourceRequest, context: ToolContext) -> dict[str, Any]:
     """Execute one validated compact current-agent request."""
 
-    scope = _scope(context, request)
     try:
+        scope = _scope(context, request)
         _validate_resource_key(request)
         if request.operation == "list":
             return _list(scope, request.kind)
@@ -89,23 +94,49 @@ def execute(request: ResourceRequest, context: ToolContext) -> dict[str, Any]:
             kind=request.kind,
             key=request.key,
         )
-    except CatalogConflictError as exc:
+    except CatalogConflictError:
         fail(
             "conflict",
-            str(exc),
+            f"authored {request.kind} conflicts with existing content",
             operation=request.operation,
             kind=request.kind,
             key=request.key,
         )
     except StatePreparationError as exc:
         _fail_flow(request, exc)
+    except UnsafeAuthoringPathError as exc:
+        path = "key" if request.key is not None else "kind"
+        fail(
+            "storage_error",
+            str(exc),
+            operation=request.operation,
+            kind=request.kind,
+            key=request.key,
+            issues=(issue("unsafe-storage", path, str(exc)),),
+        )
+    except YAMLError:
+        path = "key" if request.key is not None else "kind"
+        fail(
+            "invalid_content",
+            f"authored {request.kind} content is invalid",
+            operation=request.operation,
+            kind=request.kind,
+            key=request.key,
+            issues=(
+                issue(
+                    "invalid-frontmatter",
+                    path,
+                    "authored front matter is invalid",
+                ),
+            ),
+        )
     except (TypeError, ValueError) as exc:
         if request.operation in {"create", "update"}:
             code = "invalid_flow" if request.kind == "flow" else "invalid_content"
             path = "content.source" if request.kind == "flow" else "content"
         else:
-            code = "invalid_request"
-            path = "key"
+            code = "invalid_flow" if request.kind == "flow" else "invalid_content"
+            path = "key" if request.key is not None else "kind"
         fail(
             code,
             str(exc) or type(exc).__name__,
@@ -115,22 +146,26 @@ def execute(request: ResourceRequest, context: ToolContext) -> dict[str, Any]:
             issues=(issue("invalid-value", path, str(exc) or type(exc).__name__),),
         )
     except OSError as exc:
+        path = "key" if request.key is not None else "kind"
         fail(
             "storage_error",
             f"could not {request.operation} {request.kind}",
             operation=request.operation,
             kind=request.kind,
             key=request.key,
-            issues=(issue("storage-error", "key", type(exc).__name__),),
+            issues=(issue("storage-error", path, type(exc).__name__),),
         )
 
 
 def _list(scope: AgentStateScope, kind: ResourceKind) -> dict[str, Any]:
     if kind in JOB_KINDS:
-        entries = _jobs(scope).list(kind=cast(JobKind, kind))
+        entries = _jobs(scope, assign_missing=True).list(kind=cast(JobKind, kind))
         items = [_job_item(scope, item, include_content=False) for item in entries]
     elif kind in NAMED_KINDS and kind != "flow":
-        entries = _caps(scope).list(kinds={cast(CapKind, kind)})
+        cap_kind = cast(CapKind, kind)
+        catalog = _caps(scope, cap_kind)
+        with catalog.write_lock():
+            entries = catalog.list(kinds={cap_kind})
         items = [_cap_item(scope, item, include_content=False) for item in entries]
     else:
         items = [
@@ -147,7 +182,10 @@ def _get(scope: AgentStateScope, kind: ResourceKind, key: str) -> dict[str, Any]
             raise CatalogNotFoundError(f"authored {kind} not found: {key}")
         payload = _job_item(scope, item, include_content=True)
     elif kind in NAMED_KINDS and kind != "flow":
-        item = _caps(scope).get(cast(CapKind, kind), key)
+        cap_kind = cast(CapKind, kind)
+        catalog = _caps(scope, cap_kind, key=key)
+        with catalog.write_lock():
+            item = catalog.get(cap_kind, key)
         if item is None:
             raise CatalogNotFoundError(f"authored {kind} not found: {key}")
         payload = _cap_item(scope, item, include_content=True)
@@ -162,9 +200,10 @@ def _get(scope: AgentStateScope, kind: ResourceKind, key: str) -> dict[str, Any]
 def _create(scope: AgentStateScope, request: ResourceRequest) -> dict[str, Any]:
     content = _content(request)
     if request.kind in JOB_KINDS:
-        document = new_job_file(
-            kind=cast(JobKind, request.kind),
-            job_id=allocate_authored_job_id(scope.layout),
+        kind = cast(JobKind, request.kind)
+        candidate = new_job_file(
+            kind=kind,
+            job_id="pending",
             title=_blank_to_none(cast(str | None, content.get("title"))),
             body=cast(str, content["body"]),
             schedule=(
@@ -173,7 +212,10 @@ def _create(scope: AgentStateScope, request: ResourceRequest) -> dict[str, Any]:
                 else None
             ),
         )
-        item = _jobs(scope).create(document)
+        catalog = _jobs(scope, allocator=True)
+        job_id = allocate_authored_job_id(scope.layout, catalog=catalog)
+        document = candidate.with_meta({**candidate.meta, "id": job_id})
+        item = catalog.create(document)
         payload = _job_item(scope, item, include_content=True)
     elif request.kind in NAMED_KINDS and request.kind != "flow":
         kind = cast(CapKind, request.kind)
@@ -183,7 +225,7 @@ def _create(scope: AgentStateScope, request: ResourceRequest) -> dict[str, Any]:
             kind=kind,
             name=key,
         )
-        item = _caps(scope).create(item)
+        item = _caps(scope, kind, key=key).create(item)
         payload = _cap_item(scope, item, include_content=True)
     else:
         item = _flows(scope).create(_key(request), cast(str, content["source"]))
@@ -214,7 +256,7 @@ def _update(scope: AgentStateScope, request: ResourceRequest) -> dict[str, Any]:
         payload = _job_item(scope, saved, include_content=True)
     elif request.kind in NAMED_KINDS and request.kind != "flow":
         kind = cast(CapKind, request.kind)
-        catalog = _caps(scope)
+        catalog = _caps(scope, kind, key=key)
         with catalog.write_lock():
             current = catalog.get(kind, key)
             if current is None:
@@ -250,7 +292,12 @@ def _delete(
         _flows(scope).delete(key, if_digest=if_digest)
     else:
         cap_kind = cast(CapKind, kind)
-        catalog = _caps(scope)
+        catalog = _caps(
+            scope,
+            cap_kind,
+            key=key,
+            recursive=cap_kind == "skill",
+        )
         with catalog.write_lock():
             current = catalog.get(cap_kind, key)
             if current is None:
@@ -261,8 +308,10 @@ def _delete(
 
 
 def _scope(context: ToolContext, request: ResourceRequest) -> AgentStateScope:
-    home = context.home.resolve()
-    if home.parent.name != "agents":
+    authored_home = context.home.expanduser()
+    unsafe_context = authored_home.is_symlink() or authored_home.parent.is_symlink()
+    home = authored_home.resolve()
+    if unsafe_context or home.parent.name != "agents" or not home.is_dir():
         fail(
             "invalid_request",
             "_me requires a current agent home",
@@ -280,16 +329,38 @@ def _scope(context: ToolContext, request: ResourceRequest) -> AgentStateScope:
     )
 
 
-def _jobs(scope: AgentStateScope) -> AuthoredJobs:
+def _jobs(
+    scope: AgentStateScope,
+    *,
+    allocator: bool = False,
+    assign_missing: bool = False,
+) -> AuthoredJobs:
+    validate_job_storage(
+        scope.layout.home,
+        allocator=allocator or assign_missing,
+    )
     catalog = AuthoredJobs(scope.layout.home)
-    try:
-        assign_missing_authored_job_ids(scope.layout, catalog=catalog)
-    except (CatalogError, ValueError) as exc:
-        raise ValueError(str(exc)) from exc
+    if assign_missing:
+        try:
+            assign_missing_authored_job_ids(scope.layout, catalog=catalog)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
     return catalog
 
 
-def _caps(scope: AgentStateScope) -> caps.AuthoredCaps:
+def _caps(
+    scope: AgentStateScope,
+    kind: CapKind,
+    *,
+    key: str | None = None,
+    recursive: bool = False,
+) -> caps.AuthoredCaps:
+    validate_cap_storage(
+        scope.layout.home,
+        kind,
+        key=key,
+        recursive=recursive,
+    )
     return caps.AuthoredCaps(scope.layout.home)
 
 
@@ -323,7 +394,7 @@ def _job_item(
     item: dict[str, Any] = {
         "key": document.id,
         "path": _home_path(scope, path),
-        "digest": _file_digest(path),
+        "digest": _content_digest(document.content),
         "title": document.title,
         "thread_id": job_thread_id(document),
     }
@@ -349,7 +420,7 @@ def _cap_item(
     item: dict[str, Any] = {
         "key": cap.name,
         "path": _home_path(scope, path),
-        "digest": _file_digest(path),
+        "digest": _content_digest(cap.content),
         "meta": mutable_data(cap.meta),
     }
     if include_content:
@@ -415,6 +486,8 @@ def _updated_cap_text(cap: caps.CapFile, changes: Mapping[str, Any]) -> str:
     for name in ("description", "transport", "target", "headers", "env"):
         if name in changes:
             meta[name] = changes[name]
+    if cap.kind == "service" and "transport" in changes:
+        meta.pop("protocol", None)
     body = cast(str, changes.get("body", cap.body))
     return _markdown_text(body, meta)
 
@@ -438,8 +511,8 @@ def _check_digest(
     resource: JobFile | caps.CapFile,
     expected: str | None,
 ) -> None:
-    path = _required_path(resource.path)
-    actual = _file_digest(path)
+    _required_path(resource.path)
+    actual = _content_digest(resource.content)
     if expected is not None and actual != expected:
         raise DigestMismatchError(
             kind=resource.kind,
@@ -449,8 +522,8 @@ def _check_digest(
         )
 
 
-def _file_digest(path: Path) -> str:
-    return sha256(path.read_bytes()).hexdigest()
+def _content_digest(content: str) -> str:
+    return sha256(content.encode("utf-8")).hexdigest()
 
 
 def _required_path(path: Path | None) -> Path:

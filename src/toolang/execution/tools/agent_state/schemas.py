@@ -39,6 +39,9 @@ NAMED_KINDS: tuple[ResourceKind, ...] = (
 JOB_KINDS = frozenset({"task", "chore"})
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _MAX_ISSUES = 32
+_MAX_IDENTIFIER_LENGTH = 128
+_MAX_ERROR_TEXT_LENGTH = 512
+_MAX_ISSUE_PATH_LENGTH = 256
 
 _CONTENT_PROPERTIES: dict[str, dict[str, Any]] = {
     "title": {"type": "string"},
@@ -223,7 +226,12 @@ def decode_request(
                 issues=(issue("required-field", "key", "non-empty key required"),),
             )
         key = raw_key.strip()
-        if key in {".", ".."} or "/" in key or "\\" in key:
+        if (
+            len(key) > _MAX_IDENTIFIER_LENGTH
+            or key in {".", ".."}
+            or "/" in key
+            or "\\" in key
+        ):
             fail(
                 "invalid_request",
                 f"key is invalid for {operation} {kind}",
@@ -234,7 +242,8 @@ def decode_request(
                     issue(
                         "invalid-key",
                         "key",
-                        "key must be one non-path resource identifier",
+                        "key must be one resource identifier of at most "
+                        f"{_MAX_IDENTIFIER_LENGTH} characters",
                     ),
                 ),
             )
@@ -296,7 +305,11 @@ def issue(
 ) -> dict[str, Any]:
     """Build one stable structured tool issue."""
 
-    result: dict[str, Any] = {"code": code, "path": path, "message": message}
+    result: dict[str, Any] = {
+        "code": _bounded_text(code, _MAX_IDENTIFIER_LENGTH),
+        "path": _bounded_text(path, _MAX_ISSUE_PATH_LENGTH),
+        "message": _bounded_text(message, _MAX_ERROR_TEXT_LENGTH),
+    }
     if line is not None:
         result["line"] = line
     if column is not None:
@@ -316,18 +329,21 @@ def fail(
     """Raise one expected failed tool call with bounded structured output."""
 
     selected = issues[:_MAX_ISSUES]
+    safe_message = _bounded_text(message, _MAX_ERROR_TEXT_LENGTH)
     error: dict[str, Any] = {
         "code": code,
-        "message": message,
+        "message": safe_message,
         "operation": operation,
         "issues": [dict(item) for item in selected],
         "truncated": len(issues) > len(selected),
     }
-    if kind is not None:
-        error["kind"] = kind
-    if key is not None:
-        error["key"] = key
-    raise ToolFailure(message, output={"error": error})
+    safe_kind = _safe_text(kind)
+    safe_key = _safe_text(key)
+    if safe_kind is not None:
+        error["kind"] = safe_kind
+    if safe_key is not None:
+        error["key"] = safe_key
+    raise ToolFailure(safe_message, output={"error": error})
 
 
 def _validate_content(
@@ -408,4 +424,8 @@ def _safe_text(value: object) -> str | None:
     if not isinstance(value, str):
         return None
     text = value.strip()
-    return text[:128] if text else None
+    return text[:_MAX_IDENTIFIER_LENGTH] if text else None
+
+
+def _bounded_text(value: str, limit: int) -> str:
+    return value if len(value) <= limit else f"{value[: limit - 1]}…"

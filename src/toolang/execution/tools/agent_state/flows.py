@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -13,9 +14,11 @@ from toolang.state.prepare import validate_home_programs
 from toolang.state.source import (
     SourceFile,
     SourceSnapshot,
-    read_authored_source,
+    read_home_program_source,
 )
 from toolang.state.state import flow_module_name
+
+from .storage import UnsafeAuthoringPathError, require_regular_file
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +30,13 @@ class AuthoredFlow:
     source: str
     digest: str
     size: int
+
+
+@dataclass(frozen=True, slots=True)
+class _StoredFlow:
+    path: Path
+    content: bytes
+    digest: str
 
 
 class AuthoredFlows:
@@ -44,34 +54,33 @@ class AuthoredFlows:
         return self.layout.home / ".authored-flows.lock"
 
     def list(self) -> tuple[AuthoredFlow, ...]:
-        directory = self._checked_directory(create=False)
-        if directory is None:
-            return ()
-        entries: list[AuthoredFlow] = []
-        for path in sorted(directory.iterdir(), key=lambda item: item.name):
-            if path.suffix != ".too":
-                continue
-            if path.is_symlink() or not path.is_file():
-                raise ValueError(f"flow source must be a regular file: {path.name}")
-            entries.append(self._load(path.stem))
-        return tuple(entries)
+        with self._lock():
+            directory = self._checked_directory(create=False)
+            if directory is None:
+                return ()
+            entries: list[AuthoredFlow] = []
+            for path in sorted(directory.iterdir(), key=lambda item: item.name):
+                if path.suffix != ".too":
+                    continue
+                self._require_regular(path)
+                entries.append(self._load(path.stem))
+            return tuple(entries)
 
     def get(self, key: str) -> AuthoredFlow | None:
-        path = self._exact_path(key)
-        if path is None:
-            return None
-        self._require_regular(path)
-        return self._load(key)
+        with self._lock():
+            stored = self._stored(key)
+            return None if stored is None else self._flow(key, stored)
 
     def create(self, key: str, source: str) -> AuthoredFlow:
-        with file_write_lock(self.lock_path):
+        with self._lock():
             path = self.path(key, create_directory=True)
             collision = self._casefold_collision(key)
             if collision is not None:
                 raise CatalogConflictError(f"authored flow already exists: {key}")
-            self._validate_candidate(key, source)
+            encoded = source.encode("utf-8")
+            self._validate_candidate(key, encoded)
             atomic_write_text(path, source)
-            return self._load(key)
+            return self._flow_from_content(key, path, source, encoded)
 
     def update(
         self,
@@ -80,25 +89,25 @@ class AuthoredFlows:
         *,
         if_digest: str | None,
     ) -> tuple[AuthoredFlow, bool]:
-        with file_write_lock(self.lock_path):
-            current = self.get(key)
+        with self._lock():
+            current = self._stored(key)
             if current is None:
                 raise CatalogNotFoundError(f"authored flow not found: {key}")
             _check_digest(current.digest, if_digest, kind="flow", key=key)
-            self._validate_candidate(key, source)
-            if current.source == source:
-                return current, False
+            encoded = source.encode("utf-8")
+            self._validate_candidate(key, encoded)
+            if current.content == encoded:
+                return self._flow(key, current), False
             atomic_write_text(current.path, source)
-            return self._load(key), True
+            return self._flow_from_content(key, current.path, source, encoded), True
 
-    def delete(self, key: str, *, if_digest: str | None) -> AuthoredFlow:
-        with file_write_lock(self.lock_path):
-            current = self.get(key)
+    def delete(self, key: str, *, if_digest: str | None) -> None:
+        with self._lock():
+            current = self._stored(key)
             if current is None:
                 raise CatalogNotFoundError(f"authored flow not found: {key}")
             _check_digest(current.digest, if_digest, kind="flow", key=key)
             current.path.unlink()
-            return current
 
     def path(self, key: str, *, create_directory: bool = False) -> Path:
         flow_module_name(f"flows/{key}.too")
@@ -108,10 +117,12 @@ class AuthoredFlows:
     def _checked_directory(self, *, create: bool) -> Path | None:
         directory = self.directory
         if directory.is_symlink():
-            raise ValueError("flow source directory must not be a symbolic link")
+            raise UnsafeAuthoringPathError(
+                "flow source directory must not be a symbolic link"
+            )
         if directory.exists():
             if not directory.is_dir():
-                raise ValueError("flow source path must be a directory")
+                raise UnsafeAuthoringPathError("flow source path must be a directory")
             return directory
         if create:
             directory.mkdir(parents=True)
@@ -119,19 +130,43 @@ class AuthoredFlows:
         return None
 
     def _load(self, key: str) -> AuthoredFlow:
-        path = self.path(key)
-        self._require_regular(path)
-        content = path.read_bytes()
+        stored = self._stored(key)
+        if stored is None:
+            raise CatalogNotFoundError(f"authored flow not found: {key}")
+        return self._flow(key, stored)
+
+    def _flow(self, key: str, stored: _StoredFlow) -> AuthoredFlow:
         try:
-            source = content.decode("utf-8")
+            source = stored.content.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise ValueError(f"flow source is not valid UTF-8: {key}") from exc
+        return self._flow_from_content(key, stored.path, source, stored.content)
+
+    def _flow_from_content(
+        self,
+        key: str,
+        path: Path,
+        source: str,
+        content: bytes,
+    ) -> AuthoredFlow:
         return AuthoredFlow(
             key=key,
             path=path,
             source=source,
             digest=sha256(content).hexdigest(),
             size=len(content),
+        )
+
+    def _stored(self, key: str) -> _StoredFlow | None:
+        path = self._exact_path(key)
+        if path is None:
+            return None
+        self._require_regular(path)
+        content = path.read_bytes()
+        return _StoredFlow(
+            path=path,
+            content=content,
+            digest=sha256(content).hexdigest(),
         )
 
     def _casefold_collision(self, key: str) -> Path | None:
@@ -161,12 +196,18 @@ class AuthoredFlows:
 
     def _require_regular(self, path: Path) -> None:
         if path.is_symlink() or not path.is_file():
-            raise ValueError(f"flow source must be a regular file: {path.name}")
+            raise UnsafeAuthoringPathError(
+                f"flow source must be a regular file: {path.name}"
+            )
 
-    def _validate_candidate(self, key: str, source: str) -> None:
-        snapshot = read_authored_source(self.layout.root, self.layout.name)
+    def _lock(self) -> AbstractContextManager[None]:
+        require_regular_file(self.lock_path, "flow lock")
+        return file_write_lock(self.lock_path)
+
+    def _validate_candidate(self, key: str, encoded: bytes) -> None:
+        self._validate_source_storage()
+        snapshot = read_home_program_source(self.layout.root, self.layout.name)
         relative = self.path(key).relative_to(self.layout.root).as_posix()
-        encoded = source.encode("utf-8")
         candidate = SourceFile(
             path=self.path(key),
             relative_path=relative,
@@ -196,6 +237,14 @@ class AuthoredFlows:
                 files=files,
             )
         )
+
+    def _validate_source_storage(self) -> None:
+        directory = self._checked_directory(create=False)
+        if directory is None:
+            return
+        for path in directory.iterdir():
+            if path.suffix == ".too":
+                self._require_regular(path)
 
 
 def _check_digest(

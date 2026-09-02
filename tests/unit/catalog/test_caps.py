@@ -186,6 +186,34 @@ def test_authored_caps_removes_complete_skill_directory(tmp_path: Path) -> None:
     assert not skill.path.parent.exists()
 
 
+def test_authored_caps_skill_removal_commits_before_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    caps = AuthoredCaps(tmp_path)
+    skill = caps.create(
+        _cap(
+            "skill",
+            "reviewer",
+            "---\ndescription: Review code\n---\nReview carefully.\n",
+        )
+    )
+    assert skill.path is not None
+
+    monkeypatch.setattr(
+        "toolang.catalog.cap.shutil.rmtree", lambda *args, **kwargs: None
+    )
+
+    removed = caps.remove("skill", "reviewer")
+
+    tombstones = tuple(tmp_path.joinpath(".runtime", "authored-cap-trash").iterdir())
+    assert removed == skill
+    assert caps.get("skill", "reviewer") is None
+    assert not skill.path.parent.exists()
+    assert len(tombstones) == 1
+    assert tombstones[0].joinpath("SKILL.md").is_file()
+
+
 def test_authored_caps_rejects_service_env_map(tmp_path: Path) -> None:
     content = (
         "---\n"
