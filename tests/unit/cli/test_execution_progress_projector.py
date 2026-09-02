@@ -14,7 +14,6 @@ from toolang.cli.common.execution_progress import (
     ProgressProjector,
     ProgressBlock,
 )
-from toolang.cli.common.execution_progress.formatting import elapsed
 from toolang.cli.common.execution_progress.headers import statement_header
 from toolang.execution.events import (
     PartBegin,
@@ -101,16 +100,6 @@ def _tool_call_part() -> ToolCallPart:
 
 def _rows(blocks: tuple[ProgressBlock, ...]) -> list[list[str]]:
     return [[row.text for row in block.rows] for block in blocks]
-
-
-def test_elapsed_normalizes_rounded_seconds_into_minutes() -> None:
-    assert (
-        elapsed(
-            "2026-01-01T00:00:00Z",
-            "2026-01-01T00:01:59.600Z",
-        )
-        == "2m00s"
-    )
 
 
 def test_progress_statement_header_prefers_doc_and_preserves_runnable_name() -> None:
@@ -875,7 +864,7 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
     )
     assert _rows(wrapper.committed) == [
         [
-            "  2.0s · 1 run 1 model · ↑639 ↓215 · ≈$0.0015",
+            "  2s · 1 run 1 model · ↑639 ↓215 · ≈$0.0015",
             "",
         ]
     ]
@@ -1624,7 +1613,7 @@ def test_nested_cancellation_is_rendered_once_at_the_leaf() -> None:
         "[0] Expand the research question into diverse search queries",
         "",
         "• canceled",
-        "  2.0s · 1 run 1 model",
+        "  2s · 1 run 1 model",
         "",
         "• script interrupted",
     ]

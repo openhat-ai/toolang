@@ -145,12 +145,12 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
         if line.startswith("∎ ") and "run_one succeeded" in line
     )
     assert footer.startswith("∎ run_one succeeded  ")
-    assert footer.endswith("2.0s · 1 model · ↑3.4k ↓86 · ≈$0.01")
+    assert footer.endswith("2s · 1 model · ↑3.4k ↓86 · ≈$0.01")
     assert "succeeded ·" not in footer
     assert display_width(footer) == 120
     assert "┌" not in output
     assert "└" not in output
-    assert "2.0s · 1 model · ↑3.4k ↓86 · ≈$0.01" in output
+    assert "2s · 1 model · ↑3.4k ↓86 · ≈$0.01" in output
 
 
 def test_run_footer_right_aligns_long_facts_and_indents_narrow_facts() -> None:

@@ -20,7 +20,8 @@ from toolang.execution.types import (
 )
 from toolang.lang.ast import FlowStmt
 
-from .formatting import cost_fact, execution_count_fact, flow_statement, token_fact
+from .facts import cost_fact, execution_count_fact, token_fact
+from .formatting import flow_statement
 
 
 @dataclass(frozen=True, slots=True)

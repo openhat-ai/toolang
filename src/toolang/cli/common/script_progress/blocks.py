@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from toolang.execution.events import RunBegin, RunEnd
 
-from ..execution_progress.formatting import elapsed
+from ..execution_progress.facts import elapsed_fact
 from ..execution_progress.rich_rendering import run_footer_renderable
 from ..execution_progress.state import Metrics
 from .console import ProgressConsole
@@ -42,7 +42,7 @@ class RunBlock:
         gap_before: bool,
     ) -> None:
         console.clear_live()
-        duration = elapsed(self.started_at, event.finished_at)
+        duration = elapsed_fact(self.started_at, event.finished_at)
         facts = self.metrics.facts(
             duration=duration,
             run_count=max(self.metrics.runs - 1, 0),

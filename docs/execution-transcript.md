@@ -12,7 +12,7 @@ child-Run closure rows, verbosity-specific structures, and the `·`, `↳`, and
 [2] Search the web for each query
 
 • Mapped all 6 items in parallel
-  31.0s · 6 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) · ≈$0.01        run_root.2
+  31s · 6 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) · ≈$0.01        run_root.2
 
 ∎ run_nrqpt0mf succeeded        1m16s · 26 runs 32 models 8 tools · ↑43.8k ↓17.6k(9.2k) · ≈$0.01
 ```

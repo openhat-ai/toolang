@@ -160,7 +160,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
     row = footer.committed[0].rows[0]
     assert row.text == "---  "
     assert row.leader == "hyphen"
-    assert row.facts == ("2.0s", "1 run 1 model", "↑4 ↓2")
+    assert row.facts == ("2s", "1 run 1 model", "↑4 ↓2")
     assert row.right_status == "succeeded"
     assert row.right_identity == "run_child"
     assert footer.committed[0].rows[-1] == ProgressRow("")

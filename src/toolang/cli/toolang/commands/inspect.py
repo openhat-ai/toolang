@@ -19,11 +19,11 @@ from toolang.cli.common.human_values import (
     human_scalar_text,
     human_value_renderable,
 )
-from toolang.cli.common.execution_progress.formatting import (
-    elapsed as _format_elapsed,
-    one_line as _one_line,
+from toolang.cli.common.execution_progress.facts import (
+    elapsed_fact as _format_elapsed,
     token_fact as _token_fact,
 )
+from toolang.cli.common.execution_progress.formatting import one_line as _one_line
 from toolang.execution.accounting import token_meter_quantity
 from toolang.execution.history import RunHistory
 from toolang.execution.inspection import (
