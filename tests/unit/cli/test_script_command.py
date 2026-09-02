@@ -93,7 +93,6 @@ def test_script_binds_options_arguments_and_primary_input(
     assert captured["runnable"] == "demo"
     assert captured["runnable_kind"] == "agic"
     assert captured["model_body"] == "openai/gpt effort=high"
-    assert captured["default_options"] == ()
     assert captured["allow_options"] == (
         "models=openai/*,deepseek/*",
         "models=openai/*",
@@ -119,13 +118,10 @@ def test_script_binds_options_arguments_and_primary_input(
     assert input._ == "hello world"
 
 
-def test_script_model_body_builds_one_invocation_session_layer(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+def test_script_model_body_builds_one_invocation_session_layer() -> None:
     override = script._script_session_override(
         model_body="test/model effort=4096",
         allow_options=("models=test/*",),
-        default_options=(),
         limit_options=("tokens=1000",),
     )
 
@@ -134,25 +130,6 @@ def test_script_model_body_builds_one_invocation_session_layer(
     assert override.model.effort == 4096
     assert override.allow[0].field == "models"
     assert override.limits[0].value == 1000
-    assert capsys.readouterr().err == ""
-
-    compatibility = script._script_session_override(
-        model_body=None,
-        allow_options=(),
-        default_options=("model=test/model effort=high",),
-        limit_options=(),
-    )
-    assert compatibility.model is not None
-    assert compatibility.model.effort == "high"
-    assert capsys.readouterr().err.count("deprecated") == 1
-
-    with pytest.raises(ValueError, match="cannot be combined"):
-        script._script_session_override(
-            model_body="test/model",
-            allow_options=(),
-            default_options=("model=test/model",),
-            limit_options=(),
-        )
 
 
 def test_script_reads_primary_input_from_stdin(
@@ -764,7 +741,6 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
         raw_named=(NamedInputSource("count", "2"),),
         allow_options=(),
         model_body=None,
-        default_options=(),
         limit_options=(),
         sandbox="docker",
         dev=tmp_path / "dist",
@@ -826,7 +802,6 @@ def test_embedded_script_prepare_failure_uses_the_operational_failure_block(
         raw_named=(NamedInputSource("count", "2"),),
         allow_options=(),
         model_body=None,
-        default_options=(),
         limit_options=(),
         sandbox="host",
         dev=None,
@@ -997,6 +972,31 @@ def test_script_rejects_removed_verbose_option(
 
     assert result == 2
     assert f"No such option: {option}" in strip_ansi(output.err)
+
+
+def test_script_rejects_removed_default_option(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    source = _write_source(tmp_path)
+
+    result = script.dispatch(
+        [],
+        [
+            str(source),
+            "demo",
+            "count=2",
+            "--default",
+            "model=test/model effort=high",
+            "hello",
+        ],
+        prog_name="toolang",
+        stdin=StringIO(),
+    )
+    output = capsys.readouterr()
+
+    assert result == 2
+    assert "No such option: --default" in strip_ansi(output.err)
 
 
 def test_script_rejects_stdin_marker_mixed_with_input(
