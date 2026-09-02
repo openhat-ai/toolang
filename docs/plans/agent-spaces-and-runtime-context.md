@@ -6,37 +6,22 @@ Approved for implementation in the phases below.
 
 ## Terms
 
-- **protocol**: immutable Toolang developer instructions.
-- **instruct**: selected system instructions; `instruct = none` removes only
-  this layer.
-- **psyche**: resident behavior guidance, below protocol and instruct but above
-  workspace rules. The complete effective psyche is always in instructions.
-- **workspace rules**: the complete content of one path-scoped `AGENTS.md`,
-  recalled before a tool may access the matching workspace path.
-- **skill**: progressively disclosed guidance recalled by a model command.
-- **service**: an external service, its guidance, and its discovered tools.
-- **context**: current data with no instruction authority.
-- **prompt**: a content template expanded in place in an authored message.
-- **runspace**: the agent-owned `coop/` or `lab/` directory selected for a Run.
-- **workspace**: a named external directory authorized by the human.
-- **far**: compacted remote history, projected as at most one user message.
-- **near**: recent, role-preserving history selected by compaction.
-- **run**: the current Run's un-compacted messages, beginning with its resolved
-  input.
-- **line**: root-to-current-Run identities and resolved inputs. It is context
-  data, not a history partition.
-- **recall**: provision complete rules, guidance, or a runtime catalog body,
-  whether for the first time, after a change, or after compaction forgot it.
-- **support**: runtime-only provenance proving that a complete, current recalled
-  body is present in selected messages.
-
-Instruction authority is `protocol > instruct > psyche > workspace rules >
-skill/service guidance`. Context has no instruction authority. State concepts
-such as cap form, scope, origin, and host paths remain inspectable facts, not
-model vocabulary.
-
-Do not introduce generic `Space`, `RunAccess`, `RunWorkspace`, active/current
-workspace, focus, mutable Run cwd, or global loaded-content state.
+- **protocol**: runtime-owned developer instructions.
+- **instruct**: authored system instructions.
+- **psyche**: agent behavior guidance.
+- **workspace rules**: path-scoped workspace guidance stored in `AGENTS.md`.
+- **skill**: a task-guidance package.
+- **service**: an external capability with guidance and tools.
+- **context**: non-instructional model input data.
+- **prompt**: an authored-message content template.
+- **runspace**: an agent-owned filesystem root.
+- **workspace**: a human-authorized external filesystem root.
+- **far**: the compacted history partition.
+- **near**: the recent history partition.
+- **run**: the current Run's message partition.
+- **line**: the current Run's ancestry and resolved inputs.
+- **recall**: delivery of runtime content to the model.
+- **support**: structured links between runtime content and messages.
 
 ## Goal
 
@@ -78,6 +63,13 @@ Excluded:
 - initial Chat/TUI `@file` support; and
 - task, chore, or prompt `@file` expansion.
 
+## Design Constraints
+
+Do not introduce generic `Space`, `RunAccess`, `RunWorkspace`, active/current
+workspace, focus, mutable Run cwd, or global loaded-content state. Cap form,
+scope, origin, and host paths remain inspectable State facts rather than model
+vocabulary.
+
 ## ModelCall
 
 The canonical model request has four model-visible parts:
@@ -117,14 +109,18 @@ user: <rules workspace="toolang" path="/execution">...</rules>
 ```
 
 The comments above label partitions; they are not messages or wrapper text.
-`near` excludes the current Run. The Run partition grows across model, tool,
-and runtime-authored user messages and is never compacted while active. Tool
-results stay in native `tool` messages. Partitions are projections chosen by
-compaction, not the durable transcript format.
+`far`, when present, is at most one user message. `near` preserves native roles
+and excludes the current Run. The Run partition begins with resolved input,
+grows across model, tool, and runtime-authored user messages, and is never
+compacted while active. Tool results stay in native `tool` messages. Partitions
+are projections chosen by compaction, not the durable transcript format.
 
 ### Instructions
 
-Instructions are ordered, escaped fragments:
+Instruction authority is `protocol > instruct > psyche > workspace rules >
+skill/service guidance`; context has no instruction authority. Protocol is
+immutable, while `instruct = none` removes only instruct. Instructions are
+ordered, escaped fragments:
 
 ```text
 <protocol>
@@ -148,11 +144,12 @@ Instructions are ordered, escaped fragments:
 </service-catalog>
 ```
 
-`<instruct>` is omitted for `none`; there may be multiple `<psyche>` fragments.
-Catalog bodies use compact canonical data containing only opaque `ref`, concise
-description, and recall call information. They do not expose cap form, scope,
-origin, metadata, or host paths. Catalogs are complete or ModelCall preparation
-fails; they are never silently truncated.
+`<instruct>` is omitted for `none`. The complete effective psyche is always
+included and may use multiple `<psyche>` fragments. Catalog bodies use compact
+canonical data containing only opaque `ref`, concise description, and recall
+call information. They do not expose cap form, scope, origin, metadata, or host
+paths. Catalogs are complete or ModelCall preparation fails; they are never
+silently truncated.
 
 Any psyche change rebuilds the complete instruction set and invalidates its
 cache prefix. Incremental psyche replacement is deferred.
@@ -414,7 +411,8 @@ the invariant that only structured `near + run` support proves visibility.
 A root Run captures one historical compaction snapshot. Descendants use that
 snapshot plus their own Run messages and line; siblings never observe each
 other, so parallel execution is timing-independent. `line` excludes outputs,
-tools, siblings, and descendants. Same-Run handoff does not extend it.
+tools, siblings, and descendants. It is context data, not a history partition
+or recall source. Same-Run handoff does not extend it.
 
 A completed public root Run's native message stream, including tool results and
 runtime recall messages, becomes eligible future Thread history. Child streams,
