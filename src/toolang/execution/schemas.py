@@ -48,6 +48,7 @@ from .types import (
     ModelStepGiven,
     Occurrence,
     RunStatus,
+    Runspace,
     StepKind,
     StepGiven,
     StepNoted,
@@ -59,6 +60,7 @@ from .types import (
     TypedPointer,
     validate_execution_id,
     validate_occurrence,
+    validate_runspace,
     validate_step_given,
     validate_step_noted,
 )
@@ -379,6 +381,7 @@ class RunRequest:
 
     thread_id: str
     request_id: str
+    runspace: Runspace
     runnable: RunnableRequest
     model: ModelRequest | None
     policy: RunPolicy
@@ -392,6 +395,7 @@ class RunRequest:
             raise TypeError("run request ID must be a string")
         if not self.request_id or self.request_id != self.request_id.strip():
             raise ValueError("run request requires a canonical request ID")
+        validate_runspace(self.runspace)
         if not isinstance(self.runnable, RunnableRequest):
             raise TypeError("run request runnable must be RunnableRequest")
         if self.model is not None and not isinstance(self.model, ModelRequest):
@@ -577,6 +581,7 @@ class RunInfo:
     parent: StepPath | None
     thread_id: str
     root_run_id: str
+    runspace: Runspace
     runnable_kind: str
     runnable_name: str | None
     call_kind: str
@@ -633,6 +638,7 @@ class RunInfo:
             parent=run.parent,
             thread_id=run.thread,
             root_run_id=root_run_id,
+            runspace=preparation.runspace,
             runnable_kind=kind if separator else "",
             runnable_name=name if separator else preparation.runnable,
             call_kind="top" if run.parent is None else "run",

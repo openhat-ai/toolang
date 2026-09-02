@@ -948,6 +948,7 @@ def _render_collection(
                 (
                     item.record.id,
                     _runnable_activity(item.runnable),
+                    item.runspace,
                     _display_status(item.record.status),
                     str(item.step_count),
                     item.record.created_at,
@@ -958,6 +959,7 @@ def _render_collection(
                 (
                     "RUN",
                     "RUNNABLE",
+                    "RUNSPACE",
                     "STATUS",
                     "STEPS",
                     "CREATED",
@@ -970,6 +972,7 @@ def _render_collection(
                 (
                     item.record.id,
                     _runnable_activity(item.runnable),
+                    item.runspace,
                     _display_status(item.record.status),
                     str(item.step_count),
                     str(item.record.parent) if item.record.parent is not None else "-",
@@ -981,6 +984,7 @@ def _render_collection(
                 (
                     "RUN",
                     "RUNNABLE",
+                    "RUNSPACE",
                     "STATUS",
                     "STEPS",
                     "PARENT STEP",
@@ -993,6 +997,7 @@ def _render_collection(
             (
                 item.record.id,
                 _runnable_activity(item.runnable),
+                item.runspace,
                 _display_status(item.record.status),
                 str(item.step_count),
                 item.record.thread,
@@ -1005,6 +1010,7 @@ def _render_collection(
             (
                 "RUN",
                 "RUNNABLE",
+                "RUNSPACE",
                 "STATUS",
                 "STEPS",
                 "THREAD",

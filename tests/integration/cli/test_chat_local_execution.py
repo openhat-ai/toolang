@@ -137,6 +137,7 @@ def test_local_chat_run_request_materializes_chat_runnable() -> None:
             RunRequest(
                 thread_id="term_test",
                 request_id="term_request",
+                runspace="coop",
                 runnable=RunnableRequest("agic:chat", RunnableInputRaw(_="hello")),
                 model=ModelRequest("test/scripted"),
                 policy=RunPolicy(allow=(AgentCeiling(models=("test/*",)),)),

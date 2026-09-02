@@ -98,6 +98,7 @@ class _Client:
         return RunRequest(
             thread_id=thread_id,
             request_id=f"request_{len(self.starts)}",
+            runspace="coop",
             runnable=RunnableRequest(
                 setting.runnable or "agic:chat",
                 input,

@@ -240,6 +240,7 @@ agic chat(_: Part[]) -> Part[]:
                 json={
                     "thread_id": thread_id,
                     "request_id": "term_remote_chat",
+                    "runspace": "coop",
                     "runnable": {
                         "ref": "agic:chat",
                         "input": {"_": "hello", "named": []},

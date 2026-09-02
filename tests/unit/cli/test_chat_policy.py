@@ -46,6 +46,7 @@ def test_build_run_request_materializes_a_session_snapshot_without_mutation() ->
     request = build_run_request(
         thread_id="term_test",
         request_id="term_request",
+        runspace="coop",
         input=RunnableInputRaw(
             _="hello",
             named=(NamedInputSource("tone", "brief"),),
@@ -64,6 +65,7 @@ def test_build_run_request_materializes_a_session_snapshot_without_mutation() ->
     assert request == RunRequest(
         thread_id="term_test",
         request_id="term_request",
+        runspace="coop",
         runnable=RunnableRequest(
             "flow:review",
             RunnableInputRaw(
@@ -113,6 +115,7 @@ def test_input_local_effort_change_reuses_session_model_identity() -> None:
     request = build_run_request(
         thread_id="term_test",
         request_id="term_request",
+        runspace="coop",
         input=RunnableInputRaw(_="hello"),
         override=RunOverride(model=ModelOverride(effort="low")),
         setting=SessionSetting(
@@ -138,6 +141,7 @@ def test_build_run_request_materializes_unqualified_runnable_to_exact_ref() -> N
     request = build_run_request(
         thread_id="term_test",
         request_id="term_request",
+        runspace="coop",
         input=RunnableInputRaw(_="hello"),
         override=RunOverride(runnable="review"),
         setting=_surface(),

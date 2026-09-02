@@ -211,6 +211,7 @@ def _request(source: str) -> RunRequest:
     return RunRequest(
         thread_id="thread_1",
         request_id=f"request_{source}",
+        runspace="coop",
         runnable=RunnableRequest("agic:chat", RunnableInputRaw(_=source)),
         model=ModelRequest("openai/gpt-5"),
         policy=RunPolicy(),

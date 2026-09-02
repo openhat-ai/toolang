@@ -18,7 +18,7 @@ from toolang.execution.schemas import (
     RunDetail,
     ThreadInfo,
 )
-from toolang.execution.types import StepPath
+from toolang.execution.types import Runspace, StepPath
 from toolang.lang.types import parse_public_runnable_ref
 
 
@@ -44,7 +44,7 @@ def _reject_materialized_run_unknowns(value: object, *, direct: bool) -> None:
     data = cast(Mapping[str, object], value)
     _reject_keys(
         data,
-        {"thread_id", "request_id", "runnable", "model", "policy"},
+        {"thread_id", "request_id", "runspace", "runnable", "model", "policy"},
         "run request",
     )
     runnable = data.get("runnable")
@@ -298,6 +298,7 @@ class RunCreateRequest(ApiRequest):
 
     thread_id: str = Field(min_length=1)
     request_id: str = Field(min_length=1)
+    runspace: Runspace = "coop"
     runnable: DirectRunnableRequest
     model: ModelRequest | None
     policy: RunPolicy
@@ -322,6 +323,7 @@ class AuthoredRunRequest(ApiRequest):
 
     thread_id: StrictText
     request_id: StrictText
+    runspace: Runspace
     runnable: RunnableRequest
     model: ModelRequest | None
     policy: RunPolicy

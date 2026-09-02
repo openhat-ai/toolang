@@ -13,7 +13,7 @@ from .records import (
     StepRecord,
     StoredModelStepGiven,
 )
-from .types import StepPath, ToolStepGiven
+from .types import Runspace, StepPath, ToolStepGiven
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +26,13 @@ class InspectedRun:
 
     @property
     def runnable(self) -> str:
+        return self._preparation().runnable
+
+    @property
+    def runspace(self) -> Runspace:
+        return self._preparation().runspace
+
+    def _preparation(self) -> PreparationControlPayload:
         payload = self.entry.payload
         if (
             self.record.control.target != self.record.id
@@ -38,7 +45,7 @@ class InspectedRun:
                 "run preparation control not found: "
                 f"{self.record.id}@{self.record.control.index}"
             )
-        return payload.runnable
+        return payload
 
 
 @dataclass(frozen=True, slots=True)

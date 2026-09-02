@@ -15,7 +15,7 @@ from toolang.execution.policy import (
 )
 from toolang.execution.runnables import parse_runnable_ref
 from toolang.execution.schemas import RunRequest, RunnableRequest
-from toolang.execution.types import RunOverride, SessionSetting
+from toolang.execution.types import RunOverride, Runspace, SessionSetting
 from toolang.lang.input import RunnableInputRaw
 
 
@@ -107,6 +107,7 @@ def build_run_request(
     *,
     thread_id: str,
     request_id: str,
+    runspace: Runspace,
     input: RunnableInputRaw,
     override: RunOverride,
     setting: SessionSetting,
@@ -125,6 +126,7 @@ def build_run_request(
     return RunRequest(
         thread_id=thread_id,
         request_id=request_id,
+        runspace=runspace,
         runnable=RunnableRequest(
             resolve_runnable_ref(effective.runnable),
             input,

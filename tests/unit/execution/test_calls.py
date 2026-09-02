@@ -97,6 +97,7 @@ def test_materialized_agic_request_requires_a_model(tmp_path) -> None:
                 RunRequest(
                     thread_id="term_test",
                     request_id="request_without_model",
+                    runspace="coop",
                     runnable=RunnableRequest(
                         "agic:default",
                         RunnableInputRaw(_="hello"),
@@ -125,6 +126,7 @@ def test_materialized_request_rejects_an_unqualified_runnable(tmp_path) -> None:
                 RunRequest(
                     thread_id="term_test",
                     request_id="request_with_selector",
+                    runspace="coop",
                     runnable=RunnableRequest(
                         "default",
                         RunnableInputRaw(_="hello"),
@@ -165,6 +167,7 @@ flow hello_flow(_: Text) -> Text:
                     setup=harness.setup,
                     state=harness.state,
                     thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runspace="coop",
                     default_runnable="default",
                 )
             )
@@ -213,6 +216,7 @@ flow hello_flow(_: Text) -> Text:
                     setup=harness.setup,
                     state=harness.state,
                     thread=thread,
+                    runspace="coop",
                     default_runnable="default",
                 )
             )
@@ -224,6 +228,7 @@ flow hello_flow(_: Text) -> Text:
                     setup=harness.setup,
                     state=harness.state,
                     thread=thread,
+                    runspace="coop",
                     default_runnable="default",
                 )
             )
@@ -253,6 +258,7 @@ def test_resolve_spec_binds_policy_primary_and_typed_named_inputs(
             setup=harness.setup,
             state=harness.state,
             thread="term_test",
+            runspace="coop",
             default_runnable="default",
         )
 
@@ -300,6 +306,7 @@ agic default(_: Part[]):
             setup=harness.setup,
             state=harness.state,
             thread="term_test",
+            runspace="coop",
             default_runnable="default",
         )
 
@@ -344,6 +351,7 @@ agic default(_: Part[]):
                 setup=harness.setup,
                 state=state,
                 thread="term_test",
+                runspace="coop",
                 default_runnable="default",
             )
     finally:
@@ -392,6 +400,7 @@ agic default(_: Part[]):
             setup=harness.setup,
             state=state,
             thread="term_test",
+            runspace="coop",
             default_runnable="default",
         )
 
@@ -416,6 +425,7 @@ def test_run_default_returns_to_surface_binding_not_session_binding(
             setup=harness.setup,
             state=harness.state,
             thread="term_test",
+            runspace="coop",
             default_runnable="default",
             surface=RunBindings(runnable="agic:default"),
             session_commands=(RunCommand("default", "runnable", "agic:review"),),
@@ -450,6 +460,7 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
             setup=setup,
             state=harness.state,
             thread="term_test",
+            runspace="coop",
             default_runnable="default",
             surface=surface,
             session_commands=session,
@@ -500,6 +511,7 @@ def test_invalid_explicit_model_is_rejected_before_run_persistence(tmp_path) -> 
                 setup=harness.setup,
                 state=harness.state,
                 thread=thread,
+                runspace="coop",
                 default_runnable="default",
             )
 
@@ -532,6 +544,7 @@ def test_missing_default_model_is_rejected_before_run_persistence(tmp_path) -> N
             setup=setup,
             state=harness.state,
             thread=thread,
+            runspace="coop",
             default_runnable="default",
         )
 

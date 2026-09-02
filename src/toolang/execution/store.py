@@ -78,6 +78,7 @@ from .types import (
     ExecutionError,
     ControlTiming,
     RunStatus,
+    Runspace,
     StepKind,
     StepGiven,
     StepNoted,
@@ -89,6 +90,7 @@ from .types import (
     Pointer,
     TypedPointer,
     RunCommand,
+    validate_runspace,
     validate_runtime_value,
     valid_run_id,
     valid_thread_id,
@@ -221,6 +223,7 @@ class RunStore:
         run_id: str,
         parent: StepPath | None,
         thread: str,
+        runspace: Runspace,
         resources: AgentResources,
         limits: RunLimits,
         state: str | None,
@@ -246,6 +249,7 @@ class RunStore:
             raise ValueError(f"invalid run id: {run_id!r}")
         if not valid_thread_id(thread):
             raise ValueError(f"invalid thread id: {thread!r}")
+        validate_runspace(runspace)
         if parent is None:
             _validate_canonical_sandbox(sandbox)
             if state is None:
@@ -366,6 +370,7 @@ class RunStore:
                     RunControlPayload(
                         resources=resources,
                         limits=limits,
+                        runspace=runspace,
                         state=state,
                         runnable=runnable,
                         model=model,
@@ -381,6 +386,7 @@ class RunStore:
                     else RerunControlPayload(
                         resources=resources,
                         limits=limits,
+                        runspace=runspace,
                         state=cast(str, state),
                         runnable=runnable,
                         model=model,
@@ -707,6 +713,7 @@ class RunStore:
         *,
         run_id: str,
         anchor: StepPath | None,
+        runspace: Runspace,
         resources: AgentResources,
         limits: RunLimits,
         state: str | None,
@@ -728,6 +735,7 @@ class RunStore:
             raise ValueError(f"invalid run id: {run_id!r}")
         if state is None:
             raise ValueError("retry requires an Agent State revision")
+        validate_runspace(runspace)
         _validate_canonical_sandbox(sandbox)
         _validate_request_id(request_id)
         with self._lock:
@@ -811,6 +819,11 @@ class RunStore:
                         f"retry sandbox {sandbox} does not match original sandbox "
                         f"{preparation_payload.sandbox} for run {run_id}; use rerun"
                     )
+                if preparation_payload.runspace != runspace:
+                    raise ValueError(
+                        f"retry runspace {runspace} does not match original runspace "
+                        f"{preparation_payload.runspace} for run {run_id}"
+                    )
                 tree_runs = self._root_tree_runs(run_id)
                 resolved_anchor = self._resolve_retry_anchor(
                     run_id=run_id,
@@ -845,6 +858,7 @@ class RunStore:
                     payload=RetryControlPayload(
                         resources=resources,
                         limits=limits,
+                        runspace=runspace,
                         state=None,
                         runnable=runnable,
                         model=model,

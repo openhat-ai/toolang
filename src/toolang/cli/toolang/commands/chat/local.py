@@ -338,6 +338,7 @@ class LocalChatSession:
         return build_run_request(
             thread_id=thread_id,
             request_id=f"term_{uuid4().hex}",
+            runspace="coop",
             input=input,
             override=override,
             setting=setting,

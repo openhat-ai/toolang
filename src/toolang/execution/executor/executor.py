@@ -70,8 +70,10 @@ from ..types import (
     ModelStepNoted,
     Occurrence,
     OccurrencePosition,
+    Runspace,
     TypedPointer,
     RunCommand,
+    validate_runspace,
 )
 from ..runnables import (
     ResolvedRunnable,
@@ -171,6 +173,7 @@ class RunSpec:
     setup: AgentSetup
     state: ExecutionState
     thread: str
+    runspace: Runspace
     bindings: RunBindings
     limits: RunLimits
     model_request: ModelRequest | None = None
@@ -180,6 +183,9 @@ class RunSpec:
     authored_commands: tuple[RunCommand, ...] = ()
     authored_session_commands: tuple[RunCommand, ...] = ()
     prompt_invocations: tuple[PromptInvocation, ...] = ()
+
+    def __post_init__(self) -> None:
+        validate_runspace(self.runspace)
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,6 +343,7 @@ class RunExecutor:
             run_id=bound.run_id,
             parent=None,
             thread=bound.thread,
+            runspace=bound.runspace,
             resources=resources,
             limits=bound.limits,
             state=bound.state.revision,
@@ -419,6 +426,7 @@ class RunExecutor:
             run_id=bound.run_id,
             parent=None,
             thread=bound.thread,
+            runspace=bound.runspace,
             resources=resources,
             limits=bound.limits,
             state=bound.state.revision,
@@ -498,6 +506,7 @@ class RunExecutor:
         _reopened, control, _trimmed = self.store.accept_retry(
             run_id=run_id,
             anchor=StepPath.parse(anchor) if anchor is not None else None,
+            runspace=bound.runspace,
             resources=resources,
             limits=bound.limits,
             state=bound.state.revision,
@@ -605,6 +614,7 @@ class RunExecutor:
             setup=setup,
             state=state,
             thread=run.thread,
+            runspace=control.payload.runspace,
             bindings=RunBindings(
                 runnable=f"{declaration.kind}:{runnable}",
                 model=(
@@ -2184,6 +2194,7 @@ class _Execution:
             run_id=self.executor.ids.issue_run(),
             root_run_id=parent.root_run_id,
             thread=parent.thread,
+            runspace=parent.runspace,
             bindings=RunBindings(
                 model=parent.bindings.model,
                 runnable=f"{runnable.kind}:{name}",
@@ -2277,6 +2288,7 @@ class _Execution:
                     run_id=binding.run_id,
                     parent=binding.parent,
                     thread=binding.thread,
+                    runspace=binding.runspace,
                     resources=resources,
                     limits=binding.limits,
                     state=None,
@@ -2666,6 +2678,7 @@ def _child_binding(
         run_id=context.executor.ids.issue_run(),
         root_run_id=parent.root_run_id,
         thread=parent.thread,
+        runspace=parent.runspace,
         bindings=RunBindings(
             model=parent.bindings.model,
             runnable=f"{runnable.kind}:{effective_name}",
@@ -2724,6 +2737,7 @@ def _bind_run(
         run_id=run_id,
         root_run_id=run_id,
         thread=spec.thread,
+        runspace=spec.runspace,
         bindings=RunBindings(
             runnable=f"{resolved_runnable.kind}:{runnable_name}",
             model=spec.bindings.model or "none",

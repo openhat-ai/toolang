@@ -154,6 +154,7 @@ def _detail(
         parent=None,
         thread_id="term_remote",
         root_run_id=run_id,
+        runspace="coop",
         runnable_kind="agic",
         runnable_name="chat",
         call_kind="top",

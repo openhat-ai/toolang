@@ -70,6 +70,14 @@ LimitValue: TypeAlias = int | Decimal | None
 ModelEffort: TypeAlias = ReasoningEffort | int | Literal["auto"]
 PolicyGroup = Literal["allow", "default", "limit"]
 PolicyValue: TypeAlias = tuple[str, ...] | str | int | Decimal | None
+Runspace = Literal["coop", "lab"]
+
+
+def validate_runspace(value: object) -> None:
+    """Require one concrete agent runspace."""
+
+    if not isinstance(value, str) or value not in {"coop", "lab"}:
+        raise ValueError(f"invalid runspace: {value!r}")
 
 
 @dataclass(frozen=True, slots=True)

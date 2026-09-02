@@ -130,6 +130,7 @@ async def run(
                         setup=setup,
                         state=state,
                         thread=submission.record.thread_id,
+                        runspace="coop",
                         bindings=RunBindings(
                             runnable=runnable_ref,
                             model=setup.defaults.model,

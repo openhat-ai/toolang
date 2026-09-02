@@ -31,6 +31,7 @@ from toolang.execution.types import (
     ModelStepGiven,
     Pointer,
     RunStatus,
+    Runspace,
     StepPath,
 )
 from toolang.lang.ast import LetStmt, Span
@@ -459,6 +460,7 @@ def test_retry_reopens_root_from_a_failed_value_step(
             store.accept_retry(
                 run_id=run.id,
                 anchor=None,
+                runspace="coop",
                 resources=run_control.payload.resources,
                 limits=run_control.payload.limits,
                 runnable=run_control.payload.runnable,
@@ -487,6 +489,7 @@ def test_retry_reopens_root_from_a_failed_value_step(
             store.accept_retry(
                 run_id=run.id,
                 anchor=None,
+                runspace="coop",
                 resources=run_control.payload.resources,
                 limits=run_control.payload.limits,
                 runnable=run_control.payload.runnable,
@@ -506,6 +509,7 @@ def test_retry_reopens_root_from_a_failed_value_step(
         reopened, control, trimmed = store.accept_retry(
             run_id=run.id,
             anchor=None,
+            runspace="coop",
             resources=run_control.payload.resources,
             limits=run_control.payload.limits,
             runnable=run_control.payload.runnable,
@@ -652,6 +656,7 @@ def test_retry_allows_unapplied_reload_history(
         reopened, retry, _trimmed = store.accept_retry(
             run_id=run.id,
             anchor=None,
+            runspace="coop",
             resources=entry.payload.resources,
             limits=entry.payload.limits,
             state=entry.payload.state,
@@ -702,6 +707,7 @@ def test_retry_rejects_applied_reload_history_without_mutation(tmp_path: Path) -
             store.accept_retry(
                 run_id=run.id,
                 anchor=None,
+                runspace="coop",
                 resources=entry.payload.resources,
                 limits=entry.payload.limits,
                 state=entry.payload.state,
@@ -769,6 +775,7 @@ def test_retry_rejects_applied_execute_history_without_mutation(
             store.accept_retry(
                 run_id=run.id,
                 anchor=None,
+                runspace="coop",
                 resources=entry.payload.resources,
                 limits=entry.payload.limits,
                 state=entry.payload.state,
@@ -785,7 +792,7 @@ def test_retry_rejects_applied_execute_history_without_mutation(
         store.close()
 
 
-def test_retry_rejects_unknown_or_mismatched_sandbox_without_mutation(
+def test_retry_rejects_mismatched_preparation_without_mutation(
     tmp_path: Path,
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
@@ -804,10 +811,11 @@ def test_retry_rejects_unknown_or_mismatched_sandbox_without_mutation(
         run_payload = run_control.payload
         assert run_payload.sandbox == "host"
 
-        def accept_retry(sandbox: str):
+        def accept_retry(sandbox: str, runspace: Runspace = "coop"):
             return store.accept_retry(
                 run_id=run.id,
                 anchor=None,
+                runspace=runspace,
                 resources=run_payload.resources,
                 limits=run_payload.limits,
                 state=run_payload.state,
@@ -818,6 +826,13 @@ def test_retry_rejects_unknown_or_mismatched_sandbox_without_mutation(
                 request_id=None,
                 created_at="2026-01-01T00:00:03Z",
             )
+
+        with pytest.raises(
+            ValueError,
+            match="retry runspace lab does not match original runspace coop",
+        ):
+            accept_retry("host", "lab")
+        assert len(store.list_run_controls(run_id=run.id)) == 1
 
         with pytest.raises(
             ValueError,
@@ -909,6 +924,7 @@ def test_retry_preserves_child_controls_and_revision_monotonicity(
         store.accept_retry(
             run_id=root.id,
             anchor=None,
+            runspace="coop",
             resources=payload.resources,
             limits=payload.limits,
             state=payload.state,
@@ -1028,6 +1044,7 @@ def test_retry_anchor_selection_distinguishes_run_outcomes_and_explicit_values(
         _reopened, control, trimmed = store.accept_retry(
             run_id=run.id,
             anchor=steps[explicit_anchor].path if explicit_anchor is not None else None,
+            runspace="coop",
             resources=run_control.payload.resources,
             limits=run_control.payload.limits,
             runnable=run_control.payload.runnable,
@@ -1243,6 +1260,7 @@ def test_retry_does_not_read_or_write_ejection_fields(tmp_path: Path) -> None:
         reopened, retry, trimmed = store.accept_retry(
             run_id=source.id,
             anchor=None,
+            runspace="coop",
             resources=payload.resources,
             limits=payload.limits,
             state=payload.state,
