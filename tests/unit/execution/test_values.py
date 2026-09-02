@@ -373,6 +373,7 @@ def test_preparation_payload_round_trips_resolved_locals() -> None:
     payload = RunControlPayload(
         resources=AgentResources(models=("test/model",)),
         limits=RunLimits(tokens=10),
+        runspace="lab",
         state="0" * 64,
         runnable="agic:worker",
         model="test/model",
@@ -400,6 +401,7 @@ def test_preparation_payload_omits_inactive_reasoning_controls(
     payload = RunControlPayload(
         resources=AgentResources(models=("test/model",)),
         limits=RunLimits(),
+        runspace="lab",
         state="0" * 64,
         runnable="agic:worker",
         model="test/model",
@@ -422,6 +424,7 @@ def test_preparation_payload_preserves_an_absent_model_request() -> None:
     payload = RunControlPayload(
         resources=AgentResources(),
         limits=RunLimits(),
+        runspace="lab",
         state="0" * 64,
         runnable="flow:worker",
         model="none",
@@ -440,6 +443,7 @@ def test_preparation_payload_materializes_a_legacy_model_field() -> None:
     payload = RunControlPayload(
         resources=AgentResources(models=("test/model",)),
         limits=RunLimits(),
+        runspace="lab",
         state="0" * 64,
         runnable="agic:worker",
         model="test/model",
@@ -459,6 +463,7 @@ def test_preparation_payload_preserves_a_legacy_model_free_run() -> None:
     payload = RunControlPayload(
         resources=AgentResources(),
         limits=RunLimits(),
+        runspace="lab",
         state="0" * 64,
         runnable="flow:worker",
         model="none",
@@ -478,6 +483,7 @@ def test_preparation_payload_rejects_a_legacy_non_exact_model_ref() -> None:
     payload = RunControlPayload(
         resources=AgentResources(models=("test/*",)),
         limits=RunLimits(),
+        runspace="lab",
         state="0" * 64,
         runnable="agic:worker",
         model="test/*",
@@ -496,6 +502,7 @@ def test_preparation_payload_rejects_a_mismatched_model_request() -> None:
         RunControlPayload(
             resources=AgentResources(models=("test/model",)),
             limits=RunLimits(),
+            runspace="lab",
             state="0" * 64,
             runnable="agic:worker",
             model="test/model",
@@ -508,6 +515,7 @@ def test_preparation_payload_round_trips_authored_prompt_facts() -> None:
     payload = RunControlPayload(
         resources=AgentResources(models=("test/model",)),
         limits=RunLimits(),
+        runspace="lab",
         state="0" * 64,
         runnable="agic:worker",
         model="test/model",
@@ -548,16 +556,20 @@ def test_preparation_payload_reads_legacy_missing_sandbox_as_unknown() -> None:
     payload = RunControlPayload(
         resources=AgentResources(),
         limits=RunLimits(),
+        runspace="lab",
         state="0" * 64,
         runnable="flow:worker",
         model="none",
         locals=(),
     )
 
-    restored = control_payload_from_data("run", control_payload_to_data(payload))
+    data = control_payload_to_data(payload)
+    data.pop("runspace")
+    restored = control_payload_from_data("run", data)
 
     assert isinstance(restored, RunControlPayload)
     assert restored.sandbox is None
+    assert restored.runspace == "coop"
     assert "sandbox" not in control_payload_to_data(restored)
 
 
@@ -567,6 +579,7 @@ def test_preparation_payload_rejects_noncanonical_sandbox(sandbox: str) -> None:
         RunControlPayload(
             resources=AgentResources(),
             limits=RunLimits(),
+            runspace="lab",
             state="0" * 64,
             runnable="flow:worker",
             model="none",
@@ -579,6 +592,7 @@ def test_preparation_payload_rejects_instead_of_dropping_invalid_locals() -> Non
     payload = RunControlPayload(
         resources=AgentResources(models=("test/model",)),
         limits=RunLimits(),
+        runspace="lab",
         state="0" * 64,
         runnable="agic:worker",
         model="test/model",
@@ -597,6 +611,7 @@ def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:
     inherited = RetryControlPayload(
         resources=AgentResources(models=("test/model",)),
         limits=RunLimits(),
+        runspace="lab",
         state="0" * 64,
         runnable="flow:worker",
         model="test/model",
@@ -607,6 +622,7 @@ def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:
     empty = RetryControlPayload(
         resources=inherited.resources,
         limits=inherited.limits,
+        runspace=inherited.runspace,
         state=inherited.state,
         runnable=inherited.runnable,
         model=inherited.model,
@@ -630,6 +646,7 @@ def test_reload_and_inherited_preparation_payloads_round_trip_without_revision_d
     child_payload = RunControlPayload(
         resources=AgentResources(),
         limits=RunLimits(),
+        runspace="lab",
         state=None,
         runnable="agic:child",
         model="test/model",

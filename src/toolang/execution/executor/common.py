@@ -52,6 +52,7 @@ from ..types import (
     ControlRef,
     Local as RecordLocal,
     Occurrence,
+    Runspace,
     StepKind,
     StepNoted,
     StepPath,
@@ -107,6 +108,7 @@ class BoundRun:
     run_id: str
     root_run_id: str
     thread: str
+    runspace: Runspace
     bindings: RunBindings
     input: RunnableInput
     control_locals: tuple[RecordLocal, ...]

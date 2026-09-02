@@ -37,6 +37,7 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
         {
             "thread_id": "term_example",
             "request_id": "term_request",
+            "runspace": "lab",
             "runnable": {
                 "ref": "agic:chat",
                 "input": {
@@ -70,6 +71,7 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
     assert parse_authored_run(payload) == RunRequest(
         thread_id="term_example",
         request_id="term_request",
+        runspace="lab",
         runnable=RunnableRequest(
             "agic:chat",
             RunnableInputRaw(
@@ -105,6 +107,7 @@ def test_parse_authored_run_accepts_canonical_reasoning_budget() -> None:
         {
             "thread_id": "term_example",
             "request_id": "term_request",
+            "runspace": "coop",
             "runnable": {
                 "ref": "agic:chat",
                 "input": {"_": "hello", "named": []},

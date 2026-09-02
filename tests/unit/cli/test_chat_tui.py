@@ -2563,6 +2563,7 @@ def test_chat_tui_run_lifecycle_starts_and_stops_status_activity() -> None:
             RunRequest(
                 thread_id="term_request",
                 request_id="term_request",
+                runspace="coop",
                 runnable=RunnableRequest(
                     "agic:chat",
                     RunnableInputRaw(_="hello"),
@@ -3022,6 +3023,7 @@ def test_chat_tui_recovers_from_durable_terminal_truth(
         parent=None,
         thread_id="term_remote",
         root_run_id="run_remote",
+        runspace="coop",
         runnable_kind="agic",
         runnable_name="chat",
         call_kind="top",
@@ -3305,6 +3307,7 @@ def test_chat_tui_rejects_known_unsupported_colon_effort_in_status() -> None:
             return RunRequest(
                 thread_id=thread_id,
                 request_id="term_request",
+                runspace="coop",
                 runnable=RunnableRequest("agic:chat", input),
                 model=ModelRequest(
                     "openai/gpt-5",
@@ -3356,6 +3359,7 @@ def test_chat_tui_uses_queued_runnable_snapshot_for_the_next_active_status() -> 
             RunRequest(
                 thread_id="term_busy",
                 request_id="term_queued",
+                runspace="coop",
                 runnable=RunnableRequest(
                     "flow:research",
                     RunnableInputRaw(_="queued"),
@@ -4028,6 +4032,7 @@ class FakeClient(ChatClient):
         return RunRequest(
             thread_id=thread_id,
             request_id="term_request",
+            runspace="coop",
             runnable=RunnableRequest("agic:chat", input),
             model=setting.model,
             policy=RunPolicy(),

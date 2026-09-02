@@ -532,6 +532,7 @@ def _create_authored_run(agent: _RunningDockerAgent) -> str:
         {
             "thread": thread["id"],
             "request_id": "live_docker_seed",
+            "runspace": "coop",
             "commands": [{"group": "default", "field": "model", "value": _MODEL}],
             "input": {"primary": "seed run"},
             "runnable_fallbacks": ["agic:echo"],

@@ -384,11 +384,12 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
         (
             "run",
             RunControlPayload(
-                resources, limits, revision, "agic:test", "test/model", ()
+                resources, limits, "lab", revision, "agic:test", "test/model", ()
             ),
             {
                 "resources",
                 "limits",
+                "runspace",
                 "state",
                 "runnable",
                 "model",
@@ -406,6 +407,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
             RerunControlPayload(
                 resources,
                 limits,
+                "lab",
                 revision,
                 "agic:test",
                 "test/model",
@@ -415,6 +417,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
             {
                 "resources",
                 "limits",
+                "runspace",
                 "state",
                 "runnable",
                 "model",
@@ -433,6 +436,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
             RetryControlPayload(
                 resources,
                 limits,
+                "lab",
                 revision,
                 "agic:test",
                 "test/model",
@@ -442,6 +446,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
             {
                 "resources",
                 "limits",
+                "runspace",
                 "state",
                 "runnable",
                 "model",
@@ -521,6 +526,7 @@ def test_durable_record_json_rejects_colon_bearing_field_names(
                 run_id="run_colon",
                 parent=None,
                 thread="term_colon",
+                runspace="coop",
                 resources=AgentResources(),
                 limits=RunLimits(),
                 state="a" * 64,

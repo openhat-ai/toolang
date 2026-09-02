@@ -513,17 +513,21 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
     human_run_lines = [
         " ".join(line.split()) for line in strip_ansi(human_runs.stdout).splitlines()
     ]
-    assert "RUN RUNNABLE STATUS STEPS THREAD PARENT STEP CREATED" in human_run_lines
+    assert (
+        "RUN RUNNABLE RUNSPACE STATUS STEPS THREAD PARENT STEP CREATED"
+        in human_run_lines
+    )
     first_run_line = next(
         line for line in human_run_lines if line.startswith("run_subject_first ")
     )
     child_run_line = next(
         line for line in human_run_lines if line.startswith("run_subject_child ")
     )
-    assert "<agic> test succeeded 3 custom_subject -" in first_run_line
+    assert "<agic> test coop succeeded 3 custom_subject -" in first_run_line
     assert first_run_line.split()[-1] == "2026-01-01T00:00:00Z"
     assert (
-        "<agic> test succeeded 0 custom_subject run_subject_first.2" in child_run_line
+        "<agic> test coop succeeded 0 custom_subject run_subject_first.2"
+        in child_run_line
     )
     assert child_run_line.split()[-1] == "2026-01-01T12:00:00Z"
     assert human_scoped_runs.exit_code == 0, human_scoped_runs.stderr
@@ -531,11 +535,13 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
         " ".join(line.split())
         for line in strip_ansi(human_scoped_runs.stdout).splitlines()
     ]
-    assert "RUN RUNNABLE STATUS STEPS PARENT STEP CREATED" in human_scoped_lines
+    assert (
+        "RUN RUNNABLE RUNSPACE STATUS STEPS PARENT STEP CREATED" in human_scoped_lines
+    )
     scoped_first_line = next(
         line for line in human_scoped_lines if line.startswith("run_subject_first ")
     )
-    assert "<agic> test succeeded 3 -" in scoped_first_line
+    assert "<agic> test coop succeeded 3 -" in scoped_first_line
     assert scoped_first_line.split()[-1] == "2026-01-01T00:00:00Z"
     assert steps.exit_code == 0, steps.stderr
     step_documents = json.loads(steps.stdout)
@@ -1189,7 +1195,7 @@ def test_inspect_projects_run_tree_and_container_step_call(tmp_path: Path) -> No
         " ".join(line.split())
         for line in strip_ansi(human_child_runs.stdout).splitlines()
     ]
-    assert "RUN RUNNABLE STATUS STEPS CREATED" in child_run_lines
+    assert "RUN RUNNABLE RUNSPACE STATUS STEPS CREATED" in child_run_lines
     assert not any("OCCUR" in line for line in child_run_lines)
 
 

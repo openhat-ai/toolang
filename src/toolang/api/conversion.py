@@ -24,6 +24,7 @@ def parse_authored_run(payload: AuthoredRunRequest) -> RunRequest:
         return RunRequest(
             thread_id=payload.thread_id,
             request_id=payload.request_id,
+            runspace=payload.runspace,
             runnable=payload.runnable,
             model=payload.model,
             policy=payload.policy,

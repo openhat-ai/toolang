@@ -133,6 +133,7 @@ flow relay(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="relay",
+                    runspace="lab",
                     primary=resolve_input_parts("hello"),
                 ),
                 tracer=tracer,
@@ -153,6 +154,8 @@ flow relay(_: Part[]) -> Part[]:
             assert isinstance(child_run_control.payload, RunControlPayload)
             assert isinstance(root_run_control.payload, RunControlPayload)
             assert child_run_control.payload.runnable == "agic:echo"
+            assert child_run_control.payload.runspace == "lab"
+            assert root_run_control.payload.runspace == "lab"
             assert child_run_control.payload.sandbox is None
             assert root_run_control.payload.sandbox == "host"
             assert harness.store.run_output(run_id=root.id) == (TextPart("relayed"),)
@@ -231,6 +234,7 @@ flow relay(_: Part[]) -> Part[]:
                 RunRequest(
                     thread_id=thread,
                     request_id="term_first",
+                    runspace="lab",
                     runnable=RunnableRequest(
                         "flow:relay",
                         RunnableInputRaw(_="hello"),
@@ -246,6 +250,7 @@ flow relay(_: Part[]) -> Part[]:
                 RunRequest(
                     thread_id=thread,
                     request_id="term_second",
+                    runspace="lab",
                     runnable=RunnableRequest(
                         "agic:echo",
                         RunnableInputRaw(_="hello"),
@@ -398,6 +403,7 @@ flow staged(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="staged",
+                    runspace="lab",
                     primary=resolve_input_parts("hello"),
                 )
             )
@@ -474,6 +480,7 @@ flow staged(_: Part[]) -> Part[]:
             assert retry.payload.limits == run_control.payload.limits
             assert retry.payload.locals == run_control.payload.locals
             assert retry.payload.resources == run_control.payload.resources
+            assert retry.payload.runspace == run_control.payload.runspace == "lab"
             assert retry.payload.sandbox == run_control.payload.sandbox == "host"
             runs = harness.store.list_runs(
                 thread_id=thread,

@@ -132,6 +132,7 @@ def accept_run(
         run_id=run_id,
         parent=parent,
         thread=thread,
+        runspace="coop",
         resources=resources if resources is not None else AgentResources(),
         limits=limits if limits is not None else RunLimits(),
         runnable=resolved_bindings.runnable or "agic:test",
@@ -199,6 +200,7 @@ def project_run_start(
         run_id=run_id,
         parent=parent_path,
         thread=thread_id,
+        runspace="coop",
         resources=AgentResources(),
         limits=RunLimits(),
         runnable=(

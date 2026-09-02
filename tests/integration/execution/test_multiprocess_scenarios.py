@@ -232,6 +232,7 @@ def _race_retry(
         store.accept_retry(
             run_id="run_retry_race",
             anchor=None,
+            runspace="coop",
             resources=payload.resources,
             limits=payload.limits,
             state=payload.state,

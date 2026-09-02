@@ -96,6 +96,7 @@ def _request(
     return RunRequest(
         thread_id=thread,
         request_id=request_id,
+        runspace="lab",
         runnable=RunnableRequest(bindings.runnable or runnable, input),
         model=ModelRequest(bindings.model or TEST_MODEL_REF),
         policy=RunPolicy(allow=ceilings, limits=limits),
@@ -108,6 +109,7 @@ def test_run_request_contains_only_materialized_caller_values() -> None:
     assert request == RunRequest(
         thread_id="term_test",
         request_id="request_1",
+        runspace="lab",
         runnable=RunnableRequest("agic:chat", RunnableInputRaw(_="hello")),
         model=ModelRequest(TEST_MODEL_REF),
         policy=RunPolicy(),
@@ -115,6 +117,7 @@ def test_run_request_contains_only_materialized_caller_values() -> None:
     assert {item.name for item in fields(RunRequest)} == {
         "thread_id",
         "request_id",
+        "runspace",
         "runnable",
         "model",
         "policy",
@@ -125,6 +128,7 @@ def test_run_request_contains_only_materialized_caller_values() -> None:
     ("changes", "error"),
     [
         ({"thread_id": ""}, ValueError),
+        ({"runspace": "work"}, ValueError),
         ({"runnable": "chat"}, TypeError),
         ({"model": "test/scripted"}, TypeError),
         ({"policy": "default"}, TypeError),
@@ -138,6 +142,7 @@ def test_run_request_rejects_invalid_field_shapes(
     values: dict[str, object] = {
         "thread_id": "term_test",
         "request_id": "request_1",
+        "runspace": "lab",
         "runnable": RunnableRequest("agic:chat", RunnableInputRaw(_="hello")),
         "model": ModelRequest(TEST_MODEL_REF),
         "policy": RunPolicy(),

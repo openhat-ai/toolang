@@ -486,6 +486,7 @@ class JobScheduler:
             setup=setup,
             state=state,
             thread=job.thread_id,
+            runspace="coop",
             default_runnable=runnable,
             surface=RunBindings(runnable=runnable),
             include=lambda reference: resolve_file_include(reference, base=base),

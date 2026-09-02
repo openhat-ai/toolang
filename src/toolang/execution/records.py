@@ -49,6 +49,7 @@ from .types import (
     OccurrencePosition,
     IterationOccurrence,
     RunStatus,
+    Runspace,
     StepKind,
     StepGiven,
     StepNoted,
@@ -62,6 +63,7 @@ from .types import (
     RunCommand,
     local_from_protocol_data,
     validate_occurrence,
+    validate_runspace,
     validate_runtime_value,
     valid_run_id,
     valid_thread_id,
@@ -146,6 +148,7 @@ class RunControlPayload:
 
     resources: AgentResources
     limits: RunLimits
+    runspace: Runspace
     state: str | None
     runnable: str
     model: str
@@ -158,6 +161,7 @@ class RunControlPayload:
     prompt_invocations: tuple[PromptInvocation, ...] = ()
 
     def __post_init__(self) -> None:
+        validate_runspace(self.runspace)
         _validate_preparation_payload(
             self.state,
             self.runnable,
@@ -180,6 +184,7 @@ class RerunControlPayload:
 
     resources: AgentResources
     limits: RunLimits
+    runspace: Runspace
     state: str
     runnable: str
     model: str
@@ -193,6 +198,7 @@ class RerunControlPayload:
     prompt_invocations: tuple[PromptInvocation, ...] = ()
 
     def __post_init__(self) -> None:
+        validate_runspace(self.runspace)
         _validate_preparation_payload(
             self.state,
             self.runnable,
@@ -217,6 +223,7 @@ class RetryControlPayload:
 
     resources: AgentResources
     limits: RunLimits
+    runspace: Runspace
     state: str | None
     runnable: str
     model: str
@@ -230,6 +237,7 @@ class RetryControlPayload:
     prompt_invocations: tuple[PromptInvocation, ...] = ()
 
     def __post_init__(self) -> None:
+        validate_runspace(self.runspace)
         _validate_preparation_payload(
             self.state,
             self.runnable,
@@ -720,6 +728,8 @@ def _control_payload_from_data(
             raise ValueError(f"{kind} payload requires resources and limits")
         resources = AgentResources.from_data(cast(Mapping[str, object], resources_raw))
         limits = run_limits_from_data(limits_raw)
+        runspace = cast(Runspace, payload.get("runspace", "coop"))
+        validate_runspace(runspace)
         state = _optional_payload_text(payload, "state")
         runnable = _required_payload_text(payload, "runnable")
         model = _required_payload_text(payload, "model")
@@ -770,6 +780,7 @@ def _control_payload_from_data(
             return RunControlPayload(
                 resources=resources,
                 limits=limits,
+                runspace=runspace,
                 state=state,
                 runnable=runnable,
                 model=model,
@@ -787,6 +798,7 @@ def _control_payload_from_data(
             return RerunControlPayload(
                 resources=resources,
                 limits=limits,
+                runspace=runspace,
                 state=state,
                 runnable=runnable,
                 model=model,
@@ -803,6 +815,7 @@ def _control_payload_from_data(
         return RetryControlPayload(
             resources=resources,
             limits=limits,
+            runspace=runspace,
             state=state,
             runnable=runnable,
             model=model,
@@ -1671,6 +1684,7 @@ def _preparation_payload_data(
     data: dict[str, object] = {
         "resources": payload.resources.to_data(),
         "limits": run_limits_to_data(payload.limits),
+        "runspace": payload.runspace,
         "runnable": payload.runnable,
         "model": payload.model,
         "model_request": (

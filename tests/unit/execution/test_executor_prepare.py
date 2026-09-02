@@ -244,6 +244,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
         run_id="run_1",
         root_run_id="run_1",
         thread="term_1",
+        runspace="coop",
         bindings=RunBindings(model="test/model", runnable="agic:chat"),
         input=resolve_runnable_input(
             agic,
@@ -340,6 +341,7 @@ def test_prepare_agic_keeps_declared_output_contract_out_of_instructions(
         run_id="run_1",
         root_run_id="run_1",
         thread="term_1",
+        runspace="coop",
         bindings=RunBindings(model="test/model", runnable="agic:queries"),
         input=resolve_runnable_input(
             agic,
@@ -420,6 +422,7 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
         run_id="run_1",
         root_run_id="run_1",
         thread="term_1",
+        runspace="coop",
         bindings=RunBindings(model="test/model", runnable="agic:review"),
         input=resolve_runnable_input(
             agic,
@@ -533,6 +536,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
                     setup=setup,
                     state=state,
                     thread="term_1",
+                    runspace="coop",
                     bindings=RunBindings(model="test/model", runnable="chat"),
                     limits=setup.limits,
                     input=resolve_runnable_input(

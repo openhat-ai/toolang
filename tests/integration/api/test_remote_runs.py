@@ -69,6 +69,7 @@ def _authored_request(
     return {
         "thread_id": thread_id,
         "request_id": request_id,
+        "runspace": "lab",
         "runnable": {
             "ref": runnable,
             "input": {"_": source, "named": named or []},
@@ -82,6 +83,7 @@ def _core_request(thread_id: str, request_id: str) -> RunRequest:
     return RunRequest(
         thread_id=thread_id,
         request_id=request_id,
+        runspace="lab",
         runnable=RunnableRequest("agic:chat", RunnableInputRaw(_="hello")),
         model=ModelRequest(TEST_MODEL_REF),
         policy=RunPolicy(),
@@ -249,6 +251,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         assert fallback_events[0][0] == "run_begin"
         assert fallback_events[-1][0] == "run_end"
         assert fallback_detail.runnable_name == "chat"
+        assert fallback_detail.runspace == "lab"
         assert fallback_detail.input_text == "$review focus=security - @note.txt"
         assert fallback_detail.controls[0].request_id == "fallback_request"
         assert (
@@ -258,6 +261,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         assert fallback_control is not None
         assert isinstance(fallback_control.payload, RunControlPayload)
         assert fallback_control.payload.limits.cost == Decimal("2.50")
+        assert fallback_control.payload.runspace == "lab"
         assert fallback_control.payload.sandbox == "host"
         assert fallback_control.payload.authored_input == RunnableInputRaw(
             _="$review focus=security -\n@note.txt",
@@ -396,9 +400,12 @@ agic chat(_: Part[]) -> Part[]:
         assert retry_detail.controls[-1].request_id == "retry_request"
         assert isinstance(retry_detail.controls[-1].payload, RetryControlPayload)
         assert retry_detail.controls[-1].payload.limits.tokens == 10
+        assert retry_detail.controls[-1].payload.runspace == "lab"
         assert rerun_detail.controls[0].request_id == "rerun_request"
         assert isinstance(rerun_detail.controls[0].payload, RerunControlPayload)
         assert rerun_detail.controls[0].payload.limits.time == 30
+        assert rerun_detail.controls[0].payload.runspace == "lab"
+        assert retry_detail.runspace == rerun_detail.runspace == "lab"
         assert duplicate.status_code == 409
         assert duplicate.json()["detail"] == (
             "run control request already exists: retry_request"

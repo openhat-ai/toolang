@@ -29,6 +29,7 @@ def test_run_spec_has_minimal_execution_contract() -> None:
         "setup",
         "state",
         "thread",
+        "runspace",
         "bindings",
         "limits",
         "model_request",
@@ -47,6 +48,7 @@ def test_run_spec_defaults_are_immutable() -> None:
         setup=first_setup,
         state=_state(),
         thread="term_first",
+        runspace="coop",
         bindings=RunBindings(runnable="chat"),
         limits=first_setup.limits,
     )
@@ -55,6 +57,7 @@ def test_run_spec_defaults_are_immutable() -> None:
         setup=second_setup,
         state=_state(),
         thread="term_second",
+        runspace="lab",
         bindings=RunBindings(runnable="chat"),
         limits=second_setup.limits,
     )

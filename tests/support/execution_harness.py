@@ -36,6 +36,7 @@ from toolang.execution.runnables import (
     resolve_state_runnable,
 )
 from toolang.execution.store import RunStore
+from toolang.execution.types import Runspace
 from toolang.execution.threads import ThreadManager
 from toolang.lang import Program
 from toolang.lang.input import resolve_runnable_input
@@ -386,6 +387,7 @@ class ExecutionHarness:
         primary: tuple[Part, ...] | None = None,
         named: Mapping[str, object] | None = None,
         model: str | None = None,
+        runspace: Runspace = "coop",
         limits: RunLimits | None = None,
         ceilings: tuple[AgentCeiling, ...] = (),
     ) -> RunSpec:
@@ -401,6 +403,7 @@ class ExecutionHarness:
             setup=self.setup,
             state=self.state,
             thread=thread,
+            runspace=runspace,
             bindings=RunBindings(
                 model=model if model is not None else self.setup.defaults.model,
                 runnable=runnable,

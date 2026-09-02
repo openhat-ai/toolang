@@ -39,7 +39,7 @@ from .runnables import (
     resolve_public_runnable_query,
 )
 from .schemas import RerunRequest, RetryRequest, RunRequest
-from .types import RunCommand, RunOverride, SessionSetting
+from .types import RunCommand, RunOverride, Runspace, SessionSetting
 
 if TYPE_CHECKING:
     from .executor.executor import RunSpec
@@ -95,6 +95,7 @@ def resolve_run_request(
         setup=setup,
         state=state,
         thread=request.thread_id,
+        runspace=request.runspace,
         bindings=RunBindings(
             runnable=request.runnable.ref,
             model=model_request.ref if model_request is not None else None,
@@ -160,6 +161,7 @@ def resolve_spec(
     setup: AgentSetup,
     state: AgentState | StatePublication,
     thread: str,
+    runspace: Runspace,
     default_runnable: str,
     surface: RunBindings = RunBindings(),
     session_commands: Sequence[RunCommand] = (),
@@ -215,6 +217,7 @@ def resolve_spec(
         setup=setup,
         state=state,
         thread=thread,
+        runspace=runspace,
         bindings=bindings,
         model_request=model_request,
         ceilings=ceilings,
@@ -264,6 +267,7 @@ def _resolve_concrete_spec(
     setup: AgentSetup,
     state: AgentState | StatePublication,
     thread: str,
+    runspace: Runspace,
     bindings: RunBindings,
     model_request: ModelRequest | None,
     ceilings: tuple[AgentCeiling, ...],
@@ -324,6 +328,7 @@ def _resolve_concrete_spec(
         setup=setup,
         state=state,
         thread=thread,
+        runspace=runspace,
         bindings=RunBindings(
             model=bindings.model,
             runnable=resolved_runnable.ref,

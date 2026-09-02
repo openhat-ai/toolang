@@ -84,6 +84,7 @@ def _request() -> RunRequest:
     return RunRequest(
         thread_id="term_test",
         request_id="term_request",
+        runspace="lab",
         runnable=RunnableRequest(
             "agic:chat",
             RunnableInputRaw(
@@ -122,6 +123,7 @@ def _detail(run_id: str = "run_remote") -> RunDetail:
         parent=None,
         thread_id="term_test",
         root_run_id=run_id,
+        runspace="lab",
         runnable_kind="agic",
         runnable_name="chat",
         call_kind="top",
@@ -230,6 +232,7 @@ def test_remote_client_runs_traces_and_waits_for_detail() -> None:
             {
                 "thread_id": "term_test",
                 "request_id": "term_request",
+                "runspace": "lab",
                 "runnable": {
                     "ref": "agic:chat",
                     "input": {

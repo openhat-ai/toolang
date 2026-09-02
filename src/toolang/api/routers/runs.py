@@ -72,6 +72,7 @@ async def _run_stream(
                 setup=setup,
                 state=state,
                 thread=thread_id,
+                runspace=payload.runspace,
                 bindings=RunBindings(
                     runnable=resolved_runnable.ref,
                     model=(model_request.ref if model_request is not None else None),

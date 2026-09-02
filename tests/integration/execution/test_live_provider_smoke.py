@@ -95,6 +95,7 @@ class _LiveExecution:
                     setup=self.setup,
                     state=self.state,
                     thread=thread,
+                    runspace="coop",
                     bindings=RunBindings(runnable=runnable),
                     limits=self.setup.limits,
                     input=resolve_runnable_input(

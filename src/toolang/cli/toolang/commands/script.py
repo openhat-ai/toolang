@@ -721,6 +721,7 @@ async def _execute_remote(
                 RunRequest(
                     thread_id=thread,
                     request_id=f"term_{uuid4().hex}",
+                    runspace="coop",
                     runnable=RunnableRequest(
                         effective.runnable or runnable, request_input
                     ),
@@ -1004,6 +1005,7 @@ async def _execute(
         setup=setup,
         state=state,
         thread=_UNPERSISTED_THREAD,
+        runspace="coop",
         default_runnable=runnable,
         surface=RunBindings(runnable=runnable),
         surface_named_sources=raw_named,

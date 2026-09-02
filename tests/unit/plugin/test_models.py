@@ -3198,6 +3198,7 @@ def _prepared_agic(
             run_id="run_1",
             root_run_id="run_1",
             thread="thread-1",
+            runspace="coop",
             bindings=RunBindings(runnable="agic:main"),
             input=RunnableInput(),
             control_locals=(),
