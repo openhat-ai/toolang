@@ -17,6 +17,7 @@ from toolang.base.types.progress import ProgressEvent, ProgressStage, ProgressSt
 from toolang.base.types.sandbox import SandboxOutput, SandboxRef
 import toolang.cli.toolang.main as cli
 from toolang.cli.common import agent_server as agent_server_acquisition
+from toolang.cli.toolang.commands.chat import main as chat_commands
 from toolang.cli.toolang.commands import runtime as runtime_commands
 from toolang.common.layout import AgentLayout
 from toolang.up import sandbox as sandbox_runtime
@@ -73,7 +74,7 @@ def test_policy_options_follow_cli_display_order(
     assert positions == tuple(sorted(positions))
 
 
-def test_restart_commands_expose_only_valid_runtime_options() -> None:
+def test_session_and_restart_commands_expose_only_valid_runtime_options() -> None:
     chat = strip_ansi(runner.invoke(cli.app, ["chat", "alice", "--help"]).stdout)
     retry = strip_ansi(runner.invoke(cli.app, ["retry", "alice", "--help"]).stdout)
     rerun = strip_ansi(runner.invoke(cli.app, ["rerun", "alice", "--help"]).stdout)
@@ -87,6 +88,34 @@ def test_restart_commands_expose_only_valid_runtime_options() -> None:
     assert "--dev" in rerun
     assert "--sandbox" in rerun
     assert "--default" not in rerun
+
+
+def test_chat_default_options_reach_session_orchestration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def chat_command(_ctx: object, **kwargs: object) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(chat_commands, "chat_command", chat_command)
+
+    result = cli.main(
+        [
+            "alice",
+            "chat",
+            "--default",
+            "model=test/model effort=high",
+            "--default",
+            "runnable=flow:review",
+        ]
+    )
+
+    assert result == 0
+    assert captured["defaults"] == [
+        "model=test/model effort=high",
+        "runnable=flow:review",
+    ]
 
 
 @pytest.mark.parametrize(
