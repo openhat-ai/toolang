@@ -15,6 +15,7 @@ from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ToolCall, ToolCallResult
 from toolang.base.types.tool import ToolContext, ToolService
+from toolang.base.errors import ToolFailure
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.common.template import render_text_template
@@ -377,7 +378,7 @@ async def invoke_tool_call(
         )
         error = None
     except Exception as exc:
-        output = {}
+        output = dict(exc.output) if isinstance(exc, ToolFailure) else {}
         error = str(exc) or type(exc).__name__
     return ToolCallResult(
         tool_call_id=call.tool_call_id,

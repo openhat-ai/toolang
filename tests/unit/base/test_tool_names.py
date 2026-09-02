@@ -11,7 +11,7 @@ from toolang.base.utils.tools import encode_tool_name
     [
         ("fs", "read", "fs__read"),
         ("public_tools", "run_task", "public_tools__run_task"),
-        ("_me", "create_task", "_me__create_task"),
+        ("_me", "create", "_me__create"),
     ],
 )
 def test_encode_tool_name_accepts_canonical_components(

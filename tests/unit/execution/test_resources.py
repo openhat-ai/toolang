@@ -165,10 +165,10 @@ def test_agent_resources_durable_data_round_trips_every_resource_kind() -> None:
         models=("test/model",),
         tools=(
             AgentToolResource(
-                model_name="_me__create_task",
+                model_name="_me__create",
                 plugin="_me",
                 toolset="_me",
-                name="create_task",
+                name="create",
             ),
         ),
         caps=(AgentCapResource(kind="skill", name="review", ref="skill:review"),),

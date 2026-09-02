@@ -144,6 +144,12 @@ def load_agent_state(
     return state
 
 
+def validate_home_programs(authored: SourceSnapshot) -> None:
+    """Validate one captured home Program candidate without publishing State."""
+
+    _program_drafts(authored)
+
+
 def refresh_agent_state(
     layout: AgentLayout,
     *,
