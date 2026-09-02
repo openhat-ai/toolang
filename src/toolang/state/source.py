@@ -589,6 +589,35 @@ def read_authored_source(toolang_root: Path, agent_name: str) -> SourceSnapshot:
     return _authored_source(toolang_root, agent_name, files)
 
 
+def read_home_program_source(toolang_root: Path, agent_name: str) -> SourceSnapshot:
+    """Read only one agent module and its direct home flow modules."""
+
+    agent_dir = toolang_root / "agents" / agent_name
+    files: list[SourceFile] = []
+    for path in _direct_flow_files(agent_dir / "flows"):
+        files.extend(
+            _collect_file(
+                toolang_root,
+                path,
+                category="program",
+                origin="agent",
+            )
+        )
+    files.extend(
+        _collect_file(
+            toolang_root,
+            agent_dir / "agent.too",
+            category="program",
+            origin="agent",
+        )
+    )
+    return _authored_source(
+        toolang_root,
+        agent_name,
+        tuple(sorted(files, key=lambda item: item.relative_path)),
+    )
+
+
 def read_root_source(toolang_root: Path) -> SourceSnapshot:
     """Read only root-authored files with fixed contents."""
 

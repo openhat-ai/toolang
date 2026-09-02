@@ -7,7 +7,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 import re
+import shutil
+from uuid import uuid4
+
 import frontmatter
+
 from toolang.common.files import atomic_write_text, file_write_lock
 
 from .common import normalize_meta
@@ -143,13 +147,7 @@ class AuthoredCaps:
             if cap is None or cap.path is None:
                 raise CatalogNotFoundError(f"authored {kind} not found: {name}")
             if kind == "skill":
-                skill_dir = cap.path.parent
-                for path in sorted(skill_dir.rglob("*"), reverse=True):
-                    if path.is_file() or path.is_symlink():
-                        path.unlink()
-                    elif path.is_dir():
-                        path.rmdir()
-                skill_dir.rmdir()
+                self._remove_skill_directory(cap.path.parent)
             else:
                 cap.path.unlink()
             return cap
@@ -166,6 +164,22 @@ class AuthoredCaps:
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(path, cap.content)
         return replace(cap, path=path)
+
+    def _remove_skill_directory(self, directory: Path) -> None:
+        trash = self.directory / ".runtime" / "authored-cap-trash"
+        _prepare_directory(trash.parent, "authored cap runtime storage")
+        _prepare_directory(trash, "authored cap trash")
+        tombstone = trash / uuid4().hex
+        directory.replace(tombstone)
+        shutil.rmtree(tombstone, ignore_errors=True)
+
+
+def _prepare_directory(path: Path, label: str) -> None:
+    if path.is_symlink():
+        raise ValueError(f"{label} must not be a symbolic link")
+    if path.exists() and not path.is_dir():
+        raise ValueError(f"{label} must be a directory")
+    path.mkdir(parents=True, exist_ok=True)
 
 
 def _validate_cap(cap: CapFile) -> None:

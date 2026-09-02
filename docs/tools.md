@@ -83,24 +83,35 @@ path for choosing another target. They expose no layer selector and operate
 only on the current agent's home layer; `_me` does not read or modify root-layer
 caps.
 
-It provides model-facing tools to:
+It exposes five leaves for all supported resource kinds:
 
-- list and read tasks
-- create and update tasks
-- list and read chores
-- create and update chores
-- list, read, create, update, and delete psyches
-- list, read, create, update, and delete skills
-- list, read, create, update, and delete services
-- list, read, create, update, and delete prompts
+```text
+_me__list(kind)
+_me__get(kind, key)
+_me__create(kind, key?, content)
+_me__update(kind, key, content, if_digest?)
+_me__delete(kind, key, if_digest?)
+```
 
-Leaf names use verb-first forms such as `list_tasks`, `get_task`,
-`create_skill`, and `delete_prompt`.
+`kind` is one of `task`, `chore`, `psyche`, `skill`, `service`, `prompt`, or
+`flow`. `key` is a task/chore id or an authored cap/flow name. Task and chore
+create allocates the key and addresses ready documents only. Their lifecycle
+does not support `_me__delete`, and delete is never interpreted as archive.
 
-Task and chore writes reuse the same Markdown document models, id allocation,
-RRULE validation, and archive placement rules as the CLI and jobs API.
-Psyche, skill, service, and prompt writes reuse the same authored cap file
-layout and validation rules as the CLI and cap API.
+`content` is selected and validated from the operation and kind. Job writes
+reuse the Markdown document models, id allocation, and RRULE validation used
+by the CLI and jobs API. Cap writes reuse the authored cap file layout and
+validation used by the CLI and cap API. Flow writes manage only direct
+`flows/<key>.too` modules and validate the complete home program before an
+atomic write. Invalid create and update requests do not change existing
+authored files.
+
+Get and list return home-relative paths and SHA-256 digests. Update and delete
+accept an optional `if_digest` precondition. Expected failures remain failed
+tool calls and include a structured `output.error` with a stable code,
+operation, kind, optional key, and bounded field diagnostics. Source mutation
+does not publish State directly; normal watcher and `_too__reload` behavior
+remain authoritative.
 
 
 ## Runtime Rule

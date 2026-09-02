@@ -2,7 +2,9 @@
 
 ## Status
 
-Approved for implementation on 2026-08-27.
+Implemented. The `_me` leaf catalog in this plan is superseded by
+[Define Compact Current-Agent Authoring Tools](compact-current-agent-authoring-tools.md).
+Its tool-name grammar and internal-authority decisions remain active.
 
 ## Goal
 

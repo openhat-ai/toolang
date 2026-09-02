@@ -210,34 +210,11 @@ def test_load_tools_uses_encoded_model_names(monkeypatch) -> None:
         "service__read_resource",
         "service__list_prompts",
         "service__get_prompt",
-        "_me__list_tasks",
-        "_me__get_task",
-        "_me__create_task",
-        "_me__update_task",
-        "_me__list_chores",
-        "_me__get_chore",
-        "_me__create_chore",
-        "_me__update_chore",
-        "_me__list_psyches",
-        "_me__get_psyche",
-        "_me__create_psyche",
-        "_me__update_psyche",
-        "_me__delete_psyche",
-        "_me__list_skills",
-        "_me__get_skill",
-        "_me__create_skill",
-        "_me__update_skill",
-        "_me__delete_skill",
-        "_me__list_services",
-        "_me__get_service",
-        "_me__create_service",
-        "_me__update_service",
-        "_me__delete_service",
-        "_me__list_prompts",
-        "_me__get_prompt",
-        "_me__create_prompt",
-        "_me__update_prompt",
-        "_me__delete_prompt",
+        "_me__list",
+        "_me__get",
+        "_me__create",
+        "_me__update",
+        "_me__delete",
     }
 
     assert expected <= tools.keys()
@@ -270,7 +247,7 @@ def test_canonical_tool_identities_include_internal_toolset(monkeypatch) -> None
 
     assert "fs__read" in selected
     assert "service__call_tool" in selected
-    assert "_me__create_task" in selected
+    assert "_me__create" in selected
     validate_tool_queries(tools, ("fs/*", "service/call_tool", "_me/*"))
     with pytest.raises(ValueError, match="tool query matched no items"):
         validate_tool_queries(tools, ("filesystem/*",))
@@ -350,7 +327,7 @@ def test_tool_query_parameters_are_json_schema_property_names() -> None:
 def test_toolang_distribution_can_register_an_internal_toolset(monkeypatch) -> None:
     entry = _FakeEntryPoint(
         "_me",
-        _test_toolset_factory("_me", "create_task", "create_task"),
+        _test_toolset_factory("_me", "create", "create"),
         distribution="toolang",
     )
     monkeypatch.setattr(
@@ -360,9 +337,9 @@ def test_toolang_distribution_can_register_an_internal_toolset(monkeypatch) -> N
 
     tools = load_tools()
 
-    assert tuple(tools) == ("_me__create_task",)
-    assert getattr(tools["_me__create_task"], "ref") == ToolRef(
-        plugin="_me", toolset="_me", name="create_task"
+    assert tuple(tools) == ("_me__create",)
+    assert getattr(tools["_me__create"], "ref") == ToolRef(
+        plugin="_me", toolset="_me", name="create"
     )
 
 
@@ -428,7 +405,7 @@ def test_external_plugin_cannot_register_internal_toolset(
 def test_toolang_module_target_does_not_grant_internal_authority(monkeypatch) -> None:
     entry = _FakeEntryPoint(
         "_me",
-        _test_toolset_factory("_me", "create_task", "create_task"),
+        _test_toolset_factory("_me", "create", "create"),
         value="toolang.external:create_toolset",
     )
     monkeypatch.setattr(
