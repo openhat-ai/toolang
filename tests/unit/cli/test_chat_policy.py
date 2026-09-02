@@ -134,6 +134,31 @@ def test_input_local_effort_change_reuses_session_model_identity() -> None:
     )
 
 
+def test_input_local_unset_removes_only_the_run_model() -> None:
+    setting = SessionSetting(
+        model=ModelRequest("openai/gpt-5"),
+        runnable="agic:chat",
+        limits=RunLimits(),
+    )
+
+    request = build_run_request(
+        thread_id="term_test",
+        request_id="term_request",
+        input=RunnableInputRaw(_="hello"),
+        override=RunOverride(
+            model=ModelOverride(identity="unset"),
+            runnable="flow:review",
+        ),
+        setting=setting,
+        surface=_surface(),
+        resolve_model_ref=lambda value: value,
+        resolve_runnable_ref=lambda value: value,
+    )
+
+    assert request.model is None
+    assert setting.model == ModelRequest("openai/gpt-5")
+
+
 def test_build_run_request_materializes_unqualified_runnable_to_exact_ref() -> None:
     request = build_run_request(
         thread_id="term_test",

@@ -305,6 +305,7 @@ Include the run input in the same submission.
 
 Available overrides:
   :model MODEL
+  :model unset
   :model effort=VALUE
   :agic AGIC
   :flow FLOW

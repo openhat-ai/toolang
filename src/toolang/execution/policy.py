@@ -60,7 +60,10 @@ _REASONING_EFFORTS = frozenset(
 # Setting name -> (standalone setting body, independently useful override bodies).
 SETTING_OVERRIDE_FORMS: Mapping[str, tuple[str, tuple[str, ...]]] = MappingProxyType(
     {
-        "model": ("[MODEL] [effort=VALUE]", ("MODEL", "effort=VALUE")),
+        "model": (
+            "[MODEL] [effort=VALUE]",
+            ("MODEL", "unset", "effort=VALUE"),
+        ),
         "agic": ("AGIC", ("AGIC",)),
         "flow": ("FLOW", ("FLOW",)),
         "runnable": ("RUNNABLE", ("RUNNABLE",)),

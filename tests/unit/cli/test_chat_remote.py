@@ -115,6 +115,21 @@ def test_remote_chat_initializes_a_fallback_when_run_defaults_have_no_model() ->
         session.close()
 
 
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {"default": None, "items": _models()["items"]},
+        {"default": "missing/model", "items": _models()["items"]},
+        {"default": "test/model", "items": []},
+    ),
+)
+def test_remote_chat_rejects_a_model_default_outside_items(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(remote.RemoteChatError, match="models returned invalid default"):
+        remote._catalog_payload(payload, operation="models", item_kind="model")
+
+
 class _Bytes(httpx.AsyncByteStream):
     def __init__(self, *chunks: bytes) -> None:
         self._chunks = chunks

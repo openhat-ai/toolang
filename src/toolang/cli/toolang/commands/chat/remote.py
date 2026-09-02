@@ -899,6 +899,12 @@ def _catalog_payload(
                 f"remote chat {operation} returned invalid items"
             )
         items.append(dict(item))
+    if item_kind == "model":
+        refs = {cast(str, item["ref"]) for item in items}
+        if (refs and default not in refs) or (not refs and default is not None):
+            raise _RemoteChatProtocolError(
+                f"remote chat {operation} returned invalid default"
+            )
     return {"default": default, "items": items}
 
 

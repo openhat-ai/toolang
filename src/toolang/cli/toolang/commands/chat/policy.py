@@ -161,7 +161,7 @@ def reconcile_session_model(
     if (
         model is not None
         and update.model is not None
-        and update.model.identity not in {None, "unset"}
+        and update.model.identity not in {None, "default", "unset"}
     ):
         raise ValueError(f"model is outside session allow.models: {model.ref}")
     can_fallback = any(item.field == "models" for item in update.allow) or (

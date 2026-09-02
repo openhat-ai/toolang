@@ -358,6 +358,7 @@ def test_run_override_help_explains_lifetime_and_uses_shared_forms() -> None:
     lines = slashes.outcome_lines(slashes.run_override_help())
     expected_forms = (
         ":model MODEL",
+        ":model unset",
         ":model effort=VALUE",
         ":agic AGIC",
         ":flow FLOW",
@@ -625,10 +626,17 @@ def test_model_reconciliation_prefers_the_available_configured_default() -> None
         allowed_refs=("provider/first", "provider/default"),
         default_ref="provider/default",
     )
+    query_relative_default = reconcile_session_model(
+        setting,
+        RunOverride(model=ModelOverride(identity="default")),
+        allowed_refs=("provider/first", "provider/default"),
+        default_ref="provider/default",
+    )
 
     assert preferred.model == ModelRequest("provider/default")
     assert first.model == ModelRequest("provider/first")
     assert cleared_preference.model == ModelRequest("provider/first")
+    assert query_relative_default.model == ModelRequest("provider/default")
 
 
 def test_allow_none_clears_the_model_and_reports_an_empty_collection() -> None:
