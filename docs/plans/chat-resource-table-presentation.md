@@ -124,15 +124,14 @@ openai/gpt-5 · high
 openai/gpt-5 · 4096
 openai/gpt-5 · auto
 basic/text-model
-[model not set]
+[no models available]
 ```
 
 Do not prefix values with `model` or `effort`. Their fixed positions make the
 meaning clear while preserving horizontal space. The first value is the
 canonical session model ref. If there is no selected model, the complete
-right-side segment is the placeholder `[model not set]`. This placeholder is
-not used for a configured default: when a default model exists, its concrete
-ref is the effective session model and is displayed normally.
+right-side segment is the placeholder `[no models available]`. A non-empty
+effective collection always has a concrete session model and displays its ref.
 
 When a model is selected, append ` · VALUE` only when effort applies. `VALUE`
 is:
@@ -146,7 +145,8 @@ is:
 If the selected model advertises neither control, omit the effort segment. If
 control metadata cannot be resolved, also omit it rather than guessing support
 or adding an `unknown` placeholder. These shapes remain unambiguous:
-`[model not set]` means no effective model, while `MODEL · none` means a
+`[no models available]` means the effective collection is empty, while
+`MODEL · none` means a
 selected model with the explicit `none` effort level. `MODEL · auto` means
 effort applies but no explicit effort is set.
 
@@ -262,7 +262,7 @@ query table renderer or introduce fixed cross-command column widths.
 - A truncated default model retains its trailing `*`.
 - Status shows explicit level and budget values and `auto` for an applicable
   but unset effort, without `model` or `effort` labels.
-- `[model not set]` is visually distinct from `MODEL · none`; a model without
+- `[no models available]` is visually distinct from `MODEL · none`; a model without
   effort support or resolvable control metadata has no effort suffix, and
   clearing with `effort=auto` updates an applicable model back to
   `MODEL · auto`.

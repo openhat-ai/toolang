@@ -67,11 +67,14 @@ Model bodies contain an optional identity followed by assignments:
 
 `effort` is input convenience. A canonical unsigned integer becomes
 `reasoning.budget_tokens`; a recognized level becomes `reasoning.effort`; and
-`auto` removes explicit reasoning. An effort or budget is validated against the
-effective model before run acceptance. Parameter-only input retains the model
-identity. Selecting an identity clears unmentioned explicit model parameters.
-Bare model `default` restores the surface model and bare model `none` selects no
-model.
+`auto` removes explicit reasoning so the model or provider chooses its default
+reasoning behavior. An effort or budget is validated against the effective model
+before run acceptance. Parameter-only input retains the model identity. Selecting
+an identity clears unmentioned explicit model parameters. Bare one-run model
+`default` restores the surface model, while `:model unset` removes the inherited
+model binding for that run. `/model default` selects the effective default inside
+the session's current `allow.models` result. `/model unset`, `/model none`, and
+`:model none` are invalid.
 
 The generic runnable form accepts an exact kind-qualified ref or a uniquely
 resolvable unqualified ref. `agic` and `flow` are exact shorthand:
@@ -159,6 +162,11 @@ or `Allowed 2 models`; read-only commands use summaries such as `Found 2
 models`. Missing required bodies use `Usage:` and command failures use `Error:`.
 Successful setting changes also refresh the status bar's current session
 values.
+
+When the session's model ceiling changes, Chat preserves the complete current
+model request if it remains available. Otherwise it selects the configured
+default when present in the ordered result, then the first result. Only an empty
+model collection leaves the session model unset.
 
 `/?` explains slash commands, `:?` explains one-run overrides, and `/keys`
 lists Toolang-owned interactive shortcuts. These are submitted read-only

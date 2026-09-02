@@ -478,7 +478,8 @@ duration at one second; `0s` is never shown. If the current default runnable
 differs, it appears on the right as
 `DEFAULT_RUNNABLE · MODEL`; otherwise the right side contains only `MODEL`.
 `MODEL` is always the current default model, not an active model step. It is
-the canonical ref, `[model not set]` when absent, `MODEL · VALUE` for an
+the canonical ref, `[no models available]` when the effective collection is
+empty, `MODEL · VALUE` for an
 explicit effort or token budget, and `MODEL · auto` when reasoning effort or
 budget applies without an explicit value. Models without applicable reasoning
 control omit the suffix. The segment remains right-aligned against the terminal

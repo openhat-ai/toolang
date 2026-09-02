@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 import pytest
@@ -12,7 +12,12 @@ from toolang.base.types.policy import AgentCeiling, RunPolicy
 from toolang.common.errors import ToolangError
 from toolang.execution.policy import apply_session_setting
 from toolang.execution.schemas import RunRequest, RunnableRequest
-from toolang.execution.types import RunOverride, SessionSetting
+from toolang.execution.types import (
+    AllowOverride,
+    ModelOverride,
+    RunOverride,
+    SessionSetting,
+)
 from toolang.lang.input import RunnableInputRaw
 from toolang.cli.toolang.commands.chat import shortcuts, slashes
 from toolang.cli.toolang.commands.chat.base import ChatResult, QueuedCall
@@ -107,9 +112,16 @@ class _Client:
     ) -> Mapping[str, Any]:
         self._raise_error()
         self.resource_calls.append(("models", None, queries))
+        items = list(_select(self.models, queries))
         return {
-            "default": "openai/gpt-5",
-            "items": list(_select(self.models, queries)),
+            "default": (
+                "openai/gpt-5"
+                if any(item["ref"] == "openai/gpt-5" for item in items)
+                else cast(str, items[0]["ref"])
+                if items
+                else None
+            ),
+            "items": items,
         }
 
     def list_tools(
@@ -141,7 +153,8 @@ class _Client:
         setting: SessionSetting,
         update: RunOverride,
         *,
-        allowed_model_refs: Collection[str] | None = None,
+        allowed_model_refs: Sequence[str] | None = None,
+        default_model_ref: str | None = None,
     ) -> SessionSetting:
         self._raise_error()
         self.applied.append(update)
@@ -153,17 +166,20 @@ class _Client:
                 candidate,
                 update,
                 allowed_refs=allowed_model_refs,
+                default_ref=default_model_ref,
             )
+        payload = self.list_models(candidate.allow.models)
         return reconcile_session_model(
             candidate,
             update,
-            allowed_refs={
+            allowed_refs=tuple(
                 cast(str, item["ref"])
                 for item in cast(
                     list[dict[str, object]],
-                    self.list_models(candidate.allow.models)["items"],
+                    payload["items"],
                 )
-            },
+            ),
+            default_ref=cast(str | None, payload["default"]),
         )
 
     def get_result(
@@ -476,16 +492,32 @@ def test_model_defers_effort_validation_when_metadata_is_unavailable() -> None:
     assert slashes.outcome_lines(result) == ("Model set to openai/gpt-5 · medium",)
 
 
-def test_model_none_clears_without_loading_resources() -> None:
+def test_model_none_is_rejected_without_loading_resources() -> None:
     app = _App()
 
     result = _outcome(slashes.handle(app, QuickCommand("model", "none")))
 
-    assert result.kind == "success"
-    assert slashes.outcome_lines(result) == ("Model cleared",)
-    assert app.setting.model is None
+    assert result.kind == "error"
+    assert slashes.outcome_lines(result) == (
+        "Error: model identity 'none' was removed; use :model unset for a "
+        "model-free run",
+    )
+    assert app.setting.model == ModelRequest("openai/gpt-5")
     assert app.client.resource_calls == []
-    assert app.status_refreshes == 1
+    assert app.status_refreshes == 0
+
+
+def test_model_unset_is_rejected_as_a_session_command() -> None:
+    app = _App()
+
+    result = _outcome(slashes.handle(app, QuickCommand("model", "unset")))
+
+    assert result.kind == "error"
+    assert slashes.outcome_lines(result) == (
+        "Error: /model unset is not a session setting; use :model unset for one run",
+    )
+    assert app.setting.model == ModelRequest("openai/gpt-5")
+    assert app.status_refreshes == 0
 
 
 def test_runnable_argument_updates_setting_and_refreshes_status() -> None:
@@ -525,7 +557,7 @@ def test_allow_and_limit_report_effective_updates_and_refresh_status() -> None:
     ]
 
 
-def test_allow_clears_an_excluded_model_and_reports_it() -> None:
+def test_allow_selects_a_fallback_for_an_excluded_model_and_reports_it() -> None:
     app = _App()
     app.setting = SessionSetting(
         model=ModelRequest(
@@ -537,11 +569,12 @@ def test_allow_clears_an_excluded_model_and_reports_it() -> None:
 
     result = _outcome(slashes.handle(app, QuickCommand("allow", "models=openrouter/*")))
 
-    assert app.setting.model is None
+    assert app.setting.model == ModelRequest("openrouter/openai/o3")
     assert app.setting.allow.models == ("openrouter/*",)
     assert slashes.outcome_lines(result) == (
         "Allowed 1 model",
-        "Model cleared: openai/gpt-5 is outside allow.models",
+        "Model changed: openai/gpt-5 -> openrouter/openai/o3 because "
+        "openai/gpt-5 is outside allow.models",
     )
     assert app.status_refreshes == 1
     assert app.client.resource_calls == [
@@ -564,6 +597,40 @@ def test_allow_preserves_parameters_for_an_allowed_model() -> None:
     assert app.status_refreshes == 1
 
 
+def test_model_reconciliation_prefers_the_available_configured_default() -> None:
+    update = RunOverride(allow=(AllowOverride("models", ("provider/*",)),))
+    setting = SessionSetting(
+        model=ModelRequest(
+            "excluded/model",
+            ModelParameters(ReasoningParameters(effort="high")),
+        ),
+        runnable="agic:chat",
+    )
+
+    preferred = reconcile_session_model(
+        setting,
+        update,
+        allowed_refs=("provider/first", "provider/default"),
+        default_ref="provider/default",
+    )
+    first = reconcile_session_model(
+        setting,
+        update,
+        allowed_refs=("provider/first", "provider/second"),
+        default_ref="excluded/default",
+    )
+    cleared_preference = reconcile_session_model(
+        setting,
+        RunOverride(model=ModelOverride(identity="unset")),
+        allowed_refs=("provider/first", "provider/default"),
+        default_ref="provider/default",
+    )
+
+    assert preferred.model == ModelRequest("provider/default")
+    assert first.model == ModelRequest("provider/first")
+    assert cleared_preference.model == ModelRequest("provider/first")
+
+
 def test_allow_none_clears_the_model_and_reports_an_empty_collection() -> None:
     app = _App()
 
@@ -573,7 +640,7 @@ def test_allow_none_clears_the_model_and_reports_an_empty_collection() -> None:
     assert app.setting.allow.models == ()
     assert slashes.outcome_lines(result) == (
         "Allowed 0 models",
-        "Model cleared: openai/gpt-5 is outside allow.models",
+        "Model cleared: openai/gpt-5 is outside allow.models; no models available",
     )
     assert app.client.resource_calls == [("models", None, ())]
     assert app.status_refreshes == 1
@@ -598,23 +665,21 @@ def test_explicit_model_outside_allow_is_atomic() -> None:
     assert app.status_refreshes == 0
 
 
-def test_default_model_outside_allow_is_atomic() -> None:
+def test_default_model_uses_the_query_relative_fallback() -> None:
     app = _App()
     app.setting = SessionSetting(
         model=None,
         runnable="agic:chat",
         allow=AgentCeiling(models=("openrouter/*",)),
     )
-    previous = app.setting
-
     result = _outcome(slashes.handle(app, QuickCommand("model", "default")))
 
-    assert result.kind == "error"
+    assert result.kind == "success"
     assert slashes.outcome_lines(result) == (
-        "Error: model is outside session allow.models: openai/gpt-5",
+        "Model set to openrouter/openai/o3 · auto",
     )
-    assert app.setting == previous
-    assert app.status_refreshes == 0
+    assert app.setting.model == ModelRequest("openrouter/openai/o3")
+    assert app.status_refreshes == 1
 
 
 @pytest.mark.parametrize(

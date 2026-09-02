@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import cast
 
@@ -149,26 +149,43 @@ def reconcile_session_model(
     setting: SessionSetting,
     update: RunOverride,
     *,
-    allowed_refs: Collection[str],
+    allowed_refs: Sequence[str],
+    default_ref: str | None,
 ) -> SessionSetting:
     """Keep one selected model coherent with the candidate session ceiling."""
 
     model = setting.model
-    if model is None or model.ref in allowed_refs:
+    allowed = frozenset(allowed_refs)
+    if model is not None and model.ref in allowed:
         return setting
-    if update.model is not None and update.model.identity is not None:
+    if (
+        model is not None
+        and update.model is not None
+        and update.model.identity not in {None, "unset"}
+    ):
         raise ValueError(f"model is outside session allow.models: {model.ref}")
-    if any(item.field == "models" for item in update.allow):
-        return replace(setting, model=None)
-    raise ValueError(f"session model is outside allow.models: {model.ref}")
+    can_fallback = any(item.field == "models" for item in update.allow) or (
+        update.model is not None and update.model.identity in {"default", "unset"}
+    )
+    if not can_fallback:
+        ref = model.ref if model is not None else "none"
+        raise ValueError(f"session model is outside allow.models: {ref}")
+    clears_preference = update.model is not None and update.model.identity == "unset"
+    fallback = default_ref if not clears_preference and default_ref in allowed else None
+    if fallback is None and allowed_refs:
+        fallback = allowed_refs[0]
+    return replace(
+        setting,
+        model=ModelRequest(fallback) if fallback is not None else None,
+    )
 
 
 def session_model_reconciliation_required(update: RunOverride) -> bool:
     """Return whether one update can change model/ceiling coherence."""
 
-    return (
-        update.model is not None and update.model.identity not in {None, "none"}
-    ) or any(item.field == "models" for item in update.allow)
+    return (update.model is not None and update.model.identity is not None) or any(
+        item.field == "models" for item in update.allow
+    )
 
 
 def materialize_runnable_list_ref(

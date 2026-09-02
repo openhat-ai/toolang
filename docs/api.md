@@ -888,6 +888,9 @@ run starts, not by this inspection endpoint. The response includes:
 `ref` is the exact catalog route identity, including nested model ids, and does
 not include query predicates. Reasoning efforts are distinct recognized catalog
 values in catalog order; an unsupported model returns an empty list.
+`default` is always one of the returned item refs when `items` is non-empty: it
+is the configured default when that ref is included, otherwise the first item.
+It is `null` only for an empty result.
 `parameters.reasoning.applicable` is true when the model advertises either
 effort-level or token-budget control; a toggle by itself is not applicable.
 `price.input` and `price.output` are base token prices converted to USD per one
@@ -897,8 +900,10 @@ million tokens and are `null` when the corresponding catalog price is absent.
 runtime model collection. `GET /api/v1/tools` uses the same convention and
 returns effective tool `ref`, structured `toolset`, `plugin`, and `description`
 fields. Omitting
-`query` lists the complete effective collection; valid empty matches return an
-empty `items` list.
+`query` lists the complete effective collection. Repeated query values and
+comma-separated top-level matches order result groups as authored; each group
+retains the model collection's existing order, and overlaps use the first
+match. Valid empty matches return an empty `items` list and a `null` default.
 
 `GET /api/v1/agics` and `GET /api/v1/flows` list the agent's runnable
 definitions.

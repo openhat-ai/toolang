@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass, replace
 import json
@@ -127,8 +127,7 @@ class RemoteChatSession:
         queries: Sequence[str] | None = None,
     ) -> Mapping[str, Any]:
         if queries is not None and not queries:
-            model = self._session_defaults().model
-            return {"default": model.ref if model is not None else None, "items": []}
+            return {"default": None, "items": []}
         return cast(
             Mapping[str, Any],
             self._submit(self._list_models(queries)).result(),
@@ -187,7 +186,8 @@ class RemoteChatSession:
         setting: SessionSetting,
         update: RunOverride,
         *,
-        allowed_model_refs: Collection[str] | None = None,
+        allowed_model_refs: Sequence[str] | None = None,
+        default_model_ref: str | None = None,
     ) -> SessionSetting:
         return cast(
             SessionSetting,
@@ -196,6 +196,7 @@ class RemoteChatSession:
                     setting,
                     update,
                     allowed_model_refs=allowed_model_refs,
+                    default_model_ref=default_model_ref,
                 )
             ).result(),
         )
@@ -331,6 +332,14 @@ class RemoteChatSession:
             operation="run defaults",
         )
         self._surface = _session_setting(defaults)
+        if self._surface.model is None:
+            models = await self._list_models()
+            default = models.get("default")
+            if isinstance(default, str):
+                self._surface = replace(
+                    self._surface,
+                    model=ModelRequest(default),
+                )
 
     async def _list_models(
         self,
@@ -342,10 +351,7 @@ class RemoteChatSession:
             operation="models",
             params=_query_params(queries),
         )
-        result = _catalog_payload(payload, operation="models", item_kind="model")
-        model = self._session_defaults().model
-        result["default"] = model.ref if model is not None else None
-        return result
+        return _catalog_payload(payload, operation="models", item_kind="model")
 
     async def _list_tools(
         self,
@@ -506,7 +512,8 @@ class RemoteChatSession:
         setting: SessionSetting,
         update: RunOverride,
         *,
-        allowed_model_refs: Collection[str] | None = None,
+        allowed_model_refs: Sequence[str] | None = None,
+        default_model_ref: str | None = None,
     ) -> SessionSetting:
         if self._blocked_message is not None:
             raise RemoteChatError(self._blocked_message)
@@ -523,15 +530,21 @@ class RemoteChatSession:
                 if candidate.allow.models == ()
                 else await self._list_models(candidate.allow.models)
             )
-            allowed_model_refs = frozenset(
+            allowed_model_refs = tuple(
                 cast(str, item["ref"])
                 for item in cast(list[dict[str, object]], payload["items"])
                 if isinstance(item.get("ref"), str)
+            )
+            default_model_ref = (
+                cast(str, payload["default"])
+                if isinstance(payload.get("default"), str)
+                else None
             )
         return reconcile_session_model(
             candidate,
             update,
             allowed_refs=allowed_model_refs,
+            default_ref=default_model_ref,
         )
 
     async def _get_result(

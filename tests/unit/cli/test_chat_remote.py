@@ -78,6 +78,43 @@ def test_remote_run_defaults_allow_an_absent_runnable() -> None:
     assert setting.runnable is None
 
 
+def test_remote_chat_initializes_a_fallback_when_run_defaults_have_no_model() -> None:
+    model_requests = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal model_requests
+        if request.url.path == "/healthz":
+            return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/v1/profile":
+            return httpx.Response(200, json=_profile())
+        if request.url.path == "/api/v1/runs/defaults":
+            return httpx.Response(
+                200,
+                json={
+                    "model": None,
+                    "runnable": "agic:chat",
+                    "policy": {"allow": [], "limits": {}},
+                },
+            )
+        if request.url.path == "/api/v1/models":
+            model_requests += 1
+            return httpx.Response(200, json=_models())
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+    session = remote.RemoteChatSession(
+        "http://runtime.test:7001",
+        expected_sandbox="host",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        model = session.initial_setting().model
+        assert model is not None
+        assert model.ref == "test/model"
+        assert model_requests == 1
+    finally:
+        session.close()
+
+
 class _Bytes(httpx.AsyncByteStream):
     def __init__(self, *chunks: bytes) -> None:
         self._chunks = chunks
@@ -359,7 +396,14 @@ def test_remote_chat_resource_queries_and_model_reconciliation() -> None:
             )
             return httpx.Response(
                 200,
-                json={"default": "test/model", "items": items},
+                json={
+                    "default": (
+                        "openrouter/openai/o3"
+                        if query == ("openrouter/*",)
+                        else "test/model"
+                    ),
+                    "items": items,
+                },
             )
         if path == "/api/v1/tools":
             queries.append(("tools", query))
@@ -411,6 +455,10 @@ def test_remote_chat_resource_queries_and_model_reconciliation() -> None:
         assert [
             item["ref"] for item in session.list_models(("openrouter/*",))["items"]
         ] == ["openrouter/openai/o3"]
+        assert (
+            session.list_models(("openrouter/*",))["default"] == "openrouter/openai/o3"
+        )
+        assert session.list_models(())["default"] is None
         assert session.list_models(())["items"] == []
         assert session.list_tools(("filesystem/*",))["items"][0]["ref"] == (
             "filesystem/read"
@@ -431,7 +479,8 @@ def test_remote_chat_resource_queries_and_model_reconciliation() -> None:
             session.initial_setting(),
             RunOverride(allow=(AllowOverride("models", ("openrouter/*",)),)),
         )
-        assert narrowed.model is None
+        assert narrowed.model is not None
+        assert narrowed.model.ref == "openrouter/openai/o3"
         assert narrowed.allow.models == ("openrouter/*",)
 
         disabled = session.apply_setting(
@@ -449,11 +498,13 @@ def test_remote_chat_resource_queries_and_model_reconciliation() -> None:
                 narrowed,
                 RunOverride(model=ModelOverride(identity="test/model")),
             )
-        assert narrowed.model is None
+        assert narrowed.model is not None
+        assert narrowed.model.ref == "openrouter/openai/o3"
     finally:
         session.close()
 
     assert queries == [
+        ("models", ("openrouter/*",)),
         ("models", ("openrouter/*",)),
         ("tools", ("filesystem/*",)),
         ("caps", ("skill/*",)),

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass
 from decimal import Decimal
@@ -146,16 +146,12 @@ class LocalChatSession:
         queries: Sequence[str] | None = None,
     ) -> Mapping[str, Any]:
         setup = self.setup_watcher.current()
-        session_model = self.initial_setting().model
         if queries is not None and not queries:
-            return {
-                "default": session_model.ref if session_model is not None else None,
-                "items": [],
-            }
+            return {"default": None, "items": []}
         models = setup.models.match(queries)
         selection = snapshot_model_selection(setup)
         return {
-            "default": session_model.ref if session_model is not None else None,
+            "default": models.effective_default(setup.defaults.model),
             "items": [
                 {
                     "ref": ref,
@@ -306,7 +302,8 @@ class LocalChatSession:
         setting: SessionSetting,
         update: RunOverride,
         *,
-        allowed_model_refs: Collection[str] | None = None,
+        allowed_model_refs: Sequence[str] | None = None,
+        default_model_ref: str | None = None,
     ) -> SessionSetting:
         candidate = update_session_setting(
             surface=self.initial_setting(),
@@ -317,15 +314,21 @@ class LocalChatSession:
             return candidate
         if allowed_model_refs is None:
             payload = self.list_models(candidate.allow.models)
-            allowed_model_refs = frozenset(
+            allowed_model_refs = tuple(
                 str(item["ref"])
                 for item in payload["items"]
                 if isinstance(item, Mapping) and isinstance(item.get("ref"), str)
+            )
+            default_model_ref = (
+                str(payload["default"])
+                if isinstance(payload.get("default"), str)
+                else None
             )
         return reconcile_session_model(
             candidate,
             update,
             allowed_refs=allowed_model_refs,
+            default_ref=default_model_ref,
         )
 
     def build_request(
@@ -471,7 +474,7 @@ class LocalChatSession:
     def _current_session_setting(
         *, setup: AgentSetup, state: AgentState | StatePublication
     ) -> SessionSetting:
-        model = setup.defaults.model
+        model = setup.models.effective_default(setup.defaults.model)
         runnable = setup.defaults.runnable
         if runnable is None:
             default_agic, default_flow = runnable_binding_defaults(

@@ -123,7 +123,12 @@ class ModelOverride:
 
     def __post_init__(self) -> None:
         if self.identity is not None:
-            if self.identity not in {"default", "none"}:
+            if self.identity == "none":
+                raise ValueError(
+                    "model identity 'none' was removed; use 'unset' for a "
+                    "model-free run"
+                )
+            if self.identity not in {"default", "unset"}:
                 ModelRequest(self.identity)
         if self.effort is not None:
             if isinstance(self.effort, bool):

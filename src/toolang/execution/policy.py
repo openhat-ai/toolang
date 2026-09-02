@@ -222,7 +222,7 @@ def commands_from_run_override(override: RunOverride) -> tuple[RunCommand, ...]:
     """Lower policy-compatible authored fields for durable execution provenance."""
 
     commands: list[RunCommand] = []
-    if override.model is not None and override.model.identity not in {None, "none"}:
+    if override.model is not None and override.model.identity not in {None, "unset"}:
         commands.append(
             RunCommand(
                 "default",
@@ -376,8 +376,14 @@ def _model_override(tokens: Sequence[str]) -> RunOverride:
         if "=" not in token:
             if index != 0 or identity is not None:
                 raise ValueError("model identity must be the first token")
-            identity = token.lower() if token.lower() in {"default", "none"} else token
-            if identity not in {"default", "none"}:
+            sentinel = token.lower()
+            if sentinel == "none":
+                raise ValueError(
+                    "model identity 'none' was removed; use :model unset for "
+                    "a model-free run"
+                )
+            identity = sentinel if sentinel in {"default", "unset"} else token
+            if identity not in {"default", "unset"}:
                 ModelRequest(identity)
             continue
         field, raw = _assignment(token, command=":model")
@@ -472,7 +478,7 @@ def _apply_model_override(
         return current
     if override.identity == "default":
         model = surface
-    elif override.identity == "none":
+    elif override.identity == "unset":
         model = None
     elif override.identity is not None:
         model = ModelRequest(override.identity)

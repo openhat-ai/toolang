@@ -180,7 +180,7 @@ agic chat(_: Part[]) -> Part[]:
     assert defaults.runnable == "agic:chat"
 
 
-def test_local_chat_model_list_retains_the_session_default(tmp_path: Path) -> None:
+def test_local_chat_model_list_uses_the_collection_default(tmp_path: Path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -207,7 +207,7 @@ agic chat(_: Part[]) -> Part[]:
     finally:
         harness.store.close()
 
-    assert payload["default"] == "session/model"
+    assert payload["default"] == TEST_MODEL_REF
     assert [item["ref"] for item in payload["items"]] == [TEST_MODEL_REF]
 
 
@@ -242,7 +242,8 @@ def test_local_chat_queries_resources_and_reconciles_model_ceiling(
         assert model_items[0]["price"] == {"input": None, "output": None}
         assert model_items[0]["parameters"]["reasoning"]["applicable"] is False
         assert session.list_models(("missing/*",))["items"] == []
-        assert session.list_models(())["items"] == []
+        assert session.list_models(("missing/*",))["default"] is None
+        assert session.list_models(()) == {"default": None, "items": []}
         tool_items = session.list_tools(("test/*",))["items"]
         assert [item["ref"] for item in tool_items] == ["test/test__lookup"]
         assert tool_items[0]["toolset"] == "test"

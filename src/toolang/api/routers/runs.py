@@ -303,7 +303,7 @@ async def run_defaults(core: AgentCoreDep) -> dict[str, object]:
 
     setup = core.setup.current()
     state = core.state.current()
-    model = setup.defaults.model
+    model = setup.models.effective_default(setup.defaults.model)
     runnable = setup.defaults.runnable
     if runnable is None:
         default_agic, default_flow = runnable_binding_defaults(
