@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, fields
 from collections.abc import Mapping
 from functools import lru_cache
 import re
-from typing import Annotated, Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal, cast
 
 from pydantic import Discriminator, Tag, TypeAdapter
 from tree_sitter import Language, Node as TreeSitterNode, Parser, Tree
@@ -22,6 +22,10 @@ Limit = Literal["top", "bottom"]
 _QUERY_DIRECTIVE_RE = re.compile(
     rb"^[ \t]*(?:models|tools|skills|services|psyches|prompts|hands|handoffs)"
     rb"[ \t]*(?:\+=|-=|=)"
+)
+_EMPTY_CAP_PROPERTY_RE = re.compile(
+    r"^[ \t]+(?P<property>[a-z][a-z0-9_]*(?:_[a-z0-9]+)*)"
+    r"[ \t]*=[ \t]*(?:#.*)?$"
 )
 
 
@@ -355,10 +359,38 @@ def _parse_source(source: str) -> _ParsedSource:
     if error := _first_syntax_error(tree.root_node):
         line = error.start_point.row + 1
         raw = lines[line - 1] if line <= len(lines) else ""
+        if details := _empty_cap_property_details(error, encoded, raw):
+            from .validate import _raise_empty_cap_property
+
+            kind, name, property_name = details
+            _raise_empty_cap_property(kind, name, property_name, line=line)
         if raw.startswith((" ", "\t")) and raw.strip():
             raise ToolangSyntaxError(f"Unexpected indentation at line {line}.")
         raise ToolangSyntaxError(f"Syntax error at line {line}.")
     return _ParsedSource(tree=tree, source=encoded)
+
+
+def _empty_cap_property_details(
+    error: TreeSitterNode, source: bytes, raw_line: str
+) -> tuple[CapKind, str, str] | None:
+    match = _EMPTY_CAP_PROPERTY_RE.fullmatch(raw_line)
+    if match is None:
+        return None
+    current: TreeSitterNode | None = error
+    while current is not None and current.type not in {
+        "psyche",
+        "skill",
+        "service",
+        "prompt",
+    }:
+        current = current.parent
+    if current is None:
+        return None
+    name_node = current.child_by_field_name("name")
+    if name_node is None:
+        return None
+    name = source[name_node.start_byte : name_node.end_byte].decode("utf-8").strip()
+    return cast(CapKind, current.type), name, match.group("property")
 
 
 def _parse_tree(source: bytes) -> Tree:

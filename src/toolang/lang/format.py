@@ -226,11 +226,19 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
                 formatted.append(
                     f"{indent * depth}{_format_flow_statement_line(stripped)}"
                 )
+                empty_content_assignment = (
+                    stripped.startswith("let ")
+                    and "=" in stripped
+                    and not stripped.partition("=")[2].strip()
+                )
                 flow_content_block = (
                     (column, depth)
-                    if ":" in stripped
-                    and not stripped.partition(":")[2].strip()
-                    and not stripped.startswith("repeat")
+                    if empty_content_assignment
+                    or (
+                        ":" in stripped
+                        and not stripped.partition(":")[2].strip()
+                        and not stripped.startswith("repeat")
+                    )
                     else None
                 )
                 if stripped.startswith("repeat"):
@@ -332,6 +340,13 @@ def _ancestor_types(node: Node) -> set[str]:
 
 def _indent_depth(node: Node) -> int:
     ancestors = _ancestor_types(node)
+    if "property" in ancestors and ancestors & {
+        "psyche",
+        "skill",
+        "service",
+        "prompt",
+    }:
+        return 1
     if ancestors & {"struct_body", "cap_body", "job_body"}:
         return 1
     if "agic_body" in ancestors:
@@ -541,7 +556,7 @@ def _collapse_syntax_space(value: str) -> str:
     rendered = re.sub(r"[ \t]+", " ", value.strip())
     rendered = re.sub(r"[ \t]*->[ \t]*", " -> ", rendered)
     rendered = re.sub(r"[ \t]*=[ \t]*", " = ", rendered)
-    return rendered
+    return rendered.rstrip()
 
 
 def _format_csv_values(raw: str) -> str:

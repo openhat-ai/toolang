@@ -360,7 +360,7 @@ def _recalls_history(agic: AgicDecl) -> bool:
     values = (
         tuple(value for value in directives[0].values if value) if directives else ()
     )
-    return not values or "default" in values or "history" in values
+    return not values or "auto" in values or "near" in values
 
 
 def _body_variables(

@@ -129,6 +129,32 @@ another program module.
 Cap declarations use their own schemas. They are not runnable declarations
 and do not share the agic/flow namespace.
 
+```too
+psyche reviewer:
+  Prefer precise, evidence-backed reviews.
+
+skill review:
+  description = Review a code change.
+
+  Inspect the change and report actionable findings.
+
+service github:
+  description = Access GitHub.
+  transport = http
+  target = https://mcp.github.com/mcp
+
+prompt review:
+  Review {{path}} with focus on {{focus}}.
+```
+
+`psyche` and `prompt` accept no properties and require a body. `skill`
+requires the `description` property and a body. `service` requires
+`description`, `target`, and exactly one of `transport` or its `protocol`
+alias; its body is optional. Service transport is `http` or `stdio`. Optional
+`headers` is HTTP-only, while optional `env` is a comma-separated list of
+unique environment variable names. All properties are single-use and
+nonempty.
+
 
 ## Runnable Signatures
 
@@ -205,9 +231,10 @@ Rules:
 
 - `name` is required.
 - `name?` is optional.
-- An omitted type defaults to `Part[]`.
+- An omitted type defaults to `Text`.
 - Parameters are initialized as named runtime locals.
-- Parameter names must be unique and cannot reuse `_`.
+- Parameter names must be unique and cannot reuse `_`, `far`, `near`, or
+  `line`.
 
 Script CLI arguments and options are derived from the selected runnable's
 signature. The primary input maps to positional/stdin content rather than a
@@ -229,7 +256,8 @@ Part[]
 
 `T[]` denotes an array of any language type `T`. `S` denotes the name of any
 declared struct type; neither `T` nor `S` is a literal type name that can be
-written in source.
+written in source. `Pack` is not built in and may be declared as an ordinary
+user struct.
 
 The language names map to package-level protocol values:
 
@@ -260,9 +288,10 @@ flow research(_: Text) -> Report:
   ...
 ```
 
-For an agic:
+An omitted output type defaults to `Part[]`. For an agic:
 
-- no declaration keeps normal unstructured assistant content
+- omitted `-> T` keeps normal unstructured assistant content and validates it
+  as `Part[]`
 - `Text`, `Part`, and `Part[]` use content output with type validation
 - `Number`, `Boolean`, `Json`, declared structs `S`, and ordinary `T[]` values
   use structured model output
@@ -278,8 +307,7 @@ Number               canonical decimal
 Boolean              true or false
 Json, S, T[]          compact JSON
 Part                  one JSON object
-Part[]                one JSON array when explicitly declared
-undeclared agic       human-readable assistant content
+Part[]                one JSON array
 ```
 
 
@@ -314,7 +342,7 @@ agic review(_, focus?: Text) -> ReviewResult:
   models = gpt-5
   skills += review
   tools = shell/*
-  recall = history
+  recall = near
   context: default
   instruct: strict
 
@@ -357,7 +385,10 @@ snapshot:
 ```
 
 `models` and `recall` are scalar selections and support `=` only. `recall`
-accepts `default`, `none`, `history`, `memory`, or `history, memory`.
+accepts `auto`, `none`, `far`, `near`, or `far, near`, and is Agic-only.
+Omission, `auto`, and `near` include the current conversation history. `none`
+and `far` do not; `far, near` includes it because `near` is selected. Durable
+`far` recall is reserved for a later runtime change.
 
 `hands` and `handoffs` are Agic-only runnable routes. They accept ordered,
 exact public refs in `name`, `agic:name`, or `flow:name` form and support only
@@ -504,16 +535,17 @@ generated names cannot collide with user declarations.
 
 A prompt is a reusable `Content` template:
 
-````too
-prompt review: ```md
----
-params: path, focus?
----
-
-Review {{path}} carefully.
-{{focus}}
+```too
+prompt review:
+  Review {{path}} carefully.
+  Focus on {{focus}}.
+  {{_}}
 ```
-````
+
+Named parameters are inferred from the first appearance of Mustache root
+placeholders. Dotted references and section tags contribute their root name;
+closing tags, repeated roots, and the primary `{{_}}` placeholder do not.
+Every inferred parameter is required `Text`.
 
 It is invoked with dollar-prefixed content syntax:
 
@@ -530,27 +562,23 @@ prompts.
 
 ## Service Caps
 
-`service` caps use fenced Markdown with frontmatter. Required fields are
-`description`, `transport`, and `target`; optional fields are `headers` and
-`env`.
+Inline `service` caps declare properties directly. Required properties are
+`description`, exactly one of `transport` or `protocol`, and `target`;
+optional properties are `headers` and `env`.
 
-````too
-service github: ```md
----
-description: Use this service for GitHub access.
-transport: http
-target: https://mcp.github.com/mcp
-headers:
-  Authorization: Bearer $GITHUB_TOKEN
----
-
-Use this service when the current work needs GitHub.
+```too
+service github:
+  description = Use this service for GitHub access.
+  transport = http
+  target = https://mcp.github.com/mcp
+  headers = Authorization: Bearer $GITHUB_TOKEN
+  env = GITHUB_TOKEN
 ```
-````
 
-For `http`, `target` is the endpoint URL. For `stdio`, it is one argv command
-line executed without a shell. Header values may reference host variables with
-`$NAME`; `env` declares required process environment names.
+Both accepted transport spellings lower to the canonical `transport` metadata
+key. For `http`, `target` is the endpoint URL. For `stdio`, it remains opaque
+command text at the language boundary. Markdown cap files keep their
+catalog-owned frontmatter format.
 
 
 ## Surface Rules

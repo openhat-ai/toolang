@@ -57,7 +57,7 @@ let VALUE_STMT                discard the result
 
 repeat ...                    update locals through its body
 
-let NAME: BODY          evaluate Content and assign one `Percept` to `NAME`
+let NAME = BODY         evaluate Content and assign one `Percept` to `NAME`
 ```
 
 Flow signatures use the runnable parameter rules in
@@ -66,6 +66,8 @@ named parameters.
 
 `_` is the primary local. A value statement reads a locals snapshot, computes
 one result, and applies its binding only after the complete statement succeeds.
+`far`, `near`, and `line` are reserved runtime-local names and cannot be used
+as authored bindings.
 `repeat` is different: it produces no result and accepts no `let` binding. Its
 body statements update the current flow locals normally as the loop proceeds.
 
@@ -159,7 +161,7 @@ bind their complete result once.
   result shape.
 - `ask` evaluates its `Content` for the human owner and returns the owner's
   canonical `Percept`, represented in the language as `Part[]`.
-- A direct `let NAME: BODY` evaluates its `Content` as one `Percept` local
+- A direct `let NAME = BODY` evaluates its `Content` as one `Percept` local
   with language type `Part[]`, without starting a child run.
 - Inline `keep`, `drop`, and `until` bodies return `Boolean`.
 - A `SCORER` or inline `rank` body returns `Number`.

@@ -59,8 +59,6 @@ def test_resource_discovery_endpoints_filter_effective_collections(
         tmp_path,
         source="""
 prompt review:
-  params = focus
-
   Review {{focus}}.
 
 agic chat:

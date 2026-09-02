@@ -9,11 +9,12 @@ from typing import TypeVar, cast
 from tree_sitter import Node as CstNode
 
 from . import ast
+from .validate import _validate_cap_source
 
-_PROMPT_PARAM_RE = re.compile(r"^(?P<name>[A-Za-z_][\w-]*)(?P<optional>\?)?$")
 _DECL_REF_RE = re.compile(r"^[A-Za-z_][\w-]*$")
 _TEMPLATE_LOCAL_RE = re.compile(
-    r"{{\s*(?:[#^/]\s*)?([A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z_][\w-]*)*\s*}}"
+    r"{{\s*(?P<sigil>[#^/]?)\s*(?P<root>[A-Za-z_][A-Za-z0-9_]*)"
+    r"(?:\.[A-Za-z_][\w-]*)*\s*}}"
 )
 _TRIVIA = {
     "blank_line",
@@ -108,7 +109,7 @@ def _node_line(node: NodeT) -> int:
 
 
 def _lower(cst: ast._ParsedSource) -> ast.Program:
-    """Lower a checked CST without applying semantic validation."""
+    """Lower a checked CST, preserving source detail until cap validation."""
 
     return _Lowerer(cst).lower()
 
@@ -186,19 +187,34 @@ class _Lowerer:
         )
 
     def _lower_cap(self, node: CstNode, *, doc: str | None) -> ast.CapDecl:
-        body = self._required(node, "body")
-        meta = self._properties(body)
-        params = (
-            self._prompt_parameters(
-                str(meta.get("params") or ""), span=self._span(node)
+        name = self._required_text(node, "name").strip()
+        body_node = node.child_by_field_name("body")
+        body = self._content_text(body_node) if body_node is not None else ""
+        properties = tuple(
+            (
+                self._required_text(child, "key").strip(),
+                self._required_text(child, "value").strip(),
+                self._line(child),
             )
+            for child in node.children_by_field_name("property")
+        )
+        kind = cast(ast.CapKind, node.type)
+        meta = _validate_cap_source(
+            kind,
+            name,
+            body,
+            properties,
+            line_number=self._line(node),
+        )
+        params = (
+            self._prompt_parameters(body, span=self._span(node))
             if node.type == "prompt"
             else ()
         )
         return ast.CapDecl(
-            kind=cast(ast.CapKind, node.type),
-            name=self._required_text(node, "name").strip(),
-            body=self._content_text(body),
+            kind=kind,
+            name=name,
+            body=body,
             meta=meta,
             params=params,
             span=self._span(node),
@@ -315,7 +331,9 @@ class _Lowerer:
             name=self._optional_text(node.child_by_field_name("name")) or "default",
             input=input_param,
             params=params,
-            output=self._optional_text(node.child_by_field_name("return")),
+            output=(
+                self._optional_text(node.child_by_field_name("return")) or "Part[]"
+            ),
             directives=tuple(directives),
             context=context,
             instruct=instruct,
@@ -394,7 +412,7 @@ class _Lowerer:
                 if input_param is not None
                 else {}
             ),
-            **{param.name: param.type_name or "Part[]" for param in params},
+            **{param.name: param.type_name or "Text" for param in params},
         }
         directives: list[ast.Directive] = []
         stmts: list[ast.FlowStmt] = []
@@ -421,7 +439,9 @@ class _Lowerer:
             name_explicit=name is not None,
             input=input_param,
             params=params,
-            output=self._optional_text(node.child_by_field_name("return")),
+            output=(
+                self._optional_text(node.child_by_field_name("return")) or "Part[]"
+            ),
             directives=tuple(directives),
             stmts=tuple(stmts),
             span=self._span(node),
@@ -639,7 +659,7 @@ class _Lowerer:
                 name=name,
                 input=self._default_input(node),
                 params=params,
-                output=output,
+                output=output or "Part[]",
                 directives=directives,
                 messages=(
                     ast.Message(role="user", content=body, span=self._span(node)),
@@ -660,7 +680,9 @@ class _Lowerer:
         names = {param.name for param in params}
         local_types = self._flow_local_types or {}
         for match in _TEMPLATE_LOCAL_RE.finditer(body):
-            name = match.group(1)
+            if match.group("sigil") == "/":
+                continue
+            name = match.group("root")
             if name == "_" or name in names or name not in local_types:
                 continue
             captured.append(
@@ -690,7 +712,7 @@ class _Lowerer:
                 optional=child.child_by_field_name("optional") is not None,
                 type_name=(
                     self._optional_text(child.child_by_field_name("type"))
-                    or ("Part[]" if name == "_" else None)
+                    or ("Part[]" if name == "_" else "Text")
                 ),
                 span=self._span(child),
             )
@@ -704,21 +726,22 @@ class _Lowerer:
         return ast.Parameter(name="_", type_name="Part[]", span=self._span(owner))
 
     def _prompt_parameters(
-        self, raw: str, *, span: ast.Span
+        self, body: str, *, span: ast.Span
     ) -> tuple[ast.Parameter, ...]:
-        if not raw.strip():
-            return ()
         params: list[ast.Parameter] = []
-        for value in raw.split(","):
-            item = value.strip()
-            match = _PROMPT_PARAM_RE.fullmatch(item)
+        names: set[str] = set()
+        for match in _TEMPLATE_LOCAL_RE.finditer(body):
+            name = match.group("root")
+            if match.group("sigil") == "/" or name == "_" or name in names:
+                continue
             params.append(
                 ast.Parameter(
-                    name=match.group("name") if match is not None else item,
-                    optional=match is not None and match.group("optional") is not None,
+                    name=name,
+                    type_name="Text",
                     span=span,
                 )
             )
+            names.add(name)
         return tuple(params)
 
     def _lower_directive(self, node: CstNode) -> ast.Directive:

@@ -156,7 +156,7 @@ agic improve_plan(_: Part[], project: Part[], constraints?: Text):
 
 ## Build, challenge, and improve an execution-ready delivery plan.
 flow plan(_: Text, constraints?: Text):
-  let project:
+  let project =
     {{_}}
 
   ## Decompose the project into independently actionable workstreams
@@ -166,7 +166,7 @@ flow plan(_: Text, constraints?: Text):
   ## Reconcile the workstreams into one dependency-aware draft
   gather assemble_plan
 
-  let draft:
+  let draft =
     {{_}}
 
   ## Select review perspectives suited to this particular plan

@@ -1,13 +1,13 @@
 #!/usr/bin/env toolang
 
 # Manual check for simulating a short thread while allowing future memory
-# retrieval. `recall = memory` still keeps stored thread history out of the
+# retrieval. `recall = far` still keeps stored thread history out of the
 # model input, so the explicit message blocks below are the conversation replay.
 #
 #   toolang examples/script.simulated-history.memory.too followup "What did I ask you to remember?"
 
 agic followup(_: Part[]):
-  recall = memory
+  recall = far
 
   context none
   instruct none

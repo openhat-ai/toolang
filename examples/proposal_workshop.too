@@ -76,7 +76,7 @@ agic revise_draft(_: Part[], feedback: Part[], request: Part[], audience?: Text,
 
 ## Draft and improve a proposal through three review-revision cycles.
 flow workshop(_: Text, audience?: Text, criteria?: Text):
-  let request:
+  let request =
     {{_}}
 
   ## Create the initial proposal

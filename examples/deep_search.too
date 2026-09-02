@@ -54,7 +54,7 @@ agic synthesize_report(_: Part[], topic: Part[]):
   - Next search directions
 
 flow research(_: Text):
-  let topic:
+  let topic =
     {{_}}
 
   ## Expand the research question into diverse search queries
