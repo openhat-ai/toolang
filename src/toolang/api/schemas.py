@@ -10,7 +10,7 @@ from typing import Annotated, Literal, Self, cast
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE
-from toolang.base.types.model import ModelRequest
+from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import RunLimits, RunPolicy
 from toolang.execution.schemas import (
     ControlInfo,
@@ -339,6 +339,7 @@ class AuthoredRerunRequest(ApiRequest):
     request_id: StrictText
     commands: list[RunOverridePayload] = Field(default_factory=list)
     model: ModelRequest | None = None
+    model_override: ModelOverride | None = None
 
 
 class AuthoredRetryRequest(ApiRequest):

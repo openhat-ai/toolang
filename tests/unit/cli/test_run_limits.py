@@ -1,5 +1,6 @@
 import pytest
 
+from toolang.base.types.model import ModelOverride
 from toolang.cli.common.policy import (
     resolve_default_overrides,
     resolve_ceiling_overrides,
@@ -21,7 +22,9 @@ def test_policy_options_overlay_environment_by_field() -> None:
         "models": ("local/*", "test/*"),
         "tools": (),
     }
-    assert resolve_default_overrides(environ, ("model=none",)) == {"model": None}
+    assert resolve_default_overrides(environ, ("model=none",)) == {
+        "model": ModelOverride(identity="unset")
+    }
     assert resolve_limit_overrides(
         environ,
         ("tokens=500", "agic_tool_calls=none", "time=60"),
@@ -36,7 +39,9 @@ def test_policy_overrides_preserve_absent_empty_and_unrestricted() -> None:
     assert resolve_ceiling_overrides({}, ()) == {}
     assert resolve_ceiling_overrides({}, ("tools=none",)) == {"tools": ()}
     assert resolve_ceiling_overrides({}, ("tools=all",)) == {"tools": None}
-    assert resolve_default_overrides({}, ("model=none",)) == {"model": None}
+    assert resolve_default_overrides({}, ("model=none",)) == {
+        "model": ModelOverride(identity="unset")
+    }
     assert resolve_limit_overrides({}, ("time=none",)) == {"time": None}
 
 
@@ -75,3 +80,14 @@ def test_policy_options_reject_invalid_values(
     )
     with pytest.raises(ValueError, match=message):
         resolver({}, values)
+
+
+def test_default_model_body_composes_environment_and_startup_parameters() -> None:
+    assert resolve_default_overrides(
+        {"TOOLANG_DEFAULT_MODEL": "gateway/chat effort=low"},
+        ("model=effort=high",),
+    ) == {"model": ModelOverride(identity="gateway/chat", effort="high")}
+    assert resolve_default_overrides(
+        {"TOOLANG_DEFAULT_MODEL": "none"},
+        ("model=default effort=high",),
+    ) == {"model": ModelOverride(identity="default", effort="high")}

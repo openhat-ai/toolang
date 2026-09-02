@@ -18,7 +18,7 @@ from tests.support.execution_harness import (
 )
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import Message, TextPart
-from toolang.base.types.model import ModelRequest
+from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import RunBindings, RunLimits, RunPolicy
 from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.execution.client import LocalRunClient, RunClient, RunHandle
@@ -171,6 +171,7 @@ def test_restart_requests_keep_retry_and_rerun_inputs_unambiguous() -> None:
         "commands",
         "request_id",
         "model",
+        "model_override",
     }
     assert retry.anchor == StepPath("run_source", (1,))
     assert rerun.source == retry.source
@@ -181,6 +182,15 @@ def test_restart_requests_keep_retry_and_rerun_inputs_unambiguous() -> None:
         replace(
             rerun,
             commands=(RunCommand("default", "runnable", "agic:selected"),),
+        )
+    with pytest.raises(ValueError, match="cannot remove"):
+        replace(rerun, commands=(), model_override=ModelOverride(identity="unset"))
+    with pytest.raises(ValueError, match="cannot combine"):
+        replace(
+            rerun,
+            commands=(),
+            model=ModelRequest(TEST_MODEL_REF),
+            model_override=ModelOverride(effort="high"),
         )
 
 

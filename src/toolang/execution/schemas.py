@@ -20,7 +20,7 @@ from typing import (
 from pydantic import BaseModel, TypeAdapter
 
 from toolang.base.types.message import Part, message_summary
-from toolang.base.types.model import ModelRequest
+from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import RunPolicy
 from toolang.base.types.run import ModelCall
 from toolang.lang.input import RunnableInputRaw
@@ -434,6 +434,7 @@ class RerunRequest:
     commands: tuple[RunCommand, ...]
     request_id: str
     model: ModelRequest | None = None
+    model_override: ModelOverride | None = None
 
     def __post_init__(self) -> None:
         _validate_restart_request(
@@ -443,6 +444,16 @@ class RerunRequest:
         )
         if self.model is not None and not isinstance(self.model, ModelRequest):
             raise TypeError("rerun request model must be ModelRequest or none")
+        if self.model_override is not None and not isinstance(
+            self.model_override, ModelOverride
+        ):
+            raise TypeError(
+                "rerun request model override must be ModelOverride or none"
+            )
+        if self.model is not None and self.model_override is not None:
+            raise ValueError("rerun request cannot combine model and model override")
+        if self.model_override is not None and self.model_override.identity == "unset":
+            raise ValueError("rerun request cannot remove the persisted model")
 
 
 def _validate_restart_request(

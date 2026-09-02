@@ -13,7 +13,9 @@ import click
 import typer
 
 from toolang.base.errors import ToolangError
+from toolang.base.model_settings import parse_model_body
 from toolang.base.types.message import Message
+from toolang.base.types.model import ModelOverride
 from toolang.cli.common.policy import (
     resolve_default_overrides,
     resolve_ceiling_overrides,
@@ -133,7 +135,7 @@ def retry_command(
         list[str] | None,
         typer.Option(
             "--default",
-            help="Compatibility option; retry preserves the persisted model.",
+            hidden=True,
         ),
     ] = None,
 ) -> None:
@@ -160,12 +162,10 @@ def retry_command(
         dev=dev,
         commands=user_call(
             _restart_commands,
-            layout,
             allow_options=allows,
-            default_options=None,
             limit_options=limit,
-            model_replacement=False,
         ),
+        model_override=None,
         show_progress=show_progress,
         model_catalog=resolve_model_catalog_option(model_catalog),
     )
@@ -205,9 +205,17 @@ def rerun_command(
             help="Set FIELD=VALUE. Repeat for another field.",
         ),
     ] = None,
+    model: Annotated[
+        str | None,
+        typer.Option(
+            "--model",
+            help="Replace the persisted model identity or parameters.",
+            metavar="MODEL_BODY",
+        ),
+    ] = None,
     defaults: Annotated[
         list[str] | None,
-        typer.Option("--default", help="Set model=VALUE for the new run."),
+        typer.Option("--default", hidden=True),
     ] = None,
 ) -> None:
     """Start a new root run from one terminal source invocation."""
@@ -218,6 +226,11 @@ def rerun_command(
             raise RuntimeError("execution resources were not opened")
         _thread_id, source = _anchor(RunHistory(resources.store), run)
     show_progress = sys.stderr.isatty()
+    model_override = user_call(
+        _rerun_model_override,
+        model_body=model,
+        default_options=defaults,
+    )
     result = _run_retry_or_rerun(
         layout=layout,
         kind="rerun",
@@ -227,12 +240,10 @@ def rerun_command(
         dev=dev,
         commands=user_call(
             _restart_commands,
-            layout,
             allow_options=allows,
-            default_options=defaults,
             limit_options=limit,
-            model_replacement=True,
         ),
+        model_override=model_override,
         show_progress=show_progress,
         model_catalog=resolve_model_catalog_option(model_catalog),
     )
@@ -345,6 +356,7 @@ def _run_retry_or_rerun(
     sandbox: str | None,
     dev: Path | None,
     commands: tuple[RunCommand, ...],
+    model_override: ModelOverride | None,
     show_progress: bool,
     model_catalog: Path | None = None,
 ) -> RunDetail:
@@ -364,6 +376,7 @@ def _run_retry_or_rerun(
                     source=source,
                     anchor=anchor,
                     commands=commands,
+                    model_override=model_override,
                     show_progress=show_progress,
                     model_catalog=model_catalog,
                 )
@@ -375,34 +388,41 @@ def _run_retry_or_rerun(
 
 
 def _restart_commands(
-    layout: AgentLayout,
     *,
     allow_options: list[str] | None,
-    default_options: list[str] | None,
     limit_options: list[str] | None,
-    model_replacement: bool,
 ) -> tuple[RunCommand, ...]:
-    environ = load_runtime_environ(layout, base_environ=os.environ)
-    cli_defaults = resolve_default_overrides({}, default_options)
-    if "runnable" in cli_defaults:
-        raise ValueError("--default runnable does not apply to a persisted source run")
-    default_overrides = {
-        **resolve_default_overrides(environ),
-        **cli_defaults,
-    }
-    default_overrides.pop("runnable", None)
-    if not model_replacement:
-        default_overrides.pop("model", None)
-    ceilings = resolve_ceiling_overrides(environ, allow_options or ())
-    limits = resolve_limit_overrides(environ, limit_options or ())
+    ceilings = resolve_ceiling_overrides({}, allow_options or ())
+    limits = resolve_limit_overrides({}, limit_options or ())
     return (
         *(RunCommand("allow", field, value) for field, value in ceilings.items()),
-        *(
-            RunCommand("default", field, value)
-            for field, value in default_overrides.items()
-        ),
         *(RunCommand("limit", field, value) for field, value in limits.items()),
     )
+
+
+def _rerun_model_override(
+    *,
+    model_body: str | None,
+    default_options: list[str] | None,
+) -> ModelOverride | None:
+    defaults = resolve_default_overrides({}, default_options)
+    if "runnable" in defaults:
+        raise ValueError("--default runnable does not apply to a persisted source run")
+    compatibility_model = defaults.get("model")
+    if compatibility_model is not None and not isinstance(
+        compatibility_model, ModelOverride
+    ):
+        raise TypeError("--default model must resolve to a model override")
+    if model_body is not None and compatibility_model is not None:
+        raise ValueError("--model cannot be combined with --default model=...")
+    if compatibility_model is not None:
+        typer.echo("warning: --default model=... is deprecated; use --model", err=True)
+    resolved = (
+        parse_model_body(model_body) if model_body is not None else compatibility_model
+    )
+    if resolved is not None and resolved.identity == "unset":
+        raise ValueError("rerun --model does not accept unset")
+    return resolved
 
 
 async def _execute_retry_or_rerun(
@@ -413,6 +433,7 @@ async def _execute_retry_or_rerun(
     source: str,
     anchor: StepPath | None,
     commands: tuple[RunCommand, ...],
+    model_override: ModelOverride | None,
     show_progress: bool,
     model_catalog: Path | None,
 ) -> RunDetail:
@@ -450,6 +471,7 @@ async def _execute_retry_or_rerun(
                         source=source,
                         commands=commands,
                         request_id=request_id,
+                        model_override=model_override,
                     ),
                     tracer=tracer,
                 )

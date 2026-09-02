@@ -17,6 +17,7 @@ from pydantic import TypeAdapter
 from toolang.api.app import create_app
 from toolang.api.common import LiveEventRelay, sse_stream
 from toolang.base.types.message import DocumentPart, Message, TextPart
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunDefaults, RunLimits
 from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.catalog import CapsManager, JobsManager
@@ -127,7 +128,7 @@ agic answer(_: Part[]) -> Part[]:
     setup = replace(
         harness.setup,
         defaults=RunDefaults(
-            model="test/scripted",
+            model=ModelRequest("test/scripted"),
             runnable="agic:answer",
         ),
     )

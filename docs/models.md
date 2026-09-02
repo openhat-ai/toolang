@@ -282,15 +282,28 @@ key_env = "GATEWAY_API_KEY"
 models = ["gateway/*"]
 
 [default]
-model = "gateway/chat"
+model = "gateway/chat effort=high"
 ```
 
 Provider configuration participates in the one-time provider resolution.
 `SetupWatcher` applies `allow.models` once and publishes the resulting
 `ModelCollection`; request and runnable policy can only narrow that base.
-`default.model` must be one concrete ref present in the effective collection.
-When it is absent, Toolang does not choose a first model implicitly. Agics then
-require an explicit surface selection, while model-free flows remain valid.
+`default.model` uses the same model body as invocation, Chat, and run-input
+settings: an optional concrete ref followed by typed assignments. The current
+assignment is `effort=LEVEL`, `effort=TOKENS`, or `effort=auto`. The effective
+ref must be present in the Setup collection, and its parameters are validated
+before Setup publication. An agent config may use a parameter-only body such
+as `effort=high` to modify the inherited root default. Setup keeps an absent
+configured model absent; Chat and Script surfaces use the first effective
+collection model as their runtime fallback. `unset` explicitly selects no
+model at the session or one-run layer for model-free execution.
+
+The same body is accepted by `TOOLANG_DEFAULT_MODEL`, startup
+`--default model=BODY`, Script/Chat/rerun `--model BODY`, `/model BODY`, and
+`:model BODY`. Multi-token CLI and environment values must be shell-quoted.
+Configuration deliberately supports only the string form under `[default]`;
+there is no `[default.model]` table. Legacy `none` values in Setup default
+sources normalize to canonical `unset`.
 
 `[models].default` and `[models.aliases.*]` are rejected. Custom model
 identities and aliases will be supplied by a future custom catalog rather than

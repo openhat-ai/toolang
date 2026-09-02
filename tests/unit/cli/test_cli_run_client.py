@@ -36,14 +36,21 @@ def test_acquire_run_client_uses_local_embedding_without_a_server(
         *,
         sandbox: str,
         model_catalog: Path | None,
+        allow_overrides: object,
+        default_overrides: object,
+        limit_overrides: object,
     ) -> Mock:
         assert selected == layout
         assert sandbox == "host"
         assert model_catalog == catalog
+        assert allow_overrides == {}
+        assert default_overrides == {}
+        assert limit_overrides == {}
         return setup
 
-    def open_state(selected: AgentLayout) -> Mock:
+    def open_state(selected: AgentLayout, *, allow_overrides: object) -> Mock:
         assert selected == layout
+        assert allow_overrides == {}
         return state
 
     def open_executor(
@@ -63,6 +70,11 @@ def test_acquire_run_client_uses_local_embedding_without_a_server(
     monkeypatch.setattr(run_client, "StateWatcher", open_state)
     monkeypatch.setattr(run_client, "RunExecutor", open_executor)
     monkeypatch.setattr(run_client, "LocalRunClient", open_client)
+    monkeypatch.setattr(
+        run_client,
+        "load_runtime_environ",
+        lambda *_args, **_kwargs: {},
+    )
 
     async def scenario() -> None:
         async with run_client.acquire_run_client(

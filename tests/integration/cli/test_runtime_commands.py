@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from pathlib import Path
+import re
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -11,6 +12,7 @@ from click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from toolang.base.errors import ToolangError
+from toolang.base.types.model import ModelOverride
 from toolang.base.types.progress import ProgressEvent, ProgressStage, ProgressStatus
 from toolang.base.types.sandbox import SandboxOutput, SandboxRef
 import toolang.cli.toolang.main as cli
@@ -49,10 +51,10 @@ def _startup_event(
         (["start", "--help"], ("--sandbox", "--allow", "--limit", "--default")),
         (
             ["chat", "alice", "--help"],
-            ("--sandbox", "--allow", "--limit", "--default"),
+            ("--sandbox", "--allow", "--limit", "--model", "--runnable"),
         ),
-        (["retry", "alice", "--help"], ("--allow", "--limit", "--default")),
-        (["rerun", "alice", "--help"], ("--allow", "--limit", "--default")),
+        (["retry", "alice", "--help"], ("--allow", "--limit")),
+        (["rerun", "alice", "--help"], ("--allow", "--limit", "--model")),
     ],
 )
 def test_policy_options_follow_cli_display_order(
@@ -63,7 +65,11 @@ def test_policy_options_follow_cli_display_order(
 
     assert result.exit_code == 0, result.stderr
     output = strip_ansi(result.stdout)
-    positions = tuple(output.index(option) for option in options)
+    matches = tuple(
+        re.search(rf"{re.escape(option)}(?![a-z-])", output) for option in options
+    )
+    assert all(match is not None for match in matches)
+    positions = tuple(match.start() for match in matches if match is not None)
     assert positions == tuple(sorted(positions))
 
 
@@ -288,7 +294,9 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
         "tools": ("fs,shell",),
         "skills": ("reviewer",),
     }
-    assert resolved["default_overrides"] == {"model": "openai/gpt-5"}
+    assert resolved["default_overrides"] == {
+        "model": ModelOverride(identity="openai/gpt-5")
+    }
     assert resolved["limit_overrides"] == {
         "agic_tool_calls": 40,
         "tokens": 3000,

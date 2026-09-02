@@ -23,6 +23,8 @@ import uvicorn
 from uvicorn.main import STARTUP_FAILURE
 
 from toolang.api.app import create_app
+from toolang.base.model_settings import format_model_body
+from toolang.base.types.model import ModelOverride
 from toolang.base.types.policy import AgentCeiling
 from toolang.catalog import CapsManager, JobsManager
 from toolang.common.config import resolve_ui_base_url
@@ -68,7 +70,9 @@ class ServeSpec:
     ceiling_overrides: Mapping[str, tuple[str, ...] | None] = field(
         default_factory=dict
     )
-    default_overrides: Mapping[str, str | None] = field(default_factory=dict)
+    default_overrides: Mapping[str, ModelOverride | str | None] = field(
+        default_factory=dict
+    )
     limit_overrides: Mapping[str, int | Decimal | None] = field(default_factory=dict)
     file_inboxes: tuple[Path, ...] = ()
     log_spec: str | None = None
@@ -102,7 +106,7 @@ def resolve_serve(
     endpoint_host: str | None = None,
     port: int | None = None,
     ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
-    default_overrides: Mapping[str, str | None] | None = None,
+    default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
     limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     file_inboxes: Sequence[Path] | None = None,
     log_spec: str | None = None,
@@ -154,7 +158,14 @@ def build_serve_argv(
     for name, selectors in spec.ceiling_overrides.items():
         command.extend(["--allow", f"{name}={_format_allow(selectors)}"])
     for name, value in spec.default_overrides.items():
-        command.extend(["--default", f"{name}={_format_value(value)}"])
+        formatted = (
+            format_model_body(value)
+            if name == "model" and isinstance(value, ModelOverride)
+            else "unset"
+            if name == "model" and value is None
+            else _format_value(value)
+        )
+        command.extend(["--default", f"{name}={formatted}"])
     for name, value in spec.limit_overrides.items():
         command.extend(["--limit", f"{name}={_format_value(value)}"])
     for inbox in spec.file_inboxes:

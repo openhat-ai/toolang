@@ -32,6 +32,7 @@ from toolang.base.types.message import (
     ToolResultPart,
 )
 from toolang.base.types.model import (
+    ModelOverride,
     ModelParameters,
     ModelRequest,
     ReasoningParameters,
@@ -52,6 +53,7 @@ from toolang.execution.records import (
     RetryControlPayload,
     RunControlPayload,
 )
+from toolang.execution.schemas import RerunRequest
 from toolang.execution.types import (
     ModelStepNoted,
     ModelTokenCount,
@@ -249,7 +251,14 @@ def test_reasoning_effort_reaches_accounting_and_restart_persistence(
             message=Message.assistant(label),
             usage=ModelUsage(input_tokens=1, output_tokens=1),
         )
-        for label in ("source", "retry", "rerun", "replacement", "automatic")
+        for label in (
+            "source",
+            "retry",
+            "rerun",
+            "sparse",
+            "replacement",
+            "automatic",
+        )
     ]
     harness = ExecutionHarness.create(
         tmp_path,
@@ -290,6 +299,7 @@ agic reply(_: Part[]) -> Part[]:
             )
         ),
     )
+    harness.executor._setup = lambda: harness.setup
     high = ModelRequest(
         TEST_MODEL_REF,
         ModelParameters(ReasoningParameters("high")),
@@ -342,6 +352,22 @@ agic reply(_: Part[]) -> Part[]:
             assert isinstance(preserved_control.payload, RerunControlPayload)
             assert preserved_control.payload.model_request == high
 
+            sparse = await harness.executor.rerun(
+                RerunRequest(
+                    source.id,
+                    (),
+                    "rerun_sparse_model_parameters",
+                    model_override=ModelOverride(effort="low"),
+                )
+            )
+            sparse_control = harness.store.get_run_control(
+                run_id=sparse.id,
+                index=0,
+            )
+            assert sparse_control is not None
+            assert isinstance(sparse_control.payload, RerunControlPayload)
+            assert sparse_control.payload.model_request == low
+
             replacement = await harness.executor.rerun(
                 source.id,
                 setup=harness.setup,
@@ -370,6 +396,7 @@ agic reply(_: Part[]) -> Part[]:
             assert source.status == retried.status == "succeeded"
             assert (
                 preserved.status
+                == sparse.status
                 == replacement.status
                 == automatic.status
                 == ("succeeded")
@@ -382,10 +409,12 @@ agic reply(_: Part[]) -> Part[]:
                 {"effort": "high"},
                 {"effort": "high"},
                 {"effort": "low"},
+                {"effort": "low"},
                 {"enabled": True, "effort": "medium"},
             ]
             for run, expected in (
                 (preserved, {"effort": "high"}),
+                (sparse, {"effort": "low"}),
                 (replacement, {"effort": "low"}),
                 (automatic, {"enabled": True, "effort": "medium"}),
             ):

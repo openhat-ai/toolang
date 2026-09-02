@@ -10,6 +10,7 @@ from typing import Any, cast
 import pytest
 
 from toolang.base.types.message import ImagePart, Message, TextPart
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunBindings, RunDefaults
 from toolang.base.types.run import ModelCall
 from toolang.common.errors import ToolangError
@@ -149,7 +150,7 @@ def _model_setup() -> AgentSetup:
         tools=ToolCollection(),
         envs={},
         environment=AgentEnvironment.capture(layout, sandbox="host"),
-        defaults=RunDefaults(model="test/scripted"),
+        defaults=RunDefaults(model=ModelRequest("test/scripted")),
     )
 
 
@@ -198,7 +199,12 @@ def _spec(
         setup=setup,
         state=state,
         thread=thread,
-        bindings=RunBindings(model=setup.defaults.model, runnable=runnable),
+        bindings=RunBindings(
+            model=(
+                setup.defaults.model.ref if setup.defaults.model is not None else None
+            ),
+            runnable=runnable,
+        ),
         limits=setup.limits,
         ceilings=(ceiling,) if ceiling is not None else (),
         input=resolve_runnable_input(

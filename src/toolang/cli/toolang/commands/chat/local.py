@@ -13,7 +13,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 from toolang.base.types.message import Message
-from toolang.base.types.model import ModelRequest
+from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
@@ -84,7 +84,7 @@ class LocalChatSession:
         sandbox: str = "host",
         model_catalog: Path | None = None,
         ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
-        default_overrides: Mapping[str, str | None] | None = None,
+        default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
         limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     ) -> None:
         self.layout = layout
@@ -150,8 +150,11 @@ class LocalChatSession:
             return {"default": None, "items": []}
         models = setup.models.match(queries)
         selection = snapshot_model_selection(setup)
+        preferred = (
+            setup.defaults.model.ref if setup.defaults.model is not None else None
+        )
         return {
-            "default": models.effective_default(setup.defaults.model),
+            "default": models.effective_default(preferred),
             "items": [
                 {
                     "ref": ref,
@@ -474,7 +477,10 @@ class LocalChatSession:
     def _current_session_setting(
         *, setup: AgentSetup, state: AgentState | StatePublication
     ) -> SessionSetting:
-        model = setup.models.effective_default(setup.defaults.model)
+        model = setup.defaults.model
+        if model is None:
+            fallback = setup.models.effective_default(None)
+            model = ModelRequest(fallback) if fallback is not None else None
         runnable = setup.defaults.runnable
         if runnable is None:
             default_agic, default_flow = runnable_binding_defaults(
@@ -489,7 +495,7 @@ class LocalChatSession:
         if runnable is not None:
             runnable = resolve_public_runnable_query(state, runnable).ref
         return SessionSetting(
-            model=ModelRequest(model) if model is not None else None,
+            model=model,
             runnable=runnable,
             limits=setup.limits,
         )

@@ -166,7 +166,7 @@ agic chat(_: Part[]) -> Part[]:
     )
     setup = replace(
         harness.setup,
-        defaults=RunDefaults(model=TEST_MODEL_REF, runnable="chat"),
+        defaults=RunDefaults(model=ModelRequest(TEST_MODEL_REF), runnable="chat"),
     )
     try:
         defaults = local.LocalChatSession._current_session_setting(

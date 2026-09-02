@@ -7,7 +7,12 @@ import pytest
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import Message, TextPart
-from toolang.base.types.model import ModelRequest
+from toolang.base.types.model import (
+    ModelOverride,
+    ModelParameters,
+    ModelRequest,
+    ReasoningParameters,
+)
 from toolang.base.types.run import ModelCallResult
 from toolang.base.types.policy import RunBindings, RunDefaults, RunPolicy
 from toolang.execution.calls import (
@@ -76,9 +81,32 @@ def test_restart_resolution_preserves_model_unless_rerun_replaces_it(
             setup=harness.setup,
             state=harness.state,
         )
+        effective_default = resolve_restart_request(
+            RerunRequest(
+                "run_source",
+                (RunCommand("default", "model", None),),
+                "rerun_effective_default",
+            ),
+            setup=replace(harness.setup, defaults=RunDefaults()),
+            state=harness.state,
+        )
+        parameter_only = resolve_restart_request(
+            RerunRequest(
+                "run_source",
+                (),
+                "rerun_parameters",
+                model_override=ModelOverride(effort="high"),
+            ),
+            setup=harness.setup,
+            state=harness.state,
+        )
         assert preserved.model is None
+        assert preserved.model_override is None
         assert replaced.model == explicit
         assert legacy.model == ModelRequest("test/scripted")
+        assert effective_default.model == ModelRequest("test/scripted")
+        assert parameter_only.model is None
+        assert parameter_only.model_override == ModelOverride(effort="high")
         with pytest.raises(ValueError, match="retry request cannot replace"):
             RetryRequest(
                 "run_source",
@@ -431,7 +459,13 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
     harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
     setup = replace(
         harness.setup,
-        defaults=RunDefaults(model="test/scripted", runnable="agic:bound"),
+        defaults=RunDefaults(
+            model=ModelRequest(
+                "test/scripted",
+                ModelParameters(reasoning=ReasoningParameters()),
+            ),
+            runnable="agic:bound",
+        ),
     )
 
     def resolve(
@@ -470,6 +504,10 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
             surface=RunBindings(runnable="agic:default"),
             session=(RunCommand("default", "runnable", "agic:bound"),),
         )
+        restored_model = resolve(
+            "Input",
+            session=(RunCommand("default", "model", None),),
+        )
 
         assert bound.bindings == RunBindings(
             model="test/scripted",
@@ -481,6 +519,7 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
         )
         assert authored.bindings.runnable == "agic:bound"
         assert selected.bindings.runnable == "agic:default"
+        assert restored_model.model_request == setup.defaults.model
     finally:
         harness.store.close()
 

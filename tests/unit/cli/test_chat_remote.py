@@ -12,6 +12,11 @@ import pytest
 from pydantic import TypeAdapter
 
 from toolang.base.types.message import TextPart
+from toolang.base.types.model import (
+    ModelParameters,
+    ModelRequest,
+    ReasoningParameters,
+)
 from toolang.cli.toolang.commands.chat import remote
 from toolang.cli.toolang.commands.chat.base import (
     ChatExecutorMetadata,
@@ -45,7 +50,7 @@ _HOST_DESCRIPTION = "macOS 27.0 arm64"
 
 def _run_defaults() -> dict[str, object]:
     return {
-        "model": "test/model",
+        "model": {"ref": "test/model", "parameters": {}},
         "runnable": "agic:chat",
         "policy": {"allow": [], "limits": {}},
     }
@@ -128,6 +133,24 @@ def test_remote_chat_rejects_a_model_default_outside_items(
 ) -> None:
     with pytest.raises(remote.RemoteChatError, match="models returned invalid default"):
         remote._catalog_payload(payload, operation="models", item_kind="model")
+
+
+def test_remote_run_defaults_preserve_typed_model_parameters() -> None:
+    setting = remote._session_setting(
+        {
+            "model": {
+                "ref": "test/model",
+                "parameters": {"reasoning": {"effort": "high"}},
+            },
+            "runnable": "agic:chat",
+            "policy": {"allow": [], "limits": {}},
+        }
+    )
+
+    assert setting.model == ModelRequest(
+        "test/model",
+        ModelParameters(reasoning=ReasoningParameters(effort="high")),
+    )
 
 
 class _Bytes(httpx.AsyncByteStream):

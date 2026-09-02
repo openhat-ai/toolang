@@ -223,9 +223,6 @@ def _model(app: AppContext, _command: str, argument: str) -> SlashOutcome:
         if default_model_ref is None:
             raise ValueError("No models are available for the current allow.models")
         allowed_model_refs = _model_refs(payload)
-        update = RunOverride(
-            model=ModelOverride(identity=default_model_ref, effort=model.effort)
-        )
     elif model.identity is not None:
         payload = client.list_models()
         resolved = _chat_resolve_model_command(payload, model.identity)

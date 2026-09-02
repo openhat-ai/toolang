@@ -16,6 +16,11 @@ from toolang.api.app import create_app
 from toolang.api.routers import agent as agent_router
 from toolang.api.routers.agent import profile
 from toolang.base.types.message import Message, TextPart
+from toolang.base.types.model import (
+    ModelParameters,
+    ModelRequest,
+    ReasoningParameters,
+)
 from toolang.base.types.policy import RunDefaults
 from toolang.base.types.run import ModelCallResult
 from toolang.catalog import CapsManager, JobsManager
@@ -205,7 +210,13 @@ agic chat(_: Part[]) -> Part[]:
     )
     setup = replace(
         harness.setup,
-        defaults=RunDefaults(model=TEST_MODEL_REF, runnable="chat"),
+        defaults=RunDefaults(
+            model=ModelRequest(
+                TEST_MODEL_REF,
+                ModelParameters(reasoning=ReasoningParameters(effort="high")),
+            ),
+            runnable="chat",
+        ),
     )
     harness.store.close()
     core = AgentCore(setup.layout)
@@ -264,7 +275,10 @@ agic chat(_: Part[]) -> Part[]:
             },
         }
         assert defaults.status_code == 200
-        assert defaults.json()["model"] == TEST_MODEL_REF
+        assert defaults.json()["model"] == {
+            "ref": TEST_MODEL_REF,
+            "parameters": {"reasoning": {"effort": "high", "budget_tokens": None}},
+        }
         assert defaults.json()["runnable"] == "agic:chat"
         assert models.status_code == 200
         assert models.json()["default"] == TEST_MODEL_REF

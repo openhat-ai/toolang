@@ -13,7 +13,15 @@ import pytest
 from toolang.base.protocols.model import ModelCatalog
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.common.errors import ToolangError
-from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelInfo, Provider
+from toolang.base.types.model import (
+    Model,
+    ModelCatalogSnapshot,
+    ModelInfo,
+    ModelParameters,
+    ModelRequest,
+    Provider,
+    ReasoningParameters,
+)
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.adapters.responses import ResponsesModelAdapter
 from toolang.plugin.models.adapters.chat_completions import (
@@ -346,7 +354,7 @@ def test_model_context_ignores_defaults_limits_and_tool_allow(
 
     setup = asyncio.run(SetupWatcher(layout).refresh())
 
-    assert setup.defaults.model == "test/one"
+    assert setup.defaults.model == ModelRequest("test/one")
     assert setup.limits.tokens == 123
     assert len(_context_cache_files(tmp_path, "alice")) == 1
 
@@ -1155,7 +1163,7 @@ def test_setup_watcher_publishes_only_effective_resources_and_policy(
     assert len(setup.tools._matcher.items) == 1
     assert tuple(setup.providers) == ("test",)
     assert tuple(setup.providers["test"].models) == ("one",)
-    assert setup.defaults.model == "test/one"
+    assert setup.defaults.model == ModelRequest("test/one")
     assert setup.defaults.runnable == "agic:chat"
     assert setup.limits.tokens == 300
     assert setup.limits.cost == Decimal("1.5")
@@ -1192,6 +1200,31 @@ def test_setup_watcher_rejects_default_excluded_from_effective_models(
 
     with pytest.raises(ToolangError, match="model ref is unavailable: test/two"):
         asyncio.run(watcher.refresh())
+
+
+def test_setup_watcher_validates_default_model_parameters_before_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "models.json", ("one",), reasoning=True)
+    config: dict[str, object] = {"default": {"model": "test/one effort=high"}}
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
+
+    setup = asyncio.run(watcher.refresh())
+
+    assert setup.defaults.model == ModelRequest(
+        "test/one",
+        ModelParameters(reasoning=ReasoningParameters(effort="high")),
+    )
+
+    config["default"] = {"model": "test/one effort=max"}
+    rejected = asyncio.run(watcher.refresh())
+
+    assert rejected is setup
+    assert (
+        "does not advertise reasoning effort 'max'" in watcher.diagnostics()[0].message
+    )
 
 
 def test_setup_watcher_retains_last_setup_when_default_becomes_unavailable(
@@ -1301,13 +1334,21 @@ def _empty_local(provider_id: str) -> ModelCatalogSnapshot:
     )
 
 
-def _write_catalog(path: Path, model_ids: tuple[str, ...]) -> None:
+def _write_catalog(
+    path: Path,
+    model_ids: tuple[str, ...],
+    *,
+    reasoning: bool = False,
+) -> None:
     models = {
         model_id: {
             "id": model_id,
             "name": model_id.title(),
             "attachment": False,
-            "reasoning": False,
+            "reasoning": reasoning,
+            "reasoning_options": (
+                [{"type": "effort", "values": ["low", "high"]}] if reasoning else None
+            ),
             "tool_call": True,
             "structured_output": True,
             "temperature": True,

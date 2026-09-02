@@ -74,9 +74,7 @@ def test_remote_script_uses_a_script_thread_and_native_progress(
                 override=RunOverride(),
                 input=RunnableInputRaw(_="hello"),
                 raw_named=(),
-                allow_options=(),
-                default_options=(),
-                limit_options=(),
+                session_override=RunOverride(),
                 quiet=False,
                 transport=httpx.ASGITransport(app=app),
             )

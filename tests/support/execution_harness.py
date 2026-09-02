@@ -13,7 +13,13 @@ from typing import Any, Self
 
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import Part, TextPart
-from toolang.base.types.model import ModelInfo, ModelTarget, Provider, ResolvedProvider
+from toolang.base.types.model import (
+    ModelInfo,
+    ModelRequest,
+    ModelTarget,
+    Provider,
+    ResolvedProvider,
+)
 from toolang.base.types.policy import (
     AgentCeiling,
     RunBindings,
@@ -352,7 +358,7 @@ class ExecutionHarness:
                 home=home,
                 working_directory=home,
             ),
-            defaults=RunDefaults(model=TEST_MODEL_REF),
+            defaults=RunDefaults(model=ModelRequest(TEST_MODEL_REF)),
         )
         store = RunStore(runtime / "runs.db")
         ids = IdIssuer(runtime / "ids.json")
@@ -402,8 +408,19 @@ class ExecutionHarness:
             state=self.state,
             thread=thread,
             bindings=RunBindings(
-                model=model if model is not None else self.setup.defaults.model,
+                model=(
+                    model
+                    if model is not None
+                    else self.setup.defaults.model.ref
+                    if self.setup.defaults.model is not None
+                    else None
+                ),
                 runnable=runnable,
+            ),
+            model_request=(
+                self.setup.defaults.model
+                if model is None and self.setup.defaults.model is not None
+                else None
             ),
             limits=limits if limits is not None else self.setup.limits,
             ceilings=ceilings,

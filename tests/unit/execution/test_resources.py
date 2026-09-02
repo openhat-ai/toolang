@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import pytest
 
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.base.types.policy import RunDefaults
 from toolang.common.errors import ToolangError
@@ -152,12 +153,13 @@ def test_agent_model_default_is_the_selected_candidate_concrete_ref(
     tmp_path: Path,
 ) -> None:
     setup, state, _selection = _snapshots(tmp_path)
-    setup = replace(setup, defaults=RunDefaults(model="test/scripted"))
+    setup = replace(setup, defaults=RunDefaults(model=ModelRequest("test/scripted")))
 
     default, targets = agent_model_targets(setup, AgentCeiling())
 
     assert default == targets[0][0]
-    assert default == setup.defaults.model
+    assert setup.defaults.model is not None
+    assert default == setup.defaults.model.ref
 
 
 def test_agent_resources_durable_data_round_trips_every_resource_kind() -> None:

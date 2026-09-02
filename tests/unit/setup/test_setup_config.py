@@ -4,6 +4,12 @@ from pathlib import Path
 
 import pytest
 
+from toolang.base.model_settings import parse_model_body
+from toolang.base.types.model import (
+    ModelParameters,
+    ModelRequest,
+    ReasoningParameters,
+)
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
@@ -173,6 +179,28 @@ def test_run_limits_use_limit_table() -> None:
     )
 
 
+def test_default_model_body_layers_identity_and_typed_parameters() -> None:
+    assert resolve_run_defaults(
+        (
+            {"default": {"model": "openai/gpt-5 effort=low"}},
+            {"default": {"model": "effort=high"}},
+        ),
+        overrides={"model": parse_model_body("effort=auto")},
+    ) == RunDefaults(model=ModelRequest("openai/gpt-5"))
+
+    assert resolve_run_defaults(
+        (
+            {"default": {"model": "openai/gpt-5 effort=low"}},
+            {"default": {"model": "effort=4096"}},
+        )
+    ) == RunDefaults(
+        model=ModelRequest(
+            "openai/gpt-5",
+            ModelParameters(reasoning=ReasoningParameters(budget_tokens=4096)),
+        )
+    )
+
+
 def test_setup_policy_rejects_unknown_and_invalid_fields() -> None:
     with pytest.raises(ValueError, match="unknown allow field: channels"):
         resolve_setup_allow(({"allow": {"channels": ["web"]}},))
@@ -182,6 +210,8 @@ def test_setup_policy_rejects_unknown_and_invalid_fields() -> None:
         resolve_run_defaults(({"default": {"tool": "shell"}},))
     with pytest.raises(ValueError, match="model request ref must be exact"):
         resolve_run_defaults(({"default": {"model": "openai/*"}},))
+    with pytest.raises(TypeError, match="default model must be a string"):
+        resolve_run_defaults(({"default": {"model": {"ref": "openai/gpt-5"}}},))
     with pytest.raises(ValueError, match="unknown run limit: turns"):
         resolve_run_limits(({"limit": {"turns": 1}},))
     with pytest.raises(ValueError, match="cost must be non-negative"):

@@ -5,6 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
+from toolang.base.types.model import ModelOverride
 from toolang.cli.common.policy import (
     resolve_default_overrides,
     resolve_ceiling_overrides,
@@ -54,7 +55,10 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
             "tools": (),
             "skills": None,
         },
-        default_overrides={"model": "openai/gpt-5", "runnable": None},
+        default_overrides={
+            "model": ModelOverride(identity="openai/gpt-5"),
+            "runnable": None,
+        },
         limit_overrides={
             "agic_model_calls": 25,
             "tokens": 1000,
