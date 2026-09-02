@@ -18,7 +18,7 @@ Approved for implementation in the phases below.
 - **workspace**: a human-authorized external filesystem root.
 - **far**: the compacted history partition.
 - **near**: the recent history partition.
-- **run**: the current Run's message partition.
+- **this_run**: the current Run's message partition.
 - **line**: the current Run's ancestry and resolved inputs.
 - **recall**: delivery of runtime content to the model.
 - **support**: structured links between runtime content and messages.
@@ -35,9 +35,9 @@ executes, while skills and services remain explicit model choices.
 - Every Run has one inherited `coop | lab` runspace, and State exposes all
   human-configured workspaces without a new workspace domain model.
 - Every provider call comes from one inspectable canonical ModelCall whose
-  fixed content and active Run fit the total context budget.
+  fixed content and `this_run` fit the total context budget.
 - V1 compaction deterministically selects complete recent groups into `near`,
-  always emits empty `far`, and never mutates the active Run.
+  always emits empty `far`, and never mutates `this_run`.
 - Workspace operations execute only after current applicable rules are visible;
   skill and service guidance is recalled explicitly and without duplication.
 - Compaction, parallel Runs, changed setup, and retry cannot bypass provenance,
@@ -80,7 +80,7 @@ ModelCall
 ├── messages
 │   ├── far
 │   ├── near
-│   └── run
+│   └── this_run
 ├── tools
 └── output_contract
 ```
@@ -100,7 +100,7 @@ user: ...
 assistant: ...
 # near ends
 
-# run begins
+# this_run begins
 user: <context>{{context}}</context>
       {{user_input_with_expanded_prompts}}
 assistant: ...
@@ -110,7 +110,7 @@ user: <rules workspace="toolang" path="/execution">...</rules>
 
 The comments above label partitions; they are not messages or wrapper text.
 `far`, when present, is at most one user message. `near` preserves native roles
-and excludes the current Run. The Run partition begins with resolved input,
+and excludes `this_run`. The `this_run` partition begins with resolved input,
 grows across model, tool, and runtime-authored user messages, and is never
 compacted while active. Tool results stay in native `tool` messages. Partitions
 are projections chosen by compaction, not the durable transcript format.
@@ -171,10 +171,10 @@ user: <context>
       {{user_input_with_expanded_prompts}}
 ```
 
-The runtime omits an unchanged catalog already supported by `near + run` and
-recalls the complete catalog when absent or stale. Future child-model catalogs
-use the same placement. User-authored lookalike tags never acquire runtime
-authority; provenance, not text parsing, establishes trust.
+The runtime omits an unchanged catalog already supported by
+`near + this_run` and recalls the complete catalog when absent or stale. Future
+child-model catalogs use the same placement. User-authored lookalike tags never
+acquire runtime authority; provenance, not text parsing, establishes trust.
 
 ### Canonical Guarantees
 
@@ -217,8 +217,7 @@ invalid. Omission means `auto`.
 In the first version, `auto` and explicit `near` enable near history. `far` is
 always empty. `memory` is parsed, persisted, and inspectable but has no behavior.
 Therefore `far` alone or `memory` alone recalls no history. Recall policy never
-removes the active Run's required messages and does not disable rules or guidance
-recall.
+removes `this_run` messages and does not disable rules or guidance recall.
 
 ## Runspaces and Workspaces
 
@@ -299,10 +298,10 @@ current content digest selects the revision. The complete chain is recalled
 root-to-leaf, with deeper rules applying more specifically. Runspaces use
 `MEMO.md` and do not discover `AGENTS.md`.
 
-If every required revision is supported by `near + run`, the runtime invokes
-the plugin. Otherwise the whole tool-call batch is atomic: no plugin runs, every
-call receives an error result, and the runtime appends each missing complete
-rules body as a separate user message:
+If every required revision is supported by `near + this_run`, the runtime
+invokes the plugin. Otherwise the whole tool-call batch is atomic: no plugin
+runs, every call receives an error result, and the runtime appends each missing
+complete rules body as a separate user message:
 
 ```text
 assistant: fs.read(...)
@@ -345,8 +344,8 @@ The command succeeds once its complete body is appended; it is not retried.
 Normal service calls still return service data in tool messages. Service tool
 schemas discovered by recall enter the next `ModelCall.tools`. A changed or
 forgotten body is recalled through the same command. If current support already
-exists in `near + run`, the command acknowledges it without appending a duplicate
-user message.
+exists in `near + this_run`, the command acknowledges it without appending a
+duplicate user message.
 
 Internally, one tool completion may produce exactly one normal tool result and
 zero or more runtime-authored messages appended after it. This is an execution
@@ -375,7 +374,7 @@ is_visible(support, identity, digest) -> bool
 - `compact` selects historical groups and returns `far`, `near`, retained
   support, and omitted cost/count diagnostics.
 - `is_visible` performs an exact generic support lookup. The runtime queries
-  the union of compaction support and active-Run support.
+  the union of compaction support and `this_run` support.
 
 `MessageGroup`, `CompactionResult`, and support records belong in execution
 `types.py`; storage conversion remains in records/store code. Token costs come
@@ -385,7 +384,7 @@ of compaction.
 ### First Algorithm
 
 1. The ModelCall builder resolves instructions, tools, output contract, output
-   reserve, and the exact active Run. If those fixed parts exceed the total
+   reserve, and exact `this_run`. If those fixed parts exceed the total
    budget, preparation fails.
 2. Their cost is reserved. The remainder becomes `history_budget`.
 3. `group_messages` validates eligible durable history and its support.
@@ -394,8 +393,8 @@ of compaction.
    near is empty.
 5. `far` is always empty. Older groups are omitted from the request but remain
    in durable execution history and exact inspection.
-6. The builder flattens `far + near + run`, then performs a final total-budget
-   check before the provider call.
+6. The builder flattens `far + near + this_run`, then performs a final
+   total-budget check before the provider call.
 
 No group is split or summarized. In particular, assistant/tool protocol groups
 and their runtime recall messages remain atomic. Support is retained only with
@@ -404,15 +403,15 @@ the complete selected group that proves it. `far` never satisfies visibility.
 This deliberately allows forgetting: after a rules body or guidance body leaves
 near, the next relevant preflight or model command recalls it again. Future far
 summarization may consume omitted history without changing the result shape or
-the invariant that only structured `near + run` support proves visibility.
+the invariant that only structured `near + this_run` support proves visibility.
 
 ## Run Trees and Persistence
 
 A root Run captures one historical compaction snapshot. Descendants use that
-snapshot plus their own Run messages and line; siblings never observe each
-other, so parallel execution is timing-independent. `line` excludes outputs,
-tools, siblings, and descendants. It is context data, not a history partition
-or recall source. Same-Run handoff does not extend it.
+snapshot plus their own `this_run` messages and line; siblings never observe
+each other, so parallel execution is timing-independent. `line` excludes
+outputs, tools, siblings, and descendants. It is context data, not a history
+partition or recall source. Same-Run handoff does not extend it.
 
 A completed public root Run's native message stream, including tool results and
 runtime recall messages, becomes eligible future Thread history. Child streams,
@@ -458,13 +457,13 @@ Each phase is an independently verifiable implementation pull request.
 | First ModelCall | Complete protocol, selected instruct/psyche/catalogs, current context/input, exact tools and output contract fit the total budget. |
 | `instruct = none` | Protocol, psyche, catalogs, tools, and output contract remain; only instruct is absent. |
 | Workspace read without supported rules | No call in the batch executes; tool errors request retry; complete applicable rules follow as runtime user messages. |
-| Retried workspace read | Current digests are supported by `near + run`; the plugin executes once. |
+| Retried workspace read | Current digests are supported by `near + this_run`; the plugin executes once. |
 | Nested or multi-path workspace call | The ordered union of applicable rules bodies is recalled once, without host paths in model tags. |
 | Rules change or leave near | Old/missing support does not count; the complete current revision is recalled before execution. |
 | Skill/service use | The model selects a catalog ref; recall yields a tool acknowledgement plus a complete tagged user message; service tools appear on the next call. |
-| `recall = none`, `far`, or `memory` in V1 | Historical near is absent and far is empty; active Run messages and rules/guidance recall still work. |
+| `recall = none`, `far`, or `memory` in V1 | Historical near is absent and far is empty; `this_run` messages and rules/guidance recall still work. |
 | Near budget cuts a tool exchange | The whole group is retained or omitted; roles, call/result correlation, and support remain valid. |
-| Child and parallel Runs | Each sees the captured history, its own run/line, and no sibling messages. |
+| Child and parallel Runs | Each sees the captured history, its own `this_run`/line, and no sibling messages. |
 | Workspace removed before retry | Historical calls remain inspectable; the new attempt fails current authorization. |
 | Changed ModelCall prefix | Continuation is invalidated; stored canonical call and actual provider projection agree. |
 
@@ -481,7 +480,7 @@ path enforcement, and deterministic offline budget accounting.
 - Shell command text cannot be path-preflighted; sandboxing remains its security
   boundary.
 - Empty far intentionally forgets old context in V1; callers needing continuity
-  must keep required facts in near/run or recall them from an authoritative
+  must keep required facts in `near`/`this_run` or recall them from an authoritative
   source.
 
 ## Open Questions
