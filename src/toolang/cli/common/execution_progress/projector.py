@@ -37,7 +37,8 @@ from toolang.lang.ast import (
     StormStmt,
 )
 
-from .formatting import elapsed, one_line, output_parts
+from .facts import elapsed_fact
+from .formatting import one_line, output_parts
 from .headers import statement_header, until_header
 from .state import (
     LaneOwner,
@@ -963,7 +964,7 @@ class ProgressProjector:
         if not state.metrics.has_activity:
             return []
         return state.metrics.facts(
-            duration=elapsed(state.begin.started_at, event.finished_at),
+            duration=elapsed_fact(state.begin.started_at, event.finished_at),
             include_runs=True,
         )
 
@@ -1136,7 +1137,7 @@ class ProgressProjector:
         facts = (
             tuple(
                 state.metrics.facts(
-                    duration=elapsed(state.begin.started_at, event.finished_at),
+                    duration=elapsed_fact(state.begin.started_at, event.finished_at),
                     include_runs=True,
                 )
             )

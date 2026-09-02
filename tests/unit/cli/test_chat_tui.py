@@ -563,7 +563,7 @@ def test_chat_run_summary_block_shows_canceling_then_canceled() -> None:
     lines = rendered.splitlines()
     assert lines[0] == ""
     assert lines[1].startswith("∎ run_1 canceled  ")
-    assert lines[1].endswith("3.0s")
+    assert lines[1].endswith("3s")
     assert rendering.display_len(lines[1]) == 80
     assert lines[2] == ""
 
@@ -721,7 +721,7 @@ def test_chat_root_footer_keeps_short_facts_inline() -> None:
     lines = [line for line in _render_text(block.render()).splitlines() if line]
     assert len(lines) == 1
     assert lines[0].startswith("∎ run_pmqv7gfc succeeded  ")
-    assert lines[0].endswith("3.0s")
+    assert lines[0].endswith("3s")
     assert "succeeded ·" not in lines[0]
     assert rendering.display_len(lines[0]) == 80
 
@@ -746,7 +746,7 @@ def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> No
     assert all(len(line) <= 32 for line in lines)
     assert lines[0] == "∎ run_1 failed"
     assert all(line.startswith("  ") for line in lines[1:])
-    assert "3.0s" in lines[1]
+    assert "3s" in lines[1]
     assert "6 runs" in "\n".join(lines)
     assert all("─" not in line for line in lines)
 
@@ -1183,7 +1183,7 @@ def test_chat_run_footer_colors_marker_and_dims_caption(
     assert _render_text(root_summary.render()).strip().startswith("∎ ")
     marker = next(segment for segment in segments if "∎" in segment.text)
     caption = next(segment for segment in segments if f"run_1 {status}" in segment.text)
-    facts = next(segment for segment in segments if "3.0s" in segment.text)
+    facts = next(segment for segment in segments if "3s" in segment.text)
     assert marker.style is not None
     assert not marker.style.dim
     if marker_color is None:

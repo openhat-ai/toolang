@@ -116,7 +116,7 @@ canonical resolved runnable ref:
 
 • Summary text from the child.
 
----  2.0s · 1 run 1 model ----------------------- succeeded run_abc123
+---  2s · 1 run 1 model ------------------------- succeeded run_abc123
 ```
 
 The fixed prefix is three ASCII hyphens followed by two spaces. The caption,
@@ -270,7 +270,7 @@ A Flow Step that owns child execution may append one dim footer:
 [2] Search the web for each query
 
 • Mapped all 6 items in parallel
-  31.0s · 6 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) · ≈$0.01        run_root.2
+  31s · 6 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) · ≈$0.01        run_root.2
 ```
 
 Facts retain their two-cell indentation at the left, and the complete canonical
@@ -280,6 +280,9 @@ indent and the untruncated StepPath follows on a right-aligned continuation
 line. Undefined facts are omitted, and a StepPath is not displayed by itself.
 Duration, execution counts, token usage, and cost are separate facts. Counts
 form one `RUNS runs MODELS models TOOLS tools` group and omit zero categories.
+Human durations keep milliseconds below one second, otherwise round to whole
+seconds; exact minutes omit `00s`. Stored timestamps retain their original
+precision.
 Token usage is `↑INPUT(CACHE%) ↓OUTPUT(REASONING)`: the input parenthetical is
 the complete cache-read ratio, while the output parenthetical is the reasoning
 token count. Output is inclusive and already contains reasoning. Explicit zero
@@ -327,7 +330,7 @@ boundary error:
              provider returned status 429
 
 • parallel step stopped because lane 1 (#5) failed
-  31.0s · 7 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) · ≈$0.01
+  31s · 7 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) · ≈$0.01
 ```
 
 ## Repeat and Settle
@@ -386,7 +389,7 @@ A CLI retry or rerun identifies the operation in the same footer instead of
 appending a separate result line:
 
 ```text
-∎ run_zvczap2h: retry succeeded        2.0s · 1 model
+∎ run_zvczap2h: retry succeeded        2s · 1 model
 ```
 
 The U+220E END OF PROOF character marks the complete root Run; square brackets
