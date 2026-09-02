@@ -11,6 +11,7 @@ from .base import AppContext, ChatRunState, RunRecovered
 
 ChatUIEventType = Literal[
     "submit",
+    "steer",
     "run_event",
     "run_error",
     "run_state",

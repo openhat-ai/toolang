@@ -160,3 +160,47 @@ def test_chat_tui_updates_defaults_while_a_run_is_active(tmp_path: Path) -> None
         assert session.wait_for_exit() == 0, session.output
     finally:
         session.close()
+
+
+def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
+    tmp_path: Path,
+) -> None:
+    session = ChatTuiPtySession.start(
+        "tests.support.chat_tui_e2e",
+        tmp_path,
+        "status",
+    )
+    try:
+        session.wait_for("■ agic:chat", "scripted")
+        session.send(b"hold queue\r")
+        session.wait_for("◧ agic:chat running")
+
+        session.send(b"queued follow-up\r")
+        visible = session.wait_for(
+            "1 item queued",
+            "[1] queued follow-up",
+            "Tab focus",
+        )
+        assert "Traceback" not in visible
+
+        session.send(b"\t")
+        focused = session.wait_for(
+            "› [1] queued follow-up",
+            "1 item queued",
+            "Ctrl-P/N",
+            "E edit",
+            "Meta-Enter steer",
+            "D/Delete delete",
+            "Tab input",
+        )
+        assert "Traceback" not in focused
+
+        session.send(b" ")
+        session.wait_for("Tab expand")
+        session.send(b"\t")
+        session.send(b"d")
+        session.wait_for("succeeded", "■ agic:chat")
+        session.send(b"\x04")
+        assert session.wait_for_exit() == 0, session.output
+    finally:
+        session.close()

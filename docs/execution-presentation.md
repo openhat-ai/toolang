@@ -75,6 +75,45 @@ continuations align with the text after the marker:
   zeta eta theta
 ```
 
+## Chat Input and Queue Controls
+
+The Chat input area distinguishes sending, steering, and multiline editing.
+Enter submits when idle and queues runnable input while a run is starting or
+active. Meta-Enter sends literal steer text to the active run. Ctrl-J inserts a
+newline, with Shift-Enter registered when the terminal can report it
+distinctly.
+
+A non-empty Queue is expanded above Input without taking focus. Tab and
+Shift-Tab move focus between these two areas, except while an Input completion
+menu is active. Queue contains one top padding row, at most four single-line
+previews, and one bottom padding row. The top row centers a dim count summary;
+the bottom row right-aligns dim action hints. When previews omit items, a dim
+omitted-count row follows the entries. Input's own top padding preserves the
+visual gap below Queue. A focused Queue marks and highlights its selected row.
+Up/Down or Ctrl-P/N move selection without wrapping. E edits, Meta-Enter steers,
+and D or Delete removes the selected item.
+
+Space collapses focused Queue into Input's existing top padding and returns
+focus to the input buffer. The dim count summary is centered and `Tab expand`
+is right-aligned, sharing Input's background and accent rail with no extra
+height or separate focus target. Tab or Shift-Tab expands and focuses Queue
+again, unless Input completion is active. Entry actions are disabled until
+expanded; normal input typing and draft steering remain available. If the
+summary and hint would overlap, the summary shifts left and truncates first;
+very narrow terminals show only the truncated hint. Queue mutations preserve
+the collapsed choice until the queue empties and resets to the expanded default.
+
+Expanded Queue and Input accent rails are always one full cell wide. The focused
+area uses its semantic accent background: steer purple for Queue and run cyan for
+Input. The unfocused area uses one shared muted accent background. Focus
+changes color but never changes rail width or moves content horizontally.
+
+Queue content occupies the terminal width minus its one-cell accent rail. Rows
+never wrap; item previews and footer hints truncate by display cells. A longer
+queue windows around the selection and reports how many items are outside the
+four-row view. Removing or automatically submitting an item clamps the
+selection; an empty queue removes the area and restores Input focus.
+
 Flow headers also start in column zero and are followed by one blank line.
 Iteration and condition headers create the same kind of stable boundary.
 

@@ -16,19 +16,66 @@ class ChatShortcut:
     optional_bindings: tuple[tuple[str, ...], ...] = ()
 
 
-SUBMIT = ChatShortcut("submit", (("enter",),), "Enter", "Submit input")
+SUBMIT = ChatShortcut(
+    "submit",
+    (("enter",),),
+    "Enter",
+    "Send input (submit or queue)",
+)
+STEER = ChatShortcut(
+    "steer",
+    (("escape", "enter"),),
+    "Meta-Enter",
+    "Steer the active run",
+)
 INSERT_NEWLINE = ChatShortcut(
     "insert_newline",
-    (("escape", "enter"), ("c-j",)),
-    "Alt-Enter, Ctrl-J",
-    "Insert a newline",
-)
-SHIFT_NEWLINE = ChatShortcut(
-    "shift_newline",
-    (),
-    "Shift-Enter",
-    "Insert a newline when supported by the terminal",
+    (("c-j",),),
+    "Ctrl-J",
+    "Insert a newline (also Shift-Enter if supported)",
     optional_bindings=(("s-enter",),),
+)
+SWITCH_AREA = ChatShortcut(
+    "switch_area",
+    (("tab",), ("s-tab",)),
+    "Tab, Shift-Tab",
+    "Switch between input and queued inputs",
+)
+QUEUE_PREVIOUS = ChatShortcut(
+    "queue_previous",
+    (("up",), ("c-p",)),
+    "Up, Ctrl-P",
+    "Select the previous queued input",
+)
+QUEUE_NEXT = ChatShortcut(
+    "queue_next",
+    (("down",), ("c-n",)),
+    "Down, Ctrl-N",
+    "Select the next queued input",
+)
+QUEUE_COLLAPSE = ChatShortcut(
+    "queue_collapse",
+    ((" ",),),
+    "Space",
+    "Collapse queued inputs into input",
+)
+QUEUE_EDIT = ChatShortcut(
+    "queue_edit",
+    (("e",),),
+    "E",
+    "Edit the selected queued input",
+)
+QUEUE_STEER = ChatShortcut(
+    "queue_steer",
+    STEER.bindings,
+    "Meta-Enter",
+    "Steer with the selected queued input",
+)
+QUEUE_DELETE = ChatShortcut(
+    "queue_delete",
+    (("d",), ("delete",)),
+    "D, Delete",
+    "Remove the selected queued input",
 )
 PREVIOUS_HISTORY = ChatShortcut(
     "previous_history",
@@ -81,8 +128,9 @@ QUIT = ChatShortcut(
 
 CHAT_SHORTCUTS = (
     SUBMIT,
+    STEER,
     INSERT_NEWLINE,
-    SHIFT_NEWLINE,
+    SWITCH_AREA,
     PREVIOUS_HISTORY,
     NEXT_HISTORY,
     DISMISS_STATUS,
@@ -113,9 +161,16 @@ __all__ = [
     "INTERRUPT",
     "NEXT_HISTORY",
     "PREVIOUS_HISTORY",
+    "QUEUE_COLLAPSE",
+    "QUEUE_DELETE",
+    "QUEUE_EDIT",
+    "QUEUE_NEXT",
+    "QUEUE_PREVIOUS",
+    "QUEUE_STEER",
     "QUIT",
-    "SHIFT_NEWLINE",
+    "STEER",
     "SUBMIT",
+    "SWITCH_AREA",
     "ChatShortcut",
     "help_lines",
 ]

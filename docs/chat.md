@@ -63,6 +63,35 @@ snapshot when the visible session changes. A submitted slash setting command
 requires a body and never opens a picker. Completion may edit the command draft
 but does not submit it or mutate the session.
 
+Interactive Chat uses one send-oriented input model. Enter submits runnable
+input when idle and appends it to the queue while a run is starting or active.
+Meta-Enter sends the current normalized draft directly to the active run as
+literal steer input; it does not parse leading slash, colon, dollar, or at-sign
+syntax. A rejected steer retains the draft, while a locally accepted steer
+records it in input history and clears the unchanged draft. Ctrl-J inserts a
+newline, as does Shift-Enter when the terminal exposes it distinctly.
+
+A non-empty Queue area appears expanded above Input without taking focus. It
+centers a dim summary in its top padding row, shows up to four one-line
+previews followed by an omitted-item count when needed, and right-aligns dim
+action hints in its bottom padding row. Queue and Input retain equal-width
+accent rails: the focused area uses its semantic color and the other uses a
+shared muted color. Tab and Shift-Tab switch focus while yielding to active
+input completion.
+
+Space collapses the focused Queue into Input's existing top padding and returns
+Input focus. Its centered summary and right-aligned `Tab expand` hint share
+Input's background and accent rail without adding height. Tab or Shift-Tab
+expands and focuses Queue again, preserving selection. While collapsed, Input
+keeps normal typing and draft steering, and queue entry actions are disabled.
+Expanded Queue provides Up/Down or Ctrl-P/N selection, E editing, Meta-Enter
+steering, and D or Delete
+removal. Editing does not overwrite an existing draft. Queue steering and
+blocked-state handling retain the item when the steer cannot be accepted.
+Run completion continues to submit queued requests in FIFO order and keeps
+selection valid without changing the expanded/collapsed choice. Emptying the
+queue resets the next non-empty Queue to expanded.
+
 Thread ids use one underscore-delimited normalized form:
 
 ```text

@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 import shutil
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer
-from prompt_toolkit.filters import Condition
+from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, VSplit, Window
@@ -23,8 +23,10 @@ from .input import normalize_chat_input
 from . import shortcuts
 from .rendering import (
     ACCENT_CELL,
+    INACTIVE_CONTROL_ACCENT,
     INPUT_BACKGROUND,
     RUN_CONTROL_ACCENT_PROMPT_TOOLKIT,
+    STEER_CONTROL_ACCENT,
 )
 
 MAX_INPUT_ROWS = 6
@@ -48,10 +50,15 @@ def _chat_ui_palette() -> dict[str, str]:
     return {
         "": "",
         "queue": "fg:#f2f2f2 bg:#3a3a3a",
-        "queue.dim": "fg:#b8b8b8 bg:#3a3a3a",
+        "queue.selected": "fg:#ffffff bg:#565656 bold",
+        "queue.info": "fg:#b8b8b8 bg:#3a3a3a",
+        "queue.accent": f"bg:{INACTIVE_CONTROL_ACCENT}",
+        "queue.accent.focused": f"bg:{STEER_CONTROL_ACCENT}",
         "control.run": f"bg:{RUN_CONTROL_ACCENT_PROMPT_TOOLKIT}",
+        "control.run.unfocused": f"bg:{INACTIVE_CONTROL_ACCENT}",
         "input": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
         "input.placeholder": f"fg:#b8b8b8 bg:{INPUT_BACKGROUND}",
+        "input.queue-summary": f"fg:#b8b8b8 bg:{INPUT_BACKGROUND}",
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": "",
@@ -78,63 +85,181 @@ def _format_elapsed_seconds(seconds: int) -> str:
 class QueuePanel:
     def __init__(self, get_items: Callable[[], Sequence[str]]) -> None:
         self.get_items = get_items
-        self.view = FormattedTextControl(self._render)
+        self._selected_index = 0
+        self.expanded = True
+        self.view = FormattedTextControl(self._render, focusable=True)
+        self.summary_view = FormattedTextControl(self._render_summary)
+        self._has_focus = has_focus(self.view)
 
     def container(self) -> ConditionalContainer:
         return ConditionalContainer(
-            Window(
-                self.view,
+            VSplit(
+                [
+                    Window(
+                        width=1,
+                        style=self._accent_style,
+                        char=ACCENT_CELL,
+                        always_hide_cursor=True,
+                    ),
+                    Window(
+                        self.view,
+                        height=self.rows,
+                        wrap_lines=False,
+                        always_hide_cursor=True,
+                        style="class:queue",
+                        char=" ",
+                    ),
+                ],
                 height=self.rows,
-                wrap_lines=False,
-                always_hide_cursor=True,
                 style="class:queue",
-                char=" ",
             ),
-            filter=Condition(lambda: bool(self.get_items())),
+            filter=Condition(lambda: self.expanded and bool(self.get_items())),
         )
 
     def _render(self) -> list[tuple[str, str]]:
-        items = list(enumerate(self.get_items(), 1))
-        shown = items[:MAX_QUEUE_ROWS]
-        hidden = len(items) - len(shown)
-        suffix = f" ({hidden} more not shown)" if hidden else ""
-        rows: list[list[tuple[str, str]]] = [
-            [("class:queue.dim", f"  queued for submission:{suffix}")]
-        ]
-        rows.extend(
-            [
-                ("class:queue", "  "),
-                ("class:queue.dim", f"[{index}]"),
-                ("class:queue", f" {self._summarize(item)}"),
-            ]
-            for index, item in shown
-        )
-
+        items = tuple(self.get_items())
+        if not items or not self.expanded:
+            return []
         fragments: list[tuple[str, str]] = []
-        width = self._terminal_width()
-        for row_index, row in enumerate(rows):
-            visible_len = 0
-            for style, text in row:
-                fragments.append((style, text))
-                visible_len += get_cwidth(text)
-            if padding := " " * max(0, width - visible_len):
-                fragments.append(("class:queue", padding))
+        width = max(1, self._terminal_width() - 1)
+        rows = self._rows(items, width=width)
+        for row_index, (style, text) in enumerate(rows):
+            fitted = truncate(text, width)
+            fragments.append((style, fitted))
+            if padding := " " * max(0, width - get_cwidth(fitted)):
+                fragments.append((style, padding))
             if row_index < len(rows) - 1:
                 fragments.append(("", "\n"))
         return fragments
 
+    def _render_summary(self) -> list[tuple[str, str]]:
+        items = self.get_items()
+        if not items or self.expanded:
+            return []
+        width = max(1, self._terminal_width() - 1)
+        text = self._collapsed_row(self._count_label(len(items)), "Tab expand", width)
+        return [("class:input.queue-summary", text)]
+
     def rows(self) -> int:
-        return 1 + min(len(self.get_items()), MAX_QUEUE_ROWS) if self.get_items() else 0
+        count = len(self.get_items())
+        if not count or not self.expanded:
+            return 0
+        return 2 + min(count, MAX_QUEUE_ROWS) + (1 if count > MAX_QUEUE_ROWS else 0)
+
+    def toggle_expanded(self) -> bool:
+        if not self.get_items():
+            return False
+        self.expanded = not self.expanded
+        return True
+
+    @property
+    def selected_index(self) -> int | None:
+        return self._selected_index if self.get_items() else None
+
+    def move_selection(self, offset: int) -> bool:
+        count = len(self.get_items())
+        if not count or not self.expanded:
+            return False
+        selected = min(max(self._selected_index + offset, 0), count - 1)
+        if selected == self._selected_index:
+            return False
+        self._selected_index = selected
+        return True
+
+    def reconcile(self, *, removed_index: int | None = None) -> bool:
+        count = len(self.get_items())
+        if not count:
+            self._selected_index = 0
+            self.expanded = True
+            return False
+        if removed_index is not None and removed_index < self._selected_index:
+            self._selected_index -= 1
+        self._selected_index = min(max(self._selected_index, 0), count - 1)
+        return True
+
+    def _rows(
+        self,
+        items: Sequence[str],
+        *,
+        width: int,
+    ) -> tuple[tuple[str, str], ...]:
+        focused = self._has_focus()
+        summary = self._count_label(len(items))
+        start = min(
+            max(0, self._selected_index - MAX_QUEUE_ROWS + 1),
+            max(0, len(items) - MAX_QUEUE_ROWS),
+        )
+        shown = tuple(enumerate(items[start : start + MAX_QUEUE_ROWS], start + 1))
+        hidden = len(items) - len(shown)
+        summary = truncate(summary, width)
+        summary_padding = " " * ((width - get_cwidth(summary)) // 2)
+        rows: list[tuple[str, str]] = [
+            ("class:queue.info", f"{summary_padding}{summary}")
+        ]
+        for item_number, item in shown:
+            selected = focused and item_number - 1 == self._selected_index
+            marker = "›" if selected else " "
+            prefix = f"{marker} [{item_number}] "
+            preview_width = max(1, width - get_cwidth(prefix))
+            preview = self._summarize(item, width=preview_width)
+            rows.append(
+                (
+                    "class:queue.selected" if selected else "class:queue",
+                    f"{prefix}{preview}",
+                )
+            )
+        if hidden:
+            rows.append(
+                (
+                    "class:queue.info",
+                    f"  … {hidden} item{'' if hidden == 1 else 's'} not shown",
+                )
+            )
+        actions = (
+            "↑/↓ (Ctrl-P/N) select · E edit · Meta-Enter steer · "
+            "D/Delete delete · Space collapse"
+        )
+        hint = f"{actions} · Tab input" if focused else f"Tab focus · {actions}"
+        footer = truncate(hint, width)
+        left_padding = " " * (width - get_cwidth(footer))
+        rows.append(
+            (
+                "class:queue.info",
+                f"{left_padding}{footer}",
+            )
+        )
+        return tuple(rows)
+
+    def _accent_style(self) -> str:
+        return (
+            "class:queue.accent.focused" if self._has_focus() else "class:queue.accent"
+        )
 
     @staticmethod
-    def _summarize(message: str, *, width: int = 72) -> str:
+    def _summarize(message: str, *, width: int) -> str:
         text = " ".join(message.split())
-        return text if len(text) <= width else f"{text[: width - 3].rstrip()}..."
+        return truncate(text, max(1, width))
+
+    @staticmethod
+    def _count_label(count: int) -> str:
+        return f"{count} item{'' if count == 1 else 's'} queued"
+
+    @staticmethod
+    def _collapsed_row(summary: str, hint: str, width: int) -> str:
+        hint = truncate(hint, width)
+        summary_width = width - get_cwidth(hint) - 1
+        if summary_width <= 0:
+            return f"{' ' * (width - get_cwidth(hint))}{hint}"
+        summary = truncate(summary, summary_width)
+        summary_start = min(
+            (width - get_cwidth(summary)) // 2,
+            summary_width - get_cwidth(summary),
+        )
+        gap = width - summary_start - get_cwidth(summary) - get_cwidth(hint)
+        return f"{' ' * summary_start}{summary}{' ' * gap}{hint}"
 
     @staticmethod
     def _terminal_width(default: int = 100) -> int:
-        import shutil
-
         return shutil.get_terminal_size((default, 24)).columns
 
 
@@ -165,12 +290,18 @@ class PromptBox:
         self.history_draft = ""
         self.buffer.on_text_changed += self._handle_text_changed
         self.buffer.on_cursor_position_changed += self._handle_cursor_position_changed
+        self._has_focus = has_focus(self.buffer)
 
-    def container(self) -> VSplit:
+    def container(self, *, header: FormattedTextControl | None = None) -> VSplit:
         content = HSplit(
             [
                 Window(
-                    height=1, style="class:input", always_hide_cursor=True, char=" "
+                    header,
+                    height=1,
+                    style="class:input",
+                    always_hide_cursor=True,
+                    char=" ",
+                    wrap_lines=False,
                 ),
                 VSplit(
                     [
@@ -218,7 +349,7 @@ class PromptBox:
             [
                 Window(
                     width=1,
-                    style="class:control.run",
+                    style=self._accent_style,
                     always_hide_cursor=True,
                     char=ACCENT_CELL,
                 ),
@@ -228,6 +359,11 @@ class PromptBox:
             style="class:input",
         )
 
+    def _accent_style(self) -> str:
+        return (
+            "class:control.run" if self._has_focus() else "class:control.run.unfocused"
+        )
+
     def bind(self, keys: KeyBindings) -> None:
         def submit(_event) -> None:
             message = normalize_chat_input(self.buffer.text)
@@ -235,6 +371,14 @@ class PromptBox:
                 return
             self._notify_input()
             self.emit(ChatUIEvent("submit", message))
+            self.invalidate()
+
+        def steer(_event) -> None:
+            message = normalize_chat_input(self.buffer.text)
+            if not message:
+                return
+            self._notify_input()
+            self.emit(ChatUIEvent("steer", message))
             self.invalidate()
 
         def interrupt(_event) -> None:
@@ -269,25 +413,32 @@ class PromptBox:
             self._notify_input()
             self._next_history()
 
-        bindings = (
+        prompt_bindings = (
             (shortcuts.SUBMIT, submit),
+            (shortcuts.STEER, steer),
+            (shortcuts.INSERT_NEWLINE, insert_newline),
+            (shortcuts.PREVIOUS_HISTORY, previous_history),
+            (shortcuts.NEXT_HISTORY, next_history),
+        )
+        prompt_focus = has_focus(self.buffer)
+        for shortcut, handler in prompt_bindings:
+            for binding in shortcut.bindings:
+                keys.add(*binding, filter=prompt_focus)(handler)
+        global_bindings = (
             (shortcuts.INTERRUPT, interrupt),
             (shortcuts.EOF, eof),
             (shortcuts.QUIT, quit_app),
             (shortcuts.CLEAR, clear_screen),
-            (shortcuts.INSERT_NEWLINE, insert_newline),
             (shortcuts.DISMISS_STATUS, dismiss_status_error),
-            (shortcuts.PREVIOUS_HISTORY, previous_history),
-            (shortcuts.NEXT_HISTORY, next_history),
         )
-        for shortcut, handler in bindings:
+        for shortcut, handler in global_bindings:
             for binding in shortcut.bindings:
                 keys.add(*binding)(handler)
         for binding in shortcuts.CANCEL_RUN.bindings:
             keys.add(*binding, eager=True)(cancel_run)
-        for binding in shortcuts.SHIFT_NEWLINE.optional_bindings:
+        for binding in shortcuts.INSERT_NEWLINE.optional_bindings:
             try:
-                keys.add(*binding)(insert_newline)
+                keys.add(*binding, filter=prompt_focus)(insert_newline)
             except ValueError:
                 pass
 
