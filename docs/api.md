@@ -573,8 +573,9 @@ Default model values use one shared model body across TOML,
 `TOOLANG_DEFAULT_MODEL`, and startup `--default model=BODY`. A body contains an
 optional exact identity followed by typed assignments such as `effort=high`,
 `effort=4096`, or `effort=auto`. Setup publishes the resulting complete model
-request only after validating it against the effective model. Script, Chat,
-and rerun invocation options use `--model BODY` above that Setup default.
+request only after validating it against the effective model. Chat startup uses
+`--default model=BODY` for its multi-run session, while Script and rerun use
+`--model BODY` for one-run selection above the Setup default.
 
 The precedence order is built-in values, root config, agent-home config,
 runtime environment, CLI, then any request-level binding or limit fields.
@@ -1053,7 +1054,7 @@ that needs another presentation shape adapts these events client-side; the API
 does not maintain a second chat event vocabulary.
 
 The CLI command for interactive chat is `toolang <agent> chat [thread]
-[--sandbox <selector>] [--model MODEL_BODY] [--runnable RUNNABLE]
+[--sandbox <selector>] [--default FIELD=VALUE]
 [--allow COLLECTION=QUERY] [--limit FIELD=VALUE]`.
 Without a thread id, the TUI creates a terminal chat thread on first input. With
 a thread id, it continues that thread. A stopped resident, roaming agent, or

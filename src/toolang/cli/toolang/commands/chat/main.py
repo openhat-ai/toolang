@@ -13,7 +13,6 @@ from typing import cast
 import click
 import typer
 
-from toolang.base.model_settings import parse_model_body
 from toolang.base.types.model import ModelOverride
 from toolang.base.types.message import TextDelta, TextPart, message_text
 from toolang.cli.common.policy import (
@@ -89,8 +88,6 @@ def chat_command(
     thread: str | None = None,
     model_catalog: Path | None = None,
     allows: list[str] | None = None,
-    model: str | None = None,
-    runnable: str | None = None,
     defaults: list[str] | None = None,
     sandbox: str | None = None,
     dev: Path | None = None,
@@ -104,8 +101,6 @@ def chat_command(
         sandbox=sandbox,
         dev=dev,
         allow_options=allows,
-        model_body=model,
-        runnable=runnable,
         default_options=defaults,
         limit_options=limits,
     )
@@ -119,8 +114,6 @@ def _chat_interactive(
     sandbox: str | None = None,
     dev: Path | None = None,
     allow_options: list[str] | None = None,
-    model_body: str | None = None,
-    runnable: str | None = None,
     default_options: list[str] | None = None,
     limit_options: list[str] | None = None,
 ) -> None:
@@ -133,8 +126,6 @@ def _chat_interactive(
         setting = client.initial_setting()
         initial_update, clear_runnable = _chat_session_override(
             allow_options=allow_options,
-            model_body=model_body,
-            runnable=runnable,
             default_options=default_options,
             limit_options=limit_options,
         )
@@ -231,8 +222,6 @@ def _chat_runtime(
 def _chat_session_override(
     *,
     allow_options: list[str] | None,
-    model_body: str | None,
-    runnable: str | None,
     default_options: list[str] | None,
     limit_options: list[str] | None,
 ) -> tuple[RunOverride, bool]:
@@ -249,41 +238,18 @@ def _chat_session_override(
                 ),
             )
         )
-    compatibility_model = defaults.get("model")
-    if compatibility_model is not None and not isinstance(
-        compatibility_model, ModelOverride
-    ):
+    model = defaults.get("model")
+    if model is not None and not isinstance(model, ModelOverride):
         raise TypeError("--default model must resolve to a model override")
-    compatibility_runnable = defaults.get("runnable")
-    if isinstance(compatibility_runnable, ModelOverride):
+    runnable = defaults.get("runnable")
+    if isinstance(runnable, ModelOverride):
         raise TypeError("--default runnable must resolve to a string or none")
-    if model_body is not None and compatibility_model is not None:
-        raise ValueError("--model cannot be combined with --default model=...")
-    if runnable is not None and "runnable" in defaults:
-        raise ValueError("--runnable cannot be combined with --default runnable=...")
-    if defaults:
-        typer.echo(
-            "warning: Chat --default is deprecated; use --model or --runnable",
-            err=True,
-        )
-    selected_model = (
-        parse_model_body(model_body) if model_body is not None else compatibility_model
-    )
-    selected_runnable = (
-        runnable.strip() if runnable is not None else compatibility_runnable
-    )
-    if runnable is not None and not selected_runnable:
-        raise ValueError("--runnable must not be empty")
-    clear_runnable = (selected_runnable is None and "runnable" in defaults) or (
-        isinstance(selected_runnable, str) and selected_runnable.lower() == "none"
-    )
-    if clear_runnable:
-        selected_runnable = None
-    if selected_model is not None or selected_runnable is not None:
+    clear_runnable = runnable is None and "runnable" in defaults
+    if model is not None or runnable is not None:
         updates.append(
             RunOverride(
-                model=selected_model,
-                runnable=selected_runnable,
+                model=model,
+                runnable=runnable,
             )
         )
     if limits:

@@ -44,8 +44,6 @@ _HOST_DESCRIPTION = "macOS 27.0 arm64"
 def test_chat_default_model_none_clears_the_configured_preference() -> None:
     update, clear_runnable = chat._chat_session_override(
         allow_options=None,
-        model_body=None,
-        runnable=None,
         default_options=["model=none"],
         limit_options=None,
     )
@@ -398,7 +396,7 @@ def test_interactive_tty_passes_the_unmodified_thread_to_the_tui(
     assert client.created == 0
 
 
-def test_chat_invocation_model_body_and_runnable_initialize_the_session(
+def test_chat_invocation_defaults_initialize_the_session(
     monkeypatch: Any,
 ) -> None:
     client = _Client()
@@ -426,8 +424,10 @@ def test_chat_invocation_model_body_and_runnable_initialize_the_session(
     chat._chat_interactive(
         object(),  # type: ignore[arg-type]
         thread_id=None,
-        model_body="test/other effort=high",
-        runnable="flow:review",
+        default_options=[
+            "model=test/other effort=high",
+            "runnable=flow:review",
+        ],
     )
 
     assert captured["setting"] == SessionSetting(
@@ -439,13 +439,11 @@ def test_chat_invocation_model_body_and_runnable_initialize_the_session(
     )
 
 
-def test_chat_hidden_default_model_compatibility_warns_once(
+def test_chat_default_options_build_session_override_without_warning(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     override, clear_runnable = chat._chat_session_override(
         allow_options=None,
-        model_body=None,
-        runnable=None,
         default_options=["model=test/model effort=high"],
         limit_options=None,
     )
@@ -454,27 +452,16 @@ def test_chat_hidden_default_model_compatibility_warns_once(
     assert override.model.identity == "test/model"
     assert override.model.effort == "high"
     assert not clear_runnable
-    assert capsys.readouterr().err.count("deprecated") == 1
+    assert capsys.readouterr().err == ""
 
     cleared, clear_runnable = chat._chat_session_override(
         allow_options=None,
-        model_body=None,
-        runnable=None,
         default_options=["runnable=none"],
         limit_options=None,
     )
     assert cleared.empty
     assert clear_runnable
-    assert capsys.readouterr().err.count("deprecated") == 1
-
-    with pytest.raises(ValueError, match="cannot be combined"):
-        chat._chat_session_override(
-            allow_options=None,
-            model_body="test/model",
-            runnable=None,
-            default_options=["model=test/model"],
-            limit_options=None,
-        )
+    assert capsys.readouterr().err == ""
 
 
 def test_chat_runtime_builds_process_local_execution_resources(

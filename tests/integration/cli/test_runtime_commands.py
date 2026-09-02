@@ -17,6 +17,7 @@ from toolang.base.types.progress import ProgressEvent, ProgressStage, ProgressSt
 from toolang.base.types.sandbox import SandboxOutput, SandboxRef
 import toolang.cli.toolang.main as cli
 from toolang.cli.common import agent_server as agent_server_acquisition
+from toolang.cli.toolang.commands.chat import main as chat_commands
 from toolang.cli.toolang.commands import runtime as runtime_commands
 from toolang.common.layout import AgentLayout
 from toolang.up import sandbox as sandbox_runtime
@@ -51,7 +52,7 @@ def _startup_event(
         (["start", "--help"], ("--sandbox", "--allow", "--limit", "--default")),
         (
             ["chat", "alice", "--help"],
-            ("--sandbox", "--allow", "--limit", "--model", "--runnable"),
+            ("--sandbox", "--allow", "--limit", "--default"),
         ),
         (["retry", "alice", "--help"], ("--allow", "--limit")),
         (["rerun", "alice", "--help"], ("--allow", "--limit", "--model")),
@@ -73,14 +74,69 @@ def test_policy_options_follow_cli_display_order(
     assert positions == tuple(sorted(positions))
 
 
-def test_restart_commands_expose_only_valid_runtime_options() -> None:
+def test_session_and_restart_commands_expose_only_valid_runtime_options() -> None:
+    chat = strip_ansi(runner.invoke(cli.app, ["chat", "alice", "--help"]).stdout)
     retry = strip_ansi(runner.invoke(cli.app, ["retry", "alice", "--help"]).stdout)
     rerun = strip_ansi(runner.invoke(cli.app, ["rerun", "alice", "--help"]).stdout)
 
+    assert "--default" in chat
+    assert re.search(r"--model(?![a-z-])", chat) is None
+    assert "--runnable" not in chat
     assert "--dev" in retry
     assert "--sandbox" not in retry
+    assert "--default" not in retry
     assert "--dev" in rerun
     assert "--sandbox" in rerun
+    assert "--default" not in rerun
+
+
+def test_chat_default_options_reach_session_orchestration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def chat_command(_ctx: object, **kwargs: object) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(chat_commands, "chat_command", chat_command)
+
+    result = cli.main(
+        [
+            "alice",
+            "chat",
+            "--default",
+            "model=test/model effort=high",
+            "--default",
+            "runnable=flow:review",
+        ]
+    )
+
+    assert result == 0
+    assert captured["defaults"] == [
+        "model=test/model effort=high",
+        "runnable=flow:review",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("args", "option"),
+    (
+        (["alice", "chat", "--model", "test/model"], "--model"),
+        (["alice", "chat", "--runnable", "demo"], "--runnable"),
+        (["alice", "retry", "run_test", "--default", "model=test/model"], "--default"),
+        (["alice", "rerun", "run_test", "--default", "model=test/model"], "--default"),
+    ),
+)
+def test_session_and_run_commands_reject_wrong_lifetime_options(
+    args: list[str],
+    option: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = cli.main(args)
+    output = capsys.readouterr()
+
+    assert result == 2
+    assert f"No such option: {option}" in strip_ansi(output.err)
 
 
 def _create_agent(root: Path, name: str = "alice") -> AgentLayout:
