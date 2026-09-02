@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, TypeAlias, cast
@@ -211,7 +211,22 @@ def _model(app: AppContext, _command: str, argument: str) -> SlashOutcome:
     payload: Mapping[str, Any] | None = None
     if model is None:  # pragma: no cover - parser invariant
         raise RuntimeError("model setting did not contain a model override")
-    if model.identity not in {None, "default", "none"}:
+    allowed_model_refs: tuple[str, ...] | None = None
+    default_model_ref: str | None = None
+    if model.identity == "unset":
+        raise ValueError(
+            "/model unset is not a session setting; use :model unset for one run"
+        )
+    if model.identity == "default":
+        payload = client.list_models(app.get_setting().allow.models)
+        default_model_ref = as_text(payload.get("default"))
+        if default_model_ref is None:
+            raise ValueError("No models are available for the current allow.models")
+        allowed_model_refs = _model_refs(payload)
+        update = RunOverride(
+            model=ModelOverride(identity=default_model_ref, effort=model.effort)
+        )
+    elif model.identity is not None:
         payload = client.list_models()
         resolved = _chat_resolve_model_command(payload, model.identity)
         if resolved is None:
@@ -221,7 +236,12 @@ def _model(app: AppContext, _command: str, argument: str) -> SlashOutcome:
         update = RunOverride(
             model=ModelOverride(identity=resolved[0], effort=model.effort)
         )
-    setting = _candidate_setting(app, update)
+    setting = _candidate_setting(
+        app,
+        update,
+        allowed_model_refs=allowed_model_refs,
+        default_model_ref=default_model_ref,
+    )
     effort_applicable: bool | None = None
     if setting.model is not None:
         if payload is None:
@@ -255,17 +275,31 @@ def _setting(app: AppContext, command: str, argument: str) -> SlashOutcome:
     update = parse_setting_override(command, argument)
     previous = app.get_setting()
     if command == "allow":
-        summary, allowed_model_refs = _allow_summary(app.get_client(), update)
+        summary, allowed_model_refs, default_model_ref = _allow_summary(
+            app.get_client(), update
+        )
         setting = _candidate_setting(
             app,
             update,
             allowed_model_refs=allowed_model_refs,
+            default_model_ref=default_model_ref,
         )
         details: list[str] = []
-        if previous.model is not None and setting.model is None:
-            details.append(
-                f"Model cleared: {previous.model.ref} is outside allow.models"
-            )
+        previous_ref = previous.model.ref if previous.model is not None else None
+        setting_ref = setting.model.ref if setting.model is not None else None
+        if previous_ref != setting_ref:
+            if setting_ref is None:
+                details.append(
+                    f"Model cleared: {previous_ref} is outside allow.models; "
+                    "no models available"
+                )
+            elif previous_ref is None:
+                details.append(f"Model selected: {setting_ref}")
+            else:
+                details.append(
+                    f"Model changed: {previous_ref} -> {setting_ref} because "
+                    f"{previous_ref} is outside allow.models"
+                )
     else:
         setting = _candidate_setting(app, update)
         summary = _limit_summary(setting, update)
@@ -493,12 +527,14 @@ def _candidate_setting(
     app: AppContext,
     update: RunOverride,
     *,
-    allowed_model_refs: Collection[str] | None = None,
+    allowed_model_refs: Sequence[str] | None = None,
+    default_model_ref: str | None = None,
 ) -> SessionSetting:
     return app.get_client().apply_setting(
         app.get_setting(),
         update,
         allowed_model_refs=allowed_model_refs,
+        default_model_ref=default_model_ref,
     )
 
 
@@ -510,24 +546,35 @@ def _commit_setting(app: AppContext, setting: SessionSetting) -> None:
 def _allow_summary(
     client: ChatClient,
     update: RunOverride,
-) -> tuple[str, Collection[str] | None]:
+) -> tuple[str, tuple[str, ...] | None, str | None]:
     counts: list[str] = []
-    allowed_model_refs: Collection[str] | None = None
+    allowed_model_refs: tuple[str, ...] | None = None
+    default_model_ref: str | None = None
     for item in update.allow:
         if item.field == "models":
-            models = _items(client.list_models(item.value))
+            payload = client.list_models(item.value)
+            models = _items(payload)
             count = len(models)
-            allowed_model_refs = frozenset(
-                ref
-                for model in models
-                if (ref := as_text(model.get("ref"))) is not None
-            )
+            allowed_model_refs = _model_refs(payload)
+            default_model_ref = as_text(payload.get("default"))
         elif item.field == "tools":
             count = len(_items(client.list_tools(item.value)))
         else:
             count = len(_items(client.list_caps(item.field.rstrip("s"), item.value)))
         counts.append(f"{count} {_plural(count, item.field.rstrip('s'))}")
-    return f"Allowed {', '.join(counts)}", allowed_model_refs
+    return (
+        f"Allowed {', '.join(counts)}",
+        allowed_model_refs,
+        default_model_ref,
+    )
+
+
+def _model_refs(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    return tuple(
+        ref
+        for model in _items(payload)
+        if (ref := as_text(model.get("ref"))) is not None
+    )
 
 
 def _limit_summary(setting: SessionSetting, update: RunOverride) -> str:
@@ -660,7 +707,7 @@ def model_status_label(
     """Return the canonical compact model status segment."""
 
     if model is None:
-        return "[model not set]"
+        return "[no models available]"
     value = model_reasoning_value(model)
     if value is not None:
         return f"{model.ref} · {value}"

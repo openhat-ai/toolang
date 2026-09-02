@@ -64,6 +64,7 @@ def _setup() -> AgentSetup:
             ":model effort=auto",
             RunOverride(model=ModelOverride(effort="auto")),
         ),
+        (":model unset", RunOverride(model=ModelOverride(identity="unset"))),
         (":agic review", RunOverride(runnable="agic:review")),
         (":flow research", RunOverride(runnable="flow:research")),
         (":runnable custom", RunOverride(runnable="custom")),
@@ -120,6 +121,7 @@ def test_prefix_merges_allow_lines_and_multiple_fields() -> None:
         (":model ref=openai/gpt-5", "unknown model parameter"),
         (":model reasoning=high", "unknown model parameter"),
         (":model effort=01", "unknown reasoning effort"),
+        (":model none", "was removed"),
         (":allow", "requires"),
         (":allow unknown=value", "unknown allow field"),
         (":limit tokens=-1", "non-negative"),
@@ -218,7 +220,7 @@ def test_model_identity_and_effort_have_independent_update_boundaries() -> None:
     assert identity_only.model == ModelRequest("anthropic/claude-sonnet-4.5")
 
 
-def test_effort_budget_auto_default_and_none_materialize_canonically() -> None:
+def test_effort_budget_auto_default_and_unset_materialize_canonically() -> None:
     surface = SessionSetting(
         model=ModelRequest("openai/gpt-4.1"),
         runnable="agic:chat",
@@ -248,7 +250,7 @@ def test_effort_budget_auto_default_and_none_materialize_canonically() -> None:
     _ceilings, disabled = materialize_run_setting(
         surface,
         session,
-        RunOverride(model=ModelOverride(identity="none")),
+        RunOverride(model=ModelOverride(identity="unset")),
     )
 
     assert budget.model == ModelRequest(

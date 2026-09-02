@@ -2237,7 +2237,7 @@ def test_chat_model_label_uses_canonical_ref_and_reasoning_status() -> None:
             payload,
             SessionSetting(model=None, runnable="agic:chat"),
         )
-        == "[model not set]"
+        == "[no models available]"
     )
 
 
@@ -4058,8 +4058,9 @@ class FakeClient(ChatClient):
         update: RunOverride,
         *,
         allowed_model_refs: Collection[str] | None = None,
+        default_model_ref: str | None = None,
     ) -> SessionSetting:
-        del allowed_model_refs
+        del allowed_model_refs, default_model_ref
         return update_session_setting(
             surface=self.initial_setting(),
             current=setting,

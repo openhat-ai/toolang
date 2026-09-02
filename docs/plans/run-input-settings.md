@@ -150,7 +150,7 @@ Colon and slash forms share command bodies but have different destinations:
 
 ```text
 ModelBody = MODEL_IDENTITY? MODEL_PARAMETER_ASSIGNMENT*
-MODEL_IDENTITY = EXACT_REF | default | none
+MODEL_IDENTITY = EXACT_REF | default | unset
 MODEL_PARAMETER_ASSIGNMENT = MODEL_PARAMETER=VALUE
 MODEL_PARAMETER = effort
 ```
@@ -169,7 +169,6 @@ Session examples:
 /model effort=auto
 /model openai/gpt-5 effort=high
 /model default
-/model none
 ```
 
 One-run examples:
@@ -182,6 +181,10 @@ Explain this code.
 :model openai/gpt-5 effort=4096
 
 Solve this problem.
+
+:model unset
+
+Run this without an inherited model binding.
 ```
 
 `effort` is input-only convenience:
@@ -198,7 +201,9 @@ zeros, decimals, exponents, or separators in budget-like values are invalid.
 The selected model's advertised subset is validated after the effective model
 is known.
 
-Bare `default` selects the captured surface model. Bare `none` selects no model.
+Bare `default` selects the captured surface model for one run. Bare `unset`
+selects no model for one run and is invalid as `/model unset`. The removed
+`/model none` and `:model none` spellings are invalid.
 Assigned `effort=default` and `effort=none` are effort levels, not identity
 operations, and succeed only when the model advertises them.
 
@@ -405,7 +410,7 @@ The effective values resolve as follows:
 | model parameter only | retain model identity and other parameters; change the authored parameter |
 | explicit model ref | select it, clear inherited explicit parameters, then apply same-command parameters |
 | model `default` | use the captured surface model and its configured behavior |
-| model `none` | use no model |
+| model `unset` | use no model |
 | runnable ref | use its exact resolved ref |
 | runnable `default` | use the captured surface runnable |
 | allow | add a ceiling intersected with the session ceiling |

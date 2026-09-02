@@ -138,10 +138,11 @@ agic chat:
             )
 
         assert [item["ref"] for item in models.json()["items"]] == [TEST_MODEL_REF]
+        assert models.json()["default"] == TEST_MODEL_REF
         model_item = models.json()["items"][0]
         assert model_item["price"] == {"input": None, "output": None}
         assert model_item["parameters"]["reasoning"]["applicable"] is False
-        assert no_models.json()["items"] == []
+        assert no_models.json() == {"default": None, "items": []}
         assert tools.json() == {
             "items": [
                 {

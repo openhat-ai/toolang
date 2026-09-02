@@ -305,6 +305,7 @@ Include the run input in the same submission.
 
 Available overrides:
   :model MODEL
+  :model unset
   :model effort=VALUE
   :agic AGIC
   :flow FLOW
@@ -420,16 +421,15 @@ rules:
 1. If `allow.models` is unchanged, the existing model behavior is unchanged.
 2. If `/allow` changes `models` and the current model still matches the new
    ceiling, preserve the complete `ModelRequest`, including explicit effort.
-3. If the current model does not match, clear the model and its parameters to
-   `None`; do not silently select the first match because collection order is
-   not model preference.
+3. If the current model does not match, select the configured default when it
+   remains in the ordered result, otherwise select the first result with a fresh
+   `ModelRequest`.
 4. If the new ceiling contains no models, including `models=none`, the model is
-   likewise `None`.
-5. The result explicitly reports a cleared model so the user can follow with
-   `/models QUERY` and `/model REF`.
+   `None`.
+5. The result explicitly reports a fallback selection or an empty collection.
 6. An explicit `/model REF` must be within the current `allow.models` ceiling
-   or fail without changing the session. `/model default` follows the same
-   rule when the captured surface default is outside the current ceiling.
+   or fail without changing the session. `/model default` selects the effective
+   default relative to the current ceiling.
 7. Parameter-only `/model effort=...` retains the allowed model identity and
    continues to use the existing model-support validation. A cleared model
    cannot accept model parameters.
@@ -572,10 +572,12 @@ Excluded:
    setting unchanged.
 7. Explicit model selection outside the current model ceiling fails atomically;
    allowed identity changes and effort-only changes retain existing reasoning
-   support checks.
+   support checks. `/model none` and `/model unset` are invalid session forms;
+   `:model unset` is the model-free one-run form.
 8. `/models`, `/tools`, and `/caps` list all effective base resources with no
    query, apply valid advanced queries through the owning definitions, preserve
-   base order, show copyable identities and `Found N ...` summaries according
+   authored match-group order for models, show copyable identities and `Found N
+   ...` summaries according
    to the later resource-table definition, and treat zero matches as a
    successful `No ... found` result.
 9. Combined cap queries support qualified and unqualified identities and common
@@ -610,9 +612,8 @@ Excluded:
 
 ## Risks
 
-- Clearing an excluded model can temporarily leave an agic session without a
-  model. The explicit scrollback result makes this visible and avoids choosing
-  an arbitrary fallback; the next `/model` restores a runnable model binding.
+- An empty effective model collection leaves an agic session without a model.
+  The status and scrollback result make that state explicit.
 - Effective resource snapshots may refresh between discovery and submission.
   Run materialization remains authoritative and reports any later change.
 - Resource tables can be wide. Their Chat projections stay intentionally

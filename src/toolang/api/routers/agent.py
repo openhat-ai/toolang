@@ -61,7 +61,7 @@ def models(
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
-        "default": setup.defaults.model,
+        "default": selected.effective_default(setup.defaults.model),
         "items": [
             _model_item(
                 ref=ref,

@@ -320,7 +320,8 @@ summary and detail rows align with other output using a two-space indent and no
 leading marker column.
 
 The status bar's right side shows the canonical session model ref without a
-field label. No effective model appears as `[model not set]`. An explicit
+field label. An empty effective model collection appears as
+`[no models available]`. An explicit
 effort level or token budget appears as `MODEL · VALUE`; a model that advertises
 effort-level or token-budget control but has no explicit session value appears
 as `MODEL · auto`. Models without either control, toggle-only models, and models

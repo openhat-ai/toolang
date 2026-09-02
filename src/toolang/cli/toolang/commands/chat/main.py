@@ -237,7 +237,7 @@ def _chat_session_override(
         updates.append(
             RunOverride(
                 model=(
-                    ModelOverride(identity=model if model is not None else "none")
+                    ModelOverride(identity=model if model is not None else "unset")
                     if "model" in defaults
                     else None
                 ),

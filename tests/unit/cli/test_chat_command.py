@@ -24,11 +24,27 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEnd, RunEvent, StepEnd
 from toolang.execution.policy import apply_session_setting
 from toolang.execution.schemas import RunRequest, RunnableRequest
-from toolang.execution.types import Local, RunOverride, SessionSetting, StepPath
+from toolang.execution.types import (
+    Local,
+    ModelOverride,
+    RunOverride,
+    SessionSetting,
+    StepPath,
+)
 from toolang.lang.input import RunnableInputRaw
 from toolang.up.types import AgentServerRef
 
 _HOST_DESCRIPTION = "macOS 27.0 arm64"
+
+
+def test_chat_default_model_none_clears_the_configured_preference() -> None:
+    update = chat._chat_session_override(
+        allow_options=None,
+        default_options=["model=none"],
+        limit_options=None,
+    )
+
+    assert update.model == ModelOverride(identity="unset")
 
 
 class _Client:
@@ -83,8 +99,9 @@ class _Client:
         update: RunOverride,
         *,
         allowed_model_refs: Collection[str] | None = None,
+        default_model_ref: str | None = None,
     ) -> SessionSetting:
-        del allowed_model_refs
+        del allowed_model_refs, default_model_ref
         return apply_session_setting(self.initial_setting(), setting, update)
 
     def build_request(

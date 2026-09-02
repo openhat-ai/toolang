@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import ast
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import json
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
@@ -125,7 +125,8 @@ class ChatClient(Protocol):
         setting: SessionSetting,
         update: RunOverride,
         *,
-        allowed_model_refs: Collection[str] | None = None,
+        allowed_model_refs: Sequence[str] | None = None,
+        default_model_ref: str | None = None,
     ) -> SessionSetting: ...
 
     def build_request(

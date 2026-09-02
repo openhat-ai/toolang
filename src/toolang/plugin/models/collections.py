@@ -209,16 +209,25 @@ class ModelCollection:
         self,
         queries: MatchUnion | str | Sequence[str] | None = None,
     ) -> ModelCollection:
-        """Return the stable-order subset accepted by collection queries."""
+        """Return matches in authored match order and collection order within each."""
 
         if queries is None:
             return self
-        matched = {
-            cast(ModelEntry, item.record).key for item in self._matcher.query(queries)
-        }
-        return self._derive(
-            tuple(entry for entry in self.entries if entry.key in matched)
+        parsed = (
+            queries if isinstance(queries, MatchUnion) else MODEL_SCHEMA.parse(queries)
         )
+        selected: list[ModelEntry] = []
+        seen: set[str] = set()
+        for match in parsed.matches:
+            matched = {
+                cast(ModelEntry, item.record).key
+                for item in self._matcher.query(MatchUnion((match,)))
+            }
+            for entry in self.entries:
+                if entry.key in matched and entry.key not in seen:
+                    selected.append(entry)
+                    seen.add(entry.key)
+        return self._derive(tuple(selected))
 
     def apply(
         self,
@@ -281,6 +290,13 @@ class ModelCollection:
         """Return public refs in collection order."""
 
         return tuple(entry.ref for entry in self.entries)
+
+    def effective_default(self, preferred: str | None) -> str | None:
+        """Return a preferred available ref, then the first collection ref."""
+
+        if preferred is not None and self.contains(preferred):
+            return preferred
+        return self.entries[0].ref if self.entries else None
 
     def keys(self) -> tuple[str, ...]:
         """Return stable resource keys in collection order."""

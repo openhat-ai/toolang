@@ -73,8 +73,12 @@ def test_model_collection_owns_matching_set_operations_and_exact_indexes() -> No
     models = ModelCollection((alpha, beta, gamma))
 
     assert models.match(("beta/*", "alpha/*")).refs() == (
-        "alpha/one",
         "beta/two",
+        "alpha/one",
+        "alpha/three",
+    )
+    assert models.match(("alpha/*", "*/three")).refs() == (
+        "alpha/one",
         "alpha/three",
     )
     assert models.match("*[tool_call=false]").refs() == ("beta/two",)
@@ -91,6 +95,9 @@ def test_model_collection_owns_matching_set_operations_and_exact_indexes() -> No
     assert models.subset(("alpha/three", "alpha/one")).entries == (gamma, alpha)
     assert models.contains("alpha/one")
     assert not models.contains("missing/model")
+    assert models.effective_default("beta/two") == "beta/two"
+    assert models.effective_default("missing/model") == "alpha/one"
+    assert ModelCollection().effective_default("missing/model") is None
     with pytest.raises(TypeError):
         cast(dict[str, object], alpha.info.metadata)["mutable"] = True
     with pytest.raises(TypeError):
