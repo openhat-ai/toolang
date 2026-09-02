@@ -214,6 +214,13 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
             continue
 
         if current_top == "flow" and column > 0:
+            if flow_content_block is not None:
+                block_indent, block_depth = flow_content_block
+                if column > block_indent:
+                    formatted.append(f"{indent * (block_depth + 1)}{stripped}")
+                    continue
+                flow_content_block = None
+
             if _DIRECTIVE_RE.match(line):
                 formatted.append(f"{indent}{_format_directive_line(stripped)}")
                 flow_content_block = None
@@ -226,11 +233,19 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
                 formatted.append(
                     f"{indent * depth}{_format_flow_statement_line(stripped)}"
                 )
+                empty_content_assignment = (
+                    stripped.startswith("let ")
+                    and "=" in stripped
+                    and not stripped.partition("=")[2].strip()
+                )
                 flow_content_block = (
                     (column, depth)
-                    if ":" in stripped
-                    and not stripped.partition(":")[2].strip()
-                    and not stripped.startswith("repeat")
+                    if empty_content_assignment
+                    or (
+                        ":" in stripped
+                        and not stripped.partition(":")[2].strip()
+                        and not stripped.startswith("repeat")
+                    )
                     else None
                 )
                 if stripped.startswith("repeat"):
@@ -244,12 +259,6 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
                 formatted.append(f"{indent * depth}{_format_comment_line(stripped)}")
                 continue
 
-            if flow_content_block is not None:
-                block_indent, block_depth = flow_content_block
-                if column > block_indent:
-                    formatted.append(f"{indent * (block_depth + 1)}{stripped}")
-                    continue
-                flow_content_block = None
             depth = 1 + sum(
                 1 for repeat_indent in flow_repeat_indents if repeat_indent < column
             )
@@ -332,6 +341,13 @@ def _ancestor_types(node: Node) -> set[str]:
 
 def _indent_depth(node: Node) -> int:
     ancestors = _ancestor_types(node)
+    if "property" in ancestors and ancestors & {
+        "psyche",
+        "skill",
+        "service",
+        "prompt",
+    }:
+        return 1
     if ancestors & {"struct_body", "cap_body", "job_body"}:
         return 1
     if "agic_body" in ancestors:
@@ -541,7 +557,7 @@ def _collapse_syntax_space(value: str) -> str:
     rendered = re.sub(r"[ \t]+", " ", value.strip())
     rendered = re.sub(r"[ \t]*->[ \t]*", " -> ", rendered)
     rendered = re.sub(r"[ \t]*=[ \t]*", " = ", rendered)
-    return rendered
+    return rendered.rstrip()
 
 
 def _format_csv_values(raw: str) -> str:

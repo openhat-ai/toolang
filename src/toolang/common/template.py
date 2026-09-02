@@ -10,8 +10,10 @@ import mstache
 
 from toolang.common.errors import ToolangError
 
-_TAG_NAME_RE = re.compile(
-    r"^(\.|[A-Za-z_][\w-]*(?:\.(?:[A-Za-z_][\w-]*|0|[1-9]\d*))*)$"
+_TAG_NAME_PATTERN = r"\.|[A-Za-z_][\w-]*(?:\.(?:[A-Za-z_][\w-]*|0|[1-9]\d*))*"
+_TAG_NAME_RE = re.compile(rf"^(?:{_TAG_NAME_PATTERN})$")
+_REFERENCE_TAG_RE = re.compile(
+    rf"{{{{\s*(?P<sigil>[#^/]?)\s*(?P<name>{_TAG_NAME_PATTERN})\s*}}}}"
 )
 
 
@@ -31,6 +33,16 @@ def render_text_template(template: str, context: Mapping[str, object]) -> str:
         )
     except Exception as exc:
         raise ToolangError(f"invalid Toolang template: {exc}") from exc
+
+
+def template_root_names(template: str) -> tuple[str, ...]:
+    """Return referenced root names in source order without deduplication."""
+
+    return tuple(
+        name.partition(".")[0]
+        for match in _REFERENCE_TAG_RE.finditer(template)
+        if match.group("sigil") != "/" and (name := match.group("name")) != "."
+    )
 
 
 def _validate_template(template: str) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any, cast
 
 import pytest
@@ -11,7 +12,7 @@ from toolang.lang.errors import ToolangValidationError
 from toolang.lang import Program, to_data
 from toolang.lang.ast import LetStmt, RepeatStmt, ScatterStmt, SettleStmt
 from toolang.base.types.message import TextPart
-from toolang.lang.input import resolve_input_parts
+from toolang.lang.input import resolve_input_parts, resolve_input_parts_with_provenance
 from toolang.state.source import read_authored_source
 
 
@@ -28,8 +29,6 @@ service github:
   Connect to GitHub.
 
 prompt review:
-  params = path, focus?
-
   Review {{path}}.
   {{focus}}
 
@@ -61,9 +60,9 @@ flow main:
     assert service.meta["target"] == "https://mcp.github.com/mcp"
     with pytest.raises(TypeError):
         cast(Any, service.meta)["target"] = "https://example.com"
-    assert [(item.name, item.optional) for item in prompt.params] == [
-        ("path", False),
-        ("focus", True),
+    assert [(item.name, item.type_name, item.optional) for item in prompt.params] == [
+        ("path", "Text", False),
+        ("focus", "Text", False),
     ]
     assert [(item.name, item.optional) for item in program.structs[0].fields] == [
         ("title", False),
@@ -79,6 +78,170 @@ flow main:
     assert agic.messages[0].content == "Review {{_}}."
     assert program.flows[0].name == "main"
     assert program.flows[0].stmts[0].kind == "run"
+
+
+def test_cap_kinds_lower_exact_properties_and_body_contracts() -> None:
+    program = Program.from_source(
+        """
+psyche reviewer:
+  Prefer precise reviews.
+
+skill review:
+  description = Review a change.
+
+  Inspect the change.
+
+service github:
+  description = Access GitHub.
+  protocol = http
+  target = https://mcp.github.com/mcp
+  headers = Authorization: Bearer $GITHUB_TOKEN
+  env = GITHUB_TOKEN, GITHUB_ORG
+
+prompt summarize:
+  Summarize {{topic}}.
+"""
+    )
+
+    psyche, skill, service, prompt = program.caps
+    assert (psyche.meta, psyche.body) == ({}, "Prefer precise reviews.")
+    assert (skill.meta, skill.body) == (
+        {"description": "Review a change."},
+        "Inspect the change.",
+    )
+    assert service.body == ""
+    assert service.meta == {
+        "description": "Access GitHub.",
+        "target": "https://mcp.github.com/mcp",
+        "headers": "Authorization: Bearer $GITHUB_TOKEN",
+        "env": "GITHUB_TOKEN, GITHUB_ORG",
+        "transport": "http",
+    }
+    assert prompt.meta == {}
+    assert [
+        (param.name, param.type_name, param.optional) for param in prompt.params
+    ] == [("topic", "Text", False)]
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        ("psyche empty:\n", "Psyche cap 'empty' requires a nonempty body at line 1"),
+        (
+            "skill empty:\n  description = Missing body.\n",
+            "Skill cap 'empty' requires a nonempty body at line 1",
+        ),
+        (
+            "skill empty:\n  Body without description.\n",
+            "Skill cap 'empty' is missing required property 'description' at line 1",
+        ),
+        ("prompt empty:\n", "Prompt cap 'empty' requires a nonempty body at line 1"),
+        (
+            "service empty:\n  description = Missing target.\n  transport = http\n",
+            "Service cap 'empty' is missing required property 'target' at line 1",
+        ),
+    ],
+)
+def test_cap_kinds_reject_missing_properties_and_bodies(
+    source: str, message: str
+) -> None:
+    with pytest.raises(ToolangValidationError, match=re.escape(message)):
+        Program.from_source(source)
+
+
+def test_cap_properties_report_unknown_duplicate_and_empty_source_lines() -> None:
+    with pytest.raises(
+        ToolangValidationError,
+        match="Prompt cap 'review' property 'params' at line 2 is unsupported",
+    ):
+        Program.from_source("prompt review:\n  params = focus\n\n  Review {{focus}}.\n")
+
+    with pytest.raises(
+        ToolangValidationError,
+        match="Skill cap 'review' property 'description' at line 3 duplicates line 2",
+    ):
+        Program.from_source(
+            "skill review:\n"
+            "  description = First.\n"
+            "  description = Second.\n\n"
+            "  Review.\n"
+        )
+
+    with pytest.raises(
+        ToolangValidationError,
+        match="Skill cap 'review' property 'description' at line 2 must be nonempty",
+    ):
+        Program.from_source("skill review:\n  description =\n\n  Review.\n")
+
+
+@pytest.mark.parametrize(
+    ("properties", "message"),
+    [
+        (
+            "  transport = http\n  protocol = stdio\n  target = server\n",
+            "properties 'transport' at line 3 and 'protocol' at line 4 are mutually exclusive",
+        ),
+        (
+            "  transport = websocket\n  target = server\n",
+            "property 'transport' at line 3 must be 'http' or 'stdio'",
+        ),
+        (
+            "  transport = stdio\n  target = server\n  headers = X-Test: yes\n",
+            "property 'headers' at line 5 is valid only for HTTP",
+        ),
+        (
+            "  transport = stdio\n  target = server\n  env = GOOD, bad-name\n",
+            "property 'env' at line 5 must contain comma-separated environment names",
+        ),
+        (
+            "  transport = stdio\n  target = server\n  env = GOOD, GOOD\n",
+            "property 'env' at line 5 must not contain duplicate environment names",
+        ),
+    ],
+)
+def test_service_cap_rejects_invalid_property_combinations(
+    properties: str, message: str
+) -> None:
+    with pytest.raises(ToolangValidationError, match=re.escape(message)):
+        Program.from_source(
+            "service invalid:\n  description = Invalid service.\n" + properties
+        )
+
+
+def test_prompt_parameters_are_inferred_from_ordered_mustache_roots() -> None:
+    program = Program.from_source(
+        """
+prompt render:
+  {{user.name}} {{#items}}{{items.title}}{{/items}}
+  {{^empty}}{{empty}}{{/empty}} {{_}} {{user.email}} {{/closing}}
+  {{user-name}} {{records.0}} {{.}}
+"""
+    )
+
+    prompt = program.caps[0]
+    assert prompt.body == (
+        "{{user.name}} {{#items}}{{items.title}}{{/items}}\n"
+        "{{^empty}}{{empty}}{{/empty}} {{_}} {{user.email}} {{/closing}}\n"
+        "{{user-name}} {{records.0}} {{.}}"
+    )
+    assert [
+        (param.name, param.type_name, param.optional) for param in prompt.params
+    ] == [
+        ("user", "Text", False),
+        ("items", "Text", False),
+        ("empty", "Text", False),
+        ("user-name", "Text", False),
+        ("records", "Text", False),
+    ]
+
+
+def test_cap_property_like_lines_remain_literal_after_the_body_starts() -> None:
+    prompt = Program.from_source(
+        "prompt literal:\n  Start body.\n  params = literal text\n"
+    ).caps[0]
+
+    assert prompt.meta == {}
+    assert prompt.body == "Start body.\nparams = literal text"
 
 
 def test_parameters_distinguish_implicit_empty_and_explicit_input() -> None:
@@ -110,12 +273,45 @@ agic custom(_: Json, detail: Text):
     assert args.input is None
     assert [(item.name, item.type_name, item.optional) for item in args.params] == [
         ("name", "Text", False),
-        ("detail", None, True),
+        ("detail", "Text", True),
     ]
     assert custom.input is not None and custom.input.type_name == "Json"
     assert [(item.name, item.type_name) for item in custom.params] == [
         ("detail", "Text")
     ]
+    assert [agic.output for agic in program.agics] == ["Part[]"] * 5
+
+
+def test_flow_materializes_named_parameter_and_output_defaults() -> None:
+    program = Program.from_source("flow work(topic):\n  pass\n")
+
+    flow = program.flows[0]
+    assert flow.input is None
+    assert [(param.name, param.type_name) for param in flow.params] == [
+        ("topic", "Text")
+    ]
+    assert flow.output == "Part[]"
+
+
+@pytest.mark.parametrize("name", ["far", "near", "line"])
+def test_runtime_local_names_are_reserved_for_parameters_and_bindings(
+    name: str,
+) -> None:
+    with pytest.raises(ToolangValidationError, match=f"reserved.*{name!r}"):
+        Program.from_source(f"agic invalid({name}):\n  pass\n")
+
+    with pytest.raises(ToolangValidationError, match=f"binding {name!r}.*reserved"):
+        Program.from_source(f"flow invalid:\n  let {name} = content\n")
+
+
+def test_pack_is_available_as_a_user_struct_type() -> None:
+    program = Program.from_source(
+        "struct Pack:\n  value: Text\n\nagic use(pack: Pack) -> Pack:\n  pass\n"
+    )
+
+    assert program.structs[0].name == "Pack"
+    assert program.agics[0].params[0].type_name == "Pack"
+    assert program.agics[0].output == "Pack"
 
 
 @pytest.mark.parametrize(
@@ -157,7 +353,7 @@ flow pipeline:
   drop predicate
   rank score top 3 par 2
   let saved = run action
-  let note:
+  let note =
     Store this note.
 
   repeat 2:
@@ -197,6 +393,19 @@ flow pipeline:
     assert repeat.runnable is not None
 
 
+def test_flow_content_locals_accept_inline_and_block_equals_only() -> None:
+    program = Program.from_source(
+        "flow content:\n  let inline = Keep this.\n  let block =\n    Keep this too.\n"
+    )
+
+    inline, block = program.flows[0].stmts
+    assert isinstance(inline, LetStmt) and inline.value == "Keep this."
+    assert isinstance(block, LetStmt) and block.value == "Keep this too."
+
+    with pytest.raises(ToolangError, match="line 2"):
+        Program.from_source("flow legacy:\n  let content:\n    Removed syntax.\n")
+
+
 def test_inline_settle_exposes_the_current_item() -> None:
     program = Program.from_source(
         """
@@ -223,7 +432,7 @@ agic prepare -> Text:
   pass
 
 flow expand(_: Text, topic: Text) -> Text[]:
-  let source:
+  let source =
     {{_}}
   let prepared = run prepare
 
@@ -241,6 +450,17 @@ flow expand(_: Text, topic: Text) -> Text[]:
         ("topic", "Text"),
         ("prepared", "Part[]"),
     ]
+
+
+def test_inline_scatter_applies_array_shape_to_the_default_item_output() -> None:
+    program = Program.from_source(
+        "flow expand:\n  scatter 2:\n    Return distinct pieces.\n"
+    )
+
+    statement = program.flows[0].stmts[0]
+    assert isinstance(statement, ScatterStmt)
+    generated = next(agic for agic in program.agics if agic.name == statement.runnable)
+    assert generated.output == "Part[][]"
 
 
 def test_inline_flow_evaluators_disable_recall_and_tools() -> None:
@@ -315,6 +535,31 @@ agic configured:
         "tools",
         "skills",
     ]
+
+
+@pytest.mark.parametrize(
+    ("source_value", "expected"),
+    [
+        ("auto", ("auto",)),
+        ("none", ("none",)),
+        ("far", ("far",)),
+        ("near", ("near",)),
+        ("far, near", ("far", "near")),
+    ],
+)
+def test_recall_directive_lowers_canonical_values(
+    source_value: str, expected: tuple[str, ...]
+) -> None:
+    program = Program.from_source(
+        f"agic configured:\n  recall = {source_value}\n\n  Configured.\n"
+    )
+
+    assert program.agics[0].directives[0].values == expected
+
+
+def test_flow_rejects_recall_directive() -> None:
+    with pytest.raises(ToolangValidationError, match="must not declare the recall"):
+        Program.from_source("flow configured:\n  recall = near\n\n  pass\n")
 
 
 def test_agic_routing_directives_preserve_collection_queries() -> None:
@@ -465,7 +710,7 @@ def test_program_data_rejects_unknown_statement_kind() -> None:
 
 
 def test_validation_runs_after_lowering() -> None:
-    with pytest.raises(ToolangError, match="missing description"):
+    with pytest.raises(ToolangError, match="missing required property 'description'"):
         Program.from_source(
             """
 service github:
@@ -588,8 +833,6 @@ def test_program_expands_prompt_calls(tmp_path: Path) -> None:
         tmp_path,
         """
 prompt review:
-  params = path, focus?
-
   Review {{path}} carefully.
   {{focus}}
 
@@ -609,6 +852,22 @@ agic:
     assert expanded == (
         TextPart("Review src/app.py carefully.\nonly errors\n\n\nAlso inspect tests."),
     )
+
+
+def test_program_expands_hyphenated_prompt_parameters(tmp_path: Path) -> None:
+    root = _write_program(
+        tmp_path,
+        "prompt review:\n  Review {{focus-area}}.\n\nagic:\n  Respond directly.\n",
+    )
+    program = read_authored_source(root, "alice").load_program().parse()
+
+    resolution = resolve_input_parts_with_provenance(
+        "$review focus-area=security",
+        program=program,
+    )
+
+    assert resolution.parts == (TextPart("Review security."),)
+    assert resolution.prompts[0].arguments == (("focus-area", "security"),)
 
 
 def test_repo_program_fixtures_parse_cleanly() -> None:

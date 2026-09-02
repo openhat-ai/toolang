@@ -74,7 +74,7 @@ def test_model_free_flow_retry_preserves_an_absent_model_request(
         tmp_path,
         source="""
 flow passthrough(_: Text) -> Text:
-  let note:
+  let note =
     retained
 """,
         responses=[],
@@ -285,7 +285,7 @@ agic echo(_: Part[]) -> Part[]:
     $bracket -- {{_}}
 
 flow relay(_: Part[]) -> Part[]:
-  let note:
+  let note =
     $bracket -- flow
   run echo
 """,
@@ -381,7 +381,7 @@ agic worker(_: Part[]) -> Part[]:
   user: {{_}}
 
 flow staged(_: Part[]) -> Part[]:
-  let note:
+  let note =
     committed
   run worker
 """,
@@ -504,7 +504,7 @@ agic worker(_: Part[]) -> Part[]:
 
 flow staged(_: Part[]) -> Part[]:
   run worker
-  let note:
+  let note =
     committed
 """,
         responses=[
@@ -651,7 +651,7 @@ agic worker(_: Part[]) -> Part[]:
   user: {{_}}
 
 flow staged(_: Part[]) -> Part[]:
-  let note:
+  let note =
     committed
   run worker
 """,
@@ -847,7 +847,7 @@ def test_runtime_failure_outside_a_step_is_recorded_on_the_run(
         tmp_path,
         source="""
 flow fail(_: Part[]) -> Number:
-  let note:
+  let note =
     captured
 """,
         responses=[],
@@ -955,7 +955,7 @@ def test_parent_step_points_to_child_runtime_error_without_copying_it(
         tmp_path,
         source="""
 flow child(_: Part[]) -> Number:
-  let note:
+  let note =
     captured
 
 flow parent(_: Part[]) -> Number:
@@ -2024,7 +2024,7 @@ def test_inline_scatter_requests_and_returns_an_array_result(tmp_path: Path) -> 
         tmp_path,
         source="""
 flow scattered(_: Text) -> Text[]:
-  let source:
+  let source =
     {{_}}
 
   scatter 3 -> Text:

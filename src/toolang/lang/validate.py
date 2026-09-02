@@ -13,9 +13,23 @@ from .errors import ToolangValidationError
 from .runnable_query import RUNNABLE_SCHEMA
 from .types import validate_struct_type
 
-_SERVICE_FIELDS = frozenset(
-    {"description", "transport", "protocol", "target", "headers", "env"}
-)
+_CAP_SOURCE_FIELDS: dict[ast.CapKind, frozenset[str]] = {
+    "psyche": frozenset(),
+    "skill": frozenset({"description"}),
+    "service": frozenset(
+        {"description", "transport", "protocol", "target", "headers", "env"}
+    ),
+    "prompt": frozenset(),
+}
+_CAP_REQUIRED_FIELDS: dict[ast.CapKind, frozenset[str]] = {
+    "psyche": frozenset(),
+    "skill": frozenset({"description"}),
+    "service": frozenset({"description", "transport", "target"}),
+    "prompt": frozenset(),
+}
+_CAP_BODY_REQUIRED = frozenset({"psyche", "skill", "prompt"})
+_SERVICE_FIELDS = frozenset({"description", "transport", "target", "headers", "env"})
+_RESERVED_RUNTIME_NAMES = frozenset({"far", "near", "line"})
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PARAM_NAME_RE = re.compile(r"^[A-Za-z_][\w-]*$")
 
@@ -35,6 +49,7 @@ def _validate(program: ast.Program) -> None:
             agic.directives,
             owner=f"Agic {agic.name!r}",
             allow_routes=True,
+            allow_recall=True,
         )
         _validate_prompt_ref(agic.context, contexts, target="context", owner=agic.name)
         _validate_prompt_ref(
@@ -47,54 +62,81 @@ def _validate(program: ast.Program) -> None:
             flow.directives,
             owner=f"Flow {flow.name!r}",
             allow_routes=False,
+            allow_recall=False,
         )
         _validate_stmts(flow.stmts, runnables=runnables)
 
 
-def _validate_service_meta(
-    meta: Mapping[str, Any],
+def _validate_cap_source(
+    kind: ast.CapKind,
+    name: str,
+    body: str,
+    properties: tuple[tuple[str, str, int], ...],
     *,
     line_number: int,
-    require_description: bool = False,
+) -> dict[str, str]:
+    """Validate ordered source properties before constructing immutable cap metadata."""
+
+    meta: dict[str, str] = {}
+    property_lines: dict[str, int] = {}
+    for property_name, raw_value, property_line in properties:
+        _validate_cap_property_name(kind, name, property_name, line=property_line)
+        if first_line := property_lines.get(property_name):
+            raise ToolangValidationError(
+                f"{kind.capitalize()} cap {name!r} property {property_name!r} "
+                f"at line {property_line} duplicates line {first_line}."
+            )
+        value = raw_value.strip()
+        if not value:
+            _raise_empty_cap_property(kind, name, property_name, line=property_line)
+        meta[property_name] = value
+        property_lines[property_name] = property_line
+
+    if "transport" in meta and "protocol" in meta:
+        raise ToolangValidationError(
+            f"Service cap {name!r} properties 'transport' at line "
+            f"{property_lines['transport']} and 'protocol' at line "
+            f"{property_lines['protocol']} are mutually exclusive."
+        )
+    if protocol := meta.pop("protocol", None):
+        meta["transport"] = protocol
+        property_lines["transport"] = property_lines.pop("protocol")
+
+    _validate_cap_contract(
+        kind,
+        name,
+        body,
+        meta,
+        line_number=line_number,
+        property_lines=property_lines,
+    )
+    return meta
+
+
+def _validate_cap_property_name(
+    kind: ast.CapKind, name: str, property_name: str, *, line: int
 ) -> None:
-    _require_exact_fields(meta, _SERVICE_FIELDS, kind="service", line=line_number)
-    description = meta.get("description")
-    if require_description and (not isinstance(description, str) or not description):
-        raise ToolangValidationError(
-            f"Service cap at line {line_number} is missing description."
-        )
-    if description is not None and not isinstance(description, str):
-        raise ToolangValidationError(
-            f"Service cap at line {line_number} must define description as a string."
-        )
-    transport = meta.get("transport") or meta.get("protocol")
-    if not isinstance(transport, str) or not transport:
-        raise ToolangValidationError(
-            f"Service cap at line {line_number} is missing protocol."
-        )
-    if transport not in {"http", "stdio"}:
-        raise ToolangValidationError(
-            f"Service cap at line {line_number} uses unsupported transport {transport!r}."
-        )
-    target = meta.get("target")
-    if not isinstance(target, str) or not target:
-        raise ToolangValidationError(
-            f"Service cap at line {line_number} is missing target."
-        )
-    headers = meta.get("headers")
-    if (
-        headers is not None
-        and not isinstance(headers, str)
-        and not _is_string_map(headers)
-    ):
-        raise ToolangValidationError(
-            f"Service cap at line {line_number} must define headers as a string map."
-        )
-    env = meta.get("env")
-    if env is not None and not _is_env_names(env):
-        raise ToolangValidationError(
-            f"Service cap at line {line_number} must list environment variable names."
-        )
+    allowed = _CAP_SOURCE_FIELDS[kind]
+    if property_name in allowed:
+        return
+    if allowed:
+        suffix = f"allowed properties are: {', '.join(sorted(allowed))}"
+    else:
+        suffix = f"{kind} caps allow no properties"
+    raise ToolangValidationError(
+        f"{kind.capitalize()} cap {name!r} property {property_name!r} "
+        f"at line {line} is unsupported; {suffix}."
+    )
+
+
+def _raise_empty_cap_property(
+    kind: ast.CapKind, name: str, property_name: str, *, line: int
+) -> None:
+    _validate_cap_property_name(kind, name, property_name, line=line)
+    raise ToolangValidationError(
+        f"{kind.capitalize()} cap {name!r} property {property_name!r} "
+        f"at line {line} must be nonempty."
+    )
 
 
 def _validate_caps(caps: tuple[ast.CapDecl, ...]) -> None:
@@ -104,14 +146,15 @@ def _validate_caps(caps: tuple[ast.CapDecl, ...]) -> None:
         if key in seen:
             raise ToolangValidationError(f"Duplicate {cap.kind} name {cap.name!r}.")
         seen.add(key)
-        if cap.kind == "service":
-            _validate_service_meta(
-                cap.meta, line_number=cap.span.line, require_description=True
-            )
-        elif cap.kind == "prompt":
-            _require_exact_fields(
-                cap.meta, frozenset({"params"}), kind="prompt", line=cap.span.line
-            )
+        _validate_cap_contract(
+            cap.kind,
+            cap.name,
+            cap.body,
+            cap.meta,
+            line_number=cap.span.line,
+            property_lines={},
+        )
+        if cap.kind == "prompt":
             _unique(
                 (item.name for item in cap.params),
                 label=f"parameter in prompt {cap.name!r}",
@@ -125,6 +168,93 @@ def _validate_caps(caps: tuple[ast.CapDecl, ...]) -> None:
                     raise ToolangValidationError(
                         f"Invalid prompt parameter {param.name!r} at line {param.span.line}."
                     )
+                if param.optional or param.type_name != "Text":
+                    raise ToolangValidationError(
+                        f"Prompt parameter {param.name!r} at line {param.span.line} "
+                        "must be required Text."
+                    )
+
+
+def _validate_cap_contract(
+    kind: ast.CapKind,
+    name: str,
+    body: str,
+    meta: Mapping[str, Any],
+    *,
+    line_number: int,
+    property_lines: Mapping[str, int],
+) -> None:
+    allowed = _SERVICE_FIELDS if kind == "service" else _CAP_SOURCE_FIELDS[kind]
+    if unknown := sorted(set(meta) - allowed):
+        property_name = unknown[0]
+        property_line = property_lines.get(property_name, line_number)
+        if allowed:
+            suffix = f"allowed properties are: {', '.join(sorted(allowed))}"
+        else:
+            suffix = f"{kind} caps allow no properties"
+        raise ToolangValidationError(
+            f"{kind.capitalize()} cap {name!r} property {property_name!r} "
+            f"at line {property_line} is unsupported; {suffix}."
+        )
+
+    for property_name, value in meta.items():
+        property_line = property_lines.get(property_name, line_number)
+        if not isinstance(value, str) or not value.strip():
+            raise ToolangValidationError(
+                f"{kind.capitalize()} cap {name!r} property {property_name!r} "
+                f"at line {property_line} must be nonempty inline text."
+            )
+
+    for property_name in sorted(_CAP_REQUIRED_FIELDS[kind] - set(meta)):
+        raise ToolangValidationError(
+            f"{kind.capitalize()} cap {name!r} is missing required property "
+            f"{property_name!r} at line {line_number}."
+        )
+
+    if kind in _CAP_BODY_REQUIRED and not body.strip():
+        raise ToolangValidationError(
+            f"{kind.capitalize()} cap {name!r} requires a nonempty body "
+            f"at line {line_number}."
+        )
+
+    if kind != "service":
+        return
+    transport = meta.get("transport")
+    if transport not in {"http", "stdio"}:
+        raise ToolangValidationError(
+            f"Service cap {name!r} property 'transport' at line "
+            f"{property_lines.get('transport', line_number)} must be 'http' or 'stdio'."
+        )
+    if "headers" in meta and transport != "http":
+        raise ToolangValidationError(
+            f"Service cap {name!r} property 'headers' at line "
+            f"{property_lines.get('headers', line_number)} is valid only for HTTP."
+        )
+    if env := meta.get("env"):
+        _validate_service_env(
+            name,
+            env,
+            line_number=property_lines.get("env", line_number),
+        )
+
+
+def _validate_service_env(name: str, raw: object, *, line_number: int) -> None:
+    if not isinstance(raw, str):
+        raise ToolangValidationError(
+            f"Service cap {name!r} property 'env' at line {line_number} "
+            "must list environment variable names."
+        )
+    values = [item.strip() for item in raw.split(",")]
+    if any(_ENV_NAME_RE.fullmatch(item) is None for item in values):
+        raise ToolangValidationError(
+            f"Service cap {name!r} property 'env' at line {line_number} "
+            "must contain comma-separated environment names."
+        )
+    if len(values) != len(set(values)):
+        raise ToolangValidationError(
+            f"Service cap {name!r} property 'env' at line {line_number} "
+            "must not contain duplicate environment names."
+        )
 
 
 def _runnable_namespace(program: ast.Program) -> dict[str, ast.AgicDecl | ast.FlowDecl]:
@@ -179,6 +309,11 @@ def _validate_parameters(
         raise ToolangValidationError(
             f"{owner} must not use reserved parameter name 'runtime'."
         )
+    if reserved := seen & _RESERVED_RUNTIME_NAMES:
+        name = next(iter(reserved))
+        raise ToolangValidationError(
+            f"{owner} must not use reserved runtime parameter name {name!r}."
+        )
     for param in params:
         if param.name == "_":
             raise ToolangValidationError(
@@ -187,6 +322,10 @@ def _validate_parameters(
         if param.name == "runtime":
             raise ToolangValidationError(
                 f"{owner} must not use reserved parameter name 'runtime'."
+            )
+        if param.name in _RESERVED_RUNTIME_NAMES:
+            raise ToolangValidationError(
+                f"{owner} must not use reserved runtime parameter name {param.name!r}."
             )
         if param.name in seen:
             raise ToolangValidationError(
@@ -200,6 +339,7 @@ def _validate_directives(
     *,
     owner: str,
     allow_routes: bool,
+    allow_recall: bool,
 ) -> None:
     models = [item for item in directives if item.name == "models"]
     for directive in models:
@@ -251,6 +391,8 @@ def _validate_directives(
             )
 
     recalls = [item for item in directives if item.name == "recall"]
+    if recalls and not allow_recall:
+        raise ToolangValidationError(f"{owner} must not declare the recall directive.")
     if len(recalls) > 1:
         raise ToolangValidationError(
             f"{owner} may declare at most one recall directive."
@@ -263,10 +405,10 @@ def _validate_directives(
     values = set(recall.values)
     if values in (
         {"none"},
-        {"default"},
-        {"history"},
-        {"memory"},
-        {"history", "memory"},
+        {"auto"},
+        {"far"},
+        {"near"},
+        {"far", "near"},
     ):
         return
     if not values:
@@ -359,6 +501,11 @@ def _validate_stmts(
 
 def _validate_binding(stmt: ast.FlowStmt) -> None:
     binding = stmt.binding
+    if binding in _RESERVED_RUNTIME_NAMES:
+        raise ToolangValidationError(
+            f"Flow binding {binding!r} at line {stmt.span.line} is reserved "
+            "for a runtime local."
+        )
     if (
         binding is not None
         and binding != "_"
@@ -403,32 +550,3 @@ def _non_negative(value: int, *, field: str, line: int) -> None:
 def _positive_optional(value: int | None, *, field: str, line: int) -> None:
     if value is not None and value <= 0:
         raise ToolangValidationError(f"{field} at line {line} must be positive.")
-
-
-def _require_exact_fields(
-    meta: Mapping[str, Any], allowed: frozenset[str], *, kind: str, line: int
-) -> None:
-    if unknown := sorted(set(meta) - allowed):
-        raise ToolangValidationError(
-            f"{kind.capitalize()} at line {line} has unsupported field(s): {', '.join(unknown)}."
-        )
-
-
-def _is_string_map(value: object) -> bool:
-    return isinstance(value, Mapping) and all(
-        isinstance(key, str) and isinstance(item, str) for key, item in value.items()
-    )
-
-
-def _is_env_names(value: object) -> bool:
-    if isinstance(value, str):
-        items = [item.strip() for item in value.split(",")]
-    elif isinstance(value, list | tuple):
-        items = [item.strip() for item in value if isinstance(item, str)]
-        if len(items) != len(value):
-            return False
-    else:
-        return False
-    return bool(items) and all(
-        _ENV_NAME_RE.fullmatch(item) is not None for item in items
-    )

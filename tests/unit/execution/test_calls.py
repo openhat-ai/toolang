@@ -188,7 +188,7 @@ agic worker(_: Text) -> Text:
   user: {{_}}
 
 agic chat(_: Text) -> Text:
-  recall = history
+  recall = near
   context: none
   instruct: none
   user: {{_}}
@@ -283,8 +283,6 @@ def test_resolve_spec_preserves_authored_prompt_input_and_provenance(
         tmp_path,
         source="""
 prompt review:
-  params = focus
-
   {{focus}} {{_}}
 
 agic default(_: Part[]):

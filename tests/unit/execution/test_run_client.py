@@ -333,8 +333,6 @@ def test_executor_retries_recorded_state_and_reruns_current_state(
     source_with_prompt = (
         """
 prompt rewrite:
-  params = style
-
   Old {{style}} {{_}}
 
 """

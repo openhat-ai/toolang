@@ -8,6 +8,7 @@ from toolang.lang import (
     format_statement_head,
     to_data,
 )
+from toolang.lang.ast import LetStmt
 
 
 def test_format_statement_head_preserves_compact_source_order() -> None:
@@ -23,7 +24,7 @@ agic score -> Number:
   pass
 
 flow work:
-  let topic:
+  let topic =
     hello
   run action
   let reviewed = run action
@@ -208,6 +209,38 @@ service search:
         "service search:\n"
         "  This is syntactically valid even before service metadata is authored.\n"
     )
+
+
+def test_format_source_indents_cap_properties_and_content_local_blocks() -> None:
+    source = """
+service search:
+    description= Search docs.
+    protocol= http
+    target= https://example.com/mcp
+
+flow collect:
+    let note =
+        tools = literal content
+        run remains literal content
+""".strip()
+    expected = (
+        "service search:\n"
+        "  description = Search docs.\n"
+        "  protocol = http\n"
+        "  target = https://example.com/mcp\n"
+        "\n"
+        "flow collect:\n"
+        "  let note =\n"
+        "    tools = literal content\n"
+        "    run remains literal content\n"
+    )
+
+    assert format_source(source) == expected
+    assert format_source(expected) == expected
+    program = Program.from_source(expected)
+    statement = program.flows[0].stmts[0]
+    assert isinstance(statement, LetStmt)
+    assert statement.value == ("tools = literal content\nrun remains literal content")
 
 
 def test_format_source_formats_inline_job_headers() -> None:
@@ -618,8 +651,6 @@ service search  :
     Search documentation.
 
 prompt summarize:
-    params= topic,focus?
-
     Summarize {{topic}}.
 
 struct Result:
@@ -661,8 +692,6 @@ service search:
   Search documentation.
 
 prompt summarize:
-  params = topic,focus?
-
   Summarize {{topic}}.
 
 struct Result:

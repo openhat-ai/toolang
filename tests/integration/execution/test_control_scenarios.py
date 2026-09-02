@@ -337,7 +337,7 @@ agic pause(_: Text) -> Text:
 
 flow sequence(_: Text) -> Text:
   run pause
-  let note:
+  let note =
     checkpoint
   run pause
 """,
@@ -408,7 +408,7 @@ agic pause(_: Text) -> Text:
 
 flow sequence(_: Text) -> Text:
   run pause
-  let note:
+  let note =
     checkpoint
   run pause
 """,

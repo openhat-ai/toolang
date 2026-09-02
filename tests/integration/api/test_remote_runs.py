@@ -95,8 +95,6 @@ def test_authored_run_stream_resolves_fallback_policy_and_server_include(
         tmp_path,
         source="""
 prompt review:
-  params = focus
-
   {{focus}} {{_}}
 
 agic chat(_: Part[], tone: Text) -> Part[]:

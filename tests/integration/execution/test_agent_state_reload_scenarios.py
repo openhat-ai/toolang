@@ -73,7 +73,7 @@ agic child(_: Part[]) -> Part[]:
   context: none
   user: hello
 
-flow parent(_: Part[]):
+flow parent(_: Part[]) -> Part[][]:
   storm 2 child par 2
 """.lstrip()
 

@@ -494,10 +494,12 @@ agic caller(_: Text) -> Text:
   instruct: none
   user: {{_}}
 
-flow:
+flow -> Text:
   run caller
 """
-    reloaded_flow = initial_flow.replace("flow:", "flow outer(_: Text) -> Text:")
+    reloaded_flow = initial_flow.replace(
+        "flow -> Text:", "flow outer(_: Text) -> Text:"
+    )
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True, exist_ok=True)
     layout.program.write_text(source, encoding="utf-8")
@@ -774,7 +776,7 @@ agic parent(_: Text) -> Text:
   title: Text
 
 flow new_flow(_: Text, brief: Brief) -> Text:
-  let result:
+  let result =
     {{brief.title}} {{_}}
 """,
             encoding="utf-8",
@@ -837,12 +839,12 @@ agic parent(_: Text) -> Text:
   user: {{_}}
 
 flow target(_: Text) -> Text:
-  let result:
+  let result =
     completed {{_}}
 """
     reloaded_source = """
 flow target(_: Text) -> Text:
-  let result:
+  let result =
     completed {{_}}
 """
     layout = AgentLayout.resident(tmp_path, "alice")
@@ -996,7 +998,7 @@ agic parent(_: Text) -> Text:
   user: {{_}}
 
 flow child(_: Text) -> Text:
-  let result:
+  let result =
     completed {{_}}
 """,
         responses=(
@@ -1866,7 +1868,7 @@ agic middle(_: Text) -> Text:
   Middle {{_}}.
 
 flow deliver(_: Text) -> Text:
-  let result:
+  let result =
     delivered {{_}}
 """,
         responses=(

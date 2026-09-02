@@ -32,7 +32,7 @@ from toolang.execution.events import RunEvent, RunTracer, StepBegin
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.executor.common import BoundRun, Local, output_parts
 from toolang.execution.executor._persist import _PersistSink
-from toolang.execution.executor.prepare import prepare_agic
+from toolang.execution.executor.prepare import _recalls_history, prepare_agic
 from toolang.execution.history import RunHistory
 from toolang.execution.records import (
     StoredModelStepGiven,
@@ -50,7 +50,14 @@ from toolang.execution.types import (
     ModelStepNoted,
     Pointer,
 )
-from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
+from toolang.lang.ast import (
+    AgicDecl,
+    Directive,
+    Message as AstMessage,
+    Parameter,
+    Program,
+    Span,
+)
 from toolang.lang.input import resolve_runnable_input
 from toolang.plugin.toolsets.registry import tool_ref_for_model_tool
 from toolang.setup import (
@@ -190,6 +197,25 @@ def test_empty_structured_list_is_not_treated_as_empty_parts() -> None:
         TextPart("[]"),
     )
     assert output_parts(Local(value=(), shape="item", type_name="Part[]")) == ()
+
+
+def test_recall_values_map_to_current_history_only_when_near_is_selected() -> None:
+    for values, expected in [
+        ((), True),
+        (("auto",), True),
+        (("none",), False),
+        (("far",), False),
+        (("near",), True),
+        (("far", "near"), True),
+    ]:
+        directives = (
+            (Directive(name="recall", operator="=", values=values, span=Span(1)),)
+            if values
+            else ()
+        )
+        agic = AgicDecl(name="test", directives=directives, span=Span(1))
+
+        assert _recalls_history(agic) is expected
 
 
 def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:

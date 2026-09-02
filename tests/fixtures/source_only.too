@@ -7,8 +7,6 @@ service github:
   Use this service when the agent needs to inspect repositories and pull requests.
 
 prompt summarize:
-  params = style, audience?
-
   Summarize the request in a {{style}} style.
   Audience: {{audience}}
 

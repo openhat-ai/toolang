@@ -1,7 +1,7 @@
 import pytest
 
 from toolang.common.errors import ToolangError
-from toolang.common.template import render_text_template
+from toolang.common.template import render_text_template, template_root_names
 
 
 def test_render_text_template_supports_variables_sections_and_inverted_sections() -> (
@@ -56,6 +56,12 @@ def test_render_text_template_supports_sequence_indexes() -> None:
     )
 
     assert rendered == "fs read README.md utf-8"
+
+
+def test_template_root_names_follow_supported_reference_rules() -> None:
+    assert template_root_names(
+        "{{user-name}} {{#items}}{{items.name}}{{/items}} {{records.0}} {{_}} {{.}}"
+    ) == ("user-name", "items", "items", "records", "_")
 
 
 @pytest.mark.parametrize(
