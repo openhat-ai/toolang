@@ -89,7 +89,7 @@ class ChatRunPresenter:
         self._apply(
             self._projector.diagnostic(
                 "Live output may be incomplete after reconnecting; inspect the "
-                f"durable result with /show {detail.id}."
+                f"durable result with /output {detail.id}."
             ),
             app,
         )

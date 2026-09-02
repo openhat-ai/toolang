@@ -9,6 +9,11 @@ from typing import Any, Literal, TypeAlias, cast
 
 import click
 
+from toolang.cli.common.execution_progress.formatting import (
+    display_width,
+    truncate,
+    wrap_display,
+)
 from toolang.cli.common.model_selection import materialize_model_selection
 from toolang.base.types.model import ModelRequest
 from toolang.common.errors import ToolangError
@@ -20,7 +25,6 @@ from .input import QuickCommand
 from .policy import (
     materialize_runnable_list_ref,
     run_override_help_lines,
-    setting_slash_usage,
     validate_model_reasoning_request,
 )
 from .shortcuts import help_lines as shortcut_help_lines
@@ -28,6 +32,8 @@ from .tables import table_lines
 
 SlashOutcomeKind = Literal["success", "result", "usage", "error"]
 SlashArgument = Literal["none", "optional", "required"]
+SlashCategory = Literal["session", "inspection", "other"]
+HELP_DESCRIPTION_MIN_WIDTH = 12
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,13 +56,39 @@ class SlashTable:
 
 
 @dataclass(frozen=True, slots=True)
+class SlashHelpRow:
+    """One command entry in the main slash help."""
+
+    command: str
+    arguments: str
+    description: str
+    aliases: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class SlashHelpSection:
+    """One titled group in the main slash help."""
+
+    title: str
+    rows: tuple[SlashHelpRow, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SlashHelp:
+    """Structured main slash help with shared column widths."""
+
+    sections: tuple[SlashHelpSection, ...]
+    footer: str
+
+
+@dataclass(frozen=True, slots=True)
 class SlashRunResult:
-    """One durable result returned by `/show`."""
+    """One durable result returned by `/output`."""
 
     result: ChatResult
 
 
-SlashContent: TypeAlias = SlashText | SlashTable | SlashRunResult
+SlashContent: TypeAlias = SlashText | SlashTable | SlashHelp | SlashRunResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,19 +101,22 @@ class SlashOutcome:
 
 @dataclass(frozen=True, slots=True)
 class SlashCommand:
-    names: tuple[str, ...]
-    summary: str
+    name: str
+    arguments: str
+    description: str
     run: Callable[[AppContext, str, str], SlashOutcome | None]
-    usage: str = ""
+    aliases: tuple[str, ...] = ()
+    category: SlashCategory | None = None
     argument: SlashArgument = "optional"
+    focused_help: SlashText | None = None
 
     @property
-    def primary(self) -> str:
-        return self.names[0]
+    def names(self) -> tuple[str, ...]:
+        return (self.name, *self.aliases)
 
     @property
     def display_usage(self) -> str:
-        return self.usage or f"/{self.primary}"
+        return f"/{self.name}{f' {self.arguments}' if self.arguments else ''}"
 
 
 def handle(app: AppContext, quick: QuickCommand) -> SlashOutcome | None:
@@ -93,7 +128,11 @@ def handle(app: AppContext, quick: QuickCommand) -> SlashOutcome | None:
     if slash is None:
         raise KeyError(f"unregistered slash command: {command}")
     if slash.argument == "required" and not argument:
-        return _usage(slash)
+        return (
+            SlashOutcome("usage", slash.focused_help)
+            if slash.focused_help is not None
+            else _usage(slash)
+        )
     if slash.argument == "none" and argument:
         return error_outcome(f"/{command} does not accept an argument")
 
@@ -134,17 +173,24 @@ def outcome_lines(
 
     content = outcome.content
     if isinstance(content, SlashText):
-        return (content.summary, *content.details)
+        lines = (content.summary, *content.details)
+        return _wrapped_lines(lines, width=width)
+    if isinstance(content, SlashHelp):
+        return _help_lines(content, width=width)
     if isinstance(content, SlashTable):
+        indent = "  " if width is None or width >= 4 else ""
         lines = table_lines(
             content.headers,
             content.rows,
-            width=None if width is None else max(1, width - 2),
+            width=(None if width is None else max(1, width - display_width(indent))),
             shrink_order=content.shrink_order,
             protected_suffixes=content.protected_suffixes,
         )
-        return (content.summary, *(f"  {line}" for line in lines))
-    return (f"{content.result.run_id} result",)
+        return (
+            *_wrapped_lines((content.summary,), width=width),
+            *(_bounded_line(f"{indent}{line}", width=width) for line in lines),
+        )
+    return _wrapped_lines((f"{content.result.run_id} output",), width=width)
 
 
 def _usage(command: SlashCommand) -> SlashOutcome:
@@ -160,16 +206,32 @@ def _result(summary: str, *details: str) -> SlashOutcome:
 
 
 def _help(_app: AppContext, _command: str, _argument: str) -> SlashOutcome:
-    return _result(
-        "Slash commands act immediately.",
-        "Setting commands change defaults for future runs in this Chat session.",
-        "effort=auto inherits model or provider reasoning defaults.",
-        "",
-        "Submit one slash command by itself; it cannot be combined with run input.",
-        "See :? to change settings for one run only.",
-        "",
-        "Available commands:",
-        *_chat_help_lines(),
+    sections = tuple(
+        SlashHelpSection(
+            title,
+            tuple(
+                SlashHelpRow(
+                    f"/{slash.name}",
+                    slash.arguments,
+                    slash.description,
+                    tuple(f"/{alias}" for alias in slash.aliases),
+                )
+                for slash in SLASHES
+                if slash.category == category
+            ),
+        )
+        for category, title in (
+            ("session", "Session commands:"),
+            ("inspection", "Inspection commands:"),
+            ("other", "Other commands:"),
+        )
+    )
+    return SlashOutcome(
+        "result",
+        SlashHelp(
+            sections,
+            "To list one-run colon directives, type :?.",
+        ),
     )
 
 
@@ -306,78 +368,163 @@ def _setting(app: AppContext, command: str, argument: str) -> SlashOutcome:
 
 
 def _resources(app: AppContext, command: str, argument: str) -> SlashOutcome:
-    queries = (argument,) if argument else None
+    all_available, query = _resource_arguments(argument)
     client = app.get_client()
     if command == "models":
-        payload = client.list_models(queries)
-        items = _items(payload)
-        if not items:
-            return _result("No models found")
+        available, allowed, items = _select_resource_items(
+            client.list_models,
+            allowed_queries=app.get_setting().allow.models,
+            query=query,
+            all_available=all_available,
+            identity="ref",
+        )
+        summary = _resource_summary(
+            len(items),
+            len(available if all_available else allowed),
+            "model",
+            scope="available" if all_available else "allowed",
+            queried=query is not None,
+        )
+        headers = _with_allowed_header(
+            ("MODEL", "PRICE ($/1M)", "EFFORT"), enabled=all_available
+        )
+        if not items and not all_available:
+            return _result(summary)
         configured = app.get_setting().model
         default = configured.ref if configured is not None else None
         prices = _model_prices(items)
+        allowed_refs = _identity_set(allowed, "ref")
         rows = tuple(
-            (
-                f"{as_text(item.get('ref')) or '-'}"
-                f"{'*' if as_text(item.get('ref')) == default else ''}",
-                price,
-                _model_efforts(item),
+            _with_allowed_column(
+                (
+                    f"{as_text(item.get('ref')) or '-'}"
+                    f"{' *' if as_text(item.get('ref')) == default else ''}",
+                    price,
+                    _model_efforts(item),
+                ),
+                allowed=(as_text(item.get("ref")) or "") in allowed_refs,
+                enabled=all_available,
             )
             for item, price in zip(items, prices, strict=True)
         )
         return SlashOutcome(
             "result",
             SlashTable(
-                _found(len(rows), "model"),
-                ("MODEL", "PRICE ($/1M)", "EFFORT"),
+                summary,
+                headers,
                 rows,
-                shrink_order=(2, 0, 1),
-                protected_suffixes=("*", None, None),
+                shrink_order=(3, 0, 2, 1) if all_available else (2, 0, 1),
+                protected_suffixes=(" *",) + (None,) * (len(headers) - 1),
             ),
         )
     if command == "tools":
-        items = [
-            item
-            for item in _items(client.list_tools(queries))
-            if not (as_text(item.get("toolset")) or "").startswith("_")
-        ]
-        if not items:
-            return _result("No tools found")
+        available, allowed, items = _select_resource_items(
+            client.list_tools,
+            allowed_queries=app.get_setting().allow.tools,
+            query=query,
+            all_available=all_available,
+            identity="ref",
+            normalize=_visible_tools,
+        )
+        summary = _resource_summary(
+            len(items),
+            len(available if all_available else allowed),
+            "tool",
+            scope="available" if all_available else "allowed",
+            queried=query is not None,
+        )
+        headers = _with_allowed_header(("TOOL", "DESCRIPTION"), enabled=all_available)
+        if not items and not all_available:
+            return _result(summary)
+        allowed_refs = _identity_set(allowed, "ref")
         rows = tuple(
-            (
-                as_text(item.get("ref")) or "-",
-                as_text(item.get("description")) or "-",
+            _with_allowed_column(
+                (
+                    as_text(item.get("ref")) or "-",
+                    as_text(item.get("description")) or "-",
+                ),
+                allowed=(as_text(item.get("ref")) or "") in allowed_refs,
+                enabled=all_available,
             )
             for item in items
         )
         return SlashOutcome(
             "result",
             SlashTable(
-                _found(len(rows), "tool"),
-                ("TOOL", "DESCRIPTION"),
+                summary,
+                headers,
                 rows,
-                shrink_order=(1, 0),
+                shrink_order=(2, 0, 1) if all_available else (1, 0),
             ),
         )
-    items = _items(client.list_caps(None, queries))
-    if not items:
-        return _result("No caps found")
+    available, allowed, items = _select_cap_items(
+        app,
+        query=query,
+        all_available=all_available,
+    )
+    summary = _resource_summary(
+        len(items),
+        len(available if all_available else allowed),
+        "capability",
+        scope="available" if all_available else "allowed",
+        queried=query is not None,
+    )
+    headers = _with_allowed_header(
+        ("CAP", "SCOPE", "FORM", "DESCRIPTION"), enabled=all_available
+    )
+    if not items and not all_available:
+        return _result(summary)
+    allowed_identities = _identity_set(allowed, "identity")
     rows = tuple(
-        (
-            as_text(item.get("identity")) or "-",
-            as_text(item.get("scope")) or "-",
-            as_text(item.get("form")) or "-",
-            as_text(item.get("summary")) or "-",
+        _with_allowed_column(
+            (
+                as_text(item.get("identity")) or "-",
+                as_text(item.get("scope")) or "-",
+                as_text(item.get("form")) or "-",
+                as_text(item.get("summary")) or "-",
+            ),
+            allowed=(as_text(item.get("identity")) or "") in allowed_identities,
+            enabled=all_available,
         )
         for item in items
     )
     return SlashOutcome(
         "result",
         SlashTable(
-            _found(len(rows), "cap"),
-            ("CAP", "SCOPE", "FORM", "DESCRIPTION"),
+            summary,
+            headers,
             rows,
-            shrink_order=(3, 0, 1, 2),
+            shrink_order=(4, 0, 2, 3, 1) if all_available else (3, 0, 1, 2),
+        ),
+    )
+
+
+def _runnables(app: AppContext, command: str, _argument: str) -> SlashOutcome:
+    kind = command.removesuffix("s")
+    payload = app.get_client().list_runnables(kind)
+    items = _items(payload)
+    summary = _resource_summary(
+        len(items),
+        len(items),
+        kind,
+        scope="available",
+        queried=False,
+    )
+    if not items:
+        return _result(summary)
+    current = app.get_setting().runnable
+    rows = tuple(
+        (f"{name}{' *' if current == f'{kind}:{name}' else ''}",)
+        for item in items
+        for name in (as_text(item.get("name")) or "-",)
+    )
+    return SlashOutcome(
+        "result",
+        SlashTable(
+            summary,
+            (kind.upper(),),
+            rows,
+            protected_suffixes=(" *",),
         ),
     )
 
@@ -427,10 +574,10 @@ def _steer(app: AppContext, _command: str, argument: str) -> SlashOutcome:
     return _success("Steer accepted")
 
 
-def _show(app: AppContext, _command: str, argument: str) -> SlashOutcome:
+def _output(app: AppContext, _command: str, argument: str) -> SlashOutcome:
     tokens = argument.split()
     if len(tokens) > 1:
-        raise ValueError("/show accepts at most one run id")
+        raise ValueError("/output accepts at most one run id")
     run_id = tokens[0] if tokens else None
     result = app.get_client().get_result(
         run_id,
@@ -439,76 +586,459 @@ def _show(app: AppContext, _command: str, argument: str) -> SlashOutcome:
     return SlashOutcome("result", SlashRunResult(result))
 
 
+_MODEL_HELP = SlashText(
+    "/model [MODEL] [effort=VALUE]",
+    (
+        "",
+        "Set the session model or effort",
+        "",
+        "Examples:",
+        "  /model openai/gpt-5 effort=high",
+        "  /model openai/gpt-5",
+        "  /model effort=high",
+    ),
+)
+_RUNNABLE_HELP = SlashText(
+    "/runnable RUNNABLE",
+    (
+        "/agic     AGIC",
+        "/flow     FLOW",
+        "",
+        "Switch the session runnable",
+        "",
+        "Examples:",
+        "  /runnable flow:review",
+        "  /runnable agic:chat",
+        "  /runnable default",
+        "  /agic chat",
+        "  /flow review",
+    ),
+)
+_ALLOW_HELP = SlashText(
+    "/allow FIELD=QUERY...",
+    (
+        "",
+        "Set session resource ceilings",
+        "",
+        "Fields:",
+        "  models, tools, psyches, skills, services, prompts",
+        "",
+        "Examples:",
+        "  /allow models=openai/*",
+        "  /allow tools=shell/* skills=review*",
+        "  /allow models=none",
+    ),
+)
+_LIMIT_HELP = SlashText(
+    "/limit FIELD=VALUE...",
+    (
+        "",
+        "Set session run limits",
+        "",
+        "Fields:",
+        "  agic_model_calls, agic_tool_calls, tokens, cost, time",
+        "",
+        "Examples:",
+        "  /limit tokens=2000",
+        "  /limit time=120 cost=1.50",
+        "  /limit agic_model_calls=100 agic_tool_calls=50",
+    ),
+)
+
+
 SLASHES: tuple[SlashCommand, ...] = (
     SlashCommand(
-        ("model",),
+        "model",
+        "[MODEL] [effort=VALUE]",
         "Set the session model or effort",
         _model,
-        setting_slash_usage("model"),
-        "required",
+        category="session",
+        argument="required",
+        focused_help=_MODEL_HELP,
     ),
     SlashCommand(
-        ("agic",),
-        "Switch the session agic",
-        _runnable,
-        setting_slash_usage("agic"),
-        "required",
-    ),
-    SlashCommand(
-        ("flow",),
-        "Switch the session flow",
-        _runnable,
-        setting_slash_usage("flow"),
-        "required",
-    ),
-    SlashCommand(
-        ("runnable",),
+        "runnable",
+        "RUNNABLE",
         "Switch the session runnable",
         _runnable,
-        setting_slash_usage("runnable"),
-        "required",
+        category="session",
+        argument="required",
+        focused_help=_RUNNABLE_HELP,
     ),
     SlashCommand(
-        ("allow",),
+        "agic",
+        "AGIC",
+        "Switch the session agic",
+        _runnable,
+        category="session",
+        argument="required",
+        focused_help=_RUNNABLE_HELP,
+    ),
+    SlashCommand(
+        "flow",
+        "FLOW",
+        "Switch the session flow",
+        _runnable,
+        category="session",
+        argument="required",
+        focused_help=_RUNNABLE_HELP,
+    ),
+    SlashCommand(
+        "allow",
+        "FIELD=QUERY...",
         "Set session resource ceilings",
         _setting,
-        setting_slash_usage("allow"),
-        "required",
+        category="session",
+        argument="required",
+        focused_help=_ALLOW_HELP,
     ),
     SlashCommand(
-        ("limit",),
+        "limit",
+        "FIELD=VALUE...",
         "Set session run limits",
         _setting,
-        setting_slash_usage("limit"),
-        "required",
+        category="session",
+        argument="required",
+        focused_help=_LIMIT_HELP,
     ),
-    SlashCommand(("models",), "Find models", _resources, "/models [QUERY]"),
-    SlashCommand(("tools",), "Find tools", _resources, "/tools [QUERY]"),
-    SlashCommand(("caps",), "Find capabilities", _resources, "/caps [QUERY]"),
     SlashCommand(
-        ("queue", "q"),
+        "models",
+        "[-a] [QUERY]",
+        "List allowed models (-a: all available)",
+        _resources,
+        category="inspection",
+    ),
+    SlashCommand(
+        "tools",
+        "[-a] [QUERY]",
+        "List allowed tools (-a: all available)",
+        _resources,
+        category="inspection",
+    ),
+    SlashCommand(
+        "caps",
+        "[-a] [QUERY]",
+        "List allowed capabilities (-a: all available)",
+        _resources,
+        category="inspection",
+    ),
+    SlashCommand(
+        "agics",
+        "",
+        "List available agics",
+        _runnables,
+        category="inspection",
+        argument="none",
+    ),
+    SlashCommand(
+        "flows",
+        "",
+        "List available flows",
+        _runnables,
+        category="inspection",
+        argument="none",
+    ),
+    SlashCommand(
+        "output",
+        "[RUN]",
+        "Show output from the given or latest run",
+        _output,
+        aliases=("show",),
+        category="inspection",
+    ),
+    SlashCommand(
+        "queue",
+        "[ACTION]",
         "Inspect or edit queued submissions",
         _queue,
-        "/queue [ACTION]",
+        aliases=("q",),
     ),
     SlashCommand(
-        ("steer", "s"),
+        "steer",
+        "MESSAGE",
         "Steer the active run",
         _steer,
-        "/steer MESSAGE",
-        "required",
+        aliases=("s",),
+        argument="required",
     ),
-    SlashCommand(("show",), "Show a run result", _show, "/show [RUN_ID]"),
-    SlashCommand(("keys",), "Show keyboard shortcuts", _keys, "/keys", "none"),
-    SlashCommand(("help", "?"), "Show this help", _help, "/help, /?", "none"),
-    SlashCommand(("exit", "quit"), "Exit Chat", _exit, "/exit", "none"),
+    SlashCommand(
+        "help",
+        "",
+        "Show this help",
+        _help,
+        aliases=("?",),
+        category="other",
+        argument="none",
+    ),
+    SlashCommand(
+        "exit",
+        "",
+        "Exit Chat",
+        _exit,
+        aliases=("quit",),
+        category="other",
+        argument="none",
+    ),
+    SlashCommand(
+        "keys",
+        "",
+        "Show keyboard shortcuts",
+        _keys,
+        category="other",
+        argument="none",
+    ),
 )
 _SLASH_BY_NAME = {name: slash for slash in SLASHES for name in slash.names}
 
 
-def _chat_help_lines() -> list[str]:
-    width = max(len(slash.display_usage) for slash in SLASHES)
-    return [f"{slash.display_usage:<{width}}  {slash.summary}" for slash in SLASHES]
+def _resource_arguments(argument: str) -> tuple[bool, str | None]:
+    tokens = argument.strip().split(maxsplit=1)
+    if tokens and tokens[0] == "-a":
+        return True, tokens[1].strip() if len(tokens) == 2 else None
+    return False, argument.strip() or None
+
+
+def _select_resource_items(
+    fetch: Callable[[Sequence[str] | None], Mapping[str, Any]],
+    *,
+    allowed_queries: Sequence[str] | None,
+    query: str | None,
+    all_available: bool,
+    identity: str,
+    normalize: Callable[[Sequence[Mapping[str, Any]]], Sequence[Mapping[str, Any]]]
+    | None = None,
+) -> tuple[
+    tuple[Mapping[str, Any], ...],
+    tuple[Mapping[str, Any], ...],
+    tuple[Mapping[str, Any], ...],
+]:
+    normalize_items = normalize or tuple
+    available = (
+        tuple(normalize_items(_items(fetch(None))))
+        if all_available or allowed_queries is None
+        else ()
+    )
+    allowed = (
+        available
+        if allowed_queries is None
+        else tuple(normalize_items(_items(fetch(allowed_queries))))
+    )
+    base = available if all_available else allowed
+    if query is None:
+        return available, allowed, base
+    queried = tuple(normalize_items(_items(fetch((query,)))))
+    queried_identities = _identity_set(queried, identity)
+    return (
+        available,
+        allowed,
+        tuple(
+            item
+            for item in base
+            if (as_text(item.get(identity)) or "") in queried_identities
+        ),
+    )
+
+
+def _select_cap_items(
+    app: AppContext,
+    *,
+    query: str | None,
+    all_available: bool,
+) -> tuple[
+    tuple[Mapping[str, Any], ...],
+    tuple[Mapping[str, Any], ...],
+    tuple[Mapping[str, Any], ...],
+]:
+    client = app.get_client()
+    available = tuple(_items(client.list_caps()))
+    available_by_kind = {
+        kind: tuple(item for item in available if as_text(item.get("kind")) == kind)
+        for kind in ("psyche", "skill", "service", "prompt")
+    }
+    allowed_items: list[Mapping[str, Any]] = []
+    ceiling = app.get_setting().allow
+    for field, kind in (
+        ("psyches", "psyche"),
+        ("skills", "skill"),
+        ("services", "service"),
+        ("prompts", "prompt"),
+    ):
+        queries = getattr(ceiling, field)
+        if queries is None:
+            allowed_items.extend(available_by_kind[kind])
+        elif queries:
+            allowed_items.extend(_items(client.list_caps(kind, queries)))
+    allowed = tuple(allowed_items)
+    base = available if all_available else allowed
+    if query is None:
+        return available, allowed, base
+    queried_identities = _identity_set(
+        _items(client.list_caps(None, (query,))), "identity"
+    )
+    return (
+        available,
+        allowed,
+        tuple(
+            item
+            for item in base
+            if (as_text(item.get("identity")) or "") in queried_identities
+        ),
+    )
+
+
+def _identity_set(
+    items: Sequence[Mapping[str, Any]],
+    field: str,
+) -> frozenset[str]:
+    return frozenset(
+        identity for item in items if (identity := as_text(item.get(field))) is not None
+    )
+
+
+def _visible_tools(
+    items: Sequence[Mapping[str, Any]],
+) -> tuple[Mapping[str, Any], ...]:
+    return tuple(
+        item
+        for item in items
+        if not (as_text(item.get("toolset")) or "").startswith("_")
+    )
+
+
+def _with_allowed_header(
+    headers: tuple[str, ...],
+    *,
+    enabled: bool,
+) -> tuple[str, ...]:
+    return (headers[0], "ALLOWED", *headers[1:]) if enabled else headers
+
+
+def _with_allowed_column(
+    row: tuple[str, ...],
+    *,
+    allowed: bool,
+    enabled: bool,
+) -> tuple[str, ...]:
+    return (row[0], "yes" if allowed else "no", *row[1:]) if enabled else row
+
+
+def _resource_summary(
+    count: int,
+    total: int,
+    noun: str,
+    *,
+    scope: Literal["allowed", "available"],
+    queried: bool,
+) -> str:
+    subject = _plural(count, noun)
+    if queried:
+        return f"{count} {subject} matched out of {total} {scope}."
+    return f"{count} {subject} {scope}."
+
+
+def _help_lines(help_content: SlashHelp, *, width: int | None) -> tuple[str, ...]:
+    command_width, argument_width = help_column_widths(help_content)
+    lines: list[str] = []
+    for section_index, section in enumerate(help_content.sections):
+        if section_index:
+            lines.append("")
+        lines.extend((*_wrapped_lines((section.title,), width=width), ""))
+        for row in section.rows:
+            aliases = f" (alias: {', '.join(row.aliases)})" if row.aliases else ""
+            lines.extend(
+                _help_row_lines(
+                    row,
+                    aliases=aliases,
+                    command_width=command_width,
+                    argument_width=argument_width,
+                    width=width,
+                )
+            )
+    lines.extend(("", help_content.footer))
+    return tuple(lines[:-1]) + _wrapped_lines((lines[-1],), width=width)
+
+
+def _help_row_lines(
+    row: SlashHelpRow,
+    *,
+    aliases: str,
+    command_width: int,
+    argument_width: int,
+    width: int | None,
+) -> tuple[str, ...]:
+    prefix = f"  {row.command:<{command_width}}  {row.arguments:<{argument_width}}  "
+    description = f"{row.description}{aliases}"
+    if width is None:
+        return (f"{prefix}{description}",)
+    prefix_width = display_width(prefix)
+    if prefix_width + HELP_DESCRIPTION_MIN_WIDTH <= width:
+        wrapped = wrap_display(description, width - prefix_width)
+        return (
+            f"{prefix}{wrapped[0]}",
+            *(f"{' ' * prefix_width}{line}" for line in wrapped[1:]),
+        )
+    usage = _compact_help_usage_lines(row, width=width)
+    description_indent = "    " if width > 4 else ""
+    return (
+        *usage,
+        *(
+            f"{description_indent}{line}"
+            for line in wrap_display(
+                description,
+                max(1, width - display_width(description_indent)),
+            )
+        ),
+    )
+
+
+def help_column_widths(help_content: SlashHelp) -> tuple[int, int]:
+    """Return the global command and argument widths for main help."""
+
+    rows = tuple(row for section in help_content.sections for row in section.rows)
+    return (
+        max(display_width(row.command) for row in rows),
+        max(display_width(row.arguments) for row in rows),
+    )
+
+
+def _compact_help_usage_lines(
+    row: SlashHelpRow,
+    *,
+    width: int,
+) -> tuple[str, ...]:
+    command = f"  {row.command}"
+    if not row.arguments:
+        return _wrapped_lines((command,), width=width)
+    inline = f"{command}  {row.arguments}"
+    if display_width(inline) <= width:
+        return (inline,)
+    argument_indent = "    " if width > 4 else ""
+    return (
+        *_wrapped_lines((command,), width=width),
+        *(
+            f"{argument_indent}{line}"
+            for line in wrap_display(
+                row.arguments,
+                max(1, width - display_width(argument_indent)),
+            )
+        ),
+    )
+
+
+def _wrapped_lines(
+    lines: Sequence[str],
+    *,
+    width: int | None,
+) -> tuple[str, ...]:
+    if width is None:
+        return tuple(lines)
+    return tuple(
+        wrapped for line in lines for wrapped in wrap_display(line, max(1, width))
+    )
+
+
+def _bounded_line(line: str, *, width: int | None) -> str:
+    return line if width is None else truncate(line, max(1, width))
 
 
 def _chat_queue_help_lines() -> list[str]:
@@ -615,8 +1145,8 @@ def _model_efforts(item: Mapping[str, Any]) -> str:
 
 def _model_prices(items: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
     components = tuple(_model_price_components(item) for item in items)
-    input_width = max(6, *(len(input_value) for input_value, _ in components))
-    output_width = max(6, *(len(output_value) for _, output_value in components))
+    input_width = max((6, *(len(input_value) for input_value, _ in components)))
+    output_width = max((6, *(len(output_value) for _, output_value in components)))
     return tuple(
         f"{input_value.rjust(input_width)} / {output_value.rjust(output_width)}"
         for input_value, output_value in components
@@ -643,12 +1173,12 @@ def _price_component(value: object) -> str:
     return f"${number.rjust(5)}"
 
 
-def _found(count: int, noun: str) -> str:
-    return f"Found {count} {_plural(count, noun)}"
-
-
 def _plural(count: int, noun: str) -> str:
-    return noun if count == 1 else f"{noun}s"
+    if count == 1:
+        return noun
+    if noun.endswith("y"):
+        return f"{noun[:-1]}ies"
+    return f"{noun}s"
 
 
 def _resolve_runnable_command(

@@ -20,7 +20,8 @@ from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
-from rich.console import RenderableType
+from rich.console import Group, RenderableType
+from rich.text import Text
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
@@ -92,7 +93,10 @@ _BLOCKED_READ_ONLY_COMMANDS = frozenset(
         "models",
         "tools",
         "caps",
+        "agics",
+        "flows",
         "keys",
+        "output",
         "show",
         "exit",
         "quit",
@@ -248,6 +252,7 @@ class ChatTuiApp:
         self._status_completed_elapsed_seconds: int | None = None
         self._status_stop_handle: asyncio.TimerHandle | None = None
         self._footer_row_floor = 0
+        self.progress_max_width = progress_max_width
         self.presenter = ChatRunPresenter(max_width=progress_max_width)
         self.completer = ChatInputCompleter(
             resource_paths=(lambda: list(resource_paths)) if resource_paths else None
@@ -730,26 +735,32 @@ class ChatTuiApp:
         content = outcome.content
         if isinstance(content, slashes.SlashRunResult):
             result = content.result
-            self._stage_scrollback(
-                (
-                    blocks.SlashResultBlock(
-                        message=message,
-                        run_id=result.run_id,
-                        parts=result.output,
-                    ).render(),
-                )
-            )
-            return
-        renderable = (
-            blocks.SlashTableBlock(message, content).render()
-            if isinstance(content, slashes.SlashTable)
-            else blocks.SlashBlock(
+            renderable = blocks.SlashResultBlock(
+                message=message,
+                run_id=result.run_id,
+                parts=result.output,
+                max_width=self.progress_max_width,
+            ).render()
+        elif isinstance(content, slashes.SlashTable):
+            renderable = blocks.SlashTableBlock(
+                message,
+                content,
+                max_width=self.progress_max_width,
+            ).render()
+        elif isinstance(content, slashes.SlashHelp):
+            renderable = blocks.SlashHelpBlock(
+                message,
+                content,
+                max_width=self.progress_max_width,
+            ).render()
+        else:
+            renderable = blocks.SlashBlock(
                 message,
                 slashes.outcome_lines(outcome),
                 outcome.kind,
+                max_width=self.progress_max_width,
             ).render()
-        )
-        self._stage_scrollback((renderable,))
+        self._stage_scrollback((Group(renderable, Text("\n")),))
 
     def _handle_run_error(self, message: str) -> None:
         friendly = friendly_error(message)
@@ -898,6 +909,6 @@ def _blocked_input_allowed(value: object) -> bool:
         return False
     if value.name == "queue":
         return not (value.tail or "").strip()
-    if value.name in {"model", "agic", "flow", "runnable"}:
+    if value.name in {"model", "agic", "flow", "runnable", "allow", "limit"}:
         return value.tail is None
     return value.name in _BLOCKED_READ_ONLY_COMMANDS

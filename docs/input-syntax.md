@@ -130,50 +130,56 @@ Slash commands are terminal-chat interactions and must occupy the complete
 normalized submission:
 
 ```text
-/help                     /show [RUN_ID]
-/?                        /queue [ACTION]
-/model MODEL? effort=VALUE
-/steer MESSAGE
-/agic AGIC                /quit
-/flow FLOW                /exit
+/help                     /?                       /keys
+/model [MODEL] [effort=VALUE]
 /runnable RUNNABLE
+/agic AGIC                /flow FLOW
 /allow FIELD=QUERY...
 /limit FIELD=VALUE...
-/models [QUERY]           /tools [QUERY]
-/caps [QUERY]             /keys
+/models [-a] [QUERY]      /tools [-a] [QUERY]
+/caps [-a] [QUERY]
+/agics                    /flows
+/output [RUN]             /show [RUN]
+/queue [ACTION]           /steer MESSAGE
+/exit                     /quit
 :?
 ```
 
 Every setting body is required. Submitting bare `/model`, `/runnable`, `/agic`,
-`/flow`, `/allow`, or `/limit` neither lists values nor opens a picker. An
-editor completion popup may insert text into the draft, but selection never
-submits input or changes the session. A slash command cannot be combined with a
-colon override or runnable input.
+`/flow`, `/allow`, or `/limit` shows focused usage, purpose, and examples; it
+does not list values or open a picker. `/runnable`, `/agic`, and `/flow` share
+one focused help result. An editor completion popup may insert text into the
+draft, but selection never submits input or changes the session. A slash
+command cannot be combined with a colon override or runnable input.
 
-`/models`, `/tools`, and `/caps` inspect effective base resources. Their
-optional body is one collection query, including any spaces; it is not split
-into positional arguments. With no query they list the complete collection.
-`/caps` applies the query independently to psyches, skills, services, and
-prompts before combining the results.
+`/models`, `/tools`, and `/caps` inspect resources allowed by the current
+session. Their optional body is one collection query, including any spaces; it
+is intersected with the allowed collection rather than added to its allow
+queries. `-a` changes the base to all available resources and adds an `ALLOWED`
+column. `/caps` evaluates session ceilings independently for psyches, skills,
+services, and prompts before combining the results. `/agics` and `/flows` list
+all available runnables of their kind and do not accept a query.
 
 Every submitted slash command that keeps Chat open writes its outcome to
 scrollback. State changes use concrete confirmations such as `Model set to ...`
-or `Allowed 2 models`; read-only commands use summaries such as `Found 2
-models`. Missing required bodies use `Usage:` and command failures use `Error:`.
-Successful setting changes also refresh the status bar's current session
-values.
+or `Allowed 2 models`; resource summaries distinguish `allowed` from
+`available` and include the base count when a query is present. Missing
+required bodies use focused help and command failures use `Error:`. Successful
+setting changes also refresh the status bar's current session values.
 
 When the session's model ceiling changes, Chat preserves the complete current
 model request if it remains available. Otherwise it selects the configured
 default when present in the ordered result, then the first result. Only an empty
 model collection leaves the session model unset.
 
-`/?` explains slash commands, `:?` explains one-run overrides, and `/keys`
-lists Toolang-owned interactive shortcuts. These are submitted read-only
-interactions and remain in scrollback. A bare or unknown slash command and any
-rejected runnable submission remain editable in the input box; their diagnostic
-appears in the status bar. Known slash-command usage and errors are completed
-command outcomes, so they enter scrollback and clear the input.
+`/help` and its `/?` alias are the main input guide. They group session,
+inspection, and other commands, identify aliases, and direct users to `:?` for
+one-run colon directives. `/keys` lists Toolang-owned interactive shortcuts.
+These are submitted read-only interactions and remain in scrollback. A bare or
+unknown slash command and any rejected runnable submission remain editable in
+the input box; their diagnostic appears in the status bar. Known slash-command
+help and errors are completed command outcomes, so they enter scrollback and
+clear the input.
 
 Chat removes leading and trailing blank lines, then removes horizontal
 whitespace from the end of the final line. It preserves indentation on the

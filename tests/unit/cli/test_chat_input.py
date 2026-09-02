@@ -19,6 +19,7 @@ from toolang.lang.input import NamedInputSource, RunnableInputRaw, resolve_input
     ("source", "expected"),
     [
         ("/help", QuickCommand("help")),
+        ("/output run_1", QuickCommand("output", "run_1")),
         ("/show run_1", QuickCommand("show", "run_1")),
         ("/model", QuickCommand("model")),
         ("/model openai/gpt-5", QuickCommand("model", "openai/gpt-5")),
@@ -31,6 +32,9 @@ from toolang.lang.input import NamedInputSource, RunnableInputRaw, resolve_input
         ("/steer revise this", QuickCommand("steer", "revise this")),
         ("/steer", QuickCommand("steer")),
         ("/models", QuickCommand("models")),
+        ("/models -a openai/*", QuickCommand("models", "-a openai/*")),
+        ("/agics", QuickCommand("agics")),
+        ("/flows", QuickCommand("flows")),
         ("/review", QuickCommand("review")),
         ("/help unexpected", QuickCommand("help", "unexpected")),
         (":?", RunOverrideHelp()),

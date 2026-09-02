@@ -21,26 +21,34 @@ creates a run control and a run in an existing thread. A client creates the
 thread explicitly before the first run.
 
 Terminal interactions use complete slash commands such as `/help`, `/model`,
-`/runnable`, `/allow`, `/limit`, `/models`, `/tools`, `/caps`, `/show`,
-`/queue`, `/steer`, and `/keys`. Model, runnable, allow, and limit slash commands
-update `SessionSetting`; matching colon-prefixed lines form the one-run
-`RunOverride`. The plural resource commands query effective collections without
-changing the session. `/?` explains the immediate slash surface, while the
-special `:?` interaction explains leading run overrides without creating a
-run. Dollar-prefixed `Content` lines expand reusable prompts. See
+`/runnable`, `/allow`, `/limit`, `/models`, `/tools`, `/caps`, `/agics`,
+`/flows`, `/output`, `/queue`, `/steer`, and `/keys`. `/show` remains an alias
+for `/output`. Model, runnable, allow, and limit slash commands update
+`SessionSetting`; matching colon-prefixed lines form the one-run `RunOverride`.
+The plural resource commands inspect collections without changing the session.
+`/help` and `/?` are the main guide and direct users to the special `:?`
+interaction for leading run overrides. Dollar-prefixed `Content` lines expand
+reusable prompts. See
 [input-syntax.md](./input-syntax.md) for the namespace contract and
 [call-input.md](./call-input.md) for runnable and prompt Call Input forms.
 
 The three plural discovery commands produce compact, structured tables:
 
-- `/models [QUERY]` shows `MODEL`, `PRICE ($/1M)`, and `EFFORT`. The configured
-  session model has a trailing `*`; price is base input/output USD per million
+- `/models [-a] [QUERY]` shows `MODEL`, `PRICE ($/1M)`, and `EFFORT`. The current
+  session model has a trailing ` *`; price is base input/output USD per million
   tokens; advertised effort levels retain catalog order.
-- `/caps [QUERY]` shows `CAP`, `SCOPE`, `FORM`, and `DESCRIPTION`. Description
+- `/caps [-a] [QUERY]` shows `CAP`, `SCOPE`, `FORM`, and `DESCRIPTION`. Description
   display falls back from title metadata to description metadata and then the
   first content paragraph.
-- `/tools [QUERY]` shows `TOOL` and `DESCRIPTION`. Tools in a structured
+- `/tools [-a] [QUERY]` shows `TOOL` and `DESCRIPTION`. Tools in a structured
   toolset whose name starts with `_` are hidden from this display only.
+
+The default base is the current session-allowed collection. `-a` changes the
+base to all available resources and adds an `ALLOWED` column. A supplied query
+is intersected with the base; summaries state the displayed count and the
+allowed or available denominator. `/agics` and `/flows` use one-column tables
+to list every available item of that kind and mark the current runnable with
+the same ` *` suffix.
 
 Each result derives its own display-cell column widths. A neutral separator
 follows the header, every row remains one terminal line, and flexible cells use
@@ -258,7 +266,7 @@ Remote acceptance records the root run id before the first event so cancel and
 steer remain addressable. If an accepted stream disconnects, the TUI keeps the
 queue paused and polls durable run detail after 500 ms, 1 s, 2 s, and then every
 5 s. Terminal durable truth finalizes the run without inventing missed events
-and directs the user to `/show RUN_ID` for the complete output. An ambiguous
+and directs the user to `/output RUN_ID` for the complete output. An ambiguous
 pre-acceptance failure, missing accepted run, or invalid recovery identity
 blocks further submissions until Chat restarts; read-only commands and exit
 remain available. Chat never retries a submission or falls back to embedded

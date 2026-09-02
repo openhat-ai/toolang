@@ -50,6 +50,7 @@ from toolang.cli.toolang.commands.chat import (
     widgets,
 )
 from toolang.cli.toolang.commands.chat.policy import update_session_setting
+from toolang.cli.toolang.commands.chat.input import QuickCommand
 from toolang.cli.toolang.commands.chat.events import ChatUIEvent
 from toolang.cli.toolang.commands.chat.base import (
     ChatClient,
@@ -1795,7 +1796,7 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     assert "  Slash commands act immediately." in rendered
     assert "/model [MODEL]" in rendered
     assert "List or switch models." in rendered
-    assert rendered.endswith("\n")
+    assert not rendered.endswith("\n")
     command = next(segment for segment in segments if segment.text == "/model")
     argument = next(segment for segment in segments if segment.text == "[MODEL]")
     quick_accents = [
@@ -1842,15 +1843,52 @@ def test_chat_slash_summary_uses_two_space_indent_without_marker() -> None:
     assert summary == "  Model set to openai/gpt-5 · high"
 
 
+def test_chat_main_help_styles_structure_and_honors_maximum_width() -> None:
+    outcome = slashes.handle(None, QuickCommand("help"))  # type: ignore[arg-type]
+    assert outcome is not None
+    assert isinstance(outcome.content, slashes.SlashHelp)
+    block = blocks.SlashHelpBlock(
+        "/help",
+        outcome.content,
+        max_width=60,
+    )
+
+    rendered = _render_text(block.render(), width=100)
+    segments = rendering.render_segments(block.render(), width=100)
+    heading = next(
+        segment for segment in segments if segment.text == "Session commands:"
+    )
+    command = next(segment for segment in segments if segment.text == "/model")
+    argument = next(
+        segment for segment in segments if segment.text == "[MODEL] [effort=VALUE]"
+    )
+    alias = next(segment for segment in segments if "(alias: /show)" in segment.text)
+    narrow = _render_text(
+        blocks.SlashHelpBlock("/help", outcome.content, max_width=24).render(),
+        width=100,
+    )
+    narrow_words = " ".join(narrow.split())
+
+    assert all(get_cwidth(line) <= 60 for line in rendered.splitlines())
+    assert all(get_cwidth(line) <= 24 for line in narrow.splitlines())
+    assert "Set the session model or effort" in narrow_words
+    assert "all available" in narrow_words
+    assert "alias: /show" in narrow_words
+    assert heading.style is not None and heading.style.bold
+    assert command.style is not None and command.style.color is not None
+    assert argument.style is not None and argument.style.dim
+    assert alias.style is not None and alias.style.dim
+
+
 def test_chat_slash_table_uses_neutral_headers_and_one_line_rows() -> None:
     block = blocks.SlashTableBlock(
         "/models",
         slashes.SlashTable(
             "Found 1 model",
             ("MODEL", "PRICE ($/1M)", "EFFORT"),
-            (("openai/a-very-long-model*", "$ 1.25 / $10.00", "low, high"),),
+            (("openai/a-very-long-model *", "$ 1.25 / $10.00", "low, high"),),
             shrink_order=(2, 0, 1),
-            protected_suffixes=("*", None, None),
+            protected_suffixes=(" *", None, None),
         ),
     )
 
@@ -1864,7 +1902,7 @@ def test_chat_slash_table_uses_neutral_headers_and_one_line_rows() -> None:
 
     assert any("PRICE ($/1M)" in line and "EFFORT" in line for line in table_lines)
     assert any("─" in line for line in table_lines)
-    assert any(line.rstrip().endswith("*") or "*  " in line for line in table_lines)
+    assert any(line.rstrip().endswith(" *") or " *  " in line for line in table_lines)
     assert all(get_cwidth(line) <= 42 for line in table_lines)
     assert model_header.style is None or model_header.style.color is None
 
@@ -3095,7 +3133,7 @@ def test_chat_tui_recovers_from_durable_terminal_truth(
 
     output = "\n".join(rendered)
     assert "inspect the durable result" in output
-    assert "with /show run_remote" in output
+    assert "with /output run_remote" in output
     assert "run_remote" in output
     assert not app.run_in_flight.is_set()
     assert app.active_run_id is None
@@ -3139,7 +3177,7 @@ def test_chat_tui_blocks_mutating_input_after_ambiguous_acceptance(
     app.handle_submit("new call")
     app.handle_submit("/model test/model")
     app.handle_submit("/queue")
-    app.handle_submit("/show run_remote")
+    app.handle_submit("/output run_remote")
 
     assert app.submission_blocked == message
     assert [item.source for item in app.queue] == ["already queued"]
@@ -3184,7 +3222,8 @@ def test_chat_tui_bare_model_command_does_not_open_or_load_a_picker(
     app.handle_submit("/model")
 
     assert app.status_bar.error_message == ""
-    assert any("Usage: /model [MODEL] [effort=VALUE]" in value for value in rendered)
+    assert any("/model [MODEL] [effort=VALUE]" in value for value in rendered)
+    assert any("Set the session model or effort" in value for value in rendered)
     assert client.model_reads == initial_reads
 
 
@@ -3265,9 +3304,9 @@ def test_chat_tui_rejected_command_shaped_input_stays_editable_in_status(
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
-        ("/model", "Usage: /model [MODEL] [effort=VALUE]"),
+        ("/model", "/model [MODEL] [effort=VALUE]"),
         ("/help\nInput", "Error: quick command cannot be combined with other input"),
-        ("/?", "Slash commands act immediately."),
+        ("/?", "Session commands:"),
         (":?", "Run overrides change settings for this run only."),
         ("/keys", "These shortcuts control interactive Chat."),
     ],
@@ -3619,7 +3658,7 @@ def test_chat_tui_commits_slash_outcome_in_scrollback_transaction(
 
     def write_scrollback(renderables: Sequence[RenderableType | None]) -> None:
         assert len(renderables) == 1
-        assert "Usage: /model" in _render_text(renderables[0])
+        assert "/model [MODEL] [effort=VALUE]" in _render_text(renderables[0])
         order.append("write")
 
     monkeypatch.setattr(app, "_write_scrollback", write_scrollback)
@@ -3634,6 +3673,31 @@ def test_chat_tui_commits_slash_outcome_in_scrollback_transaction(
 
     assert order == ["erase:False", "write", "invalidate"]
     assert app._pending_scrollback == []
+
+
+def test_chat_tui_adds_one_trailing_gap_to_summary_only_usage(
+    monkeypatch: Any,
+) -> None:
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        setting=FakeClient().initial_setting(),
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    written: list[RenderableType | None] = []
+    monkeypatch.setattr(
+        tui.rendering,
+        "write_renderables",
+        lambda renderables: written.extend(renderables),
+    )
+
+    app.handle_submit("/steer")
+
+    assert len(written) == 1
+    rendered = _render_text(written[0])
+    assert rendered.endswith("\n\n")
+    assert not rendered.endswith("\n\n\n")
 
 
 def test_chat_tui_replaces_failed_model_live_state_in_scrollback_transaction(
@@ -3694,7 +3758,7 @@ def test_chat_tui_replaces_failed_model_live_state_in_scrollback_transaction(
     )
 
 
-def test_chat_tui_show_command_renders_durable_markdown(
+def test_chat_tui_output_command_renders_durable_markdown(
     monkeypatch: Any,
 ) -> None:
     app = tui.ChatTuiApp(
@@ -3711,12 +3775,12 @@ def test_chat_tui_show_command_renders_durable_markdown(
         lambda renderables: written.extend(renderables),
     )
 
-    app.handle_submit("/show run_saved")
+    app.handle_submit("/output run_saved")
 
     assert len(written) == 1
     rendered = _render_text(written[0])
     result_lines = [line.rstrip() for line in rendered.splitlines()]
-    divider = "• run_saved result "
+    divider = "• run_saved output "
     divider += "─" * (42 - len(divider))
     divider_index = result_lines.index(divider)
     assert result_lines[divider_index : divider_index + 3] == [
@@ -3733,7 +3797,7 @@ def test_chat_tui_show_command_renders_durable_markdown(
     ]
     marker = next(segment for segment in segments if segment.text == "•")
     caption = next(
-        segment for segment in segments if "run_saved result" in segment.text
+        segment for segment in segments if "run_saved output" in segment.text
     )
     rule = [segment for segment in segments if "─" in segment.text]
     response = next(segment for segment in segments if "durable result" in segment.text)
@@ -3745,12 +3809,12 @@ def test_chat_tui_show_command_renders_durable_markdown(
     assert response.style is None or not response.style.dim
 
 
-def test_chat_show_result_divider_truncates_without_wrapping(
+def test_chat_output_divider_truncates_without_wrapping(
     monkeypatch: Any,
 ) -> None:
     monkeypatch.setattr(rendering, "terminal_width", lambda: 24)
     block = blocks.SlashResultBlock(
-        message="/show run_saved_with_a_long_identifier",
+        message="/output run_saved_with_a_long_identifier",
         run_id="run_saved_with_a_long_identifier",
         parts=(TextPart("durable result"),),
         max_width=24,

@@ -48,7 +48,11 @@ from toolang.cli.common.agent_server import (
     AgentServerAcquisitionError,
     acquire_agent_server,
 )
-from toolang.cli.common.execution_progress.config import resolve_progress_max_width
+from toolang.cli.common.execution_progress.config import (
+    DEFAULT_MAX_PROGRESS_WIDTH,
+    resolve_progress_max_width,
+)
+from toolang.cli.common.execution_progress.formatting import wrap_display
 from toolang.cli.common.human_values import parts_response_text
 from toolang.cli.common.output import shorten_home_path
 from . import slashes as chat_slashes
@@ -143,6 +147,10 @@ def _chat_interactive(
                 client=client,
                 thread_id=thread_id,
                 setting=setting,
+                progress_max_width=user_call(
+                    resolve_progress_max_width,
+                    load_runtime_environ(context_layout(ctx), base_environ=os.environ),
+                ),
             )
             return
         _chat_interactive_prompt_toolkit(
@@ -330,9 +338,15 @@ def _chat_interactive_scripted_local(
     client: ChatClient,
     thread_id: str | None,
     setting: SessionSetting,
+    progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
 ) -> None:
     renderer = _ScriptedRunRenderer()
-    context = _ScriptedAppContext(client, setting=setting, thread_id=thread_id)
+    context = _ScriptedAppContext(
+        client,
+        setting=setting,
+        thread_id=thread_id,
+        progress_max_width=progress_max_width,
+    )
 
     def ensure_thread_id() -> str:
         existing = context.get_thread_id()
@@ -360,7 +374,10 @@ def _chat_interactive_scripted_local(
             if is_slash_input(source):
                 command = slash_command_name(source) or ""
                 if chat_slashes.is_registered(command):
-                    _echo_scripted_outcome(chat_slashes.error_outcome(str(exc)))
+                    _echo_scripted_outcome(
+                        chat_slashes.error_outcome(str(exc)),
+                        max_width=progress_max_width,
+                    )
                 else:
                     typer.echo(
                         chat_slashes.unrecognized_diagnostic(command),
@@ -384,12 +401,15 @@ def _chat_interactive_scripted_local(
                 continue
             outcome = chat_slashes.handle(context, chat_input)
             if outcome is not None:
-                _echo_scripted_outcome(outcome)
+                _echo_scripted_outcome(outcome, max_width=progress_max_width)
             if context.exit_requested:
                 return
             continue
         if isinstance(chat_input, RunOverrideHelp):
-            _echo_scripted_outcome(chat_slashes.run_override_help())
+            _echo_scripted_outcome(
+                chat_slashes.run_override_help(),
+                max_width=progress_max_width,
+            )
             continue
         if not is_runnable_input(chat_input):
             raise AssertionError("unknown chat input value")
@@ -422,13 +442,14 @@ class _ScriptedAppContext(AppContext):
         *,
         setting: SessionSetting,
         thread_id: str | None,
+        progress_max_width: int,
     ) -> None:
         self.client = client
         self.setting = setting
         self.thread_id = thread_id
         self.queue: list[QueuedCall] = []
         self.live_blocks: list[MutableBlock] = []
-        self.presenter = ChatRunPresenter()
+        self.presenter = ChatRunPresenter(max_width=progress_max_width)
         self.exit_requested = False
 
     def get_setting(self) -> SessionSetting:
@@ -485,15 +506,23 @@ class _ScriptedAppContext(AppContext):
         self.exit_requested = True
 
 
-def _echo_scripted_outcome(outcome: chat_slashes.SlashOutcome) -> None:
+def _echo_scripted_outcome(
+    outcome: chat_slashes.SlashOutcome,
+    *,
+    max_width: int,
+) -> None:
+    width = max(1, min(terminal_width(), max_width))
     content = outcome.content
     if isinstance(content, chat_slashes.SlashRunResult):
-        typer.echo(f"{content.result.run_id} result")
+        for line in wrap_display(f"{content.result.run_id} output", width):
+            typer.echo(line)
         text = parts_response_text(content.result.output)
         if text:
-            typer.echo(text)
+            for raw_line in text.splitlines() or [""]:
+                for line in wrap_display(raw_line, width):
+                    typer.echo(line)
         return
-    for line in chat_slashes.outcome_lines(outcome, width=terminal_width()):
+    for line in chat_slashes.outcome_lines(outcome, width=width):
         typer.echo(line, err=outcome.kind == "error")
 
 

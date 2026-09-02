@@ -237,8 +237,9 @@ def test_scripted_chat_projects_shared_slash_outcomes(
 
     output = capsys.readouterr().out
     assert "Model set to test/model · high" in output
-    assert "Usage: /model [MODEL] [effort=VALUE]" in output
-    assert "No models found" in output
+    assert "/model [MODEL] [effort=VALUE]" in output
+    assert "Set the session model or effort" in output
+    assert "0 models allowed." in output
     assert "Success:" not in output
     assert "Result:" not in output
     assert client.created == 0
@@ -267,14 +268,35 @@ def test_scripted_chat_projects_unrecognized_diagnostics_and_both_help_surfaces(
     assert "Unknown run override :missing · See :? for help" in captured.err
     assert "Run overrides change settings for this run only." in captured.out
     assert "These shortcuts control interactive Chat." in captured.out
-    assert "Slash commands act immediately." in captured.out
+    assert "Session commands:" in captured.out
+    assert "To list one-run colon directives, type :?." in captured.out
     assert "Available overrides:" in captured.out
     assert "Available shortcuts:" in captured.out
-    assert "Available commands:" in captured.out
+    assert "Inspection commands:" in captured.out
     assert "Chat Commands" not in captured.out
     assert "Run Overrides" not in captured.out
     assert "Chat shortcuts" not in captured.out
     assert client.created == 0
+
+
+def test_scripted_slash_help_honors_the_configured_maximum_width(
+    monkeypatch: Any,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = _Client()
+    inputs = iter(("/help", "/exit"))
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
+
+    chat._chat_interactive_scripted_local(
+        client=client,
+        thread_id=None,
+        setting=client.initial_setting(),
+        progress_max_width=48,
+    )
+
+    output = capsys.readouterr().out
+    assert "Session commands:" in output
+    assert all(len(line) <= 48 for line in output.splitlines())
 
 
 def test_scripted_chat_creates_one_thread_for_the_first_submission(
