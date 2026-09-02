@@ -12,7 +12,7 @@ from toolang.lang.errors import ToolangValidationError
 from toolang.lang import Program, to_data
 from toolang.lang.ast import LetStmt, RepeatStmt, ScatterStmt, SettleStmt
 from toolang.base.types.message import TextPart
-from toolang.lang.input import resolve_input_parts
+from toolang.lang.input import resolve_input_parts, resolve_input_parts_with_provenance
 from toolang.state.source import read_authored_source
 
 
@@ -214,13 +214,15 @@ def test_prompt_parameters_are_inferred_from_ordered_mustache_roots() -> None:
 prompt render:
   {{user.name}} {{#items}}{{items.title}}{{/items}}
   {{^empty}}{{empty}}{{/empty}} {{_}} {{user.email}} {{/closing}}
+  {{user-name}} {{records.0}} {{.}}
 """
     )
 
     prompt = program.caps[0]
     assert prompt.body == (
         "{{user.name}} {{#items}}{{items.title}}{{/items}}\n"
-        "{{^empty}}{{empty}}{{/empty}} {{_}} {{user.email}} {{/closing}}"
+        "{{^empty}}{{empty}}{{/empty}} {{_}} {{user.email}} {{/closing}}\n"
+        "{{user-name}} {{records.0}} {{.}}"
     )
     assert [
         (param.name, param.type_name, param.optional) for param in prompt.params
@@ -228,6 +230,8 @@ prompt render:
         ("user", "Text", False),
         ("items", "Text", False),
         ("empty", "Text", False),
+        ("user-name", "Text", False),
+        ("records", "Text", False),
     ]
 
 
@@ -446,6 +450,17 @@ flow expand(_: Text, topic: Text) -> Text[]:
         ("topic", "Text"),
         ("prepared", "Part[]"),
     ]
+
+
+def test_inline_scatter_applies_array_shape_to_the_default_item_output() -> None:
+    program = Program.from_source(
+        "flow expand:\n  scatter 2:\n    Return distinct pieces.\n"
+    )
+
+    statement = program.flows[0].stmts[0]
+    assert isinstance(statement, ScatterStmt)
+    generated = next(agic for agic in program.agics if agic.name == statement.runnable)
+    assert generated.output == "Part[][]"
 
 
 def test_inline_flow_evaluators_disable_recall_and_tools() -> None:
@@ -837,6 +852,22 @@ agic:
     assert expanded == (
         TextPart("Review src/app.py carefully.\nonly errors\n\n\nAlso inspect tests."),
     )
+
+
+def test_program_expands_hyphenated_prompt_parameters(tmp_path: Path) -> None:
+    root = _write_program(
+        tmp_path,
+        "prompt review:\n  Review {{focus-area}}.\n\nagic:\n  Respond directly.\n",
+    )
+    program = read_authored_source(root, "alice").load_program().parse()
+
+    resolution = resolve_input_parts_with_provenance(
+        "$review focus-area=security",
+        program=program,
+    )
+
+    assert resolution.parts == (TextPart("Review security."),)
+    assert resolution.prompts[0].arguments == (("focus-area", "security"),)
 
 
 def test_repo_program_fixtures_parse_cleanly() -> None:

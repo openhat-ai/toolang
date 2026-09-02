@@ -132,7 +132,7 @@ class PromptInvocation:
         if not self.name or not _PROMPT_NAME_RE.fullmatch(self.name):
             raise ValueError("prompt invocation requires a canonical name")
         names = tuple(name for name, _value in self.arguments)
-        if any(not _ARGUMENT_NAME_RE.fullmatch(name) for name in names):
+        if any(not _PROMPT_NAME_RE.fullmatch(name) for name in names):
             raise ValueError("prompt invocation arguments require canonical names")
         if len(names) != len(set(names)):
             raise ValueError("prompt invocation arguments must be unique")
@@ -643,14 +643,9 @@ def _expand_prompt_text(
             following,
             label=f"prompt ${prompt_name}",
         )
-        call_input = CallInput(
-            _=prompt_input,
-            named=tuple(
-                NamedInputSource(parameter.name, bindings[parameter.name])
-                for parameter in prompt.params
-            ),
-        )
-        prompt_bindings = {item.name: item.source for item in call_input.named}
+        prompt_bindings = {
+            parameter.name: bindings[parameter.name] for parameter in prompt.params
+        }
         invocations.append(
             PromptInvocation(
                 name=prompt_name,
@@ -661,7 +656,7 @@ def _expand_prompt_text(
             )
         )
 
-        prompt_text = call_input._ or ""
+        prompt_text = prompt_input or ""
         form = call.input_form or "primary"
         prompt_text = _prompt_text(
             prompt_text,

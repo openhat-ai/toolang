@@ -8,14 +8,12 @@ from typing import TypeVar, cast
 
 from tree_sitter import Node as CstNode
 
+from toolang.common.template import template_root_names
+
 from . import ast
 from .validate import _validate_cap_source
 
 _DECL_REF_RE = re.compile(r"^[A-Za-z_][\w-]*$")
-_TEMPLATE_LOCAL_RE = re.compile(
-    r"{{\s*(?P<sigil>[#^/]?)\s*(?P<root>[A-Za-z_][A-Za-z0-9_]*)"
-    r"(?:\.[A-Za-z_][\w-]*)*\s*}}"
-)
 _TRIVIA = {
     "blank_line",
     "comment_line",
@@ -614,8 +612,10 @@ class _Lowerer:
         agic = node.child_by_field_name("agic")
         if agic is None:
             raise RuntimeError(f"Missing runnable at line {self._line(node)}.")
-        declared_output = self._optional_text(agic.child_by_field_name("return"))
-        if array_output and declared_output is not None:
+        declared_output = (
+            self._optional_text(agic.child_by_field_name("return")) or "Part[]"
+        )
+        if array_output:
             declared_output = f"{declared_output}[]"
         return self._generated_agic(
             agic,
@@ -679,10 +679,7 @@ class _Lowerer:
         captured = list(params)
         names = {param.name for param in params}
         local_types = self._flow_local_types or {}
-        for match in _TEMPLATE_LOCAL_RE.finditer(body):
-            if match.group("sigil") == "/":
-                continue
-            name = match.group("root")
+        for name in template_root_names(body):
             if name == "_" or name in names or name not in local_types:
                 continue
             captured.append(
@@ -730,9 +727,8 @@ class _Lowerer:
     ) -> tuple[ast.Parameter, ...]:
         params: list[ast.Parameter] = []
         names: set[str] = set()
-        for match in _TEMPLATE_LOCAL_RE.finditer(body):
-            name = match.group("root")
-            if match.group("sigil") == "/" or name == "_" or name in names:
+        for name in template_root_names(body):
+            if name == "_" or name in names:
                 continue
             params.append(
                 ast.Parameter(
