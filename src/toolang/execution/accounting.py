@@ -148,13 +148,28 @@ def cache_hit_ratio(accounting: ModelAccounting | None) -> Decimal | None:
 
     if accounting is None or accounting.input_tokens <= 0:
         return None
-    meter = next(
-        (item for item in accounting.meters if item.name == "input.cache_read"),
-        None,
-    )
-    if meter is None:
+    quantity = token_meter_quantity(accounting, "input.cache_read")
+    if quantity is None:
         return None
-    return Decimal(meter.quantity) / Decimal(accounting.input_tokens)
+    return Decimal(quantity) / Decimal(accounting.input_tokens)
+
+
+def token_meter_quantity(
+    accounting: ModelAccounting | None,
+    name: str,
+) -> int | None:
+    """Return one unambiguous integral token meter, or ``None`` when unknown."""
+
+    if accounting is None:
+        return None
+    meters = tuple(meter for meter in accounting.meters if meter.name == name)
+    if len(meters) != 1:
+        return None
+    meter = meters[0]
+    quantity = Decimal(meter.quantity)
+    if meter.unit != "token" or quantity != quantity.to_integral_value():
+        return None
+    return int(quantity)
 
 
 def _selected_rates(

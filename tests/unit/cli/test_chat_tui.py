@@ -102,6 +102,7 @@ from toolang.execution.types import (
     ModelStepGiven,
     ModelStepNoted,
     ModelTokenCount,
+    ModelUsageMeter,
     Occurrence,
     OccurrencePosition,
     RunOverride,
@@ -585,8 +586,7 @@ def test_chat_root_footer_counts_child_runs_for_any_runnable_kind() -> None:
 
     assert "run_1 succeeded" in rendered
     assert "6 runs" in rendered
-    assert "8 model calls" in rendered
-    assert "2 tool calls" in rendered
+    assert "6 runs 8 models 2 tools" in rendered
     assert all(rendering.display_len(line) <= 72 for line in lines)
     assert all(not line.endswith("·") for line in lines)
     assert lines[0].startswith("∎ run_1")
@@ -637,6 +637,13 @@ def test_progress_marks_complete_zero_price_as_exact() -> None:
                             ),
                         ),
                     ),
+                    meters=(
+                        ModelUsageMeter(
+                            name="output.reasoning",
+                            quantity="0",
+                            unit="token",
+                        ),
+                    ),
                     selected="estimated",
                 )
             ),
@@ -644,25 +651,67 @@ def test_progress_marks_complete_zero_price_as_exact() -> None:
     )
 
     assert metrics.facts(include_runs=False) == [
-        "1 model call",
-        "↑3.8k ↓120 $0",
+        "1 model",
+        "↑3.8k ↓120(0)",
     ]
 
 
 @pytest.mark.parametrize(
-    ("amount", "expected"),
+    ("amount", "approximate", "expected"),
     [
-        ("0.030000", "$0.03"),
-        ("0.042137", "$0.042137"),
-        ("1.200000", "$1.2"),
+        ("0", False, ""),
+        ("0.030000", False, "$0.03"),
+        ("0.042137", False, "$0.04"),
+        ("1.200000", False, "$1.2"),
+        ("0.001276", False, "$0.0013"),
+        ("0.0000124", False, "<$0.0001"),
+        ("0.010762", True, "≈$0.01"),
+        ("0.0000124", True, "≲$0.0001"),
     ],
 )
-def test_progress_cost_omits_trailing_fractional_zeroes(
-    amount: str, expected: str
+def test_progress_cost_uses_adaptive_precision(
+    amount: str,
+    approximate: bool,
+    expected: str,
 ) -> None:
-    metrics = Metrics(cost=Decimal(amount), cost_known=True)
+    metrics = Metrics(
+        cost=Decimal(amount),
+        cost_known=True,
+        cost_approximate=approximate,
+    )
 
-    assert metrics.facts(include_runs=False) == [expected]
+    assert metrics.facts(include_runs=False) == ([expected] if expected else [])
+
+
+def test_progress_marks_partial_reasoning_as_a_lower_bound() -> None:
+    metrics = Metrics()
+    for accounting in (
+        ModelAccounting(
+            input_tokens=1000,
+            output_tokens=200,
+            meters=(
+                ModelUsageMeter(
+                    name="output.reasoning",
+                    quantity="150",
+                    unit="token",
+                ),
+            ),
+        ),
+        ModelAccounting(input_tokens=100, output_tokens=20),
+    ):
+        metrics.record_step(
+            StepEnd(
+                step=StepPath.parse(f"run_1.{metrics.model_calls}"),
+                kind="model",
+                status="succeeded",
+                noted=ModelStepNoted(accounting=accounting),
+            )
+        )
+
+    assert metrics.facts(include_runs=False) == [
+        "2 models",
+        "↑1.1k ↓220(150+)",
+    ]
 
 
 def test_chat_root_footer_keeps_short_facts_inline() -> None:

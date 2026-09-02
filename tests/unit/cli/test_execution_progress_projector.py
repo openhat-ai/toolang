@@ -109,7 +109,7 @@ def test_elapsed_normalizes_rounded_seconds_into_minutes() -> None:
             "2026-01-01T00:00:00Z",
             "2026-01-01T00:01:59.600Z",
         )
-        == "2m 00s"
+        == "2m00s"
     )
 
 
@@ -875,7 +875,7 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
     )
     assert _rows(wrapper.committed) == [
         [
-            "  2.0s · 1 run · 1 model call · ↑639 ↓215 ~$0.00149",
+            "  2.0s · 1 run 1 model · ↑639 ↓215 · ≈$0.0015",
             "",
         ]
     ]
@@ -1206,7 +1206,7 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries() -> None:
     assert _rows(completed.committed) == [
         [
             "• Completed 1 iteration without meeting the condition",
-            "  1 run · 1 model call",
+            "  1 run 1 model",
             "",
         ]
     ]
@@ -1376,7 +1376,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
             "             provider returned status 429",
             "",
             "• parallel step stopped because lane 0 (#4) failed",
-            "  2 runs · 1 model call · 1 tool call",
+            "  2 runs 1 model 1 tool",
             "",
         ]
     ]
@@ -1624,7 +1624,7 @@ def test_nested_cancellation_is_rendered_once_at_the_leaf() -> None:
         "[0] Expand the research question into diverse search queries",
         "",
         "• canceled",
-        "  2.0s · 1 run · 1 model call",
+        "  2.0s · 1 run 1 model",
         "",
         "• script interrupted",
     ]
@@ -1844,7 +1844,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
     assert _rows(terminal.committed) == [
         [
             "• Mapped all 2 items in parallel",
-            "  3 runs · 1 tool call",
+            "  3 runs 1 tool",
             "",
         ]
     ]

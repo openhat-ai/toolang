@@ -9,9 +9,10 @@ from toolang.execution.accounting import (
     cache_hit_ratio,
     selected_cost_is_approximate,
     selected_usd_cost,
+    token_meter_quantity,
 )
 from toolang.execution.records import step_noted_from_data, step_noted_to_data
-from toolang.execution.types import ModelStepNoted
+from toolang.execution.types import ModelAccounting, ModelStepNoted, ModelUsageMeter
 
 
 def test_accounting_prices_cache_and_reasoning_without_double_counting() -> None:
@@ -45,6 +46,32 @@ def test_accounting_prices_cache_and_reasoning_without_double_counting() -> None
         "output.visible",
     ]
     assert cache_hit_ratio(accounting) == Decimal("0.65")
+    assert token_meter_quantity(accounting, "output.reasoning") == 150
+
+
+def test_token_meter_quantity_treats_ambiguous_or_invalid_values_as_unknown() -> None:
+    duplicate = ModelAccounting(
+        input_tokens=0,
+        output_tokens=2,
+        meters=(
+            ModelUsageMeter("output.reasoning", "1", "token"),
+            ModelUsageMeter("output.reasoning", "1", "token"),
+        ),
+    )
+    fractional = ModelAccounting(
+        input_tokens=0,
+        output_tokens=1,
+        meters=(ModelUsageMeter("output.reasoning", "0.5", "token"),),
+    )
+    other_unit = ModelAccounting(
+        input_tokens=0,
+        output_tokens=1,
+        meters=(ModelUsageMeter("output.reasoning", "1", "request"),),
+    )
+
+    assert token_meter_quantity(duplicate, "output.reasoning") is None
+    assert token_meter_quantity(fractional, "output.reasoning") is None
+    assert token_meter_quantity(other_unit, "output.reasoning") is None
 
 
 def test_accounting_accepts_fractional_float_rates_from_effective_resources() -> None:

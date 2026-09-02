@@ -16,6 +16,7 @@ from toolang.execution.types import (
     ModelAccounting,
     ModelCost,
     ModelStepNoted,
+    ModelUsageMeter,
     Occurrence,
     OccurrencePosition,
     ControlRef,
@@ -272,6 +273,13 @@ def test_tree_aggregates_partial_accounting_without_inventing_values(
     accounting = ModelAccounting(
         input_tokens=10,
         output_tokens=4,
+        meters=(
+            ModelUsageMeter(
+                name="output.reasoning",
+                quantity="3",
+                unit="token",
+            ),
+        ),
         estimate=ModelCost(amount="0.025", currency="USD", complete=True),
         selected="estimated",
     )
@@ -293,11 +301,85 @@ def test_tree_aggregates_partial_accounting_without_inventing_values(
         "tool_calls": 0,
         "input_tokens": 10,
         "output_tokens": 4,
+        "reasoning_tokens": 3,
         "usage_complete": False,
+        "reasoning_complete": False,
         "cost_usd": "0.025",
         "cost_complete": False,
         "cost_approximate": True,
     }
+
+
+def test_tree_aggregates_exact_reasoning_through_nested_runs(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        root = project_run_start(
+            store,
+            run_id="run_reasoning_root",
+            thread_id="term_reasoning",
+            origin="test",
+            input=Message.user("Reasoning"),
+        )
+        parent = project_step(
+            store,
+            run_id=root.id,
+            step_index=0,
+            kind="run",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        child = project_run_start(
+            store,
+            run_id="run_reasoning_child",
+            thread_id=root.thread,
+            origin="test",
+            input=Message.user("Child"),
+            parent=parent.path,
+        )
+        model = project_step(
+            store,
+            run_id=child.id,
+            step_index=0,
+            kind="model",
+            status="succeeded",
+            input=(),
+            output=(TextPart("Done"),),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+        project_run_end(store, run_id=child.id)
+        project_run_end(store, run_id=root.id)
+        snapshot = store.load_execution_snapshot(root=root.id)
+    finally:
+        store.close()
+
+    accounting = ModelAccounting(
+        input_tokens=10,
+        output_tokens=4,
+        meters=(ModelUsageMeter("output.reasoning", "3", "token"),),
+    )
+    snapshot = replace(
+        snapshot,
+        steps=tuple(
+            replace(step, noted=ModelStepNoted(accounting=accounting))
+            if step.path == model.path
+            else step
+            for step in snapshot.steps
+        ),
+    )
+
+    tree = build_execution_tree(snapshot)
+    metrics = {
+        node.pointer: node.metrics
+        for node in tree.nodes
+        if node.pointer in {root.id, str(parent.path), child.id, str(model.path)}
+    }
+
+    assert all(item.reasoning_tokens == 3 for item in metrics.values())
+    assert all(item.reasoning_complete is True for item in metrics.values())
 
 
 def test_step_root_snapshot_ignores_external_parent_but_rejects_internal_orphan(
