@@ -28,6 +28,12 @@ def table_lines(
     )
     if any(len(row) != len(normalized_headers) for row in normalized_rows):
         raise ValueError("table rows must match the header column count")
+    suffixes = tuple(protected_suffixes) + (None,) * (
+        len(normalized_headers) - len(protected_suffixes)
+    )
+    minimum_widths = tuple(
+        max(1, display_width(suffix)) if suffix else 1 for suffix in suffixes
+    )
     preferred = [
         max(
             display_width(header),
@@ -38,11 +44,9 @@ def table_lines(
     widths = _fit_widths(
         preferred,
         header_widths=tuple(display_width(header) for header in normalized_headers),
+        minimum_widths=minimum_widths,
         width=width,
         shrink_order=shrink_order,
-    )
-    suffixes = tuple(protected_suffixes) + (None,) * (
-        len(normalized_headers) - len(protected_suffixes)
     )
     return (
         _row(normalized_headers, widths, suffixes=()),
@@ -55,6 +59,7 @@ def _fit_widths(
     preferred: Sequence[int],
     *,
     header_widths: Sequence[int],
+    minimum_widths: Sequence[int],
     width: int | None,
     shrink_order: Sequence[int],
 ) -> tuple[int, ...]:
@@ -62,7 +67,7 @@ def _fit_widths(
     if width is None:
         return tuple(widths)
     gaps = _COLUMN_GAP * max(0, len(widths) - 1)
-    target = max(len(widths) + gaps, width)
+    target = max(sum(minimum_widths) + gaps, width)
     overflow = max(0, sum(widths) + gaps - target)
     order = [
         *(index for index in shrink_order if 0 <= index < len(widths)),
@@ -70,7 +75,7 @@ def _fit_widths(
     ]
     for floors in (
         tuple(max(1, value) for value in header_widths),
-        (1,) * len(widths),
+        tuple(max(1, value) for value in minimum_widths),
     ):
         for index in order:
             reduction = min(max(0, widths[index] - floors[index]), overflow)

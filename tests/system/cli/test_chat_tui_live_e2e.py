@@ -76,7 +76,7 @@ def test_chat_tui_runs_with_real_deepseek_provider(
         assert "Traceback" not in output
 
         if kind == "flow":
-            session.send(b"/show\r")
+            session.send(b"/output\r")
             session.wait_for(response, timeout=30)
 
         session.send(b"\x04")

@@ -407,12 +407,13 @@ The footer owns total duration and whole-tree Run facts. Script does not append
 a separate `Run: RUN_ID` line. Errors before `RunBegin` are reported outside
 execution progress; later terminal errors belong to progress and its footer.
 
-## Reopened Chat Result Divider
+## Reopened Chat Output Divider
 
-The Chat TUI `/show` command introduces a durable result with a quiet divider:
+The Chat TUI `/output` command introduces durable run output with a quiet
+divider. `/show` is a compatibility alias:
 
 ```text
-• run_ma8hccd9 result ────────────────────
+• run_ma8hccd9 output ────────────────────
 
 • Result body rendered as Markdown.
 ```
@@ -503,5 +504,12 @@ through scrollback rendering. Their headers use normal terminal text and a dim
 `─` separator row. Each table derives widths from only that result, uses two
 spaces between columns and a two-space output indent, measures Unicode display
 cells, and keeps every header and data row on one physical line. Flexible cells
-are elided with `…` in command-specific order rather than wrapped. Scripted Chat
-uses the same layout with its current terminal width.
+are elided with `…` in command-specific order rather than wrapped. `-a` results
+add an `ALLOWED` column. The current model marker is the protected suffix ` *`.
+
+Every submitted slash control bar, help page, focused help result, resource
+table, and reopened run output uses the lesser of the terminal width and the
+configured progress maximum width. Prose wraps while table rows elide. Slash
+content owns no trailing blank rows; Chat adds exactly one scrollback separation
+row after the complete interaction. Scripted Chat applies the same maximum-width
+policy to its plain-text projection.

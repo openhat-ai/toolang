@@ -49,7 +49,7 @@ from .rendering import (
     bar,
     terminal_width,
 )
-from .slashes import SlashTable
+from .slashes import SlashHelp, SlashTable
 from .tables import table_lines
 
 _HEADER_MIN_WIDE_WIDTH = 69
@@ -109,38 +109,49 @@ def _control_bar_line(
     )
 
 
-def _control_bar_lines(message: str, *, accent: str) -> list[RenderableType]:
-    width = terminal_width()
-    content_width = max(1, width - 2)
+def _control_bar_lines(
+    message: str,
+    *,
+    accent: str,
+    width: int | None = None,
+) -> list[RenderableType]:
+    output_width = width or terminal_width()
+    content_width = max(1, output_width - 2)
     wrapped_lines = [
         wrapped_line
         for line in message.splitlines() or [""]
         for wrapped_line in wrap_display(line, content_width)
     ]
     lines: list[RenderableType] = [
-        _control_bar_line(line, accent=accent, width=width) for line in wrapped_lines
+        _control_bar_line(line, accent=accent, width=output_width)
+        for line in wrapped_lines
     ]
     padding_count = max(0, 3 - len(lines))
     top_padding_count = (padding_count + 1) // 2
     bottom_padding_count = padding_count - top_padding_count
     return [
         *(
-            _control_bar_line(accent=accent, width=width)
+            _control_bar_line(accent=accent, width=output_width)
             for _ in range(top_padding_count)
         ),
         *lines,
         *(
-            _control_bar_line(accent=accent, width=width)
+            _control_bar_line(accent=accent, width=output_width)
             for _ in range(bottom_padding_count)
         ),
     ]
 
 
-def _slash_control_lines(message: str) -> list[RenderableType]:
+def _slash_control_lines(
+    message: str,
+    *,
+    width: int | None = None,
+) -> list[RenderableType]:
     return [
         *_control_bar_lines(
             message,
             accent=QUICK_COMMAND_CONTROL_ACCENT,
+            width=width,
         ),
         Text(),
     ]
@@ -390,18 +401,25 @@ class SlashResultBlock:
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
 
     def render(self) -> RenderableType:
+        return self
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        width = max(1, min(options.max_width, self.max_width))
         response = AssistantResponseBlock.from_parts(
             self.parts,
             max_width=self.max_width,
         ).render()
         lines = [
-            *_slash_control_lines(self.message),
+            *_slash_control_lines(self.message, width=width),
             _SlashResultDivider(self.run_id, max_width=self.max_width),
         ]
         if response is not None:
             lines.extend([Text(), response])
-        lines.append(Text("\n"))
-        return Group(*lines)
+        yield from console.render(Group(*lines), options.update_width(width))
 
 
 @dataclass(frozen=True, slots=True)
@@ -417,7 +435,7 @@ class _SlashResultDivider:
         del console
         width = max(1, min(options.max_width, self.max_width))
         divider_width = min(width, RUN_DIVIDER_WIDTH)
-        caption = f"{self.run_id} result"
+        caption = f"{self.run_id} output"
         if divider_width < 5:
             divider = Text("•", style="dim")
             if divider_width > 1:
@@ -554,20 +572,36 @@ class SlashBlock:
     message: str
     body: Sequence[str]
     kind: Literal["success", "result", "usage", "error"] = "result"
+    max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
 
     def render(self) -> RenderableType:
-        lines = _slash_control_lines(self.message)
+        return self
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        width = max(1, min(options.max_width, self.max_width))
+        lines = _slash_control_lines(self.message, width=width)
         if self.body:
             first, *rest = self.body
             lines.append(self._summary_line(first))
-            lines.append(Text())
-            if rest and not rest[0].strip():
-                rest = rest[1:]
-            lines.extend(self._body_line(line) for line in rest)
-        lines.append(Text("\n"))
-        return Group(*lines)
+            if rest:
+                first_detail = rest[0]
+                if first_detail.strip() and not (
+                    first.lstrip().startswith(("/", ":"))
+                    and first_detail.lstrip().startswith(("/", ":"))
+                ):
+                    lines.append(Text())
+                lines.extend(self._body_line(line) for line in rest)
+        yield from console.render(Group(*lines), options.update_width(width))
 
     def _summary_line(self, line: str) -> Text:
+        if line.lstrip().startswith(("/", ":")):
+            return self._command_line(line)
+        if self._is_heading(line):
+            return self._heading_line(line)
         styles = {
             "success": "green",
             "result": "none",
@@ -582,21 +616,48 @@ class SlashBlock:
     def _body_line(line: str) -> Text:
         if not line.strip():
             return Text()
-        if line.startswith(("/", ":")):
+        if line.lstrip().startswith(("/", ":")):
             return SlashBlock._command_line(line)
+        if SlashBlock._is_heading(line):
+            return SlashBlock._heading_line(line)
         return Text.from_markup(f"[none]  {escape(line)}[/]")
 
     @staticmethod
     def _command_line(line: str) -> Text:
-        usage, _, summary = line.partition("  ")
+        stripped = line.lstrip()
+        leading = line[: len(line) - len(stripped)]
+        aligned_argument = re.fullmatch(
+            r"(?P<command>[/:]\S+)(?P<gap>\s{2,})(?P<argument>[A-Z][A-Z0-9_.=-]*)",
+            stripped,
+        )
+        if aligned_argument is not None:
+            text = Text(f"  {leading}")
+            text.append(aligned_argument.group("command"), style="cyan")
+            text.append(aligned_argument.group("gap"))
+            text.append(aligned_argument.group("argument"), style="dim")
+            return text
+        usage, _, summary = stripped.partition("  ")
         while summary.startswith(" "):
             summary = summary[1:]
-        text = Text("  ")
+        text = Text(f"  {leading}")
         SlashBlock._append_usage(text, usage)
         if summary:
             text.append(" " * max(2, 34 - text.cell_len))
             text.append(summary, style="none")
         return text
+
+    @staticmethod
+    def _is_heading(line: str) -> bool:
+        return line.strip() in {
+            "Examples:",
+            "Fields:",
+            "Available overrides:",
+            "Available shortcuts:",
+        }
+
+    @staticmethod
+    def _heading_line(line: str) -> Text:
+        return Text(f"  {line}", style="bold")
 
     @staticmethod
     def _append_usage(text: Text, usage: str) -> None:
@@ -624,17 +685,76 @@ class SlashTableBlock:
 
     message: str
     table: SlashTable
+    max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
 
     def render(self) -> RenderableType:
+        return self
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        width = max(1, min(options.max_width, self.max_width))
         summary = Text("  ")
         summary.append(self.table.summary)
-        return Group(
-            *_slash_control_lines(self.message),
-            summary,
-            Text(),
-            _SlashTableRows(self.table),
-            Text("\n"),
+        yield from console.render(
+            Group(
+                *_slash_control_lines(self.message, width=width),
+                summary,
+                Text(),
+                _SlashTableRows(self.table),
+            ),
+            options.update_width(width),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class SlashHelpBlock:
+    """Render the structured main slash help."""
+
+    message: str
+    help: SlashHelp
+    max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
+
+    def render(self) -> RenderableType:
+        return self
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        width = max(1, min(options.max_width, self.max_width))
+        rows = tuple(row for section in self.help.sections for row in section.rows)
+        command_width = max(display_width(row.command) for row in rows)
+        argument_width = max(display_width(row.arguments) for row in rows)
+        lines: list[RenderableType] = _slash_control_lines(
+            self.message,
+            width=width,
+        )
+        for section_index, section in enumerate(self.help.sections):
+            if section_index:
+                lines.append(Text())
+            lines.extend((Text(section.title, style="bold"), Text()))
+            table = Table.grid(padding=(0, 2), expand=False)
+            table.add_column(width=command_width + 2, no_wrap=True)
+            table.add_column(width=argument_width, no_wrap=True)
+            table.add_column()
+            for row in section.rows:
+                command = Text("  ")
+                command.append(row.command, style="cyan")
+                argument = Text(row.arguments, style="dim")
+                description = Text(row.description)
+                if row.aliases:
+                    description.append(
+                        f" (alias: {', '.join(row.aliases)})",
+                        style="dim",
+                    )
+                table.add_row(command, argument, description)
+            lines.append(table)
+        lines.extend((Text(), Text(self.help.footer)))
+        yield from console.render(Group(*lines), options.update_width(width))
 
 
 @dataclass(frozen=True, slots=True)
