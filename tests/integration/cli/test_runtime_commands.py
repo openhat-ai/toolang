@@ -51,7 +51,7 @@ def _startup_event(
         (["start", "--help"], ("--sandbox", "--allow", "--limit", "--default")),
         (
             ["chat", "alice", "--help"],
-            ("--sandbox", "--allow", "--limit", "--model", "--runnable"),
+            ("--sandbox", "--allow", "--limit", "--default"),
         ),
         (["retry", "alice", "--help"], ("--allow", "--limit")),
         (["rerun", "alice", "--help"], ("--allow", "--limit", "--model")),
@@ -74,13 +74,40 @@ def test_policy_options_follow_cli_display_order(
 
 
 def test_restart_commands_expose_only_valid_runtime_options() -> None:
+    chat = strip_ansi(runner.invoke(cli.app, ["chat", "alice", "--help"]).stdout)
     retry = strip_ansi(runner.invoke(cli.app, ["retry", "alice", "--help"]).stdout)
     rerun = strip_ansi(runner.invoke(cli.app, ["rerun", "alice", "--help"]).stdout)
 
+    assert "--default" in chat
+    assert re.search(r"--model(?![a-z-])", chat) is None
+    assert "--runnable" not in chat
     assert "--dev" in retry
     assert "--sandbox" not in retry
+    assert "--default" not in retry
     assert "--dev" in rerun
     assert "--sandbox" in rerun
+    assert "--default" not in rerun
+
+
+@pytest.mark.parametrize(
+    ("args", "option"),
+    (
+        (["alice", "chat", "--model", "test/model"], "--model"),
+        (["alice", "chat", "--runnable", "demo"], "--runnable"),
+        (["alice", "retry", "run_test", "--default", "model=test/model"], "--default"),
+        (["alice", "rerun", "run_test", "--default", "model=test/model"], "--default"),
+    ),
+)
+def test_session_and_run_commands_reject_wrong_lifetime_options(
+    args: list[str],
+    option: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = cli.main(args)
+    output = capsys.readouterr()
+
+    assert result == 2
+    assert f"No such option: {option}" in strip_ansi(output.err)
 
 
 def _create_agent(root: Path, name: str = "alice") -> AgentLayout:

@@ -46,25 +46,9 @@ def chat_command(
             help="Set FIELD=VALUE. Repeat for another field.",
         ),
     ] = None,
-    model: Annotated[
-        str | None,
-        typer.Option(
-            "--model",
-            help="Set the model identity and parameters for this session.",
-            metavar="MODEL_BODY",
-        ),
-    ] = None,
-    runnable: Annotated[
-        str | None,
-        typer.Option(
-            "--runnable",
-            help="Set the runnable for this session.",
-            metavar="RUNNABLE",
-        ),
-    ] = None,
     defaults: Annotated[
         list[str] | None,
-        typer.Option("--default", hidden=True),
+        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
     ] = None,
 ) -> None:
     from .main import chat_command as run
@@ -74,8 +58,6 @@ def chat_command(
         thread=thread,
         model_catalog=model_catalog,
         allows=allows,
-        model=model,
-        runnable=runnable,
         defaults=defaults,
         sandbox=sandbox,
         dev=dev,

@@ -298,8 +298,8 @@ configured model absent; Chat and Script surfaces use the first effective
 collection model as their runtime fallback. `unset` explicitly selects no
 model at the session or one-run layer for model-free execution.
 
-The same body is accepted by `TOOLANG_DEFAULT_MODEL`, startup
-`--default model=BODY`, Script/Chat/rerun `--model BODY`, `/model BODY`, and
+The same body is accepted by `TOOLANG_DEFAULT_MODEL`, Agent and Chat startup
+`--default model=BODY`, Script/rerun `--model BODY`, `/model BODY`, and
 `:model BODY`. Multi-token CLI and environment values must be shell-quoted.
 Configuration deliberately supports only the string form under `[default]`;
 there is no `[default.model]` table. Legacy `none` values in Setup default

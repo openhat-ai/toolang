@@ -17,7 +17,6 @@ from toolang.base.model_settings import parse_model_body
 from toolang.base.types.message import Message
 from toolang.base.types.model import ModelOverride
 from toolang.cli.common.policy import (
-    resolve_default_overrides,
     resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
@@ -131,21 +130,9 @@ def retry_command(
             help="Set FIELD=VALUE. Repeat for another field.",
         ),
     ] = None,
-    defaults: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--default",
-            hidden=True,
-        ),
-    ] = None,
 ) -> None:
     """Retry one terminal root run from a durable step boundary."""
 
-    if defaults:
-        raise click.BadParameter(
-            "retry preserves the persisted model",
-            param_hint="--default",
-        )
     layout = context_layout(ctx)
     with open_execution(ctx, required=True) as resources:
         if resources is None:  # pragma: no cover
@@ -213,10 +200,6 @@ def rerun_command(
             metavar="MODEL_BODY",
         ),
     ] = None,
-    defaults: Annotated[
-        list[str] | None,
-        typer.Option("--default", hidden=True),
-    ] = None,
 ) -> None:
     """Start a new root run from one terminal source invocation."""
 
@@ -229,7 +212,6 @@ def rerun_command(
     model_override = user_call(
         _rerun_model_override,
         model_body=model,
-        default_options=defaults,
     )
     result = _run_retry_or_rerun(
         layout=layout,
@@ -403,23 +385,8 @@ def _restart_commands(
 def _rerun_model_override(
     *,
     model_body: str | None,
-    default_options: list[str] | None,
 ) -> ModelOverride | None:
-    defaults = resolve_default_overrides({}, default_options)
-    if "runnable" in defaults:
-        raise ValueError("--default runnable does not apply to a persisted source run")
-    compatibility_model = defaults.get("model")
-    if compatibility_model is not None and not isinstance(
-        compatibility_model, ModelOverride
-    ):
-        raise TypeError("--default model must resolve to a model override")
-    if model_body is not None and compatibility_model is not None:
-        raise ValueError("--model cannot be combined with --default model=...")
-    if compatibility_model is not None:
-        typer.echo("warning: --default model=... is deprecated; use --model", err=True)
-    resolved = (
-        parse_model_body(model_body) if model_body is not None else compatibility_model
-    )
+    resolved = parse_model_body(model_body) if model_body is not None else None
     if resolved is not None and resolved.identity == "unset":
         raise ValueError("rerun --model does not accept unset")
     return resolved
