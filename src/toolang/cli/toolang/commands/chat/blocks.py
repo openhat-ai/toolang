@@ -49,7 +49,13 @@ from .rendering import (
     bar,
     terminal_width,
 )
-from .slashes import SlashHelp, SlashTable
+from .slashes import (
+    HELP_DESCRIPTION_MIN_WIDTH,
+    SlashHelp,
+    SlashHelpRow,
+    SlashTable,
+    help_column_widths,
+)
 from .tables import table_lines
 
 _HEADER_MIN_WIDE_WIDTH = 69
@@ -726,9 +732,9 @@ class SlashHelpBlock:
         options: ConsoleOptions,
     ) -> RenderResult:
         width = max(1, min(options.max_width, self.max_width))
-        rows = tuple(row for section in self.help.sections for row in section.rows)
-        command_width = max(display_width(row.command) for row in rows)
-        argument_width = max(display_width(row.arguments) for row in rows)
+        command_width, argument_width = help_column_widths(self.help)
+        aligned_prefix_width = command_width + argument_width + 6
+        aligned = aligned_prefix_width + HELP_DESCRIPTION_MIN_WIDTH <= width
         lines: list[RenderableType] = _slash_control_lines(
             self.message,
             width=width,
@@ -737,24 +743,89 @@ class SlashHelpBlock:
             if section_index:
                 lines.append(Text())
             lines.extend((Text(section.title, style="bold"), Text()))
-            table = Table.grid(padding=(0, 2), expand=False)
-            table.add_column(width=command_width + 2, no_wrap=True)
-            table.add_column(width=argument_width, no_wrap=True)
-            table.add_column()
-            for row in section.rows:
-                command = Text("  ")
-                command.append(row.command, style="cyan")
-                argument = Text(row.arguments, style="dim")
-                description = Text(row.description)
-                if row.aliases:
-                    description.append(
-                        f" (alias: {', '.join(row.aliases)})",
-                        style="dim",
+            if aligned:
+                table = Table.grid(padding=(0, 2), expand=False)
+                table.add_column(width=command_width + 2, no_wrap=True)
+                table.add_column(width=argument_width, no_wrap=True)
+                table.add_column(overflow="fold")
+                for row in section.rows:
+                    command = Text("  ")
+                    command.append(row.command, style="cyan")
+                    table.add_row(
+                        command,
+                        Text(row.arguments, style="dim"),
+                        _help_description(row),
                     )
-                table.add_row(command, argument, description)
-            lines.append(table)
+                lines.append(table)
+            else:
+                for row in section.rows:
+                    lines.extend(_compact_help_row(console, row, width=width))
         lines.extend((Text(), Text(self.help.footer)))
         yield from console.render(Group(*lines), options.update_width(width))
+
+
+def _compact_help_row(
+    console: Console,
+    row: SlashHelpRow,
+    *,
+    width: int,
+) -> list[Text]:
+    command = Text("  ")
+    command.append(row.command, style="cyan")
+    usage = command.copy()
+    if row.arguments:
+        usage.append("  ")
+        usage.append(row.arguments, style="dim")
+    lines: list[Text]
+    if usage.cell_len <= width:
+        lines = [usage]
+    else:
+        lines = [command]
+        lines.extend(
+            _indented_help_lines(
+                console,
+                Text(row.arguments, style="dim"),
+                width=width,
+            )
+        )
+    lines.extend(
+        _indented_help_lines(
+            console,
+            _help_description(row),
+            width=width,
+        )
+    )
+    return lines
+
+
+def _help_description(row: SlashHelpRow) -> Text:
+    description = Text(row.description)
+    if row.aliases:
+        description.append(
+            f" (alias: {', '.join(row.aliases)})",
+            style="dim",
+        )
+    return description
+
+
+def _indented_help_lines(
+    console: Console,
+    text: Text,
+    *,
+    width: int,
+) -> list[Text]:
+    indent_width = min(4, max(0, width - 1))
+    wrapped = text.wrap(
+        console,
+        max(1, width - indent_width),
+        overflow="fold",
+    )
+    lines: list[Text] = []
+    for line in wrapped:
+        rendered = Text(" " * indent_width)
+        rendered.append(line)
+        lines.append(rendered)
+    return lines
 
 
 @dataclass(frozen=True, slots=True)

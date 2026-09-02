@@ -356,12 +356,15 @@ def test_quick_help_and_exit_are_declarative_commands() -> None:
         "Other commands:",
         "",
         "  /help                              Show this help (alias: /?)",
-        "  /keys                              Show keyboard shortcuts",
         "  /exit                              Exit Chat (alias: /quit)",
+        "  /keys                              Show keyboard shortcuts",
         "",
         "To list one-run colon directives, type :?.",
     )
     assert not any("/queue" in line or "/steer" in line for line in help_lines)
+    assert all(
+        get_cwidth(line) <= 10 for line in slashes.outcome_lines(help_result, width=10)
+    )
     assert exit_result is None
     assert app.exited is True
 
@@ -991,8 +994,36 @@ def test_all_resource_tables_show_allowed_state_and_available_denominator() -> N
     assert tuple(row[1] for row in caps.content.rows) == ("yes", "no")
 
     narrow = slashes.outcome_lines(models, width=24)
-    assert all(get_cwidth(line) <= 24 for line in narrow)
     assert any(" *" in line for line in narrow)
+    assert any(line.startswith(" *") for line in slashes.outcome_lines(models, width=3))
+    for width in (1, 2, 10, 24):
+        assert all(
+            get_cwidth(line) <= width
+            for line in slashes.outcome_lines(models, width=width)
+        )
+
+
+@pytest.mark.parametrize(
+    ("command", "headers"),
+    [
+        ("models", ("MODEL", "ALLOWED", "PRICE ($/1M)", "EFFORT")),
+        ("tools", ("TOOL", "ALLOWED", "DESCRIPTION")),
+        ("caps", ("CAP", "ALLOWED", "SCOPE", "FORM", "DESCRIPTION")),
+    ],
+)
+def test_all_resource_tables_keep_allowed_column_without_matches(
+    command: str,
+    headers: tuple[str, ...],
+) -> None:
+    result = _outcome(slashes.handle(_App(), QuickCommand(command, "-a missing/*")))
+
+    assert isinstance(result.content, slashes.SlashTable)
+    assert result.content.summary.endswith("matched out of 2 available.")
+    assert result.content.headers == headers
+    assert result.content.rows == ()
+    lines = slashes.outcome_lines(result, width=60)
+    assert "ALLOWED" in lines[1]
+    assert len(lines) == 3
 
 
 def test_agics_and_flows_list_available_items_and_mark_the_current_kind() -> None:

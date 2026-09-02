@@ -82,8 +82,8 @@ Inspection commands:
 Other commands:
 
   /help                               Show this help (alias: /?)
-  /keys                               Show keyboard shortcuts
   /exit                               Exit Chat (alias: /quit)
+  /keys                               Show keyboard shortcuts
 
 To list one-run colon directives, type :?.
 ```
@@ -191,9 +191,10 @@ Likely files:
   ` *` at narrow widths.
 - `/output`, its latest-run form, and `/show` return a divider ending in
   ` output`.
-- TUI and scripted slash text fit configured narrow and wide maximums; tables
-  never wrap, Unicode display widths remain correct, and exact rendered output
-  has one trailing separation row.
+- TUI and scripted slash text fit configured narrow and wide maximums; narrow
+  help retains every command description and alias, tables never wrap, Unicode
+  display widths remain correct, and exact rendered output has one trailing
+  separation row.
 - The complete default verification suite passes offline.
 
 ## Risks

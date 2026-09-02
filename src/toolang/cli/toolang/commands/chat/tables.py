@@ -36,8 +36,10 @@ def table_lines(
     )
     preferred = [
         max(
-            display_width(header),
-            *(display_width(row[index]) for row in normalized_rows),
+            (
+                display_width(header),
+                *(display_width(row[index]) for row in normalized_rows),
+            )
         )
         for index, header in enumerate(normalized_headers)
     ]
@@ -48,11 +50,14 @@ def table_lines(
         width=width,
         shrink_order=shrink_order,
     )
-    return (
+    lines = (
         _row(normalized_headers, widths, suffixes=()),
         _separator(widths),
         *(_row(row, widths, suffixes=suffixes) for row in normalized_rows),
     )
+    if width is None:
+        return lines
+    return tuple(_truncate(line, width=max(1, width)) for line in lines)
 
 
 def _fit_widths(

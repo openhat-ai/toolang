@@ -1867,9 +1867,13 @@ def test_chat_main_help_styles_structure_and_honors_maximum_width() -> None:
         blocks.SlashHelpBlock("/help", outcome.content, max_width=24).render(),
         width=100,
     )
+    narrow_words = " ".join(narrow.split())
 
     assert all(get_cwidth(line) <= 60 for line in rendered.splitlines())
     assert all(get_cwidth(line) <= 24 for line in narrow.splitlines())
+    assert "Set the session model or effort" in narrow_words
+    assert "all available" in narrow_words
+    assert "alias: /show" in narrow_words
     assert heading.style is not None and heading.style.bold
     assert command.style is not None and command.style.color is not None
     assert argument.style is not None and argument.style.dim

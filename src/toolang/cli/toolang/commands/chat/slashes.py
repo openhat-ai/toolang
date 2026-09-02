@@ -9,7 +9,11 @@ from typing import Any, Literal, TypeAlias, cast
 
 import click
 
-from toolang.cli.common.execution_progress.formatting import display_width, wrap_display
+from toolang.cli.common.execution_progress.formatting import (
+    display_width,
+    truncate,
+    wrap_display,
+)
 from toolang.cli.common.model_selection import materialize_model_selection
 from toolang.base.types.model import ModelRequest
 from toolang.common.errors import ToolangError
@@ -29,6 +33,7 @@ from .tables import table_lines
 SlashOutcomeKind = Literal["success", "result", "usage", "error"]
 SlashArgument = Literal["none", "optional", "required"]
 SlashCategory = Literal["session", "inspection", "other"]
+HELP_DESCRIPTION_MIN_WIDTH = 12
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,16 +178,17 @@ def outcome_lines(
     if isinstance(content, SlashHelp):
         return _help_lines(content, width=width)
     if isinstance(content, SlashTable):
+        indent = "  " if width is None or width >= 4 else ""
         lines = table_lines(
             content.headers,
             content.rows,
-            width=None if width is None else max(1, width - 2),
+            width=(None if width is None else max(1, width - display_width(indent))),
             shrink_order=content.shrink_order,
             protected_suffixes=content.protected_suffixes,
         )
         return (
             *_wrapped_lines((content.summary,), width=width),
-            *(f"  {line}" for line in lines),
+            *(_bounded_line(f"{indent}{line}", width=width) for line in lines),
         )
     return _wrapped_lines((f"{content.result.run_id} output",), width=width)
 
@@ -379,7 +385,10 @@ def _resources(app: AppContext, command: str, argument: str) -> SlashOutcome:
             scope="available" if all_available else "allowed",
             queried=query is not None,
         )
-        if not items:
+        headers = _with_allowed_header(
+            ("MODEL", "PRICE ($/1M)", "EFFORT"), enabled=all_available
+        )
+        if not items and not all_available:
             return _result(summary)
         configured = app.get_setting().model
         default = configured.ref if configured is not None else None
@@ -397,9 +406,6 @@ def _resources(app: AppContext, command: str, argument: str) -> SlashOutcome:
                 enabled=all_available,
             )
             for item, price in zip(items, prices, strict=True)
-        )
-        headers = _with_allowed_header(
-            ("MODEL", "PRICE ($/1M)", "EFFORT"), enabled=all_available
         )
         return SlashOutcome(
             "result",
@@ -427,7 +433,8 @@ def _resources(app: AppContext, command: str, argument: str) -> SlashOutcome:
             scope="available" if all_available else "allowed",
             queried=query is not None,
         )
-        if not items:
+        headers = _with_allowed_header(("TOOL", "DESCRIPTION"), enabled=all_available)
+        if not items and not all_available:
             return _result(summary)
         allowed_refs = _identity_set(allowed, "ref")
         rows = tuple(
@@ -441,7 +448,6 @@ def _resources(app: AppContext, command: str, argument: str) -> SlashOutcome:
             )
             for item in items
         )
-        headers = _with_allowed_header(("TOOL", "DESCRIPTION"), enabled=all_available)
         return SlashOutcome(
             "result",
             SlashTable(
@@ -463,7 +469,10 @@ def _resources(app: AppContext, command: str, argument: str) -> SlashOutcome:
         scope="available" if all_available else "allowed",
         queried=query is not None,
     )
-    if not items:
+    headers = _with_allowed_header(
+        ("CAP", "SCOPE", "FORM", "DESCRIPTION"), enabled=all_available
+    )
+    if not items and not all_available:
         return _result(summary)
     allowed_identities = _identity_set(allowed, "identity")
     rows = tuple(
@@ -478,9 +487,6 @@ def _resources(app: AppContext, command: str, argument: str) -> SlashOutcome:
             enabled=all_available,
         )
         for item in items
-    )
-    headers = _with_allowed_header(
-        ("CAP", "SCOPE", "FORM", "DESCRIPTION"), enabled=all_available
     )
     return SlashOutcome(
         "result",
@@ -765,19 +771,19 @@ SLASHES: tuple[SlashCommand, ...] = (
         argument="none",
     ),
     SlashCommand(
-        "keys",
-        "",
-        "Show keyboard shortcuts",
-        _keys,
-        category="other",
-        argument="none",
-    ),
-    SlashCommand(
         "exit",
         "",
         "Exit Chat",
         _exit,
         aliases=("quit",),
+        category="other",
+        argument="none",
+    ),
+    SlashCommand(
+        "keys",
+        "",
+        "Show keyboard shortcuts",
+        _keys,
         category="other",
         argument="none",
     ),
@@ -931,14 +937,12 @@ def _resource_summary(
 
 
 def _help_lines(help_content: SlashHelp, *, width: int | None) -> tuple[str, ...]:
-    rows = tuple(row for section in help_content.sections for row in section.rows)
-    command_width = max(display_width(row.command) for row in rows)
-    argument_width = max(display_width(row.arguments) for row in rows)
+    command_width, argument_width = help_column_widths(help_content)
     lines: list[str] = []
     for section_index, section in enumerate(help_content.sections):
         if section_index:
             lines.append("")
-        lines.extend((section.title, ""))
+        lines.extend((*_wrapped_lines((section.title,), width=width), ""))
         for row in section.rows:
             aliases = f" (alias: {', '.join(row.aliases)})" if row.aliases else ""
             lines.extend(
@@ -967,23 +971,55 @@ def _help_row_lines(
     if width is None:
         return (f"{prefix}{description}",)
     prefix_width = display_width(prefix)
-    if prefix_width < width:
+    if prefix_width + HELP_DESCRIPTION_MIN_WIDTH <= width:
         wrapped = wrap_display(description, width - prefix_width)
         return (
             f"{prefix}{wrapped[0]}",
             *(f"{' ' * prefix_width}{line}" for line in wrapped[1:]),
         )
-    command = f"  {row.command}"
-    if row.arguments:
-        command = f"{command}  {row.arguments}"
+    usage = _compact_help_usage_lines(row, width=width)
     description_indent = "    " if width > 4 else ""
     return (
-        *_wrapped_lines((command,), width=width),
+        *usage,
         *(
             f"{description_indent}{line}"
             for line in wrap_display(
                 description,
                 max(1, width - display_width(description_indent)),
+            )
+        ),
+    )
+
+
+def help_column_widths(help_content: SlashHelp) -> tuple[int, int]:
+    """Return the global command and argument widths for main help."""
+
+    rows = tuple(row for section in help_content.sections for row in section.rows)
+    return (
+        max(display_width(row.command) for row in rows),
+        max(display_width(row.arguments) for row in rows),
+    )
+
+
+def _compact_help_usage_lines(
+    row: SlashHelpRow,
+    *,
+    width: int,
+) -> tuple[str, ...]:
+    command = f"  {row.command}"
+    if not row.arguments:
+        return _wrapped_lines((command,), width=width)
+    inline = f"{command}  {row.arguments}"
+    if display_width(inline) <= width:
+        return (inline,)
+    argument_indent = "    " if width > 4 else ""
+    return (
+        *_wrapped_lines((command,), width=width),
+        *(
+            f"{argument_indent}{line}"
+            for line in wrap_display(
+                row.arguments,
+                max(1, width - display_width(argument_indent)),
             )
         ),
     )
@@ -999,6 +1035,10 @@ def _wrapped_lines(
     return tuple(
         wrapped for line in lines for wrapped in wrap_display(line, max(1, width))
     )
+
+
+def _bounded_line(line: str, *, width: int | None) -> str:
+    return line if width is None else truncate(line, max(1, width))
 
 
 def _chat_queue_help_lines() -> list[str]:
@@ -1105,8 +1145,8 @@ def _model_efforts(item: Mapping[str, Any]) -> str:
 
 def _model_prices(items: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
     components = tuple(_model_price_components(item) for item in items)
-    input_width = max(6, *(len(input_value) for input_value, _ in components))
-    output_width = max(6, *(len(output_value) for _, output_value in components))
+    input_width = max((6, *(len(input_value) for input_value, _ in components)))
+    output_width = max((6, *(len(output_value) for _, output_value in components)))
     return tuple(
         f"{input_value.rjust(input_width)} / {output_value.rjust(output_width)}"
         for input_value, output_value in components
