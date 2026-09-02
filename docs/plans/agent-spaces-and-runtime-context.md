@@ -1,66 +1,229 @@
-# Define Agent Spaces and Runtime Context
+# Define Agent Spaces, Model Calls, and Compaction
 
 ## Status
 
 Approved for implementation in the phases below.
 
+## Terms
+
+- **protocol**: immutable Toolang developer instructions.
+- **instruct**: selected system instructions; `instruct = none` removes only
+  this layer.
+- **psyche**: resident behavior guidance, below protocol and instruct but above
+  workspace rules. The complete effective psyche is always in instructions.
+- **workspace rule**: path-scoped `AGENTS.md` content recalled before a tool may
+  access the matching workspace path.
+- **skill**: progressively disclosed guidance recalled by a model command.
+- **service**: an external service, its guidance, and its discovered tools.
+- **context**: current data with no instruction authority.
+- **prompt**: a content template expanded in place in an authored message.
+- **runspace**: the agent-owned `coop/` or `lab/` directory selected for a Run.
+- **workspace**: a named external directory authorized by the human.
+- **far**: compacted remote history, projected as at most one user message.
+- **near**: recent, role-preserving history selected by compaction.
+- **run**: the current Run's un-compacted messages, beginning with its resolved
+  input.
+- **line**: root-to-current-Run identities and resolved inputs. It is context
+  data, not a history partition.
+- **recall**: provision a complete rule, guidance, or runtime catalog body,
+  whether for the first time, after a change, or after compaction forgot it.
+- **support**: runtime-only provenance proving that a complete, current recalled
+  body is present in selected messages.
+
+Instruction authority is `protocol > instruct > psyche > workspace rule >
+skill/service guidance`. Context has no instruction authority. State concepts
+such as cap form, scope, origin, and host paths remain inspectable facts, not
+model vocabulary.
+
+Do not introduce generic `Space`, `RunAccess`, `RunWorkspace`, active/current
+workspace, focus, mutable Run cwd, or global loaded-content state.
+
 ## Goal
 
-Give agents durable collaboration and exploration directories, human-granted
-workspace access, and deterministic model context. Load workspace instructions
-only when a tool identifies the relevant path, without active workspaces,
-mutable run working directories, or persisted access snapshots.
+Provide agent-owned runspaces, human-authorized workspaces, a deterministic
+`ModelCall`, and budgeted history compaction. Runtime recall must ensure that a
+model sees the current workspace rules before its requested path operation
+executes, while skills and services remain explicit model choices.
 
 ## Success Criteria
 
-- Every agent home has preserved `coop/MEMO.md` and `lab/MEMO.md` files.
-- Every root run records one `coop | lab` runspace; descendants inherit it.
-- Humans manage named workspaces in agent `config.toml`, and the current State
-  publication exposes the effective mapping.
-- Tools access only the selected runspace and configured workspaces.
-- A path-aware tool executes only when its workspace instructions were visible
-  to the ModelCall that requested it.
-- Root, child, nested, and parallel runs receive deterministic `far`, `near`,
-  and `line` context.
-- Compaction may forget workspace instructions; a later path access reloads
-  them safely.
+- Every Run has one inherited `coop | lab` runspace, and State exposes all
+  human-configured workspaces without a new workspace domain model.
+- Every provider call comes from one inspectable canonical ModelCall whose
+  fixed content and active Run fit the total context budget.
+- V1 compaction deterministically selects complete recent groups into `near`,
+  always emits empty `far`, and never mutates the active Run.
+- Workspace operations execute only after current applicable rules are visible;
+  skill and service guidance is recalled explicitly and without duplication.
+- Compaction, parallel Runs, changed setup, and retry cannot bypass provenance,
+  path authorization, or exact historical inspection.
 
 ## Scope
 
 Included:
 
 - runspace layout, selection, inheritance, memo context, and persistence;
-- workspace configuration, CLI, State publication, and hosting;
-- explicit tool paths, access checks, and dynamic `AGENTS.md` loading;
-- `far`, `near`, `line`, compaction invariants, and exact ModelCalls;
-- retry, rerun, replay, inspection, legacy decoding, and offline tests.
+- workspace configuration, CLI, State publication, and filesystem access;
+- instruction layers, cap catalogs, directives, and canonical ModelCalls;
+- rule and guidance recall protocols;
+- a first compaction module with structured `near` and empty `far`;
+- `line`, child/parallel isolation, retry, inspection, and offline tests.
 
 Excluded:
 
-- plugin-owned `memory/` and memory behavior;
-- active workspaces or model-facing workspace tools;
-- mutable run cwd or parsing paths from arbitrary shell text;
-- compaction thresholds, summarization models, and summary quality;
-- initial Chat/TUI `@file` implementation; and
+- plugin-owned `memory/` behavior;
+- far summarization and memory recall behavior;
+- active workspaces, model-facing workspace management, or mutable Run cwd;
+- parsing paths from arbitrary shell command text;
+- initial Chat/TUI `@file` support; and
 - task, chore, or prompt `@file` expansion.
 
-## Vocabulary
+## ModelCall
 
-- **Runspace**: the agent-owned `coop` or `lab` directory selected for a run.
-- **Workspace**: a human-configured external directory the agent may access.
-- **Session cwd**: a future Chat/TUI setting used only for `@file` lookup.
-- **far**: compacted Thread prefix as `Part[]`.
-- **near**: uncompacted Thread suffix as `Message[]`.
-- **line**: root-to-current Run path as `Part[]`.
-- **Visible instructions**: complete instruction files in the exact ModelCall
-  that produced a tool call.
-- **Tool preparation**: path resolution, access checking, and instruction
-  loading before plugin invocation.
+The canonical model request has four model-visible parts:
 
-Do not introduce generic `Space`, `RunAccess`, `RunWorkspace`, active/current
-workspace, focus, mutable run cwd, or loaded-instruction state.
+```text
+ModelCall
+├── instructions
+├── messages
+│   ├── far
+│   ├── near
+│   └── run
+├── tools
+└── output_contract
+```
 
-## Runspaces and Notes
+The selected model target, continuation, provenance, digests, and budgets are
+supporting metadata. The provider wire format still receives one flattened
+message sequence:
+
+```text
+# far, when present
+user: {{far}}
+
+# near begins; native roles are preserved
+assistant: ...
+tool: ...
+user: ...
+assistant: ...
+# near ends
+
+# run begins
+user: <context>{{context}}</context>
+      {{user_input_with_expanded_prompts}}
+assistant: ...
+tool: ...
+user: <rule workspace="toolang" path="/execution">...</rule>
+```
+
+The comments above label partitions; they are not messages or wrapper text.
+`near` excludes the current Run. The Run partition grows across model, tool,
+and runtime-authored user messages and is never compacted while active. Tool
+results stay in native `tool` messages. Partitions are projections chosen by
+compaction, not the durable transcript format.
+
+### Instructions
+
+Instructions are ordered, escaped fragments:
+
+```text
+<protocol>
+{{stable_toolang_protocol}}
+</protocol>
+
+<instruct>
+{{selected_instruct}}
+</instruct>
+
+<psyche ref="behavior">
+{{complete_psyche}}
+</psyche>
+
+<skill-catalog>
+{{complete_skill_catalog}}
+</skill-catalog>
+
+<service-catalog>
+{{complete_service_catalog}}
+</service-catalog>
+```
+
+`<instruct>` is omitted for `none`; there may be multiple `<psyche>` fragments.
+Catalog bodies use compact canonical data containing only opaque `ref`, concise
+description, and recall call information. They do not expose cap form, scope,
+origin, metadata, or host paths. Catalogs are complete or ModelCall preparation
+fails; they are never silently truncated.
+
+Any psyche change rebuilds the complete instruction set and invalidates its
+cache prefix. Incremental psyche replacement is deferred.
+
+The protocol defines authority, tags, recall behavior, tool-result reuse, and
+route use. Volatile values such as Thread ID, agent home, program source,
+environment, runnable routes, and future model choices do not enter this stable
+prefix.
+
+Runtime data belongs in the current user message:
+
+```text
+user: <context>
+        {{context_data}}
+        <runnable-catalog>
+        {{authorized_runnable_routes}}
+        </runnable-catalog>
+      </context>
+      {{user_input_with_expanded_prompts}}
+```
+
+The runtime omits an unchanged catalog already supported by `near + run` and
+recalls the complete catalog when absent or stale. Future child-model catalogs
+use the same placement. User-authored lookalike tags never acquire runtime
+authority; provenance, not text parsing, establishes trust.
+
+### Canonical Guarantees
+
+- Provider options cannot override instructions, messages, tools, model, or
+  output contract after the canonical ModelCall is recorded.
+- A total context preflight accounts for instructions, messages, tool schemas,
+  media, output contract, and output/reasoning reserve.
+- Continuation reuse is bound to the relevant ModelCall prefix fingerprint;
+  changed instructions, tools, model, or output contract invalidate it.
+- Adapters project canonical instructions to the strongest supported provider
+  role and normalize tool errors consistently.
+- Persistence and inspection retain the exact canonical ModelCall and can show
+  fragment source, authority, size, digest, inclusion reason, and provider
+  projection with sensitive values redacted by default.
+- Prompt expansion uses strict variables. Unknown variables and malformed or
+  unescaped framing fail before a provider call.
+
+## Directives
+
+Directives support only `=`. A directive may appear at most once; `+=` and `-=`
+are invalid. Every selection intersects the effective ceiling and can never
+widen it. Omission selects the full ceiling for resource directives and no
+routes for routing directives; `none` selects an empty set.
+
+| Directive | ModelCall effect |
+| --- | --- |
+| `models` | Selects the model target; no message content in this version. |
+| `tools` | Selects `ModelCall.tools`. |
+| `psyches` | Selects resident `<psyche>` instruction fragments. |
+| `skills` | Selects `<skill-catalog>` entries and allowed skill recall. |
+| `services` | Selects `<service-catalog>` entries, service recall, and service tools. |
+| `prompts` | Limits prompt templates expanded in place in messages. |
+| `hands`, `handoffs` | Select authorized routes in runtime context. |
+| `recall` | Selects which historical `far` and `near` partitions are generated. |
+
+`recall` accepts `auto`, `none`, `far`, `near`, `memory`, or a combination of
+`far`, `near`, and `memory`. `auto` and `none` must stand alone; duplicates are
+invalid. Omission means `auto`.
+
+In the first version, `auto` and explicit `near` enable near history. `far` is
+always empty. `memory` is parsed, persisted, and inspectable but has no behavior.
+Therefore `far` alone or `memory` alone recalls no history. Recall policy never
+removes the active Run's required messages and does not disable rule or guidance
+recall.
+
+## Runspaces and Workspaces
 
 ```text
 agents/<agent>/
@@ -71,24 +234,18 @@ agents/<agent>/
   .runtime/
 ```
 
-`coop` is the default for collaboration; `lab` is for exploration.
+`coop` is the default collaboration runspace; `lab` is for exploration.
 Materialization creates missing directories and one-newline memo files,
-preserves existing bytes, and rejects conflicting file shapes. New, cloned,
-visiting, roaming, and upgraded agents use the same idempotent path. Clone
-copies `config.toml` unchanged and performs no workspace-specific work.
+preserves existing bytes, and rejects conflicting shapes. Clone copies
+`config.toml` unchanged and performs no workspace-specific work.
 
 Public call sites resolve a concrete runspace into `RunRequest`; core execution
-has no default. Descendants, retry, and rerun preserve it, and a run never
-switches runspace. Legacy preparation records decode as `coop`.
+has no default. Descendants, retry, and rerun preserve it, and a Run never
+switches runspace. Legacy records decode as `coop`. The selected bounded UTF-8
+`MEMO.md` is context data: collaboration notes in `coop`, exploration notes in
+`lab`. A future memory plugin exclusively owns `memory/`.
 
-The selected runspace is readable and writable. Its bounded UTF-8 `MEMO.md` is
-loaded as context data, independent of authored `instruct` and `context`.
-`coop/MEMO.md` contains collaboration notes; `lab/MEMO.md` contains exploration
-notes. A future memory plugin exclusively owns `memory/`.
-
-## Workspaces
-
-Only the agent-home config grants workspaces:
+The agent config grants named workspaces:
 
 ```toml
 [workspaces]
@@ -96,212 +253,237 @@ toolang = "/Users/alice/src/toolang"
 website = "/Users/alice/src/website"
 ```
 
-Names are stable 1-64 character ASCII identifiers; values are absolute paths.
-`add` canonicalizes an existing directory and rejects duplicate names,
-duplicate canonical paths, and nested roots. Loading copied config does not
-require paths to exist; availability is checked when listing or using them.
-
 ```text
 too <agent> workspace add PATH [--name NAME]
 too <agent> workspace list
 too <agent> workspace remove NAME
 ```
 
-`add` defaults to a valid directory basename. `list` reports name, path, and
-availability. `remove` changes only config and never deletes the directory.
-Commands preserve unrelated TOML and never duplicate metadata in `MEMO.md`.
+Names are stable ASCII identifiers. `add` canonicalizes an existing directory
+and rejects duplicate names, canonical paths, and nested roots. `list` reports
+name, path, and availability. `remove` changes only config. Commands preserve
+unrelated TOML and never duplicate workspace data in `MEMO.md`.
 
-Workspaces are a State-owned runtime resource, not durable Program content.
-`StatePublication.workspaces` is an immutable name-sorted `Mapping[str, str>`;
-no `Workspace` domain object is needed. Workspace-only config changes may
-refresh this publication without changing Program or cap content.
+State publishes an immutable, name-sorted `Mapping[str, str]`; no `Workspace`
+domain object is needed. Retry resolves access against the latest compatible
+State publication, so removing a workspace revokes future retry access without
+altering exact historical ModelCalls. No absolute-path access snapshot is
+persisted. Containers expose available workspaces at deterministic guest paths
+and require restart for mount changes.
 
-A root tree keeps its captured publication. Retry uses the latest compatible
-publication for the durable State revision, so removed workspaces cannot be
-recovered from an old absolute-path snapshot. Historical ModelCalls and tool
-calls remain exact evidence; no `RunAccess` is persisted.
+A future Chat/TUI session cwd may affect only human `@file` lookup and
+completion. It is not Run state, a tool default, an access grant, or a rule
+selector. Authored task/chore/prompt resources must stay below their owning
+package and reject absolute paths, parent traversal, and symlink escape.
 
-Local hosting publishes canonical host paths. Containers mount all configured,
-available workspaces at deterministic guest paths. A mount-changing update
-reports `restart required` and never widens a running container silently.
-
-## Session File Lookup
-
-Future Chat/TUI support may initialize `session.cwd` from the launch directory
-and modify it with local `/cd PATH` and `/pwd` commands. It affects only
-human-authored `@file` lookup and completion: it is not run state, a tool
-default, an access grant, or an instruction selector.
-
-Task, chore, and prompt input does not support `@file`. Future authored
-resources must remain below their owning package, such as
-`skills/NAME/assets/file`; absolute paths, parent traversal, and symlink escape
-are invalid.
-
-## Thread and Run Context
+## Filesystem Access and Rule Recall
 
 ```text
-thread context = far + near
+allowed roots = selected runspace + configured workspaces
 ```
 
-The two values have no overlap or gap. Compaction may replace a Thread prefix
-between root runs but never mutates an active root snapshot. Every descendant
-inherits that snapshot, so parallel behavior is timing-independent. Only
-public root interaction contributes to future Thread context; child messages,
-tool exchanges, repairs, and flow locals remain internal.
+Filesystem tools use explicit absolute paths; shell uses an explicit absolute
+`cwd` and opaque command text. A generic execution preflight canonicalizes every
+declared local path, rejects traversal and symlink escape, identifies one root,
+and authorizes it before plugin invocation. Sandboxing remains the boundary for
+paths hidden inside arbitrary process input.
 
-`line` contains the ordered root-to-current Run identities and resolved inputs.
-It excludes outputs, tools, siblings, and descendants. Children extend it,
-parallel branches diverge, and same-Run handoff does not extend it.
+Path-aware tools declare internal argument metadata such as
+`local_paths=("path",)`; this is absent from their model-facing schemas. The
+outer runtime implements preflight once. Plugins do not inspect messages,
+compaction, rules, or access state. Every local-path read or write tool and
+shell `cwd` uses preflight; tools without local path arguments do not.
+
+For a workspace target, preflight finds the `AGENTS.md` chain from workspace
+root to the target directory. A rule identity is `(workspace name, virtual
+path)`; the path is rooted at `/` inside that workspace. The current content
+digest selects its revision. The complete chain is recalled root-to-leaf, with
+deeper rules applying more specifically. Runspaces use `MEMO.md` and do not
+discover `AGENTS.md`.
+
+If every required revision is supported by `near + run`, the runtime invokes
+the plugin. Otherwise the whole tool-call batch is atomic: no plugin runs, every
+call receives an error result, and the runtime appends each missing complete
+rule as a separate user message:
 
 ```text
-agic messages = recalled messages + rendered messages + appended messages
+assistant: fs.read(...)
+tool: {"error":"operation not executed; retry required"}
+user: <rule workspace="toolang" path="/execution">
+      {{complete_rule}}
+      </rule>
+
+assistant: fs.read(...)
+tool: {{actual_result}}
 ```
 
-Root `recall = auto` recalls `far, near`; child `auto` recalls nothing. Explicit
-forms are `none`, `far`, `near`, and `far, near`. `line` is an explicit
-read-only local, never a recall source. A flow owns no model messages.
+The model retries or changes its action; the runtime never retries
+automatically. Multi-path calls recall the ordered union of rule chains.
+Invalid UTF-8 and oversized rules fail instead of becoming lossy summaries.
+When a visible source changes, its new complete revision is recalled by the
+same protocol. A watcher may append that recall before the next model call, but
+preflight remains the authoritative check for every requested operation.
 
-Each model step snapshots the agic messages into an exact normalized
-`ModelCall`. Instructions, messages, tools, output schema, and continuation
-remain independent. Provider continuation optimizations cannot change the
-logical request.
+## Guidance Recall
 
-## Tool Paths and Access
-
-Filesystem tools use explicit absolute paths. Shell execution requires an
-explicit absolute `cwd`; command text remains opaque. Neither uses
-`session.cwd` or mutable run state.
+Skills and services cannot be transparent to model reasoning. The model chooses
+an opaque catalog ref and calls the corresponding command:
 
 ```text
-allowed roots = selected runspace + captured StatePublication.workspaces
+assistant: skill.recall(ref="fastapi")
+tool: {"status":"recalled","ref":"fastapi"}
+user: <skill ref="fastapi">
+      {{complete_skill_guidance}}
+      </skill>
+
+assistant: service.recall(ref="github")
+tool: {"status":"recalled","ref":"github"}
+user: <service ref="github">
+      {{complete_service_guidance}}
+      </service>
 ```
 
-Preparation canonicalizes every declared path, rejects traversal and symlink
-escape, identifies one unique root, and authorizes before reading instructions.
-Sandboxing remains the security boundary for arbitrary process access.
+The command succeeds once its complete body is appended; it is not retried.
+Normal service calls still return service data in tool messages. Service tool
+schemas discovered by recall enter the next `ModelCall.tools`. A changed or
+forgotten body is recalled through the same command. If current support already
+exists in `near + run`, the command acknowledges it without appending a duplicate
+user message.
 
-The plugin system implements preparation once. A relevant tool only declares
-internal metadata such as `local_paths=("path",)` or
-`local_paths=("source", "destination")`; it does not inspect transcript or
-compaction state. This metadata is absent from the model-facing schema. The
-executor never guesses path arguments or parses shell commands.
+Internally, one tool completion may produce exactly one normal tool result and
+zero or more runtime-authored messages appended after it. This is an execution
+facility, not a plugin return convention: ordinary plugins still return one
+ordinary result, and no `_too_inject` field or recall-specific plugin logic is
+introduced.
 
-## Workspace Instructions
+## Compaction Module
 
-For each declared workspace path, preparation finds the `AGENTS.md` chain from
-workspace root to target directory. Files use their parent, directories use
-themselves, and new paths use the nearest existing parent. Runspaces use their
-memo and do not load `AGENTS.md`.
+`src/toolang/execution/compaction.py` is a pure execution module. It has no
+store, filesystem, watcher, cap, service, or plugin dependency. Compaction sees
+messages, costs, atomic grouping, and opaque support assertions; it does not
+parse XML or understand rule/skill/service semantics.
 
-The executor derives visible instructions from structured tool results in the
-exact source ModelCall. Identity is `(canonical path, complete-content digest)`.
-User text, summaries, path-only manifests, and incomplete content do not count.
-
-When all current digests are visible, preparation invokes the plugin with
-normalized paths. Otherwise it skips invocation and returns a successful
-ordinary tool result:
-
-```json
-{
-  "executed": false,
-  "retry": true,
-  "instructions": [
-    {
-      "path": "/repos/toolang/AGENTS.md",
-      "digest": "sha256:...",
-      "content": "..."
-    }
-  ]
-}
-```
-
-The model may retry or change its action; the executor never retries
-automatically. The data stays in `ToolResultPart.output`. No `_too` tool or
-field is added; `_too__*` remains reserved for inner runtime tool names.
-
-Read, list, search, glob, write, edit, move, copy, remove, and shell cwd use the
-same preparation. Multi-path tools load the ordered union of missing chains.
-Bounded invalid UTF-8 or oversized instructions fail instead of becoming an
-authoritative summary.
-
-## Compaction
+Its small public surface is:
 
 ```text
-exact ModelCall
--> complete assistant response
--> all correlated tool calls and results
--> optional compaction before the next ModelCall
+group_messages(messages, support) -> MessageGroup[]
+compact(groups, policy, history_budget) -> CompactionResult
+is_visible(support, identity, digest) -> bool
 ```
 
-Sibling tools use one visible-instruction snapshot. Compaction preserves whole
-assistant/tool groups and keeps the newest complete exchange uncompacted until
-a later successful ModelCall has seen it. This general rule protects newly
-loaded instructions without a pending-instruction record.
+- `group_messages` validates provider ordering and binds an assistant tool-call
+  message, every correlated tool result, and associated runtime-authored user
+  messages into an indivisible group.
+- `compact` selects historical groups and returns `far`, `near`, retained
+  support, and omitted cost/count diagnostics.
+- `is_visible` performs an exact generic support lookup. The runtime queries
+  the union of compaction support and active-Run support.
 
-Afterward, compaction may remove the exchange. A `far` summary does not make an
-instruction visible, so a later path access loads it again. No global
-`loaded_agents` state exists. Dynamic tool exchanges never enter a future root
-Thread snapshot.
+`MessageGroup`, `CompactionResult`, and support records belong in execution
+`types.py`; storage conversion remains in records/store code. Token costs come
+from the selected model's estimator and are inputs, not a provider dependency
+of compaction.
 
-## Persistence and Restart
+### First Algorithm
 
-`RunRequest`, `RunSpec`, bound runs, and root preparation controls carry the
-runspace. Children inherit it. Retry and rerun preserve it. Exact historical
-inspection reconstructs each ModelCall independently of current workspaces.
-Exact replay uses stored facts; new retry performs current path checks instead
-of reusing old absolute paths.
+1. The ModelCall builder resolves instructions, tools, output contract, output
+   reserve, and the exact active Run. If those fixed parts exceed the total
+   budget, preparation fails.
+2. Their cost is reserved. The remainder becomes `history_budget`.
+3. `group_messages` validates eligible durable history and its support.
+4. If near is enabled, `compact` walks backward from the newest group until the
+   next complete group cannot fit, then restores chronological order. Otherwise
+   near is empty.
+5. `far` is always empty. Older groups are omitted from the request but remain
+   in durable execution history and exact inspection.
+6. The builder flattens `far + near + run`, then performs a final total-budget
+   check before the provider call.
+
+No group is split or summarized. In particular, assistant/tool protocol groups
+and their runtime recall messages remain atomic. Support is retained only with
+the complete selected group that proves it. `far` never satisfies visibility.
+
+This deliberately allows forgetting: after a rule or guidance body leaves
+near, the next relevant preflight or model command recalls it again. Future far
+summarization may consume omitted history without changing the result shape or
+the rule that only structured `near + run` support proves visibility.
+
+## Run Trees and Persistence
+
+A root Run captures one historical compaction snapshot. Descendants use that
+snapshot plus their own Run messages and line; siblings never observe each
+other, so parallel execution is timing-independent. `line` excludes outputs,
+tools, siblings, and descendants. Same-Run handoff does not extend it.
+
+A completed public root Run's native message stream, including tool results and
+runtime recall messages, becomes eligible future Thread history. Child streams,
+flow locals, and sibling exchanges remain execution evidence unless their
+owning feature explicitly publishes them.
+
+Each model step persists its exact canonical ModelCall, result, compaction
+diagnostics, and structured support. Replay and inspection use stored facts.
+Retry builds a new ModelCall from durable Run state plus current setup, so it
+revalidates workspaces and rule revisions instead of reusing old access paths.
 
 ## Implementation Phases
 
-1. Publish configured workspaces through State and add workspace CLI commands.
-2. Carry runspace through requests, execution, controls, and inspection.
-3. Materialize runspaces and load the selected memo.
-4. Implement `far`, `near`, and `line`.
-5. Centralize declared local-path preparation and access checks.
-6. Load workspace instructions and enforce compaction invariants.
+1. Publish workspace configuration and CLI management through State.
+2. Carry runspace through requests, records, descendants, retry, and inspection;
+   materialize runspaces and provide the selected memo as context.
+3. Separate protocol, instruct, psyche, catalogs, context, and prompt expansion;
+   enforce directive and canonical ModelCall guarantees.
+4. Add compaction types/module, budgeted near selection, structured support,
+   persistence, and inspection. Keep far empty.
+5. Add generic local-path preflight and workspace rule recall.
+6. Add skill/service guidance recall and service-tool discovery integration.
 
 Each phase is an independently verifiable implementation pull request.
 
-## Touchpoints
+## Implementation Touchpoints
 
-- Layout, catalog, clone, hosting, and mounts: runspaces and workspaces.
-- State config, publication, watcher, and CLI: workspace management.
-- Execution schemas, calls, records, store, API, remote client, Chat, and
-  Script: runspace transport and persistence.
-- Executor preparation and model steps: memo, `far`, `near`, `line`, and
-  visible instructions.
-- Tool helpers, tool steps, filesystem, shell, and sandbox: path declaration,
-  preparation, and enforcement.
+- `setup`, `state`, `up`, and CLI config commands: runspace layout, workspace
+  publication, hosting, and mounts.
+- `base/types/run.py`, execution schemas/records/store, API, and clients:
+  runspace transport, canonical ModelCalls, support, persistence, and inspect.
+- `lang/validate.py` and generated language artifacts: directive grammar and
+  recall values.
+- `execution/executor/prepare.py`, new `execution/compaction.py`, and execution
+  `types.py`: assembly, budgeting, grouping, projection, and visibility.
+- execution tool dispatch, filesystem/shell plugins, and model adapters:
+  preflight, runtime messages, provider projection, and continuation safety.
 
-## Acceptance Tests
+## Design Validation and Acceptance Tests
 
-1. Materialization preserves both runspaces and memo contents for every agent
-   placement and clone/upgrade path.
-2. Workspace commands preserve unrelated TOML, validate identities and paths,
-   report unavailable copies, publish deterministic State resources, and never
-   delete workspace data.
-3. Active roots keep their workspace publication; compatible retry observes
-   the latest mapping.
-4. Every root caller supplies runspace; wire, controls, persistence,
-   inspection, descendants, retry, rerun, and legacy decoding preserve it.
-5. Only the selected memo loads, and notes never widen access.
-6. `far` and `near` have no overlap or gap; snapshots and branch-local `line`
-   are deterministic.
-7. Preparation covers all declared paths, roots, traversal, symlinks,
-   unavailable workspaces, and shell cwd before plugin invocation.
-8. Nested, changed, and compacted instructions load correctly; summaries and
-   user text never satisfy visibility.
-9. Tool groups remain provider-valid across compaction, siblings share one
-   snapshot, and exact ModelCalls remain inspectable.
-10. Local/container publication and the full offline verification suite pass.
+| Scenario | Required result |
+| --- | --- |
+| First ModelCall | Complete protocol, selected instruct/psyche/catalogs, current context/input, exact tools and output contract fit the total budget. |
+| `instruct = none` | Protocol, psyche, catalogs, tools, and output contract remain; only instruct is absent. |
+| Workspace read without visible rule | No call in the batch executes; tool errors request retry; complete applicable rules follow as runtime user messages. |
+| Retried workspace read | Current digests are supported by `near + run`; the plugin executes once. |
+| Nested or multi-path workspace call | The ordered union of applicable rule chains is recalled once, without host paths in model tags. |
+| Rule changes or leaves near | Old/missing support does not count; the complete current revision is recalled before execution. |
+| Skill/service use | The model selects a catalog ref; recall yields a tool acknowledgement plus a complete tagged user message; service tools appear on the next call. |
+| `recall = none`, `far`, or `memory` in V1 | Historical near is absent and far is empty; active Run messages and rule/guidance recall still work. |
+| Near budget cuts a tool exchange | The whole group is retained or omitted; roles, call/result correlation, and support remain valid. |
+| Child and parallel Runs | Each sees the captured history, its own run/line, and no sibling messages. |
+| Workspace removed before retry | Historical calls remain inspectable; the new attempt fails current authorization. |
+| Changed ModelCall prefix | Continuation is invalidated; stored canonical call and actual provider projection agree. |
+
+Acceptance tests cover these scenarios, strict directive/template validation,
+legacy `coop` decoding, exact persistence, redacted inspection, local/container
+path enforcement, and deterministic offline budget accounting.
 
 ## Risks
 
-- Workspace paths and memo content may expose sensitive local data in prompts,
-  records, and inspection.
-- Shell text cannot be path-prepared; sandboxing remains the security boundary.
-- State publication and container mounts have different refresh lifecycles.
-- Large instruction files require strict limits rather than lossy summaries.
+- Rules, memos, and tool results may expose sensitive local data in model calls
+  and records; inspection must redact by default.
+- Provider token estimators differ; reserve conservatively and fail closed after
+  final serialization checks.
+- Shell command text cannot be path-preflighted; sandboxing remains its security
+  boundary.
+- Empty far intentionally forgets old context in V1; callers needing continuity
+  must keep required facts in near/run or recall them from an authoritative
+  source.
 
 ## Open Questions
 
