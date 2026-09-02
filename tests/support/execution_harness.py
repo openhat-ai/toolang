@@ -417,6 +417,11 @@ class ExecutionHarness:
                 ),
                 runnable=runnable,
             ),
+            model_request=(
+                self.setup.defaults.model
+                if model is None and self.setup.defaults.model is not None
+                else None
+            ),
             limits=limits if limits is not None else self.setup.limits,
             ceilings=ceilings,
             input=resolve_runnable_input(

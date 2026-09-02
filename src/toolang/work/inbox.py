@@ -111,42 +111,12 @@ async def run(
                     )
                 setup = get_agent_setup()
                 state = get_agent_state()
-                runnable_ref = (
-                    "agic:file"
-                    if (
-                        (entry := state.runnables.get("file")) is not None
-                        and entry.kind == "agic"
-                    )
-                    else "agic:default"
-                )
-                runnable_name, runnable_kind = parse_runnable_ref(runnable_ref)
-                module, runnable = resolve_state_runnable(
-                    state,
-                    runnable_name,
-                    kind=runnable_kind,
-                )
                 handle = executor.run(
-                    RunSpec(
-                        setup=setup,
-                        state=state,
+                    _file_run_spec(
+                        setup,
+                        state,
                         thread=submission.record.thread_id,
-                        bindings=RunBindings(
-                            runnable=runnable_ref,
-                            model=(
-                                setup.defaults.model.ref
-                                if setup.defaults.model is not None
-                                else None
-                            ),
-                        ),
-                        limits=setup.limits,
-                        input=resolve_runnable_input(
-                            runnable,
-                            primary=submission.input.parts,
-                            structs={
-                                item.name: item
-                                for item in state.modules[module].structs
-                            },
-                        ),
+                        input=submission.input,
                     )
                 )
                 try:
@@ -178,6 +148,45 @@ async def run(
                 now=datetime.now(timezone.utc),
             )
         store.close()
+
+
+def _file_run_spec(
+    setup: AgentSetup,
+    state: AgentState | StatePublication,
+    *,
+    thread: str,
+    input: Message,
+) -> RunSpec:
+    """Build one file-triggered run from the current runtime snapshots."""
+
+    runnable_ref = (
+        "agic:file"
+        if ((entry := state.runnables.get("file")) is not None and entry.kind == "agic")
+        else "agic:default"
+    )
+    runnable_name, runnable_kind = parse_runnable_ref(runnable_ref)
+    module, runnable = resolve_state_runnable(
+        state,
+        runnable_name,
+        kind=runnable_kind,
+    )
+    model = setup.defaults.model
+    return RunSpec(
+        setup=setup,
+        state=state,
+        thread=thread,
+        bindings=RunBindings(
+            runnable=runnable_ref,
+            model=model.ref if model is not None else None,
+        ),
+        model_request=model,
+        limits=setup.limits,
+        input=resolve_runnable_input(
+            runnable,
+            primary=input.parts,
+            structs={item.name: item for item in state.modules[module].structs},
+        ),
+    )
 
 
 def collect_file_submissions(

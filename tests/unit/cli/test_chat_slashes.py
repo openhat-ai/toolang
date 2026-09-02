@@ -635,7 +635,7 @@ def test_model_reconciliation_prefers_the_available_configured_default() -> None
 
     assert preferred.model == ModelRequest("provider/default")
     assert first.model == ModelRequest("provider/first")
-    assert cleared_preference.model == ModelRequest("provider/first")
+    assert cleared_preference.model is None
     assert query_relative_default.model == ModelRequest("provider/default")
 
 
@@ -680,13 +680,20 @@ def test_default_model_uses_the_query_relative_fallback() -> None:
         runnable="agic:chat",
         allow=AgentCeiling(models=("openrouter/*",)),
     )
-    result = _outcome(slashes.handle(app, QuickCommand("model", "default")))
+    result = _outcome(slashes.handle(app, QuickCommand("model", "default effort=high")))
 
     assert result.kind == "success"
     assert slashes.outcome_lines(result) == (
-        "Model set to openrouter/openai/o3 · auto",
+        "Model set to openrouter/openai/o3 · high",
     )
-    assert app.setting.model == ModelRequest("openrouter/openai/o3")
+    assert app.setting.model == ModelRequest(
+        "openrouter/openai/o3",
+        ModelParameters(ReasoningParameters(effort="high")),
+    )
+    assert app.client.applied[-1].model == ModelOverride(
+        identity="default",
+        effort="high",
+    )
     assert app.status_refreshes == 1
 
 

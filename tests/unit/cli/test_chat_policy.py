@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from toolang.base.types.model import (
     ModelParameters,
     ModelRequest,
@@ -10,6 +12,7 @@ from toolang.base.types.model import (
 from toolang.base.types.policy import AgentCeiling, RunLimits, RunPolicy
 from toolang.cli.toolang.commands.chat.policy import (
     build_run_request,
+    reconcile_session_model,
     run_override_error,
     update_session_setting,
 )
@@ -107,6 +110,72 @@ def test_model_identity_change_clears_unmentioned_parameters() -> None:
     )
 
     assert changed.model == ModelRequest("anthropic/claude-sonnet-4.5")
+
+
+def test_model_reconciliation_applies_parameter_update_to_fallback() -> None:
+    surface = _surface()
+    update = RunOverride(
+        model=ModelOverride(effort="high"),
+        allow=(AllowOverride("models", ("anthropic/*",)),),
+    )
+    candidate = update_session_setting(
+        surface=surface,
+        current=surface,
+        update=update,
+    )
+
+    reconciled = reconcile_session_model(
+        candidate,
+        update,
+        allowed_refs=("anthropic/claude-sonnet-4.5",),
+        default_ref="anthropic/claude-sonnet-4.5",
+    )
+
+    assert reconciled.model == ModelRequest(
+        "anthropic/claude-sonnet-4.5",
+        ModelParameters(ReasoningParameters(effort="high")),
+    )
+
+
+def test_model_reconciliation_keeps_explicit_unset_model_free() -> None:
+    surface = _surface()
+    assert surface.model is not None
+    update = RunOverride(model=ModelOverride(identity="unset"))
+    candidate = update_session_setting(
+        surface=surface,
+        current=surface,
+        update=update,
+    )
+
+    reconciled = reconcile_session_model(
+        candidate,
+        update,
+        allowed_refs=(surface.model.ref,),
+        default_ref=surface.model.ref,
+    )
+
+    assert reconciled.model is None
+
+
+def test_model_reconciliation_rejects_parameters_without_fallback() -> None:
+    surface = _surface()
+    update = RunOverride(
+        model=ModelOverride(effort="high"),
+        allow=(AllowOverride("models", ()),),
+    )
+    candidate = update_session_setting(
+        surface=surface,
+        current=surface,
+        update=update,
+    )
+
+    with pytest.raises(ValueError, match="effort requires an effective model"):
+        reconcile_session_model(
+            candidate,
+            update,
+            allowed_refs=(),
+            default_ref=None,
+        )
 
 
 def test_input_local_effort_change_reuses_session_model_identity() -> None:

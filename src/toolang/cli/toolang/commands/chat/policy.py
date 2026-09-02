@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import cast
 
+from toolang.base.model_settings import apply_model_override
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunPolicy
 from toolang.execution.policy import (
@@ -154,6 +155,8 @@ def reconcile_session_model(
 ) -> SessionSetting:
     """Keep one selected model coherent with the candidate session ceiling."""
 
+    if update.model is not None and update.model.identity == "unset":
+        return replace(setting, model=None)
     model = setting.model
     allowed = frozenset(allowed_refs)
     if model is not None and model.ref in allowed:
@@ -170,13 +173,18 @@ def reconcile_session_model(
     if not can_fallback:
         ref = model.ref if model is not None else "none"
         raise ValueError(f"session model is outside allow.models: {ref}")
-    clears_preference = update.model is not None and update.model.identity == "unset"
-    fallback = default_ref if not clears_preference and default_ref in allowed else None
+    fallback = default_ref if default_ref in allowed else None
     if fallback is None and allowed_refs:
         fallback = allowed_refs[0]
+    fallback_model = ModelRequest(fallback) if fallback is not None else None
+    fallback_model = apply_model_override(
+        fallback_model,
+        fallback_model,
+        update.model,
+    )
     return replace(
         setting,
-        model=ModelRequest(fallback) if fallback is not None else None,
+        model=fallback_model,
     )
 
 
