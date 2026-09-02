@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-import pytest
-
 from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelTarget, Provider
 from toolang.base.types.run import ModelUsage
 from toolang.execution.accounting import (
@@ -51,7 +49,7 @@ def test_accounting_prices_cache_and_reasoning_without_double_counting() -> None
     assert token_meter_quantity(accounting, "output.reasoning") == 150
 
 
-def test_token_meter_quantity_rejects_ambiguous_or_non_integral_values() -> None:
+def test_token_meter_quantity_treats_ambiguous_or_invalid_values_as_unknown() -> None:
     duplicate = ModelAccounting(
         input_tokens=0,
         output_tokens=2,
@@ -65,11 +63,15 @@ def test_token_meter_quantity_rejects_ambiguous_or_non_integral_values() -> None
         output_tokens=1,
         meters=(ModelUsageMeter("output.reasoning", "0.5", "token"),),
     )
+    other_unit = ModelAccounting(
+        input_tokens=0,
+        output_tokens=1,
+        meters=(ModelUsageMeter("output.reasoning", "1", "request"),),
+    )
 
-    with pytest.raises(ValueError, match="duplicate model accounting meter"):
-        token_meter_quantity(duplicate, "output.reasoning")
-    with pytest.raises(ValueError, match="not an integral token count"):
-        token_meter_quantity(fractional, "output.reasoning")
+    assert token_meter_quantity(duplicate, "output.reasoning") is None
+    assert token_meter_quantity(fractional, "output.reasoning") is None
+    assert token_meter_quantity(other_unit, "output.reasoning") is None
 
 
 def test_accounting_accepts_fractional_float_rates_from_effective_resources() -> None:

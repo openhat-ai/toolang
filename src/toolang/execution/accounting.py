@@ -158,21 +158,17 @@ def token_meter_quantity(
     accounting: ModelAccounting | None,
     name: str,
 ) -> int | None:
-    """Return one exact integral token meter from durable model accounting."""
+    """Return one unambiguous integral token meter, or ``None`` when unknown."""
 
     if accounting is None:
         return None
     meters = tuple(meter for meter in accounting.meters if meter.name == name)
-    if not meters:
+    if len(meters) != 1:
         return None
-    if len(meters) > 1:
-        raise ValueError(f"duplicate model accounting meter: {name}")
     meter = meters[0]
     quantity = Decimal(meter.quantity)
     if meter.unit != "token" or quantity != quantity.to_integral_value():
-        raise ValueError(
-            f"model accounting meter is not an integral token count: {name}"
-        )
+        return None
     return int(quantity)
 
 

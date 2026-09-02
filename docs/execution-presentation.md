@@ -116,7 +116,7 @@ canonical resolved runnable ref:
 
 • Summary text from the child.
 
----  2.0s · 1 run · 1 model call ---------------- succeeded run_abc123
+---  2.0s · 1 run 1 model ----------------------- succeeded run_abc123
 ```
 
 The fixed prefix is three ASCII hyphens followed by two spaces. The caption,
