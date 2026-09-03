@@ -2,8 +2,9 @@
 
 ## Status
 
-Approved in the 2026-09-02 design discussion. This definition follows the
-slash-command output work and is authoritative for interactive queue
+Approved in the 2026-09-02 design discussion, with the separate Queue layout,
+width, focus, and spacing revisions approved on 2026-09-03. This definition
+follows the slash-command output work and is authoritative for interactive queue
 presentation, input submission keys, and steer shortcuts.
 
 ## Goal
@@ -26,11 +27,11 @@ away from the active run.
   when a new item arrives.
 - Tab and Shift-Tab move focus between the visible Queue and Input areas while
   preserving completion-menu behavior.
-- Space collapses the focused Queue into Input and returns Input focus. Tab
-  expands it when focusing Queue again. Selection is preserved, but actions on
-  hidden entries are disabled; Ctrl-P/N select entries when expanded.
-- Queue and Input use equal-width accent rails. The focused area uses its
-  semantic accent color and the unfocused area uses one shared muted color.
+- Space toggles the focused Queue without moving focus; Tab only changes focus.
+  Selection is preserved, but actions on hidden entries are disabled.
+- Queue is independently centered, at most 120 columns wide, with exactly one
+  blank row before Input. Its header or collapsed rail indicates focus; Input
+  retains its cyan accent and only displays its cursor while focused.
 - Queue selection remains valid while items are removed or automatically
   submitted, and the panel resets when the queue becomes empty.
 - The existing hidden `/queue`, `/q`, `/steer`, and `/s` commands retain their
@@ -91,58 +92,63 @@ conditionally registered Shift-Enter binding remains best effort.
 The Queue area is absent when the queue is empty. The first queued input makes
 it visible and fully expanded above the prompt without moving Input focus.
 Further queued inputs update it without changing focus or selection.
-The user can collapse it into Input's existing top padding row. New items and
-FIFO dequeue preserve that choice until the queue empties, when the next
-non-empty queue defaults to expanded again.
+New items and FIFO dequeue preserve the expanded/collapsed choice until the
+queue empties, when the next non-empty queue defaults to expanded again.
 
 Queue and Input are the only focus-switching areas in this scope. Tab and
-Shift-Tab move between them while the queue exists. In Input, these bindings
-expand Queue before focusing it and yield to an active completion menu. When
-the queue is empty, normal Prompt Toolkit Tab behavior remains unchanged.
+Shift-Tab move between them without changing expansion. In Input, these bindings
+yield to an active completion menu. When the queue is empty, normal Prompt
+Toolkit Tab behavior remains unchanged.
 
-The Queue content is one cell narrower than the terminal because its first
-column is an accent rail. Expanded layout:
+Queue stays separate above Input in both modes, horizontally centered with a
+stable width of `min(120, terminal_width - 2)`. Its normal minimum is 80 columns;
+on narrower terminals the two-column outer margin takes precedence. Exactly
+one blank row separates Queue from Input's unchanged top padding. Any dynamic
+space used to stabilize the footer belongs above Queue, never inside this gap.
+Expanded layout:
 
-- The top padding row centers a dim summary, such as `3 items queued`.
+- A full-width header left-aligns the summary, such as `3 items queued`, and
+  right-aligns `Space collapse`. Its background is muted when unfocused and
+  steer purple when focused. There is no separate left accent rail.
 - The middle shows up to four one-line previews, following selection. If any
   entries are outside the visible window, a final dim content row reports
   `… N items not shown`.
-- The bottom padding row right-aligns dim selection, edit, steer, delete, and
-  collapse hints. While Input has focus, `Tab focus` precedes those actions;
-  while Queue has focus, `Tab input` follows them.
+- Only the selected entry displays a `>` marker and right-aligned dim
+  `E edit · Meta-Enter steer · D/Delete delete` hints. Its preview truncates to
+  reserve hint space; unselected entries use the full content width. Selection
+  stays visible when Queue is unfocused. There is no bottom hint row.
 
-Expanded height ranges from three rows for one item to seven rows when entries
-are omitted. Input's own top padding separates its content from Queue's hints.
+Expanded height ranges from two rows for one item to six rows when entries are
+omitted, excluding the one-row gap before Input.
 
-Collapsed layout reuses Input's top padding row: the dim summary is centered
-and `Tab expand` is right-aligned. It shares Input's background and accent rail,
-adds no height, and is not a separate focus target. Collapsing returns focus to
-the input buffer. If summary and hint would overlap on a narrow terminal, the
-summary shifts left and truncates before the expand hint. At extremely narrow
-widths only the truncated hint remains. All rows truncate by display cells and
-never wrap. An empty queue or expanded Queue restores the blank Input padding.
+Collapsed layout is one independent, focusable row: a one-cell left accent
+rail, a left-aligned dim summary, and right-aligned `Space expand`. The rail is
+muted when unfocused and steer purple when focused. The panel keeps its expanded
+width and horizontal position. No queue content appears inside Input. On narrow
+terminals previews and summaries truncate before hints; hints also truncate if
+necessary, preserving the selected entry's marker and number when they fit.
+All rows fit by display cells, including wide Unicode, and never wrap.
 
-Expanded Queue and Input accent rails remain one full cell wide. The focused
-area uses its semantic accent color; the unfocused area replaces that background
-with one shared muted accent color. A focused Queue additionally shows the
-selected-row marker and highlight when expanded. There is no additional heading
-row beyond the top padding summary.
+Input's one-cell accent remains cyan regardless of focus. Its cursor is hidden
+while Queue has focus and returns to the preserved editing position when focus
+returns. Focus and expansion never change the width of either area.
 
 Focused Queue bindings are:
 
 | Key | Action |
 | --- | --- |
-| Space | Collapse Queue into Input and return Input focus, preserving selection |
+| Space | Expand or collapse Queue without changing focus or selection |
 | Up / Down (also Ctrl-P / Ctrl-N) | Select the previous or next queued input without wrapping |
 | E | Remove the selected item and place its source in the prompt for editing |
 | Meta-Enter | Send the selected source as steer input |
 | D / Delete | Remove the selected item |
 | Tab / Shift-Tab | Return focus to Input |
 
-Selection, edit, steer, delete, and Space bindings apply only while Queue is
-expanded and focused. Collapsed Queue does not intercept input; Space inserts
-a space and Meta-Enter steers with the input draft. Ctrl-P/N are explicitly
-bound for the custom Queue control. Input retains its existing history bindings.
+Selection, edit, steer, and delete apply only while Queue is expanded and
+focused. Collapsed Queue accepts only focus switching and Space toggling, not
+hidden-entry actions. In Input, Space inserts a space and Meta-Enter steers
+with the draft. Ctrl-P/N are explicitly bound for Queue selection. Input retains
+its existing history bindings.
 
 Editing never overwrites a non-empty prompt draft. In that case the item stays
 queued and Chat reports a transient instruction to clear the draft first. A
@@ -176,9 +182,9 @@ Ctrl-J             Insert a newline (also Shift-Enter if supported)
 Tab, Shift-Tab     Switch between input and queued inputs
 ```
 
-Existing navigation, cancel, interrupt, clear, and exit rows remain. The Queue
-area owns its contextual Space, Up/Down (Ctrl-P/N), E, D, Delete, and Meta-Enter
-hints so `/keys` does not duplicate every panel-only binding.
+Existing navigation, cancel, interrupt, clear, and exit rows remain. A short
+Queue-focused section documents Space, Up/Down (Ctrl-P/N), E, D/Delete, and
+Meta-Enter, including selection keys that are not repeated in every entry.
 
 ## Design Touchpoints
 
@@ -204,13 +210,15 @@ Likely files:
   accepted draft, and creates the existing steer control presentation.
 - The Queue area covers absent, default-expanded, collapsed, unfocused,
   focused, more-than-four, narrow-terminal, and automatically emptied states.
-- Expanded summaries are centered in the top row, omitted counts follow the
-  entries, and action hints are right-aligned in the bottom row. Collapsed
-  summaries and expand hints share Input's top padding without overlapping,
-  extra height, a separate background, or an independent accent rail.
-- Space collapses only focused Queue and returns Input focus; Tab expands it
-  again without losing selection. Input spaces and draft steering retain their
-  behavior. Hidden entries cannot be selected or mutated.
+- Both modes stay centered and width-limited across resize, with exactly one
+  blank row before Input and no queue text inside its padding.
+- Expanded headers change background with focus; collapsed rails change color
+  without changing width. Input's accent stays cyan and its cursor tracks focus.
+- Only selected entries reserve right-aligned action hints; long and CJK
+  previews truncate without wrapping. Omitted counts follow the visible entries.
+- Space toggles only focused Queue without moving focus; Tab never expands it.
+  Input spaces and draft steering retain their behavior. Hidden entries cannot
+  be selected or mutated.
 - Tab and Shift-Tab focus transitions preserve completion behavior, and
   Up/Down and Ctrl-P/N selection remain deterministic.
 - Edit covers empty and non-empty prompt drafts and documents rebuilt request

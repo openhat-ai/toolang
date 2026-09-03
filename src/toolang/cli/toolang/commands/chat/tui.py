@@ -282,14 +282,18 @@ class ChatTuiApp:
                     height=self._input_spacer_rows,
                     always_hide_cursor=True,
                 ),
-                self.prompt.container(header=self.queue_panel.summary_view),
+                self.queue_panel.container(),
+                Window(
+                    height=self._queue_gap_rows,
+                    always_hide_cursor=True,
+                ),
+                self.prompt.container(),
                 self.status_bar.container(),
             ]
         )
         body = HSplit(
             [
                 DynamicContainer(self._live_blocks_container),
-                self.queue_panel.container(),
                 input_area,
             ]
         )
@@ -344,7 +348,9 @@ class ChatTuiApp:
 
     def _input_spacer_rows(self) -> int:
         live_rows = self._live_area_height()
-        fixed_footer_rows = self.queue_panel.rows() + self.prompt.rows() + 1
+        fixed_footer_rows = (
+            self.queue_panel.rows() + self._queue_gap_rows() + self.prompt.rows() + 1
+        )
         terminal_rows = self.app.output.get_size().rows
         required_rows = min(terminal_rows, live_rows + fixed_footer_rows)
         self._footer_row_floor = min(
@@ -353,9 +359,14 @@ class ChatTuiApp:
         )
         return max(0, self._footer_row_floor - live_rows - fixed_footer_rows)
 
+    def _queue_gap_rows(self) -> int:
+        return 1 if self.queue_panel.rows() else 0
+
     def _available_live_rows(self) -> int:
         terminal_rows = self.app.output.get_size().rows
-        reserved_rows = self.queue_panel.rows() + self.prompt.rows() + 1
+        reserved_rows = (
+            self.queue_panel.rows() + self._queue_gap_rows() + self.prompt.rows() + 1
+        )
         return max(0, terminal_rows - reserved_rows)
 
     def _enqueue_ui_event(self, event: ChatUIEvent) -> None:
@@ -451,7 +462,6 @@ class ChatTuiApp:
     def _bind_queue_keys(self, keys: KeyBindings) -> None:
         def focus_queue(_event: object) -> None:
             self._clear_status_error()
-            self.queue_panel.expanded = True
             self.app.layout.focus(self.queue_panel.view)
             self._invalidate_ui()
 
@@ -464,9 +474,8 @@ class ChatTuiApp:
             if self.queue_panel.move_selection(-1):
                 self._invalidate_ui()
 
-        def collapse(_event: object) -> None:
+        def toggle(_event: object) -> None:
             if self.queue_panel.toggle_expanded():
-                self._focus_prompt()
                 self._invalidate_ui()
 
         def next_item(_event: object) -> None:
@@ -484,7 +493,7 @@ class ChatTuiApp:
 
         prompt_focus = has_focus(self.prompt.buffer)
         queue_focus = has_focus(self.queue_panel.view)
-        queue_available = Condition(lambda: bool(self.queue))
+        queue_available = Condition(lambda: bool(self.queue_panel.rows()))
         queue_expanded = Condition(lambda: self.queue_panel.expanded)
         for binding in shortcuts.SWITCH_AREA.bindings:
             keys.add(
@@ -492,10 +501,8 @@ class ChatTuiApp:
                 filter=prompt_focus & queue_available & ~has_completions,
             )(focus_queue)
             keys.add(*binding, filter=queue_focus)(focus_prompt)
-        for binding in shortcuts.QUEUE_COLLAPSE.bindings:
-            keys.add(*binding, filter=queue_focus & queue_available & queue_expanded)(
-                collapse
-            )
+        for binding in shortcuts.QUEUE_TOGGLE.bindings:
+            keys.add(*binding, filter=queue_focus & queue_available)(toggle)
         for shortcut, handler in (
             (shortcuts.QUEUE_PREVIOUS, previous),
             (shortcuts.QUEUE_NEXT, next_item),

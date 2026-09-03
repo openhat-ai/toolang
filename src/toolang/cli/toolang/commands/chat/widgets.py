@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import shutil
+from prompt_toolkit.application import get_app
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer
 from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, VSplit, Window
-from prompt_toolkit.layout.containers import ConditionalContainer
+from prompt_toolkit.layout.containers import ConditionalContainer, HorizontalAlign
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
@@ -31,6 +32,7 @@ from .rendering import (
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
+MAX_QUEUE_WIDTH = 120
 _INPUT_PLACEHOLDER = "Ask or describe a task"
 _STATUS_SPINNER_STYLES: dict[str, tuple[str, tuple[str, ...]]] = {
     "circles": ("■", ("◐", "◓", "◑", "◒")),
@@ -50,15 +52,17 @@ def _chat_ui_palette() -> dict[str, str]:
     return {
         "": "",
         "queue": "fg:#f2f2f2 bg:#3a3a3a",
-        "queue.selected": "fg:#ffffff bg:#565656 bold",
+        "queue.selected": "fg:#ffffff bold",
         "queue.info": "fg:#b8b8b8 bg:#3a3a3a",
+        "queue.header": f"fg:#ffffff bg:{INACTIVE_CONTROL_ACCENT}",
+        "queue.header.focused": f"fg:#1f1f1f bg:{STEER_CONTROL_ACCENT}",
+        "queue-header-hint": "fg:#dddddd nobold",
+        "queue-header-hint.focused": "fg:#493a5c",
         "queue.accent": f"bg:{INACTIVE_CONTROL_ACCENT}",
         "queue.accent.focused": f"bg:{STEER_CONTROL_ACCENT}",
         "control.run": f"bg:{RUN_CONTROL_ACCENT_PROMPT_TOOLKIT}",
-        "control.run.unfocused": f"bg:{INACTIVE_CONTROL_ACCENT}",
         "input": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
         "input.placeholder": f"fg:#b8b8b8 bg:{INPUT_BACKGROUND}",
-        "input.queue-summary": f"fg:#b8b8b8 bg:{INPUT_BACKGROUND}",
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": "",
@@ -88,7 +92,6 @@ class QueuePanel:
         self._selected_index = 0
         self.expanded = True
         self.view = FormattedTextControl(self._render, focusable=True)
-        self.summary_view = FormattedTextControl(self._render_summary)
         self._has_focus = has_focus(self.view)
 
     def container(self) -> ConditionalContainer:
@@ -96,13 +99,8 @@ class QueuePanel:
             VSplit(
                 [
                     Window(
-                        width=1,
-                        style=self._accent_style,
-                        char=ACCENT_CELL,
-                        always_hide_cursor=True,
-                    ),
-                    Window(
                         self.view,
+                        width=self.width,
                         height=self.rows,
                         wrap_lines=False,
                         always_hide_cursor=True,
@@ -111,40 +109,45 @@ class QueuePanel:
                     ),
                 ],
                 height=self.rows,
-                style="class:queue",
+                align=HorizontalAlign.CENTER,
             ),
-            filter=Condition(lambda: self.expanded and bool(self.get_items())),
+            filter=Condition(lambda: bool(self.rows())),
         )
 
     def _render(self) -> list[tuple[str, str]]:
         items = tuple(self.get_items())
-        if not items or not self.expanded:
+        width = self.width()
+        if not items or not width:
             return []
+        if not self.expanded:
+            return [
+                (self._accent_style(), ACCENT_CELL),
+                *self._split_row(
+                    f" {self._count_label(len(items))}",
+                    "Space expand ",
+                    width - 1,
+                    style="class:queue.info",
+                    hint_style="class:queue.info",
+                ),
+            ]
         fragments: list[tuple[str, str]] = []
-        width = max(1, self._terminal_width() - 1)
         rows = self._rows(items, width=width)
-        for row_index, (style, text) in enumerate(rows):
-            fitted = truncate(text, width)
-            fragments.append((style, fitted))
-            if padding := " " * max(0, width - get_cwidth(fitted)):
-                fragments.append((style, padding))
+        for row_index, row in enumerate(rows):
+            fragments.extend(row)
             if row_index < len(rows) - 1:
                 fragments.append(("", "\n"))
         return fragments
 
-    def _render_summary(self) -> list[tuple[str, str]]:
-        items = self.get_items()
-        if not items or self.expanded:
-            return []
-        width = max(1, self._terminal_width() - 1)
-        text = self._collapsed_row(self._count_label(len(items)), "Tab expand", width)
-        return [("class:input.queue-summary", text)]
+    def width(self) -> int:
+        return max(0, min(MAX_QUEUE_WIDTH, self._terminal_width() - 2))
 
     def rows(self) -> int:
         count = len(self.get_items())
-        if not count or not self.expanded:
+        if not count or not self.width():
             return 0
-        return 2 + min(count, MAX_QUEUE_ROWS) + (1 if count > MAX_QUEUE_ROWS else 0)
+        if not self.expanded:
+            return 1
+        return 1 + min(count, MAX_QUEUE_ROWS) + (1 if count > MAX_QUEUE_ROWS else 0)
 
     def toggle_expanded(self) -> bool:
         if not self.get_items():
@@ -182,8 +185,12 @@ class QueuePanel:
         items: Sequence[str],
         *,
         width: int,
-    ) -> tuple[tuple[str, str], ...]:
-        focused = self._has_focus()
+    ) -> list[list[tuple[str, str]]]:
+        header_style = "class:queue.header"
+        header_hint_style = "class:queue-header-hint"
+        if self._has_focus():
+            header_style += " class:queue.header.focused"
+            header_hint_style += ".focused"
         summary = self._count_label(len(items))
         start = min(
             max(0, self._selected_index - MAX_QUEUE_ROWS + 1),
@@ -191,44 +198,41 @@ class QueuePanel:
         )
         shown = tuple(enumerate(items[start : start + MAX_QUEUE_ROWS], start + 1))
         hidden = len(items) - len(shown)
-        summary = truncate(summary, width)
-        summary_padding = " " * ((width - get_cwidth(summary)) // 2)
-        rows: list[tuple[str, str]] = [
-            ("class:queue.info", f"{summary_padding}{summary}")
+        rows = [
+            self._split_row(
+                f"  {summary}",
+                "Space collapse ",
+                width,
+                style=header_style,
+                hint_style=f"{header_style} {header_hint_style}",
+            )
         ]
         for item_number, item in shown:
-            selected = focused and item_number - 1 == self._selected_index
-            marker = "›" if selected else " "
+            selected = item_number - 1 == self._selected_index
+            marker = ">" if selected else " "
             prefix = f"{marker} [{item_number}] "
-            preview_width = max(1, width - get_cwidth(prefix))
-            preview = self._summarize(item, width=preview_width)
+            preview = " ".join(item.split())
             rows.append(
-                (
-                    "class:queue.selected" if selected else "class:queue",
+                self._split_row(
                     f"{prefix}{preview}",
+                    "E edit · Meta-Enter steer · D/Delete delete " if selected else " ",
+                    width,
+                    style="class:queue.selected" if selected else "class:queue",
+                    hint_style="class:queue.info",
+                    min_text_width=get_cwidth(prefix) + 1 if selected else 0,
                 )
             )
         if hidden:
             rows.append(
-                (
-                    "class:queue.info",
+                self._split_row(
                     f"  … {hidden} item{'' if hidden == 1 else 's'} not shown",
+                    " ",
+                    width,
+                    style="class:queue.info",
+                    hint_style="class:queue.info",
                 )
             )
-        actions = (
-            "↑/↓ (Ctrl-P/N) select · E edit · Meta-Enter steer · "
-            "D/Delete delete · Space collapse"
-        )
-        hint = f"{actions} · Tab input" if focused else f"Tab focus · {actions}"
-        footer = truncate(hint, width)
-        left_padding = " " * (width - get_cwidth(footer))
-        rows.append(
-            (
-                "class:queue.info",
-                f"{left_padding}{footer}",
-            )
-        )
-        return tuple(rows)
+        return rows
 
     def _accent_style(self) -> str:
         return (
@@ -236,31 +240,43 @@ class QueuePanel:
         )
 
     @staticmethod
-    def _summarize(message: str, *, width: int) -> str:
-        text = " ".join(message.split())
-        return truncate(text, max(1, width))
-
-    @staticmethod
     def _count_label(count: int) -> str:
         return f"{count} item{'' if count == 1 else 's'} queued"
 
-    @staticmethod
-    def _collapsed_row(summary: str, hint: str, width: int) -> str:
-        hint = truncate(hint, width)
-        summary_width = width - get_cwidth(hint) - 1
-        if summary_width <= 0:
-            return f"{' ' * (width - get_cwidth(hint))}{hint}"
-        summary = truncate(summary, summary_width)
-        summary_start = min(
-            (width - get_cwidth(summary)) // 2,
-            summary_width - get_cwidth(summary),
-        )
-        gap = width - summary_start - get_cwidth(summary) - get_cwidth(hint)
-        return f"{' ' * summary_start}{summary}{' ' * gap}{hint}"
+    @classmethod
+    def _split_row(
+        cls,
+        text: str,
+        hint: str,
+        width: int,
+        *,
+        style: str,
+        hint_style: str,
+        min_text_width: int = 0,
+    ) -> list[tuple[str, str]]:
+        """Reserve right-aligned hints before fitting the left-hand content."""
+        hint = cls._truncate(hint, max(0, width - min_text_width))
+        text = cls._truncate(text, max(0, width - get_cwidth(hint) - 1))
+        gap = " " * max(0, width - get_cwidth(text) - get_cwidth(hint))
+        return [(style, text + gap), (hint_style, hint)]
 
     @staticmethod
-    def _terminal_width(default: int = 100) -> int:
-        return shutil.get_terminal_size((default, 24)).columns
+    def _truncate(text: str, width: int) -> str:
+        """Use the same cell accounting as Prompt Toolkit's renderer."""
+        if get_cwidth(text) <= width:
+            return text
+        if width <= 0:
+            return ""
+        remaining = width - 1
+        for index, char in enumerate(text):
+            remaining -= get_cwidth(char)
+            if remaining < 0:
+                return text[:index].rstrip() + "…"
+        return text
+
+    @staticmethod
+    def _terminal_width() -> int:
+        return get_app().output.get_size().columns
 
 
 class PromptBox:
@@ -290,13 +306,11 @@ class PromptBox:
         self.history_draft = ""
         self.buffer.on_text_changed += self._handle_text_changed
         self.buffer.on_cursor_position_changed += self._handle_cursor_position_changed
-        self._has_focus = has_focus(self.buffer)
 
-    def container(self, *, header: FormattedTextControl | None = None) -> VSplit:
+    def container(self) -> VSplit:
         content = HSplit(
             [
                 Window(
-                    header,
                     height=1,
                     style="class:input",
                     always_hide_cursor=True,
@@ -349,7 +363,7 @@ class PromptBox:
             [
                 Window(
                     width=1,
-                    style=self._accent_style,
+                    style="class:control.run",
                     always_hide_cursor=True,
                     char=ACCENT_CELL,
                 ),
@@ -357,11 +371,6 @@ class PromptBox:
             ],
             height=self._height_dimension,
             style="class:input",
-        )
-
-    def _accent_style(self) -> str:
-        return (
-            "class:control.run" if self._has_focus() else "class:control.run.unfocused"
         )
 
     def bind(self, keys: KeyBindings) -> None:

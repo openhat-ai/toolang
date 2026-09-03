@@ -85,34 +85,34 @@ distinctly.
 
 A non-empty Queue is expanded above Input without taking focus. Tab and
 Shift-Tab move focus between these two areas, except while an Input completion
-menu is active. Queue contains one top padding row, at most four single-line
-previews, and one bottom padding row. The top row centers a dim count summary;
-the bottom row right-aligns dim action hints. When previews omit items, a dim
-omitted-count row follows the entries. Input's own top padding preserves the
-visual gap below Queue. A focused Queue marks and highlights its selected row.
-Up/Down or Ctrl-P/N move selection without wrapping. E edits, Meta-Enter steers,
-and D or Delete removes the selected item.
+menu is active. Space expands or collapses focused Queue without moving focus;
+Tab never changes expansion. Input spaces and draft steering remain unchanged.
 
-Space collapses focused Queue into Input's existing top padding and returns
-focus to the input buffer. The dim count summary is centered and `Tab expand`
-is right-aligned, sharing Input's background and accent rail with no extra
-height or separate focus target. Tab or Shift-Tab expands and focuses Queue
-again, unless Input completion is active. Entry actions are disabled until
-expanded; normal input typing and draft steering remain available. If the
-summary and hint would overlap, the summary shifts left and truncates first;
-very narrow terminals show only the truncated hint. Queue mutations preserve
-the collapsed choice until the queue empties and resets to the expanded default.
+Queue is independently centered at `min(120, terminal_width - 2)` columns in
+both modes. Its normal 80-column minimum yields to narrower terminals. Exactly
+one blank row separates Queue from Input's unchanged top padding. Adaptive
+footer-stabilizing space belongs above Queue, not inside that gap.
 
-Expanded Queue and Input accent rails are always one full cell wide. The focused
-area uses its semantic accent background: steer purple for Queue and run cyan for
-Input. The unfocused area uses one shared muted accent background. Focus
-changes color but never changes rail width or moves content horizontally.
+Expanded Queue has a full-width header with a left-aligned count and
+right-aligned `Space collapse`, followed by up to four single-line previews.
+Only the selected entry has a `>` marker and dim right-aligned edit, steer,
+and delete hints; its preview truncates to reserve their space. Selection stays
+visible when unfocused. An omitted-count row follows the entries when needed;
+there is no bottom help row. The header background is muted when unfocused and
+steer purple when focused, without an additional left accent rail.
 
-Queue content occupies the terminal width minus its one-cell accent rail. Rows
-never wrap; item previews and footer hints truncate by display cells. A longer
-queue windows around the selection and reports how many items are outside the
-four-row view. Removing or automatically submitting an item clamps the
-selection; an empty queue removes the area and restores Input focus.
+Collapsed Queue is one separate, focusable row with a one-cell left accent rail,
+left-aligned count, and right-aligned `Space expand`. The rail changes from muted
+to steer purple on focus. Hidden entries cannot be selected or mutated.
+Input's accent always stays cyan. Its cursor hides on Queue focus and returns
+to its preserved position on Input focus.
+
+Rows never wrap; previews and summaries truncate by display cells before hints,
+which also truncate on very narrow terminals. Up/Down or Ctrl-P/N select without
+wrapping; E edits, Meta-Enter steers, and D/Delete removes. `/keys` documents
+these Queue-focused bindings. Mutations preserve the expansion choice and clamp
+selection; an empty queue disappears, restores Input focus, and resets the next
+non-empty queue to expanded.
 
 Flow headers also start in column zero and are followed by one blank line.
 Iteration and condition headers create the same kind of stable boundary.

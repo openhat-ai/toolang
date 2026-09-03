@@ -179,25 +179,23 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
         visible = session.wait_for(
             "1 item queued",
             "[1] queued follow-up",
-            "Tab focus",
+            "Space collapse",
         )
         assert "Traceback" not in visible
 
         session.send(b"\t")
         focused = session.wait_for(
-            "› [1] queued follow-up",
+            "> [1] queued follow-up",
             "1 item queued",
-            "Ctrl-P/N",
             "E edit",
             "Meta-Enter steer",
             "D/Delete delete",
-            "Tab input",
         )
         assert "Traceback" not in focused
 
         session.send(b" ")
-        session.wait_for("Tab expand")
-        session.send(b"\t")
+        session.wait_for("Space expand")
+        session.send(b" ")
         session.send(b"d")
         session.wait_for("succeeded", "■ agic:chat")
         session.send(b"\x04")

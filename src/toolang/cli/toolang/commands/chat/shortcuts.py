@@ -53,11 +53,11 @@ QUEUE_NEXT = ChatShortcut(
     "Down, Ctrl-N",
     "Select the next queued input",
 )
-QUEUE_COLLAPSE = ChatShortcut(
-    "queue_collapse",
+QUEUE_TOGGLE = ChatShortcut(
+    "queue_toggle",
     ((" ",),),
     "Space",
-    "Collapse queued inputs into input",
+    "Expand or collapse queued inputs",
 )
 QUEUE_EDIT = ChatShortcut(
     "queue_edit",
@@ -146,8 +146,25 @@ def help_lines() -> tuple[str, ...]:
     """Return aligned, presentation-neutral shortcut help rows."""
 
     width = max(len(shortcut.label) for shortcut in CHAT_SHORTCUTS)
-    return tuple(
-        f"{shortcut.label:<{width}}  {shortcut.summary}" for shortcut in CHAT_SHORTCUTS
+    queue_shortcuts = (
+        QUEUE_TOGGLE,
+        QUEUE_PREVIOUS,
+        QUEUE_NEXT,
+        QUEUE_EDIT,
+        QUEUE_STEER,
+        QUEUE_DELETE,
+    )
+    return (
+        *(
+            f"{shortcut.label:<{width}}  {shortcut.summary}"
+            for shortcut in CHAT_SHORTCUTS
+        ),
+        "",
+        "Queue focused:",
+        *(
+            f"{shortcut.label:<{width}}  {shortcut.summary}"
+            for shortcut in queue_shortcuts
+        ),
     )
 
 
@@ -161,12 +178,12 @@ __all__ = [
     "INTERRUPT",
     "NEXT_HISTORY",
     "PREVIOUS_HISTORY",
-    "QUEUE_COLLAPSE",
     "QUEUE_DELETE",
     "QUEUE_EDIT",
     "QUEUE_NEXT",
     "QUEUE_PREVIOUS",
     "QUEUE_STEER",
+    "QUEUE_TOGGLE",
     "QUIT",
     "STEER",
     "SUBMIT",

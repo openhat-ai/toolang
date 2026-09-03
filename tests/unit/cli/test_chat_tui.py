@@ -123,11 +123,15 @@ _HOST_SANDBOX_VALUE = f"host · {_HOST_DESCRIPTION}"
 
 
 class _TerminalOutput(DummyOutput):
+    columns = 100
+
     def get_size(self) -> Size:
-        return Size(rows=30, columns=100)
+        return Size(rows=30, columns=self.columns)
 
 
 def _render_chat_layout(app: tui.ChatTuiApp) -> Screen:
+    # Match Application._redraw: controls cache fragments for each render counter.
+    app.app.render_counter += 1
     app.app.renderer.render(app.app, app.app.layout)
     screen = app.app.renderer.last_rendered_screen
     assert screen is not None
@@ -1369,7 +1373,7 @@ def test_chat_control_bar_wraps_every_physical_row(
     assert "".join(line[2:].rstrip() for line in rendered_lines) == message
 
 
-def test_chat_prompt_uses_a_focus_aware_run_control_accent() -> None:
+def test_chat_prompt_keeps_its_run_control_accent() -> None:
     prompt = widgets.PromptBox(lambda _event: None, lambda: None)
 
     container = prompt.container()
@@ -1378,13 +1382,9 @@ def test_chat_prompt_uses_a_focus_aware_run_control_accent() -> None:
     accent, content = container.children
     assert isinstance(accent, Window)
     assert accent.width == 1
-    assert callable(accent.style)
-    assert cast(Callable[[], str], accent.style)() == "class:control.run.unfocused"
+    assert accent.style == "class:control.run"
     assert accent.char == rendering.ACCENT_CELL
     assert widgets._chat_ui_palette()["control.run"] == "bg:ansibrightcyan"
-    assert widgets._chat_ui_palette()["control.run.unfocused"] == (
-        f"bg:{rendering.INACTIVE_CONTROL_ACCENT}"
-    )
     assert rendering.CONTROL_BAR_BACKGROUND == "bright_black"
     assert rendering.INPUT_BACKGROUND == "ansibrightblack"
     assert (
@@ -1421,29 +1421,58 @@ def test_chat_prompt_uses_a_focus_aware_run_control_accent() -> None:
     assert not placeholder.filter()
 
 
-def test_chat_queue_panel_is_expanded_and_padded_by_default(
+def test_chat_queue_panel_is_expanded_with_a_header_and_inline_actions_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     panel = widgets.QueuePanel(lambda: ["first", "second"])
-    monkeypatch.setattr(panel, "_terminal_width", lambda: 40)
+    monkeypatch.setattr(panel, "_terminal_width", lambda: 100)
 
     fragments = panel._render()
     lines = "".join(text for _style, text in fragments).splitlines()
 
-    assert panel.rows() == 4
+    assert panel.rows() == 3
     assert panel.expanded
     assert panel.selected_index == 0
-    assert lines[0].strip() == "2 items queued"
-    assert "[1] first" in lines[1]
-    assert "[2] second" in lines[2]
-    assert "Tab focus" in lines[3]
-    assert all(get_cwidth(line) == 39 for line in lines)
-    assert not any(style == "class:queue.selected" for style, _text in fragments)
+    assert lines[0].startswith("  2 items queued")
+    assert lines[0].endswith("Space collapse ")
+    assert lines[1].startswith("> [1] first")
+    assert lines[1].endswith("E edit · Meta-Enter steer · D/Delete delete ")
+    assert lines[2].strip() == "[2] second"
+    assert all(get_cwidth(line) == 98 for line in lines)
+    assert any(style == "class:queue.selected" for style, _text in fragments)
 
 
 @pytest.mark.parametrize("focused", [False, True])
-@pytest.mark.parametrize("terminal_width", [100, 101])
-def test_chat_queue_panel_centers_summary_and_right_aligns_key_hints(
+@pytest.mark.parametrize("terminal_width", [80, 82, 100, 101, 122, 160])
+def test_chat_queue_panel_reserves_actions_only_for_selected_entries(
+    monkeypatch: pytest.MonkeyPatch,
+    focused: bool,
+    terminal_width: int,
+) -> None:
+    text = "任务 preview " * 20
+    panel = widgets.QueuePanel(lambda: [text, text])
+    monkeypatch.setattr(panel, "_terminal_width", lambda: terminal_width)
+    monkeypatch.setattr(panel, "_has_focus", lambda: focused)
+
+    fragments = panel._render()
+    lines = "".join(text for _style, text in fragments).splitlines()
+    header, selected, unselected = lines
+    hint = "E edit · Meta-Enter steer · D/Delete delete "
+    assert header.startswith("  2 items queued")
+    assert header.endswith("Space collapse ")
+    assert selected.startswith("> [1] 任务 preview")
+    assert selected.endswith(hint)
+    assert "…" in selected[: selected.index(hint)]
+    assert get_cwidth(selected[: selected.index(hint)]) < get_cwidth(unselected)
+    assert unselected.startswith("  [2] 任务 preview")
+    assert "edit" not in unselected
+    assert all(get_cwidth(line) == min(120, terminal_width - 2) for line in lines)
+    assert ("class:queue.header.focused" in fragments[0][0]) is focused
+
+
+@pytest.mark.parametrize("focused", [False, True])
+@pytest.mark.parametrize("terminal_width", [40, 100, 101, 160])
+def test_chat_queue_panel_collapses_to_a_focusable_row_with_a_colored_rail(
     monkeypatch: pytest.MonkeyPatch,
     focused: bool,
     terminal_width: int,
@@ -1452,67 +1481,54 @@ def test_chat_queue_panel_centers_summary_and_right_aligns_key_hints(
     monkeypatch.setattr(panel, "_terminal_width", lambda: terminal_width)
     monkeypatch.setattr(panel, "_has_focus", lambda: focused)
 
+    assert panel.toggle_expanded()
     fragments = panel._render()
     lines = "".join(text for _style, text in fragments).splitlines()
-    summary, footer = lines[0], lines[-1]
 
-    actions = (
-        "↑/↓ (Ctrl-P/N) select · E edit · Meta-Enter steer · "
-        "D/Delete delete · Space collapse"
-    )
-    hint = f"{actions} · Tab input" if focused else f"Tab focus · {actions}"
-    assert summary.strip() == "2 items queued"
-    assert footer.strip() == hint
-    left_padding = len(summary) - len(summary.lstrip())
-    right_padding = len(summary) - len(summary.rstrip())
-    assert left_padding > 0
-    assert right_padding - left_padding in (0, 1)
-    assert footer == footer.rstrip()
-    assert all(get_cwidth(line) == terminal_width - 1 for line in lines)
-
-
-@pytest.mark.parametrize("terminal_width", [40, 100, 101])
-def test_chat_queue_panel_collapses_into_an_input_summary_and_right_aligned_hint(
-    monkeypatch: pytest.MonkeyPatch,
-    terminal_width: int,
-) -> None:
-    panel = widgets.QueuePanel(lambda: ["first", "second"])
-    monkeypatch.setattr(panel, "_terminal_width", lambda: terminal_width)
-
-    assert panel._render_summary() == []
-    assert panel.toggle_expanded()
-    fragments = panel._render_summary()
-    lines = "".join(text for _style, text in fragments).splitlines()
-
-    assert panel.rows() == 0
-    assert panel._render() == []
-    assert not panel.container().filter()
-    assert not panel.summary_view.is_focusable()
+    assert panel.rows() == 1
+    assert panel.container().filter()
+    assert panel.view.is_focusable()
     assert len(lines) == 1
-    assert lines[0].index("2 items queued") == (terminal_width - 1 - 14) // 2
-    assert lines[0].endswith("Tab expand")
-    assert get_cwidth(lines[0]) == terminal_width - 1
-    assert all(style == "class:input.queue-summary" for style, _text in fragments)
+    assert lines[0].index("2 items queued") == 2
+    assert lines[0].endswith("Space expand ")
+    assert get_cwidth(lines[0]) == min(120, terminal_width - 2)
+    assert fragments[0] == (
+        "class:queue.accent.focused" if focused else "class:queue.accent",
+        rendering.ACCENT_CELL,
+    )
     assert not any(item in lines[0] for item in ("first", "second", "edit", "delete"))
 
 
-@pytest.mark.parametrize("terminal_width", [2, 12, 25, 40])
-def test_chat_collapsed_queue_fits_narrow_terminals_without_overlapping_hints(
+@pytest.mark.parametrize("message", ["👩‍💻" * 10, "❤️" * 25, "e\u0301" * 50])
+def test_chat_queue_uses_prompt_toolkit_cell_width_for_combining_text(
     monkeypatch: pytest.MonkeyPatch,
+    message: str,
+) -> None:
+    panel = widgets.QueuePanel(lambda: [message, message])
+    monkeypatch.setattr(panel, "_terminal_width", lambda: 82)
+
+    lines = "".join(text for _style, text in panel._render()).splitlines()
+
+    assert all(get_cwidth(line) == 80 for line in lines)
+    assert lines[1].endswith("E edit · Meta-Enter steer · D/Delete delete ")
+
+
+@pytest.mark.parametrize("expanded", [False, True])
+@pytest.mark.parametrize("terminal_width", [2, 3, 4, 12, 25, 40])
+def test_chat_queue_fits_narrow_terminals_without_wrapping(
+    monkeypatch: pytest.MonkeyPatch,
+    expanded: bool,
     terminal_width: int,
 ) -> None:
     panel = widgets.QueuePanel(lambda: ["first", "second"])
-    panel.toggle_expanded()
+    panel.expanded = expanded
     monkeypatch.setattr(panel, "_terminal_width", lambda: terminal_width)
 
-    line = "".join(text for _style, text in panel._render_summary())
-
-    assert "\n" not in line
-    assert get_cwidth(line) == terminal_width - 1
-    if terminal_width == 40:
-        hint = "Tab expand"
-        assert line.endswith(hint)
-        assert line.index("2 items queued") + len("2 items queued") < line.index(hint)
+    lines = "".join(text for _style, text in panel._render()).splitlines()
+    assert len(lines) == panel.rows()
+    assert all(get_cwidth(line) == terminal_width - 2 for line in lines)
+    if expanded and terminal_width >= 12:
+        assert lines[1].startswith("> [1]")
 
 
 def test_chat_queue_panel_preserves_collapsed_state_until_empty() -> None:
@@ -1536,28 +1552,24 @@ def test_chat_queue_panel_preserves_collapsed_state_until_empty() -> None:
     assert not panel.reconcile()
     assert panel.expanded
     assert panel.rows() == 0
-    assert panel._render_summary() == []
+    assert panel._render() == []
     assert not panel.toggle_expanded()
 
     items.append("next")
     assert panel.reconcile()
     assert panel.expanded
-    assert panel.rows() == 3
+    assert panel.rows() == 2
 
 
-def test_chat_queue_panel_uses_the_steer_accent_rail() -> None:
+def test_chat_queue_panel_has_no_separate_expanded_accent_rail() -> None:
     panel = widgets.QueuePanel(lambda: ["first"])
 
     container = panel.container()
 
     assert isinstance(container, ConditionalContainer)
     assert isinstance(container.content, VSplit)
-    accent = container.content.children[0]
-    assert isinstance(accent, Window)
-    assert accent.width == 1
-    assert callable(accent.style)
-    assert cast(Callable[[], str], accent.style)() == "class:queue.accent"
-    assert accent.char == rendering.ACCENT_CELL
+    assert len(container.content.children) == 1
+    assert isinstance(container.content.children[0], Window)
     assert widgets._chat_ui_palette()["queue.accent"] == (
         f"bg:{rendering.INACTIVE_CONTROL_ACCENT}"
     )
@@ -1571,7 +1583,7 @@ def test_chat_queue_panel_focus_selects_and_windows_queued_inputs(
 ) -> None:
     items = [f"queued input {index}" for index in range(1, 7)]
     panel = widgets.QueuePanel(lambda: items)
-    monkeypatch.setattr(panel, "_terminal_width", lambda: 52)
+    monkeypatch.setattr(panel, "_terminal_width", lambda: 100)
 
     monkeypatch.setattr(panel, "_has_focus", lambda: True)
     for _ in range(5):
@@ -1581,15 +1593,13 @@ def test_chat_queue_panel_focus_selects_and_windows_queued_inputs(
     rendered = "".join(text for _style, text in fragments)
     lines = rendered.splitlines()
 
-    assert panel.rows() == 7
+    assert panel.rows() == 6
     assert panel.selected_index == 5
-    assert lines[0].strip() == "6 items queued"
+    assert lines[0].startswith("  6 items queued")
     assert "[3] queued input 3" in lines[1]
-    assert "› [6] queued input 6" in lines[4]
+    assert "> [6] queued input 6" in lines[4]
     assert lines[5].strip() == "… 2 items not shown"
-    assert "Ctrl-P/N" in lines[6]
-    assert lines[6].rstrip().endswith("…")
-    assert all(get_cwidth(line) == 51 for line in lines)
+    assert all(get_cwidth(line) == 98 for line in lines)
     assert any(style == "class:queue.selected" for style, _text in fragments)
     assert panel._accent_style() == "class:queue.accent.focused"
 
@@ -2006,9 +2016,12 @@ def test_chat_input_area_absorbs_live_progress_contraction() -> None:
     asyncio.run(exercise())
 
 
-def test_chat_collapsed_queue_shares_input_padding_background_and_accent() -> None:
+def test_chat_queue_layout_preserves_width_gap_and_cursor_across_focus_and_resize() -> (
+    None
+):
     async def exercise() -> None:
-        with create_app_session(input=DummyInput(), output=_TerminalOutput()):
+        output = _TerminalOutput()
+        with create_app_session(input=DummyInput(), output=output):
             app = tui.ChatTuiApp(
                 thread_id="term_busy",
                 setting=FakeClient().initial_setting(),
@@ -2019,40 +2032,99 @@ def test_chat_collapsed_queue_shares_input_padding_background_and_accent() -> No
             app.active_run_id = "run_busy"
             app.handle_submit("first")
             app.handle_submit("second")
-            app.queue_panel.toggle_expanded()
             app.prompt.buffer.text = "Keep typing"
+            app.prompt.buffer.cursor_position = 4
 
             with set_app(app.app):
-                screen = _render_chat_layout(app)
-                lines = {
-                    row: "".join(
-                        screen.data_buffer[row][col].char for col in range(100)
-                    )
-                    for row in range(screen.height)
-                }
-                summary_row = next(
-                    row for row, line in lines.items() if "2 items queued" in line
-                )
-                input_row = next(
-                    row for row, line in lines.items() if "Keep typing" in line
-                )
-
-                assert summary_row == input_row - 1
-                assert lines[summary_row].endswith("Tab expand")
-                assert app.queue_panel.rows() == 0
-                assert not app.queue_panel.container().filter()
-                assert app._available_live_rows() == 30 - app.prompt.rows() - 1
                 app_style = app.app.style
                 assert app_style is not None
-                for column in (0, 1):
-                    summary_style = app_style.get_attrs_for_style_str(
-                        screen.data_buffer[summary_row][column].style
-                    )
-                    input_style = app_style.get_attrs_for_style_str(
-                        screen.data_buffer[input_row][column].style
-                    )
-                    assert summary_style.bgcolor == input_style.bgcolor
-                assert app.prompt._accent_style() == "class:control.run"
+                # Leave stable-footer space above Queue, never between it and Input.
+                app._footer_row_floor = 20
+                for columns in (160, 100, 82, 40, 101):
+                    output.columns = columns
+                    for expanded in (True, False, True):
+                        app.queue_panel.expanded = expanded
+                        for focused in (False, True, False):
+                            app.app.layout.focus(
+                                app.queue_panel.view if focused else app.prompt.buffer
+                            )
+                            screen = _render_chat_layout(app)
+                            lines = {
+                                row: "".join(
+                                    screen.data_buffer[row][col].char
+                                    for col in range(columns)
+                                )
+                                for row in range(screen.height)
+                            }
+                            summary_row = next(
+                                row
+                                for row, line in lines.items()
+                                if "2 items queued" in line
+                            )
+                            input_row = next(
+                                row
+                                for row, line in lines.items()
+                                if "Keep typing" in line
+                            )
+                            width = min(120, columns - 2)
+                            left = lines[summary_row].index("2 items queued") - 2
+                            assert abs(left - (columns - width) / 2) <= 0.5
+                            assert lines[summary_row][:left].strip() == ""
+                            assert lines[summary_row][left + width :].strip() == ""
+                            assert lines[summary_row][left : left + width].endswith(
+                                "Space collapse " if expanded else "Space expand "
+                            )
+                            panel_rows = 3 if expanded else 1
+                            assert app.queue_panel.rows() == panel_rows
+                            assert input_row == summary_row + panel_rows + 2
+                            assert not lines[input_row - 2].strip()  # Separate gap.
+                            assert not lines[input_row - 1].strip()  # Input padding.
+                            assert app._input_spacer_rows() > 0
+                            assert app._available_live_rows() == (
+                                30 - panel_rows - 1 - app.prompt.rows() - 1
+                            )
+
+                            def background(row: int, col: int) -> str | None:
+                                return app_style.get_attrs_for_style_str(
+                                    screen.data_buffer[row][col].style
+                                ).bgcolor
+
+                            accent = (
+                                rendering.STEER_CONTROL_ACCENT
+                                if focused
+                                else rendering.INACTIVE_CONTROL_ACCENT
+                            ).removeprefix("#")
+                            assert background(summary_row, left) == accent
+                            assert background(summary_row, left + width - 1) == (
+                                accent if expanded else "3a3a3a"
+                            )
+                            if expanded:
+                                summary_attrs = app_style.get_attrs_for_style_str(
+                                    screen.data_buffer[summary_row][left + 2].style
+                                )
+                                hint_attrs = app_style.get_attrs_for_style_str(
+                                    screen.data_buffer[summary_row][
+                                        left + width - 2
+                                    ].style
+                                )
+                                assert summary_attrs.color == (
+                                    "1f1f1f" if focused else "ffffff"
+                                )
+                                assert hint_attrs.color == (
+                                    "493a5c" if focused else "dddddd"
+                                )
+                            assert background(summary_row, left - 1) == ""
+                            assert background(summary_row, left + width) == ""
+                            assert background(input_row - 2, 0) == ""
+                            assert background(input_row - 1, 0) == "ansibrightcyan"
+                            assert background(input_row, 0) == "ansibrightcyan"
+                            assert screen.show_cursor is not focused
+                            assert app.prompt.buffer.cursor_position == 4
+                            if not focused:
+                                cursor = screen.get_cursor_position(
+                                    app.app.layout.current_window
+                                )
+                                assert (cursor.x, cursor.y) == (6, input_row)
 
             await app.app.cancel_and_wait_for_background_tasks()
 
@@ -3352,7 +3424,7 @@ def test_chat_queue_captures_settings_at_submission_time() -> None:
         if item.request.model is not None
         and item.request.model.parameters.reasoning is not None
     ] == ["low", "high"]
-    assert app.queue_panel.rows() == 4
+    assert app.queue_panel.rows() == 3
     assert isinstance(app.app.layout.current_control, BufferControl)
     assert app.app.layout.current_control.buffer is app.prompt.buffer
 
@@ -3543,12 +3615,10 @@ def test_chat_tui_queue_shortcuts_switch_focus_and_move_selection() -> None:
         active[-1].handler(cast(Any, None))
 
     with set_app(app.app):
-        assert app.prompt._accent_style() == "class:control.run"
         assert app.queue_panel._accent_style() == "class:queue.accent"
 
         invoke(Keys.Tab)
         assert app.app.layout.current_control is app.queue_panel.view
-        assert app.prompt._accent_style() == "class:control.run.unfocused"
         assert app.queue_panel._accent_style() == "class:queue.accent.focused"
 
         invoke(Keys.Down)
@@ -3572,7 +3642,7 @@ def test_chat_tui_queue_shortcuts_switch_focus_and_move_selection() -> None:
         assert app.app.layout.current_control.buffer is app.prompt.buffer
 
 
-def test_chat_tui_collapsing_queue_returns_to_input_and_tab_reopens_selection() -> None:
+def test_chat_tui_space_toggles_queue_and_tab_only_switches_focus() -> None:
     app = tui.ChatTuiApp(
         thread_id="term_busy",
         setting=FakeClient().initial_setting(),
@@ -3597,10 +3667,21 @@ def test_chat_tui_collapsing_queue_returns_to_input_and_tab_reopens_selection() 
 
             press(" ")
             assert not app.queue_panel.expanded
-            assert app.queue_panel.rows() == 0
-            assert isinstance(app.app.layout.current_control, BufferControl)
-            assert app.app.layout.current_control.buffer is app.prompt.buffer
+            assert app.queue_panel.rows() == 1
+            assert app.app.layout.current_control is app.queue_panel.view
 
+            for key in (
+                Keys.Up,
+                Keys.ControlP,
+                Keys.Down,
+                Keys.ControlN,
+                "e",
+                "d",
+                Keys.Delete,
+                Keys.Escape,
+                Keys.Enter,
+            ):
+                press(key)
             app._edit_selected_queue_item()
             app._steer_selected_queue_item()
             app._delete_selected_queue_item()
@@ -3608,6 +3689,9 @@ def test_chat_tui_collapsing_queue_returns_to_input_and_tab_reopens_selection() 
             assert app.queue_panel.selected_index == 1
             assert app.prompt.buffer.text == ""
 
+            press(Keys.Tab)
+            assert not app.queue_panel.expanded
+            assert app.app.layout.current_control is not app.queue_panel.view
             press(" ")
             assert app.prompt.buffer.text == " "
             assert not app.queue_panel.expanded
@@ -3621,14 +3705,17 @@ def test_chat_tui_collapsing_queue_returns_to_input_and_tab_reopens_selection() 
             app.prompt.buffer.reset()
 
             press(Keys.Tab)
-            assert app.queue_panel.expanded
+            assert not app.queue_panel.expanded
             assert app.queue_panel.selected_index == 1
             assert app.app.layout.current_control is app.queue_panel.view
 
             press(" ")
+            assert app.queue_panel.expanded
+            assert app.queue_panel.selected_index == 1
+            press(" ")
             app.handle_submit("third")
             assert not app.queue_panel.expanded
-            assert app.app.layout.current_control is not app.queue_panel.view
+            assert app.app.layout.current_control is app.queue_panel.view
             app.queue.clear()
             app._reconcile_queue_panel()
             assert app.queue_panel.expanded
@@ -3670,6 +3757,23 @@ def test_chat_tui_queue_focus_shortcuts_yield_to_input_completion(
 def test_chat_tui_queue_steer_has_no_single_key_binding() -> None:
     assert shortcuts.QUEUE_STEER.bindings == shortcuts.STEER.bindings
     assert ("s",) not in shortcuts.QUEUE_STEER.bindings
+
+
+def test_chat_queue_shortcut_help_includes_navigation_and_contextual_actions() -> None:
+    lines = shortcuts.help_lines()
+    queue_lines = lines[lines.index("Queue focused:") + 1 :]
+
+    assert [line.split("  ", 1)[0] for line in queue_lines] == [
+        "Space",
+        "Up, Ctrl-P",
+        "Down, Ctrl-N",
+        "E",
+        "Meta-Enter",
+        "D, Delete",
+    ]
+    assert "Expand or collapse queued inputs" in queue_lines[0]
+    assert "Select the previous queued input" in queue_lines[1]
+    assert "Select the next queued input" in queue_lines[2]
 
 
 def test_chat_tui_queue_blocks_mutations_after_ambiguous_acceptance() -> None:
