@@ -179,14 +179,19 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
         visible = session.wait_for(
             "1 item queued",
             "[1] queued follow-up",
-            "[Space] Collapse",
+            "[Tab] Queue",
         )
         assert "Traceback" not in visible
+        assert "[Space] Collapse" not in visible
+        assert "[e] Edit" not in visible
 
         session.send(b"\t")
         focused = session.wait_for(
             "> [1] queued follow-up",
             "1 item queued",
+            "[Tab] Input",
+            "[Space] Collapse",
+            "[↑↓] Select",
             "[e] Edit",
             "[Meta+Enter] Steer",
             "[d] Delete",

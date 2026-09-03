@@ -30,8 +30,10 @@ away from the active run.
 - Space toggles the focused Queue without moving focus; Tab only changes focus.
   Selection is preserved, but actions on hidden entries are disabled.
 - Queue uses the full terminal width and joins Input without a separator row.
-  The areas retain distinct backgrounds. Queue's left rail indicates focus in
-  both modes; Input retains its cyan accent and only shows its cursor on focus.
+  The areas retain distinct backgrounds. Queue shows its left accent only on
+  focus; Input retains its cyan accent and only shows its cursor on focus.
+- Queue's summary stays centered in its last row, directly above Input.
+  Collapsed Queue occupies only that row. Hints reflect focus and expansion.
 - Queue selection remains valid while items are removed or automatically
   submitted, and the panel resets when the queue becomes empty.
 - The existing hidden `/queue`, `/q`, `/steer`, and `/s` commands retain their
@@ -102,34 +104,34 @@ Toolkit Tab behavior remains unchanged.
 
 Queue occupies the full terminal width in both modes, directly above Input
 without a separator row or horizontal margins. Queue and Input retain distinct
-backgrounds, including their own padding. Any dynamic space used to stabilize the
-footer belongs above Queue, never between the two areas. A one-cell left accent
-rail spans every Queue row: steer purple when focused, muted when unfocused.
+backgrounds. Any dynamic space used to stabilize the footer belongs above Queue,
+never between the two areas. A one-cell steer-purple left accent spans every
+Queue row only when focused; otherwise that column uses the Queue background.
+Its space stays reserved so focus never shifts content horizontally.
 Expanded layout:
 
-- The first row left-aligns a dim summary, such as `3 items queued`, and
-  right-aligns `[Space] Collapse`. It has the same background as the Queue entries,
-  without a special header style.
+- Right-aligned dim key hints occupy the top row, without a special header fill.
+  Hints describe only the focused/expanded state's available actions. On narrow
+  terminals they flow onto additional rows between complete actions.
 - The middle shows up to four one-line previews, following selection. If any
-  entries are outside the visible window, a final dim content row reports
-  `… N items not shown`.
-- Only the selected entry displays a `>` marker and right-aligned dim
-  `[e] Edit · [Meta+Enter] Steer · [d] Delete` hints. Its preview truncates to
-  reserve hint space; unselected entries use the full content width. Selection
-  stays visible when Queue is unfocused. There is no bottom hint row.
+  entries are outside the visible window, a dim content row below them reports
+  `… N items not shown` before the summary.
+- Only the selected entry displays a `>` marker. All entries use the full
+  content width; none contain action hints. Selection stays visible when
+  Queue is unfocused.
+- A dim summary, such as `3 items queued`, is centered across the full panel in
+  its last row, directly adjoining Input's top padding. No Queue row follows it.
 
-Expanded height ranges from two rows for one item to six rows when entries are
-omitted.
+With one hint row, expanded height ranges from three rows for one item to seven
+rows when entries are omitted.
 
-Collapsed layout is an independent, focusable three-row panel: one blank padding
-row above and below a left-aligned dim summary and right-aligned `[Space] Expand`.
-Its one-cell left accent rail spans all three rows, muted when unfocused and
-steer purple when focused. Padding uses the Queue background. The panel
-keeps its expanded width and horizontal position. No queue content appears inside
-Input. On narrow terminals, previews and summaries truncate before hints; hints
-also truncate if necessary, preserving the selected entry's marker and number
-when they fit.
-All rows fit by display cells, including wide Unicode, and never wrap.
+Collapsed Queue is a single focusable row with the same centered summary and
+right-aligned contextual key hints. There are no extra padding rows. Centering
+never uses only the space left by hints. If the right margin cannot fit every
+hint, show complete hints in order, prioritizing Tab; never overlap or shift the
+summary. No queue content appears inside Input. Previews and summaries truncate
+by display cells on narrow terminals, including wide Unicode. Only hints flow
+between rows; individual overlong hints truncate to the available row width.
 
 Input's one-cell accent remains cyan regardless of focus. Its cursor is hidden
 while Queue has focus and returns to the preserved editing position when focus
@@ -183,6 +185,17 @@ inline hints show only the primary key. Optional Shift+Enter stays qualified
 with `also Shift+Enter if supported`. The notation does not change bindings.
 Keep `Meta` portable rather than claiming a terminal exposes physical Cmd.
 
+Panel hints depend on focus and expansion:
+
+| State | Hints |
+| --- | --- |
+| Unfocused, either mode | `[Tab] Queue` |
+| Focused, collapsed | `[Tab] Input · [Space] Expand` |
+| Focused, expanded | `[Tab] Input · [Space] Collapse · [↑↓] Select · [e] Edit · [d] Delete · [Meta+Enter] Steer` |
+
+Tab labels name the focus destination. Full help continues to document aliases
+and action preconditions; the panel does not repeat them.
+
 The global shortcut help uses these concise rows:
 
 ```text
@@ -222,14 +235,20 @@ Likely files:
   focused, more-than-four, narrow-terminal, and automatically emptied states.
 - Both modes occupy the full terminal width across resize and directly adjoin
   Input, without a separator or queue text inside Input's padding.
-- Collapsed Queue has three rows, with blank padding above and below its summary
-  and a continuous accent rail.
-- Only Queue's left rail changes color with focus, in both modes. All Queue
-  content and padding use the Queue background, distinct from Input, with no
+- The summary is centered across the full panel in its last row in every state,
+  directly above Input. Collapsed Queue has one row, with right-aligned hints.
+- Queue shows its left accent only when focused, in both modes. Its column uses
+  the Queue background when unfocused and stays reserved to prevent shifting.
+  All Queue content uses its own background, distinct from Input, with no
   special header fill.
   Input's accent stays cyan and its cursor tracks focus.
-- Only selected entries reserve right-aligned action hints; long and CJK
-  previews truncate without wrapping. Omitted counts follow the visible entries.
+- Unfocused Queue shows only the focus-in hint. Focused, collapsed Queue shows
+  only focus-out and expand; focused, expanded Queue also shows navigation,
+  collapse, edit, delete, and steer. No entry contains action hints.
+- Expanded hints flow between complete actions on narrow terminals. Collapsed
+  hints omit actions that cannot fit to the right of the centered summary.
+- Long and CJK previews truncate without wrapping. Omitted counts follow the
+  visible entries and precede the bottom summary.
 - Space toggles only focused Queue without moving focus; Tab never expands it.
   Input spaces and draft steering retain their behavior. Hidden entries cannot
   be selected or mutated.
