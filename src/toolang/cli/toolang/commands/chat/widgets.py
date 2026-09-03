@@ -89,14 +89,20 @@ class QueuePanel:
 
     def container(self) -> ConditionalContainer:
         return ConditionalContainer(
-            Window(
-                self.view,
-                width=self.width,
-                height=self.rows,
-                wrap_lines=False,
-                always_hide_cursor=True,
-                style="class:queue",
-                char=" ",
+            VSplit(
+                [
+                    Window(width=1),
+                    Window(
+                        self.view,
+                        width=self.width,
+                        height=self.rows,
+                        wrap_lines=False,
+                        always_hide_cursor=True,
+                        style="class:queue",
+                        char=" ",
+                    ),
+                    Window(width=1),
+                ]
             ),
             filter=Condition(lambda: bool(self.rows())),
         )
@@ -106,18 +112,16 @@ class QueuePanel:
         width = self.width()
         if not items or not width:
             return []
-        width -= 1  # Keep the left gutter aligned with Input's accent column.
         rows = self._rows(items, width=width)
         fragments: list[tuple[str, str]] = []
         for row_index, row in enumerate(rows):
-            fragments.append(("class:queue", ACCENT_CELL))
             fragments.extend(row)
             if row_index < len(rows) - 1:
                 fragments.append(("", "\n"))
         return fragments
 
     def width(self) -> int:
-        return max(0, self._terminal_width())
+        return max(0, self._terminal_width() - 2)
 
     def rows(self) -> int:
         count = len(self.get_items())
@@ -125,7 +129,7 @@ class QueuePanel:
             return 0
         if not self.expanded:
             return 1
-        return len(self._hint_lines(self.width() - 1)) + min(count, MAX_QUEUE_ROWS) + 1
+        return len(self._hint_lines(self.width())) + min(count, MAX_QUEUE_ROWS) + 1
 
     def toggle_expanded(self) -> bool:
         if not self.get_items():
@@ -242,7 +246,7 @@ class QueuePanel:
         """Center on the full panel, reserving only the remaining right margin."""
         summary = self._truncate(self._count_label(count), width)
         summary_width = get_cwidth(summary)
-        left = max(0, (width - summary_width - 1) // 2)
+        left = max(0, (width - summary_width) // 2)
         right = width - left - summary_width
         hint = ""
         if not self.expanded:
