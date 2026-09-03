@@ -94,18 +94,21 @@ footer-stabilizing space belongs above Queue, never between Queue and Input.
 
 Expanded Queue has a centered summary at the top, up to four single-line
 previews, and panel hints at the bottom right, directly above Input. There is no
-omitted-count row or special header fill. Entry numbers align with Input text.
-While focused, the selected entry uses Input's background from its left padding
-to the right edge, excluding the accent column. It has no selection marker or
-bold text; only the background indicates selection. Dim edit, delete, and steer
-hints occupy the right side on that same background. Losing focus hides the
-highlight and entry hints while preserving selection. The summary counts all items.
+omitted-count row or special header fill. Entry numbers align with Input text
+and remain dim in every state; body text stays normal. While focused, the
+selected entry uses Input's background, inset one cell on each side with another
+cell of padding inside each end. It has no selection marker or bold text; only
+the background indicates selection. Slightly brighter dim action hints occupy
+the right side on that same background, separated from the body by at least two
+cells. Entry and panel hints share a right edge two cells from Queue's edge;
+truncation preserves their padding. Losing focus hides the highlight and entry
+hints while preserving selection. The summary counts all items.
 
 Collapsed Queue occupies a single row: the centered summary with right-aligned
 key hints, without extra padding rows. Hidden entries cannot be selected or
 mutated. In both modes, the summary indicates focus through normal text when
-focused and dim text when unfocused. Key hints stay dim. The reserved one-cell
-left column always uses Queue's background, independent of focus and expansion.
+focused and dim text when unfocused. Key hints stay dim. Queue's outermost cells
+always use its background, independent of focus and expansion.
 Input's accent always stays cyan. Its cursor hides on Queue focus and returns
 to its preserved position on Input focus.
 

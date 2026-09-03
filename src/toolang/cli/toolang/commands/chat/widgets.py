@@ -49,8 +49,10 @@ def _chat_ui_palette() -> dict[str, str]:
     return {
         "": "",
         "queue": "fg:#f5f5f5 bg:#3a3a3a",
+        "queue.number": "dim",
         "queue.selected": f"bg:{INPUT_BACKGROUND}",
-        "queue.selected.hint": "fg:#b8b8b8 dim",
+        "queue.selected.number": "dim",
+        "queue.selected.hint": "fg:#d0d0d0 dim",
         "queue.info": "fg:#b8b8b8 bg:#3a3a3a dim",
         "queue.hint": "fg:#b8b8b8 dim",
         "control.run": f"bg:{RUN_CONTROL_ACCENT_PROMPT_TOOLKIT}",
@@ -106,12 +108,13 @@ class QueuePanel:
         width = self.width()
         if not items or not width:
             return []
-        width -= 1  # Keep the left gutter aligned with Input's accent column.
-        rows = self._rows(items, width=width)
+        rows = self._rows(items, width=max(0, width - 2))
         fragments: list[tuple[str, str]] = []
         for row_index, row in enumerate(rows):
             fragments.append(("class:queue", ACCENT_CELL))
             fragments.extend(row)
+            if width > 1:
+                fragments.append(("class:queue", ACCENT_CELL))
             if row_index < len(rows) - 1:
                 fragments.append(("", "\n"))
         return fragments
@@ -125,7 +128,11 @@ class QueuePanel:
             return 0
         if not self.expanded:
             return 1
-        return len(self._hint_lines(self.width() - 1)) + min(count, MAX_QUEUE_ROWS) + 1
+        return (
+            len(self._hint_lines(max(0, self.width() - 2)))
+            + min(count, MAX_QUEUE_ROWS)
+            + 1
+        )
 
     def toggle_expanded(self) -> bool:
         if not self.get_items():
@@ -185,20 +192,30 @@ class QueuePanel:
             prefix = f" [{item_number}] "
             preview = " ".join(item.split())
             style = "class:queue.selected" if selected else "class:queue"
+            number_style = (
+                "class:queue.selected.number" if selected else "class:queue.number"
+            )
+            row = self._split_row(
+                f"{prefix}{preview}",
+                actions if selected else "",
+                width,
+                style=style,
+                hint_style="class:queue.selected.hint" if selected else style,
+                min_text_width=get_cwidth(prefix) + 3 if selected else 0,
+            )
+            text = row[0][1]
+            number_end = len(prefix) - 1
             rows.append(
-                self._split_row(
-                    f"{prefix}{preview}",
-                    f"{actions} " if selected else " ",
-                    width,
-                    style=style,
-                    hint_style="class:queue.selected.hint" if selected else style,
-                    min_text_width=get_cwidth(prefix) + 3 if selected else 0,
-                )
+                [
+                    (number_style, text[:number_end]),
+                    (style, text[number_end:]),
+                    *row[1:],
+                ]
             )
         rows.extend(
             self._split_row(
                 "",
-                hint + " ",
+                hint,
                 width,
                 style="class:queue.hint",
                 hint_style="class:queue.hint",
@@ -242,13 +259,13 @@ class QueuePanel:
         """Center on the full panel, reserving only the remaining right margin."""
         summary = self._truncate(self._count_label(count), width)
         summary_width = get_cwidth(summary)
-        left = max(0, (width - summary_width - 1) // 2)
+        left = max(0, (width - summary_width) // 2)
         right = width - left - summary_width
         hint = ""
         if not self.expanded:
             for action in self._hints():
                 combined = f"{hint} · {action}" if hint else action
-                if get_cwidth(combined) > right - 2:
+                if get_cwidth(combined) > right - 3:
                     break
                 hint = combined
         hint = hint + " " if hint else ""
@@ -275,11 +292,16 @@ class QueuePanel:
         hint_style: str,
         min_text_width: int = 0,
     ) -> list[tuple[str, str]]:
-        """Reserve right-aligned hints before fitting the left-hand content."""
-        hint = cls._truncate(hint, max(0, width - min_text_width))
-        text = cls._truncate(text, max(0, width - get_cwidth(hint) - 1))
-        gap = " " * max(0, width - get_cwidth(text) - get_cwidth(hint))
-        return [(style, text + gap), (hint_style, hint)]
+        """Fit hints with right padding and a two-cell gap from entry text."""
+        padding = " " if width > 0 else ""
+        available = max(0, width - len(padding))
+        separation = 2 if text and hint else 0
+        hint = cls._truncate(hint, max(0, available - min_text_width - separation))
+        if not hint:
+            separation = 0
+        text = cls._truncate(text, max(0, available - get_cwidth(hint) - separation))
+        gap = " " * max(0, available - get_cwidth(text) - get_cwidth(hint))
+        return [(style, text + gap), (hint_style, hint + padding)]
 
     @staticmethod
     def _truncate(text: str, width: int) -> str:

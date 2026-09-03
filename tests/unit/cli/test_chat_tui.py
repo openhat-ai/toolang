@@ -1470,15 +1470,23 @@ def test_chat_queue_panel_splits_selected_entry_actions_from_panel_hints(
     assert selected.startswith("  [1] 任务 preview")
     assert unselected.startswith("  [2] 任务 preview")
     if focused:
-        hint = "meta+enter steer · e edit · d delete "
+        hint = "meta+enter steer · e edit · d delete  "
         assert selected.endswith(hint)
+        assert selected[: selected.index(hint)].endswith("  ")
         assert selected[: selected.index(hint)].rstrip().endswith("…")
     else:
         assert selected[6:] == unselected[6:]
         assert selected.rstrip().endswith("…")
     assert not any(action in unselected for action in ("edit", "steer", "delete"))
     assert any("queue.selected" in style for style, _text in fragments) is focused
+    assert [
+        (style, text) for style, text in fragments if style.endswith(".number")
+    ] == [
+        ("class:queue.selected.number" if focused else "class:queue.number", " [1]"),
+        ("class:queue.number", " [2]"),
+    ]
     assert "›" not in "".join(lines)
+    assert footer.endswith("  ")
     assert all(get_cwidth(line) == terminal_width for line in lines)
     accent = ("class:queue", rendering.ACCENT_CELL)
     assert fragments[0] == accent
@@ -1488,6 +1496,12 @@ def test_chat_queue_panel_splits_selected_entry_actions_from_panel_hints(
         if index == 0 or fragments[index - 1][1] == "\n"
     ]
     assert row_starts == [accent] * panel.rows()
+    row_ends = [
+        fragment
+        for index, fragment in enumerate(fragments)
+        if index == len(fragments) - 1 or fragments[index + 1][1] == "\n"
+    ]
+    assert row_ends == [accent] * panel.rows()
 
 
 @pytest.mark.parametrize("focused", [False, True])
@@ -1516,12 +1530,12 @@ def test_chat_queue_panel_collapses_to_one_centered_row_with_contextual_hints(
         hint = "sp expand"
         if terminal_width >= 80:
             hint += " · tab input"
-    assert lines[0].endswith(hint + " ")
+    assert lines[0].endswith(hint + "  ")
     assert lines[0].split("2 items queued", 1)[1].strip() == hint
     assert all(get_cwidth(line) == terminal_width for line in lines)
     accent = ("class:queue", rendering.ACCENT_CELL)
     assert fragments[0] == accent
-    assert fragments.count(accent) == 1
+    assert fragments.count(accent) == 2
     assert not any(
         item in lines[0]
         for item in ("first", "second", "select", "edit", "delete", "steer")
@@ -1548,6 +1562,28 @@ def test_chat_queue_panel_wraps_footer_hints_in_narrow_terminals(
     assert lines[0].index("1 item queued") == (terminal_width - 13) // 2
     if terminal_width >= 40:
         assert "meta+enter steer" in lines[1]
+
+
+@pytest.mark.parametrize("terminal_width", [20, 25, 40, 50, 80, 101])
+def test_chat_queue_preserves_action_gap_and_padding_when_truncating(
+    monkeypatch: pytest.MonkeyPatch,
+    terminal_width: int,
+) -> None:
+    panel = widgets.QueuePanel(lambda: ["任务 preview " * 20])
+    monkeypatch.setattr(panel, "_terminal_width", lambda: terminal_width)
+    monkeypatch.setattr(panel, "_has_focus", lambda: True)
+
+    fragments = panel._render()
+    lines = "".join(text for _style, text in fragments).splitlines()
+    hint = next(
+        text for style, text in fragments if style == "class:queue.selected.hint"
+    )
+    assert hint.strip()
+    assert hint.endswith(" ")
+    assert lines[1].endswith(hint + " ")
+    assert lines[1][: lines[1].index(hint)].endswith("  ")
+    assert lines[1].startswith("  [1] ")
+    assert all(get_cwidth(line) == terminal_width for line in lines)
 
 
 @pytest.mark.parametrize("message", ["👩‍💻" * 10, "❤️" * 25, "e\u0301" * 50])
@@ -1629,6 +1665,8 @@ def test_chat_queue_panel_uses_a_full_width_window_and_distinct_background() -> 
     assert palette["queue"] == "fg:#f5f5f5 bg:#3a3a3a"
     assert palette["queue.info"] == "fg:#b8b8b8 bg:#3a3a3a dim"
     assert palette["queue.selected"] == f"bg:{rendering.INPUT_BACKGROUND}"
+    assert palette["queue.number"] == palette["queue.selected.number"] == "dim"
+    assert palette["queue.selected.hint"] == "fg:#d0d0d0 dim"
     assert palette["queue.hint"] == "fg:#b8b8b8 dim"
     assert not any(name.startswith("queue.accent") for name in palette)
 
@@ -1653,7 +1691,7 @@ def test_chat_queue_panel_focus_selects_and_windows_queued_inputs(
     assert lines[0].strip() == "6 items queued"
     assert "[3] queued input 3" in lines[1]
     assert "[6] queued input 6" in lines[4]
-    assert lines[4].endswith("meta+enter steer · e edit · d delete ")
+    assert lines[4].endswith("meta+enter steer · e edit · d delete  ")
     assert lines[5].strip() == "↑↓ select · sp collapse · tab input"
     assert "not shown" not in rendered
     assert all(get_cwidth(line) == 100 for line in lines)
@@ -2152,7 +2190,7 @@ def test_chat_queue_joins_input_across_focus_expansion_and_terminal_resize(
                                     hint = "sp expand"
                                     if columns >= 80:
                                         hint += " · tab input"
-                                assert lines[summary_row].endswith(hint + " ")
+                                assert lines[summary_row].endswith(hint + "  ")
                             assert not lines[input_row - 1].strip()  # Input padding.
                             assert app._input_spacer_rows() > 0
                             assert app._available_live_rows() == (
@@ -2171,6 +2209,7 @@ def test_chat_queue_joins_input_across_focus_expansion_and_terminal_resize(
                             assert queue_background != input_background
                             for row in range(panel_top, panel_top + panel_rows):
                                 assert background(row, 0) == queue_background
+                                assert background(row, columns - 1) == queue_background
                                 selected = (
                                     expanded
                                     and focused
@@ -2181,8 +2220,24 @@ def test_chat_queue_joins_input_across_focus_expansion_and_terminal_resize(
                                 )
                                 assert all(
                                     background(row, col) == row_background
-                                    for col in range(1, columns)
+                                    for col in range(1, columns - 1)
                                 )
+                                if expanded and panel_top < row < panel_bottom:
+                                    number_attrs = app_style.get_attrs_for_style_str(
+                                        screen.data_buffer[row][2].style
+                                    )
+                                    entry_attrs = app_style.get_attrs_for_style_str(
+                                        screen.data_buffer[row][6].style
+                                    )
+                                    assert number_attrs.dim
+                                    assert not number_attrs.bold
+                                    assert not entry_attrs.dim
+                                    assert not entry_attrs.bold
+                                    assert (
+                                        number_attrs.color
+                                        == entry_attrs.color
+                                        == "f5f5f5"
+                                    )
                                 if selected:
                                     assert lines[row].startswith(
                                         f"  [{selected_index + 1}] "
@@ -2190,22 +2245,16 @@ def test_chat_queue_joins_input_across_focus_expansion_and_terminal_resize(
                                     assert lines[row].index(
                                         f"[{selected_index + 1}]"
                                     ) == lines[input_row].index("Keep typing")
-                                    entry_attrs = app_style.get_attrs_for_style_str(
-                                        screen.data_buffer[row][2].style
-                                    )
-                                    assert not entry_attrs.dim
-                                    assert not entry_attrs.bold
-                                    assert entry_attrs.color == "f5f5f5"
                                     entry_hint_attrs = (
                                         app_style.get_attrs_for_style_str(
                                             screen.data_buffer[row][columns - 2].style
                                         )
                                     )
                                     assert entry_hint_attrs.dim
-                                    assert entry_hint_attrs.color == "b8b8b8"
+                                    assert entry_hint_attrs.color == "d0d0d0"
                                     if columns >= 80:
                                         assert lines[row].endswith(
-                                            "meta+enter steer · e edit · d delete "
+                                            "meta+enter steer · e edit · d delete  "
                                         )
                             if not focused:
                                 assert not any(

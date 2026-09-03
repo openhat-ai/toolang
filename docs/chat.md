@@ -75,11 +75,13 @@ A non-empty Queue appears expanded above Input without taking focus. It fills
 the terminal width and directly joins Input without a separator row. The areas
 retain distinct backgrounds. Expanded Queue has a centered summary at the
 top, up to four one-line previews, and panel hints at the bottom right. There is
-no omitted-item count row. Entry numbers align with Input text. While focused,
-selection is shown only by Input's background, without covering the accent
-column; there is no selection marker. The selected entry reserves its right
-side for dim edit, delete, and steer hints. Losing focus hides its highlight and
-action hints while preserving the selected index.
+no omitted-item count row. Entry numbers align with Input text and remain dim;
+body text stays normal. While focused, selection is shown only by Input's
+background, inset one cell on each side with another cell of padding inside
+each end. There is no selection marker. The selected entry reserves its right
+side for slightly brighter dim action hints, separated from the body by at least
+two cells. All entry and panel hints end two cells from Queue's right edge.
+Losing focus hides its highlight and action hints while preserving the selected index.
 
 Tab and Shift+Tab only switch focus, yielding to active input completion.
 Space toggles the focused Queue without moving focus or selection. Collapsed
@@ -98,8 +100,8 @@ On narrow terminals footer hints flow between complete actions, and selected
 previews truncate to reserve action hints. Collapsed hints omit actions that
 cannot fit beside the centered count, prioritizing expansion. Queue indicates
 focus through its summary: normal text when focused and dim text when unfocused,
-in both modes. Its reserved left column always blends into Queue's background
-without shifting content. Key hints stay dim.
+in both modes. Its outermost cells always use Queue's background without shifting
+content. Key hints stay dim, and truncation preserves their right padding.
 There is no separate header style.
 Input's accent stays cyan; its cursor hides while Queue has focus and returns
 to the preserved editing position afterward.
