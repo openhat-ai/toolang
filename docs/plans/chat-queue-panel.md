@@ -121,12 +121,14 @@ Expanded layout:
 Expanded height ranges from two rows for one item to six rows when entries are
 omitted, excluding the one-row gap before Input.
 
-Collapsed layout is one independent, focusable row: a one-cell left accent
-rail, a left-aligned dim summary, and right-aligned `Space expand`. The rail is
-muted when unfocused and steer purple when focused. The panel keeps its expanded
-width and horizontal position. No queue content appears inside Input. On narrow
-terminals previews and summaries truncate before hints; hints also truncate if
-necessary, preserving the selected entry's marker and number when they fit.
+Collapsed layout is an independent, focusable three-row panel: one blank padding
+row above and below a left-aligned dim summary and right-aligned `Space expand`.
+Its one-cell left accent rail spans all three rows, muted when unfocused and
+steer purple when focused. Padding uses the Queue background. The panel keeps
+its expanded width and horizontal position. No queue content appears inside
+Input. On narrow terminals, previews and summaries truncate before hints; hints
+also truncate if necessary, preserving the selected entry's marker and number
+when they fit.
 All rows fit by display cells, including wide Unicode, and never wrap.
 
 Input's one-cell accent remains cyan regardless of focus. Its cursor is hidden
@@ -212,6 +214,8 @@ Likely files:
   focused, more-than-four, narrow-terminal, and automatically emptied states.
 - Both modes stay centered and width-limited across resize, with exactly one
   blank row before Input and no queue text inside its padding.
+- Collapsed Queue has three rows, with blank padding above and below its summary
+  and a continuous accent rail. Its bottom padding does not replace the Input gap.
 - Expanded headers change background with focus; collapsed rails change color
   without changing width. Input's accent stays cyan and its cursor tracks focus.
 - Only selected entries reserve right-aligned action hints; long and CJK

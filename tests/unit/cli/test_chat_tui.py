@@ -1472,7 +1472,7 @@ def test_chat_queue_panel_reserves_actions_only_for_selected_entries(
 
 @pytest.mark.parametrize("focused", [False, True])
 @pytest.mark.parametrize("terminal_width", [40, 100, 101, 160])
-def test_chat_queue_panel_collapses_to_a_focusable_row_with_a_colored_rail(
+def test_chat_queue_panel_collapses_to_three_padded_rows_with_a_colored_rail(
     monkeypatch: pytest.MonkeyPatch,
     focused: bool,
     terminal_width: int,
@@ -1485,18 +1485,22 @@ def test_chat_queue_panel_collapses_to_a_focusable_row_with_a_colored_rail(
     fragments = panel._render()
     lines = "".join(text for _style, text in fragments).splitlines()
 
-    assert panel.rows() == 1
+    assert panel.rows() == 3
     assert panel.container().filter()
     assert panel.view.is_focusable()
-    assert len(lines) == 1
-    assert lines[0].index("2 items queued") == 2
-    assert lines[0].endswith("Space expand ")
-    assert get_cwidth(lines[0]) == min(120, terminal_width - 2)
-    assert fragments[0] == (
+    assert len(lines) == 3
+    assert not lines[0].strip()
+    assert not lines[2].strip()
+    assert lines[1].index("2 items queued") == 2
+    assert lines[1].endswith("Space expand ")
+    assert all(get_cwidth(line) == min(120, terminal_width - 2) for line in lines)
+    accent = (
         "class:queue.accent.focused" if focused else "class:queue.accent",
         rendering.ACCENT_CELL,
     )
-    assert not any(item in lines[0] for item in ("first", "second", "edit", "delete"))
+    assert fragments[0] == accent
+    assert fragments.count(accent) == 3
+    assert not any(item in lines[1] for item in ("first", "second", "edit", "delete"))
 
 
 @pytest.mark.parametrize("message", ["👩‍💻" * 10, "❤️" * 25, "e\u0301" * 50])
@@ -2032,6 +2036,7 @@ def test_chat_queue_layout_preserves_width_gap_and_cursor_across_focus_and_resiz
             app.active_run_id = "run_busy"
             app.handle_submit("first")
             app.handle_submit("second")
+            app.handle_submit("third")
             app.prompt.buffer.text = "Keep typing"
             app.prompt.buffer.cursor_position = 4
 
@@ -2059,7 +2064,7 @@ def test_chat_queue_layout_preserves_width_gap_and_cursor_across_focus_and_resiz
                             summary_row = next(
                                 row
                                 for row, line in lines.items()
-                                if "2 items queued" in line
+                                if "3 items queued" in line
                             )
                             input_row = next(
                                 row
@@ -2067,16 +2072,17 @@ def test_chat_queue_layout_preserves_width_gap_and_cursor_across_focus_and_resiz
                                 if "Keep typing" in line
                             )
                             width = min(120, columns - 2)
-                            left = lines[summary_row].index("2 items queued") - 2
+                            left = lines[summary_row].index("3 items queued") - 2
                             assert abs(left - (columns - width) / 2) <= 0.5
                             assert lines[summary_row][:left].strip() == ""
                             assert lines[summary_row][left + width :].strip() == ""
                             assert lines[summary_row][left : left + width].endswith(
                                 "Space collapse " if expanded else "Space expand "
                             )
-                            panel_rows = 3 if expanded else 1
+                            panel_top = summary_row if expanded else summary_row - 1
+                            panel_rows = 4 if expanded else 3
                             assert app.queue_panel.rows() == panel_rows
-                            assert input_row == summary_row + panel_rows + 2
+                            assert input_row == panel_top + panel_rows + 2
                             assert not lines[input_row - 2].strip()  # Separate gap.
                             assert not lines[input_row - 1].strip()  # Input padding.
                             assert app._input_spacer_rows() > 0
@@ -2115,6 +2121,14 @@ def test_chat_queue_layout_preserves_width_gap_and_cursor_across_focus_and_resiz
                                 )
                             assert background(summary_row, left - 1) == ""
                             assert background(summary_row, left + width) == ""
+                            if not expanded:
+                                for row in (summary_row - 1, summary_row + 1):
+                                    assert not lines[row].strip()
+                                    assert background(row, left) == accent
+                                    assert background(row, left + 1) == "3a3a3a"
+                                    assert background(row, left + width - 1) == "3a3a3a"
+                                    assert background(row, left - 1) == ""
+                                    assert background(row, left + width) == ""
                             assert background(input_row - 2, 0) == ""
                             assert background(input_row - 1, 0) == "ansibrightcyan"
                             assert background(input_row, 0) == "ansibrightcyan"
@@ -3667,7 +3681,7 @@ def test_chat_tui_space_toggles_queue_and_tab_only_switches_focus() -> None:
 
             press(" ")
             assert not app.queue_panel.expanded
-            assert app.queue_panel.rows() == 1
+            assert app.queue_panel.rows() == 3
             assert app.app.layout.current_control is app.queue_panel.view
 
             for key in (

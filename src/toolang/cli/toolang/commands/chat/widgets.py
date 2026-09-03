@@ -120,18 +120,25 @@ class QueuePanel:
         if not items or not width:
             return []
         if not self.expanded:
-            return [
-                (self._accent_style(), ACCENT_CELL),
-                *self._split_row(
-                    f" {self._count_label(len(items))}",
-                    "Space expand ",
-                    width - 1,
-                    style="class:queue.info",
-                    hint_style="class:queue.info",
-                ),
+            accent = (self._accent_style(), ACCENT_CELL)
+            padding = [accent, ("class:queue", " " * (width - 1))]
+            rows = [
+                padding,
+                [
+                    accent,
+                    *self._split_row(
+                        f" {self._count_label(len(items))}",
+                        "Space expand ",
+                        width - 1,
+                        style="class:queue.info",
+                        hint_style="class:queue.info",
+                    ),
+                ],
+                padding,
             ]
+        else:
+            rows = self._rows(items, width=width)
         fragments: list[tuple[str, str]] = []
-        rows = self._rows(items, width=width)
         for row_index, row in enumerate(rows):
             fragments.extend(row)
             if row_index < len(rows) - 1:
@@ -146,7 +153,7 @@ class QueuePanel:
         if not count or not self.width():
             return 0
         if not self.expanded:
-            return 1
+            return 3
         return 1 + min(count, MAX_QUEUE_ROWS) + (1 if count > MAX_QUEUE_ROWS else 0)
 
     def toggle_expanded(self) -> bool:

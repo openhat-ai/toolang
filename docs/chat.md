@@ -81,8 +81,9 @@ right-aligned edit, steer, and delete hints; its preview truncates to fit them.
 
 Tab and Shift-Tab only switch focus, yielding to active input completion.
 Space toggles the focused Queue without moving focus or selection. Collapsed
-Queue is one separate, focusable row of the same width, with a left-aligned
-count and right-aligned `Space expand`. Entry actions are disabled while
+Queue is a separate, focusable three-row panel of the same width, with blank
+padding above and below the left-aligned count and right-aligned `Space expand`.
+Its one-cell accent rail spans all three rows. Entry actions are disabled while
 collapsed. Input keeps normal typing and draft steering when focused.
 Expanded Queue provides Up/Down or Ctrl-P/N selection, E editing, Meta-Enter
 steering, and D or Delete removal. `/keys` lists these Queue-focused bindings.

@@ -101,9 +101,11 @@ visible when unfocused. An omitted-count row follows the entries when needed;
 there is no bottom help row. The header background is muted when unfocused and
 steer purple when focused, without an additional left accent rail.
 
-Collapsed Queue is one separate, focusable row with a one-cell left accent rail,
-left-aligned count, and right-aligned `Space expand`. The rail changes from muted
-to steer purple on focus. Hidden entries cannot be selected or mutated.
+Collapsed Queue is a separate, focusable three-row panel: blank padding above
+and below the left-aligned count and right-aligned `Space expand`. Padding uses
+the Queue background, and the one-cell left accent rail spans all three rows.
+The rail changes from muted to steer purple on focus. The one-row gap before
+Input remains separate. Hidden entries cannot be selected or mutated.
 Input's accent always stays cyan. Its cursor hides on Queue focus and returns
 to its preserved position on Input focus.
 
