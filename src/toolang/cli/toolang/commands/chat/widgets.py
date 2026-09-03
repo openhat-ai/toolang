@@ -26,7 +26,6 @@ from .rendering import (
     ACCENT_CELL,
     INPUT_BACKGROUND,
     RUN_CONTROL_ACCENT_PROMPT_TOOLKIT,
-    STEER_CONTROL_ACCENT,
 )
 
 MAX_INPUT_ROWS = 6
@@ -54,7 +53,7 @@ def _chat_ui_palette() -> dict[str, str]:
         "queue.selected.hint": "fg:#b8b8b8 dim",
         "queue.info": "fg:#b8b8b8 bg:#3a3a3a dim",
         "queue.hint": "fg:#b8b8b8 dim",
-        "queue.accent.focused": f"bg:{STEER_CONTROL_ACCENT}",
+        "queue.accent.focused": f"bg:{INPUT_BACKGROUND}",
         "control.run": f"bg:{RUN_CONTROL_ACCENT_PROMPT_TOOLKIT}",
         "input": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
         "input.placeholder": f"fg:#b8b8b8 bg:{INPUT_BACKGROUND}",
@@ -264,7 +263,9 @@ class QueuePanel:
         ]
 
     def _accent_style(self) -> str:
-        return "class:queue.accent.focused" if self._has_focus() else "class:queue"
+        if self._has_focus() and not self.expanded:
+            return "class:queue.accent.focused"
+        return "class:queue"
 
     @staticmethod
     def _count_label(count: int) -> str:

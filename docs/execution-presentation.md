@@ -103,8 +103,9 @@ highlight and entry hints while preserving selection. The summary counts all ite
 
 Collapsed Queue occupies a single row: the centered dim summary with right-aligned
 key hints, without extra padding rows. Hidden entries cannot be selected or
-mutated. A one-cell steer-purple accent spans the left edge only while focused,
-in both modes; the reserved column uses the Queue background when unfocused.
+mutated. The reserved one-cell left accent uses Input's background only when
+focused and collapsed. When expanded or unfocused, it uses Queue's background;
+expanded focus is shown only by selection.
 Input's accent always stays cyan. Its cursor hides on Queue focus and returns
 to its preserved position on Input focus.
 

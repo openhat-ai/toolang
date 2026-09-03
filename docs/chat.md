@@ -96,9 +96,10 @@ at the bottom right and `meta+enter steer · e edit · d delete` on the selected
 Frequent actions for the current state come first in each tier.
 On narrow terminals footer hints flow between complete actions, and selected
 previews truncate to reserve action hints. Collapsed hints omit actions that
-cannot fit beside the centered count, prioritizing expansion. Queue's steer-purple
-left accent appears only on focus; its
-column blends into the Queue background otherwise, without shifting content.
+cannot fit beside the centered count, prioritizing expansion. Queue's left accent
+uses Input's background only when focused and collapsed. When expanded or
+unfocused, it blends into Queue's background without shifting content; expanded
+focus is shown only by selection.
 There is no separate header style.
 Input's accent stays cyan; its cursor hides while Queue has focus and returns
 to the preserved editing position afterward.
