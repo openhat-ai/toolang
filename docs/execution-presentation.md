@@ -88,16 +88,15 @@ Shift+Tab move focus between these two areas, except while an Input completion
 menu is active. Space expands or collapses focused Queue without moving focus;
 Tab never changes expansion. Input spaces and draft steering remain unchanged.
 
-Queue is inset one terminal-background cell on each side in both modes and
-directly adjoins full-width Input without a separator row. Queue and Input
-retain distinct backgrounds. Adaptive footer-stabilizing space belongs above
-Queue, never between Queue and Input.
+Queue occupies the full terminal width in both modes and directly adjoins Input
+without a separator row. Queue and Input retain distinct backgrounds. Adaptive
+footer-stabilizing space belongs above Queue, never between Queue and Input.
 
 Expanded Queue has a centered summary at the top, up to four single-line
 previews, and panel hints at the bottom right, directly above Input. There is no
 omitted-count row or special header fill. Entry numbers align with Input text.
 While focused, the selected entry uses Input's background from its left padding
-to the right edge, excluding the outer margins. It has no selection marker or
+to the right edge, excluding the accent column. It has no selection marker or
 bold text; only the background indicates selection. Dim edit, delete, and steer
 hints occupy the right side on that same background. Losing focus hides the
 highlight and entry hints while preserving selection. The summary counts all items.
@@ -105,8 +104,8 @@ highlight and entry hints while preserving selection. The summary counts all ite
 Collapsed Queue occupies a single row: the centered summary with right-aligned
 key hints, without extra padding rows. Hidden entries cannot be selected or
 mutated. In both modes, the summary indicates focus through normal text when
-focused and dim text when unfocused. Key hints stay dim. Queue has no accent;
-the outer margins never change with focus, expansion, or selection.
+focused and dim text when unfocused. Key hints stay dim. The reserved one-cell
+left column always uses Queue's background, independent of focus and expansion.
 Input's accent always stays cyan. Its cursor hides on Queue focus and returns
 to its preserved position on Input focus.
 
