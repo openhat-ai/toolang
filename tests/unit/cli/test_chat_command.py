@@ -277,6 +277,25 @@ def test_scripted_chat_projects_unrecognized_diagnostics_and_both_help_surfaces(
     assert client.created == 0
 
 
+@pytest.mark.parametrize("command", ["queue", "q", "steer", "s"])
+def test_scripted_chat_rejects_removed_queue_commands(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+) -> None:
+    client = _Client()
+    inputs = iter((f"/{command} value", "/exit"))
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
+
+    chat._chat_interactive_scripted_local(
+        client=client, thread_id=None, setting=client.initial_setting()
+    )
+
+    assert f"Unknown command /{command} · See /? for help" in capsys.readouterr().err
+    assert client.created == 0
+    assert not client.starts
+
+
 def test_scripted_slash_help_honors_the_configured_maximum_width(
     monkeypatch: Any,
     capsys: pytest.CaptureFixture[str],

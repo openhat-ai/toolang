@@ -9,19 +9,17 @@ from prompt_toolkit.utils import get_cwidth
 
 from toolang.base.types.message import TextPart
 from toolang.base.types.model import ModelParameters, ModelRequest, ReasoningParameters
-from toolang.base.types.policy import AgentCeiling, RunPolicy
+from toolang.base.types.policy import AgentCeiling
 from toolang.common.errors import ToolangError
 from toolang.execution.policy import apply_session_setting
-from toolang.execution.schemas import RunRequest, RunnableRequest
 from toolang.execution.types import (
     AllowOverride,
     ModelOverride,
     RunOverride,
     SessionSetting,
 )
-from toolang.lang.input import RunnableInputRaw
 from toolang.cli.toolang.commands.chat import shortcuts, slashes
-from toolang.cli.toolang.commands.chat.base import ChatResult, QueuedCall
+from toolang.cli.toolang.commands.chat.base import ChatResult
 from toolang.cli.toolang.commands.chat.input import QuickCommand
 from toolang.cli.toolang.commands.chat.policy import (
     reconcile_session_model,
@@ -223,24 +221,11 @@ def _surface() -> SessionSetting:
     )
 
 
-def _request(source: str) -> RunRequest:
-    return RunRequest(
-        thread_id="thread_1",
-        request_id=f"request_{source}",
-        runnable=RunnableRequest("agic:chat", RunnableInputRaw(_=source)),
-        model=ModelRequest("openai/gpt-5"),
-        policy=RunPolicy(),
-    )
-
-
 class _App:
     def __init__(self) -> None:
         self.client = _Client()
         self.setting = _surface()
-        self.queue: list[QueuedCall] = []
         self.active_run: str | None = None
-        self.replaced = ""
-        self.steers: list[str] = []
         self.exited = False
         self.status_refreshes = 0
         self.live_blocks: list[Any] = []
@@ -254,9 +239,6 @@ class _App:
 
     def set_setting(self, setting: SessionSetting) -> None:
         self.setting = setting
-
-    def get_queue(self) -> list[QueuedCall]:
-        return self.queue
 
     def get_active_run(self) -> str | None:
         return self.active_run
@@ -278,12 +260,6 @@ class _App:
 
     def refresh_status(self) -> None:
         self.status_refreshes += 1
-
-    def replace_input(self, text: str) -> None:
-        self.replaced = text
-
-    def request_steer(self, message: str) -> None:
-        self.steers.append(message)
 
     def request_exit(self) -> None:
         self.exited = True
@@ -478,7 +454,6 @@ def test_keys_help_uses_the_binding_metadata_without_a_title() -> None:
                 "  /limit agic_model_calls=100 agic_tool_calls=50",
             ),
         ),
-        ("steer", ("Usage: /steer MESSAGE",)),
     ],
 )
 def test_required_command_without_body_returns_focused_help(
@@ -1065,35 +1040,11 @@ def test_quick_output_and_show_load_an_explicit_or_latest_durable_result() -> No
     assert slashes.outcome_lines(latest) == ("run_saved output",)
 
 
-def test_quick_queue_edits_and_steers_numbered_items() -> None:
-    app = _App()
-    app.queue[:] = [
-        QueuedCall("first", _request("first")),
-        QueuedCall("second", _request("second")),
-    ]
-
-    edited = _outcome(slashes.handle(app, QuickCommand("queue", "edit 2")))
-    app.active_run = "run_abc"
-    steered = _outcome(slashes.handle(app, QuickCommand("queue", "steer 1")))
-
-    assert slashes.outcome_lines(edited) == ("Moved queue item 2 to input",)
-    assert slashes.outcome_lines(steered) == ("Accepted queue item 1 as steer",)
-    assert app.replaced == "second"
-    assert app.steers == ["first"]
-    assert app.queue == []
-
-
-def test_quick_steer_reports_acceptance_or_missing_active_run() -> None:
-    app = _App()
-
-    missing = _outcome(slashes.handle(app, QuickCommand("steer", "revise")))
-    app.active_run = "run_abc"
-    accepted = _outcome(slashes.handle(app, QuickCommand("steer", "revise")))
-
-    assert missing.kind == "error"
-    assert slashes.outcome_lines(missing) == ("Error: No active run to steer",)
-    assert slashes.outcome_lines(accepted) == ("Steer accepted",)
-    assert app.steers == ["revise"]
+@pytest.mark.parametrize("command", ["queue", "q", "steer", "s"])
+def test_queue_and_steer_commands_are_not_registered(command: str) -> None:
+    assert not slashes.is_registered(command)
+    with pytest.raises(KeyError, match="unregistered slash command"):
+        slashes.handle(_App(), QuickCommand(command))
 
 
 def test_quick_client_errors_return_scrollback_errors() -> None:

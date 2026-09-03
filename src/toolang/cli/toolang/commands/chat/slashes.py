@@ -529,51 +529,6 @@ def _runnables(app: AppContext, command: str, _argument: str) -> SlashOutcome:
     )
 
 
-def _queue(app: AppContext, _command: str, argument: str) -> SlashOutcome:
-    tokens = argument.split()
-    if not tokens:
-        return _result("Queue commands", *_chat_queue_help_lines())
-
-    action = tokens[0].lower()
-    queue = app.get_queue()
-    if action in {"clear", "c"}:
-        if len(tokens) != 1:
-            raise ValueError("/queue clear does not accept an item number")
-        count = len(queue)
-        queue.clear()
-        return _success(f"Cleared {count} queued {_plural(count, 'submission')}")
-    if action not in {"steer", "s", "delete", "d", "edit", "e"}:
-        raise ValueError(f"Unknown queue command: {tokens[0]}")
-    if len(tokens) != 2:
-        raise ValueError(f"/queue {tokens[0]} requires an item number")
-    try:
-        requested_index = int(tokens[1])
-    except ValueError as exc:
-        raise ValueError(f"/queue {tokens[0]} requires an item number") from exc
-    index = requested_index - 1
-    if index < 0 or index >= len(queue):
-        raise ValueError(f"Queue item does not exist: {requested_index}")
-    if action in {"delete", "d"}:
-        queue.pop(index)
-        return _success(f"Deleted queue item {requested_index}")
-    if action in {"edit", "e"}:
-        app.replace_input(queue[index].source)
-        queue.pop(index)
-        return _success(f"Moved queue item {requested_index} to input")
-    if app.get_active_run() is None:
-        raise ValueError("No active run to steer")
-    app.request_steer(queue[index].source)
-    queue.pop(index)
-    return _success(f"Accepted queue item {requested_index} as steer")
-
-
-def _steer(app: AppContext, _command: str, argument: str) -> SlashOutcome:
-    if app.get_active_run() is None:
-        raise ValueError("No active run to steer")
-    app.request_steer(argument)
-    return _success("Steer accepted")
-
-
 def _output(app: AppContext, _command: str, argument: str) -> SlashOutcome:
     tokens = argument.split()
     if len(tokens) > 1:
@@ -745,21 +700,6 @@ SLASHES: tuple[SlashCommand, ...] = (
         _output,
         aliases=("show",),
         category="inspection",
-    ),
-    SlashCommand(
-        "queue",
-        "[ACTION]",
-        "Inspect or edit queued submissions",
-        _queue,
-        aliases=("q",),
-    ),
-    SlashCommand(
-        "steer",
-        "MESSAGE",
-        "Steer the active run",
-        _steer,
-        aliases=("s",),
-        argument="required",
     ),
     SlashCommand(
         "help",
@@ -1039,15 +979,6 @@ def _wrapped_lines(
 
 def _bounded_line(line: str, *, width: int | None) -> str:
     return line if width is None else truncate(line, max(1, width))
-
-
-def _chat_queue_help_lines() -> list[str]:
-    return [
-        "/queue steer N   Steer the active run with item #N.",
-        "/queue edit N    Edit item #N in the input box.",
-        "/queue delete N  Delete item #N.",
-        "/queue clear     Clear all items.",
-    ]
 
 
 def _candidate_setting(

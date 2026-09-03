@@ -10,6 +10,7 @@ from typing import TypeGuard, cast
 
 import click
 from prompt_toolkit.application import Application
+from prompt_toolkit.filters import Condition, has_completions, has_focus
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyProcessor
 from prompt_toolkit.keys import Keys
@@ -41,6 +42,7 @@ from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WI
 from . import blocks
 from . import events
 from . import rendering
+from . import shortcuts
 from . import slashes
 from . import widgets
 from .completion import ChatInputCompleter
@@ -147,9 +149,6 @@ class ChatTuiAppContext:
     def get_client(self) -> ChatClient:
         return self._app.client
 
-    def get_queue(self) -> list[QueuedCall]:
-        return self._app.queue
-
     def get_active_run(self) -> str | None:
         return self._app.active_run_id
 
@@ -184,12 +183,6 @@ class ChatTuiAppContext:
     def refresh_status(self) -> None:
         self._app.status_bar.set_status(*self._app._status_labels())
         self._app._refresh_prompt_completions()
-
-    def replace_input(self, text: str) -> None:
-        self._app.prompt.replace_input(text)
-
-    def request_steer(self, message: str) -> None:
-        self._app._request_run_steer(message)
 
     def request_exit(self) -> None:
         self._app.app.exit()
@@ -260,7 +253,8 @@ class ChatTuiApp:
         self._model_effort_applicability: dict[str, bool] = {}
 
         self.queue_panel = widgets.QueuePanel(
-            lambda: [item.source for item in self.queue]
+            lambda: [item.source for item in self.queue],
+            get_max_rows=self._available_queue_rows,
         )
         self.status_bar = widgets.StatusBar(*self._status_labels())
         self.prompt = widgets.PromptBox(
@@ -269,16 +263,19 @@ class ChatTuiApp:
             on_input=self._clear_status_error,
             history_store=self.input_history,
             completer=self.completer,
+            get_max_rows=self._available_input_rows,
         )
         self._refresh_prompt_completions()
         keys = KeyBindings()
         self.prompt.bind(keys)
+        self._bind_queue_keys(keys)
         input_area = HSplit(
             [
                 Window(
                     height=self._input_spacer_rows,
                     always_hide_cursor=True,
                 ),
+                self.queue_panel.container(),
                 self.prompt.container(),
                 self.status_bar.container(),
             ]
@@ -286,7 +283,6 @@ class ChatTuiApp:
         body = HSplit(
             [
                 DynamicContainer(self._live_blocks_container),
-                self.queue_panel.container(),
                 input_area,
             ]
         )
@@ -349,6 +345,13 @@ class ChatTuiApp:
             max(self._footer_row_floor, required_rows),
         )
         return max(0, self._footer_row_floor - live_rows - fixed_footer_rows)
+
+    def _available_input_rows(self) -> int:
+        terminal_rows = self.app.output.get_size().rows
+        return max(0, terminal_rows - self.queue_panel.minimum_rows() - 1)
+
+    def _available_queue_rows(self) -> int:
+        return max(0, self.app.output.get_size().rows - self.prompt.rows() - 1)
 
     def _available_live_rows(self) -> int:
         terminal_rows = self.app.output.get_size().rows
@@ -444,6 +447,119 @@ class ChatTuiApp:
     def _clear_status_error_on_escape(self, key_processor: KeyProcessor) -> None:
         if key_processor.key_buffer and key_processor.key_buffer[-1].key == Keys.Escape:
             self._clear_status_error()
+
+    def _bind_queue_keys(self, keys: KeyBindings) -> None:
+        def focus_queue(_event: object) -> None:
+            self._clear_status_error()
+            self.app.layout.focus(self.queue_panel.view)
+            self._invalidate_ui()
+
+        def focus_prompt(_event: object) -> None:
+            self._clear_status_error()
+            self._focus_prompt()
+            self._invalidate_ui()
+
+        def previous(_event: object) -> None:
+            if self.queue_panel.move_selection(-1):
+                self._invalidate_ui()
+
+        def toggle(_event: object) -> None:
+            if self.queue_panel.toggle_expanded():
+                self._invalidate_ui()
+
+        def next_item(_event: object) -> None:
+            if self.queue_panel.move_selection(1):
+                self._invalidate_ui()
+
+        def edit(_event: object) -> None:
+            self._edit_selected_queue_item()
+
+        def steer(_event: object) -> None:
+            self._steer_selected_queue_item()
+
+        def delete(_event: object) -> None:
+            self._delete_selected_queue_item()
+
+        prompt_focus = has_focus(self.prompt.buffer)
+        queue_focus = has_focus(self.queue_panel.view)
+        queue_available = Condition(lambda: bool(self.queue))
+        queue_expanded = Condition(lambda: self.queue_panel.expanded)
+        for binding in shortcuts.SWITCH_AREA.bindings:
+            keys.add(
+                *binding,
+                filter=prompt_focus & queue_available & ~has_completions,
+            )(focus_queue)
+            keys.add(*binding, filter=queue_focus)(focus_prompt)
+        for binding in shortcuts.QUEUE_TOGGLE.bindings:
+            keys.add(*binding, filter=queue_focus & queue_available)(toggle)
+        for shortcut, handler in (
+            (shortcuts.QUEUE_PREVIOUS, previous),
+            (shortcuts.QUEUE_NEXT, next_item),
+            (shortcuts.QUEUE_EDIT, edit),
+            (shortcuts.QUEUE_STEER, steer),
+            (shortcuts.QUEUE_DELETE, delete),
+        ):
+            for binding in shortcut.bindings:
+                keys.add(*binding, filter=queue_focus & queue_expanded)(handler)
+
+    def _focus_prompt(self) -> None:
+        self.app.layout.focus(self.prompt.buffer)
+
+    def _selected_queue_item(self) -> tuple[int, QueuedCall] | None:
+        if not self.queue_panel.expanded:
+            return None
+        index = self.queue_panel.selected_index
+        if index is None:
+            return None
+        return index, self.queue[index]
+
+    def _edit_selected_queue_item(self) -> None:
+        self._clear_status_error()
+        if self.submission_blocked is not None:
+            return
+        selected = self._selected_queue_item()
+        if selected is None:
+            return
+        if self.prompt.has_input():
+            self.status_bar.set_error("Clear the input before editing a queued input")
+            self._invalidate_ui()
+            return
+        index, call = selected
+        self._pop_queued_call(index)
+        self.prompt.replace_input(call.source)
+        self._focus_prompt()
+        self._invalidate_ui()
+
+    def _steer_selected_queue_item(self) -> None:
+        self._clear_status_error()
+        selected = self._selected_queue_item()
+        if selected is None:
+            return
+        index, call = selected
+        if not self._request_run_steer(call.source):
+            self._invalidate_ui()
+            return
+        self._pop_queued_call(index)
+        self._invalidate_ui()
+
+    def _delete_selected_queue_item(self) -> None:
+        self._clear_status_error()
+        if self.submission_blocked is not None:
+            return
+        selected = self._selected_queue_item()
+        if selected is None:
+            return
+        index, _call = selected
+        self._pop_queued_call(index)
+        self._invalidate_ui()
+
+    def _pop_queued_call(self, index: int) -> QueuedCall:
+        """Remove one call while preserving selection and empty-queue focus."""
+        call = self.queue.pop(index)
+        has_items = self.queue_panel.reconcile(removed_index=index)
+        if not has_items and self.app.layout.current_control is self.queue_panel.view:
+            self._focus_prompt()
+        return call
 
     async def _animate_status(self) -> None:
         while True:
@@ -574,6 +690,10 @@ class ChatTuiApp:
             message = str(event.value)
             if self.handle_submit(message):
                 self.prompt.accept_submission(normalize_chat_input(message))
+        elif kind == "steer":
+            message = normalize_chat_input(str(event.value))
+            if message and self._request_run_steer(message):
+                self.prompt.accept_submission(message)
         elif kind == "run_event" and _is_run_event(event.value):
             self.handle_run_event(event.value)
         elif kind == "run_error":
@@ -612,7 +732,7 @@ class ChatTuiApp:
                 self.app.exit()
             return True
         self.interrupt_exit_pending = True
-        self.status_bar.set_error("Press Ctrl-C again to exit")
+        self.status_bar.set_error(f"Press {shortcuts.INTERRUPT.label} again to exit")
         return False
 
     def _handle_eof(self) -> None:
@@ -652,7 +772,7 @@ class ChatTuiApp:
         if self.submission_blocked is None:
             self.status_bar.clear_persistent_error()
         if self.queue:
-            self.submit_run(self.queue.pop(0))
+            self.submit_run(self._pop_queued_call(0))
 
     def handle_submit(self, message: str) -> bool:
         """Handle one Enter attempt and return whether Chat consumed the input."""
@@ -723,6 +843,7 @@ class ChatTuiApp:
         queued = QueuedCall(source, request)
         if self.active_run_id is not None or self.run_in_flight.is_set():
             self.queue.append(queued)
+            self.queue_panel.reconcile()
         else:
             self.submit_run(queued)
         return True
@@ -800,13 +921,13 @@ class ChatTuiApp:
                 break
         threading.Thread(target=consume, daemon=True).start()
 
-    def _request_run_steer(self, message: str) -> None:
+    def _request_run_steer(self, message: str) -> bool:
         if self.submission_blocked is not None:
             self.status_bar.set_error(self.submission_blocked)
-            return
+            return False
         if self.active_run_id is None:
             self.status_bar.set_error("Start a run before steering")
-            return
+            return False
         self.status_bar.clear_transient_error()
         run_id = self.active_run_id
         self.unfinalized_blocks.insert(
@@ -827,6 +948,7 @@ class ChatTuiApp:
             )
 
         threading.Thread(target=consume, daemon=True).start()
+        return True
 
     def handle_run_event(self, event: RunEvent) -> None:
         if isinstance(event, RunBegin) and event.parent is None and event.runnable:
@@ -907,8 +1029,6 @@ def _blocked_input_allowed(value: object) -> bool:
         return True
     if not isinstance(value, QuickCommand):
         return False
-    if value.name == "queue":
-        return not (value.tail or "").strip()
     if value.name in {"model", "agic", "flow", "runnable", "allow", "limit"}:
         return value.tail is None
     return value.name in _BLOCKED_READ_ONLY_COMMANDS

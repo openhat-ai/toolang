@@ -22,7 +22,7 @@ thread explicitly before the first run.
 
 Terminal interactions use complete slash commands such as `/help`, `/model`,
 `/runnable`, `/allow`, `/limit`, `/models`, `/tools`, `/caps`, `/agics`,
-`/flows`, `/output`, `/queue`, `/steer`, and `/keys`. `/show` remains an alias
+`/flows`, `/output`, and `/keys`. `/show` remains an alias
 for `/output`. Model, runnable, allow, and limit slash commands update
 `SessionSetting`; matching colon-prefixed lines form the one-run `RunOverride`.
 The plural resource commands inspect collections without changing the session.
@@ -62,6 +62,64 @@ overrides into one self-contained `RunRequest`; queued submissions retain their
 snapshot when the visible session changes. A submitted slash setting command
 requires a body and never opens a picker. Completion may edit the command draft
 but does not submit it or mutate the session.
+
+Interactive Chat uses one send-oriented input model. Enter submits runnable
+input when idle and appends it to the queue while a run is starting or active.
+Meta+Enter sends the current normalized draft directly to the active run as
+literal steer input; it does not parse leading slash, colon, dollar, or at-sign
+syntax. A rejected steer retains the draft, while a locally accepted steer
+records it in input history and clears the unchanged draft. Ctrl+J inserts a
+newline, as does Shift+Enter when the terminal exposes it distinctly.
+
+Keyboard controls replace `/queue`, `/q`, `/steer`, and `/s`; those names are
+unregistered. Esc Esc, Ctrl+C, and Ctrl+D apply only while Input is focused.
+They never cancel the run, clear the draft, or exit Chat from Queue. Esc only
+dismisses transient status and never changes focus. Ctrl+L retains its global
+clear-display behavior when idle, and Ctrl+Q exits from either area. `/keys`
+groups Input, Queue, and global actions explicitly.
+
+A non-empty Queue appears expanded above Input without taking focus. It fills
+the terminal width and directly joins Input without a separator row. The areas
+retain distinct backgrounds. Expanded Queue has a centered summary at the
+top, up to eight one-line previews, and panel hints at the bottom right. There is
+no omitted-item count row. Short terminals show fewer entries to keep Input,
+status, summary, and panel hints visible. Entry numbers align with Input text
+and remain dim; body text stays normal. While focused, selection is shown only by Input's
+background, inset one cell on each side with another cell of padding inside
+each end. There is no selection marker. The selected entry reserves its right
+side for slightly brighter dim action hints, separated from the body by at least
+two cells. Entry hints end two cells from Queue's right edge. Panel hints align
+flush right with the status bar, both when expanded and when collapsed.
+Losing focus hides its highlight and action hints while preserving the selected index.
+
+Tab and Shift+Tab only switch focus, yielding to active input completion.
+Space toggles the focused Queue without moving focus or selection. Collapsed
+Queue occupies one row with the centered summary and right-aligned panel hints.
+Entry actions are disabled while collapsed. Input keeps normal typing and
+draft steering when focused.
+Expanded Queue provides ↑/↓ or Ctrl+P/Ctrl+N selection, e editing, Meta+Enter
+steering, and d or Del removal. Inline hints use dim lowercase `key action`
+without brackets, separated by ` · `; `sp` abbreviates Space. `/keys` retains
+standard labels and alternate keys in parentheses, such as `d (Del)`.
+Unfocused Queue shows only `tab focus`. Focused, collapsed Queue shows
+`sp expand · tab input`; expanded Queue shows `↑↓ select · sp collapse · tab input`
+at the bottom right and `meta+enter steer · e edit · d delete` on the selected row.
+Frequent actions for the current state come first in each tier.
+On narrow terminals footer hints flow between complete actions, and selected
+previews truncate to reserve action hints. Collapsed hints omit actions that
+cannot fit beside the centered count, prioritizing expansion. Queue indicates
+focus through its summary: normal text when focused and dim text when unfocused,
+in both modes. Its outermost cells always use Queue's background without shifting
+content. Key hints stay dim, and truncation preserves their right padding.
+There is no separate header style.
+Input's accent stays cyan; its cursor hides while Queue has focus and returns
+to the preserved editing position afterward.
+
+Editing does not overwrite an existing draft. Queue steering and
+blocked-state handling retain the item when the steer cannot be accepted.
+Run completion continues to submit queued requests in FIFO order and keeps
+selection valid without changing the expanded/collapsed choice. Emptying the
+queue resets the next non-empty Queue to expanded.
 
 Thread ids use one underscore-delimited normalized form:
 

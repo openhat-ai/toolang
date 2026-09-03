@@ -140,7 +140,6 @@ normalized submission:
 /caps [-a] [QUERY]
 /agics                    /flows
 /output [RUN]             /show [RUN]
-/queue [ACTION]           /steer MESSAGE
 /exit                     /quit
 :?
 ```
@@ -180,6 +179,25 @@ unknown slash command and any rejected runnable submission remain editable in
 the input box; their diagnostic appears in the status bar. Known slash-command
 help and errors are completed command outcomes, so they enter scrollback and
 clear the input.
+
+Enter sends the complete normalized input. It starts a runnable request when
+Chat is idle and queues that request while a run is starting or active;
+recognized immediate interactions such as slash commands still execute during
+a run. Meta+Enter sends the draft as literal steer text to the active run and
+does not apply any input namespace. Ctrl+J inserts a newline; Shift+Enter also
+does so when supported by the terminal.
+
+Queued runnable inputs appear expanded above the prompt without taking focus.
+Tab and Shift+Tab move focus between Queue and Input unless an input completion
+menu is active. In Queue, ↑ and ↓ select an item, e moves it to an empty
+prompt for editing, Meta+Enter steers with it, and d or Del removes it.
+Editing or steering only removes an item after the local action is accepted.
+
+`/queue`, `/q`, `/steer`, and `/s` are not commands. Use the Queue panel and
+Meta+Enter instead. Esc Esc, Ctrl+C, and Ctrl+D are restricted to Input focus.
+Esc never moves focus or cancels a run from Queue; Ctrl+L and Ctrl+Q remain
+global. `/keys` lists Input, Queue, and global shortcuts separately.
+The Queue area disappears when it becomes empty.
 
 Chat removes leading and trailing blank lines, then removes horizontal
 whitespace from the end of the final line. It preserves indentation on the

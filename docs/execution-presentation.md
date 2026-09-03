@@ -75,6 +75,69 @@ continuations align with the text after the marker:
   zeta eta theta
 ```
 
+## Chat Input and Queue Controls
+
+The Chat input area distinguishes sending, steering, and multiline editing.
+Enter submits when idle and queues runnable input while a run is starting or
+active. Meta+Enter sends literal steer text to the active run. Ctrl+J inserts a
+newline, with Shift+Enter registered when the terminal can report it
+distinctly.
+
+A non-empty Queue is expanded above Input without taking focus. Tab and
+Shift+Tab move focus between these two areas, except while an Input completion
+menu is active. Space expands or collapses focused Queue without moving focus;
+Tab never changes expansion. Input spaces and draft steering remain unchanged.
+
+Esc Esc, Ctrl+C, and Ctrl+D are Input-only controls; Queue focus cannot use
+them to cancel a run, clear a draft, or exit. Esc dismisses transient status
+without moving focus. Ctrl+L keeps its global idle clear-display behavior and
+Ctrl+Q remains a global explicit exit. `/keys` groups these scopes separately.
+
+Queue occupies the full terminal width in both modes and directly adjoins Input
+without a separator row. Queue and Input retain distinct backgrounds. Adaptive
+footer-stabilizing space belongs above Queue, never between Queue and Input.
+
+Expanded Queue has a centered summary at the top, up to eight single-line
+previews, and panel hints at the bottom right, directly above Input. There is no
+omitted-count row or special header fill. Available height may reduce the entry
+count to leave room for Input, status, summary, and panel hints.
+Entry numbers align with Input text
+and remain dim in every state; body text stays normal. While focused, the
+selected entry uses Input's background, inset one cell on each side with another
+cell of padding inside each end. It has no selection marker or bold text; only
+the background indicates selection. Slightly brighter dim action hints occupy
+the right side on that same background, separated from the body by at least two
+cells. Entry hints end two cells from Queue's edge; truncation preserves their
+padding. Panel hints align flush right with the status bar in both modes,
+without changing status-bar layout. Losing focus hides the highlight and entry
+hints while preserving selection. The summary counts all items.
+
+Collapsed Queue occupies a single row: the centered summary with right-aligned
+key hints, without extra padding rows. Hidden entries cannot be selected or
+mutated. In both modes, the summary indicates focus through normal text when
+focused and dim text when unfocused. Key hints stay dim. Queue's outermost cells
+always use its background, independent of focus and expansion.
+Input's accent always stays cyan. Its cursor hides on Queue focus and returns
+to its preserved position on Input focus.
+
+Unfocused Queue shows only `tab focus`. Focused, collapsed Queue shows
+`sp expand · tab input`. Focused, expanded Queue shows `↑↓ select · sp collapse · tab input`
+at the bottom right and `meta+enter steer · e edit · d delete` only on the
+selected entry. Frequent actions for the current state come first. Footer hints
+flow between complete actions on narrow terminals;
+entry previews truncate to reserve hint space. Collapsed hints omit actions that
+cannot fit in the right margin, prioritizing expansion without shifting the summary.
+Previews, summaries, and individual overlong hints truncate by display cells.
+↑/↓ or Ctrl+P/Ctrl+N select without
+wrapping; e edits, Meta+Enter steers, and d or Del removes. `/keys` documents
+these Queue-focused bindings. Mutations preserve the expansion choice and clamp
+selection; an empty queue disappears, restores Input focus, and resets the next
+non-empty queue to expanded.
+
+Inline hints use lowercase `key action` with dim styling, no brackets, and ` · `
+between actions. Space shortens to `sp`; chords retain `+`. Only the primary key
+appears inline; `/keys` retains standard labels and aliases such as `d (Del)`.
+
 Flow headers also start in column zero and are followed by one blank line.
 Iteration and condition headers create the same kind of stable boundary.
 

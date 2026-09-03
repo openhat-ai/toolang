@@ -160,3 +160,50 @@ def test_chat_tui_updates_defaults_while_a_run_is_active(tmp_path: Path) -> None
         assert session.wait_for_exit() == 0, session.output
     finally:
         session.close()
+
+
+def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
+    tmp_path: Path,
+) -> None:
+    session = ChatTuiPtySession.start(
+        "tests.support.chat_tui_e2e",
+        tmp_path,
+        "status",
+    )
+    try:
+        session.wait_for("■ agic:chat", "scripted")
+        session.send(b"hold queue\r")
+        session.wait_for("◧ agic:chat running")
+
+        session.send(b"queued follow-up\r")
+        visible = session.wait_for(
+            "1 item queued",
+            "[1] queued follow-up",
+            "tab focus",
+        )
+        assert "Traceback" not in visible
+        assert "sp collapse" not in visible
+        assert "e edit" not in visible
+
+        session.send(b"\t")
+        focused = session.wait_for(
+            "[1] queued follow-up",
+            "1 item queued",
+            "tab input",
+            "sp collapse",
+            "↑↓ select",
+            "e edit",
+            "meta+enter steer",
+            "d delete",
+        )
+        assert "Traceback" not in focused
+        assert "meta+enter steer · e edit · d delete" in focused
+        assert "↑↓ select · sp collapse · tab input" in focused
+
+        # Exercise collapse, expand, and delete without depending on partial redraw text.
+        session.send(b"  d")
+        session.wait_for("succeeded", "■ agic:chat")
+        session.send(b"\x04")
+        assert session.wait_for_exit() == 0, session.output
+    finally:
+        session.close()
