@@ -65,28 +65,29 @@ but does not submit it or mutate the session.
 
 Interactive Chat uses one send-oriented input model. Enter submits runnable
 input when idle and appends it to the queue while a run is starting or active.
-Meta-Enter sends the current normalized draft directly to the active run as
+Meta+Enter sends the current normalized draft directly to the active run as
 literal steer input; it does not parse leading slash, colon, dollar, or at-sign
 syntax. A rejected steer retains the draft, while a locally accepted steer
-records it in input history and clears the unchanged draft. Ctrl-J inserts a
-newline, as does Shift-Enter when the terminal exposes it distinctly.
+records it in input history and clears the unchanged draft. Ctrl+J inserts a
+newline, as does Shift+Enter when the terminal exposes it distinctly.
 
 A non-empty Queue appears expanded above Input without taking focus. It stays
 independently centered at up to 120 columns, normally at least 80, and never
 wider than the terminal minus two columns. Exactly one blank row separates it
 from Input, whose padding stays empty. Its header shows the count on the left
-and `Space collapse` on the right. Up to four one-line previews follow, with an
+and `[Space] Collapse` on the right. Up to four one-line previews follow, with an
 omitted-item count when needed. Only the selected entry shows a `>` marker and
 right-aligned edit, steer, and delete hints; its preview truncates to fit them.
 
-Tab and Shift-Tab only switch focus, yielding to active input completion.
+Tab and Shift+Tab only switch focus, yielding to active input completion.
 Space toggles the focused Queue without moving focus or selection. Collapsed
 Queue is a separate, focusable three-row panel of the same width, with blank
-padding above and below the left-aligned count and right-aligned `Space expand`.
+padding above and below the left-aligned count and right-aligned `[Space] Expand`.
 Its one-cell accent rail spans all three rows. Entry actions are disabled while
 collapsed. Input keeps normal typing and draft steering when focused.
-Expanded Queue provides Up/Down or Ctrl-P/N selection, E editing, Meta-Enter
-steering, and D or Delete removal. `/keys` lists these Queue-focused bindings.
+Expanded Queue provides ↑/↓ or Ctrl+P/Ctrl+N selection, e editing, Meta+Enter
+steering, and d or Del removal. Inline hints use `[Key] Action`; `/keys` lists
+alternate keys in parentheses, such as `d (Del)`.
 The expanded header or collapsed one-cell left rail turns from muted to steer
 purple on focus. Input's accent stays cyan; its cursor hides while Queue has
 focus and returns to the preserved editing position afterward.

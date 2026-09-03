@@ -744,7 +744,7 @@ class ChatTuiApp:
                 self.app.exit()
             return True
         self.interrupt_exit_pending = True
-        self.status_bar.set_error("Press Ctrl-C again to exit")
+        self.status_bar.set_error(f"Press {shortcuts.INTERRUPT.label} again to exit")
         return False
 
     def _handle_eof(self) -> None:

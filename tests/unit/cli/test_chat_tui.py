@@ -1434,9 +1434,9 @@ def test_chat_queue_panel_is_expanded_with_a_header_and_inline_actions_by_defaul
     assert panel.expanded
     assert panel.selected_index == 0
     assert lines[0].startswith("  2 items queued")
-    assert lines[0].endswith("Space collapse ")
+    assert lines[0].endswith("[Space] Collapse ")
     assert lines[1].startswith("> [1] first")
-    assert lines[1].endswith("E edit · Meta-Enter steer · D/Delete delete ")
+    assert lines[1].endswith("[e] Edit · [Meta+Enter] Steer · [d] Delete ")
     assert lines[2].strip() == "[2] second"
     assert all(get_cwidth(line) == 98 for line in lines)
     assert any(style == "class:queue.selected" for style, _text in fragments)
@@ -1457,15 +1457,15 @@ def test_chat_queue_panel_reserves_actions_only_for_selected_entries(
     fragments = panel._render()
     lines = "".join(text for _style, text in fragments).splitlines()
     header, selected, unselected = lines
-    hint = "E edit · Meta-Enter steer · D/Delete delete "
+    hint = "[e] Edit · [Meta+Enter] Steer · [d] Delete "
     assert header.startswith("  2 items queued")
-    assert header.endswith("Space collapse ")
+    assert header.endswith("[Space] Collapse ")
     assert selected.startswith("> [1] 任务 preview")
     assert selected.endswith(hint)
     assert "…" in selected[: selected.index(hint)]
     assert get_cwidth(selected[: selected.index(hint)]) < get_cwidth(unselected)
     assert unselected.startswith("  [2] 任务 preview")
-    assert "edit" not in unselected
+    assert not any(action in unselected for action in ("Edit", "Steer", "Delete"))
     assert all(get_cwidth(line) == min(120, terminal_width - 2) for line in lines)
     assert ("class:queue.header.focused" in fragments[0][0]) is focused
 
@@ -1492,7 +1492,7 @@ def test_chat_queue_panel_collapses_to_three_padded_rows_with_a_colored_rail(
     assert not lines[0].strip()
     assert not lines[2].strip()
     assert lines[1].index("2 items queued") == 2
-    assert lines[1].endswith("Space expand ")
+    assert lines[1].endswith("[Space] Expand ")
     assert all(get_cwidth(line) == min(120, terminal_width - 2) for line in lines)
     accent = (
         "class:queue.accent.focused" if focused else "class:queue.accent",
@@ -1500,7 +1500,7 @@ def test_chat_queue_panel_collapses_to_three_padded_rows_with_a_colored_rail(
     )
     assert fragments[0] == accent
     assert fragments.count(accent) == 3
-    assert not any(item in lines[1] for item in ("first", "second", "edit", "delete"))
+    assert not any(item in lines[1] for item in ("first", "second", "Edit", "Delete"))
 
 
 @pytest.mark.parametrize("message", ["👩‍💻" * 10, "❤️" * 25, "e\u0301" * 50])
@@ -1514,7 +1514,7 @@ def test_chat_queue_uses_prompt_toolkit_cell_width_for_combining_text(
     lines = "".join(text for _style, text in panel._render()).splitlines()
 
     assert all(get_cwidth(line) == 80 for line in lines)
-    assert lines[1].endswith("E edit · Meta-Enter steer · D/Delete delete ")
+    assert lines[1].endswith("[e] Edit · [Meta+Enter] Steer · [d] Delete ")
 
 
 @pytest.mark.parametrize("expanded", [False, True])
@@ -1726,7 +1726,7 @@ def test_chat_tui_bindings_cover_all_documented_shortcut_metadata() -> None:
     assert app.app.key_bindings is not None
     actual = {binding.keys for binding in app.app.key_bindings.bindings}
 
-    for shortcut in shortcuts.CHAT_SHORTCUTS:
+    for shortcut in (*shortcuts.CHAT_SHORTCUTS, *shortcuts.QUEUE_SHORTCUTS):
         for raw_binding in (*shortcut.bindings, *shortcut.optional_bindings):
             expected = KeyBindings()
             try:
@@ -2077,7 +2077,7 @@ def test_chat_queue_layout_preserves_width_gap_and_cursor_across_focus_and_resiz
                             assert lines[summary_row][:left].strip() == ""
                             assert lines[summary_row][left + width :].strip() == ""
                             assert lines[summary_row][left : left + width].endswith(
-                                "Space collapse " if expanded else "Space expand "
+                                "[Space] Collapse " if expanded else "[Space] Expand "
                             )
                             panel_top = summary_row if expanded else summary_row - 1
                             panel_rows = 4 if expanded else 3
@@ -3779,15 +3779,37 @@ def test_chat_queue_shortcut_help_includes_navigation_and_contextual_actions() -
 
     assert [line.split("  ", 1)[0] for line in queue_lines] == [
         "Space",
-        "Up, Ctrl-P",
-        "Down, Ctrl-N",
-        "E",
-        "Meta-Enter",
-        "D, Delete",
+        "↑ (Ctrl+P)",
+        "↓ (Ctrl+N)",
+        "e",
+        "Meta+Enter",
+        "d (Del)",
     ]
-    assert "Expand or collapse queued inputs" in queue_lines[0]
-    assert "Select the previous queued input" in queue_lines[1]
-    assert "Select the next queued input" in queue_lines[2]
+    assert "Expand or collapse" in queue_lines[0]
+    assert "Select previous input" in queue_lines[1]
+    assert "Select next input" in queue_lines[2]
+
+
+def test_chat_shortcuts_share_primary_labels_without_aliases_in_inline_hints() -> None:
+    assert shortcuts.QUEUE_TOGGLE.hint("Expand") == "[Space] Expand"
+    assert shortcuts.QUEUE_EDIT.hint("Edit") == "[e] Edit"
+    assert shortcuts.QUEUE_STEER.hint("Steer") == "[Meta+Enter] Steer"
+    assert shortcuts.QUEUE_DELETE.hint("Delete") == "[d] Delete"
+    assert shortcuts.QUEUE_DELETE.help_label == "d (Del)"
+    assert shortcuts.SWITCH_AREA.help_label == "Tab (Shift+Tab)"
+    assert shortcuts.CANCEL_RUN.help_label == "Esc Esc"
+    assert shortcuts.INSERT_NEWLINE.label == "Ctrl+J"
+    assert "also Shift+Enter if supported" in shortcuts.INSERT_NEWLINE.summary
+    assert shortcuts.QUEUE_EDIT.bindings == (("e",),)
+    assert shortcuts.QUEUE_DELETE.bindings == (("d",), ("delete",))
+    assert shortcuts.QUEUE_STEER.bindings == (("escape", "enter"),)
+
+    lines = shortcuts.help_lines()
+    summaries = [
+        lines[index].index(shortcut.summary)
+        for index, shortcut in enumerate(shortcuts.CHAT_SHORTCUTS)
+    ]
+    assert len(set(summaries)) == 1
 
 
 def test_chat_tui_queue_blocks_mutations_after_ambiguous_acceptance() -> None:
@@ -4237,7 +4259,7 @@ def test_chat_tui_empty_input_requires_two_interrupts_to_exit() -> None:
 
     assert app.handle_ui_event(ChatUIEvent("interrupt")) is False
     assert app.interrupt_exit_pending
-    assert app.status_bar.error_message == "Press Ctrl-C again to exit"
+    assert app.status_bar.error_message == "Press Ctrl+C again to exit"
 
     assert app.handle_ui_event(ChatUIEvent("interrupt")) is True
 

@@ -14,6 +14,16 @@ class ChatShortcut:
     label: str
     summary: str
     optional_bindings: tuple[tuple[str, ...], ...] = ()
+    aliases: tuple[str, ...] = ()
+
+    @property
+    def help_label(self) -> str:
+        suffix = f" ({', '.join(self.aliases)})" if self.aliases else ""
+        return self.label + suffix
+
+    def hint(self, action: str) -> str:
+        """Keep inline hints short; list alternative keys only in full help."""
+        return f"[{self.label}] {action}"
 
 
 SUBMIT = ChatShortcut(
@@ -25,69 +35,75 @@ SUBMIT = ChatShortcut(
 STEER = ChatShortcut(
     "steer",
     (("escape", "enter"),),
-    "Meta-Enter",
-    "Steer the active run",
+    "Meta+Enter",
+    "Steer active run",
 )
 INSERT_NEWLINE = ChatShortcut(
     "insert_newline",
     (("c-j",),),
-    "Ctrl-J",
-    "Insert a newline (also Shift-Enter if supported)",
+    "Ctrl+J",
+    "Insert a newline (also Shift+Enter if supported)",
     optional_bindings=(("s-enter",),),
 )
 SWITCH_AREA = ChatShortcut(
     "switch_area",
     (("tab",), ("s-tab",)),
-    "Tab, Shift-Tab",
-    "Switch between input and queued inputs",
+    "Tab",
+    "Switch focus (input/queue)",
+    aliases=("Shift+Tab",),
 )
 QUEUE_PREVIOUS = ChatShortcut(
     "queue_previous",
     (("up",), ("c-p",)),
-    "Up, Ctrl-P",
-    "Select the previous queued input",
+    "↑",
+    "Select previous input",
+    aliases=("Ctrl+P",),
 )
 QUEUE_NEXT = ChatShortcut(
     "queue_next",
     (("down",), ("c-n",)),
-    "Down, Ctrl-N",
-    "Select the next queued input",
+    "↓",
+    "Select next input",
+    aliases=("Ctrl+N",),
 )
 QUEUE_TOGGLE = ChatShortcut(
     "queue_toggle",
     ((" ",),),
     "Space",
-    "Expand or collapse queued inputs",
+    "Expand or collapse",
 )
 QUEUE_EDIT = ChatShortcut(
     "queue_edit",
     (("e",),),
-    "E",
-    "Edit the selected queued input",
+    "e",
+    "Edit selected input",
 )
 QUEUE_STEER = ChatShortcut(
     "queue_steer",
     STEER.bindings,
-    "Meta-Enter",
-    "Steer with the selected queued input",
+    STEER.label,
+    "Steer with selected input",
 )
 QUEUE_DELETE = ChatShortcut(
     "queue_delete",
     (("d",), ("delete",)),
-    "D, Delete",
-    "Remove the selected queued input",
+    "d",
+    "Delete selected input",
+    aliases=("Del",),
 )
 PREVIOUS_HISTORY = ChatShortcut(
     "previous_history",
     (("up",), ("c-p",)),
-    "Up, Ctrl-P",
-    "Previous history at the first line; otherwise move up",
+    QUEUE_PREVIOUS.label,
+    "Previous history on first line; otherwise move up",
+    aliases=QUEUE_PREVIOUS.aliases,
 )
 NEXT_HISTORY = ChatShortcut(
     "next_history",
     (("down",), ("c-n",)),
-    "Down, Ctrl-N",
-    "Next history at the last line; otherwise move down",
+    QUEUE_NEXT.label,
+    "Next history on last line; otherwise move down",
+    aliases=QUEUE_NEXT.aliases,
 )
 DISMISS_STATUS = ChatShortcut(
     "dismiss_status",
@@ -104,25 +120,25 @@ CANCEL_RUN = ChatShortcut(
 INTERRUPT = ChatShortcut(
     "interrupt",
     (("c-c",),),
-    "Ctrl-C",
-    "Clear input; otherwise cancel a run; press twice to exit",
+    "Ctrl+C",
+    "Clear input; otherwise cancel run; press twice to exit",
 )
 EOF = ChatShortcut(
     "eof",
     (("c-d",),),
-    "Ctrl-D",
+    "Ctrl+D",
     "Exit when input is empty and no run is active",
 )
 CLEAR = ChatShortcut(
     "clear",
     (("c-l",),),
-    "Ctrl-L",
+    "Ctrl+L",
     "Clear the display when no run is active",
 )
 QUIT = ChatShortcut(
     "quit",
     (("c-q",),),
-    "Ctrl-Q",
+    "Ctrl+Q",
     "Exit Chat immediately",
 )
 
@@ -140,30 +156,32 @@ CHAT_SHORTCUTS = (
     CLEAR,
     QUIT,
 )
+QUEUE_SHORTCUTS = (
+    QUEUE_TOGGLE,
+    QUEUE_PREVIOUS,
+    QUEUE_NEXT,
+    QUEUE_EDIT,
+    QUEUE_STEER,
+    QUEUE_DELETE,
+)
 
 
 def help_lines() -> tuple[str, ...]:
     """Return aligned, presentation-neutral shortcut help rows."""
 
-    width = max(len(shortcut.label) for shortcut in CHAT_SHORTCUTS)
-    queue_shortcuts = (
-        QUEUE_TOGGLE,
-        QUEUE_PREVIOUS,
-        QUEUE_NEXT,
-        QUEUE_EDIT,
-        QUEUE_STEER,
-        QUEUE_DELETE,
+    width = max(
+        len(shortcut.help_label) for shortcut in (*CHAT_SHORTCUTS, *QUEUE_SHORTCUTS)
     )
     return (
         *(
-            f"{shortcut.label:<{width}}  {shortcut.summary}"
+            f"{shortcut.help_label:<{width}}  {shortcut.summary}"
             for shortcut in CHAT_SHORTCUTS
         ),
         "",
         "Queue focused:",
         *(
-            f"{shortcut.label:<{width}}  {shortcut.summary}"
-            for shortcut in queue_shortcuts
+            f"{shortcut.help_label:<{width}}  {shortcut.summary}"
+            for shortcut in QUEUE_SHORTCUTS
         ),
     )
 
@@ -182,6 +200,7 @@ __all__ = [
     "QUEUE_EDIT",
     "QUEUE_NEXT",
     "QUEUE_PREVIOUS",
+    "QUEUE_SHORTCUTS",
     "QUEUE_STEER",
     "QUEUE_TOGGLE",
     "QUIT",

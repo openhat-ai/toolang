@@ -9,8 +9,8 @@ presentation, input submission keys, and steer shortcuts.
 
 ## Goal
 
-Give terminal Chat one predictable input model: Enter sends, Meta-Enter steers,
-and Ctrl-J inserts a newline. Queued runnable inputs should remain visible and
+Give terminal Chat one predictable input model: Enter sends, Meta+Enter steers,
+and Ctrl+J inserts a newline. Queued runnable inputs should remain visible and
 editable through a compact keyboard-operated panel without taking attention
 away from the active run.
 
@@ -19,13 +19,13 @@ away from the active run.
 - Enter submits runnable input when idle and queues it while a run is starting
   or active; slash commands and other immediate interactions retain their
   existing behavior.
-- Meta-Enter always treats the current draft or selected queue item as a raw
+- Meta+Enter always treats the current draft or selected queue item as a raw
   steer message and never parses, submits, or queues it.
-- Ctrl-J inserts a newline. Shift-Enter does the same when the terminal and
+- Ctrl+J inserts a newline. Shift+Enter does the same when the terminal and
   Prompt Toolkit expose that key distinctly.
 - A non-empty queue appears expanded above the input and never steals focus
   when a new item arrives.
-- Tab and Shift-Tab move focus between the visible Queue and Input areas while
+- Tab and Shift+Tab move focus between the visible Queue and Input areas while
   preserving completion-menu behavior.
 - Space toggles the focused Queue without moving focus; Tab only changes focus.
   Selection is preserved, but actions on hidden entries are disabled.
@@ -67,25 +67,25 @@ The prompt owns three distinct actions:
 | Key | Idle | Run starting or active |
 | --- | --- | --- |
 | Enter | Submit runnable input | Queue runnable input |
-| Meta-Enter | Keep the draft and report that no run is active | Send the normalized draft as steer input |
-| Ctrl-J | Insert a newline | Insert a newline |
-| Shift-Enter | Insert a newline when supported | Insert a newline when supported |
+| Meta+Enter | Keep the draft and report that no run is active | Send the normalized draft as steer input |
+| Ctrl+J | Insert a newline | Insert a newline |
+| Shift+Enter | Insert a newline when supported | Insert a newline when supported |
 
 Enter continues to dispatch recognized slash commands and `:?` immediately,
 including during a run. Runnable inputs retain their current request-building
 and setting-snapshot behavior before entering the queue.
 
-Meta-Enter is represented at the terminal layer by the standard Meta sequence,
+Meta+Enter is represented at the terminal layer by the standard Meta sequence,
 `Escape` followed by `Enter`. A terminal may map a physical macOS Command-Enter
-keystroke to that sequence. Meta-Enter bypasses slash, colon-override, prompt,
+keystroke to that sequence. Meta+Enter bypasses slash, colon-override, prompt,
 and runnable parsing, so a draft beginning with `/`, `:`, `$`, or `@` is still
 sent as literal steer text. Empty drafts do nothing. A locally accepted steer
 is recorded in input history and clears the unchanged draft. If no accepted
 active run exists, Chat retains the draft and shows a transient status error.
 
 Alt-Enter no longer inserts a newline because it occupies the same terminal
-Meta sequence as Meta-Enter. Ctrl-J is the canonical multiline key. The
-conditionally registered Shift-Enter binding remains best effort.
+Meta sequence as Meta+Enter. Ctrl+J is the canonical multiline key. The
+conditionally registered Shift+Enter binding remains best effort.
 
 ## Queue and Input Areas
 
@@ -96,7 +96,7 @@ New items and FIFO dequeue preserve the expanded/collapsed choice until the
 queue empties, when the next non-empty queue defaults to expanded again.
 
 Queue and Input are the only focus-switching areas in this scope. Tab and
-Shift-Tab move between them without changing expansion. In Input, these bindings
+Shift+Tab move between them without changing expansion. In Input, these bindings
 yield to an active completion menu. When the queue is empty, normal Prompt
 Toolkit Tab behavior remains unchanged.
 
@@ -108,13 +108,13 @@ space used to stabilize the footer belongs above Queue, never inside this gap.
 Expanded layout:
 
 - A full-width header left-aligns the summary, such as `3 items queued`, and
-  right-aligns `Space collapse`. Its background is muted when unfocused and
+  right-aligns `[Space] Collapse`. Its background is muted when unfocused and
   steer purple when focused. There is no separate left accent rail.
 - The middle shows up to four one-line previews, following selection. If any
   entries are outside the visible window, a final dim content row reports
   `… N items not shown`.
 - Only the selected entry displays a `>` marker and right-aligned dim
-  `E edit · Meta-Enter steer · D/Delete delete` hints. Its preview truncates to
+  `[e] Edit · [Meta+Enter] Steer · [d] Delete` hints. Its preview truncates to
   reserve hint space; unselected entries use the full content width. Selection
   stays visible when Queue is unfocused. There is no bottom hint row.
 
@@ -122,7 +122,7 @@ Expanded height ranges from two rows for one item to six rows when entries are
 omitted, excluding the one-row gap before Input.
 
 Collapsed layout is an independent, focusable three-row panel: one blank padding
-row above and below a left-aligned dim summary and right-aligned `Space expand`.
+row above and below a left-aligned dim summary and right-aligned `[Space] Expand`.
 Its one-cell left accent rail spans all three rows, muted when unfocused and
 steer purple when focused. Padding uses the Queue background. The panel keeps
 its expanded width and horizontal position. No queue content appears inside
@@ -140,17 +140,17 @@ Focused Queue bindings are:
 | Key | Action |
 | --- | --- |
 | Space | Expand or collapse Queue without changing focus or selection |
-| Up / Down (also Ctrl-P / Ctrl-N) | Select the previous or next queued input without wrapping |
-| E | Remove the selected item and place its source in the prompt for editing |
-| Meta-Enter | Send the selected source as steer input |
-| D / Delete | Remove the selected item |
-| Tab / Shift-Tab | Return focus to Input |
+| ↑ / ↓ (also Ctrl+P / Ctrl+N) | Select the previous or next queued input without wrapping |
+| e | Remove the selected item and place its source in the prompt for editing |
+| Meta+Enter | Send the selected source as steer input |
+| d (Del) | Remove the selected item |
+| Tab (Shift+Tab) | Return focus to Input |
 
 Selection, edit, steer, and delete apply only while Queue is expanded and
 focused. Collapsed Queue accepts only focus switching and Space toggling, not
-hidden-entry actions. In Input, Space inserts a space and Meta-Enter steers
-with the draft. Ctrl-P/N are explicitly bound for Queue selection. Input retains
-its existing history bindings.
+hidden-entry actions. In Input, Space inserts a space and Meta+Enter steers
+with the draft. Ctrl+P/Ctrl+N are explicitly bound for Queue selection. Input
+retains its existing history bindings.
 
 Editing never overwrites a non-empty prompt draft. In that case the item stays
 queued and Chat reports a transient instruction to clear the draft first. A
@@ -175,18 +175,26 @@ new edit, delete, or steer mutations through the same blocked-state policy.
 
 ## Shortcut Help
 
+Inline hints use `[Key] Action`, with sentence-case actions and ` · ` between
+actions. Use `+` for chords (`Meta+Enter`, `Ctrl+J`), spaces for consecutive
+presses (`Esc Esc`), lowercase for unmodified letters (`e`, `d`), and arrows
+for navigation (`↑`, `↓`). Full help puts alternate keys in parentheses;
+inline hints show only the primary key. Optional Shift+Enter stays qualified
+with `also Shift+Enter if supported`. The notation does not change bindings.
+Keep `Meta` portable rather than claiming a terminal exposes physical Cmd.
+
 The global shortcut help uses these concise rows:
 
 ```text
-Enter              Send input (submit or queue)
-Meta-Enter         Steer the active run
-Ctrl-J             Insert a newline (also Shift-Enter if supported)
-Tab, Shift-Tab     Switch between input and queued inputs
+Enter            Send input (submit or queue)
+Meta+Enter       Steer active run
+Ctrl+J           Insert a newline (also Shift+Enter if supported)
+Tab (Shift+Tab)  Switch focus (input/queue)
 ```
 
 Existing navigation, cancel, interrupt, clear, and exit rows remain. A short
-Queue-focused section documents Space, Up/Down (Ctrl-P/N), E, D/Delete, and
-Meta-Enter, including selection keys that are not repeated in every entry.
+Queue-focused section documents Space, ↑/↓ (Ctrl+P/Ctrl+N), e, d (Del), and
+Meta+Enter, including selection keys that are not repeated in every entry.
 
 ## Design Touchpoints
 
@@ -205,7 +213,7 @@ Likely files:
 ## Acceptance Tests
 
 - Prompt bindings distinguish submit, direct steer, canonical newline, and
-  optional Shift-Enter without parsing Meta-Enter input.
+  optional Shift+Enter without parsing Meta+Enter input.
 - Enter starts an idle run, queues during starting, active, and disconnected
   states, and still executes immediate interactions during a run.
 - Direct steer retains an empty or rejected draft, records and clears an
@@ -223,23 +231,25 @@ Likely files:
 - Space toggles only focused Queue without moving focus; Tab never expands it.
   Input spaces and draft steering retain their behavior. Hidden entries cannot
   be selected or mutated.
-- Tab and Shift-Tab focus transitions preserve completion behavior, and
-  Up/Down and Ctrl-P/N selection remain deterministic.
+- Tab and Shift+Tab focus transitions preserve completion behavior, and
+  Up/Down and Ctrl+P/Ctrl+N selection remain deterministic.
 - Edit covers empty and non-empty prompt drafts and documents rebuilt request
   snapshot behavior.
-- Meta-Enter steers the selected item; missing or blocked active runs keep it
-  queued. D and Delete remove it and clamp selection.
+- Meta+Enter steers the selected item; missing or blocked active runs keep it
+  queued. d and Del remove it and clamp selection.
+- Inline hints and `/keys` share canonical labels. Aliases appear only in full
+  help, all hint rows stay width-limited, and the bound key sequences are unchanged.
 - Automatic FIFO dequeue reconciles panel state without changing queued request
   snapshots.
 - `/keys` shows the new mental model on terminals with and without distinct
-  Shift-Enter support; hidden slash compatibility tests continue to pass.
+  Shift+Enter support; hidden slash compatibility tests continue to pass.
 - The default offline verification suite passes.
 
 ## Risks
 
 - Terminal emulators do not expose a portable physical Command-Enter key.
   Toolang binds the portable Meta sequence and documents terminal mapping.
-- Tab focus switching must not capture Tab or Shift-Tab while Input completion
+- Tab focus switching must not capture Tab or Shift+Tab while Input completion
   candidates are active.
 - Queue changes can coincide with run terminal events. All mutations stay on
   the UI event loop and reconcile selection immediately after list changes.

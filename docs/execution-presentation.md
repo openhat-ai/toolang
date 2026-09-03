@@ -79,13 +79,13 @@ continuations align with the text after the marker:
 
 The Chat input area distinguishes sending, steering, and multiline editing.
 Enter submits when idle and queues runnable input while a run is starting or
-active. Meta-Enter sends literal steer text to the active run. Ctrl-J inserts a
-newline, with Shift-Enter registered when the terminal can report it
+active. Meta+Enter sends literal steer text to the active run. Ctrl+J inserts a
+newline, with Shift+Enter registered when the terminal can report it
 distinctly.
 
 A non-empty Queue is expanded above Input without taking focus. Tab and
-Shift-Tab move focus between these two areas, except while an Input completion
-menu is active. Space expands or collapses focused Queue without moving focus;
+Shift+Tab move focus between these two areas, except while an Input completion
+menu is active. [Space] Expands or collapses focused Queue without moving focus;
 Tab never changes expansion. Input spaces and draft steering remain unchanged.
 
 Queue is independently centered at `min(120, terminal_width - 2)` columns in
@@ -94,7 +94,7 @@ one blank row separates Queue from Input's unchanged top padding. Adaptive
 footer-stabilizing space belongs above Queue, not inside that gap.
 
 Expanded Queue has a full-width header with a left-aligned count and
-right-aligned `Space collapse`, followed by up to four single-line previews.
+right-aligned `[Space] Collapse`, followed by up to four single-line previews.
 Only the selected entry has a `>` marker and dim right-aligned edit, steer,
 and delete hints; its preview truncates to reserve their space. Selection stays
 visible when unfocused. An omitted-count row follows the entries when needed;
@@ -102,7 +102,7 @@ there is no bottom help row. The header background is muted when unfocused and
 steer purple when focused, without an additional left accent rail.
 
 Collapsed Queue is a separate, focusable three-row panel: blank padding above
-and below the left-aligned count and right-aligned `Space expand`. Padding uses
+and below the left-aligned count and right-aligned `[Space] Expand`. Padding uses
 the Queue background, and the one-cell left accent rail spans all three rows.
 The rail changes from muted to steer purple on focus. The one-row gap before
 Input remains separate. Hidden entries cannot be selected or mutated.
@@ -110,11 +110,15 @@ Input's accent always stays cyan. Its cursor hides on Queue focus and returns
 to its preserved position on Input focus.
 
 Rows never wrap; previews and summaries truncate by display cells before hints,
-which also truncate on very narrow terminals. Up/Down or Ctrl-P/N select without
-wrapping; E edits, Meta-Enter steers, and D/Delete removes. `/keys` documents
+which also truncate on very narrow terminals. ↑/↓ or Ctrl+P/Ctrl+N select without
+wrapping; e edits, Meta+Enter steers, and d or Del removes. `/keys` documents
 these Queue-focused bindings. Mutations preserve the expansion choice and clamp
 selection; an empty queue disappears, restores Input focus, and resets the next
 non-empty queue to expanded.
+
+Inline hints use `[Key] Action`, separated by ` · `. Chords use `+`, unmodified
+letters are lowercase, and actions start with a capital letter. Only the primary
+key appears inline; alternate keys use parentheses in `/keys`, such as `d (Del)`.
 
 Flow headers also start in column zero and are followed by one blank line.
 Iteration and condition headers create the same kind of stable boundary.

@@ -184,14 +184,14 @@ clear the input.
 Enter sends the complete normalized input. It starts a runnable request when
 Chat is idle and queues that request while a run is starting or active;
 recognized immediate interactions such as slash commands still execute during
-a run. Meta-Enter sends the draft as literal steer text to the active run and
-does not apply any input namespace. Ctrl-J inserts a newline; Shift-Enter also
+a run. Meta+Enter sends the draft as literal steer text to the active run and
+does not apply any input namespace. Ctrl+J inserts a newline; Shift+Enter also
 does so when supported by the terminal.
 
 Queued runnable inputs appear expanded above the prompt without taking focus.
-Tab and Shift-Tab move focus between Queue and Input unless an input completion
-menu is active. In Queue, Up and Down select an item, E moves it to an empty
-prompt for editing, Meta-Enter steers with it, and D or Delete removes it.
+Tab and Shift+Tab move focus between Queue and Input unless an input completion
+menu is active. In Queue, ↑ and ↓ select an item, e moves it to an empty
+prompt for editing, Meta+Enter steers with it, and d or Del removes it.
 Editing or steering only removes an item after the local action is accepted.
 The Queue area disappears when it becomes empty.
 

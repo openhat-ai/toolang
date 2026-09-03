@@ -128,7 +128,7 @@ class QueuePanel:
                     accent,
                     *self._split_row(
                         f" {self._count_label(len(items))}",
-                        "Space expand ",
+                        shortcuts.QUEUE_TOGGLE.hint("Expand") + " ",
                         width - 1,
                         style="class:queue.info",
                         hint_style="class:queue.info",
@@ -208,12 +208,19 @@ class QueuePanel:
         rows = [
             self._split_row(
                 f"  {summary}",
-                "Space collapse ",
+                shortcuts.QUEUE_TOGGLE.hint("Collapse") + " ",
                 width,
                 style=header_style,
                 hint_style=f"{header_style} {header_hint_style}",
             )
         ]
+        actions = " · ".join(
+            (
+                shortcuts.QUEUE_EDIT.hint("Edit"),
+                shortcuts.QUEUE_STEER.hint("Steer"),
+                shortcuts.QUEUE_DELETE.hint("Delete"),
+            )
+        )
         for item_number, item in shown:
             selected = item_number - 1 == self._selected_index
             marker = ">" if selected else " "
@@ -222,7 +229,7 @@ class QueuePanel:
             rows.append(
                 self._split_row(
                     f"{prefix}{preview}",
-                    "E edit · Meta-Enter steer · D/Delete delete " if selected else " ",
+                    f"{actions} " if selected else " ",
                     width,
                     style="class:queue.selected" if selected else "class:queue",
                     hint_style="class:queue.info",
