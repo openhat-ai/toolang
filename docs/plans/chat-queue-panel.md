@@ -121,6 +121,8 @@ Expanded layout:
   no separate omitted-entry count row; the summary counts the entire queue.
   Short terminals show fewer entries to reserve Input, status, summary, and
   panel-hint rows. At least one entry remains visible while expanded.
+  If a multiline draft still exceeds the remaining height, Input scrolls within
+  a smaller viewport; resizing never discards the draft or cursor position.
 - Entry numbers align with Input text, two cells from the left edge. Numbers
   remain dim in selected and unselected entries; body text stays normal.
   There is no selection marker or bold selection text. Only while Queue is
@@ -253,6 +255,8 @@ Meta+Enter, including selection keys that are not repeated in every entry.
 - `ChatTuiApp` owns queue mutations. Every removal, including FIFO dequeue,
   reconciles selection and empty-queue focus through one helper.
   It supplies Queue's available height after reserving Input and status rows.
+  Input's viewport is bounded first by Queue's minimum height and the status row.
+  All three widgets use Prompt Toolkit's output size, not shell size variables.
 - `shortcuts.py` owns key definitions and scoped help groups. Input, Queue,
   and shared bindings remain explicit; no general focus framework is needed.
 - Rendering tests assert final text positions and cell styles, not fragment
@@ -286,6 +290,9 @@ Files:
 - The Queue area covers absent, default-expanded, collapsed, unfocused,
   focused, more-than-eight, narrow-terminal, and automatically emptied states.
   Eight- and twelve-row terminals reduce the viewport instead of obscuring Input.
+  Multiline and wrapped drafts remain editable across resize, focus, expansion,
+  and empty-queue transitions. Stale `COLUMNS` values cannot break wrapping or
+  Queue/Status alignment.
 - Both modes occupy the full terminal width across resize and directly adjoin
   Input, without a separator or queue text inside Input's padding.
 - The summary is normal when focused and dim when unfocused, without bold text.

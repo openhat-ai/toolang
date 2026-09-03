@@ -263,6 +263,7 @@ class ChatTuiApp:
             on_input=self._clear_status_error,
             history_store=self.input_history,
             completer=self.completer,
+            get_max_rows=self._available_input_rows,
         )
         self._refresh_prompt_completions()
         keys = KeyBindings()
@@ -344,6 +345,10 @@ class ChatTuiApp:
             max(self._footer_row_floor, required_rows),
         )
         return max(0, self._footer_row_floor - live_rows - fixed_footer_rows)
+
+    def _available_input_rows(self) -> int:
+        terminal_rows = self.app.output.get_size().rows
+        return max(0, terminal_rows - self.queue_panel.minimum_rows() - 1)
 
     def _available_queue_rows(self) -> int:
         return max(0, self.app.output.get_size().rows - self.prompt.rows() - 1)

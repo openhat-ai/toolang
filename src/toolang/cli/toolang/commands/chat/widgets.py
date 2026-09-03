@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-import shutil
 from prompt_toolkit.application import get_app
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer
@@ -137,6 +136,13 @@ class QueuePanel:
         if not self.expanded:
             return 1
         return 1 + self._entry_count(count, width) + len(self._hint_lines(width))
+
+    def minimum_rows(self) -> int:
+        """Reserve summary, one entry, and hints before sizing the input viewport."""
+        width = self.width()
+        if not self.get_items() or not width:
+            return 0
+        return 2 + len(self._hint_lines(width)) if self.expanded else 1
 
     def _entry_count(self, count: int, width: int) -> int:
         limit = MAX_QUEUE_ENTRIES
@@ -335,10 +341,12 @@ class PromptBox:
         on_input: Callable[[], None] | None = None,
         history_store: ChatInputHistoryStore | None = None,
         completer: Completer | None = None,
+        get_max_rows: Callable[[], int] | None = None,
     ) -> None:
         self.emit = emit
         self.invalidate = invalidate
         self.on_input = on_input
+        self._get_max_rows = get_max_rows
         self.history = InMemoryHistory()
         self.history_store = history_store
         for entry in history_store.load() if history_store is not None else ():
@@ -592,14 +600,17 @@ class PromptBox:
             self.on_input()
 
     def _input_rows(self) -> int:
-        terminal_width = shutil.get_terminal_size((100, 24)).columns
+        terminal_width = get_app().output.get_size().columns
         input_width = max(1, terminal_width - 3)
         # BufferControl reserves one trailing cursor cell per logical line.
         rows = sum(
             max(1, (get_cwidth(line) + input_width) // input_width)
             for line in self.buffer.document.lines
         )
-        return min(MAX_INPUT_ROWS, rows)
+        limit = MAX_INPUT_ROWS
+        if self._get_max_rows is not None:
+            limit = min(limit, max(1, self._get_max_rows() - 2))
+        return min(limit, rows)
 
     def _height_dimension(self) -> Dimension:
         rows = self.rows()
@@ -774,8 +785,8 @@ class StatusBar:
         return result
 
     @staticmethod
-    def _terminal_width(default: int = 100) -> int:
-        return shutil.get_terminal_size((default, 24)).columns
+    def _terminal_width() -> int:
+        return get_app().output.get_size().columns
 
 
 def _reduce_status_width(width: int, overflow: int) -> tuple[int, int]:

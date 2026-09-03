@@ -1927,12 +1927,10 @@ def test_chat_prompt_box_enables_completion_for_authored_source() -> None:
 def test_chat_prompt_grows_for_wrapped_input(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    output = _TerminalOutput()
+    output.columns = 10
+    monkeypatch.setattr(widgets, "get_app", lambda: SimpleNamespace(output=output))
     prompt = widgets.PromptBox(lambda _event: None, lambda: None)
-    monkeypatch.setattr(
-        widgets.shutil,
-        "get_terminal_size",
-        lambda _fallback: SimpleNamespace(columns=10),
-    )
 
     prompt.buffer.text = "123456"
     assert prompt.rows() == 3
@@ -2168,7 +2166,6 @@ def test_chat_input_area_absorbs_live_progress_contraction() -> None:
 @pytest.mark.parametrize("expanded", [False, True])
 @pytest.mark.parametrize("focused", [False, True])
 def test_chat_queue_layout_centers_summary_and_joins_input(
-    monkeypatch: pytest.MonkeyPatch,
     columns: int,
     expanded: bool,
     focused: bool,
@@ -2176,7 +2173,6 @@ def test_chat_queue_layout_centers_summary_and_joins_input(
     async def exercise() -> None:
         async with _queue_test_app() as (app, output):
             output.columns = columns
-            monkeypatch.setattr(app.status_bar, "_terminal_width", lambda: columns)
             app.prompt.buffer.text = "Keep typing"
             app.queue_panel.expanded = expanded
             app._footer_row_floor = 20
@@ -2302,6 +2298,100 @@ def test_chat_queue_eight_entry_limit_adapts_to_available_height(
             assert lines[bottom].endswith("tab input")
             assert "Ask or describe a task" in lines[bottom + 2]
             assert "agic:chat" in lines[bottom + 4]
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("columns", [25, 100])
+@pytest.mark.parametrize("expanded", [False, True])
+@pytest.mark.parametrize("focused", [False, True])
+@pytest.mark.parametrize(
+    "draft",
+    ["\n".join(["draft"] * 11 + ["last"]), "x" * 800 + "last"],
+    ids=["multiline", "wrapped"],
+)
+def test_chat_queue_reserves_space_for_a_scrolling_draft_after_resize(
+    monkeypatch: pytest.MonkeyPatch,
+    columns: int,
+    expanded: bool,
+    focused: bool,
+    draft: str,
+) -> None:
+    async def exercise() -> None:
+        async with _queue_test_app() as (app, output):
+            output.columns = columns
+            monkeypatch.setenv("COLUMNS", str(columns))
+            app.prompt.replace_input(draft)
+            app.queue_panel.move_selection(2)
+            app.queue_panel.expanded = expanded
+            if focused:
+                app.app.layout.focus(app.queue_panel.view)
+
+            for terminal_rows in (30, 12, 8, 30):
+                output.rows = terminal_rows
+                screen = _render_chat_layout(app)
+                lines = _screen_lines(screen, columns)
+                assert not any("Window too small" in line for line in lines)
+                assert any("3 items queued" in line for line in lines)
+                assert any("last" in line for line in lines)
+                assert "agic:chat" in lines[-1]
+                assert app.prompt.rows() + app.queue_panel.rows() + 1 <= terminal_rows
+                assert app.prompt.buffer.text == draft
+                assert app.prompt.buffer.cursor_position == len(draft)
+                assert screen.show_cursor is not focused
+                if expanded:
+                    assert any("[3]" in line for line in lines)
+                if not focused:
+                    cursor = screen.get_cursor_position(app.app.layout.current_window)
+                    assert 0 <= cursor.y < screen.height - 2
+
+    asyncio.run(exercise())
+
+
+def test_chat_input_reclaims_height_when_queue_empties() -> None:
+    async def exercise() -> None:
+        async with _queue_test_app() as (app, output):
+            output.rows = 8
+            draft = "\n".join(["draft"] * 11 + ["last"])
+            app.prompt.replace_input(draft)
+            app.app.layout.focus(app.queue_panel.view)
+            _render_chat_layout(app)
+            assert app.prompt.rows() == 4
+
+            while app.queue:
+                app._pop_queued_call(0)
+            screen = _render_chat_layout(app)
+            lines = _screen_lines(screen, output.columns)
+            assert app.prompt.rows() == 7
+            assert app.queue_panel.rows() == 0
+            assert any("last" in line for line in lines)
+            assert "agic:chat" in lines[-1]
+            assert app.prompt.buffer.text == draft
+            assert screen.show_cursor
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("expanded", [False, True])
+def test_chat_widgets_share_output_width_after_resize(
+    monkeypatch: pytest.MonkeyPatch, expanded: bool
+) -> None:
+    async def exercise() -> None:
+        async with _queue_test_app() as (app, output):
+            # An exported shell size can differ from the actual terminal output.
+            monkeypatch.setenv("COLUMNS", "120")
+            app.prompt.replace_input("x" * 79)
+            app.queue_panel.expanded = expanded
+
+            for columns in (40, 82, 100, 160):
+                output.columns = columns
+                screen = _render_chat_layout(app)
+                lines = _screen_lines(screen, columns)
+                input_width = columns - 3
+                assert app.prompt.rows() == (79 + input_width) // input_width + 2
+                assert app.queue_panel.width() == columns
+                assert lines[-1].endswith("openai/gpt-5")
+                assert get_cwidth(lines[-1].rstrip()) == columns
 
     asyncio.run(exercise())
 
