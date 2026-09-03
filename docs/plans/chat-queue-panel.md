@@ -193,15 +193,15 @@ Panel hints depend on focus and expansion:
 
 | State | Panel hints | Selected-entry hints |
 | --- | --- | --- |
-| Unfocused, either mode | `tab queue` | None |
+| Unfocused, either mode | `tab focus` | None |
 | Focused, collapsed | `tab input · sp expand` | None |
 | Focused, expanded | `tab input · sp collapse · ↑↓ select` | `e edit · d delete · meta+enter steer` |
 
 Panel hints are bottom-right when expanded and beside the summary when collapsed.
 Selected-entry hints appear only at the right edge of that entry.
 
-Tab labels name the focus destination. Full help continues to document aliases
-and action preconditions; the panel does not repeat them.
+Tab hints use verbs: `focus` enters Queue and `input` returns to typing. Full
+help documents aliases and action preconditions; the panel does not repeat them.
 
 The global shortcut help uses these concise rows:
 

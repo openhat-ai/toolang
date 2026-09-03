@@ -90,7 +90,7 @@ Expanded Queue provides ↑/↓ or Ctrl+P/Ctrl+N selection, e editing, Meta+Ente
 steering, and d or Del removal. Inline hints use dim lowercase `key action`
 without brackets, separated by ` · `; `sp` abbreviates Space. `/keys` retains
 standard labels and alternate keys in parentheses, such as `d (Del)`.
-Unfocused Queue shows only `tab queue`. Focused, collapsed Queue shows
+Unfocused Queue shows only `tab focus`. Focused, collapsed Queue shows
 `tab input · sp expand`; expanded Queue shows `tab input · sp collapse · ↑↓ select`
 at the bottom right and `e edit · d delete · meta+enter steer` on the selected row.
 On narrow terminals footer hints flow between complete actions, and selected

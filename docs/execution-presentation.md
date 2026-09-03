@@ -108,7 +108,7 @@ in both modes; the reserved column uses the Queue background when unfocused.
 Input's accent always stays cyan. Its cursor hides on Queue focus and returns
 to its preserved position on Input focus.
 
-Unfocused Queue shows only `tab queue`. Focused, collapsed Queue shows
+Unfocused Queue shows only `tab focus`. Focused, collapsed Queue shows
 `tab input · sp expand`. Focused, expanded Queue shows `tab input · sp collapse · ↑↓ select`
 at the bottom right and `e edit · d delete · meta+enter steer` only on the
 selected entry. Footer hints flow between complete actions on narrow terminals;

@@ -212,7 +212,7 @@ class QueuePanel:
 
     def _hints(self) -> tuple[str, ...]:
         if not self._has_focus():
-            return (shortcuts.SWITCH_AREA.hint("Queue"),)
+            return (shortcuts.SWITCH_AREA.hint("Focus"),)
         hints = (
             shortcuts.SWITCH_AREA.hint("Input"),
             shortcuts.QUEUE_TOGGLE.hint("Collapse" if self.expanded else "Expand"),

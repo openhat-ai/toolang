@@ -1438,7 +1438,7 @@ def test_chat_queue_panel_defaults_to_expanded_with_only_a_focus_hint(
     assert lines[1].startswith("  [1] first")
     assert lines[1].index("[1]") == lines[2].index("[2]") == 2
     assert lines[2].strip() == "[2] second"
-    assert lines[3].strip() == "tab queue"
+    assert lines[3].strip() == "tab focus"
     assert not any(
         action in "".join(lines) for action in ("collapse", "edit", "steer", "delete")
     )
@@ -1464,7 +1464,7 @@ def test_chat_queue_panel_splits_selected_entry_actions_from_panel_hints(
     assert summary.strip() == "2 items queued"
     assert summary.index("2 items queued") == (terminal_width - 14) // 2
     assert footer.strip() == (
-        "tab input · sp collapse · ↑↓ select" if focused else "tab queue"
+        "tab input · sp collapse · ↑↓ select" if focused else "tab focus"
     )
     assert selected.startswith("  [1] 任务 preview")
     assert unselected.startswith("  [2] 任务 preview")
@@ -1512,7 +1512,7 @@ def test_chat_queue_panel_collapses_to_one_centered_row_with_contextual_hints(
     assert panel.view.is_focusable()
     assert len(lines) == 1
     assert lines[0].index("2 items queued") == (terminal_width - 14) // 2
-    hint = "tab queue"
+    hint = "tab focus"
     if focused:
         hint = "tab input"
         if terminal_width >= 80:
@@ -2149,10 +2149,10 @@ def test_chat_queue_joins_input_across_focus_expansion_and_terminal_resize(
                                 assert hints == (
                                     "tab input · sp collapse · ↑↓ select"
                                     if focused
-                                    else "tab queue"
+                                    else "tab focus"
                                 )
                             else:
-                                hint = "tab queue"
+                                hint = "tab focus"
                                 if focused:
                                     hint = "tab input"
                                     if columns >= 80:
