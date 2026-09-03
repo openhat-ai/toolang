@@ -197,8 +197,8 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
             "d delete",
         )
         assert "Traceback" not in focused
-        assert "e edit · d delete · meta+enter steer" in focused
-        assert "tab input · sp collapse · ↑↓ select" in focused
+        assert "meta+enter steer · e edit · d delete" in focused
+        assert "↑↓ select · sp collapse · tab input" in focused
 
         # Exercise collapse, expand, and delete without depending on partial redraw text.
         session.send(b"  d")

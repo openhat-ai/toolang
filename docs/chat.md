@@ -91,11 +91,12 @@ steering, and d or Del removal. Inline hints use dim lowercase `key action`
 without brackets, separated by ` · `; `sp` abbreviates Space. `/keys` retains
 standard labels and alternate keys in parentheses, such as `d (Del)`.
 Unfocused Queue shows only `tab focus`. Focused, collapsed Queue shows
-`tab input · sp expand`; expanded Queue shows `tab input · sp collapse · ↑↓ select`
-at the bottom right and `e edit · d delete · meta+enter steer` on the selected row.
+`sp expand · tab input`; expanded Queue shows `↑↓ select · sp collapse · tab input`
+at the bottom right and `meta+enter steer · e edit · d delete` on the selected row.
+Frequent actions for the current state come first in each tier.
 On narrow terminals footer hints flow between complete actions, and selected
 previews truncate to reserve action hints. Collapsed hints omit actions that
-cannot fit beside the centered count, prioritizing Tab. Queue's steer-purple
+cannot fit beside the centered count, prioritizing expansion. Queue's steer-purple
 left accent appears only on focus; its
 column blends into the Queue background otherwise, without shifting content.
 There is no separate header style.

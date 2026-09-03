@@ -109,11 +109,12 @@ Input's accent always stays cyan. Its cursor hides on Queue focus and returns
 to its preserved position on Input focus.
 
 Unfocused Queue shows only `tab focus`. Focused, collapsed Queue shows
-`tab input · sp expand`. Focused, expanded Queue shows `tab input · sp collapse · ↑↓ select`
-at the bottom right and `e edit · d delete · meta+enter steer` only on the
-selected entry. Footer hints flow between complete actions on narrow terminals;
+`sp expand · tab input`. Focused, expanded Queue shows `↑↓ select · sp collapse · tab input`
+at the bottom right and `meta+enter steer · e edit · d delete` only on the
+selected entry. Frequent actions for the current state come first. Footer hints
+flow between complete actions on narrow terminals;
 entry previews truncate to reserve hint space. Collapsed hints omit actions that
-cannot fit in the right margin, prioritizing Tab without shifting the summary.
+cannot fit in the right margin, prioritizing expansion without shifting the summary.
 Previews, summaries, and individual overlong hints truncate by display cells.
 ↑/↓ or Ctrl+P/Ctrl+N select without
 wrapping; e edits, Meta+Enter steers, and d or Del removes. `/keys` documents

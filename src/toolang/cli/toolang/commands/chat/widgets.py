@@ -178,9 +178,9 @@ class QueuePanel:
         rows = [summary]
         actions = " · ".join(
             (
+                shortcuts.QUEUE_STEER.hint("Steer"),
                 shortcuts.QUEUE_EDIT.hint("Edit"),
                 shortcuts.QUEUE_DELETE.hint("Delete"),
-                shortcuts.QUEUE_STEER.hint("Steer"),
             )
         )
         for item_number, item in shown:
@@ -214,14 +214,14 @@ class QueuePanel:
         if not self._has_focus():
             return (shortcuts.SWITCH_AREA.hint("Focus"),)
         hints = (
-            shortcuts.SWITCH_AREA.hint("Input"),
             shortcuts.QUEUE_TOGGLE.hint("Collapse" if self.expanded else "Expand"),
+            shortcuts.SWITCH_AREA.hint("Input"),
         )
         if not self.expanded:
             return hints
         return (
-            *hints,
             f"{shortcuts.QUEUE_PREVIOUS.label}{shortcuts.QUEUE_NEXT.label} select",
+            *hints,
         )
 
     def _hint_lines(self, width: int) -> list[str]:

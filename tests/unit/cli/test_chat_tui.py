@@ -1464,12 +1464,12 @@ def test_chat_queue_panel_splits_selected_entry_actions_from_panel_hints(
     assert summary.strip() == "2 items queued"
     assert summary.index("2 items queued") == (terminal_width - 14) // 2
     assert footer.strip() == (
-        "tab input · sp collapse · ↑↓ select" if focused else "tab focus"
+        "↑↓ select · sp collapse · tab input" if focused else "tab focus"
     )
     assert selected.startswith("  [1] 任务 preview")
     assert unselected.startswith("  [2] 任务 preview")
     if focused:
-        hint = "e edit · d delete · meta+enter steer "
+        hint = "meta+enter steer · e edit · d delete "
         assert selected.endswith(hint)
         assert selected[: selected.index(hint)].rstrip().endswith("…")
     else:
@@ -1514,9 +1514,9 @@ def test_chat_queue_panel_collapses_to_one_centered_row_with_contextual_hints(
     assert lines[0].index("2 items queued") == (terminal_width - 14) // 2
     hint = "tab focus"
     if focused:
-        hint = "tab input"
+        hint = "sp expand"
         if terminal_width >= 80:
-            hint += " · sp expand"
+            hint += " · tab input"
     assert lines[0].endswith(hint + " ")
     assert lines[0].split("2 items queued", 1)[1].strip() == hint
     assert all(get_cwidth(line) == terminal_width for line in lines)
@@ -1545,11 +1545,13 @@ def test_chat_queue_panel_wraps_footer_hints_in_narrow_terminals(
 
     assert len(lines) == panel.rows() == (5 if terminal_width == 25 else 3)
     assert " · ".join(line.strip() for line in lines[2:]) == (
-        "tab input · sp collapse · ↑↓ select"
+        "↑↓ select · sp collapse · tab input"
     )
     assert all(get_cwidth(line) == terminal_width for line in lines)
     assert lines[1].startswith("  [1] ")
     assert lines[0].index("1 item queued") == (terminal_width - 13) // 2
+    if terminal_width >= 40:
+        assert "meta+enter steer" in lines[1]
 
 
 @pytest.mark.parametrize("message", ["👩‍💻" * 10, "❤️" * 25, "e\u0301" * 50])
@@ -1658,8 +1660,8 @@ def test_chat_queue_panel_focus_selects_and_windows_queued_inputs(
     assert lines[0].strip() == "6 items queued"
     assert "[3] queued input 3" in lines[1]
     assert "[6] queued input 6" in lines[4]
-    assert lines[4].endswith("e edit · d delete · meta+enter steer ")
-    assert lines[5].strip() == "tab input · sp collapse · ↑↓ select"
+    assert lines[4].endswith("meta+enter steer · e edit · d delete ")
+    assert lines[5].strip() == "↑↓ select · sp collapse · tab input"
     assert "not shown" not in rendered
     assert all(get_cwidth(line) == 100 for line in lines)
     assert any(style == "class:queue.selected" for style, _text in fragments)
@@ -2147,16 +2149,16 @@ def test_chat_queue_joins_input_across_focus_expansion_and_terminal_resize(
                                 assert lines[summary_row].strip() == "3 items queued"
                                 hints = lines[panel_bottom].strip()
                                 assert hints == (
-                                    "tab input · sp collapse · ↑↓ select"
+                                    "↑↓ select · sp collapse · tab input"
                                     if focused
                                     else "tab focus"
                                 )
                             else:
                                 hint = "tab focus"
                                 if focused:
-                                    hint = "tab input"
+                                    hint = "sp expand"
                                     if columns >= 80:
-                                        hint += " · sp expand"
+                                        hint += " · tab input"
                                 assert lines[summary_row].endswith(hint + " ")
                             assert not lines[input_row - 1].strip()  # Input padding.
                             assert app._input_spacer_rows() > 0
@@ -2213,7 +2215,7 @@ def test_chat_queue_joins_input_across_focus_expansion_and_terminal_resize(
                                     assert entry_hint_attrs.color == "b8b8b8"
                                     if columns >= 80:
                                         assert lines[row].endswith(
-                                            "e edit · d delete · meta+enter steer "
+                                            "meta+enter steer · e edit · d delete "
                                         )
                             if not focused:
                                 assert not any(

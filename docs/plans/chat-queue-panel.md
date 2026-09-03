@@ -117,7 +117,7 @@ Expanded layout:
 - Entry numbers align with Input text, after the accent column and one gutter
   cell. There is no selection marker or bold selection text. Only while Queue
   is focused does the selected entry use Input's background, excluding the
-  accent column. Its right side shows `e edit · d delete · meta+enter steer` in
+  accent column. Its right side shows `meta+enter steer · e edit · d delete` in
   dim text on that same background; the preview truncates to reserve hint space.
   Unselected and unfocused entries use the full content width without hints.
 - Panel actions (focus switching, expansion, and selection) appear at the bottom
@@ -133,7 +133,7 @@ rows for four or more items.
 Collapsed Queue is a single focusable row with a centered dim summary and
 right-aligned contextual key hints. There are no extra padding rows. Centering
 never uses only the space left by hints. If the right margin cannot fit every
-hint, show complete hints in order, prioritizing Tab; never overlap or shift the
+hint, show complete hints in order, prioritizing expansion; never overlap or shift the
 summary. No queue content appears inside Input. Previews, summaries, and entry
 hints truncate by display cells on narrow terminals, including wide Unicode.
 Entry numbers and the start of the preview retain space before hints truncate.
@@ -194,11 +194,13 @@ Panel hints depend on focus and expansion:
 | State | Panel hints | Selected-entry hints |
 | --- | --- | --- |
 | Unfocused, either mode | `tab focus` | None |
-| Focused, collapsed | `tab input · sp expand` | None |
-| Focused, expanded | `tab input · sp collapse · ↑↓ select` | `e edit · d delete · meta+enter steer` |
+| Focused, collapsed | `sp expand · tab input` | None |
+| Focused, expanded | `↑↓ select · sp collapse · tab input` | `meta+enter steer · e edit · d delete` |
 
 Panel hints are bottom-right when expanded and beside the summary when collapsed.
 Selected-entry hints appear only at the right edge of that entry.
+Within each tier, frequent actions for the current state come first; preserve
+that order when wrapping or truncating hints.
 
 Tab hints use verbs: `focus` enters Queue and `input` returns to typing. Full
 help documents aliases and action preconditions; the panel does not repeat them.
