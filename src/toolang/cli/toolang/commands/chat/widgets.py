@@ -53,7 +53,6 @@ def _chat_ui_palette() -> dict[str, str]:
         "queue.selected.hint": "fg:#b8b8b8 dim",
         "queue.info": "fg:#b8b8b8 bg:#3a3a3a dim",
         "queue.hint": "fg:#b8b8b8 dim",
-        "queue.accent.focused": f"bg:{INPUT_BACKGROUND}",
         "control.run": f"bg:{RUN_CONTROL_ACCENT_PROMPT_TOOLKIT}",
         "input": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
         "input.placeholder": f"fg:#b8b8b8 bg:{INPUT_BACKGROUND}",
@@ -107,12 +106,11 @@ class QueuePanel:
         width = self.width()
         if not items or not width:
             return []
-        width -= 1  # Reserve the left accent rail in both modes.
+        width -= 1  # Keep the left gutter aligned with Input's accent column.
         rows = self._rows(items, width=width)
         fragments: list[tuple[str, str]] = []
-        accent = (self._accent_style(), ACCENT_CELL)
         for row_index, row in enumerate(rows):
-            fragments.append(accent)
+            fragments.append(("class:queue", ACCENT_CELL))
             fragments.extend(row)
             if row_index < len(rows) - 1:
                 fragments.append(("", "\n"))
@@ -256,16 +254,11 @@ class QueuePanel:
         hint = hint + " " if hint else ""
         return [
             (
-                "class:queue.info",
+                "class:queue" if self._has_focus() else "class:queue.info",
                 " " * left + summary + " " * (right - get_cwidth(hint)),
             ),
             ("class:queue.hint", hint),
         ]
-
-    def _accent_style(self) -> str:
-        if self._has_focus() and not self.expanded:
-            return "class:queue.accent.focused"
-        return "class:queue"
 
     @staticmethod
     def _count_label(count: int) -> str:

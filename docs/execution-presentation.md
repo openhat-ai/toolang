@@ -92,7 +92,7 @@ Queue occupies the full terminal width in both modes and directly adjoins Input
 without a separator row. Queue and Input retain distinct backgrounds. Adaptive
 footer-stabilizing space belongs above Queue, never between Queue and Input.
 
-Expanded Queue has a centered dim summary at the top, up to four single-line
+Expanded Queue has a centered summary at the top, up to four single-line
 previews, and panel hints at the bottom right, directly above Input. There is no
 omitted-count row or special header fill. Entry numbers align with Input text.
 While focused, the selected entry uses Input's background from its left padding
@@ -101,11 +101,11 @@ bold text; only the background indicates selection. Dim edit, delete, and steer
 hints occupy the right side on that same background. Losing focus hides the
 highlight and entry hints while preserving selection. The summary counts all items.
 
-Collapsed Queue occupies a single row: the centered dim summary with right-aligned
+Collapsed Queue occupies a single row: the centered summary with right-aligned
 key hints, without extra padding rows. Hidden entries cannot be selected or
-mutated. The reserved one-cell left accent uses Input's background only when
-focused and collapsed. When expanded or unfocused, it uses Queue's background;
-expanded focus is shown only by selection.
+mutated. In both modes, the summary indicates focus through normal text when
+focused and dim text when unfocused. Key hints stay dim. The reserved one-cell
+left column always uses Queue's background, independent of focus and expansion.
 Input's accent always stays cyan. Its cursor hides on Queue focus and returns
 to its preserved position on Input focus.
 

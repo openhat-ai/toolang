@@ -1462,6 +1462,7 @@ def test_chat_queue_panel_splits_selected_entry_actions_from_panel_hints(
     lines = "".join(text for _style, text in fragments).splitlines()
     summary, selected, unselected, footer = lines
     assert summary.strip() == "2 items queued"
+    assert fragments[1][0] == ("class:queue" if focused else "class:queue.info")
     assert summary.index("2 items queued") == (terminal_width - 14) // 2
     assert footer.strip() == (
         "↑↓ select · sp collapse · tab input" if focused else "tab focus"
@@ -1508,6 +1509,7 @@ def test_chat_queue_panel_collapses_to_one_centered_row_with_contextual_hints(
     assert panel.container().filter()
     assert panel.view.is_focusable()
     assert len(lines) == 1
+    assert fragments[1][0] == ("class:queue" if focused else "class:queue.info")
     assert lines[0].index("2 items queued") == (terminal_width - 14) // 2
     hint = "tab focus"
     if focused:
@@ -1517,10 +1519,7 @@ def test_chat_queue_panel_collapses_to_one_centered_row_with_contextual_hints(
     assert lines[0].endswith(hint + " ")
     assert lines[0].split("2 items queued", 1)[1].strip() == hint
     assert all(get_cwidth(line) == terminal_width for line in lines)
-    accent = (
-        "class:queue.accent.focused" if focused else "class:queue",
-        rendering.ACCENT_CELL,
-    )
+    accent = ("class:queue", rendering.ACCENT_CELL)
     assert fragments[0] == accent
     assert fragments.count(accent) == 1
     assert not any(
@@ -1631,10 +1630,7 @@ def test_chat_queue_panel_uses_a_full_width_window_and_distinct_background() -> 
     assert palette["queue.info"] == "fg:#b8b8b8 bg:#3a3a3a dim"
     assert palette["queue.selected"] == f"bg:{rendering.INPUT_BACKGROUND}"
     assert palette["queue.hint"] == "fg:#b8b8b8 dim"
-    assert "queue.accent" not in palette
-    assert widgets._chat_ui_palette()["queue.accent.focused"] == (
-        f"bg:{rendering.INPUT_BACKGROUND}"
-    )
+    assert not any(name.startswith("queue.accent") for name in palette)
 
 
 def test_chat_queue_panel_focus_selects_and_windows_queued_inputs(
@@ -1662,7 +1658,7 @@ def test_chat_queue_panel_focus_selects_and_windows_queued_inputs(
     assert "not shown" not in rendered
     assert all(get_cwidth(line) == 100 for line in lines)
     assert any(style == "class:queue.selected" for style, _text in fragments)
-    assert panel._accent_style() == "class:queue"
+    assert fragments[0] == ("class:queue", rendering.ACCENT_CELL)
 
 
 def test_chat_queue_panel_reconciles_selection_after_removal() -> None:
@@ -2168,18 +2164,13 @@ def test_chat_queue_joins_input_across_focus_expansion_and_terminal_resize(
                                     screen.data_buffer[row][col].style
                                 ).bgcolor
 
-                            accent = (
-                                rendering.INPUT_BACKGROUND
-                                if focused and not expanded
-                                else "3a3a3a"
-                            )
                             input_background = background(input_row - 1, 1)
                             assert input_background == rendering.INPUT_BACKGROUND
                             queue_background = background(summary_row, 1)
                             assert queue_background == "3a3a3a"
                             assert queue_background != input_background
                             for row in range(panel_top, panel_top + panel_rows):
-                                assert background(row, 0) == accent
+                                assert background(row, 0) == queue_background
                                 selected = (
                                     expanded
                                     and focused
@@ -2232,10 +2223,14 @@ def test_chat_queue_joins_input_across_focus_expansion_and_terminal_resize(
                             hint_attrs = app_style.get_attrs_for_style_str(
                                 screen.data_buffer[panel_bottom][columns - 2].style
                             )
-                            assert summary_attrs.color == hint_attrs.color == "b8b8b8"
+                            assert summary_attrs.color == (
+                                "f5f5f5" if focused else "b8b8b8"
+                            )
+                            assert summary_attrs.dim is not focused
+                            assert not summary_attrs.bold
+                            assert hint_attrs.color == "b8b8b8"
                             assert hint_attrs.dim
-                            assert summary_attrs.dim
-                            assert background(input_row - 2, 0) == accent
+                            assert background(input_row - 2, 0) == queue_background
                             assert background(input_row - 1, 0) == "ansibrightcyan"
                             assert background(input_row, 0) == "ansibrightcyan"
                             assert screen.show_cursor is not focused
@@ -3735,11 +3730,11 @@ def test_chat_tui_queue_shortcuts_switch_focus_and_move_selection() -> None:
         active[-1].handler(cast(Any, None))
 
     with set_app(app.app):
-        assert app.queue_panel._accent_style() == "class:queue"
+        assert app.queue_panel._render()[1][0] == "class:queue.info"
 
         invoke(Keys.Tab)
         assert app.app.layout.current_control is app.queue_panel.view
-        assert app.queue_panel._accent_style() == "class:queue"
+        assert app.queue_panel._render()[1][0] == "class:queue"
 
         invoke(Keys.Down)
         assert app.queue_panel.selected_index == 1
@@ -3753,6 +3748,7 @@ def test_chat_tui_queue_shortcuts_switch_focus_and_move_selection() -> None:
         invoke(Keys.BackTab)
         assert isinstance(app.app.layout.current_control, BufferControl)
         assert app.app.layout.current_control.buffer is app.prompt.buffer
+        assert app.queue_panel._render()[1][0] == "class:queue.info"
 
         invoke(Keys.BackTab)
         assert app.app.layout.current_control is app.queue_panel.view

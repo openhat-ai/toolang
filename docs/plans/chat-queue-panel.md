@@ -30,12 +30,11 @@ away from the active run.
 - Space toggles the focused Queue without moving focus; Tab only changes focus.
   Selection is preserved, but actions on hidden entries are disabled.
 - Queue uses the full terminal width and joins Input without a separator row.
-  The areas retain distinct backgrounds. Queue's left accent uses Input's
-  background only when focused and collapsed; otherwise it blends into Queue.
-  Expanded focus is shown only by selection. Input retains its cyan accent and
-  only shows its cursor on focus.
-- Queue's dim summary is centered at the top when expanded and in its only row
-  when collapsed. Entry actions and panel actions have separate hint locations.
+  The areas retain distinct backgrounds. Queue's left column always blends into
+  its background. Input retains its cyan accent and only shows its cursor on focus.
+- Queue's summary is normal when focused and dim when unfocused, in both modes.
+  It is centered at the top when expanded and in its only row when collapsed.
+  Entry actions and panel actions have separate hint locations.
 - Queue selection remains valid while items are removed or automatically
   submitted, and the panel resets when the queue becomes empty.
 - The existing hidden `/queue`, `/q`, `/steer`, and `/s` commands retain their
@@ -107,13 +106,13 @@ Toolkit Tab behavior remains unchanged.
 Queue occupies the full terminal width in both modes, directly above Input
 without a separator row or horizontal margins. Queue and Input retain distinct
 backgrounds. Any dynamic space used to stabilize the footer belongs above Queue,
-never between the two areas. Queue's one-cell left accent uses Input's background
-only when focused and collapsed. When expanded or unfocused, it uses Queue's
-background; expanded focus is shown only by the selected entry. The column stays
-reserved so focus never shifts content horizontally.
+never between the two areas. Queue's reserved one-cell left column always uses
+Queue's background; it never indicates focus. The summary uses normal text while
+focused and dim text while unfocused, in both modes. Focus never shifts content
+horizontally.
 Expanded layout:
 
-- A dim summary, such as `3 items queued`, is centered across the full panel in
+- A summary, such as `3 items queued`, is centered across the full panel in
   the top row, without a special header fill.
 - The middle shows up to four one-line previews, following selection. There is
   no separate omitted-entry count row; the summary counts the entire queue.
@@ -133,7 +132,7 @@ the selected index and scroll position for the next focus transition.
 With one hint row, expanded height ranges from three rows for one item to six
 rows for four or more items.
 
-Collapsed Queue is a single focusable row with a centered dim summary and
+Collapsed Queue is a single focusable row with a centered summary and
 right-aligned contextual key hints. There are no extra padding rows. Centering
 never uses only the space left by hints. If the right margin cannot fit every
 hint, show complete hints in order, prioritizing expansion; never overlap or shift the
@@ -247,11 +246,11 @@ Likely files:
   focused, more-than-four, narrow-terminal, and automatically emptied states.
 - Both modes occupy the full terminal width across resize and directly adjoin
   Input, without a separator or queue text inside Input's padding.
-- The summary is dim and centered across the full panel: at the top when
+- The summary is normal when focused and dim when unfocused, without bold text.
+  It stays centered across the full panel: at the top when
   expanded and in the only row when collapsed, with right-aligned panel hints.
-- Queue's left accent uses Input's background only when focused and collapsed.
-  When expanded or unfocused, the column uses Queue's background. It stays
-  reserved to prevent shifting; expanded focus is shown only by selection.
+- Queue's reserved left column always uses Queue's background, in both modes
+  and regardless of focus. The summary, not the left column, indicates focus.
   Queue uses its own background, distinct from Input, with no special header
   fill. Only while focused does the selected entry use Input's background,
   including its dim action hints but excluding the accent column. Unfocusing
