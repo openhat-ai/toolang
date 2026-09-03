@@ -140,7 +140,6 @@ normalized submission:
 /caps [-a] [QUERY]
 /agics                    /flows
 /output [RUN]             /show [RUN]
-/queue [ACTION]           /steer MESSAGE
 /exit                     /quit
 :?
 ```
@@ -193,6 +192,11 @@ Tab and Shift+Tab move focus between Queue and Input unless an input completion
 menu is active. In Queue, ↑ and ↓ select an item, e moves it to an empty
 prompt for editing, Meta+Enter steers with it, and d or Del removes it.
 Editing or steering only removes an item after the local action is accepted.
+
+`/queue`, `/q`, `/steer`, and `/s` are not commands. Use the Queue panel and
+Meta+Enter instead. Esc Esc, Ctrl+C, and Ctrl+D are restricted to Input focus.
+Esc never moves focus or cancels a run from Queue; Ctrl+L and Ctrl+Q remain
+global. `/keys` lists Input, Queue, and global shortcuts separately.
 The Queue area disappears when it becomes empty.
 
 Chat removes leading and trailing blank lines, then removes horizontal

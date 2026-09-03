@@ -37,8 +37,10 @@ away from the active run.
   Entry actions and panel actions have separate hint locations.
 - Queue selection remains valid while items are removed or automatically
   submitted, and the panel resets when the queue becomes empty.
-- The existing hidden `/queue`, `/q`, `/steer`, and `/s` commands retain their
-  behavior for compatibility but are not restored to `/help`.
+- Queue management and steering use keyboard controls only. `/queue`, `/q`,
+  `/steer`, and `/s` are unregistered and follow normal unknown-command handling.
+- Run cancellation, input clearing, and conditional exit are
+  Input-scoped. Queue focus never makes those keys act on Input or the run.
 - Contextual panel hints and `/keys` teach the complete interaction without
   requiring slash-command help.
 
@@ -51,7 +53,9 @@ In scope:
 - queue edit, steer, and delete actions;
 - prompt history and draft acceptance for direct steering;
 - queue-aware layout sizing, truncation, focus recovery, and invalidation;
-- shortcut metadata, `/keys`, Chat documentation, and offline tests.
+- shortcut metadata, `/keys`, Chat documentation, and offline tests;
+- removal of queue/steer slash handlers and their unused context methods;
+- behavior-preserving entry rendering and test cleanup.
 
 Out of scope:
 
@@ -60,7 +64,6 @@ Out of scope:
 - queue reordering, mouse controls, or a full-screen queue picker;
 - a generalized tab strip or focus framework for future Chat areas;
 - adding queue behavior to scripted Chat;
-- removing or documenting the hidden queue and steer slash commands;
 - changing slash-command output or execution progress presentation.
 
 ## Input Model
@@ -114,8 +117,10 @@ Expanded layout:
 
 - A summary, such as `3 items queued`, is centered across the full panel in
   the top row, without a special header fill.
-- The middle shows up to four one-line previews, following selection. There is
+- The middle shows up to eight one-line previews, following selection. There is
   no separate omitted-entry count row; the summary counts the entire queue.
+  Short terminals show fewer entries to reserve Input, status, summary, and
+  panel-hint rows. At least one entry remains visible while expanded.
 - Entry numbers align with Input text, two cells from the left edge. Numbers
   remain dim in selected and unselected entries; body text stays normal.
   There is no selection marker or bold selection text. Only while Queue is
@@ -135,8 +140,8 @@ Expanded layout:
 Losing focus hides both selection highlighting and entry hints, but preserves
 the selected index and scroll position for the next focus transition.
 
-With one hint row, expanded height ranges from three rows for one item to six
-rows for four or more items.
+With one hint row, expanded height ranges from three rows for one item to ten
+rows for eight or more items.
 
 Collapsed Queue is a single focusable row with a centered summary and
 right-aligned contextual key hints. There are no extra padding rows. Centering
@@ -149,6 +154,21 @@ Entry numbers and the start of the preview retain space before hints truncate.
 Input's one-cell accent remains cyan regardless of focus. Its cursor is hidden
 while Queue has focus and returns to the preserved editing position when focus
 returns. Focus and expansion never change the width of either area.
+
+### Keyboard Scope
+
+The scope revision was approved in the 2026-09-03 implementation review.
+
+- Input only: Enter, Meta+Enter with the draft, Ctrl+J, optional Shift+Enter,
+  history navigation, Esc Esc, Ctrl+C, and Ctrl+D.
+- Queue only: Space; selection, edit, delete, and Meta+Enter with an entry also
+  require expansion. Input-only control keys are inert.
+- Shared: Tab/Shift+Tab switch focus; Esc only dismisses transient status and
+  never moves focus; Ctrl+L clears the display when idle; Ctrl+Q explicitly exits
+  Chat from either area. No special Queue override for Ctrl+L is needed.
+
+Repeated Esc while Queue is focused never cancels the active run. Full `/keys`
+help groups actions by scope; inline hints keep their existing wording and order.
 
 Focused Queue bindings are:
 
@@ -213,7 +233,7 @@ that order when wrapping or truncating hints.
 Tab hints use verbs: `focus` enters Queue and `input` returns to typing. Full
 help documents aliases and action preconditions; the panel does not repeat them.
 
-The global shortcut help uses these concise rows:
+The shortcut help keeps these concise rows under their respective focus scopes:
 
 ```text
 Enter            Send input (submit or queue)
@@ -228,9 +248,22 @@ Meta+Enter, including selection keys that are not repeated in every entry.
 
 ## Design Touchpoints
 
-Likely files:
+- `QueuePanel` composes summary, entry, and footer rows. Entry rendering owns
+  its padding, truncation, and styles directly, without reparsing fragments.
+- `ChatTuiApp` owns queue mutations. Every removal, including FIFO dequeue,
+  reconciles selection and empty-queue focus through one helper.
+  It supplies Queue's available height after reserving Input and status rows.
+- `shortcuts.py` owns key definitions and scoped help groups. Input, Queue,
+  and shared bindings remain explicit; no general focus framework is needed.
+- Rendering tests assert final text positions and cell styles, not fragment
+  ordering. Separate visual contracts from focus/expansion/resize transitions.
+
+Files:
 
 - `src/toolang/cli/toolang/commands/chat/shortcuts.py`
+- `src/toolang/cli/toolang/commands/chat/slashes.py`
+- `src/toolang/cli/toolang/commands/chat/base.py`
+- `src/toolang/cli/toolang/commands/chat/main.py`
 - `src/toolang/cli/toolang/commands/chat/events.py`
 - `src/toolang/cli/toolang/commands/chat/widgets.py`
 - `src/toolang/cli/toolang/commands/chat/tui.py`
@@ -238,6 +271,8 @@ Likely files:
 - `docs/input-syntax.md`
 - `docs/execution-presentation.md`
 - `tests/unit/cli/test_chat_tui.py`
+- `tests/unit/cli/test_chat_slashes.py`
+- `tests/unit/cli/test_chat_command.py`
 - `tests/system/cli/test_chat_tui_e2e.py`
 
 ## Acceptance Tests
@@ -249,7 +284,8 @@ Likely files:
 - Direct steer retains an empty or rejected draft, records and clears an
   accepted draft, and creates the existing steer control presentation.
 - The Queue area covers absent, default-expanded, collapsed, unfocused,
-  focused, more-than-four, narrow-terminal, and automatically emptied states.
+  focused, more-than-eight, narrow-terminal, and automatically emptied states.
+  Eight- and twelve-row terminals reduce the viewport instead of obscuring Input.
 - Both modes occupy the full terminal width across resize and directly adjoin
   Input, without a separator or queue text inside Input's padding.
 - The summary is normal when focused and dim when unfocused, without bold text.
@@ -277,7 +313,7 @@ Likely files:
   body text stays normal. Selected hints use a brighter gray while staying dim.
   There is no selection marker; only the background indicates selection.
   Long and CJK previews truncate without wrapping.
-  There is no omitted-count row, even beyond four items; the summary counts all.
+  There is no omitted-count row, even beyond eight items; the summary counts all.
 - Space toggles only focused Queue without moving focus; Tab never expands it.
   Input spaces and draft steering retain their behavior. Hidden entries cannot
   be selected or mutated.
@@ -292,8 +328,12 @@ Likely files:
   All hint rows remain width-limited, and dim styling does not leak into entry bodies.
 - Automatic FIFO dequeue reconciles panel state without changing queued request
   snapshots.
-- `/keys` shows the new mental model on terminals with and without distinct
-  Shift+Enter support; hidden slash compatibility tests continue to pass.
+- `/keys` groups shared, Input, and Queue actions and preserves optional
+  Shift+Enter wording. Removed commands and aliases cannot mutate the queue,
+  selection, draft, or run in interactive or scripted Chat.
+- Real key dispatch verifies that Esc Esc, Ctrl+C, and Ctrl+D are inert
+  in both Queue modes and keep their Input behavior; Esc stays in Queue,
+  Ctrl+L and Ctrl+Q remain global, and Meta+Enter still targets the focused source.
 - The default offline verification suite passes.
 
 ## Risks

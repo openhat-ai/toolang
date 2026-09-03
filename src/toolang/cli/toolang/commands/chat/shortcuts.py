@@ -143,19 +143,15 @@ QUIT = ChatShortcut(
     "Exit Chat immediately",
 )
 
-CHAT_SHORTCUTS = (
+INPUT_SHORTCUTS = (
     SUBMIT,
     STEER,
     INSERT_NEWLINE,
-    SWITCH_AREA,
     PREVIOUS_HISTORY,
     NEXT_HISTORY,
-    DISMISS_STATUS,
     CANCEL_RUN,
     INTERRUPT,
     EOF,
-    CLEAR,
-    QUIT,
 )
 QUEUE_SHORTCUTS = (
     QUEUE_TOGGLE,
@@ -165,34 +161,38 @@ QUEUE_SHORTCUTS = (
     QUEUE_STEER,
     QUEUE_DELETE,
 )
+GLOBAL_SHORTCUTS = (SWITCH_AREA, DISMISS_STATUS, CLEAR, QUIT)
 
 
 def help_lines() -> tuple[str, ...]:
     """Return aligned, presentation-neutral shortcut help rows."""
 
+    groups = (
+        ("Input focused:", INPUT_SHORTCUTS),
+        ("Queue focused:", QUEUE_SHORTCUTS),
+        ("Global:", GLOBAL_SHORTCUTS),
+    )
     width = max(
-        len(shortcut.help_label) for shortcut in (*CHAT_SHORTCUTS, *QUEUE_SHORTCUTS)
+        len(shortcut.help_label) for _title, group in groups for shortcut in group
     )
-    return (
-        *(
-            f"{shortcut.help_label:<{width}}  {shortcut.summary}"
-            for shortcut in CHAT_SHORTCUTS
-        ),
-        "",
-        "Queue focused:",
-        *(
-            f"{shortcut.help_label:<{width}}  {shortcut.summary}"
-            for shortcut in QUEUE_SHORTCUTS
-        ),
-    )
+    lines: list[str] = []
+    for title, group in groups:
+        if lines:
+            lines.append("")
+        lines.append(title)
+        lines.extend(
+            f"{shortcut.help_label:<{width}}  {shortcut.summary}" for shortcut in group
+        )
+    return tuple(lines)
 
 
 __all__ = [
     "CANCEL_RUN",
-    "CHAT_SHORTCUTS",
     "CLEAR",
     "DISMISS_STATUS",
     "EOF",
+    "GLOBAL_SHORTCUTS",
+    "INPUT_SHORTCUTS",
     "INSERT_NEWLINE",
     "INTERRUPT",
     "NEXT_HISTORY",

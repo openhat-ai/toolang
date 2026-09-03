@@ -59,7 +59,6 @@ from .base import (
     AppContext,
     ChatClient,
     ChatRunState,
-    QueuedCall,
     RunBlocked,
     RunRecovered,
     friendly_error as chat_friendly_error,
@@ -413,7 +412,6 @@ class _ScriptedAppContext(AppContext):
         self.client = client
         self.setting = setting
         self.thread_id = thread_id
-        self.queue: list[QueuedCall] = []
         self.live_blocks: list[MutableBlock] = []
         self.presenter = ChatRunPresenter(max_width=progress_max_width)
         self.exit_requested = False
@@ -426,9 +424,6 @@ class _ScriptedAppContext(AppContext):
 
     def get_client(self) -> ChatClient:
         return self.client
-
-    def get_queue(self) -> list[QueuedCall]:
-        return self.queue
 
     def get_active_run(self) -> str | None:
         return None
@@ -459,14 +454,6 @@ class _ScriptedAppContext(AppContext):
 
     def refresh_status(self) -> None:
         return None
-
-    def replace_input(self, text: str) -> None:
-        del text
-        raise ValueError("Queue editing is unavailable in scripted Chat")
-
-    def request_steer(self, message: str) -> None:
-        del message
-        raise ValueError("No active run to steer")
 
     def request_exit(self) -> None:
         self.exit_requested = True

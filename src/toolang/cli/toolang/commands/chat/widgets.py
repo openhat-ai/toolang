@@ -29,7 +29,11 @@ from .rendering import (
 )
 
 MAX_INPUT_ROWS = 6
-MAX_QUEUE_ROWS = 4
+MAX_QUEUE_ENTRIES = 8
+_QUEUE_ENTRY_INSET = 1
+_QUEUE_ENTRY_PADDING = 1
+_QUEUE_HINT_GAP = 2
+_QUEUE_MIN_PREVIEW_WIDTH = 3
 _INPUT_PLACEHOLDER = "Ask or describe a task"
 _STATUS_SPINNER_STYLES: dict[str, tuple[str, tuple[str, ...]]] = {
     "circles": ("■", ("◐", "◓", "◑", "◒")),
@@ -82,8 +86,14 @@ def _format_elapsed_seconds(seconds: int) -> str:
 
 
 class QueuePanel:
-    def __init__(self, get_items: Callable[[], Sequence[str]]) -> None:
+    def __init__(
+        self,
+        get_items: Callable[[], Sequence[str]],
+        *,
+        get_max_rows: Callable[[], int] | None = None,
+    ) -> None:
         self.get_items = get_items
+        self._get_max_rows = get_max_rows
         self._selected_index = 0
         self.expanded = True
         self.view = FormattedTextControl(self._render, focusable=True)
@@ -100,7 +110,7 @@ class QueuePanel:
                 style="class:queue",
                 char=" ",
             ),
-            filter=Condition(lambda: bool(self.rows())),
+            filter=Condition(lambda: bool(self.get_items()) and self.width() > 0),
         )
 
     def _render(self) -> list[tuple[str, str]]:
@@ -121,11 +131,19 @@ class QueuePanel:
 
     def rows(self) -> int:
         count = len(self.get_items())
-        if not count or not self.width():
+        width = self.width()
+        if not count or not width:
             return 0
         if not self.expanded:
             return 1
-        return len(self._hint_lines(self.width())) + min(count, MAX_QUEUE_ROWS) + 1
+        return 1 + self._entry_count(count, width) + len(self._hint_lines(width))
+
+    def _entry_count(self, count: int, width: int) -> int:
+        limit = MAX_QUEUE_ENTRIES
+        if self._get_max_rows is not None:
+            available = self._get_max_rows() - 1 - len(self._hint_lines(width))
+            limit = min(limit, max(1, available))
+        return min(count, limit)
 
     def toggle_expanded(self) -> bool:
         if not self.get_items():
@@ -167,52 +185,71 @@ class QueuePanel:
         summary = self._summary_row(len(items), width=width)
         if not self.expanded:
             return [summary]
+        entry_count = self._entry_count(len(items), width)
         start = min(
-            max(0, self._selected_index - MAX_QUEUE_ROWS + 1),
-            max(0, len(items) - MAX_QUEUE_ROWS),
+            max(0, self._selected_index - entry_count + 1),
+            max(0, len(items) - entry_count),
         )
-        shown = tuple(enumerate(items[start : start + MAX_QUEUE_ROWS], start + 1))
-        rows = [summary]
-        entry_width = max(0, width - 2)
-        actions = " · ".join(
-            (
-                shortcuts.QUEUE_STEER.hint("Steer"),
-                shortcuts.QUEUE_EDIT.hint("Edit"),
-                shortcuts.QUEUE_DELETE.hint("Delete"),
-            )
-        )
-        for item_number, item in shown:
-            selected = self._has_focus() and item_number - 1 == self._selected_index
-            prefix = f" [{item_number}] "
-            preview = " ".join(item.split())
-            style = "class:queue.selected" if selected else "class:queue"
-            number_style = (
-                "class:queue.selected.number" if selected else "class:queue.number"
-            )
-            row = self._split_row(
-                f"{prefix}{preview}",
-                actions if selected else "",
-                entry_width,
-                style=style,
-                hint_style="class:queue.selected.hint" if selected else style,
-                min_text_width=get_cwidth(prefix) + 3 if selected else 0,
-            )
-            text = row[0][1]
-            number_end = len(prefix) - 1
-            entry_row = [
-                ("class:queue", ACCENT_CELL),
-                (number_style, text[:number_end]),
-                (style, text[number_end:]),
-                *row[1:],
-            ]
-            if width > 1:
-                entry_row.append(("class:queue", ACCENT_CELL))
-            rows.append(entry_row)
+        focused = self._has_focus()
+        rows = [
+            summary,
+            *(
+                self._entry_row(
+                    number=index + 1,
+                    source=items[index],
+                    width=width,
+                    selected=focused and index == self._selected_index,
+                )
+                for index in range(start, start + entry_count)
+            ),
+        ]
         rows.extend(
             [("class:queue.hint", " " * (width - get_cwidth(hint)) + hint)]
             for hint in self._hint_lines(width)
         )
         return rows
+
+    def _entry_row(
+        self, *, number: int, source: str, width: int, selected: bool
+    ) -> list[tuple[str, str]]:
+        """Lay out one inset highlight with numbered text and trailing actions."""
+        style = "class:queue.selected" if selected else "class:queue"
+        # Use child styles so number/hint attributes retain the row background.
+        number_style = f"{style}.number"
+        hint_style = f"{style}.hint" if selected else style
+        inner_width = max(0, width - 2 * _QUEUE_ENTRY_INSET)
+        right_padding = " " * min(_QUEUE_ENTRY_PADDING, inner_width)
+        available = inner_width - len(right_padding)
+        prefix = " " * _QUEUE_ENTRY_PADDING + f"[{number}]"
+        preview = " ".join(source.split())
+        hint = ""
+        if selected:
+            actions = " · ".join(
+                (
+                    shortcuts.QUEUE_STEER.hint("Steer"),
+                    shortcuts.QUEUE_EDIT.hint("Edit"),
+                    shortcuts.QUEUE_DELETE.hint("Delete"),
+                )
+            )
+            minimum_text = len(prefix) + 1 + _QUEUE_MIN_PREVIEW_WIDTH
+            hint = self._truncate(
+                actions, max(0, available - minimum_text - _QUEUE_HINT_GAP)
+            )
+        text_width = max(
+            0, available - get_cwidth(hint) - (_QUEUE_HINT_GAP if hint else 0)
+        )
+        text = self._truncate(f"{prefix} {preview}", text_width)
+        gap = " " * (available - get_cwidth(text) - get_cwidth(hint))
+        return [
+            ("class:queue", " " * min(_QUEUE_ENTRY_INSET, width)),
+            (number_style, text[: len(prefix)]),
+            (style, text[len(prefix) :] + gap),
+            (hint_style, hint + right_padding),
+            (
+                "class:queue",
+                " " * min(_QUEUE_ENTRY_INSET, max(0, width - _QUEUE_ENTRY_INSET)),
+            ),
+        ]
 
     def _hints(self) -> tuple[str, ...]:
         if not self._has_focus():
@@ -269,28 +306,6 @@ class QueuePanel:
     @staticmethod
     def _count_label(count: int) -> str:
         return f"{count} item{'' if count == 1 else 's'} queued"
-
-    @classmethod
-    def _split_row(
-        cls,
-        text: str,
-        hint: str,
-        width: int,
-        *,
-        style: str,
-        hint_style: str,
-        min_text_width: int = 0,
-    ) -> list[tuple[str, str]]:
-        """Fit hints with right padding and a two-cell gap from entry text."""
-        padding = " " if width > 0 else ""
-        available = max(0, width - len(padding))
-        separation = 2 if text and hint else 0
-        hint = cls._truncate(hint, max(0, available - min_text_width - separation))
-        if not hint:
-            separation = 0
-        text = cls._truncate(text, max(0, available - get_cwidth(hint) - separation))
-        gap = " " * max(0, available - get_cwidth(text) - get_cwidth(hint))
-        return [(style, text + gap), (hint_style, hint + padding)]
 
     @staticmethod
     def _truncate(text: str, width: int) -> str:
@@ -460,14 +475,14 @@ class PromptBox:
             (shortcuts.INSERT_NEWLINE, insert_newline),
             (shortcuts.PREVIOUS_HISTORY, previous_history),
             (shortcuts.NEXT_HISTORY, next_history),
+            (shortcuts.INTERRUPT, interrupt),
+            (shortcuts.EOF, eof),
         )
         prompt_focus = has_focus(self.buffer)
         for shortcut, handler in prompt_bindings:
             for binding in shortcut.bindings:
                 keys.add(*binding, filter=prompt_focus)(handler)
         global_bindings = (
-            (shortcuts.INTERRUPT, interrupt),
-            (shortcuts.EOF, eof),
             (shortcuts.QUIT, quit_app),
             (shortcuts.CLEAR, clear_screen),
             (shortcuts.DISMISS_STATUS, dismiss_status_error),
@@ -476,7 +491,7 @@ class PromptBox:
             for binding in shortcut.bindings:
                 keys.add(*binding)(handler)
         for binding in shortcuts.CANCEL_RUN.bindings:
-            keys.add(*binding, eager=True)(cancel_run)
+            keys.add(*binding, filter=prompt_focus, eager=True)(cancel_run)
         for binding in shortcuts.INSERT_NEWLINE.optional_bindings:
             try:
                 keys.add(*binding, filter=prompt_focus)(insert_newline)

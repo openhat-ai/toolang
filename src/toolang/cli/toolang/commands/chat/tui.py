@@ -149,9 +149,6 @@ class ChatTuiAppContext:
     def get_client(self) -> ChatClient:
         return self._app.client
 
-    def get_queue(self) -> list[QueuedCall]:
-        return self._app.queue
-
     def get_active_run(self) -> str | None:
         return self._app.active_run_id
 
@@ -186,12 +183,6 @@ class ChatTuiAppContext:
     def refresh_status(self) -> None:
         self._app.status_bar.set_status(*self._app._status_labels())
         self._app._refresh_prompt_completions()
-
-    def replace_input(self, text: str) -> None:
-        self._app.prompt.replace_input(text)
-
-    def request_steer(self, message: str) -> None:
-        self._app._request_run_steer(message)
 
     def request_exit(self) -> None:
         self._app.app.exit()
@@ -262,7 +253,8 @@ class ChatTuiApp:
         self._model_effort_applicability: dict[str, bool] = {}
 
         self.queue_panel = widgets.QueuePanel(
-            lambda: [item.source for item in self.queue]
+            lambda: [item.source for item in self.queue],
+            get_max_rows=self._available_queue_rows,
         )
         self.status_bar = widgets.StatusBar(*self._status_labels())
         self.prompt = widgets.PromptBox(
@@ -352,6 +344,9 @@ class ChatTuiApp:
             max(self._footer_row_floor, required_rows),
         )
         return max(0, self._footer_row_floor - live_rows - fixed_footer_rows)
+
+    def _available_queue_rows(self) -> int:
+        return max(0, self.app.output.get_size().rows - self.prompt.rows() - 1)
 
     def _available_live_rows(self) -> int:
         terminal_rows = self.app.output.get_size().rows
@@ -482,7 +477,7 @@ class ChatTuiApp:
 
         prompt_focus = has_focus(self.prompt.buffer)
         queue_focus = has_focus(self.queue_panel.view)
-        queue_available = Condition(lambda: bool(self.queue_panel.rows()))
+        queue_available = Condition(lambda: bool(self.queue))
         queue_expanded = Condition(lambda: self.queue_panel.expanded)
         for binding in shortcuts.SWITCH_AREA.bindings:
             keys.add(
@@ -509,8 +504,7 @@ class ChatTuiApp:
         if not self.queue_panel.expanded:
             return None
         index = self.queue_panel.selected_index
-        if index is None or index >= len(self.queue):
-            self._reconcile_queue_panel()
+        if index is None:
             return None
         return index, self.queue[index]
 
@@ -526,8 +520,7 @@ class ChatTuiApp:
             self._invalidate_ui()
             return
         index, call = selected
-        self.queue.pop(index)
-        self.queue_panel.reconcile(removed_index=index)
+        self._pop_queued_call(index)
         self.prompt.replace_input(call.source)
         self._focus_prompt()
         self._invalidate_ui()
@@ -541,8 +534,7 @@ class ChatTuiApp:
         if not self._request_run_steer(call.source):
             self._invalidate_ui()
             return
-        self.queue.pop(index)
-        self._reconcile_queue_panel(removed_index=index)
+        self._pop_queued_call(index)
         self._invalidate_ui()
 
     def _delete_selected_queue_item(self) -> None:
@@ -553,14 +545,16 @@ class ChatTuiApp:
         if selected is None:
             return
         index, _call = selected
-        self.queue.pop(index)
-        self._reconcile_queue_panel(removed_index=index)
+        self._pop_queued_call(index)
         self._invalidate_ui()
 
-    def _reconcile_queue_panel(self, *, removed_index: int | None = None) -> None:
-        was_focused = self.app.layout.current_control is self.queue_panel.view
-        if not self.queue_panel.reconcile(removed_index=removed_index) and was_focused:
+    def _pop_queued_call(self, index: int) -> QueuedCall:
+        """Remove one call while preserving selection and empty-queue focus."""
+        call = self.queue.pop(index)
+        has_items = self.queue_panel.reconcile(removed_index=index)
+        if not has_items and self.app.layout.current_control is self.queue_panel.view:
             self._focus_prompt()
+        return call
 
     async def _animate_status(self) -> None:
         while True:
@@ -773,11 +767,7 @@ class ChatTuiApp:
         if self.submission_blocked is None:
             self.status_bar.clear_persistent_error()
         if self.queue:
-            next_call = self.queue.pop(0)
-            self._reconcile_queue_panel(removed_index=0)
-            self.submit_run(next_call)
-        else:
-            self._reconcile_queue_panel()
+            self.submit_run(self._pop_queued_call(0))
 
     def handle_submit(self, message: str) -> bool:
         """Handle one Enter attempt and return whether Chat consumed the input."""
@@ -816,7 +806,6 @@ class ChatTuiApp:
                 )
                 return False
             outcome = slashes.handle(self.app_context, chat_input)
-            self._reconcile_queue_panel()
             if outcome is not None:
                 self._write_slash_outcome(source, outcome)
             return True
@@ -1035,8 +1024,6 @@ def _blocked_input_allowed(value: object) -> bool:
         return True
     if not isinstance(value, QuickCommand):
         return False
-    if value.name == "queue":
-        return not (value.tail or "").strip()
     if value.name in {"model", "agic", "flow", "runnable", "allow", "limit"}:
         return value.tail is None
     return value.name in _BLOCKED_READ_ONLY_COMMANDS
