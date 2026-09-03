@@ -32,8 +32,8 @@ away from the active run.
 - Queue uses the full terminal width and joins Input without a separator row.
   The areas retain distinct backgrounds. Queue shows its left accent only on
   focus; Input retains its cyan accent and only shows its cursor on focus.
-- Queue's summary stays centered in its last row, directly above Input.
-  Collapsed Queue occupies only that row. Hints reflect focus and expansion.
+- Queue's dim summary is centered at the top when expanded and in its only row
+  when collapsed. Entry actions and panel actions have separate hint locations.
 - Queue selection remains valid while items are removed or automatically
   submitted, and the panel resets when the queue becomes empty.
 - The existing hidden `/queue`, `/q`, `/steer`, and `/s` commands retain their
@@ -110,29 +110,33 @@ Queue row only when focused; otherwise that column uses the Queue background.
 Its space stays reserved so focus never shifts content horizontally.
 Expanded layout:
 
-- Right-aligned dim key hints occupy the top row, without a special header fill.
-  Hints describe only the focused/expanded state's available actions. On narrow
-  terminals they flow onto additional rows between complete actions.
+- A dim summary, such as `3 items queued`, is centered across the full panel in
+  the top row, without a special header fill.
 - The middle shows up to four one-line previews, following selection. There is
   no separate omitted-entry count row; the summary counts the entire queue.
 - Entry numbers align with Input text, after the accent column and one gutter
-  cell. The selected entry places a `›` marker in that gutter and uses Input's
-  background from the gutter through the right edge, never over the accent.
-  All entries use the full content width without hints. Selection stays visible
-  when Queue is unfocused.
-- A dim summary, such as `3 items queued`, is centered across the full panel in
-  its last row, directly adjoining Input's top padding. No Queue row follows it.
+  cell. There is no selection marker or bold selection text. Only while Queue
+  is focused does the selected entry use Input's background, excluding the
+  accent column. Its right side shows `e edit · d delete · meta+enter steer` in
+  dim text on that same background; the preview truncates to reserve hint space.
+  Unselected and unfocused entries use the full content width without hints.
+- Panel actions (focus switching, expansion, and selection) appear at the bottom
+  right, directly above Input. On narrow terminals these hints flow between
+  complete actions. Individual overlong hints truncate to their available width.
+
+Losing focus hides both selection highlighting and entry hints, but preserves
+the selected index and scroll position for the next focus transition.
 
 With one hint row, expanded height ranges from three rows for one item to six
 rows for four or more items.
 
-Collapsed Queue is a single focusable row with the same centered summary and
+Collapsed Queue is a single focusable row with a centered dim summary and
 right-aligned contextual key hints. There are no extra padding rows. Centering
 never uses only the space left by hints. If the right margin cannot fit every
 hint, show complete hints in order, prioritizing Tab; never overlap or shift the
-summary. No queue content appears inside Input. Previews and summaries truncate
-by display cells on narrow terminals, including wide Unicode. Only hints flow
-between rows; individual overlong hints truncate to the available row width.
+summary. No queue content appears inside Input. Previews, summaries, and entry
+hints truncate by display cells on narrow terminals, including wide Unicode.
+Entry numbers and the start of the preview retain space before hints truncate.
 
 Input's one-cell accent remains cyan regardless of focus. Its cursor is hidden
 while Queue has focus and returns to the preserved editing position when focus
@@ -178,7 +182,7 @@ new edit, delete, or steer mutations through the same blocked-state policy.
 
 ## Shortcut Help
 
-Inline hints use lowercase `key action`, dim styling, no brackets, and `, `
+Inline hints use lowercase `key action`, dim styling, no brackets, and ` · `
 between actions. Abbreviate Space as `sp`; chords retain `+` (`meta+enter`),
 and arrows represent navigation (`↑↓`). Full `/keys` help retains standard
 key labels and alternate keys in parentheses. Optional Shift+Enter stays
@@ -187,11 +191,14 @@ bindings. Keep `Meta` portable rather than claiming physical Cmd support.
 
 Panel hints depend on focus and expansion:
 
-| State | Hints |
-| --- | --- |
-| Unfocused, either mode | `tab queue` |
-| Focused, collapsed | `tab input, sp expand` |
-| Focused, expanded | `tab input, sp collapse, ↑↓ select, e edit, d delete, meta+enter steer` |
+| State | Panel hints | Selected-entry hints |
+| --- | --- | --- |
+| Unfocused, either mode | `tab queue` | None |
+| Focused, collapsed | `tab input · sp expand` | None |
+| Focused, expanded | `tab input · sp collapse · ↑↓ select` | `e edit · d delete · meta+enter steer` |
+
+Panel hints are bottom-right when expanded and beside the summary when collapsed.
+Selected-entry hints appear only at the right edge of that entry.
 
 Tab labels name the focus destination. Full help continues to document aliases
 and action preconditions; the panel does not repeat them.
@@ -235,21 +242,24 @@ Likely files:
   focused, more-than-four, narrow-terminal, and automatically emptied states.
 - Both modes occupy the full terminal width across resize and directly adjoin
   Input, without a separator or queue text inside Input's padding.
-- The summary is centered across the full panel in its last row in every state,
-  directly above Input. Collapsed Queue has one row, with right-aligned hints.
+- The summary is dim and centered across the full panel: at the top when
+  expanded and in the only row when collapsed, with right-aligned panel hints.
 - Queue shows its left accent only when focused, in both modes. Its column uses
   the Queue background when unfocused and stays reserved to prevent shifting.
   Queue uses its own background, distinct from Input, with no special header
-  fill. The selected entry uses Input's background, excluding the accent column.
+  fill. Only while focused does the selected entry use Input's background,
+  including its dim action hints but excluding the accent column. Unfocusing
+  hides all selection styling without losing the selected index.
   Input's accent stays cyan and its cursor tracks focus.
 - Unfocused Queue shows only the focus-in hint. Focused, collapsed Queue shows
-  only focus-out and expand; focused, expanded Queue also shows navigation,
-  collapse, edit, delete, and steer. No entry contains action hints.
+  only focus-out and expand. Focused, expanded Queue shows focus-out, collapse,
+  and selection at the bottom right, and edit, delete, and steer only on the
+  selected entry's right side. Neither tier repeats the other's actions.
 - Expanded hints flow between complete actions on narrow terminals. Collapsed
   hints omit actions that cannot fit to the right of the centered summary.
-- Entry numbers align with Input text and the selected marker is `›`. Long and
-  CJK previews truncate without wrapping. There is no omitted-count row, even
-  when more than four items are queued; the bottom summary counts all items.
+- Entry numbers align with Input text. There is no selection marker; only the
+  background indicates selection. Long and CJK previews truncate without wrapping.
+  There is no omitted-count row, even beyond four items; the summary counts all.
 - Space toggles only focused Queue without moving focus; Tab never expands it.
   Input spaces and draft steering retain their behavior. Hidden entries cannot
   be selected or mutated.
@@ -260,7 +270,7 @@ Likely files:
 - Meta+Enter steers the selected item; missing or blocked active runs keep it
   queued. d and Del remove it and clamp selection.
 - Inline hints are lowercase, dim, and unbracketed, with `sp` for Space and
-  commas between actions. Full `/keys` labels and aliases stay unchanged.
+  middle dots between actions. Full `/keys` labels and aliases stay unchanged.
   All hint rows remain width-limited, and dim styling does not leak into entries.
 - Automatic FIFO dequeue reconciles panel state without changing queued request
   snapshots.

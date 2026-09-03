@@ -50,8 +50,10 @@ def _chat_ui_palette() -> dict[str, str]:
     return {
         "": "",
         "queue": "fg:#f5f5f5 bg:#3a3a3a",
-        "queue.selected": f"fg:#ffffff bg:{INPUT_BACKGROUND} bold",
-        "queue.info": "fg:#b8b8b8 bg:#3a3a3a",
+        "queue.selected": f"bg:{INPUT_BACKGROUND}",
+        "queue.selected.hint": "fg:#b8b8b8 dim",
+        "queue.info": "fg:#b8b8b8 bg:#3a3a3a dim",
+        "queue.hint": "fg:#b8b8b8 dim",
         "queue.accent.focused": f"bg:{STEER_CONTROL_ACCENT}",
         "control.run": f"bg:{RUN_CONTROL_ACCENT_PROMPT_TOOLKIT}",
         "input": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
@@ -173,32 +175,40 @@ class QueuePanel:
             max(0, len(items) - MAX_QUEUE_ROWS),
         )
         shown = tuple(enumerate(items[start : start + MAX_QUEUE_ROWS], start + 1))
-        rows = [
-            self._split_row(
-                "",
-                hint + " ",
-                width,
-                style="class:queue.info dim",
-                hint_style="class:queue.info dim",
+        rows = [summary]
+        actions = " · ".join(
+            (
+                shortcuts.QUEUE_EDIT.hint("Edit"),
+                shortcuts.QUEUE_DELETE.hint("Delete"),
+                shortcuts.QUEUE_STEER.hint("Steer"),
             )
-            for hint in self._hint_lines(width)
-        ]
+        )
         for item_number, item in shown:
-            selected = item_number - 1 == self._selected_index
-            marker = "›" if selected else " "
-            prefix = f"{marker}[{item_number}] "
+            selected = self._has_focus() and item_number - 1 == self._selected_index
+            prefix = f" [{item_number}] "
             preview = " ".join(item.split())
             style = "class:queue.selected" if selected else "class:queue"
             rows.append(
                 self._split_row(
                     f"{prefix}{preview}",
-                    " ",
+                    f"{actions} " if selected else " ",
                     width,
                     style=style,
-                    hint_style=style,
+                    hint_style="class:queue.selected.hint" if selected else style,
+                    min_text_width=get_cwidth(prefix) + 3 if selected else 0,
                 )
             )
-        return [*rows, summary]
+        rows.extend(
+            self._split_row(
+                "",
+                hint + " ",
+                width,
+                style="class:queue.hint",
+                hint_style="class:queue.hint",
+            )
+            for hint in self._hint_lines(width)
+        )
+        return rows
 
     def _hints(self) -> tuple[str, ...]:
         if not self._has_focus():
@@ -212,13 +222,10 @@ class QueuePanel:
         return (
             *hints,
             f"{shortcuts.QUEUE_PREVIOUS.label}{shortcuts.QUEUE_NEXT.label} select",
-            shortcuts.QUEUE_EDIT.hint("Edit"),
-            shortcuts.QUEUE_DELETE.hint("Delete"),
-            shortcuts.QUEUE_STEER.hint("Steer"),
         )
 
     def _hint_lines(self, width: int) -> list[str]:
-        """Fit complete actions into right-aligned rows above the entries."""
+        """Fit panel actions into right-aligned rows below the entries."""
         available = max(0, width - 2)
         if not available:
             return [""]
@@ -226,7 +233,7 @@ class QueuePanel:
         current = ""
         for hint in self._hints():
             hint = self._truncate(hint, available)
-            combined = f"{current}, {hint}" if current else hint
+            combined = f"{current} · {hint}" if current else hint
             if get_cwidth(combined) > available:
                 lines.append(current)
                 current = hint
@@ -243,7 +250,7 @@ class QueuePanel:
         hint = ""
         if not self.expanded:
             for action in self._hints():
-                combined = f"{hint}, {action}" if hint else action
+                combined = f"{hint} · {action}" if hint else action
                 if get_cwidth(combined) > right - 2:
                     break
                 hint = combined
@@ -253,7 +260,7 @@ class QueuePanel:
                 "class:queue.info",
                 " " * left + summary + " " * (right - get_cwidth(hint)),
             ),
-            ("class:queue.info dim", hint),
+            ("class:queue.hint", hint),
         ]
 
     def _accent_style(self) -> str:
@@ -272,9 +279,10 @@ class QueuePanel:
         *,
         style: str,
         hint_style: str,
+        min_text_width: int = 0,
     ) -> list[tuple[str, str]]:
         """Reserve right-aligned hints before fitting the left-hand content."""
-        hint = cls._truncate(hint, width)
+        hint = cls._truncate(hint, max(0, width - min_text_width))
         text = cls._truncate(text, max(0, width - get_cwidth(hint) - 1))
         gap = " " * max(0, width - get_cwidth(text) - get_cwidth(hint))
         return [(style, text + gap), (hint_style, hint)]

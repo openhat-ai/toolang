@@ -187,7 +187,7 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
 
         session.send(b"\t")
         focused = session.wait_for(
-            "›[1] queued follow-up",
+            "[1] queued follow-up",
             "1 item queued",
             "tab input",
             "sp collapse",
@@ -197,11 +197,11 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
             "d delete",
         )
         assert "Traceback" not in focused
+        assert "e edit · d delete · meta+enter steer" in focused
+        assert "tab input · sp collapse · ↑↓ select" in focused
 
-        session.send(b" ")
-        session.wait_for("sp expand")
-        session.send(b" ")
-        session.send(b"d")
+        # Exercise collapse, expand, and delete without depending on partial redraw text.
+        session.send(b"  d")
         session.wait_for("succeeded", "■ agic:chat")
         session.send(b"\x04")
         assert session.wait_for_exit() == 0, session.output
