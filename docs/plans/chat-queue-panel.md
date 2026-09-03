@@ -212,13 +212,8 @@ new edit, delete, or steer mutations through the same blocked-state policy.
 
 ## Shortcut Help
 
-Inline hints use lowercase `key action`, dim styling, and ` · ` between actions.
-Panel hint rows use `[ … ]`: the closing bracket aligns with Status's right
-edge, and the inner space aligns the text with the unbracketed entry hints.
-Reserve both brackets and spaces when wrapping or fitting beside the summary.
-On exceptionally short terminals, truncate the final panel-hint row rather than
-displacing the entry, Input, or status row.
-Abbreviate Space as `sp`; chords retain `+` (`meta+enter`),
+Inline hints use lowercase `key action`, dim styling, no brackets, and ` · `
+between actions. Abbreviate Space as `sp`; chords retain `+` (`meta+enter`),
 and arrows represent navigation (`↑↓`). Full `/keys` help retains standard
 key labels and alternate keys in parentheses. Optional Shift+Enter stays
 qualified with `also Shift+Enter if supported`. The notation does not change
@@ -228,9 +223,9 @@ Panel hints depend on focus and expansion:
 
 | State | Panel hints | Selected-entry hints |
 | --- | --- | --- |
-| Unfocused, either mode | `[ tab focus ]` | None |
-| Focused, collapsed | `[ sp expand · tab input ]` | None |
-| Focused, expanded | `[ ↑↓ select · sp collapse · tab input ]` | `meta+enter steer · e edit · d delete` |
+| Unfocused, either mode | `tab focus` | None |
+| Focused, collapsed | `sp expand · tab input` | None |
+| Focused, expanded | `↑↓ select · sp collapse · tab input` | `meta+enter steer · e edit · d delete` |
 
 Panel hints are bottom-right when expanded and beside the summary when collapsed.
 Selected-entry hints appear only at the right edge of that entry.
@@ -335,10 +330,8 @@ Files:
   snapshot behavior.
 - Meta+Enter steers the selected item; missing or blocked active runs keep it
   queued. d and Del remove it and clamp selection.
-- Inline hints are lowercase and dim, with `sp` for Space and middle dots
-  between actions. Panel rows have balanced `[ … ]` wrappers, including after
-  wrapping or truncation; entry hints stay unbracketed. Their text right edges
-  align two cells before the terminal edge. Full `/keys` stays unchanged.
+- Inline hints are lowercase, dim, and unbracketed, with `sp` for Space and
+  middle dots between actions. Full `/keys` labels and aliases stay unchanged.
   All hint rows remain width-limited, and dim styling does not leak into entry bodies.
 - Automatic FIFO dequeue reconciles panel state without changing queued request
   snapshots.

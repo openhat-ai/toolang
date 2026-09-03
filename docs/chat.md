@@ -89,8 +89,7 @@ background, inset one cell on each side with another cell of padding inside
 each end. There is no selection marker. The selected entry reserves its right
 side for slightly brighter dim action hints, separated from the body by at least
 two cells. Entry hints end two cells from Queue's right edge. Panel hints align
-flush right with the status bar, both when expanded and when collapsed. Each
-panel hint row uses `[ … ]`, aligning its inner text with the entry hints.
+flush right with the status bar, both when expanded and when collapsed.
 Losing focus hides its highlight and action hints while preserving the selected index.
 
 Tab and Shift+Tab only switch focus, yielding to active input completion.
@@ -99,16 +98,15 @@ Queue occupies one row with the centered summary and right-aligned panel hints.
 Entry actions are disabled while collapsed. Input keeps normal typing and
 draft steering when focused.
 Expanded Queue provides ↑/↓ or Ctrl+P/Ctrl+N selection, e editing, Meta+Enter
-steering, and d or Del removal. Inline hints use dim lowercase `key action`,
-separated by ` · `; entry hints stay unbracketed. `sp` abbreviates Space.
-`/keys` retains standard labels and alternate keys in parentheses, such as `d (Del)`.
-Unfocused Queue shows only `[ tab focus ]`. Focused, collapsed Queue shows
-`[ sp expand · tab input ]`; expanded Queue shows `[ ↑↓ select · sp collapse · tab input ]`
+steering, and d or Del removal. Inline hints use dim lowercase `key action`
+without brackets, separated by ` · `; `sp` abbreviates Space. `/keys` retains
+standard labels and alternate keys in parentheses, such as `d (Del)`.
+Unfocused Queue shows only `tab focus`. Focused, collapsed Queue shows
+`sp expand · tab input`; expanded Queue shows `↑↓ select · sp collapse · tab input`
 at the bottom right and `meta+enter steer · e edit · d delete` on the selected row.
 Frequent actions for the current state come first in each tier.
 On narrow terminals footer hints flow between complete actions, and selected
-previews truncate to reserve action hints. If height is also constrained, the
-final hint row truncates while retaining both brackets. Collapsed hints omit actions that
+previews truncate to reserve action hints. Collapsed hints omit actions that
 cannot fit beside the centered count, prioritizing expansion. Queue indicates
 focus through its summary: normal text when focused and dim text when unfocused,
 in both modes. Its outermost cells always use Queue's background without shifting

@@ -90,11 +90,9 @@ class QueuePanel:
         get_items: Callable[[], Sequence[str]],
         *,
         get_max_rows: Callable[[], int] | None = None,
-        get_max_hint_rows: Callable[[], int] | None = None,
     ) -> None:
         self.get_items = get_items
         self._get_max_rows = get_max_rows
-        self._get_max_hint_rows = get_max_hint_rows
         self._selected_index = 0
         self.expanded = True
         self.view = FormattedTextControl(self._render, focusable=True)
@@ -275,7 +273,7 @@ class QueuePanel:
 
     def _hint_lines(self, width: int) -> list[str]:
         """Fit panel actions into right-aligned rows below the entries."""
-        available = max(0, width - 4)  # Reserve the surrounding "[ " and " ]".
+        available = max(0, width - 2)
         if not available:
             return [""]
         lines: list[str] = []
@@ -288,14 +286,7 @@ class QueuePanel:
                 current = hint
             else:
                 current = combined
-        lines.append(current)
-        if self._get_max_hint_rows is not None:
-            limit = max(1, self._get_max_hint_rows())
-            if len(lines) > limit:
-                lines[limit - 1 :] = [
-                    self._truncate(" · ".join(lines[limit - 1 :]), available)
-                ]
-        return [f"[ {line} ]" for line in lines]
+        return [*lines, current]
 
     def _summary_row(self, count: int, *, width: int) -> list[tuple[str, str]]:
         """Center on the full panel, reserving only the remaining right margin."""
@@ -307,11 +298,9 @@ class QueuePanel:
         if not self.expanded:
             for action in self._hints():
                 combined = f"{hint} · {action}" if hint else action
-                if get_cwidth(combined) + 4 > right - 2:
+                if get_cwidth(combined) > right - 2:
                     break
                 hint = combined
-            if hint:
-                hint = f"[ {hint} ]"
         return [
             (
                 "class:queue" if self._has_focus() else "class:queue.info",

@@ -255,7 +255,6 @@ class ChatTuiApp:
         self.queue_panel = widgets.QueuePanel(
             lambda: [item.source for item in self.queue],
             get_max_rows=self._available_queue_rows,
-            get_max_hint_rows=self._available_queue_hint_rows,
         )
         self.status_bar = widgets.StatusBar(*self._status_labels())
         self.prompt = widgets.PromptBox(
@@ -350,10 +349,6 @@ class ChatTuiApp:
     def _available_input_rows(self) -> int:
         terminal_rows = self.app.output.get_size().rows
         return max(0, terminal_rows - self.queue_panel.minimum_rows() - 1)
-
-    def _available_queue_hint_rows(self) -> int:
-        # Reserve summary, one entry, three Input rows, and status.
-        return max(1, self.app.output.get_size().rows - 6)
 
     def _available_queue_rows(self) -> int:
         return max(0, self.app.output.get_size().rows - self.prompt.rows() - 1)
