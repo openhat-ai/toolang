@@ -108,8 +108,9 @@ cell of padding inside each end. It has no selection marker or bold text; only
 the background indicates selection. Slightly brighter dim action hints occupy
 the right side on that same background, separated from the body by at least two
 cells. Entry hints end two cells from Queue's edge; truncation preserves their
-padding. Panel hints align flush right with the status bar in both modes,
-without changing status-bar layout. Losing focus hides the highlight and entry
+padding. Panel hints use `[ … ]` on each row: the closing bracket aligns flush
+right with the status bar, and the inner text aligns with entry hints in both
+modes. Status-bar layout is unchanged. Losing focus hides the highlight and entry
 hints while preserving selection. The summary counts all items.
 
 Collapsed Queue occupies a single row: the centered summary with right-aligned
@@ -120,11 +121,12 @@ always use its background, independent of focus and expansion.
 Input's accent always stays cyan. Its cursor hides on Queue focus and returns
 to its preserved position on Input focus.
 
-Unfocused Queue shows only `tab focus`. Focused, collapsed Queue shows
-`sp expand · tab input`. Focused, expanded Queue shows `↑↓ select · sp collapse · tab input`
+Unfocused Queue shows only `[ tab focus ]`. Focused, collapsed Queue shows
+`[ sp expand · tab input ]`. Focused, expanded Queue shows `[ ↑↓ select · sp collapse · tab input ]`
 at the bottom right and `meta+enter steer · e edit · d delete` only on the
 selected entry. Frequent actions for the current state come first. Footer hints
-flow between complete actions on narrow terminals;
+flow between complete actions on narrow terminals, truncating the final row
+when height is also constrained while retaining both brackets;
 entry previews truncate to reserve hint space. Collapsed hints omit actions that
 cannot fit in the right margin, prioritizing expansion without shifting the summary.
 Previews, summaries, and individual overlong hints truncate by display cells.
@@ -134,9 +136,10 @@ these Queue-focused bindings. Mutations preserve the expansion choice and clamp
 selection; an empty queue disappears, restores Input focus, and resets the next
 non-empty queue to expanded.
 
-Inline hints use lowercase `key action` with dim styling, no brackets, and ` · `
-between actions. Space shortens to `sp`; chords retain `+`. Only the primary key
-appears inline; `/keys` retains standard labels and aliases such as `d (Del)`.
+Inline hints use lowercase `key action` with dim styling and ` · ` between
+actions. Entry hints stay unbracketed. Space shortens to `sp`; chords retain `+`.
+Only the primary key appears inline; `/keys` retains standard labels and aliases
+such as `d (Del)`.
 
 Flow headers also start in column zero and are followed by one blank line.
 Iteration and condition headers create the same kind of stable boundary.

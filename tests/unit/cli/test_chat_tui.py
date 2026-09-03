@@ -1474,7 +1474,7 @@ def test_chat_queue_panel_defaults_to_expanded_with_only_a_focus_hint(
     assert lines[1].startswith("  [1] first")
     assert lines[1].index("[1]") == lines[2].index("[2]") == 2
     assert lines[2].strip() == "[2] second"
-    assert lines[3].strip() == "tab focus"
+    assert lines[3].strip() == "[ tab focus ]"
     assert not any(
         action in "".join(lines) for action in ("collapse", "edit", "steer", "delete")
     )
@@ -1500,7 +1500,7 @@ def test_chat_queue_panel_splits_selected_entry_actions_from_panel_hints(
     assert summary.strip() == "2 items queued"
     assert summary.index("2 items queued") == (terminal_width - 14) // 2
     assert footer.strip() == (
-        "↑↓ select · sp collapse · tab input" if focused else "tab focus"
+        "[ ↑↓ select · sp collapse · tab input ]" if focused else "[ tab focus ]"
     )
     assert selected.startswith("  [1] 任务 preview")
     assert unselected.startswith("  [2] 任务 preview")
@@ -1509,6 +1509,7 @@ def test_chat_queue_panel_splits_selected_entry_actions_from_panel_hints(
         assert selected.endswith(hint)
         assert selected[: selected.index(hint)].endswith("  ")
         assert selected[: selected.index(hint)].rstrip().endswith("…")
+        assert get_cwidth(selected.rstrip()) == get_cwidth(footer[:-2])
     else:
         assert selected[6:] == unselected[6:]
         assert selected.rstrip().endswith("…")
@@ -1520,7 +1521,7 @@ def test_chat_queue_panel_splits_selected_entry_actions_from_panel_hints(
 
 
 @pytest.mark.parametrize("focused", [False, True])
-@pytest.mark.parametrize("terminal_width", [40, 100, 101, 160])
+@pytest.mark.parametrize("terminal_width", [40, 44, 100, 101, 160])
 def test_chat_queue_panel_collapses_to_one_centered_row_with_contextual_hints(
     monkeypatch: pytest.MonkeyPatch,
     focused: bool,
@@ -1544,6 +1545,7 @@ def test_chat_queue_panel_collapses_to_one_centered_row_with_contextual_hints(
         hint = "sp expand"
         if terminal_width >= 80:
             hint += " · tab input"
+    hint = f"[ {hint} ]" if terminal_width >= 44 else ""
     assert lines[0].endswith(hint)
     assert lines[0].split("2 items queued", 1)[1].strip() == hint
     assert all(get_cwidth(line) == terminal_width for line in lines)
@@ -1553,7 +1555,7 @@ def test_chat_queue_panel_collapses_to_one_centered_row_with_contextual_hints(
     )
 
 
-@pytest.mark.parametrize("terminal_width", [40, 100, 101])
+@pytest.mark.parametrize("terminal_width", [44, 100, 101])
 @pytest.mark.parametrize("expanded", [False, True])
 @pytest.mark.parametrize("focused", [False, True])
 def test_chat_queue_panel_hints_align_with_status_right_edge(
@@ -1575,13 +1577,17 @@ def test_chat_queue_panel_hints_align_with_status_right_edge(
         status_line = "".join(text for _style, text in status._render())
         assert get_cwidth(queue_line) == get_cwidth(status_line) == terminal_width
         assert get_cwidth(queue_line.rstrip()) == get_cwidth(status_line.rstrip())
-        assert not queue_line[-1].isspace()
+        assert queue_line.endswith(" ]")
+        assert not queue_line[-3].isspace()
 
 
-@pytest.mark.parametrize("terminal_width", [25, 40, 80, 100])
+@pytest.mark.parametrize(
+    ("terminal_width", "footer_rows"), [(25, 3), (27, 2), (40, 1), (80, 1), (100, 1)]
+)
 def test_chat_queue_panel_wraps_footer_hints_in_narrow_terminals(
     monkeypatch: pytest.MonkeyPatch,
     terminal_width: int,
+    footer_rows: int,
 ) -> None:
     panel = widgets.QueuePanel(lambda: ["first"])
     monkeypatch.setattr(panel, "_terminal_width", lambda: terminal_width)
@@ -1589,8 +1595,11 @@ def test_chat_queue_panel_wraps_footer_hints_in_narrow_terminals(
 
     lines = "".join(text for _style, text in panel._render()).splitlines()
 
-    assert len(lines) == panel.rows() == (4 if terminal_width == 25 else 3)
-    assert " · ".join(line.strip() for line in lines[2:]) == (
+    assert len(lines) == panel.rows() == 2 + footer_rows
+    assert all(
+        line.strip().startswith("[ ") and line.endswith(" ]") for line in lines[2:]
+    )
+    assert " · ".join(line.strip()[2:-2] for line in lines[2:]) == (
         "↑↓ select · sp collapse · tab input"
     )
     assert all(get_cwidth(line) == terminal_width for line in lines)
@@ -1640,7 +1649,7 @@ def test_chat_queue_uses_prompt_toolkit_cell_width_for_combining_text(
 
 @pytest.mark.parametrize("expanded", [False, True])
 @pytest.mark.parametrize("focused", [False, True])
-@pytest.mark.parametrize("terminal_width", [0, 1, 2, 3, 4, 12, 25, 40])
+@pytest.mark.parametrize("terminal_width", [0, 1, 2, 3, 4, 5, 6, 12, 25, 40])
 def test_chat_queue_fits_narrow_terminals_without_wrapping(
     monkeypatch: pytest.MonkeyPatch,
     expanded: bool,
@@ -1657,6 +1666,10 @@ def test_chat_queue_fits_narrow_terminals_without_wrapping(
     assert all(get_cwidth(line) == terminal_width for line in lines)
     if expanded and terminal_width >= 12:
         assert lines[1].startswith("  [1]")
+    if expanded and terminal_width >= 5:
+        assert all(
+            line.lstrip().startswith("[ ") and line.endswith(" ]") for line in lines[3:]
+        )
 
 
 def test_chat_queue_panel_preserves_collapsed_state_until_empty() -> None:
@@ -1739,7 +1752,7 @@ def test_chat_queue_panel_focus_selects_and_windows_queued_inputs(
     assert "[3] queued input 3" in lines[1]
     assert "[10] queued input 10" in lines[8]
     assert lines[8].endswith("meta+enter steer · e edit · d delete  ")
-    assert lines[9].strip() == "↑↓ select · sp collapse · tab input"
+    assert lines[9].strip() == "[ ↑↓ select · sp collapse · tab input ]"
     assert "not shown" not in rendered
     assert all(get_cwidth(line) == 100 for line in lines)
     assert any(style == "class:queue.selected" for style, _text in fragments)
@@ -2195,20 +2208,23 @@ def test_chat_queue_layout_centers_summary_and_joins_input(
             assert not lines[input_row - 1].strip()
             assert app._input_spacer_rows() > 0
             assert app._available_live_rows() == 30 - panel_rows - app.prompt.rows() - 1
-            assert get_cwidth(lines[panel_bottom].rstrip()) == columns
+            if expanded or columns > 40:
+                assert get_cwidth(lines[panel_bottom].rstrip()) == columns
             assert get_cwidth(lines[input_row + 2].rstrip()) == columns
             if expanded:
                 assert lines[summary_row].strip() == "3 items queued"
                 assert lines[panel_bottom].strip() == (
-                    "↑↓ select · sp collapse · tab input" if focused else "tab focus"
+                    "[ ↑↓ select · sp collapse · tab input ]"
+                    if focused
+                    else "[ tab focus ]"
                 )
             else:
                 hint = (
-                    "tab focus"
-                    if not focused
-                    else ("sp expand" if columns == 40 else "sp expand · tab input")
+                    ""
+                    if columns == 40
+                    else ("[ sp expand · tab input ]" if focused else "[ tab focus ]")
                 )
-                assert lines[summary_row].endswith(hint)
+                assert lines[summary_row].split("3 items queued", 1)[1].strip() == hint
 
     asyncio.run(exercise())
 
@@ -2290,12 +2306,14 @@ def test_chat_queue_eight_entry_limit_adapts_to_available_height(
             lines = _screen_lines(screen, output.columns)
             assert not any("Window too small" in line for line in lines)
             top = next(i for i, line in enumerate(lines) if "10 items queued" in line)
-            footer_rows = 2 if columns == 25 else 1
+            footer_rows = min(3, terminal_rows - 6) if columns == 25 else 1
             entry_count = min(8, terminal_rows - 5 - footer_rows)
             bottom = top + entry_count + footer_rows
             assert f"[{11 - entry_count}]" in lines[top + 1]
             assert "[10]" in lines[top + entry_count]
-            assert lines[bottom].endswith("tab input")
+            assert lines[bottom].endswith(
+                "… ]" if columns == 25 and terminal_rows == 8 else "tab input ]"
+            )
             assert "Ask or describe a task" in lines[bottom + 2]
             assert "agic:chat" in lines[bottom + 4]
 
