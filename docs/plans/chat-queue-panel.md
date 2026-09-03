@@ -126,9 +126,11 @@ Expanded layout:
   and hints; previews truncate first, and hint truncation preserves right padding.
   Unselected and unfocused entries use the available content width without hints.
 - Panel actions (focus switching, expansion, and selection) appear at the bottom
-  right, directly above Input. All hints share a right edge two cells from the
-  Queue edge, including collapsed hints. On narrow terminals these hints flow
-  between complete actions. Individual overlong hints truncate to their available width.
+  right, directly above Input, flush with the terminal's right edge to align
+  with the unchanged status bar. Collapsed panel hints use the same alignment;
+  selected-entry hints retain their two-cell right inset. On narrow terminals
+  panel hints flow between complete actions. Individual overlong hints truncate
+  to their available width.
 
 Losing focus hides both selection highlighting and entry hints, but preserves
 the selected index and scroll position for the next focus transition.
@@ -266,7 +268,9 @@ Likely files:
   selected entry's right side. Neither tier repeats the other's actions.
 - Expanded hints flow between complete actions on narrow terminals. Collapsed
   hints omit actions that cannot fit to the right of the centered summary.
-- Entry and panel hints end two cells from the right edge. Selected entries have
+- Panel hints align with the status bar at the terminal's right edge in both
+  modes and focus states, including wrapped footer hints after resize.
+- Entry hints end two cells from the right edge. Selected entries have
   one cell of highlighted inner padding on each side, and at least two cells
   between body and hints. Truncation preserves this padding and gap.
 - Entry numbers align with Input text and stay dim regardless of selection;

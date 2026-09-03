@@ -1462,7 +1462,7 @@ def test_chat_queue_panel_splits_selected_entry_actions_from_panel_hints(
     lines = "".join(text for _style, text in fragments).splitlines()
     summary, selected, unselected, footer = lines
     assert summary.strip() == "2 items queued"
-    assert fragments[1][0] == ("class:queue" if focused else "class:queue.info")
+    assert fragments[0][0] == ("class:queue" if focused else "class:queue.info")
     assert summary.index("2 items queued") == (terminal_width - 14) // 2
     assert footer.strip() == (
         "↑↓ select · sp collapse · tab input" if focused else "tab focus"
@@ -1486,22 +1486,21 @@ def test_chat_queue_panel_splits_selected_entry_actions_from_panel_hints(
         ("class:queue.number", " [2]"),
     ]
     assert "›" not in "".join(lines)
-    assert footer.endswith("  ")
+    assert footer == footer.rstrip()
     assert all(get_cwidth(line) == terminal_width for line in lines)
     accent = ("class:queue", rendering.ACCENT_CELL)
-    assert fragments[0] == accent
     row_starts = [
         fragment
         for index, fragment in enumerate(fragments)
         if index == 0 or fragments[index - 1][1] == "\n"
     ]
-    assert row_starts == [accent] * panel.rows()
+    assert row_starts[1:-1] == [accent] * 2
     row_ends = [
         fragment
         for index, fragment in enumerate(fragments)
         if index == len(fragments) - 1 or fragments[index + 1][1] == "\n"
     ]
-    assert row_ends == [accent] * panel.rows()
+    assert row_ends[1:-1] == [accent] * 2
 
 
 @pytest.mark.parametrize("focused", [False, True])
@@ -1523,23 +1522,45 @@ def test_chat_queue_panel_collapses_to_one_centered_row_with_contextual_hints(
     assert panel.container().filter()
     assert panel.view.is_focusable()
     assert len(lines) == 1
-    assert fragments[1][0] == ("class:queue" if focused else "class:queue.info")
+    assert fragments[0][0] == ("class:queue" if focused else "class:queue.info")
     assert lines[0].index("2 items queued") == (terminal_width - 14) // 2
     hint = "tab focus"
     if focused:
         hint = "sp expand"
         if terminal_width >= 80:
             hint += " · tab input"
-    assert lines[0].endswith(hint + "  ")
+    assert lines[0].endswith(hint)
     assert lines[0].split("2 items queued", 1)[1].strip() == hint
     assert all(get_cwidth(line) == terminal_width for line in lines)
-    accent = ("class:queue", rendering.ACCENT_CELL)
-    assert fragments[0] == accent
-    assert fragments.count(accent) == 2
     assert not any(
         item in lines[0]
         for item in ("first", "second", "select", "edit", "delete", "steer")
     )
+
+
+@pytest.mark.parametrize("terminal_width", [40, 100, 101])
+@pytest.mark.parametrize("expanded", [False, True])
+@pytest.mark.parametrize("focused", [False, True])
+def test_chat_queue_panel_hints_align_with_status_right_edge(
+    monkeypatch: pytest.MonkeyPatch,
+    terminal_width: int,
+    expanded: bool,
+    focused: bool,
+) -> None:
+    panel = widgets.QueuePanel(lambda: ["first"])
+    panel.expanded = expanded
+    status = widgets.StatusBar("agic:chat", "model")
+    monkeypatch.setattr(panel, "_terminal_width", lambda: terminal_width)
+    monkeypatch.setattr(panel, "_has_focus", lambda: focused)
+    monkeypatch.setattr(status, "_terminal_width", lambda: terminal_width)
+
+    queue_line = "".join(text for _style, text in panel._render()).splitlines()[-1]
+    for running in (False, True):
+        status.set_running(running)
+        status_line = "".join(text for _style, text in status._render())
+        assert get_cwidth(queue_line) == get_cwidth(status_line) == terminal_width
+        assert get_cwidth(queue_line.rstrip()) == get_cwidth(status_line.rstrip())
+        assert not queue_line[-1].isspace()
 
 
 @pytest.mark.parametrize("terminal_width", [25, 40, 80, 100])
@@ -1553,11 +1574,12 @@ def test_chat_queue_panel_wraps_footer_hints_in_narrow_terminals(
 
     lines = "".join(text for _style, text in panel._render()).splitlines()
 
-    assert len(lines) == panel.rows() == (5 if terminal_width == 25 else 3)
+    assert len(lines) == panel.rows() == (4 if terminal_width == 25 else 3)
     assert " · ".join(line.strip() for line in lines[2:]) == (
         "↑↓ select · sp collapse · tab input"
     )
     assert all(get_cwidth(line) == terminal_width for line in lines)
+    assert all(line == line.rstrip() for line in lines[2:])
     assert lines[1].startswith("  [1] ")
     assert lines[0].index("1 item queued") == (terminal_width - 13) // 2
     if terminal_width >= 40:
@@ -1696,7 +1718,7 @@ def test_chat_queue_panel_focus_selects_and_windows_queued_inputs(
     assert "not shown" not in rendered
     assert all(get_cwidth(line) == 100 for line in lines)
     assert any(style == "class:queue.selected" for style, _text in fragments)
-    assert fragments[0] == ("class:queue", rendering.ACCENT_CELL)
+    assert fragments[0][0] == "class:queue"
 
 
 def test_chat_queue_panel_reconciles_selection_after_removal() -> None:
@@ -2113,6 +2135,7 @@ def test_chat_input_area_absorbs_live_progress_contraction() -> None:
 
 @pytest.mark.parametrize("selected_index", [0, 1, 2])
 def test_chat_queue_joins_input_across_focus_expansion_and_terminal_resize(
+    monkeypatch: pytest.MonkeyPatch,
     selected_index: int,
 ) -> None:
     async def exercise() -> None:
@@ -2130,6 +2153,9 @@ def test_chat_queue_joins_input_across_focus_expansion_and_terminal_resize(
             app.handle_submit("second")
             app.handle_submit("third")
             app.queue_panel.move_selection(selected_index)
+            monkeypatch.setattr(
+                app.status_bar, "_terminal_width", lambda: output.columns
+            )
             app.prompt.buffer.text = "Keep typing"
             app.prompt.buffer.cursor_position = 4
 
@@ -2190,7 +2216,13 @@ def test_chat_queue_joins_input_across_focus_expansion_and_terminal_resize(
                                     hint = "sp expand"
                                     if columns >= 80:
                                         hint += " · tab input"
-                                assert lines[summary_row].endswith(hint + "  ")
+                                assert lines[summary_row].endswith(hint)
+                            status_row = input_row + 2
+                            assert (
+                                get_cwidth(lines[panel_bottom].rstrip())
+                                == get_cwidth(lines[status_row].rstrip())
+                                == columns
+                            )
                             assert not lines[input_row - 1].strip()  # Input padding.
                             assert app._input_spacer_rows() > 0
                             assert app._available_live_rows() == (
@@ -3779,11 +3811,11 @@ def test_chat_tui_queue_shortcuts_switch_focus_and_move_selection() -> None:
         active[-1].handler(cast(Any, None))
 
     with set_app(app.app):
-        assert app.queue_panel._render()[1][0] == "class:queue.info"
+        assert app.queue_panel._render()[0][0] == "class:queue.info"
 
         invoke(Keys.Tab)
         assert app.app.layout.current_control is app.queue_panel.view
-        assert app.queue_panel._render()[1][0] == "class:queue"
+        assert app.queue_panel._render()[0][0] == "class:queue"
 
         invoke(Keys.Down)
         assert app.queue_panel.selected_index == 1
@@ -3797,7 +3829,7 @@ def test_chat_tui_queue_shortcuts_switch_focus_and_move_selection() -> None:
         invoke(Keys.BackTab)
         assert isinstance(app.app.layout.current_control, BufferControl)
         assert app.app.layout.current_control.buffer is app.prompt.buffer
-        assert app.queue_panel._render()[1][0] == "class:queue.info"
+        assert app.queue_panel._render()[0][0] == "class:queue.info"
 
         invoke(Keys.BackTab)
         assert app.app.layout.current_control is app.queue_panel.view

@@ -80,7 +80,8 @@ body text stays normal. While focused, selection is shown only by Input's
 background, inset one cell on each side with another cell of padding inside
 each end. There is no selection marker. The selected entry reserves its right
 side for slightly brighter dim action hints, separated from the body by at least
-two cells. All entry and panel hints end two cells from Queue's right edge.
+two cells. Entry hints end two cells from Queue's right edge. Panel hints align
+flush right with the status bar, both when expanded and when collapsed.
 Losing focus hides its highlight and action hints while preserving the selected index.
 
 Tab and Shift+Tab only switch focus, yielding to active input completion.

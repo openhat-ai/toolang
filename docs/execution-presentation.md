@@ -100,8 +100,9 @@ selected entry uses Input's background, inset one cell on each side with another
 cell of padding inside each end. It has no selection marker or bold text; only
 the background indicates selection. Slightly brighter dim action hints occupy
 the right side on that same background, separated from the body by at least two
-cells. Entry and panel hints share a right edge two cells from Queue's edge;
-truncation preserves their padding. Losing focus hides the highlight and entry
+cells. Entry hints end two cells from Queue's edge; truncation preserves their
+padding. Panel hints align flush right with the status bar in both modes,
+without changing status-bar layout. Losing focus hides the highlight and entry
 hints while preserving selection. The summary counts all items.
 
 Collapsed Queue occupies a single row: the centered summary with right-aligned

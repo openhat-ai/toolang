@@ -108,13 +108,10 @@ class QueuePanel:
         width = self.width()
         if not items or not width:
             return []
-        rows = self._rows(items, width=max(0, width - 2))
+        rows = self._rows(items, width=width)
         fragments: list[tuple[str, str]] = []
         for row_index, row in enumerate(rows):
-            fragments.append(("class:queue", ACCENT_CELL))
             fragments.extend(row)
-            if width > 1:
-                fragments.append(("class:queue", ACCENT_CELL))
             if row_index < len(rows) - 1:
                 fragments.append(("", "\n"))
         return fragments
@@ -128,11 +125,7 @@ class QueuePanel:
             return 0
         if not self.expanded:
             return 1
-        return (
-            len(self._hint_lines(max(0, self.width() - 2)))
-            + min(count, MAX_QUEUE_ROWS)
-            + 1
-        )
+        return len(self._hint_lines(self.width())) + min(count, MAX_QUEUE_ROWS) + 1
 
     def toggle_expanded(self) -> bool:
         if not self.get_items():
@@ -180,6 +173,7 @@ class QueuePanel:
         )
         shown = tuple(enumerate(items[start : start + MAX_QUEUE_ROWS], start + 1))
         rows = [summary]
+        entry_width = max(0, width - 2)
         actions = " · ".join(
             (
                 shortcuts.QUEUE_STEER.hint("Steer"),
@@ -198,28 +192,24 @@ class QueuePanel:
             row = self._split_row(
                 f"{prefix}{preview}",
                 actions if selected else "",
-                width,
+                entry_width,
                 style=style,
                 hint_style="class:queue.selected.hint" if selected else style,
                 min_text_width=get_cwidth(prefix) + 3 if selected else 0,
             )
             text = row[0][1]
             number_end = len(prefix) - 1
-            rows.append(
-                [
-                    (number_style, text[:number_end]),
-                    (style, text[number_end:]),
-                    *row[1:],
-                ]
-            )
+            entry_row = [
+                ("class:queue", ACCENT_CELL),
+                (number_style, text[:number_end]),
+                (style, text[number_end:]),
+                *row[1:],
+            ]
+            if width > 1:
+                entry_row.append(("class:queue", ACCENT_CELL))
+            rows.append(entry_row)
         rows.extend(
-            self._split_row(
-                "",
-                hint,
-                width,
-                style="class:queue.hint",
-                hint_style="class:queue.hint",
-            )
+            [("class:queue.hint", " " * (width - get_cwidth(hint)) + hint)]
             for hint in self._hint_lines(width)
         )
         return rows
@@ -257,7 +247,7 @@ class QueuePanel:
 
     def _summary_row(self, count: int, *, width: int) -> list[tuple[str, str]]:
         """Center on the full panel, reserving only the remaining right margin."""
-        summary = self._truncate(self._count_label(count), width)
+        summary = self._truncate(self._count_label(count), max(0, width - 2))
         summary_width = get_cwidth(summary)
         left = max(0, (width - summary_width) // 2)
         right = width - left - summary_width
@@ -265,10 +255,9 @@ class QueuePanel:
         if not self.expanded:
             for action in self._hints():
                 combined = f"{hint} · {action}" if hint else action
-                if get_cwidth(combined) > right - 3:
+                if get_cwidth(combined) > right - 2:
                     break
                 hint = combined
-        hint = hint + " " if hint else ""
         return [
             (
                 "class:queue" if self._has_focus() else "class:queue.info",
