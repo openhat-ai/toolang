@@ -85,27 +85,27 @@ distinctly.
 
 A non-empty Queue is expanded above Input without taking focus. Tab and
 Shift+Tab move focus between these two areas, except while an Input completion
-menu is active. [Space] Expands or collapses focused Queue without moving focus;
+menu is active. Space expands or collapses focused Queue without moving focus;
 Tab never changes expansion. Input spaces and draft steering remain unchanged.
 
-Queue is independently centered at `min(120, terminal_width - 2)` columns in
-both modes. Its normal 80-column minimum yields to narrower terminals. Exactly
-one blank row separates Queue from Input's unchanged top padding. Adaptive
-footer-stabilizing space belongs above Queue, not inside that gap.
+Queue occupies the full terminal width in both modes and directly adjoins Input
+without a separator row. All Queue content and padding share Input's background.
+Both areas keep their own padding. Adaptive footer-stabilizing space belongs
+above Queue, never between Queue and Input.
 
-Expanded Queue has a full-width header with a left-aligned count and
+Expanded Queue has a plain summary row with a left-aligned count and
 right-aligned `[Space] Collapse`, followed by up to four single-line previews.
 Only the selected entry has a `>` marker and dim right-aligned edit, steer,
 and delete hints; its preview truncates to reserve their space. Selection stays
 visible when unfocused. An omitted-count row follows the entries when needed;
-there is no bottom help row. The header background is muted when unfocused and
-steer purple when focused, without an additional left accent rail.
+there is no bottom help row or special header fill. A one-cell left accent rail
+spans every row, muted when unfocused and steer purple when focused.
 
 Collapsed Queue is a separate, focusable three-row panel: blank padding above
 and below the left-aligned count and right-aligned `[Space] Expand`. Padding uses
-the Queue background, and the one-cell left accent rail spans all three rows.
-The rail changes from muted to steer purple on focus. The one-row gap before
-Input remains separate. Hidden entries cannot be selected or mutated.
+the shared Input background, and the one-cell left accent rail spans all three
+rows. The rail changes from muted to steer purple on focus. Hidden entries
+cannot be selected or mutated.
 Input's accent always stays cyan. Its cursor hides on Queue focus and returns
 to its preserved position on Input focus.
 

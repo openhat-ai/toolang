@@ -2,8 +2,8 @@
 
 ## Status
 
-Approved in the 2026-09-02 design discussion, with the separate Queue layout,
-width, focus, and spacing revisions approved on 2026-09-03. This definition
+Approved in the 2026-09-02 design discussion, with layout, keyboard-hint,
+focus, and spacing revisions approved on 2026-09-03. This definition
 follows the slash-command output work and is authoritative for interactive queue
 presentation, input submission keys, and steer shortcuts.
 
@@ -29,9 +29,9 @@ away from the active run.
   preserving completion-menu behavior.
 - Space toggles the focused Queue without moving focus; Tab only changes focus.
   Selection is preserved, but actions on hidden entries are disabled.
-- Queue is independently centered, at most 120 columns wide, with exactly one
-  blank row before Input. Its header or collapsed rail indicates focus; Input
-  retains its cyan accent and only displays its cursor while focused.
+- Queue uses the full terminal width and joins Input without a separator row.
+  Both areas share Input's background. Queue's left rail indicates focus in
+  both modes; Input retains its cyan accent and only shows its cursor on focus.
 - Queue selection remains valid while items are removed or automatically
   submitted, and the panel resets when the queue becomes empty.
 - The existing hidden `/queue`, `/q`, `/steer`, and `/s` commands retain their
@@ -100,16 +100,16 @@ Shift+Tab move between them without changing expansion. In Input, these bindings
 yield to an active completion menu. When the queue is empty, normal Prompt
 Toolkit Tab behavior remains unchanged.
 
-Queue stays separate above Input in both modes, horizontally centered with a
-stable width of `min(120, terminal_width - 2)`. Its normal minimum is 80 columns;
-on narrower terminals the two-column outer margin takes precedence. Exactly
-one blank row separates Queue from Input's unchanged top padding. Any dynamic
-space used to stabilize the footer belongs above Queue, never inside this gap.
+Queue occupies the full terminal width in both modes, directly above Input
+without a separator row or horizontal margins. Queue and Input share the Input
+background; their own padding remains. Any dynamic space used to stabilize the
+footer belongs above Queue, never between the two areas. A one-cell left accent
+rail spans every Queue row: steer purple when focused, muted when unfocused.
 Expanded layout:
 
-- A full-width header left-aligns the summary, such as `3 items queued`, and
-  right-aligns `[Space] Collapse`. Its background is muted when unfocused and
-  steer purple when focused. There is no separate left accent rail.
+- The first row left-aligns a dim summary, such as `3 items queued`, and
+  right-aligns `[Space] Collapse`. It has the same background as the entries
+  and Input, without a special header style.
 - The middle shows up to four one-line previews, following selection. If any
   entries are outside the visible window, a final dim content row reports
   `… N items not shown`.
@@ -119,13 +119,13 @@ Expanded layout:
   stays visible when Queue is unfocused. There is no bottom hint row.
 
 Expanded height ranges from two rows for one item to six rows when entries are
-omitted, excluding the one-row gap before Input.
+omitted.
 
 Collapsed layout is an independent, focusable three-row panel: one blank padding
 row above and below a left-aligned dim summary and right-aligned `[Space] Expand`.
 Its one-cell left accent rail spans all three rows, muted when unfocused and
-steer purple when focused. Padding uses the Queue background. The panel keeps
-its expanded width and horizontal position. No queue content appears inside
+steer purple when focused. Padding uses the shared Input background. The panel
+keeps its expanded width and horizontal position. No queue content appears inside
 Input. On narrow terminals, previews and summaries truncate before hints; hints
 also truncate if necessary, preserving the selected entry's marker and number
 when they fit.
@@ -220,12 +220,13 @@ Likely files:
   accepted draft, and creates the existing steer control presentation.
 - The Queue area covers absent, default-expanded, collapsed, unfocused,
   focused, more-than-four, narrow-terminal, and automatically emptied states.
-- Both modes stay centered and width-limited across resize, with exactly one
-  blank row before Input and no queue text inside its padding.
+- Both modes occupy the full terminal width across resize and directly adjoin
+  Input, without a separator or queue text inside Input's padding.
 - Collapsed Queue has three rows, with blank padding above and below its summary
-  and a continuous accent rail. Its bottom padding does not replace the Input gap.
-- Expanded headers change background with focus; collapsed rails change color
-  without changing width. Input's accent stays cyan and its cursor tracks focus.
+  and a continuous accent rail.
+- Only Queue's left rail changes color with focus, in both modes. All Queue
+  content and padding share Input's background, with no special header fill.
+  Input's accent stays cyan and its cursor tracks focus.
 - Only selected entries reserve right-aligned action hints; long and CJK
   previews truncate without wrapping. Omitted counts follow the visible entries.
 - Space toggles only focused Queue without moving focus; Tab never expands it.

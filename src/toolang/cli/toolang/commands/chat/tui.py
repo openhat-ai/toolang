@@ -283,10 +283,6 @@ class ChatTuiApp:
                     always_hide_cursor=True,
                 ),
                 self.queue_panel.container(),
-                Window(
-                    height=self._queue_gap_rows,
-                    always_hide_cursor=True,
-                ),
                 self.prompt.container(),
                 self.status_bar.container(),
             ]
@@ -348,9 +344,7 @@ class ChatTuiApp:
 
     def _input_spacer_rows(self) -> int:
         live_rows = self._live_area_height()
-        fixed_footer_rows = (
-            self.queue_panel.rows() + self._queue_gap_rows() + self.prompt.rows() + 1
-        )
+        fixed_footer_rows = self.queue_panel.rows() + self.prompt.rows() + 1
         terminal_rows = self.app.output.get_size().rows
         required_rows = min(terminal_rows, live_rows + fixed_footer_rows)
         self._footer_row_floor = min(
@@ -359,14 +353,9 @@ class ChatTuiApp:
         )
         return max(0, self._footer_row_floor - live_rows - fixed_footer_rows)
 
-    def _queue_gap_rows(self) -> int:
-        return 1 if self.queue_panel.rows() else 0
-
     def _available_live_rows(self) -> int:
         terminal_rows = self.app.output.get_size().rows
-        reserved_rows = (
-            self.queue_panel.rows() + self._queue_gap_rows() + self.prompt.rows() + 1
-        )
+        reserved_rows = self.queue_panel.rows() + self.prompt.rows() + 1
         return max(0, terminal_rows - reserved_rows)
 
     def _enqueue_ui_event(self, event: ChatUIEvent) -> None:

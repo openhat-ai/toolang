@@ -71,11 +71,10 @@ syntax. A rejected steer retains the draft, while a locally accepted steer
 records it in input history and clears the unchanged draft. Ctrl+J inserts a
 newline, as does Shift+Enter when the terminal exposes it distinctly.
 
-A non-empty Queue appears expanded above Input without taking focus. It stays
-independently centered at up to 120 columns, normally at least 80, and never
-wider than the terminal minus two columns. Exactly one blank row separates it
-from Input, whose padding stays empty. Its header shows the count on the left
-and `[Space] Collapse` on the right. Up to four one-line previews follow, with an
+A non-empty Queue appears expanded above Input without taking focus. It fills
+the terminal width and directly joins Input without a separator row. Both areas
+share Input's background, keeping their own padding. The first row shows the
+count on the left and `[Space] Collapse` on the right. Up to four one-line previews follow, with an
 omitted-item count when needed. Only the selected entry shows a `>` marker and
 right-aligned edit, steer, and delete hints; its preview truncates to fit them.
 
@@ -88,9 +87,10 @@ collapsed. Input keeps normal typing and draft steering when focused.
 Expanded Queue provides ↑/↓ or Ctrl+P/Ctrl+N selection, e editing, Meta+Enter
 steering, and d or Del removal. Inline hints use `[Key] Action`; `/keys` lists
 alternate keys in parentheses, such as `d (Del)`.
-The expanded header or collapsed one-cell left rail turns from muted to steer
-purple on focus. Input's accent stays cyan; its cursor hides while Queue has
-focus and returns to the preserved editing position afterward.
+Queue's one-cell left rail spans every row in both modes and turns from muted
+to steer purple on focus. The summary row has no separate header style.
+Input's accent stays cyan; its cursor hides while Queue has focus and returns
+to the preserved editing position afterward.
 
 Editing does not overwrite an existing draft. Queue steering and
 blocked-state handling retain the item when the steer cannot be accepted.

@@ -1421,7 +1421,7 @@ def test_chat_prompt_keeps_its_run_control_accent() -> None:
     assert not placeholder.filter()
 
 
-def test_chat_queue_panel_is_expanded_with_a_header_and_inline_actions_by_default(
+def test_chat_queue_panel_is_expanded_with_a_summary_and_inline_actions_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     panel = widgets.QueuePanel(lambda: ["first", "second"])
@@ -1435,10 +1435,10 @@ def test_chat_queue_panel_is_expanded_with_a_header_and_inline_actions_by_defaul
     assert panel.selected_index == 0
     assert lines[0].startswith("  2 items queued")
     assert lines[0].endswith("[Space] Collapse ")
-    assert lines[1].startswith("> [1] first")
+    assert lines[1].startswith(" > [1] first")
     assert lines[1].endswith("[e] Edit · [Meta+Enter] Steer · [d] Delete ")
     assert lines[2].strip() == "[2] second"
-    assert all(get_cwidth(line) == 98 for line in lines)
+    assert all(get_cwidth(line) == 100 for line in lines)
     assert any(style == "class:queue.selected" for style, _text in fragments)
 
 
@@ -1460,14 +1460,19 @@ def test_chat_queue_panel_reserves_actions_only_for_selected_entries(
     hint = "[e] Edit · [Meta+Enter] Steer · [d] Delete "
     assert header.startswith("  2 items queued")
     assert header.endswith("[Space] Collapse ")
-    assert selected.startswith("> [1] 任务 preview")
+    assert selected.startswith(" > [1] 任务 preview")
     assert selected.endswith(hint)
     assert "…" in selected[: selected.index(hint)]
     assert get_cwidth(selected[: selected.index(hint)]) < get_cwidth(unselected)
-    assert unselected.startswith("  [2] 任务 preview")
+    assert unselected.startswith("   [2] 任务 preview")
     assert not any(action in unselected for action in ("Edit", "Steer", "Delete"))
-    assert all(get_cwidth(line) == min(120, terminal_width - 2) for line in lines)
-    assert ("class:queue.header.focused" in fragments[0][0]) is focused
+    assert all(get_cwidth(line) == terminal_width for line in lines)
+    accent = (
+        "class:queue.accent.focused" if focused else "class:queue.accent",
+        rendering.ACCENT_CELL,
+    )
+    assert fragments[0] == accent
+    assert fragments.count(accent) == panel.rows()
 
 
 @pytest.mark.parametrize("focused", [False, True])
@@ -1493,7 +1498,7 @@ def test_chat_queue_panel_collapses_to_three_padded_rows_with_a_colored_rail(
     assert not lines[2].strip()
     assert lines[1].index("2 items queued") == 2
     assert lines[1].endswith("[Space] Expand ")
-    assert all(get_cwidth(line) == min(120, terminal_width - 2) for line in lines)
+    assert all(get_cwidth(line) == terminal_width for line in lines)
     accent = (
         "class:queue.accent.focused" if focused else "class:queue.accent",
         rendering.ACCENT_CELL,
@@ -1513,12 +1518,12 @@ def test_chat_queue_uses_prompt_toolkit_cell_width_for_combining_text(
 
     lines = "".join(text for _style, text in panel._render()).splitlines()
 
-    assert all(get_cwidth(line) == 80 for line in lines)
+    assert all(get_cwidth(line) == 82 for line in lines)
     assert lines[1].endswith("[e] Edit · [Meta+Enter] Steer · [d] Delete ")
 
 
 @pytest.mark.parametrize("expanded", [False, True])
-@pytest.mark.parametrize("terminal_width", [2, 3, 4, 12, 25, 40])
+@pytest.mark.parametrize("terminal_width", [0, 1, 2, 3, 4, 12, 25, 40])
 def test_chat_queue_fits_narrow_terminals_without_wrapping(
     monkeypatch: pytest.MonkeyPatch,
     expanded: bool,
@@ -1530,9 +1535,9 @@ def test_chat_queue_fits_narrow_terminals_without_wrapping(
 
     lines = "".join(text for _style, text in panel._render()).splitlines()
     assert len(lines) == panel.rows()
-    assert all(get_cwidth(line) == terminal_width - 2 for line in lines)
+    assert all(get_cwidth(line) == terminal_width for line in lines)
     if expanded and terminal_width >= 12:
-        assert lines[1].startswith("> [1]")
+        assert lines[1].startswith(" > [1]")
 
 
 def test_chat_queue_panel_preserves_collapsed_state_until_empty() -> None:
@@ -1565,15 +1570,20 @@ def test_chat_queue_panel_preserves_collapsed_state_until_empty() -> None:
     assert panel.rows() == 2
 
 
-def test_chat_queue_panel_has_no_separate_expanded_accent_rail() -> None:
+def test_chat_queue_panel_uses_a_full_width_window_and_shared_input_background() -> (
+    None
+):
     panel = widgets.QueuePanel(lambda: ["first"])
 
     container = panel.container()
 
     assert isinstance(container, ConditionalContainer)
-    assert isinstance(container.content, VSplit)
-    assert len(container.content.children) == 1
-    assert isinstance(container.content.children[0], Window)
+    assert isinstance(container.content, Window)
+    assert container.content.content is panel.view
+    assert container.content.width == panel.width
+    palette = widgets._chat_ui_palette()
+    assert palette["queue"] == palette["input"]
+    assert palette["queue.info"] == palette["input.placeholder"]
     assert widgets._chat_ui_palette()["queue.accent"] == (
         f"bg:{rendering.INACTIVE_CONTROL_ACCENT}"
     )
@@ -1603,7 +1613,7 @@ def test_chat_queue_panel_focus_selects_and_windows_queued_inputs(
     assert "[3] queued input 3" in lines[1]
     assert "> [6] queued input 6" in lines[4]
     assert lines[5].strip() == "… 2 items not shown"
-    assert all(get_cwidth(line) == 98 for line in lines)
+    assert all(get_cwidth(line) == 100 for line in lines)
     assert any(style == "class:queue.selected" for style, _text in fragments)
     assert panel._accent_style() == "class:queue.accent.focused"
 
@@ -2020,9 +2030,7 @@ def test_chat_input_area_absorbs_live_progress_contraction() -> None:
     asyncio.run(exercise())
 
 
-def test_chat_queue_layout_preserves_width_gap_and_cursor_across_focus_and_resize() -> (
-    None
-):
+def test_chat_queue_joins_input_across_focus_expansion_and_terminal_resize() -> None:
     async def exercise() -> None:
         output = _TerminalOutput()
         with create_app_session(input=DummyInput(), output=output):
@@ -2071,23 +2079,19 @@ def test_chat_queue_layout_preserves_width_gap_and_cursor_across_focus_and_resiz
                                 for row, line in lines.items()
                                 if "Keep typing" in line
                             )
-                            width = min(120, columns - 2)
-                            left = lines[summary_row].index("3 items queued") - 2
-                            assert abs(left - (columns - width) / 2) <= 0.5
-                            assert lines[summary_row][:left].strip() == ""
-                            assert lines[summary_row][left + width :].strip() == ""
-                            assert lines[summary_row][left : left + width].endswith(
+                            assert app.queue_panel.width() == columns
+                            assert lines[summary_row].index("3 items queued") == 2
+                            assert lines[summary_row].endswith(
                                 "[Space] Collapse " if expanded else "[Space] Expand "
                             )
                             panel_top = summary_row if expanded else summary_row - 1
                             panel_rows = 4 if expanded else 3
                             assert app.queue_panel.rows() == panel_rows
-                            assert input_row == panel_top + panel_rows + 2
-                            assert not lines[input_row - 2].strip()  # Separate gap.
+                            assert input_row == panel_top + panel_rows + 1
                             assert not lines[input_row - 1].strip()  # Input padding.
                             assert app._input_spacer_rows() > 0
                             assert app._available_live_rows() == (
-                                30 - panel_rows - 1 - app.prompt.rows() - 1
+                                30 - panel_rows - app.prompt.rows() - 1
                             )
 
                             def background(row: int, col: int) -> str | None:
@@ -2100,36 +2104,25 @@ def test_chat_queue_layout_preserves_width_gap_and_cursor_across_focus_and_resiz
                                 if focused
                                 else rendering.INACTIVE_CONTROL_ACCENT
                             ).removeprefix("#")
-                            assert background(summary_row, left) == accent
-                            assert background(summary_row, left + width - 1) == (
-                                accent if expanded else "3a3a3a"
+                            input_background = background(input_row - 1, 1)
+                            assert input_background == rendering.INPUT_BACKGROUND
+                            for row in range(panel_top, panel_top + panel_rows):
+                                assert background(row, 0) == accent
+                                assert all(
+                                    background(row, col) == input_background
+                                    for col in range(1, columns)
+                                )
+                            summary_attrs = app_style.get_attrs_for_style_str(
+                                screen.data_buffer[summary_row][2].style
                             )
-                            if expanded:
-                                summary_attrs = app_style.get_attrs_for_style_str(
-                                    screen.data_buffer[summary_row][left + 2].style
-                                )
-                                hint_attrs = app_style.get_attrs_for_style_str(
-                                    screen.data_buffer[summary_row][
-                                        left + width - 2
-                                    ].style
-                                )
-                                assert summary_attrs.color == (
-                                    "1f1f1f" if focused else "ffffff"
-                                )
-                                assert hint_attrs.color == (
-                                    "493a5c" if focused else "dddddd"
-                                )
-                            assert background(summary_row, left - 1) == ""
-                            assert background(summary_row, left + width) == ""
+                            hint_attrs = app_style.get_attrs_for_style_str(
+                                screen.data_buffer[summary_row][columns - 2].style
+                            )
+                            assert summary_attrs.color == hint_attrs.color == "b8b8b8"
                             if not expanded:
                                 for row in (summary_row - 1, summary_row + 1):
                                     assert not lines[row].strip()
-                                    assert background(row, left) == accent
-                                    assert background(row, left + 1) == "3a3a3a"
-                                    assert background(row, left + width - 1) == "3a3a3a"
-                                    assert background(row, left - 1) == ""
-                                    assert background(row, left + width) == ""
-                            assert background(input_row - 2, 0) == ""
+                            assert background(input_row - 2, 0) == accent
                             assert background(input_row - 1, 0) == "ansibrightcyan"
                             assert background(input_row, 0) == "ansibrightcyan"
                             assert screen.show_cursor is not focused

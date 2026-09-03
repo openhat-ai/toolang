@@ -11,7 +11,7 @@ from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, VSplit, Window
-from prompt_toolkit.layout.containers import ConditionalContainer, HorizontalAlign
+from prompt_toolkit.layout.containers import ConditionalContainer
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
@@ -32,7 +32,6 @@ from .rendering import (
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
-MAX_QUEUE_WIDTH = 120
 _INPUT_PLACEHOLDER = "Ask or describe a task"
 _STATUS_SPINNER_STYLES: dict[str, tuple[str, tuple[str, ...]]] = {
     "circles": ("■", ("◐", "◓", "◑", "◒")),
@@ -51,13 +50,9 @@ _STATUS_IDLE_MARKER, _STATUS_SPINNER_FRAMES = _STATUS_SPINNER_STYLES[
 def _chat_ui_palette() -> dict[str, str]:
     return {
         "": "",
-        "queue": "fg:#f2f2f2 bg:#3a3a3a",
+        "queue": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
         "queue.selected": "fg:#ffffff bold",
-        "queue.info": "fg:#b8b8b8 bg:#3a3a3a",
-        "queue.header": f"fg:#ffffff bg:{INACTIVE_CONTROL_ACCENT}",
-        "queue.header.focused": f"fg:#1f1f1f bg:{STEER_CONTROL_ACCENT}",
-        "queue-header-hint": "fg:#dddddd nobold",
-        "queue-header-hint.focused": "fg:#493a5c",
+        "queue.info": f"fg:#b8b8b8 bg:{INPUT_BACKGROUND}",
         "queue.accent": f"bg:{INACTIVE_CONTROL_ACCENT}",
         "queue.accent.focused": f"bg:{STEER_CONTROL_ACCENT}",
         "control.run": f"bg:{RUN_CONTROL_ACCENT_PROMPT_TOOLKIT}",
@@ -96,20 +91,14 @@ class QueuePanel:
 
     def container(self) -> ConditionalContainer:
         return ConditionalContainer(
-            VSplit(
-                [
-                    Window(
-                        self.view,
-                        width=self.width,
-                        height=self.rows,
-                        wrap_lines=False,
-                        always_hide_cursor=True,
-                        style="class:queue",
-                        char=" ",
-                    ),
-                ],
+            Window(
+                self.view,
+                width=self.width,
                 height=self.rows,
-                align=HorizontalAlign.CENTER,
+                wrap_lines=False,
+                always_hide_cursor=True,
+                style="class:queue",
+                char=" ",
             ),
             filter=Condition(lambda: bool(self.rows())),
         )
@@ -119,34 +108,33 @@ class QueuePanel:
         width = self.width()
         if not items or not width:
             return []
+        width -= 1  # Reserve the left accent rail in both modes.
         if not self.expanded:
-            accent = (self._accent_style(), ACCENT_CELL)
-            padding = [accent, ("class:queue", " " * (width - 1))]
+            padding = [("class:queue", " " * width)]
             rows = [
                 padding,
-                [
-                    accent,
-                    *self._split_row(
-                        f" {self._count_label(len(items))}",
-                        shortcuts.QUEUE_TOGGLE.hint("Expand") + " ",
-                        width - 1,
-                        style="class:queue.info",
-                        hint_style="class:queue.info",
-                    ),
-                ],
+                self._split_row(
+                    f" {self._count_label(len(items))}",
+                    shortcuts.QUEUE_TOGGLE.hint("Expand") + " ",
+                    width,
+                    style="class:queue.info",
+                    hint_style="class:queue.info",
+                ),
                 padding,
             ]
         else:
             rows = self._rows(items, width=width)
         fragments: list[tuple[str, str]] = []
+        accent = (self._accent_style(), ACCENT_CELL)
         for row_index, row in enumerate(rows):
+            fragments.append(accent)
             fragments.extend(row)
             if row_index < len(rows) - 1:
                 fragments.append(("", "\n"))
         return fragments
 
     def width(self) -> int:
-        return max(0, min(MAX_QUEUE_WIDTH, self._terminal_width() - 2))
+        return max(0, self._terminal_width())
 
     def rows(self) -> int:
         count = len(self.get_items())
@@ -193,11 +181,6 @@ class QueuePanel:
         *,
         width: int,
     ) -> list[list[tuple[str, str]]]:
-        header_style = "class:queue.header"
-        header_hint_style = "class:queue-header-hint"
-        if self._has_focus():
-            header_style += " class:queue.header.focused"
-            header_hint_style += ".focused"
         summary = self._count_label(len(items))
         start = min(
             max(0, self._selected_index - MAX_QUEUE_ROWS + 1),
@@ -207,11 +190,11 @@ class QueuePanel:
         hidden = len(items) - len(shown)
         rows = [
             self._split_row(
-                f"  {summary}",
+                f" {summary}",
                 shortcuts.QUEUE_TOGGLE.hint("Collapse") + " ",
                 width,
-                style=header_style,
-                hint_style=f"{header_style} {header_hint_style}",
+                style="class:queue.info",
+                hint_style="class:queue.info",
             )
         ]
         actions = " · ".join(
