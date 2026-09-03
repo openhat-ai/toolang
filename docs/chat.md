@@ -75,8 +75,10 @@ A non-empty Queue appears expanded above Input without taking focus. It fills
 the terminal width and directly joins Input without a separator row. The areas
 retain distinct backgrounds. The summary is always centered in Queue's last
 row, directly above Input. Expanded Queue has right-aligned key hints at the top,
-then up to four one-line previews and an omitted-item count when needed. Only
-the selected entry shows a `>` marker; action hints never appear in entries.
+then up to four one-line previews, without an omitted-item count row. Entry
+numbers align with Input text; the selected entry has a `›` in the preceding
+gutter and uses Input's background without covering the accent column.
+Action hints never appear in entries.
 
 Tab and Shift+Tab only switch focus, yielding to active input completion.
 Space toggles the focused Queue without moving focus or selection. Collapsed
@@ -84,13 +86,13 @@ Queue occupies one row with the centered summary and right-aligned key hints.
 Entry actions are disabled while collapsed. Input keeps normal typing and
 draft steering when focused.
 Expanded Queue provides ↑/↓ or Ctrl+P/Ctrl+N selection, e editing, Meta+Enter
-steering, and d or Del removal. Inline hints use `[Key] Action`; `/keys` lists
-alternate keys in parentheses, such as `d (Del)`.
-Unfocused Queue shows only `[Tab] Queue`. Focused, collapsed Queue shows
-`[Tab] Input · [Space] Expand`; expanded Queue shows `[Tab] Input`,
-`[Space] Collapse`, `[↑↓] Select`, `[e] Edit`, `[d] Delete`, and
-`[Meta+Enter] Steer`. On narrow terminals expanded hints flow between complete
-actions; collapsed hints omit actions that cannot fit beside the centered count,
+steering, and d or Del removal. Inline hints use dim lowercase `key action`
+without brackets, separated by commas; `sp` abbreviates Space. `/keys` retains
+standard labels and alternate keys in parentheses, such as `d (Del)`.
+Unfocused Queue shows only `tab queue`. Focused, collapsed Queue shows
+`tab input, sp expand`; expanded Queue shows `tab input, sp collapse, ↑↓ select,
+e edit, d delete, meta+enter steer`. On narrow terminals expanded hints flow
+between complete actions; collapsed hints omit actions that cannot fit beside the centered count,
 prioritizing Tab. Queue's steer-purple left accent appears only on focus; its
 column blends into the Queue background otherwise, without shifting content.
 There is no separate header style.

@@ -113,17 +113,18 @@ Expanded layout:
 - Right-aligned dim key hints occupy the top row, without a special header fill.
   Hints describe only the focused/expanded state's available actions. On narrow
   terminals they flow onto additional rows between complete actions.
-- The middle shows up to four one-line previews, following selection. If any
-  entries are outside the visible window, a dim content row below them reports
-  `… N items not shown` before the summary.
-- Only the selected entry displays a `>` marker. All entries use the full
-  content width; none contain action hints. Selection stays visible when
-  Queue is unfocused.
+- The middle shows up to four one-line previews, following selection. There is
+  no separate omitted-entry count row; the summary counts the entire queue.
+- Entry numbers align with Input text, after the accent column and one gutter
+  cell. The selected entry places a `›` marker in that gutter and uses Input's
+  background from the gutter through the right edge, never over the accent.
+  All entries use the full content width without hints. Selection stays visible
+  when Queue is unfocused.
 - A dim summary, such as `3 items queued`, is centered across the full panel in
   its last row, directly adjoining Input's top padding. No Queue row follows it.
 
-With one hint row, expanded height ranges from three rows for one item to seven
-rows when entries are omitted.
+With one hint row, expanded height ranges from three rows for one item to six
+rows for four or more items.
 
 Collapsed Queue is a single focusable row with the same centered summary and
 right-aligned contextual key hints. There are no extra padding rows. Centering
@@ -177,21 +178,20 @@ new edit, delete, or steer mutations through the same blocked-state policy.
 
 ## Shortcut Help
 
-Inline hints use `[Key] Action`, with sentence-case actions and ` · ` between
-actions. Use `+` for chords (`Meta+Enter`, `Ctrl+J`), spaces for consecutive
-presses (`Esc Esc`), lowercase for unmodified letters (`e`, `d`), and arrows
-for navigation (`↑`, `↓`). Full help puts alternate keys in parentheses;
-inline hints show only the primary key. Optional Shift+Enter stays qualified
-with `also Shift+Enter if supported`. The notation does not change bindings.
-Keep `Meta` portable rather than claiming a terminal exposes physical Cmd.
+Inline hints use lowercase `key action`, dim styling, no brackets, and `, `
+between actions. Abbreviate Space as `sp`; chords retain `+` (`meta+enter`),
+and arrows represent navigation (`↑↓`). Full `/keys` help retains standard
+key labels and alternate keys in parentheses. Optional Shift+Enter stays
+qualified with `also Shift+Enter if supported`. The notation does not change
+bindings. Keep `Meta` portable rather than claiming physical Cmd support.
 
 Panel hints depend on focus and expansion:
 
 | State | Hints |
 | --- | --- |
-| Unfocused, either mode | `[Tab] Queue` |
-| Focused, collapsed | `[Tab] Input · [Space] Expand` |
-| Focused, expanded | `[Tab] Input · [Space] Collapse · [↑↓] Select · [e] Edit · [d] Delete · [Meta+Enter] Steer` |
+| Unfocused, either mode | `tab queue` |
+| Focused, collapsed | `tab input, sp expand` |
+| Focused, expanded | `tab input, sp collapse, ↑↓ select, e edit, d delete, meta+enter steer` |
 
 Tab labels name the focus destination. Full help continues to document aliases
 and action preconditions; the panel does not repeat them.
@@ -239,16 +239,17 @@ Likely files:
   directly above Input. Collapsed Queue has one row, with right-aligned hints.
 - Queue shows its left accent only when focused, in both modes. Its column uses
   the Queue background when unfocused and stays reserved to prevent shifting.
-  All Queue content uses its own background, distinct from Input, with no
-  special header fill.
+  Queue uses its own background, distinct from Input, with no special header
+  fill. The selected entry uses Input's background, excluding the accent column.
   Input's accent stays cyan and its cursor tracks focus.
 - Unfocused Queue shows only the focus-in hint. Focused, collapsed Queue shows
   only focus-out and expand; focused, expanded Queue also shows navigation,
   collapse, edit, delete, and steer. No entry contains action hints.
 - Expanded hints flow between complete actions on narrow terminals. Collapsed
   hints omit actions that cannot fit to the right of the centered summary.
-- Long and CJK previews truncate without wrapping. Omitted counts follow the
-  visible entries and precede the bottom summary.
+- Entry numbers align with Input text and the selected marker is `›`. Long and
+  CJK previews truncate without wrapping. There is no omitted-count row, even
+  when more than four items are queued; the bottom summary counts all items.
 - Space toggles only focused Queue without moving focus; Tab never expands it.
   Input spaces and draft steering retain their behavior. Hidden entries cannot
   be selected or mutated.
@@ -258,8 +259,9 @@ Likely files:
   snapshot behavior.
 - Meta+Enter steers the selected item; missing or blocked active runs keep it
   queued. d and Del remove it and clamp selection.
-- Inline hints and `/keys` share canonical labels. Aliases appear only in full
-  help, all hint rows stay width-limited, and the bound key sequences are unchanged.
+- Inline hints are lowercase, dim, and unbracketed, with `sp` for Space and
+  commas between actions. Full `/keys` labels and aliases stay unchanged.
+  All hint rows remain width-limited, and dim styling does not leak into entries.
 - Automatic FIFO dequeue reconciles panel state without changing queued request
   snapshots.
 - `/keys` shows the new mental model on terminals with and without distinct

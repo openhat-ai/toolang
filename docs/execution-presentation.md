@@ -93,10 +93,12 @@ without a separator row. Queue and Input retain distinct backgrounds. Adaptive
 footer-stabilizing space belongs above Queue, never between Queue and Input.
 
 Expanded Queue has right-aligned dim key hints at the top, followed by up to
-four single-line previews and an omitted-count row when needed. Only the selected
-entry has a `>` marker; no entry contains key hints. Selection stays visible when
-unfocused. The summary is centered across the full panel in its last row,
-directly adjoining Input's top padding. There is no special header fill.
+four single-line previews, with no omitted-count row. Entry numbers align with
+Input text. Only the selected entry has a `›` in the preceding gutter and uses
+Input's background from that gutter to the right edge, excluding the accent
+column. No entry contains key hints. Selection stays visible when unfocused.
+The summary counts all items and is centered across the full panel in its last
+row, directly adjoining Input's top padding. There is no special header fill.
 
 Collapsed Queue occupies a single row: the centered summary with right-aligned
 key hints, without extra padding rows. Hidden entries cannot be selected or
@@ -105,11 +107,11 @@ in both modes; the reserved column uses the Queue background when unfocused.
 Input's accent always stays cyan. Its cursor hides on Queue focus and returns
 to its preserved position on Input focus.
 
-Unfocused Queue shows only `[Tab] Queue`. Focused, collapsed Queue shows
-`[Tab] Input · [Space] Expand`. Focused, expanded Queue shows `[Tab] Input`,
-`[Space] Collapse`, `[↑↓] Select`, `[e] Edit`, `[d] Delete`, and
-`[Meta+Enter] Steer`. Expanded hints flow between complete actions on narrow
-terminals. Collapsed hints omit actions that cannot fit in the right margin,
+Unfocused Queue shows only `tab queue`. Focused, collapsed Queue shows
+`tab input, sp expand`. Focused, expanded Queue shows `tab input, sp collapse,
+↑↓ select, e edit, d delete, meta+enter steer`. Expanded hints flow between
+complete actions on narrow terminals. Collapsed hints omit actions that cannot
+fit in the right margin,
 prioritizing Tab without shifting or overlapping the centered summary.
 Previews, summaries, and individual overlong hints truncate by display cells.
 ↑/↓ or Ctrl+P/Ctrl+N select without
@@ -118,9 +120,9 @@ these Queue-focused bindings. Mutations preserve the expansion choice and clamp
 selection; an empty queue disappears, restores Input focus, and resets the next
 non-empty queue to expanded.
 
-Inline hints use `[Key] Action`, separated by ` · `. Chords use `+`, unmodified
-letters are lowercase, and actions start with a capital letter. Only the primary
-key appears inline; alternate keys use parentheses in `/keys`, such as `d (Del)`.
+Inline hints use lowercase `key action` with dim styling, no brackets, and `, `
+between actions. Space shortens to `sp`; chords retain `+`. Only the primary key
+appears inline; `/keys` retains standard labels and aliases such as `d (Del)`.
 
 Flow headers also start in column zero and are followed by one blank line.
 Iteration and condition headers create the same kind of stable boundary.

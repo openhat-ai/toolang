@@ -23,7 +23,8 @@ class ChatShortcut:
 
     def hint(self, action: str) -> str:
         """Keep inline hints short; list alternative keys only in full help."""
-        return f"[{self.label}] {action}"
+        label = "sp" if self.label == "Space" else self.label.lower()
+        return f"{label} {action.lower()}"
 
 
 SUBMIT = ChatShortcut(
