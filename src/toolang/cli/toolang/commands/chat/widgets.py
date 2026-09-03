@@ -50,9 +50,9 @@ _STATUS_IDLE_MARKER, _STATUS_SPINNER_FRAMES = _STATUS_SPINNER_STYLES[
 def _chat_ui_palette() -> dict[str, str]:
     return {
         "": "",
-        "queue": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
+        "queue": "fg:#f5f5f5 bg:#3a3a3a",
         "queue.selected": "fg:#ffffff bold",
-        "queue.info": f"fg:#b8b8b8 bg:{INPUT_BACKGROUND}",
+        "queue.info": "fg:#b8b8b8 bg:#3a3a3a",
         "queue.accent": f"bg:{INACTIVE_CONTROL_ACCENT}",
         "queue.accent.focused": f"bg:{STEER_CONTROL_ACCENT}",
         "control.run": f"bg:{RUN_CONTROL_ACCENT_PROMPT_TOOLKIT}",

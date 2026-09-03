@@ -89,9 +89,9 @@ menu is active. Space expands or collapses focused Queue without moving focus;
 Tab never changes expansion. Input spaces and draft steering remain unchanged.
 
 Queue occupies the full terminal width in both modes and directly adjoins Input
-without a separator row. All Queue content and padding share Input's background.
-Both areas keep their own padding. Adaptive footer-stabilizing space belongs
-above Queue, never between Queue and Input.
+without a separator row. Queue and Input retain distinct backgrounds, including
+their own padding. Adaptive footer-stabilizing space belongs above Queue, never
+between Queue and Input.
 
 Expanded Queue has a plain summary row with a left-aligned count and
 right-aligned `[Space] Collapse`, followed by up to four single-line previews.
@@ -103,7 +103,7 @@ spans every row, muted when unfocused and steer purple when focused.
 
 Collapsed Queue is a separate, focusable three-row panel: blank padding above
 and below the left-aligned count and right-aligned `[Space] Expand`. Padding uses
-the shared Input background, and the one-cell left accent rail spans all three
+the Queue background, and the one-cell left accent rail spans all three
 rows. The rail changes from muted to steer purple on focus. Hidden entries
 cannot be selected or mutated.
 Input's accent always stays cyan. Its cursor hides on Queue focus and returns

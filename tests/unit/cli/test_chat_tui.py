@@ -1570,9 +1570,7 @@ def test_chat_queue_panel_preserves_collapsed_state_until_empty() -> None:
     assert panel.rows() == 2
 
 
-def test_chat_queue_panel_uses_a_full_width_window_and_shared_input_background() -> (
-    None
-):
+def test_chat_queue_panel_uses_a_full_width_window_and_distinct_background() -> None:
     panel = widgets.QueuePanel(lambda: ["first"])
 
     container = panel.container()
@@ -1582,8 +1580,8 @@ def test_chat_queue_panel_uses_a_full_width_window_and_shared_input_background()
     assert container.content.content is panel.view
     assert container.content.width == panel.width
     palette = widgets._chat_ui_palette()
-    assert palette["queue"] == palette["input"]
-    assert palette["queue.info"] == palette["input.placeholder"]
+    assert palette["queue"] == "fg:#f5f5f5 bg:#3a3a3a"
+    assert palette["queue.info"] == "fg:#b8b8b8 bg:#3a3a3a"
     assert widgets._chat_ui_palette()["queue.accent"] == (
         f"bg:{rendering.INACTIVE_CONTROL_ACCENT}"
     )
@@ -2106,10 +2104,13 @@ def test_chat_queue_joins_input_across_focus_expansion_and_terminal_resize() -> 
                             ).removeprefix("#")
                             input_background = background(input_row - 1, 1)
                             assert input_background == rendering.INPUT_BACKGROUND
+                            queue_background = background(summary_row, 1)
+                            assert queue_background == "3a3a3a"
+                            assert queue_background != input_background
                             for row in range(panel_top, panel_top + panel_rows):
                                 assert background(row, 0) == accent
                                 assert all(
-                                    background(row, col) == input_background
+                                    background(row, col) == queue_background
                                     for col in range(1, columns)
                                 )
                             summary_attrs = app_style.get_attrs_for_style_str(

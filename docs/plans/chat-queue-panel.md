@@ -30,7 +30,7 @@ away from the active run.
 - Space toggles the focused Queue without moving focus; Tab only changes focus.
   Selection is preserved, but actions on hidden entries are disabled.
 - Queue uses the full terminal width and joins Input without a separator row.
-  Both areas share Input's background. Queue's left rail indicates focus in
+  The areas retain distinct backgrounds. Queue's left rail indicates focus in
   both modes; Input retains its cyan accent and only shows its cursor on focus.
 - Queue selection remains valid while items are removed or automatically
   submitted, and the panel resets when the queue becomes empty.
@@ -101,15 +101,15 @@ yield to an active completion menu. When the queue is empty, normal Prompt
 Toolkit Tab behavior remains unchanged.
 
 Queue occupies the full terminal width in both modes, directly above Input
-without a separator row or horizontal margins. Queue and Input share the Input
-background; their own padding remains. Any dynamic space used to stabilize the
+without a separator row or horizontal margins. Queue and Input retain distinct
+backgrounds, including their own padding. Any dynamic space used to stabilize the
 footer belongs above Queue, never between the two areas. A one-cell left accent
 rail spans every Queue row: steer purple when focused, muted when unfocused.
 Expanded layout:
 
 - The first row left-aligns a dim summary, such as `3 items queued`, and
-  right-aligns `[Space] Collapse`. It has the same background as the entries
-  and Input, without a special header style.
+  right-aligns `[Space] Collapse`. It has the same background as the Queue entries,
+  without a special header style.
 - The middle shows up to four one-line previews, following selection. If any
   entries are outside the visible window, a final dim content row reports
   `… N items not shown`.
@@ -124,7 +124,7 @@ omitted.
 Collapsed layout is an independent, focusable three-row panel: one blank padding
 row above and below a left-aligned dim summary and right-aligned `[Space] Expand`.
 Its one-cell left accent rail spans all three rows, muted when unfocused and
-steer purple when focused. Padding uses the shared Input background. The panel
+steer purple when focused. Padding uses the Queue background. The panel
 keeps its expanded width and horizontal position. No queue content appears inside
 Input. On narrow terminals, previews and summaries truncate before hints; hints
 also truncate if necessary, preserving the selected entry's marker and number
@@ -225,7 +225,8 @@ Likely files:
 - Collapsed Queue has three rows, with blank padding above and below its summary
   and a continuous accent rail.
 - Only Queue's left rail changes color with focus, in both modes. All Queue
-  content and padding share Input's background, with no special header fill.
+  content and padding use the Queue background, distinct from Input, with no
+  special header fill.
   Input's accent stays cyan and its cursor tracks focus.
 - Only selected entries reserve right-aligned action hints; long and CJK
   previews truncate without wrapping. Omitted counts follow the visible entries.

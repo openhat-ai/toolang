@@ -72,11 +72,12 @@ records it in input history and clears the unchanged draft. Ctrl+J inserts a
 newline, as does Shift+Enter when the terminal exposes it distinctly.
 
 A non-empty Queue appears expanded above Input without taking focus. It fills
-the terminal width and directly joins Input without a separator row. Both areas
-share Input's background, keeping their own padding. The first row shows the
-count on the left and `[Space] Collapse` on the right. Up to four one-line previews follow, with an
-omitted-item count when needed. Only the selected entry shows a `>` marker and
-right-aligned edit, steer, and delete hints; its preview truncates to fit them.
+the terminal width and directly joins Input without a separator row. The areas
+retain distinct backgrounds, including their own padding. The first row shows
+the count on the left and `[Space] Collapse` on the right. Up to four one-line
+previews follow, with an omitted-item count when needed. Only the selected entry
+shows a `>` marker and right-aligned edit, steer, and delete hints; its preview
+truncates to fit them.
 
 Tab and Shift+Tab only switch focus, yielding to active input completion.
 Space toggles the focused Queue without moving focus or selection. Collapsed
