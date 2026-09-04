@@ -279,6 +279,7 @@ class RunSteerBlock(MutableBlock):
 
     message: str
     run_id: str = ""
+    max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
     input_background: str = DARK_TERMINAL_SURFACES.input_background
 
     @classmethod
@@ -287,11 +288,13 @@ class RunSteerBlock(MutableBlock):
         *,
         message: str,
         run_id: str,
+        max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
         input_background: str = DARK_TERMINAL_SURFACES.input_background,
     ) -> RunSteerBlock:
         return cls(
             message=message,
             run_id=run_id,
+            max_width=max_width,
             input_background=input_background,
         )
 
@@ -299,16 +302,27 @@ class RunSteerBlock(MutableBlock):
         del event
 
     def render(self) -> RenderableType:
-        lines: list[RenderableType] = [Text()]
-        lines.extend(
-            _control_bar_lines(
-                self.message,
-                accent=STEER_CONTROL_ACCENT,
-                input_background=self.input_background,
-            )
+        return self
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        width = max(1, min(options.max_width, self.max_width))
+        yield from console.render(
+            Group(
+                Text(),
+                *_control_bar_lines(
+                    self.message,
+                    accent=STEER_CONTROL_ACCENT,
+                    input_background=self.input_background,
+                    width=width,
+                ),
+                Text(),
+            ),
+            options.update_width(width),
         )
-        lines.append(Text())
-        return Group(*lines)
 
 
 @dataclass(slots=True)

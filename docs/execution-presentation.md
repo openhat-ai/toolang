@@ -558,14 +558,22 @@ messages use the terminal's default foreground and explicitly clear dim styling
 in both stable and live output. An empty prompt shows the muted
 placeholder `Ask or describe a task`; the
 placeholder disappears as soon as the buffer contains text and is never part of
-the submitted message. The status bar does not paint a base background and
-therefore inherits the terminal background. Its left side begins in column zero
-with an idle marker or running spinner, followed by one space and a runnable
-rendered as `agic:name` or `flow:name`. While idle, this is the current default
-runnable. While running, it is the active root runnable. The dim label `running`
-follows the runnable below one elapsed second and is replaced by the whole-second
-duration at one second; `0s` is never shown. If the current default runnable
-differs, it appears on the right as
+the submitted message. A submitted input that starts a root Run paints its
+control bar through the full terminal width. Steer and quick-command control
+bars instead use the same output width as execution and command output: the
+lesser of the available width and `TOOLANG_PROGRESS_MAX_WIDTH`. On wider
+terminals, the terminal background visible to their right distinguishes these
+interactions from a new root Run. Quick-command result, help, table, and
+reopened-output content align to the same output boundary.
+
+The status bar does not paint a base background and therefore inherits the
+terminal background. Its left side begins in column zero with a runnable
+rendered as `agic:name` or `flow:name`, with no marker, spinner, or leading
+padding. While idle, this is the current default runnable. While running, it is
+the active root runnable. The dim label `running` follows the runnable below one
+elapsed second. At one second it becomes `running for DURATION`; `0s` is never
+shown. Durations are compact whole-second values such as `18s`, `1m20s`, and
+`1h01m01s`. If the current default runnable differs, it appears on the right as
 `DEFAULT_RUNNABLE · MODEL`; otherwise the right side contains only `MODEL`.
 `MODEL` is always the current default model, not an active model step. It is
 the canonical ref, `[no models available]` when the effective collection is
@@ -577,16 +585,11 @@ edge as defaults change; constrained layouts elide the model ref before an
 applicable effort suffix. Setting
 commands remain available while running and update these default values
 immediately without changing the active run. Hotkey hints are omitted. Runnable
-and model text inherit the terminal's default foreground without dim styling.
-The idle marker uses the terminal's dim attribute without painting a status
-background. The running spinner inherits the terminal's normal foreground
-without dim styling. The activity label uses the terminal's dim attribute. The
-default `circles` style uses `■` while idle and rotates
-through `◐`, `◓`, `◑`, and `◒` every 300 milliseconds during a Run. The retained
-`squares`, `triangles`, `quadrants`, `hatch`, and `dots` styles remain available
-through an internal named style switch.
-Short Runs retain the running state long enough to avoid flashing. This
-transient UI state is never committed to execution scrollback.
+and model text inherit the terminal's default foreground without dim styling;
+the activity label uses the terminal's dim attribute. The status redraws only
+when active state, active identity, defaults, errors, or the visible whole-
+second duration changes. Run completion returns immediately to the idle form,
+and status state is never committed to execution scrollback.
 
 Submitted `/models`, `/caps`, and `/tools` results retain structured columns
 through scrollback rendering. Their headers use normal terminal text and a dim
