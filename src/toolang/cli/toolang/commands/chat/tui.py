@@ -567,17 +567,28 @@ class ChatTuiApp:
             await self._status_elapsed_wake.wait()
             self._status_elapsed_wake.clear()
             while self.status_bar.running:
-                await asyncio.sleep(_STATUS_ELAPSED_TICK)
-                if not self.status_bar.running:
-                    break
                 loop = self.loop or asyncio.get_running_loop()
-                self._update_status_elapsed(loop.time())
+                started_at = self._status_activity_started_at
+                if started_at is None:
+                    break
+                now = loop.time()
+                self._update_status_elapsed(now)
+                elapsed = max(0.0, now - started_at)
+                next_second = int(elapsed) + 1
+                delay = min(_STATUS_ELAPSED_TICK, next_second - elapsed)
+                try:
+                    async with asyncio.timeout(delay):
+                        await self._status_elapsed_wake.wait()
+                except TimeoutError:
+                    continue
+                self._status_elapsed_wake.clear()
 
     def _update_status_elapsed(self, now: float) -> None:
         if self._status_activity_started_at is None:
             return
         elapsed = max(0.0, now - self._status_activity_started_at)
-        if self.status_bar.set_elapsed_seconds(int(elapsed)):
+        changed = self.status_bar.set_elapsed_seconds(int(elapsed))
+        if changed and not self.status_bar.error_message:
             self._invalidate_ui()
 
     def _set_status_running(self, running: bool) -> None:

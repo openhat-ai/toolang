@@ -3354,6 +3354,37 @@ def test_chat_tui_invalidates_only_when_the_visible_elapsed_second_changes(
     assert invalidations == 1
 
 
+def test_chat_tui_tracks_elapsed_without_invalidating_a_visible_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        setting=FakeClient().initial_setting(),
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    app.status_bar.set_running(True)
+    app.status_bar.set_error("Connection lost")
+    app._status_activity_started_at = 100.0
+    invalidations = 0
+
+    def record_invalidation() -> None:
+        nonlocal invalidations
+        invalidations += 1
+
+    monkeypatch.setattr(app, "_invalidate_ui", record_invalidation)
+
+    app._update_status_elapsed(101.1)
+
+    assert app.status_bar.elapsed_seconds == 1
+    assert invalidations == 0
+    app.status_bar.clear_transient_error()
+    assert "running for 1s" in "".join(
+        text for _style, text in app.status_bar._render()
+    )
+
+
 def test_chat_tui_refreshes_elapsed_status_only_while_a_run_is_active(
     monkeypatch: Any,
 ) -> None:
@@ -3392,6 +3423,47 @@ def test_chat_tui_refreshes_elapsed_status_only_while_a_run_is_active(
                 await refresh
 
     monkeypatch.setattr(tui, "_STATUS_ELAPSED_TICK", 0.001)
+    asyncio.run(exercise())
+
+
+def test_chat_tui_restarts_elapsed_refresh_timing_for_the_next_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        app = tui.ChatTuiApp(
+            thread_id=None,
+            setting=FakeClient().initial_setting(),
+            home="/tmp/agent",
+            input_history=None,
+            client=FakeClient(),
+        )
+        app.loop = asyncio.get_running_loop()
+        elapsed_updated = asyncio.Event()
+        update_status_elapsed = app._update_status_elapsed
+
+        def record_status_elapsed(now: float) -> None:
+            update_status_elapsed(now)
+            if app.status_bar.elapsed_seconds > 0:
+                elapsed_updated.set()
+
+        monkeypatch.setattr(app, "_update_status_elapsed", record_status_elapsed)
+        refresh = asyncio.create_task(app._refresh_status_elapsed())
+        try:
+            app._set_status_running(True)
+            await asyncio.sleep(0)
+
+            app._set_status_running(False)
+            app._set_status_running(True)
+            assert app._status_activity_started_at is not None
+            app._status_activity_started_at -= 1
+
+            await asyncio.wait_for(elapsed_updated.wait(), timeout=0.1)
+        finally:
+            refresh.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await refresh
+
+    monkeypatch.setattr(tui, "_STATUS_ELAPSED_TICK", 60.0)
     asyncio.run(exercise())
 
 
