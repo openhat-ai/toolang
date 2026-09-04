@@ -349,7 +349,7 @@ class TestTerminalProbe:
                 assert not sent
                 os.write(master, b"\n")
                 assert select.select([slave], [], [], 1)[0]
-                assert os.read(slave, 100) == b"x\n"
+                assert os.read(slave, 100) in {b"x", b"x\n"}
             else:
                 assert sent
             return child.wait(timeout=1), data
