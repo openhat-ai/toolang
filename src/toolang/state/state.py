@@ -638,15 +638,22 @@ class AgentState:
 
 @dataclass(frozen=True, slots=True)
 class StateResources:
-    """Process-local effective cap collections for one durable Agent State."""
+    """Process-local runtime resources for one durable Agent State."""
 
     caps_by_module: Mapping[str, tuple[StateCap, ...]]
+    workspaces: Mapping[str, str]
 
     def __post_init__(self) -> None:
         values = {name: tuple(entries) for name, entries in self.caps_by_module.items()}
         if tuple(sorted(values)) != tuple(values):
             raise ValueError("State resource modules must be sorted by name")
+        workspaces = dict(self.workspaces)
+        if tuple(sorted(workspaces)) != tuple(workspaces):
+            raise ValueError("State resource workspaces must be sorted by name")
+        if any(not isinstance(path, str) for path in workspaces.values()):
+            raise TypeError("State resource workspace paths must be strings")
         object.__setattr__(self, "caps_by_module", freeze_mapping(values))
+        object.__setattr__(self, "workspaces", freeze_mapping(workspaces))
 
     def caps_for(self, module: str) -> tuple[StateCap, ...]:
         """Return the precomputed effective caps for one Program module."""
@@ -754,6 +761,12 @@ class StatePublication:
     def module_runnables(self) -> Mapping[str, AgicDecl | FlowDecl]:
         return self.state.module_runnables
 
+    @property
+    def workspaces(self) -> Mapping[str, str]:
+        """Return configured workspace roots captured by this publication."""
+
+        return self.resources.workspaces
+
     def caps_for(self, module: str) -> tuple[StateCap, ...]:
         """Return the already-filtered cap collection for one module."""
 
@@ -765,8 +778,9 @@ def publish_state_resources(
     *,
     agent_name: str,
     allow_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
+    workspaces: Mapping[str, str] | None = None,
 ) -> StatePublication:
-    """Derive cap-kind allow policy once for one immutable State revision."""
+    """Publish effective caps and supplied runtime workspace grants."""
 
     from .collections import cap_dataset
     from .config import CAP_ALLOW_FIELDS, resolve_cap_allows
@@ -800,7 +814,11 @@ def publish_state_resources(
         by_module[module] = tuple(
             item for item in base if (item.kind, item.name, item.ref) in selected_ids
         )
-    resources = StateResources({name: by_module[name] for name in sorted(by_module)})
+    sorted_workspaces = dict(sorted((workspaces or {}).items()))
+    resources = StateResources(
+        {name: by_module[name] for name in sorted(by_module)},
+        sorted_workspaces,
+    )
     return StatePublication(state=state, resources=resources)
 
 

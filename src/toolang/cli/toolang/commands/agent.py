@@ -18,6 +18,7 @@ from toolang.common.layout import AgentLayout
 from toolang.up import process as agents
 from toolang.catalog import templates
 from toolang.setup import AgentSetup, SetupWatcher
+from toolang.state.config import ConfiguredWorkspaces
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import AgentState, StatePublication, publish_state_resources
 from ...common.context import (
@@ -246,7 +247,11 @@ def _prepare_state(layout: AgentLayout) -> StatePublication:
                     progress=progress.sink,
                 ),
             )
-            return publish_state_resources(state, agent_name=layout.name)
+            return publish_state_resources(
+                state,
+                agent_name=layout.name,
+                workspaces=ConfiguredWorkspaces(layout.config).list(),
+            )
     except Exception as exc:
         if progress.failure_stage is not None:
             raise click.ClickException(progress.failure_message(exc)) from exc

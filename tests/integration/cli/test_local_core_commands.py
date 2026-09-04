@@ -67,6 +67,81 @@ from tests.support.execution_harness import ExecutionHarness
 runner = CliRunner()
 
 
+def test_workspace_list_reports_empty_collection(tmp_path: Path) -> None:
+    root = tmp_path / "toolang-root"
+    _create_agent(root)
+
+    result = _invoke(root, "alice", "workspace", "list")
+
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == "No workspaces found.\n"
+
+
+def test_workspace_commands_preserve_config_and_never_delete_data(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "toolang-root"
+    _create_agent(root)
+    layout = AgentLayout.resident(root, "alice")
+    layout.config.write_text(
+        '# Keep this comment\n[default]\nmodel = "openai/gpt-5"\n',
+        encoding="utf-8",
+    )
+    workspace = tmp_path / "source" / "Toolang.SDK"
+    workspace.mkdir(parents=True)
+
+    added = _invoke(root, "alice", "workspace", "add", str(workspace))
+    listed = _invoke(root, "alice", "workspace", "list")
+    removed = _invoke(root, "alice", "workspace", "remove", "toolang-sdk")
+
+    assert added.exit_code == 0, added.stderr
+    assert f"Workspace toolang-sdk added: {workspace}" in added.stdout
+    assert listed.exit_code == 0, listed.stderr
+    assert "NAME" in listed.stdout
+    assert "PATH" in listed.stdout
+    assert "AVAILABLE" in listed.stdout
+    assert "toolang-sdk" in listed.stdout
+    assert str(workspace) in listed.stdout
+    assert "yes" in listed.stdout
+    assert removed.exit_code == 0, removed.stderr
+    assert f"Workspace toolang-sdk removed: {workspace}" in removed.stdout
+    assert workspace.is_dir()
+    assert "# Keep this comment" in layout.config.read_text(encoding="utf-8")
+
+
+def test_workspace_list_reports_unavailable_copied_paths(tmp_path: Path) -> None:
+    root = tmp_path / "toolang-root"
+    _create_agent(root)
+    layout = AgentLayout.resident(root, "alice")
+    unavailable = tmp_path / "another-host" / "repo"
+    layout.config.write_text(
+        f'[workspaces]\nrepo = "{unavailable}"\n',
+        encoding="utf-8",
+    )
+
+    result = _invoke(root, "alice", "workspace", "list")
+
+    assert result.exit_code == 0, result.stderr
+    assert "repo" in result.stdout
+    assert str(unavailable) in result.stdout
+    assert "no" in result.stdout
+
+
+def test_local_agent_clone_copies_workspace_config_unchanged(tmp_path: Path) -> None:
+    root = tmp_path / "toolang-root"
+    _create_agent(root)
+    source = AgentLayout.resident(root, "alice")
+    config = '# Copied unchanged\n[workspaces]\nrepo = "/another-host/source/repo"\n'
+    source.config.write_text(config, encoding="utf-8")
+
+    result = _invoke(root, "clone", "alice", "bob")
+
+    assert result.exit_code == 0, result.stderr
+    assert (
+        AgentLayout.resident(root, "bob").config.read_text(encoding="utf-8") == config
+    )
+
+
 @pytest.mark.parametrize("value", ("2.3", "run_root.2.3"))
 def test_retry_anchor_accepts_only_dot_separated_step_paths(value: str) -> None:
     assert thread_commands._retry_anchor("run_root", value) == StepPath(

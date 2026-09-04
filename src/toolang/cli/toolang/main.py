@@ -39,6 +39,7 @@ _SELECTED_LAYOUT: ContextVar[AgentLayout | None] = ContextVar(
     "toolang_cli_selected_layout", default=None
 )
 AGENT_COMMAND_PANEL = "Agent Commands"
+WORK_COMMAND_PANEL = "Work Commands"
 CAPS_COMMAND_PANEL = "Cap Commands"
 CONTROL_COMMAND_PANEL = "Control Commands"
 INSPECTION_COMMAND_PANEL = "Inspection Commands"
@@ -51,9 +52,8 @@ _AGENT_PANEL_COMMAND_ORDER = (
     "run",
     "start",
     "stop",
-    "chore",
-    "task",
 )
+_WORK_PANEL_COMMAND_ORDER = ("chore", "task", "workspace")
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt")
 _CONTROL_PANEL_COMMAND_ORDER = (
     "chat",
@@ -79,6 +79,7 @@ _HIDDEN_COMMAND_ORDER = ("query", "fmt", "parse", "serve", "channel")
 _VISIBLE_COMMAND_ORDER = (
     *_AGENT_PANEL_COMMAND_ORDER,
     *_CAPS_PANEL_COMMAND_ORDER,
+    *_WORK_PANEL_COMMAND_ORDER,
     *_CONTROL_PANEL_COMMAND_ORDER,
     *_INSPECTION_PANEL_COMMAND_ORDER,
 )
@@ -266,6 +267,13 @@ _registered_command(
     cls=RuntimeAgentCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
+_registered_group(
+    "toolang.cli.toolang.commands.workspace:workspace_app",
+    name="workspace",
+    help="Manage agent workspaces.",
+    no_args_is_help=True,
+    rich_help_panel=WORK_COMMAND_PANEL,
+)
 _registered_command(
     "run",
     "toolang.cli.toolang.commands.runtime:run",
@@ -295,14 +303,14 @@ _registered_group(
     name="chore",
     help="Manage agent chores.",
     no_args_is_help=True,
-    rich_help_panel=AGENT_COMMAND_PANEL,
+    rich_help_panel=WORK_COMMAND_PANEL,
 )
 _registered_group(
     "toolang.cli.toolang.commands.job:task_app",
     name="task",
     help="Manage agent tasks.",
     no_args_is_help=True,
-    rich_help_panel=AGENT_COMMAND_PANEL,
+    rich_help_panel=WORK_COMMAND_PANEL,
 )
 
 _registered_command(
