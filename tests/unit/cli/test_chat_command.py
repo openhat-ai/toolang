@@ -18,6 +18,7 @@ from toolang.base.types.model import (
 )
 from toolang.base.types.policy import RunPolicy
 from toolang.cli.common.output import shorten_home_path
+from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.cli.toolang.commands.chat import main as chat
 from toolang.cli.toolang.commands.chat.base import (
     ChatExecutorMetadata,
@@ -456,6 +457,93 @@ def test_chat_invocation_defaults_initialize_the_session(
         ),
         runnable="flow:review",
     )
+
+
+def test_prompt_toolkit_resolves_surfaces_before_starting_the_tui(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    client = _Client()
+    setting = client.initial_setting()
+    environ = {
+        "TOOLANG_COLOR_SCHEME": "#102030,#203040,#304050",
+        "TOOLANG_PROGRESS_MAX_WIDTH": "72",
+    }
+    surfaces = TerminalSurfaces("#102030", "#203040", "#304050")
+    calls: list[str] = []
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+    monkeypatch.setattr(
+        chat,
+        "load_runtime_environ",
+        lambda selected, *, base_environ: (
+            environ
+            if selected == layout and base_environ is chat.os.environ
+            else (_ for _ in ()).throw(AssertionError("unexpected environment load"))
+        ),
+    )
+
+    def resolve(*, environment: Mapping[str, str]) -> TerminalSurfaces:
+        calls.append("resolve")
+        assert environment is environ
+        return surfaces
+
+    def run(**kwargs: object) -> None:
+        calls.append("run")
+        captured.update(kwargs)
+
+    monkeypatch.setattr(chat, "resolve_terminal_surfaces", resolve)
+    monkeypatch.setattr(chat.ChatTuiApp, "run", run)
+
+    chat._chat_interactive_prompt_toolkit(
+        object(),  # type: ignore[arg-type]
+        thread_id="term_existing",
+        setting=setting,
+        client=client,
+    )
+
+    assert calls == ["resolve", "run"]
+    assert captured["surfaces"] is surfaces
+    assert captured["progress_max_width"] == 72
+    assert captured["thread_id"] == "term_existing"
+    assert captured["setting"] is setting
+    assert captured["client"] is client
+
+
+def test_prompt_toolkit_reports_invalid_color_scheme_before_tui_start(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+    monkeypatch.setattr(
+        chat,
+        "load_runtime_environ",
+        lambda _layout, *, base_environ: {
+            **base_environ,
+            "TOOLANG_COLOR_SCHEME": "#111111,#222222",
+        },
+    )
+    monkeypatch.setattr(
+        chat.ChatTuiApp,
+        "run",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("TUI must not start with invalid colors")
+        ),
+    )
+
+    with pytest.raises(
+        click.ClickException,
+        match="three #RRGGBB colors in input,queue,code order",
+    ):
+        chat._chat_interactive_prompt_toolkit(
+            object(),  # type: ignore[arg-type]
+            thread_id=None,
+            setting=_Client().initial_setting(),
+            client=_Client(),
+        )
 
 
 def test_chat_default_options_build_session_override_without_warning(

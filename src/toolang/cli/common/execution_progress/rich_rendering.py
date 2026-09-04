@@ -26,10 +26,24 @@ _STYLES: dict[ProgressTone, str] = {
 }
 RUN_DIVIDER_WIDTH = 42
 TERMINAL_MARKDOWN_THEME = Theme({"markdown.code": "bold cyan"})
-TERMINAL_SURFACE_BACKGROUND = "bright_black"
-TOOL_DETAIL_BACKGROUND = TERMINAL_SURFACE_BACKGROUND
+_SCRIPT_CODE_BACKGROUND = "bright_black"
+_SCRIPT_CODE_FOREGROUND = "bright_white"
 
 _ANSI_CODE_THEME = Syntax.get_theme("ansi_dark")
+
+
+class _ProgressCodeTheme(SyntaxTheme):
+    """Use terminal-owned ANSI token colors on one configured surface."""
+
+    def __init__(self, *, background: str, foreground: str | None) -> None:
+        self._background = background
+        self._foreground = foreground
+
+    def get_style_for_token(self, token_type: TokenType) -> Style:
+        return _ANSI_CODE_THEME.get_style_for_token(token_type)
+
+    def get_background_style(self) -> Style:
+        return Style(color=self._foreground, bgcolor=self._background)
 
 
 class _ProgressHeading(Heading):
@@ -58,16 +72,6 @@ class _ProgressHorizontalRule(HorizontalRule):
         yield Text()
 
 
-class _ProgressCodeTheme(SyntaxTheme):
-    """Use terminal-owned ANSI colors on a consistent code surface."""
-
-    def get_style_for_token(self, token_type: TokenType) -> Style:
-        return _ANSI_CODE_THEME.get_style_for_token(token_type)
-
-    def get_background_style(self) -> Style:
-        return Style(color="bright_white", bgcolor="bright_black")
-
-
 class _ProgressCodeBlock(CodeBlock):
     """Render fenced code with the shared terminal-native palette."""
 
@@ -77,10 +81,16 @@ class _ProgressCodeBlock(CodeBlock):
         options: ConsoleOptions,
     ) -> RenderResult:
         code = str(self.text).rstrip()
+        foreground, separator, background = self.theme.partition("|")
+        if not separator:
+            background = self.theme
         yield Syntax(
             code,
             self.lexer_name,
-            theme=_ProgressCodeTheme(),
+            theme=_ProgressCodeTheme(
+                background=background,
+                foreground=foreground or None,
+            ),
             word_wrap=True,
             padding=1,
         )
@@ -101,6 +111,8 @@ def progress_block_renderable(
     *,
     live: bool,
     max_width: int,
+    code_background: str = _SCRIPT_CODE_BACKGROUND,
+    code_foreground: str | None = _SCRIPT_CODE_FOREGROUND,
 ) -> RenderableType:
     """Render one semantic progress block with shared wrapping and Markdown."""
 
@@ -109,6 +121,8 @@ def progress_block_renderable(
             row,
             live=live,
             max_width=max_width,
+            code_background=code_background,
+            code_foreground=code_foreground,
             open_tool_detail=(
                 row.surface == "tool_detail"
                 and (index == 0 or block.rows[index - 1].surface != "tool_detail")
@@ -131,6 +145,8 @@ def _row_renderable(
     *,
     live: bool,
     max_width: int,
+    code_background: str,
+    code_foreground: str | None,
     open_tool_detail: bool,
     close_tool_detail: bool,
 ) -> RenderableType:
@@ -140,13 +156,20 @@ def _row_renderable(
             max_width=max_width,
             open_detail=open_tool_detail,
             close_detail=close_tool_detail,
+            code_background=code_background,
+            code_foreground=code_foreground,
         )
     elif row.leader in {"hyphen", "handoff"}:
         renderable = _HyphenDividerRow(row, max_width=max_width)
     elif row.format == "plain" and row.right_text:
         renderable = _TwoEndedPlainRow(row, live=live, max_width=max_width)
     elif row.format == "markdown":
-        renderable = _MarkdownRow(row, max_width=max_width)
+        renderable = _MarkdownRow(
+            row,
+            max_width=max_width,
+            code_background=code_background,
+            code_foreground=code_foreground,
+        )
     else:
         renderable = _PlainRow(row, live=live, max_width=max_width)
     return renderable
@@ -618,6 +641,8 @@ class _ToolSurfaceRow:
     max_width: int
     open_detail: bool
     close_detail: bool
+    code_background: str
+    code_foreground: str | None
 
     def __rich_console__(
         self,
@@ -644,7 +669,11 @@ class _ToolSurfaceRow:
             content_width,
             overflow="fold",
         ) or [Text("")]
-        surface_style = _tool_detail_style(self.row.tone)
+        surface_style = _tool_detail_style(
+            self.row.tone,
+            code_background=self.code_background,
+            code_foreground=self.code_foreground,
+        )
         prefix_style = _STYLES[self.row.tone]
         continuation = " " * prefix_width
         if self.row.surface == "tool_detail" and self.open_detail:
@@ -695,21 +724,28 @@ def _tool_surface_line(
     return rendered
 
 
-def _tool_detail_style(tone: ProgressTone) -> Style:
+def _tool_detail_style(
+    tone: ProgressTone,
+    *,
+    code_background: str,
+    code_foreground: str | None,
+) -> Style:
     foreground = (
         "bright_red"
         if tone == "error"
         else "bright_yellow"
         if tone == "warning"
-        else "bright_white"
+        else code_foreground
     )
-    return Style(color=foreground, bgcolor=TOOL_DETAIL_BACKGROUND)
+    return Style(color=foreground, bgcolor=code_background)
 
 
 @dataclass(frozen=True, slots=True)
 class _MarkdownRow:
     row: ProgressRow
     max_width: int
+    code_background: str
+    code_foreground: str | None
 
     def __rich_console__(
         self,
@@ -721,7 +757,10 @@ class _MarkdownRow:
         prefix_width = display_width(prefix)
         content_width = max(1, width - prefix_width)
         segments = console.render(
-            _ProgressMarkdown(self.row.text),
+            _ProgressMarkdown(
+                self.row.text,
+                code_theme=f"{self.code_foreground or ''}|{self.code_background}",
+            ),
             options.update_width(content_width),
         )
         lines = list(Segment.split_lines(segments))

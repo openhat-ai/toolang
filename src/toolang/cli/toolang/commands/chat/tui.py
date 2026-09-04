@@ -39,6 +39,10 @@ from toolang.common.version import toolang_version
 from toolang.execution.types import SessionSetting
 
 from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
+from toolang.cli.common.terminal_surfaces import (
+    DARK_TERMINAL_SURFACES,
+    TerminalSurfaces,
+)
 from . import blocks
 from . import events
 from . import rendering
@@ -199,6 +203,7 @@ class ChatTuiApp:
         client: ChatClient,
         progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
         resource_paths: tuple[str, ...] = (),
+        surfaces: TerminalSurfaces = DARK_TERMINAL_SURFACES,
     ) -> None:
         asyncio.run(
             ChatTuiApp(
@@ -209,6 +214,7 @@ class ChatTuiApp:
                 client=client,
                 progress_max_width=progress_max_width,
                 resource_paths=resource_paths,
+                surfaces=surfaces,
             ).run_loop()
         )
 
@@ -222,6 +228,7 @@ class ChatTuiApp:
         client: ChatClient,
         progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
         resource_paths: tuple[str, ...] = (),
+        surfaces: TerminalSurfaces = DARK_TERMINAL_SURFACES,
     ) -> None:
         self.thread_id = thread_id
         self.home = home
@@ -246,7 +253,11 @@ class ChatTuiApp:
         self._status_stop_handle: asyncio.TimerHandle | None = None
         self._footer_row_floor = 0
         self.progress_max_width = progress_max_width
-        self.presenter = ChatRunPresenter(max_width=progress_max_width)
+        self.surfaces = surfaces
+        self.presenter = ChatRunPresenter(
+            max_width=progress_max_width,
+            code_background=surfaces.code_background,
+        )
         self.completer = ChatInputCompleter(
             resource_paths=(lambda: list(resource_paths)) if resource_paths else None
         )
@@ -304,7 +315,7 @@ class ChatTuiApp:
                 focused_element=self.prompt.buffer,
             ),
             key_bindings=keys,
-            style=Style.from_dict(widgets._chat_ui_palette()),
+            style=Style.from_dict(widgets._chat_ui_palette(surfaces)),
             full_screen=False,
             color_depth=ColorDepth.DEPTH_24_BIT,
             erase_when_done=True,
@@ -861,18 +872,22 @@ class ChatTuiApp:
                 run_id=result.run_id,
                 parts=result.output,
                 max_width=self.progress_max_width,
+                input_background=self.surfaces.input_background,
+                code_background=self.surfaces.code_background,
             ).render()
         elif isinstance(content, slashes.SlashTable):
             renderable = blocks.SlashTableBlock(
                 message,
                 content,
                 max_width=self.progress_max_width,
+                input_background=self.surfaces.input_background,
             ).render()
         elif isinstance(content, slashes.SlashHelp):
             renderable = blocks.SlashHelpBlock(
                 message,
                 content,
                 max_width=self.progress_max_width,
+                input_background=self.surfaces.input_background,
             ).render()
         else:
             renderable = blocks.SlashBlock(
@@ -880,6 +895,7 @@ class ChatTuiApp:
                 slashes.outcome_lines(outcome),
                 outcome.kind,
                 max_width=self.progress_max_width,
+                input_background=self.surfaces.input_background,
             ).render()
         self._stage_scrollback((Group(renderable, Text("\n")),))
 
@@ -935,6 +951,7 @@ class ChatTuiApp:
             blocks.RunSteerBlock.create(
                 message=message,
                 run_id=run_id,
+                input_background=self.surfaces.input_background,
             ),
         )
 
@@ -991,7 +1008,12 @@ class ChatTuiApp:
 
     def submit_run(self, call: QueuedCall) -> None:
         self.status_bar.set_active_runnable(call.request.runnable.ref)
-        self.unfinalized_blocks.append(blocks.RunControlBlock.create(call.source))
+        self.unfinalized_blocks.append(
+            blocks.RunControlBlock.create(
+                call.source,
+                input_background=self.surfaces.input_background,
+            )
+        )
         self.app.invalidate()
 
         def consume() -> None:

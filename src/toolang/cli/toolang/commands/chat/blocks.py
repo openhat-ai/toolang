@@ -17,6 +17,7 @@ from rich.text import Text
 
 from toolang.base.types.message import Part
 from toolang.cli.common.output import toolang_logo, toolang_logo_text
+from toolang.cli.common.terminal_surfaces import DARK_TERMINAL_SURFACES
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
 from toolang.execution.types import ExecutionError
 
@@ -41,7 +42,6 @@ from toolang.cli.common.human_values import parts_response_text, response_render
 
 from .base import ChatExecutorMetadata, friendly_error
 from .rendering import (
-    CONTROL_BAR_BACKGROUND,
     ACCENT_CELL,
     QUICK_COMMAND_CONTROL_ACCENT,
     RUN_CONTROL_ACCENT,
@@ -99,18 +99,18 @@ def _control_bar_line(
     content: str = "",
     *,
     accent: str,
+    input_background: str,
     width: int | None = None,
 ) -> Text:
-    background = CONTROL_BAR_BACKGROUND
     return bar(
         [
             (ACCENT_CELL, f"not dim on {accent}"),
             (
                 f" {content}" if content else "",
-                f"not dim on {background}",
+                f"not dim on {input_background}",
             ),
         ],
-        style=f"not dim on {background}",
+        style=f"not dim on {input_background}",
         width=width,
     )
 
@@ -119,6 +119,7 @@ def _control_bar_lines(
     message: str,
     *,
     accent: str,
+    input_background: str,
     width: int | None = None,
 ) -> list[RenderableType]:
     output_width = width or terminal_width()
@@ -129,7 +130,12 @@ def _control_bar_lines(
         for wrapped_line in wrap_display(line, content_width)
     ]
     lines: list[RenderableType] = [
-        _control_bar_line(line, accent=accent, width=output_width)
+        _control_bar_line(
+            line,
+            accent=accent,
+            input_background=input_background,
+            width=output_width,
+        )
         for line in wrapped_lines
     ]
     padding_count = max(0, 3 - len(lines))
@@ -137,12 +143,20 @@ def _control_bar_lines(
     bottom_padding_count = padding_count - top_padding_count
     return [
         *(
-            _control_bar_line(accent=accent, width=output_width)
+            _control_bar_line(
+                accent=accent,
+                input_background=input_background,
+                width=output_width,
+            )
             for _ in range(top_padding_count)
         ),
         *lines,
         *(
-            _control_bar_line(accent=accent, width=output_width)
+            _control_bar_line(
+                accent=accent,
+                input_background=input_background,
+                width=output_width,
+            )
             for _ in range(bottom_padding_count)
         ),
     ]
@@ -151,12 +165,14 @@ def _control_bar_lines(
 def _slash_control_lines(
     message: str,
     *,
+    input_background: str,
     width: int | None = None,
 ) -> list[RenderableType]:
     return [
         *_control_bar_lines(
             message,
             accent=QUICK_COMMAND_CONTROL_ACCENT,
+            input_background=input_background,
             width=width,
         ),
         Text(),
@@ -184,6 +200,7 @@ class ExecutionProgressBlock(MutableBlock):
     progress: ProgressBlock
     live: bool = False
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
+    code_background: str = DARK_TERMINAL_SURFACES.code_background
 
     def update(self, event: Any) -> None:
         if isinstance(event, ProgressBlock):
@@ -194,6 +211,8 @@ class ExecutionProgressBlock(MutableBlock):
             self.progress,
             live=self.live,
             max_width=self.max_width,
+            code_background=self.code_background,
+            code_foreground=None,
         )
         if self.live:
             return rendered
@@ -208,10 +227,16 @@ class RunControlBlock(MutableBlock):
     """Created by a local submission and finalized by run_begin/run_end."""
 
     message: str
+    input_background: str = DARK_TERMINAL_SURFACES.input_background
 
     @classmethod
-    def create(cls, message: str) -> RunControlBlock:
-        return cls(message=message)
+    def create(
+        cls,
+        message: str,
+        *,
+        input_background: str = DARK_TERMINAL_SURFACES.input_background,
+    ) -> RunControlBlock:
+        return cls(message=message, input_background=input_background)
 
     def update(self, event: RunEvent) -> None:
         del event
@@ -221,6 +246,7 @@ class RunControlBlock(MutableBlock):
             *_control_bar_lines(
                 self.message,
                 accent=RUN_CONTROL_ACCENT,
+                input_background=self.input_background,
             ),
             Text(),
         )
@@ -253,10 +279,21 @@ class RunSteerBlock(MutableBlock):
 
     message: str
     run_id: str = ""
+    input_background: str = DARK_TERMINAL_SURFACES.input_background
 
     @classmethod
-    def create(cls, *, message: str, run_id: str) -> RunSteerBlock:
-        return cls(message=message, run_id=run_id)
+    def create(
+        cls,
+        *,
+        message: str,
+        run_id: str,
+        input_background: str = DARK_TERMINAL_SURFACES.input_background,
+    ) -> RunSteerBlock:
+        return cls(
+            message=message,
+            run_id=run_id,
+            input_background=input_background,
+        )
 
     def update(self, event: StepBegin | RunEnd) -> None:
         del event
@@ -267,6 +304,7 @@ class RunSteerBlock(MutableBlock):
             _control_bar_lines(
                 self.message,
                 accent=STEER_CONTROL_ACCENT,
+                input_background=self.input_background,
             )
         )
         lines.append(Text())
@@ -369,12 +407,19 @@ class AssistantResponseBlock(MutableBlock):
     text: str
     shape: str = ""
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
+    code_background: str = DARK_TERMINAL_SURFACES.code_background
 
     @classmethod
-    def create(cls, event: StepEnd) -> AssistantResponseBlock:
+    def create(
+        cls,
+        event: StepEnd,
+        *,
+        code_background: str = DARK_TERMINAL_SURFACES.code_background,
+    ) -> AssistantResponseBlock:
         return cls(
             text=parts_response_text(output_parts(event)),
             shape=shape_label(event),
+            code_background=code_background,
         )
 
     @classmethod
@@ -383,15 +428,25 @@ class AssistantResponseBlock(MutableBlock):
         parts: Sequence[Part],
         *,
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
+        code_background: str = DARK_TERMINAL_SURFACES.code_background,
     ) -> AssistantResponseBlock:
-        return cls(text=parts_response_text(parts), max_width=max_width)
+        return cls(
+            text=parts_response_text(parts),
+            max_width=max_width,
+            code_background=code_background,
+        )
 
     def update(self, event: Any) -> None:
         del event
 
     def render(self) -> RenderableType | None:
         if self.text:
-            return response_renderable(self.text, max_width=self.max_width)
+            return response_renderable(
+                self.text,
+                max_width=self.max_width,
+                code_background=self.code_background,
+                code_foreground=None,
+            )
         if self.shape:
             return Text.from_markup(f"[dim]• {escape(f'{self.shape} returned')}[/]")
         return None
@@ -405,6 +460,8 @@ class SlashResultBlock:
     run_id: str
     parts: Sequence[Part]
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
+    input_background: str = DARK_TERMINAL_SURFACES.input_background
+    code_background: str = DARK_TERMINAL_SURFACES.code_background
 
     def render(self) -> RenderableType:
         return self
@@ -418,9 +475,14 @@ class SlashResultBlock:
         response = AssistantResponseBlock.from_parts(
             self.parts,
             max_width=self.max_width,
+            code_background=self.code_background,
         ).render()
         lines = [
-            *_slash_control_lines(self.message, width=width),
+            *_slash_control_lines(
+                self.message,
+                input_background=self.input_background,
+                width=width,
+            ),
             _SlashResultDivider(self.run_id, max_width=self.max_width),
         ]
         if response is not None:
@@ -579,6 +641,7 @@ class SlashBlock:
     body: Sequence[str]
     kind: Literal["success", "result", "usage", "error"] = "result"
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
+    input_background: str = DARK_TERMINAL_SURFACES.input_background
 
     def render(self) -> RenderableType:
         return self
@@ -589,7 +652,11 @@ class SlashBlock:
         options: ConsoleOptions,
     ) -> RenderResult:
         width = max(1, min(options.max_width, self.max_width))
-        lines = _slash_control_lines(self.message, width=width)
+        lines = _slash_control_lines(
+            self.message,
+            input_background=self.input_background,
+            width=width,
+        )
         if self.body:
             first, *rest = self.body
             lines.append(self._summary_line(first))
@@ -692,6 +759,7 @@ class SlashTableBlock:
     message: str
     table: SlashTable
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
+    input_background: str = DARK_TERMINAL_SURFACES.input_background
 
     def render(self) -> RenderableType:
         return self
@@ -706,7 +774,11 @@ class SlashTableBlock:
         summary.append(self.table.summary)
         yield from console.render(
             Group(
-                *_slash_control_lines(self.message, width=width),
+                *_slash_control_lines(
+                    self.message,
+                    input_background=self.input_background,
+                    width=width,
+                ),
                 summary,
                 Text(),
                 _SlashTableRows(self.table),
@@ -722,6 +794,7 @@ class SlashHelpBlock:
     message: str
     help: SlashHelp
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
+    input_background: str = DARK_TERMINAL_SURFACES.input_background
 
     def render(self) -> RenderableType:
         return self
@@ -737,6 +810,7 @@ class SlashHelpBlock:
         aligned = aligned_prefix_width + HELP_DESCRIPTION_MIN_WIDTH <= width
         lines: list[RenderableType] = _slash_control_lines(
             self.message,
+            input_background=self.input_background,
             width=width,
         )
         for section_index, section in enumerate(self.help.sections):

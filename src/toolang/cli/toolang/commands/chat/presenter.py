@@ -10,6 +10,7 @@ from toolang.cli.common.execution_progress import (
     ProgressUpdate,
 )
 from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
+from toolang.cli.common.terminal_surfaces import DARK_TERMINAL_SURFACES
 
 from . import blocks
 from .base import AppContext, friendly_error
@@ -18,11 +19,17 @@ from .base import AppContext, friendly_error
 class ChatRunPresenter:
     """Own chat block lifetime while sharing execution presentation semantics."""
 
-    def __init__(self, *, max_width: int = DEFAULT_MAX_PROGRESS_WIDTH) -> None:
+    def __init__(
+        self,
+        *,
+        max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
+        code_background: str = DARK_TERMINAL_SURFACES.code_background,
+    ) -> None:
         self._root_run_id: str | None = None
         self._projector = ProgressProjector()
         self._progress: dict[str, blocks.ExecutionProgressBlock] = {}
         self._max_width = max_width
+        self._code_background = code_background
 
     def handle(self, event: RunEvent, app: AppContext) -> None:
         if isinstance(event, RunBegin) and event.parent is None:
@@ -158,6 +165,7 @@ class ChatRunPresenter:
                 block = blocks.ExecutionProgressBlock(
                     progress,
                     max_width=self._max_width,
+                    code_background=self._code_background,
                 )
             else:
                 block.update(progress)
@@ -173,6 +181,7 @@ class ChatRunPresenter:
                     progress,
                     live=True,
                     max_width=self._max_width,
+                    code_background=self._code_background,
                 )
             else:
                 block.update(progress)

@@ -2,7 +2,7 @@
 
 ## Work Type and Status
 
-Feature definition. Proposed for human confirmation. This document defines the
+Feature definition. Approved for implementation. This document defines the
 implementation scope and does not change product behavior.
 
 This definition supersedes the fixed shared ANSI-slot-8 surface decisions in
@@ -69,8 +69,8 @@ Command bars reuse `input_background`; they are not a fourth surface. A focused
 Queue selection continues to reuse Input's background. Tool results and fenced
 Markdown code reuse `code_background`.
 
-No `control_background`, `result_background`, generic terminal-surface name, or
-other compatibility vocabulary is introduced in code or documentation.
+No compatibility aliases or additional public surface vocabulary are introduced
+in code or documentation.
 
 ## Resolution Policy
 
@@ -108,8 +108,8 @@ inference, contrast adjustment, or OSC. Any other non-empty value fails before
 the TUI starts with an actionable configuration error that states the accepted
 keywords and `input,queue,code` order.
 
-There is no support for the earlier `code,queue,input` order, foreground and
-background pairs, named ANSI colors, or partial overrides.
+There is no support for alternate ordering, foreground and background pairs,
+named ANSI colors, or partial overrides.
 
 ### OSC Query
 
@@ -145,11 +145,14 @@ the terminal background are:
 | Queue | 1.12 |
 | Input | 1.28 |
 
-The resulting ordering is always Code < Queue < Input in visual strength.
+The intended ordering is Code < Queue < Input in visual strength.
 Mixing is capped when necessary so inherited terminal foreground text retains
 at least 4.5:1 contrast, or the terminal's original foreground/background
-contrast when that is already lower. Code's near-black floor prevents RGB
-rounding from erasing its boundary on black Terminal Pro and iTerm2 themes.
+contrast when that is already lower. When Input reaches that cap, the three
+strengths are compressed together instead of being clamped independently, so
+their ordering remains distinct where RGB quantization permits. Code's
+near-black floor prevents RGB rounding from erasing its boundary on black
+Terminal Pro and iTerm2 themes.
 
 The canonical fallbacks are:
 
