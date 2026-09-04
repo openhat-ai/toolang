@@ -72,6 +72,10 @@ from toolang.cli.common.execution_progress import (
     ProgressUpdate,
 )
 from toolang.cli.common.script_progress.console import ProgressConsole
+from toolang.cli.common.terminal_surfaces import (
+    DARK_TERMINAL_SURFACES,
+    TerminalSurfaces,
+)
 from toolang.cli.common.execution_progress.state import Metrics
 from toolang.execution.events import (
     PartBegin,
@@ -864,17 +868,15 @@ def test_chat_tool_step_dims_running_row_and_renders_terminal_surfaces() -> None
     assert all(
         sum(len(segment.text) for segment in line) == 30 for line in painted_lines
     )
-    background_numbers: list[set[int]] = []
+    background_colors: list[set[str]] = []
     for line in painted_lines:
-        numbers: set[int] = set()
+        colors: set[str] = set()
         for segment in line:
             assert segment.style is not None
             assert segment.style.bgcolor is not None
-            number = segment.style.bgcolor.number
-            assert number is not None
-            numbers.add(number)
-        background_numbers.append(numbers)
-    assert background_numbers == [{8}, {8}, {8}]
+            colors.add(segment.style.bgcolor.get_truecolor().hex)
+        background_colors.append(colors)
+    assert background_colors == [{"#0b0b0b"}, {"#0b0b0b"}, {"#0b0b0b"}]
 
     painted_offsets: list[tuple[int, int]] = []
     for line in lines:
@@ -937,7 +939,7 @@ def test_chat_tool_surfaces_wrap_within_the_configured_progress_width() -> None:
     assert all(
         sum(len(segment.text) for segment in line) == 24 for line in painted_lines
     )
-    background_widths: dict[int, set[int]] = {}
+    background_widths: dict[str, set[int]] = {}
     for line in painted_lines:
         backgrounds = [
             segment
@@ -945,16 +947,15 @@ def test_chat_tool_surfaces_wrap_within_the_configured_progress_width() -> None:
             if segment.style is not None and segment.style.bgcolor is not None
         ]
         assert backgrounds
-        widths: dict[int, int] = {}
+        widths: dict[str, int] = {}
         for segment in backgrounds:
             style = segment.style
             assert style is not None and style.bgcolor is not None
-            number = style.bgcolor.number
-            assert number is not None
-            widths[number] = widths.get(number, 0) + len(segment.text)
-        for number, width in widths.items():
-            background_widths.setdefault(number, set()).add(width)
-    assert background_widths == {8: {22}}
+            color = style.bgcolor.get_truecolor().hex
+            widths[color] = widths.get(color, 0) + len(segment.text)
+        for color, width in widths.items():
+            background_widths.setdefault(color, set()).add(width)
+    assert background_widths == {"#0b0b0b": {22}}
 
     rendered_lines = [
         "".join(segment.text for segment in line)
@@ -969,7 +970,7 @@ def test_chat_tool_surfaces_wrap_within_the_configured_progress_width() -> None:
         for segment in line
         if segment.style is not None
         and segment.style.bgcolor is not None
-        and segment.style.bgcolor.number == 8
+        and segment.style.bgcolor.get_truecolor().hex == "#0b0b0b"
         and "x" * 20 in segment.text
     )
     assert full_content == f" {'x' * 20} "
@@ -1307,8 +1308,8 @@ def test_chat_command_blocks_render_run_and_steer_states() -> None:
     assert rendering.RUN_CONTROL_ACCENT == "bright_cyan"
     assert run_accent == f"bg:{run_prompt_accent} nodim"
     assert steer_accent == f"bg:{rendering.STEER_CONTROL_ACCENT} nodim"
-    assert f"bg:{rendering.INPUT_BACKGROUND}" in run_message
-    assert f"bg:{rendering.INPUT_BACKGROUND}" in steer_message
+    assert f"bg:{DARK_TERMINAL_SURFACES.input_background}" in run_message
+    assert f"bg:{DARK_TERMINAL_SURFACES.input_background}" in steer_message
     assert "nodim" in run_message.split()
     assert "nodim" in steer_message.split()
     assert "\x1b[22m" in stable_run
@@ -1421,12 +1422,9 @@ def test_chat_prompt_keeps_its_run_control_accent() -> None:
     assert accent.style == "class:control.run"
     assert accent.char == rendering.ACCENT_CELL
     assert widgets._chat_ui_palette()["control.run"] == "bg:ansibrightcyan"
-    assert rendering.CONTROL_BAR_BACKGROUND == "bright_black"
-    assert rendering.INPUT_BACKGROUND == "ansibrightblack"
-    assert (
-        rendering._prompt_toolkit_color(Color.parse(rendering.CONTROL_BAR_BACKGROUND))
-        == rendering.INPUT_BACKGROUND
-    )
+    assert widgets._chat_ui_palette()["input"] == "bg:#1f1f1f"
+    assert widgets._chat_ui_palette()["cursor"] == "reverse"
+    assert widgets._chat_ui_palette()["input.cursor"] == "reverse"
     assert isinstance(content, HSplit)
     input_row = content.children[1]
     assert isinstance(input_row, VSplit)
@@ -1448,13 +1446,94 @@ def test_chat_prompt_keeps_its_run_control_accent() -> None:
     assert placeholder.processor.style == "class:input.placeholder"
     assert placeholder.processor.text == "Ask or describe a task"
     assert placeholder.filter()
-    assert widgets._chat_ui_palette()["input.placeholder"] == (
-        f"fg:#b8b8b8 bg:{rendering.INPUT_BACKGROUND}"
-    )
+    assert widgets._chat_ui_palette()["input.placeholder"] == "bg:#1f1f1f dim"
 
     prompt.buffer.text = "hello"
 
     assert not placeholder.filter()
+
+
+def test_chat_custom_surfaces_reach_input_queue_and_code_renderers() -> None:
+    surfaces = TerminalSurfaces(
+        input_background="#102030",
+        queue_background="#203040",
+        code_background="#304050",
+    )
+
+    palette = widgets._chat_ui_palette(surfaces)
+    assert palette["input"] == "bg:#102030"
+    assert palette["queue"] == "bg:#203040"
+    assert palette["queue.selected"] == "bg:#102030"
+    assert palette["cursor"] == palette["input.cursor"] == "reverse"
+    assert all("fg:" not in palette[name] for name in ("input", "queue"))
+
+    controls = (
+        blocks.RunControlBlock.create(
+            "run input",
+            input_background=surfaces.input_background,
+        ),
+        blocks.RunSteerBlock.create(
+            message="steer input",
+            run_id="run_1",
+            input_background=surfaces.input_background,
+        ),
+        blocks.SlashBlock(
+            "/help",
+            (),
+            input_background=surfaces.input_background,
+        ),
+    )
+    for control, message in zip(
+        controls,
+        ("run input", "steer input", "/help"),
+        strict=True,
+    ):
+        control_segment = next(
+            segment
+            for segment in rendering.render_segments(control.render())
+            if message in segment.text
+        )
+        assert control_segment.style is not None
+        assert control_segment.style.color is None
+        assert control_segment.style.bgcolor is not None
+        assert control_segment.style.bgcolor.get_truecolor().hex == "#102030"
+
+    progress = blocks.ExecutionProgressBlock(
+        ProgressBlock(
+            "step:run_1.1",
+            (ProgressRow("  result", surface="tool_detail"),),
+        ),
+        code_background=surfaces.code_background,
+    )
+    detail_segment = next(
+        segment
+        for segment in rendering.render_segments(progress.render())
+        if "result" in segment.text
+    )
+    assert detail_segment.style is not None
+    assert detail_segment.style.color is None
+    assert detail_segment.style.bgcolor is not None
+    assert detail_segment.style.bgcolor.get_truecolor().hex == "#304050"
+
+    response = blocks.AssistantResponseBlock.from_parts(
+        (TextPart("```text\nresult\n```"),),
+        code_background=surfaces.code_background,
+    )
+    code_segments = [
+        segment
+        for segment in rendering.render_segments(response.render())
+        if segment.style is not None and segment.style.bgcolor is not None
+    ]
+    assert code_segments
+    assert {
+        segment.style.bgcolor.get_truecolor().hex
+        for segment in code_segments
+        if segment.style is not None and segment.style.bgcolor is not None
+    } == {"#304050"}
+    assert any(
+        segment.style is not None and segment.style.color is None
+        for segment in code_segments
+    )
 
 
 def test_chat_queue_panel_defaults_to_expanded_with_only_a_focus_hint(
@@ -1708,12 +1787,12 @@ def test_chat_queue_panel_uses_a_full_width_window_and_distinct_background() -> 
     assert container.content.content is panel.view
     assert container.content.width == panel.width
     palette = widgets._chat_ui_palette()
-    assert palette["queue"] == "fg:#f5f5f5 bg:#3a3a3a"
-    assert palette["queue.info"] == "fg:#b8b8b8 bg:#3a3a3a dim"
-    assert palette["queue.selected"] == f"bg:{rendering.INPUT_BACKGROUND}"
+    assert palette["queue"] == "bg:#121212"
+    assert palette["queue.info"] == "bg:#121212 dim"
+    assert palette["queue.selected"] == "bg:#1f1f1f"
     assert palette["queue.number"] == palette["queue.selected.number"] == "dim"
-    assert palette["queue.selected.hint"] == "fg:#d0d0d0 dim"
-    assert palette["queue.hint"] == "fg:#b8b8b8 dim"
+    assert palette["queue.selected.hint"] == "dim"
+    assert palette["queue.hint"] == "dim"
     assert not any(name.startswith("queue.accent") for name in palette)
 
 
@@ -1997,11 +2076,11 @@ def test_chat_fenced_code_preserves_one_rectangular_background() -> None:
 
     assert background_widths == [40, 40, 40, 40, 40]
     assert {
-        segment.style.bgcolor.number
+        segment.style.bgcolor.get_truecolor().hex
         for line in lines
         for segment in line
         if segment.style is not None and segment.style.bgcolor is not None
-    } == {8}
+    } == {"#0b0b0b"}
     assert all(
         segment.style is None
         or segment.style.color is None
@@ -2014,8 +2093,7 @@ def test_chat_fenced_code_preserves_one_rectangular_background() -> None:
     )
     number = next(segment for line in lines for segment in line if "1" in segment.text)
     assert base_text.style is not None
-    assert base_text.style.color is not None
-    assert base_text.style.color.number == 15
+    assert base_text.style.color is None
     assert number.style is not None
     assert number.style.color is not None
     assert number.style.color.number == 12
@@ -2068,7 +2146,7 @@ def test_chat_preserves_rich_ansi_color_identity(
     assert rendering._prompt_toolkit_color(Color.parse(rich_color)) == prompt_color
 
 
-def test_chat_markdown_outputs_only_terminal_palette_colors() -> None:
+def test_chat_markdown_uses_only_code_surface_truecolor() -> None:
     block = blocks.AssistantResponseBlock.from_parts(
         (
             TextPart(
@@ -2083,10 +2161,10 @@ def test_chat_markdown_outputs_only_terminal_palette_colors() -> None:
     styles = [fragment[0] for fragment in fragments if fragment[1].strip()]
     stable = rendering.renderables_output([block.render()])
 
-    assert all("#" not in style for style in styles)
-    assert any(f"bg:{rendering.INPUT_BACKGROUND}" in style for style in styles)
+    assert all("fg:#" not in style for style in styles)
+    assert any("bg:#0b0b0b" in style for style in styles)
     assert "\x1b[38;2" not in stable
-    assert "\x1b[48;2" not in stable
+    assert "\x1b[48;2;11;11;11m" in stable
 
 
 def test_chat_live_viewport_keeps_latest_rows_and_reports_hidden_rows() -> None:
@@ -2232,16 +2310,16 @@ def test_chat_queue_focus_styles_respect_selection_padding(
 
             summary = _cell_attrs(app, screen, top, lines[top].index("3 items queued"))
             assert summary.dim is not focused
-            assert summary.color == ("f5f5f5" if focused else "b8b8b8")
+            assert summary.color == ""
             assert not summary.bold
             for row in range(top, bottom + 1):
-                assert _cell_attrs(app, screen, row, 0).bgcolor == "3a3a3a"
+                assert _cell_attrs(app, screen, row, 0).bgcolor == "121212"
                 assert (
                     _cell_attrs(app, screen, row, output.columns - 1).bgcolor
-                    == "3a3a3a"
+                    == "121212"
                 )
                 selected = expanded and focused and row == top + 1 + selected_index
-                background = rendering.INPUT_BACKGROUND if selected else "3a3a3a"
+                background = "1f1f1f" if selected else "121212"
                 assert all(
                     _cell_attrs(app, screen, row, col).bgcolor == background
                     for col in range(1, output.columns - 1)
@@ -2251,20 +2329,17 @@ def test_chat_queue_focus_styles_respect_selection_padding(
                     body = _cell_attrs(app, screen, row, 6)
                     assert number.dim and not body.dim
                     assert not number.bold and not body.bold
-                    assert number.color == body.color == "f5f5f5"
+                    assert number.color == body.color == ""
                 if selected:
                     assert lines[row].index(f"[{selected_index + 1}]") == 2
                     assert lines[row].endswith("meta+enter steer · e edit · d delete  ")
                     hints = _cell_attrs(app, screen, row, output.columns - 3)
-                    assert hints.dim and hints.color == "d0d0d0"
+                    assert hints.dim and hints.color == ""
             panel_hint = _cell_attrs(app, screen, bottom, output.columns - 1)
-            assert panel_hint.dim and panel_hint.color == "b8b8b8"
+            assert panel_hint.dim and panel_hint.color == ""
             assert _cell_attrs(app, screen, bottom + 1, 0).bgcolor == "ansibrightcyan"
             assert _cell_attrs(app, screen, bottom + 2, 0).bgcolor == "ansibrightcyan"
-            assert (
-                _cell_attrs(app, screen, bottom + 1, 1).bgcolor
-                == rendering.INPUT_BACKGROUND
-            )
+            assert _cell_attrs(app, screen, bottom + 1, 1).bgcolor == "1f1f1f"
             if not focused:
                 assert not any(
                     "meta+enter steer" in line for line in lines[top : bottom + 1]

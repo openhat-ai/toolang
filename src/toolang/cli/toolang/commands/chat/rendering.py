@@ -17,14 +17,10 @@ from wcwidth import wcswidth
 
 from toolang.cli.common.execution_progress.rich_rendering import (
     TERMINAL_MARKDOWN_THEME,
-    TERMINAL_SURFACE_BACKGROUND,
 )
 from toolang.cli.common.output import TOOLANG_COLOR
 
 ACCENT_CELL = " "
-# prompt-toolkit and Rich names for ANSI slot 8, respectively.
-INPUT_BACKGROUND = "ansibrightblack"
-CONTROL_BAR_BACKGROUND = TERMINAL_SURFACE_BACKGROUND
 QUICK_COMMAND_CONTROL_ACCENT = "#ffd866"
 RUN_CONTROL_ACCENT = TOOLANG_COLOR
 RUN_CONTROL_ACCENT_PROMPT_TOOLKIT = "ansibrightcyan"
@@ -71,7 +67,7 @@ def chat_console(*, width: int | None = None, file: TextIO | None = None) -> Con
 def bar(
     segments: Sequence[tuple[str, str]],
     *,
-    style: str = "white on grey23",
+    style: str,
     width: int | None = None,
 ) -> Text:
     text = Text(style=style)

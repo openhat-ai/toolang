@@ -55,6 +55,8 @@ def response_renderable(
     *,
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
     prefix: str = "• ",
+    code_background: str = "bright_black",
+    code_foreground: str | None = "bright_white",
 ) -> RenderableType | None:
     """Render one finalized Chat-style response without live state."""
 
@@ -74,6 +76,8 @@ def response_renderable(
         ),
         live=False,
         max_width=max_width,
+        code_background=code_background,
+        code_foreground=code_foreground,
     )
 
 
@@ -82,6 +86,8 @@ def parts_response_renderable(
     *,
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
     prefix: str = "• ",
+    code_background: str = "bright_black",
+    code_foreground: str | None = "bright_white",
 ) -> RenderableType | None:
     """Render Parts through the same finalized presentation used by Chat."""
 
@@ -89,6 +95,8 @@ def parts_response_renderable(
         parts_response_text(parts),
         max_width=max_width,
         prefix=prefix,
+        code_background=code_background,
+        code_foreground=code_foreground,
     )
 
 

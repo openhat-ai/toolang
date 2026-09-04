@@ -293,9 +293,8 @@ background-filled detail surface. The detail content has one empty row above
 and below it and one empty column on each side, matching code-block padding. The
 detail surface wraps like a code block and fills the available progress width
 up to `TOOLANG_PROGRESS_MAX_WIDTH`. Non-TTY output preserves the same gaps,
-padding, and width while omitting ANSI sequences. The surface shares ANSI
-palette slot 8 with the Chat control bar and input box, so terminal themes
-retain ownership of the actual color.
+padding, and width while omitting ANSI sequences. In interactive Chat the
+surface uses Code background; Script retains its ANSI-slot-8 presentation.
 
 The executor records a human-readable `summary` when the Tool Step begins and
 another when it ends. Summary generation receives the tool `family`, leaf
@@ -509,28 +508,55 @@ foreground and background. Semantic styles use named ANSI colors, so the
 terminal theme owns their actual RGB values. Inline code uses bold ANSI cyan
 text on the terminal's default background, distinguishing it from ordinary bold
 text without isolated background spans around short identifiers.
-Fenced code uses ANSI slot 15 text on an ANSI slot 8 background with Rich's
-`ansi_dark` token palette. Its top and bottom padding, trailing background
-cells, and authored blank lines remain one rectangular surface. This is a
-conventional dark code surface rather than a guarantee of contrast for
-arbitrarily redefined ANSI slots.
+In Script, fenced code uses ANSI slot 15 text on an ANSI slot 8 background with
+Rich's `ansi_dark` token palette. In interactive Chat, its base text inherits
+the terminal foreground and its background uses Code. Both paths retain the
+named ANSI syntax-token colors. Top and bottom padding, trailing background
+cells, and authored blank lines remain one rectangular surface.
 
 Chat preserves terminal-default and 16-color ANSI identities through both its
 live prompt_toolkit path and stable scrollback path. Script uses the same
-identities on a TTY and continues to emit no color for non-TTY output. Toolang
-does not probe terminal colors or infer whether the surrounding theme is light
-or dark.
+identities on a TTY and continues to emit no color for non-TTY output.
+
+Interactive Chat resolves one concrete palette before prompt_toolkit begins
+reading keyboard input. The public backgrounds are Input, Queue, and Code, in
+that order. Input fills the input box and the non-accent cells of Run, Steer,
+and Quick Command bars. Queue fills the adjacent queue area; a focused queue
+selection uses Input. Code fills tool-detail and fenced-code rectangles. These
+surfaces assign no ordinary foreground: normal text inherits the terminal
+foreground, dim text adds only the dim attribute, and the input cursor uses
+reverse video.
+
+`TOOLANG_COLOR_SCHEME` accepts case-insensitive `dark` or `light`, or exactly
+three comma-separated `#RRGGBB` values in `input,queue,code` order. An explicit
+value is final and bypasses terminal discovery. Without one, Chat requests the
+terminal's default foreground and background through bounded OSC 10 and 11
+queries when stdin and stdout are the same TTY and no input is pending. A
+complete response derives subtle surfaces from those defaults; unsupported,
+incomplete, or failed queries always use the dark palette. `COLORFGBG` is not
+consulted. Script and non-interactive Chat never probe.
+
+The fixed palettes are:
+
+| Scheme | Input | Queue | Code |
+| --- | --- | --- | --- |
+| Dark | `#1f1f1f` | `#121212` | `#0b0b0b` |
+| Light | `#e3e3e3` | `#f2f2f2` | `#f9f9f9` |
+
+OSC reports RGB colors but not terminal opacity. All resolved surfaces paint
+RGB cells; they do not infer or preserve terminal transparency. A light
+terminal where OSC is unavailable must set `TOOLANG_COLOR_SCHEME=light` or an
+explicit three-color palette.
 
 Chat submission and steer controls contain only their authored message. Their
 left background-filled accent cells distinguish start from steer without
 displaying Run IDs or execution state. The start accent uses the same ANSI
 bright cyan as the banner logo and wordmark. Quick-command bars use the same
 background-cell treatment with their own accent, and the prompt uses the start
-accent. Control bars and the input box share the fenced-code surface's ANSI
-slot 8 background, leaving its actual RGB value to the terminal theme. Control
-bar messages use the terminal's default foreground and explicitly clear dim
-styling in both stable and live output. An empty prompt shows the muted
-placeholder `Ask anything`; the
+accent. Control bars and the input box share Input background. Control-bar
+messages use the terminal's default foreground and explicitly clear dim styling
+in both stable and live output. An empty prompt shows the muted
+placeholder `Ask or describe a task`; the
 placeholder disappears as soon as the buffer contains text and is never part of
 the submitted message. The status bar does not paint a base background and
 therefore inherits the terminal background. Its left side begins in column zero

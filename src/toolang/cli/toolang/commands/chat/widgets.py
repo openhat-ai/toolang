@@ -17,13 +17,16 @@ from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
 from prompt_toolkit.utils import get_cwidth
 
 from toolang.cli.common.execution_progress.formatting import truncate
+from toolang.cli.common.terminal_surfaces import (
+    DARK_TERMINAL_SURFACES,
+    TerminalSurfaces,
+)
 from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
 from .input import normalize_chat_input
 from . import shortcuts
 from .rendering import (
     ACCENT_CELL,
-    INPUT_BACKGROUND,
     RUN_CONTROL_ACCENT_PROMPT_TOOLKIT,
 )
 
@@ -48,28 +51,30 @@ _STATUS_IDLE_MARKER, _STATUS_SPINNER_FRAMES = _STATUS_SPINNER_STYLES[
 ]
 
 
-def _chat_ui_palette() -> dict[str, str]:
+def _chat_ui_palette(
+    surfaces: TerminalSurfaces = DARK_TERMINAL_SURFACES,
+) -> dict[str, str]:
     return {
         "": "",
-        "queue": "fg:#f5f5f5 bg:#3a3a3a",
+        "queue": f"bg:{surfaces.queue_background}",
         "queue.number": "dim",
-        "queue.selected": f"bg:{INPUT_BACKGROUND}",
+        "queue.selected": f"bg:{surfaces.input_background}",
         "queue.selected.number": "dim",
-        "queue.selected.hint": "fg:#d0d0d0 dim",
-        "queue.info": "fg:#b8b8b8 bg:#3a3a3a dim",
-        "queue.hint": "fg:#b8b8b8 dim",
+        "queue.selected.hint": "dim",
+        "queue.info": f"bg:{surfaces.queue_background} dim",
+        "queue.hint": "dim",
         "control.run": f"bg:{RUN_CONTROL_ACCENT_PROMPT_TOOLKIT}",
-        "input": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
-        "input.placeholder": f"fg:#b8b8b8 bg:{INPUT_BACKGROUND}",
-        "cursor": "fg:#111111 bg:#eeeeee",
-        "input.cursor": "fg:#111111 bg:#eeeeee",
+        "input": f"bg:{surfaces.input_background}",
+        "input.placeholder": f"bg:{surfaces.input_background} dim",
+        "cursor": "reverse",
+        "input.cursor": "reverse",
         "status": "",
         "status.marker": "dim",
         "status.spinner": f"fg:{RUN_CONTROL_ACCENT_PROMPT_TOOLKIT}",
         "status.elapsed": "dim",
         "status.error.marker": "fg:ansired",
         "status.error": "fg:ansired",
-        "dim": "fg:ansigray",
+        "dim": "dim",
     }
 
 
