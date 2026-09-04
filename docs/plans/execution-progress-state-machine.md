@@ -399,41 +399,34 @@ accent, and the bottom `PromptBox` uses the Start accent. The cell replaces
 prompt glyphs such as `>` and `+` while leaving message text aligned in column
 two. Control bars and the input box share one surface background color.
 Rendering the full cell as a background avoids glyph line gaps between adjacent
-rows. An empty `PromptBox` shows the muted placeholder `Ask anything`.
+rows. A root-run submission uses the full terminal width. Steer and quick-
+command bars use the same lesser-of-available-and-configured-maximum width as
+execution and command output, so their Input background ends at the output
+boundary on wider terminals. An empty `PromptBox` shows the muted placeholder
+`Ask or describe a task`.
 The placeholder disappears as soon as the buffer contains text and is never
 part of submission or input history.
 
 The bottom `StatusBar` does not paint a base background and therefore inherits
-the terminal background. Its left side begins in column zero with an idle
-marker or running spinner, followed by one space and the current default
-runnable, rendered as `agic:name` or `flow:name`. Explicit session selection
-takes precedence; otherwise the client-provided runnable default and kind are
-used. The current resolved default model is right-aligned
+the terminal background. Its left side begins in column zero with the current
+default runnable, rendered as `agic:name` or `flow:name`, without a marker,
+spinner, or leading padding. Explicit session selection takes precedence;
+otherwise the client-provided runnable default and kind are used. While a root
+Run is active, its runnable replaces the default on the left. The current
+resolved default model is right-aligned
 against the terminal edge. The status bar omits the redundant `model ` label and
 all hotkey hints. Its runnable, padding, and model inherit the terminal's default
-foreground and background without additional color or dim styling. The idle
-marker uses the terminal's dim attribute without painting a status background.
-The running spinner inherits the terminal's normal foreground without dim
-styling. The activity label uses the terminal's dim attribute. The error state
-retains a dedicated status style.
+foreground and background without additional color or dim styling. The dim
+activity label is `running` below one elapsed second and
+`running for DURATION` at one second and later. Duration is monotonic, floored
+to whole seconds, and compactly rendered as `24s`, `1m08s`, or `1h01m01s`;
+`0s` and fractional seconds are never shown. The error state retains a dedicated
+status style.
 
-The default `circles` style uses `■` while idle. During a local Run, it rotates
-through the single-width frames `◐`, `◓`, `◑`, and `◒` every 300 milliseconds.
-The retained `squares`, `triangles`, `quadrants`, `hatch`, and `dots` styles
-remain available through an internal named style switch without exposing an
-unsettled public setting.
-Animation uses monotonic elapsed time rather than accumulated frame steps. The
-UI redraws only when the visible state changes. The spinner occupies column zero
-while a Run is active. The dim label `running` follows the active runnable below
-one elapsed second and is replaced at one second by elapsed time. The duration
-is floored to whole seconds and rendered as `24s`, `1m 08s`, or
-`1h 01m 01s`; `0s` and fractional seconds are never shown.
-Completion freezes the elapsed value until the minimum visibility period ends.
-The model and runnable never shift, and the spinner and timer are never committed
-to scrollback.
-
-Run completion does not delay results or input, but the running appearance is
-held for at least 600 milliseconds so short Runs do not flash past abruptly.
+The UI redraws only when the visible state changes, including each new whole-
+second duration. Run completion immediately restores idle state unless a queued
+root Run becomes active in the same transition. Status activity is never
+committed to scrollback.
 
 ## Implementation Touchpoints
 
@@ -470,8 +463,8 @@ Deterministic tests cover:
 - Script Rich Live and non-TTY append-only behavior;
 - equivalent Script and Chat Markdown rendering and semantic projection; and
 - message-only Chat control blocks with distinct left accents and no prompt
-  glyphs or execution metadata, plus a run-scoped status animation that
-  preserves model-label alignment.
+  glyphs or execution metadata, output-width auxiliary controls, and elapsed-
+  driven status that preserves model-label alignment.
 
 The default offline verification suite must pass.
 

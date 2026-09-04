@@ -26,7 +26,7 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
             "executor",
             "embedded",
             "Ask or describe a task",
-            "■ agic:chat",
+            "agic:chat",
             "scripted",
         )
         session.send(b"hello from user")
@@ -60,7 +60,7 @@ def test_chat_tui_runs_one_remote_exchange_in_a_pseudo_terminal(
             "executor",
             ":7001",
             "Ask or describe a task",
-            "■ agic:chat",
+            "agic:chat",
             "scripted",
         )
         assert "embedded" not in banner
@@ -91,7 +91,7 @@ def test_chat_tui_preserves_long_final_output_in_a_small_terminal(
         columns=80,
     )
     try:
-        session.wait_for("Toolang", "■ agic:chat", "scripted")
+        session.wait_for("Toolang", "agic:chat", "scripted")
         session.send(b"show long output\r")
         final_output = session.wait_for(
             "• terminal e2e line 000",
@@ -145,9 +145,9 @@ def test_chat_tui_updates_defaults_while_a_run_is_active(tmp_path: Path) -> None
         "status",
     )
     try:
-        session.wait_for("■ agic:chat", "scripted")
+        session.wait_for("agic:chat", "scripted")
         session.send(b"hold status\r")
-        session.wait_for("◧ agic:chat running")
+        session.wait_for("agic:chat running")
 
         session.send(b"/flow relay\r")
         running = session.wait_for("flow:relay · test/scripted")
@@ -155,7 +155,28 @@ def test_chat_tui_updates_defaults_while_a_run_is_active(tmp_path: Path) -> None
         assert "agic:chat" in running
         assert "Traceback" not in running
 
-        session.wait_for("succeeded", "■ flow:relay", "scripted")
+        session.wait_for("succeeded", "flow:relay", "scripted")
+        session.send(b"\x04")
+        assert session.wait_for_exit() == 0, session.output
+    finally:
+        session.close()
+
+
+def test_chat_tui_status_shows_compact_elapsed_time(tmp_path: Path) -> None:
+    session = ChatTuiPtySession.start(
+        "tests.support.chat_tui_e2e",
+        tmp_path,
+        "status",
+    )
+    try:
+        session.wait_for("agic:chat", "scripted")
+        session.send(b"hold elapsed status\r")
+
+        running = session.wait_for("agic:chat running", " for 1s")
+
+        assert "■" not in running
+        assert "◧" not in running
+        session.wait_for("succeeded", "agic:chat")
         session.send(b"\x04")
         assert session.wait_for_exit() == 0, session.output
     finally:
@@ -171,9 +192,9 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
         "status",
     )
     try:
-        session.wait_for("■ agic:chat", "scripted")
+        session.wait_for("agic:chat", "scripted")
         session.send(b"hold queue\r")
-        session.wait_for("◧ agic:chat running")
+        session.wait_for("agic:chat running")
 
         session.send(b"queued follow-up\r")
         visible = session.wait_for(
@@ -202,7 +223,7 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
 
         # Exercise collapse, expand, and delete without depending on partial redraw text.
         session.send(b"  d")
-        session.wait_for("succeeded", "■ agic:chat")
+        session.wait_for("succeeded", "agic:chat")
         session.send(b"\x04")
         assert session.wait_for_exit() == 0, session.output
     finally:

@@ -50,7 +50,7 @@ succeeds when:
 A root-run submission retains the existing full-width Input surface:
 
 ```text
-<accent> investigate the failure                                      
+<accent> investigate the failure
 ```
 
 The surface reaches the right edge and marks the beginning of a new root Run.

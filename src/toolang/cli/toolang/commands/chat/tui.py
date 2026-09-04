@@ -85,9 +85,7 @@ _RUN_EVENT_TYPES = (
     StepEnd,
     RunEnd,
 )
-_STATUS_ACTIVITY_TICK = 0.3
-_STATUS_SPINNER_FRAME_DURATION = 0.3
-_MIN_STATUS_ACTIVITY_DURATION = 0.6
+_STATUS_ELAPSED_TICK = 1.0
 _BLOCKED_READ_ONLY_COMMANDS = frozenset(
     {
         "help",
@@ -108,12 +106,6 @@ _BLOCKED_READ_ONLY_COMMANDS = frozenset(
         "quit",
     }
 )
-
-
-def _status_spinner_index(elapsed: float) -> int:
-    return int(max(0.0, elapsed) / _STATUS_SPINNER_FRAME_DURATION) % len(
-        widgets._STATUS_SPINNER_FRAMES
-    )
 
 
 def _selected_runnable(setting: SessionSetting) -> str | None:
@@ -246,11 +238,9 @@ class ChatTuiApp:
         self.run_in_flight = threading.Event()
         self.loop: asyncio.AbstractEventLoop | None = None
         self.dispatcher_task: asyncio.Task[None] | None = None
-        self.status_animation_task: asyncio.Task[None] | None = None
-        self._status_animation_wake = asyncio.Event()
+        self.status_elapsed_task: asyncio.Task[None] | None = None
+        self._status_elapsed_wake = asyncio.Event()
         self._status_activity_started_at: float | None = None
-        self._status_completed_elapsed_seconds: int | None = None
-        self._status_stop_handle: asyncio.TimerHandle | None = None
         self._footer_row_floor = 0
         self.progress_max_width = progress_max_width
         self.surfaces = surfaces
@@ -402,16 +392,16 @@ class ChatTuiApp:
             hide_cursor=False,
         )
         self.dispatcher_task = asyncio.create_task(self._dispatch_ui_events())
-        self.status_animation_task = asyncio.create_task(self._animate_status())
+        self.status_elapsed_task = asyncio.create_task(self._refresh_status_elapsed())
         try:
             with patch_stdout(raw=True):
                 await self.app.run_async()
         finally:
             self._stop_status_activity()
-            if self.status_animation_task is not None:
-                self.status_animation_task.cancel()
+            if self.status_elapsed_task is not None:
+                self.status_elapsed_task.cancel()
                 with suppress(asyncio.CancelledError):
-                    await self.status_animation_task
+                    await self.status_elapsed_task
             self.ui_events.put_nowait(ChatUIEvent("quit"))
             if self.dispatcher_task and not self.dispatcher_task.done():
                 await self.dispatcher_task
@@ -572,72 +562,46 @@ class ChatTuiApp:
             self._focus_prompt()
         return call
 
-    async def _animate_status(self) -> None:
+    async def _refresh_status_elapsed(self) -> None:
         while True:
-            await self._status_animation_wake.wait()
-            self._status_animation_wake.clear()
+            await self._status_elapsed_wake.wait()
+            self._status_elapsed_wake.clear()
             while self.status_bar.running:
-                await asyncio.sleep(_STATUS_ACTIVITY_TICK)
+                await asyncio.sleep(_STATUS_ELAPSED_TICK)
                 if not self.status_bar.running:
                     break
                 loop = self.loop or asyncio.get_running_loop()
-                self._update_status_activity(loop.time())
+                self._update_status_elapsed(loop.time())
 
-    def _update_status_activity(self, now: float) -> None:
+    def _update_status_elapsed(self, now: float) -> None:
         if self._status_activity_started_at is None:
             return
         elapsed = max(0.0, now - self._status_activity_started_at)
-        elapsed_seconds = (
-            self._status_completed_elapsed_seconds
-            if self._status_completed_elapsed_seconds is not None
-            else int(elapsed)
-        )
-        if self.status_bar.set_activity(
-            _status_spinner_index(elapsed), elapsed_seconds
-        ):
+        if self.status_bar.set_elapsed_seconds(int(elapsed)):
             self._invalidate_ui()
 
     def _set_status_running(self, running: bool) -> None:
         if running:
-            if self._status_stop_handle is not None:
-                self._status_stop_handle.cancel()
-                self._status_stop_handle = None
             self._status_activity_started_at = (
                 self.loop.time() if self.loop is not None else None
             )
-            self._status_completed_elapsed_seconds = None
             self.status_bar.set_running(True)
-            self._status_animation_wake.set()
+            self._status_elapsed_wake.set()
             self._invalidate_ui()
-            return
-        if (
-            self.loop is not None
-            and self.loop.is_running()
-            and self._status_activity_started_at is not None
-        ):
-            now = self.loop.time()
-            elapsed = max(0.0, now - self._status_activity_started_at)
-            self._status_completed_elapsed_seconds = int(elapsed)
-            self._update_status_activity(now)
-            remaining = _MIN_STATUS_ACTIVITY_DURATION - elapsed
-            if remaining > 0:
-                if self._status_stop_handle is None:
-                    self._status_stop_handle = self.loop.call_later(
-                        remaining, self._stop_status_activity
-                    )
-                return
-            self._stop_status_activity()
             return
         self._stop_status_activity()
 
     def _stop_status_activity(self) -> None:
-        if self._status_stop_handle is not None:
-            self._status_stop_handle.cancel()
-        self._status_stop_handle = None
+        changed = (
+            self.status_bar.running
+            or self.status_bar.active_runnable_label is not None
+            or self.status_bar.elapsed_seconds != 0
+        )
         self._status_activity_started_at = None
-        self._status_completed_elapsed_seconds = None
         self.status_bar.set_running(False)
-        self._invalidate_ui()
+        self._status_elapsed_wake.set()
+        if changed:
+            self._invalidate_ui()
 
     async def _dispatch_ui_events(self) -> None:
         while True:
@@ -951,6 +915,7 @@ class ChatTuiApp:
             blocks.RunSteerBlock.create(
                 message=message,
                 run_id=run_id,
+                max_width=self.progress_max_width,
                 input_background=self.surfaces.input_background,
             ),
         )
