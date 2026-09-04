@@ -145,11 +145,14 @@ the terminal background are:
 | Queue | 1.12 |
 | Input | 1.28 |
 
-The resulting ordering is always Code < Queue < Input in visual strength.
+The intended ordering is Code < Queue < Input in visual strength.
 Mixing is capped when necessary so inherited terminal foreground text retains
 at least 4.5:1 contrast, or the terminal's original foreground/background
-contrast when that is already lower. Code's near-black floor prevents RGB
-rounding from erasing its boundary on black Terminal Pro and iTerm2 themes.
+contrast when that is already lower. When Input reaches that cap, the three
+strengths are compressed together instead of being clamped independently, so
+their ordering remains distinct where RGB quantization permits. Code's
+near-black floor prevents RGB rounding from erasing its boundary on black
+Terminal Pro and iTerm2 themes.
 
 The canonical fallbacks are:
 

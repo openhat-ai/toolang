@@ -202,7 +202,7 @@ def test_terminal_stream_error_defaults_dark() -> None:
         (
             "#002b36",
             "#93a1a1",
-            surfaces.TerminalSurfaces("#213942", "#15333c", "#0a2e39"),
+            surfaces.TerminalSurfaces("#213942", "#14323b", "#0a2e39"),
         ),
     ),
 )
@@ -236,6 +236,39 @@ def test_derived_surfaces_preserve_readable_terminal_text() -> None:
         assert surfaces._contrast(fg, surfaces._parse_hex_rgb(color)) >= 4.49
 
 
+@pytest.mark.parametrize(
+    ("foreground", "background"),
+    (
+        ("#e8dd50", "#045baa"),
+        ("#4a4c9d", "#62e566"),
+        ("#9e94be", "#2cacc6"),
+    ),
+)
+def test_contrast_cap_preserves_surface_order_on_a_tinted_theme(
+    foreground: str,
+    background: str,
+) -> None:
+    resolved = surfaces.derive_terminal_surfaces(
+        foreground=foreground,
+        background=background,
+    )
+    fg = surfaces._parse_hex_rgb(foreground)
+    bg = surfaces._parse_hex_rgb(background)
+    colors = tuple(
+        surfaces._parse_hex_rgb(color)
+        for color in (
+            resolved.code_background,
+            resolved.queue_background,
+            resolved.input_background,
+        )
+    )
+
+    minimum_text = min(surfaces.MINIMUM_TEXT_CONTRAST, surfaces._contrast(fg, bg))
+    assert all(surfaces._contrast(fg, color) >= minimum_text for color in colors)
+    code, queue, input_ = (surfaces._contrast(bg, color) for color in colors)
+    assert code < queue < input_
+
+
 def test_osc_parser_accepts_scaled_channels_and_both_terminators() -> None:
     replies = surfaces._parse_osc_replies(
         b"\x1b]10;rgb:f/8/0\x07\x1b]11;rgb:1111/2222/3333\x1b\\"
@@ -264,6 +297,8 @@ class TestTerminalProbe:
         original = input_mode(slave)
         if mode == "pending":
             os.write(master, b"pending input\n")
+        elif mode == "pending_partial":
+            os.write(master, b"x")
         program = (
             "import json, sys\n"
             "from dataclasses import asdict\n"
@@ -310,6 +345,11 @@ class TestTerminalProbe:
                 assert not sent
                 assert select.select([slave], [], [], 0)[0]
                 assert os.read(slave, 100) == b"pending input\n"
+            elif mode == "pending_partial":
+                assert not sent
+                os.write(master, b"\n")
+                assert select.select([slave], [], [], 1)[0]
+                assert os.read(slave, 100) == b"x\n"
             else:
                 assert sent
             return child.wait(timeout=1), data
@@ -353,6 +393,12 @@ class TestTerminalProbe:
 
     def test_pending_input_is_not_consumed(self) -> None:
         code, output = self._run_probe("pending")
+
+        assert code == 0
+        assert b'"input_background": "#1f1f1f"' in output
+
+    def test_pending_input_without_newline_is_not_consumed(self) -> None:
+        code, output = self._run_probe("pending_partial")
 
         assert code == 0
         assert b'"input_background": "#1f1f1f"' in output

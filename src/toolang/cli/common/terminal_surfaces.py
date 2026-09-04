@@ -22,6 +22,7 @@ DEFAULT_INPUT_CONTRAST = 1.28
 NEAR_BLACK_CODE_CONTRAST = 1.07
 NEAR_BLACK_LUMINANCE = 0.005
 MINIMUM_TEXT_CONTRAST = 4.5
+_MIX_SEARCH_STEPS = 8192
 
 _OSC_QUERY = b"\x1b]10;?\x1b\\\x1b]11;?\x1b\\"
 _OSC_REPLY = re.compile(
@@ -100,26 +101,39 @@ def derive_terminal_surfaces(*, foreground: str, background: str) -> TerminalSur
         if _luminance(fg) > _luminance(bg) and _luminance(bg) <= NEAR_BLACK_LUMINANCE
         else DEFAULT_CODE_CONTRAST
     )
+    input_amount, queue_amount, code_amount = (
+        _surface_mix_amount(bg, fg, target)
+        for target in (DEFAULT_INPUT_CONTRAST, DEFAULT_QUEUE_CONTRAST, code_target)
+    )
+    scale = _readable_mix_scale(
+        bg,
+        fg,
+        maximum=input_amount,
+        minimum_text=minimum_text,
+    )
+    if scale < 1:
+        # Compress the strengths together instead of clamping them to one color.
+        readable_input = input_amount * scale
+        if readable_input > code_amount:
+            interval_scale = (readable_input - code_amount) / (
+                input_amount - code_amount
+            )
+            input_amount = readable_input
+            queue_amount = code_amount + (queue_amount - code_amount) * interval_scale
+        else:
+            input_amount *= scale
+            queue_amount *= scale
+            code_amount *= scale
+    code_color, queue_color, input_color = _ordered_surface_colors(
+        bg,
+        fg,
+        amounts=(code_amount, queue_amount, input_amount),
+        minimum_text=minimum_text,
+    )
     return TerminalSurfaces(
-        input_background=_hex_rgb(
-            _derive_surface(
-                bg,
-                fg,
-                DEFAULT_INPUT_CONTRAST,
-                minimum_text=minimum_text,
-            )
-        ),
-        queue_background=_hex_rgb(
-            _derive_surface(
-                bg,
-                fg,
-                DEFAULT_QUEUE_CONTRAST,
-                minimum_text=minimum_text,
-            )
-        ),
-        code_background=_hex_rgb(
-            _derive_surface(bg, fg, code_target, minimum_text=minimum_text)
-        ),
+        input_background=_hex_rgb(input_color),
+        queue_background=_hex_rgb(queue_color),
+        code_background=_hex_rgb(code_color),
     )
 
 
@@ -175,6 +189,8 @@ def _query_terminal_defaults(
         original = termios.tcgetattr(input_fd)
         tty.setcbreak(input_fd, termios.TCSANOW)
         output_stream.flush()
+        if select.select([input_fd], [], [], 0)[0]:
+            return None
         os.write(output_fd, _OSC_QUERY)
         deadline = time.monotonic() + timeout
         data = b""
@@ -261,37 +277,132 @@ def _contrast(first: RGB, second: RGB) -> float:
     return (high + 0.05) / (low + 0.05)
 
 
-def _derive_surface(
+def _surface_mix_amount(
     background: RGB,
     foreground: RGB,
     target: float,
-    *,
-    minimum_text: float,
-) -> RGB:
+) -> float:
     base = _luminance(background)
     text = _luminance(foreground)
     if math.isclose(text, base):
-        return background
+        return 0.0
     desired = (
         target * (base + 0.05) - 0.05 if text > base else (base + 0.05) / target - 0.05
     )
-    amount = max(0.0, min(1.0, (desired - base) / (text - base)))
+    return max(0.0, min(1.0, (desired - base) / (text - base)))
 
-    def mixed(fraction: float) -> RGB:
-        red, green, blue = (
-            _encoded(_linear(bg) + fraction * (_linear(fg) - _linear(bg)))
-            for bg, fg in zip(background, foreground)
+
+def _mix_surface(background: RGB, foreground: RGB, fraction: float) -> RGB:
+    red, green, blue = (
+        _encoded(_linear(bg) + fraction * (_linear(fg) - _linear(bg)))
+        for bg, fg in zip(background, foreground)
+    )
+    return red, green, blue
+
+
+def _readable_mix_scale(
+    background: RGB,
+    foreground: RGB,
+    *,
+    maximum: float,
+    minimum_text: float,
+) -> float:
+    if (
+        maximum == 0
+        or _contrast(
+            foreground,
+            _mix_surface(background, foreground, maximum),
         )
-        return red, green, blue
-
-    surface = mixed(amount)
-    if _contrast(foreground, surface) >= minimum_text:
-        return surface
-    low, high = 0.0, amount
+        >= minimum_text
+    ):
+        return 1.0
+    low, high = 0.0, maximum
     for _ in range(20):
         middle = (low + high) / 2
-        if _contrast(foreground, mixed(middle)) >= minimum_text:
+        if (
+            _contrast(
+                foreground,
+                _mix_surface(background, foreground, middle),
+            )
+            >= minimum_text
+        ):
             low = middle
         else:
             high = middle
-    return mixed(low)
+    return low / maximum
+
+
+def _ordered_surface_colors(
+    background: RGB,
+    foreground: RGB,
+    *,
+    amounts: tuple[float, float, float],
+    minimum_text: float,
+) -> tuple[RGB, RGB, RGB]:
+    direct = (
+        _mix_surface(background, foreground, amounts[0]),
+        _mix_surface(background, foreground, amounts[1]),
+        _mix_surface(background, foreground, amounts[2]),
+    )
+    direct_strengths = tuple(_contrast(background, color) for color in direct)
+    if (
+        all(_contrast(foreground, color) >= minimum_text for color in direct)
+        and direct_strengths[0] < direct_strengths[1] < direct_strengths[2]
+    ):
+        return direct
+
+    maximum = amounts[-1]
+    ranges: list[tuple[float, float, RGB]] = []
+    previous: RGB | None = None
+    start = 0.0
+    end = 0.0
+    for step in range(_MIX_SEARCH_STEPS + 1):
+        fraction = maximum * step / _MIX_SEARCH_STEPS
+        color = _mix_surface(background, foreground, fraction)
+        if previous is None:
+            previous = color
+            start = fraction
+        elif color != previous:
+            ranges.append((start, end, previous))
+            previous = color
+            start = fraction
+        end = fraction
+    assert previous is not None
+    ranges.append((start, end, previous))
+
+    candidates: list[tuple[float, float, RGB]] = []
+    strongest = 0.0
+    for start, end, color in ranges:
+        if _contrast(foreground, color) < minimum_text:
+            continue
+        strength = _contrast(background, color)
+        if strength <= strongest:
+            continue
+        candidates.append((start, end, color))
+        strongest = strength
+
+    def distance(candidate: tuple[float, float, RGB], target: float) -> float:
+        start, end, _ = candidate
+        return start - target if target < start else target - end if target > end else 0
+
+    if len(candidates) < len(amounts):
+        selected = [
+            min(candidates, key=lambda candidate: distance(candidate, target))[2]
+            for target in amounts
+        ]
+        return selected[0], selected[1], selected[2]
+
+    selected: list[RGB] = []
+    lower = 0
+    for position, target in enumerate(amounts):
+        upper = len(candidates) - (len(amounts) - position)
+        index = min(
+            range(lower, upper + 1),
+            key=lambda candidate_index: (
+                distance(candidates[candidate_index], target),
+                candidate_index,
+            ),
+        )
+        selected.append(candidates[index][2])
+        lower = index + 1
+    return selected[0], selected[1], selected[2]
