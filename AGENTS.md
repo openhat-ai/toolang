@@ -103,8 +103,6 @@ applies, raise the ambiguity and ask the human before proceeding.
 - Continue to title pull requests in semantic `type(scope): summary` form.
   Select the type from the delivered change, not mechanically from the issue's
   opening verb.
-- Use `loop:human-confirmed` as the human-approval workflow signal. Do not add
-  account-identity requirements or a separate manual-merge ownership rule.
 
 ## Verification
 
