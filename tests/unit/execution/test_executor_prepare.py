@@ -597,7 +597,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert detail is not None
         run_payload = detail.controls[0].payload
         assert isinstance(run_payload, RunControlPayload)
-        assert run_payload.locals == (
+        assert run_payload.input == (
             RecordLocal.typed("Part[]", (TextPart("hello"), image), "_"),
             RecordLocal.typed("Text", "events", "focus"),
         )

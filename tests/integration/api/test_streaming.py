@@ -682,7 +682,7 @@ def test_child_run_stream_redirects_client_to_root_run(tmp_path: Path) -> None:
         status="running",
         input=(
             FieldRef.from_path(
-                ControlRef.for_run("run_root", 0), "payload", "locals", 0, "value"
+                ControlRef.for_run("run_root", 0), "payload", "input", 0, "value"
             ),
         ),
         output=(),

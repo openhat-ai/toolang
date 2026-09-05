@@ -522,7 +522,7 @@ def initial_locals(
         pointer = FieldRef.from_path(
             ControlRef(RunRef(binding.run_id), binding.control_index),
             "payload",
-            "locals",
+            "input",
             index,
             "value",
         )
@@ -541,7 +541,7 @@ def initial_locals(
         pointer = FieldRef.from_path(
             ControlRef(RunRef(binding.run_id), binding.control_index),
             "payload",
-            "locals",
+            "input",
             index,
             "value",
         )
@@ -560,10 +560,10 @@ def initial_locals(
 def control_local_pointer(control: ControlRecord, name: str) -> FieldRef:
     """Point to one control payload local by its immutable list index."""
 
-    locals_value = getattr(control.payload, "locals", None)
+    locals_value = getattr(control.payload, "input", None)
     if locals_value is None:
         raise ValueError(
-            f"control locals are inherited: {control.target}@{control.index}"
+            f"control input is inherited: {control.target}@{control.index}"
         )
     index = next(
         (index for index, local in enumerate(locals_value) if local.name == name),
@@ -576,7 +576,7 @@ def control_local_pointer(control: ControlRecord, name: str) -> FieldRef:
     return FieldRef.from_path(
         control.ref,
         "payload",
-        "locals",
+        "input",
         index,
         "value",
     )
@@ -715,7 +715,7 @@ def control_text(control: ControlRecord | None) -> str:
         return ""
     if not isinstance(control.payload, SteerControlPayload | CancelControlPayload):
         return ""
-    primary = next((item for item in control.payload.locals if item.name == "_"), None)
+    primary = next((item for item in control.payload.input if item.name == "_"), None)
     if primary is None or isinstance(primary.value, TypedRef):
         return ""
     if isinstance(primary.value, str):

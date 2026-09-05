@@ -171,17 +171,15 @@ are globally unique in the unified Control table; `None` disables request
 identity without weakening the run or Control primary keys.
 
 Rerun acceptance atomically inserts the new root and its index-zero `rerun`
-control with the current canonical sandbox, then marks the source root tree as
-ejected by that control. The source records remain available for audit but
-disappear from effective thread and run projection. The source must be the
-latest visible root in its thread. It must also be terminal, so rerun cannot
-detach a still-owned execution.
+control with the current canonical sandbox. It does not modify the terminal
+source root or its history membership.
 
 Retry acceptance atomically appends an applied `retry` control to the existing
-root, resolves and records its anchor, ejects the invalid structural step
-suffix, fails stale pending controls, and reopens the root as pending. New
-steps use fresh physical indexes; ejected steps are never overwritten. Before
-mutation, retry rejects applied reload and execute-control history
+root, resolves and records its anchor, physically deletes the invalid structural
+step suffix and its child Runs, fails stale pending controls, and reopens the
+root as pending. New steps reuse the trimmed indexes. Before mutation, retry
+rejects any root tree captured by a durable fork prefix, as well as applied
+reload and execute-control history
 because it cannot replay either prior execution timeline. It also requires the
 source preparation to have sandbox
 provenance and requires it to equal the current canonical sandbox. Accepted
@@ -299,10 +297,9 @@ durable round trips do not lose precision.
 frozen process overrides. A request may overlay individual fields for one root
 run without changing the setup snapshot.
 
-A retry restores global token and cost accounting from effective, non-ejected
-succeeded model steps. Ejected attempts remain auditable but do not consume the
-retried execution's effective totals. Per-agic call counters restart only for
-agics that execute again.
+A retry restores global token and cost accounting from retained succeeded model
+steps. Deleted attempts do not consume the retried execution's effective totals.
+Per-agic call counters restart only for agics that execute again.
 
 The `_Execution` object emits `RunBegin` and `RunEnd` and dispatches each
 accepted runnable to the appropriate run body. Input coercion initializes the

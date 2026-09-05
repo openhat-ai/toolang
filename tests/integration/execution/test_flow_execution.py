@@ -279,7 +279,7 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     assert run_control.payload.runnable == "flow:pipeline"
     assert run_control.payload.model == "none"
     assert run_control.payload.limits == _setup().limits
-    assert run_control.payload.locals == ()
+    assert run_control.payload.input == ()
     assert run_control.payload.resources is not None
     detail = RunHistory(store).get_run(record.id)
     assert detail is not None
@@ -1177,7 +1177,6 @@ def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
     rewound = store.get_thread(thread_id=created)
     anchor = store.get_run(run_id=anchor_id)
     assert anchor is not None and rewound is not None
-    assert anchor.ejected_by is None
     assert [event.type for event in listener.events] == [
         "thread_created",
         "thread_forked",
@@ -1235,9 +1234,7 @@ def test_thread_fork_rejects_duplicate_request_without_starting_runs(
     )
 
     assert store.get_thread(thread_id=forked) is not None
-    assert [run.id for run in store.list_runs(limit=None, include_ejected=True)] == [
-        "run_anchor"
-    ]
+    assert [run.id for run in store.list_runs(limit=None)] == ["run_anchor"]
     assert [event.type for event in listener.events] == [
         "thread_created",
         "thread_forked",
@@ -1281,10 +1278,10 @@ def test_rewind_uses_durable_acceptance_order_instead_of_timestamps(
     anchor = store.get_run(run_id="run_anchor")
     after = store.get_run(run_id="run_after")
     rewound = store.get_thread(thread_id=created)
-    assert before is not None and before.ejected_by is None
+    assert before is not None
     assert rewound is not None
-    assert anchor is not None and anchor.ejected_by is None
-    assert after is not None and after.ejected_by is None
+    assert anchor is not None
+    assert after is not None
     asyncio.run(executor.stop())
 
 
@@ -1327,7 +1324,7 @@ def test_rewind_can_trim_inherited_fork_history(tmp_path: Path) -> None:
         run.id for run in store.list_thread_history_chronological(thread_id=forked)
     ] == ["run_a"]
     source_anchor = store.get_run(run_id="run_b")
-    assert source_anchor is not None and source_anchor.ejected_by is None
+    assert source_anchor is not None
     asyncio.run(executor.stop())
 
 
@@ -1364,7 +1361,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
                     FieldRef.from_path(
                         ControlRef.for_run("run_root", 0),
                         "payload",
-                        "locals",
+                        "input",
                         0,
                         "value",
                     ),
@@ -1761,7 +1758,7 @@ def test_private_event_projector_persists_run_and_step_records(
             given=LetStmt(span=Span(line=1), value="done"),
             input=(
                 FieldRef.from_path(
-                    ControlRef.for_run("run_test", 0), "payload", "locals", 0, "value"
+                    ControlRef.for_run("run_test", 0), "payload", "input", 0, "value"
                 ),
             ),
             started_at="2026-01-01T00:00:02Z",

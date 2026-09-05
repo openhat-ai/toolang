@@ -43,7 +43,7 @@ records and observes only new live events.
 
 Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
-process exits. Schema version 34 is an incompatible reference boundary: both
+process exits. The execution store uses schema version 36: both
 read-only and writable opens reject every other version unchanged. This build
 does not migrate older stores.
 
@@ -291,9 +291,11 @@ run-control rows. Its inherited history includes the anchor. It may select an
 earlier terminal anchor even when the source thread has a later active run. A
 rewind discards its anchor and the visible suffix after it, and is rejected
 while any visible top-level run is pending or running. The caller must cancel
-active runs before retrying; `ThreadManager` never writes run controls. Runs
-owned by the rewound thread are marked with `ejected`; an inherited
-source run is never modified. Forks and rewinds are serialized across
+active runs before retrying; `ThreadManager` never writes run controls. Rewind
+records a closed range in a Thread control without modifying Runs or Steps.
+Logical history applies that Thread's controls; physical records remain readable.
+Forks capture the source view at its control head, so later source rewinds do not
+change the inherited prefix. Forks and rewinds are serialized across
 processes with an agent-local file lock. Anchor resolution, terminal checks,
 the rewind idle check, and control insertion occur in one SQLite write
 transaction. The store keeps expected-head comparison as an internal defensive

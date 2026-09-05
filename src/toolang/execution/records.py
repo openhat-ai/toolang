@@ -94,7 +94,6 @@ class RunRecord:
     occur: Occurrence | None = None
     status: RunStatus = "pending"
     error: ErrorMessage | ErrorRef | None = None
-    ejected_by: ControlRef | None = None
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
@@ -117,8 +116,6 @@ class RunRecord:
         if self.output is not None and not isinstance(self.output, Local):
             raise TypeError("run output requires a Local or None")
         _validate_record_error(self.error, label="run")
-        if self.ejected_by is not None and not isinstance(self.ejected_by, ControlRef):
-            raise TypeError("run ejected_by requires a ControlRef or None")
         validate_occurrence(self.occur)
 
 
@@ -165,7 +162,7 @@ class RunControlPayload:
     state: str | None
     runnable: str
     model: str
-    locals: tuple[Local, ...]
+    input: tuple[Local, ...]
     model_request: ModelRequest | None = None
     sandbox: str | None = None
     authored_input: RunnableInputRaw | None = None
@@ -179,7 +176,7 @@ class RunControlPayload:
             self.runnable,
             self.model,
             self.model_request,
-            self.locals,
+            self.input,
             self.sandbox,
         )
         _validate_authored_facts(
@@ -199,7 +196,7 @@ class RerunControlPayload:
     state: str
     runnable: str
     model: str
-    locals: tuple[Local, ...]
+    input: tuple[Local, ...]
     rerun_from: RunRef
     model_request: ModelRequest | None = None
     sandbox: str | None = None
@@ -214,7 +211,7 @@ class RerunControlPayload:
             self.runnable,
             self.model,
             self.model_request,
-            self.locals,
+            self.input,
             self.sandbox,
         )
         if not isinstance(self.rerun_from, RunRef):
@@ -236,7 +233,7 @@ class RetryControlPayload:
     state: str | None
     runnable: str
     model: str
-    locals: tuple[Local, ...] | None
+    input: tuple[Local, ...] | None
     retry_from: StepRef | None
     model_request: ModelRequest | None = None
     sandbox: str | None = None
@@ -251,7 +248,7 @@ class RetryControlPayload:
             self.runnable,
             self.model,
             self.model_request,
-            self.locals,
+            self.input,
             self.sandbox,
         )
         if self.retry_from is not None and not isinstance(self.retry_from, StepRef):
@@ -282,7 +279,7 @@ class ExecuteControlPayload:
     runnable: str
     module: str
     source: FieldRef
-    locals: tuple[Local, ...]
+    input: tuple[Local, ...]
 
     def __post_init__(self) -> None:
         _validate_state_revision(self.state, label="execute payload State")
@@ -292,12 +289,12 @@ class ExecuteControlPayload:
             raise ValueError("execute payload requires a canonical module")
         if not isinstance(self.source, FieldRef):
             raise TypeError("execute payload source requires a FieldRef")
-        _validate_control_locals(self.locals)
-        for local in self.locals:
+        _validate_control_input(self.input)
+        for local in self.input:
             if local.type != "Json":
-                raise TypeError("execute payload locals must use raw Json values")
+                raise TypeError("execute payload input must use raw Json values")
             if not isinstance(local.value, TypedRef):
-                raise TypeError("execute payload locals must point to model input")
+                raise TypeError("execute payload input must point to model input")
             expected = self.source.select("input", "input", local.name or "")
             if local.value.ref != expected:
                 raise ValueError(
@@ -309,20 +306,20 @@ class ExecuteControlPayload:
 class SteerControlPayload:
     """Values injected at one agic model boundary."""
 
-    locals: tuple[Local, ...]
+    input: tuple[Local, ...]
 
     def __post_init__(self) -> None:
-        _validate_control_locals(self.locals)
+        _validate_control_input(self.input)
 
 
 @dataclass(frozen=True, slots=True)
 class CancelControlPayload:
     """Optional run cancellation reason values."""
 
-    locals: tuple[Local, ...] = ()
+    input: tuple[Local, ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_control_locals(self.locals)
+        _validate_control_input(self.input)
 
 
 @dataclass(frozen=True, slots=True)
@@ -486,7 +483,6 @@ class StepRecord:
     noted: StepNoted = None
     status: StepStatus = "running"
     error: ErrorMessage | ErrorRef | None = None
-    ejected_by: ControlRef | None = None
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
@@ -504,8 +500,6 @@ class StepRecord:
         if self.output is not None and not isinstance(self.output, Local):
             raise TypeError("step output requires a Local or None")
         _validate_record_error(self.error, label="step")
-        if self.ejected_by is not None and not isinstance(self.ejected_by, ControlRef):
-            raise TypeError("step ejected_by requires a ControlRef or None")
         validate_occurrence(self.occur)
         if isinstance(self.given, StoredModelStepGiven):
             if self.kind != "model":
@@ -805,21 +799,21 @@ def _control_payload_from_data(
         if model_request is not None and model_request.ref != model:
             raise ValueError("preparation model request must match model")
         sandbox = _optional_payload_text(payload, "sandbox")
-        raw_locals = payload.get("locals")
-        if raw_locals is None:
-            locals_value = None
-        elif isinstance(raw_locals, Sequence) and not isinstance(
-            raw_locals, (str, bytes, bytearray)
+        raw_input = payload.get("input")
+        if raw_input is None:
+            input_value = None
+        elif isinstance(raw_input, Sequence) and not isinstance(
+            raw_input, (str, bytes, bytearray)
         ):
-            if not all(isinstance(item, Mapping) for item in raw_locals):
+            if not all(isinstance(item, Mapping) for item in raw_input):
                 raise ValueError(f"{kind} payload contains an invalid local")
-            locals_value = tuple(
-                local_decoder(cast(Mapping[str, object], item)) for item in raw_locals
+            input_value = tuple(
+                local_decoder(cast(Mapping[str, object], item)) for item in raw_input
             )
         else:
-            raise ValueError(f"{kind} payload locals must be an array or null")
-        if kind != "retry" and locals_value is None:
-            raise ValueError(f"{kind} payload requires locals")
+            raise ValueError(f"{kind} payload input must be an array or null")
+        if kind != "retry" and input_value is None:
+            raise ValueError(f"{kind} payload requires input")
         authored_input = _authored_input_from_data(payload.get("authored_input"))
         authored_commands = _run_commands_from_data(
             payload.get("authored_commands", ()),
@@ -839,7 +833,7 @@ def _control_payload_from_data(
                 state=state,
                 runnable=runnable,
                 model=model,
-                locals=locals_value or (),
+                input=input_value or (),
                 model_request=model_request,
                 sandbox=sandbox,
                 authored_input=authored_input,
@@ -856,7 +850,7 @@ def _control_payload_from_data(
                 state=state,
                 runnable=runnable,
                 model=model,
-                locals=locals_value or (),
+                input=input_value or (),
                 rerun_from=RunRef(_required_payload_text(payload, "rerun_from")),
                 model_request=model_request,
                 sandbox=sandbox,
@@ -872,7 +866,7 @@ def _control_payload_from_data(
             state=state,
             runnable=runnable,
             model=model,
-            locals=locals_value,
+            input=input_value,
             retry_from=(
                 StepRef.parse(str(raw_retry_from))
                 if raw_retry_from is not None
@@ -890,39 +884,39 @@ def _control_payload_from_data(
             state=_required_payload_text(payload, "state"),
         )
     if kind == "execute":
-        raw_locals = payload.get("locals")
-        if not isinstance(raw_locals, Sequence) or isinstance(
-            raw_locals, (str, bytes, bytearray)
+        raw_input = payload.get("input")
+        if not isinstance(raw_input, Sequence) or isinstance(
+            raw_input, (str, bytes, bytearray)
         ):
-            raise ValueError("execute payload locals must be an array")
-        if not all(isinstance(item, Mapping) for item in raw_locals):
+            raise ValueError("execute payload input must be an array")
+        if not all(isinstance(item, Mapping) for item in raw_input):
             raise ValueError("execute payload contains an invalid local")
         return ExecuteControlPayload(
             state=_required_payload_text(payload, "state"),
             runnable=_required_payload_text(payload, "runnable"),
             module=_required_payload_text(payload, "module"),
             source=FieldRef.parse(_required_payload_text(payload, "source")),
-            locals=tuple(
-                local_decoder(cast(Mapping[str, object], item)) for item in raw_locals
+            input=tuple(
+                local_decoder(cast(Mapping[str, object], item)) for item in raw_input
             ),
         )
     if kind in {"steer", "cancel"}:
-        raw_locals = payload.get("locals", ())
-        if not isinstance(raw_locals, Sequence) or isinstance(
-            raw_locals, (str, bytes, bytearray)
+        raw_input = payload.get("input", ())
+        if not isinstance(raw_input, Sequence) or isinstance(
+            raw_input, (str, bytes, bytearray)
         ):
-            raise ValueError(f"{kind} payload locals must be an array")
-        locals_value = tuple(
+            raise ValueError(f"{kind} payload input must be an array")
+        input_value = tuple(
             local_decoder(cast(Mapping[str, object], item))
-            for item in raw_locals
+            for item in raw_input
             if isinstance(item, Mapping)
         )
-        if len(locals_value) != len(raw_locals):
+        if len(input_value) != len(raw_input):
             raise ValueError(f"{kind} payload contains an invalid local")
         return (
-            SteerControlPayload(locals_value)
+            SteerControlPayload(input_value)
             if kind == "steer"
-            else CancelControlPayload(locals_value)
+            else CancelControlPayload(input_value)
         )
     if kind == "create":
         if payload:
@@ -956,11 +950,6 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
     if isinstance(payload, RetryControlPayload):
         return {
             **_preparation_payload_data(payload),
-            "locals": (
-                [local_to_data(local) for local in payload.locals]
-                if payload.locals is not None
-                else None
-            ),
             "retry_from": (
                 str(payload.retry_from) if payload.retry_from is not None else None
             ),
@@ -973,10 +962,10 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
             "runnable": payload.runnable,
             "module": payload.module,
             "source": str(payload.source),
-            "locals": [local_to_data(local) for local in payload.locals],
+            "input": [local_to_data(local) for local in payload.input],
         }
     if isinstance(payload, SteerControlPayload | CancelControlPayload):
-        return {"locals": [local_to_data(local) for local in payload.locals]}
+        return {"input": [local_to_data(local) for local in payload.input]}
     if isinstance(payload, CreateControlPayload):
         return {}
     if isinstance(payload, ForkControlPayload):
@@ -1753,9 +1742,9 @@ def _preparation_payload_data(
             if payload.model_request is not None
             else None
         ),
-        "locals": (
-            [local_to_data(local) for local in payload.locals]
-            if payload.locals is not None
+        "input": (
+            [local_to_data(local) for local in payload.input]
+            if payload.input is not None
             else None
         ),
     }
@@ -1916,7 +1905,7 @@ def _validate_preparation_payload(
     runnable: str,
     model: str,
     model_request: ModelRequest | None,
-    locals: tuple[Local, ...] | None,
+    input: tuple[Local, ...] | None,
     sandbox: str | None,
 ) -> None:
     if state is not None:
@@ -1933,8 +1922,8 @@ def _validate_preparation_payload(
         not isinstance(sandbox, str) or not sandbox or sandbox != sandbox.strip()
     ):
         raise ValueError("preparation payload requires a canonical sandbox")
-    if locals is not None:
-        _validate_control_locals(locals)
+    if input is not None:
+        _validate_control_input(input)
 
 
 def _validate_authored_facts(
@@ -1974,11 +1963,11 @@ def _validate_state_revision(state: object, *, label: str) -> str:
     return state
 
 
-def _validate_control_locals(locals: tuple[Local, ...]) -> None:
-    if not all(isinstance(local, Local) for local in locals):
-        raise TypeError("control locals must contain Local values")
-    names = tuple(local.name for local in locals)
+def _validate_control_input(input: tuple[Local, ...]) -> None:
+    if not all(isinstance(local, Local) for local in input):
+        raise TypeError("control input must contain Local values")
+    names = tuple(local.name for local in input)
     if any(name is None for name in names):
-        raise ValueError("control locals must be named")
+        raise ValueError("control input must be named")
     if len(names) != len(set(names)):
         raise ValueError("control local names must be unique")

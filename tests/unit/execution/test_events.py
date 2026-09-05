@@ -61,7 +61,7 @@ _EVENTS: tuple[RunEvent, ...] = (
         given=ModelStepGiven(model="test/model", call=ModelCall("", [])),
         input=(
             FieldRef.from_path(
-                ControlRef.for_run("run_root", 0), "payload", "locals", 0, "value"
+                ControlRef.for_run("run_root", 0), "payload", "input", 0, "value"
             ),
             FieldRef.from_path(StepRef.parse("run_root.1"), "output", "value"),
         ),

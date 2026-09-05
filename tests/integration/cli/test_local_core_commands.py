@@ -313,7 +313,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
             status="succeeded",
             input=(
                 FieldRef.from_path(
-                    ControlRef.for_run(run.id, 0), "payload", "locals", 0, "value"
+                    ControlRef.for_run(run.id, 0), "payload", "input", 0, "value"
                 ),
             ),
             output=(TextPart(text="prepared"),),
@@ -337,6 +337,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     assert result.exit_code == 0
     document = json.loads(result.stdout)
     assert document["id"] == "run_inspect.0"
+    assert "ejected_by" not in document
     assert document["kind"] == "value"
     assert document["occur"] == {
         "item": None,
@@ -373,6 +374,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     human = _invoke(root, "alice", "inspect", "run_inspect.0")
     old_thread_field = _invoke(root, "alice", "inspect", "term_inspect/thread_id")
     old_run_field = _invoke(root, "alice", "inspect", "run_inspect/occurrence")
+    old_run_ejection = _invoke(root, "alice", "inspect", "run_inspect/ejected_by")
     old_step_field = _invoke(
         root,
         "alice",
@@ -382,7 +384,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     resolved = _invoke(root, "alice", "inspect", "run_inspect.0/input")
     resolved_value = _invoke(root, "alice", "inspect", "run_inspect.0/input/0")
     status = _invoke(root, "alice", "inspect", "run_inspect.0/status")
-    ejected_by = _invoke(root, "alice", "inspect", "run_inspect.0/ejected_by")
+    old_step_ejection = _invoke(root, "alice", "inspect", "run_inspect.0/ejected_by")
     response = _invoke(
         root,
         "alice",
@@ -410,7 +412,13 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     human_step_text = " ".join(strip_ansi(human.stdout).split())
     assert "FIELD TYPE VALUE" in human_step_text
     assert "/occur Occurrence?" in human_step_text
-    for old_field in (old_thread_field, old_run_field, old_step_field):
+    for old_field in (
+        old_thread_field,
+        old_run_field,
+        old_step_field,
+        old_run_ejection,
+        old_step_ejection,
+    ):
         assert old_field.exit_code == 1
         assert "field does not exist" in old_field.stderr
     assert "has type" not in human.stdout
@@ -418,7 +426,8 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     assert "TYPE" in human.stdout
     assert "/id" in human.stdout
     assert "str" in human.stdout
-    assert "ControlRef?" in human.stdout
+    assert "ControlRef" in human.stdout
+    assert "/ejected_by" not in human.stdout
     assert "ControlRef | None" not in human.stdout
     assert "/path" not in human.stdout
     assert "/output" in human.stdout
@@ -436,7 +445,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     assert resolved_row.split()[:2] == ["/0", "FieldRef"]
     assert "→" not in resolved.stdout
     assert "run_inspect.0/input/0" not in resolved.stdout
-    assert "run_inspect@0/payload/locals/0/value" in resolved.stdout
+    assert "run_inspect@0/payload/input/0/value" in resolved.stdout
     assert "Inspect this" not in resolved.stdout
     assert resolved_value.exit_code == 0
     assert "resolves to" not in resolved_value.stdout
@@ -444,8 +453,6 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     assert strip_ansi(resolved_value.stdout).strip() == "Inspect this"
     assert status.exit_code == 0
     assert status.stdout == "succeeded\n"
-    assert ejected_by.exit_code == 0
-    assert ejected_by.stdout == "null\n"
     assert response.exit_code == 0
     assert "run_inspect.0/output/value" not in response.stdout
     assert "prepared" in response.stdout
@@ -2023,7 +2030,7 @@ def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> Non
         ("cancel", "immediate", "pending"),
     ]
     assert isinstance(controls[1].payload, SteerControlPayload)
-    assert controls[1].payload.locals == (
+    assert controls[1].payload.input == (
         Local.typed("Part[]", Message.user("Focus on tests").parts, "_", 0),
     )
 

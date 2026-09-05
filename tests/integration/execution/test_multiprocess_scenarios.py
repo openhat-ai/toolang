@@ -236,7 +236,7 @@ def _race_retry(
             state=payload.state,
             runnable=payload.runnable,
             model=payload.model,
-            locals=payload.locals,
+            locals=payload.input,
             sandbox="host",
             request_id=request_id,
             created_at="2026-01-01T00:00:03Z",
@@ -440,7 +440,7 @@ def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
             assert control is not None
             assert control.status == "applied"
             assert control.payload == SteerControlPayload(
-                locals=(
+                input=(
                     Local.typed(
                         "Part[]",
                         Message.user("Use the remote guidance.").parts,
@@ -799,7 +799,6 @@ def test_concurrent_forks_preserve_one_terminal_anchor(
             ] == ["run_fork_anchor"]
         anchor = reopened.get_run(run_id="run_fork_anchor")
         assert anchor is not None
-        assert anchor.ejected_by is None
     finally:
         reopened.close()
 
@@ -831,7 +830,6 @@ def test_run_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
         new_run = reopened.get_run(run_id="run_racing_run")
         thread = reopened.get_thread(thread_id="term_race")
         assert new_run is not None
-        assert new_run.ejected_by is None
         assert thread is not None
 
         rewind = by_kind["rewind"]
@@ -842,7 +840,6 @@ def test_run_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
             )
             anchor = reopened.get_run(run_id="run_race_anchor")
             assert anchor is not None
-            assert anchor.ejected_by is None
             assert [
                 run.id
                 for run in reopened.list_thread_history_chronological(

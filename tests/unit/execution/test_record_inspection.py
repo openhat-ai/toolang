@@ -4,6 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from pydantic import TypeAdapter
 
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.policy import RunLimits
@@ -195,7 +196,7 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
             status="succeeded",
             input=(
                 FieldRef.from_path(
-                    ControlRef.for_run(run.id, 0), "payload", "locals", 0, "value"
+                    ControlRef.for_run(run.id, 0), "payload", "input", 0, "value"
                 ),
             ),
             output=(TextPart("result"),),
@@ -253,7 +254,6 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
             "occur",
             "status",
             "error",
-            "ejected_by",
             "created_at",
             "started_at",
             "finished_at",
@@ -269,14 +269,13 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
             "noted",
             "status",
             "error",
-            "ejected_by",
             "created_at",
             "started_at",
             "finished_at",
         }
         assert "scope" not in control_data
         assert control_data["id"] == f"{run.id}@0"
-        assert step_data["input"] == [f"{run.id}@0/payload/locals/0/value"]
+        assert step_data["input"] == [f"{run.id}@0/payload/input/0/value"]
         assert run_data["output"] == {
             "type": "Part[]",
             "value": {"?": f"{step.ref}/output/value:Part[]"},
@@ -439,7 +438,10 @@ def test_record_lookup_retains_steps_owned_by_a_rewound_run(tmp_path: Path) -> N
         store.close()
 
 
-def test_record_lookup_hides_a_run_owned_by_an_ejected_step(tmp_path: Path) -> None:
+@pytest.mark.parametrize("reopen", (False, True))
+def test_record_lookup_retains_children_of_a_rewound_run(
+    tmp_path: Path, reopen: bool
+) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
         root = project_run_start(
@@ -479,24 +481,44 @@ def test_record_lookup_hides_a_run_owned_by_an_ejected_step(tmp_path: Path) -> N
             started_at="2026-01-01T00:00:03Z",
             finished_at="2026-01-01T00:00:04Z",
         )
-        with store.write_transaction():
-            store._conn.execute(
-                """
-                UPDATE steps
-                SET ejected_by = ?
-                WHERE run = ? AND path = ?
-                """,
-                (
-                    str(ControlRef.for_thread(str(root.thread), 0)),
-                    parent.ref.run_id,
-                    parent.ref.local,
-                ),
-            )
+        project_run_end(store, run_id=child.id)
+        project_run_end(store, run_id=root.id)
+        store.rewind_thread(
+            thread_id=str(root.thread),
+            anchor=root.id,
+            request_id=None,
+            expected_head=store.thread_views().head(str(root.thread)),
+            created_at="2026-01-01T00:00:05Z",
+        )
+        if reopen:
+            store.close()
+            store = RunStore(tmp_path / "runs.db")
 
-        assert child.id not in {run.id for run in store.list_runs(limit=None)}
-        assert store.get_record(Pointer.parse(child.id)) is None
-        assert store.get_record(Pointer(ControlRef.for_run(child.id, 0))) is None
-        assert store.get_record(Pointer.parse(str(child_step.ref))) is None
+        assert child.id in {run.id for run in store.list_runs(limit=None)}
+        assert store.get_record(Pointer.parse(child.id)) == store.get_run(
+            run_id=child.id
+        )
+        assert store.get_record(Pointer(ControlRef.for_run(child.id, 0))) is not None
+        assert store.get_record(Pointer(child_step.ref)) == child_step
+        assert store.inspect_runs(thread_id=str(root.thread)) == ()
+        assert store.list_runs(thread_id=str(root.thread)) == []
+        assert store.list_thread_history_chronological(thread_id=str(root.thread)) == ()
+        assert {
+            run.id
+            for run in store.list_runs(thread_id=str(root.thread), include_rewound=True)
+        } == {root.id, child.id}
+        assert store.inspect_child_runs(parent=parent)[0].record.id == child.id
+        assert store.inspect_steps(run_id=child.id)[0].record == child_step
+        assert {item.record.id for item in store.inspect_runs()} == {root.id, child.id}
+        snapshot = store.load_execution_snapshot(root=root.id)
+        assert {run.id for run in snapshot.runs} == {root.id, child.id}
+        assert {step.ref for step in snapshot.steps} == {parent.ref, child_step.ref}
+        child_snapshot = store.load_execution_snapshot(root=parent.ref)
+        assert {run.id for run in child_snapshot.runs} == {child.id}
+        assert {step.ref for step in child_snapshot.steps} == {
+            parent.ref,
+            child_step.ref,
+        }
     finally:
         store.close()
 
@@ -510,7 +532,12 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
         (
             "run",
             RunControlPayload(
-                resources, limits, revision, "agic:test", "test/model", ()
+                resources,
+                limits,
+                revision,
+                "agic:test",
+                "test/model",
+                (Local.typed("Json", {"locals": {"input": "unchanged"}}, "_"),),
             ),
             {
                 "resources",
@@ -519,7 +546,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 "runnable",
                 "model",
                 "model_request",
-                "locals",
+                "input",
                 "sandbox",
                 "authored_input",
                 "authored_commands",
@@ -545,7 +572,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 "runnable",
                 "model",
                 "model_request",
-                "locals",
+                "input",
                 "rerun_from",
                 "sandbox",
                 "authored_input",
@@ -572,7 +599,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 "runnable",
                 "model",
                 "model_request",
-                "locals",
+                "input",
                 "retry_from",
                 "sandbox",
                 "authored_input",
@@ -591,14 +618,14 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 source,
                 (Local.typed("Json", source.select("input", "input", "_"), "_"),),
             ),
-            {"state", "runnable", "module", "source", "locals"},
+            {"state", "runnable", "module", "source", "input"},
         ),
         (
             "steer",
             SteerControlPayload((Local.typed("Text", "continue", "_"),)),
-            {"locals"},
+            {"input"},
         ),
-        ("cancel", CancelControlPayload(), {"locals"}),
+        ("cancel", CancelControlPayload(), {"input"}),
         ("create", CreateControlPayload(), set()),
         (
             "fork",
@@ -624,9 +651,12 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
         target = (
             "term_control" if kind in {"create", "fork", "rewind"} else "run_control"
         )
-        data = record_to_data(
-            ControlRecord(id=f"{target}@{index}", kind=kind, payload=payload)  # type: ignore[arg-type]
+        record = ControlRecord(
+            id=f"{target}@{index}",
+            kind=kind,  # type: ignore[arg-type]
+            payload=payload,
         )
+        data = record_to_data(record)
 
         assert set(data) == {
             "id",
@@ -640,3 +670,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
             "finished_at",
         }
         assert set(data["payload"]) == payload_fields  # type: ignore[arg-type]
+        adapter = TypeAdapter(ControlRecord)
+        protocol = adapter.dump_python(record, mode="json")
+        assert set(protocol["payload"]) == payload_fields
+        assert adapter.validate_python(protocol) == record

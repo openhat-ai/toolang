@@ -333,12 +333,12 @@ missing `runs.db` is an error rather than an empty successful result.
 The initial collection and relation subjects are:
 
 ```text
-threads                 every visible Thread record
-runs                    every visible Run record
-controls                every visible Control record
-THREAD runs             every visible Run belonging to THREAD
-RUN steps               every visible Step physically owned by RUN
-STEP runs               every visible Run directly accepted by STEP
+threads                 every Thread record
+runs                    every physical Run record, including rewound Runs
+controls                Thread controls and controls of existing Runs
+THREAD runs             Runs in THREAD's logical history, including child Runs
+RUN steps               every Step physically owned by RUN
+STEP runs               every Run directly accepted by STEP
 LOOP_STEP steps         every direct same-Run Step owned by LOOP_STEP
 ```
 
@@ -346,10 +346,10 @@ Collections are unbounded and preserve durable ordering. Their JSON form is a
 bare array of canonical record objects; every object is identical to inspecting
 its printed Pointer individually. A missing `runs.db` is an error, while an
 existing store with no matching records returns an empty collection.
-`controls` combines all Thread Controls with Controls belonging to visible Runs.
-It excludes a Run Control when its owning Run or parent Step is ejected and
-orders records by creation time descending, target ascending, then Control index
-descending.
+`controls` combines all Thread Controls with Controls belonging to existing Runs,
+including rewound Runs. It excludes a Run Control when retry deleted its owning
+Run and orders records by creation time descending, target ascending, then
+Control index descending.
 
 A Pointer still selects one durable Thread, Control, Run, or Step record, or a
 field inside that record:
@@ -361,7 +361,7 @@ run_ab12.0                        Step record
 term_ab12@0                       Thread Control record
 run_ab12@1                        Run Control record
 run_ab12.0/output/value/0         nested field
-run_ab12@1/payload/locals/0/value nested Control field
+run_ab12@1/payload/input/0/value nested Control field
 ```
 
 `.` enters the Step hierarchy, `@` selects a Control index, and `/` enters a

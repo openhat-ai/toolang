@@ -104,7 +104,7 @@ def _retry(store: RunStore, run: str) -> None:
         state=payload.state,
         runnable=payload.runnable,
         model=payload.model,
-        locals=payload.locals,
+        locals=payload.input,
         sandbox="host",
         request_id=None,
         created_at="2026-01-01T00:00:05Z",
@@ -162,7 +162,7 @@ def test_nested_forks_capture_source_views_and_closed_rewinds_survive_restart(
             assert [
                 r.id
                 for r in reader.list_thread_history_chronological(
-                    thread_id="term_fork", include_ejected=True
+                    thread_id="term_fork", include_rewound=True
                 )
             ] == ["run_z", "run_child", "run_b", "run_d", "run_e"]
             assert [r.id for r in reader.thread_views().history("term_nested")] == [

@@ -87,6 +87,9 @@ Control status is `pending`, `applied`, `wontapply`, or `revoked`. Timing is
 `immediate`, `next_step`, or `next_call`. Private claim and revision columns
 support concurrency and polling.
 
+Run, Rerun, Retry, Execute, Steer, and Cancel payloads store primary and named
+values in `input`. Execution-time local variables remain locals.
+
 ### RunRecord
 
 ```text
@@ -99,14 +102,13 @@ output
 occur
 status
 error
-ejected_by
 created_at
 started_at
 finished_at
 ```
 
-`parent` is the calling `StepRef` for a child Run. `thread`, `control`, `state`,
-and `ejected_by` are typed references. `output` is a Local and may contain a
+`parent` is the calling `StepRef` for a child Run. `thread`, `control`, and `state`
+are typed references. `output` is a Local and may contain a
 `TypedRef` to an explicit `/output/value` field.
 
 ### StepRecord
@@ -122,7 +124,6 @@ occur
 noted
 status
 error
-ejected_by
 created_at
 started_at
 finished_at
@@ -165,7 +166,9 @@ explicit `null` remain distinct outcomes.
 
 `toolang AGENT inspect POINTER` opens the store read-only. Human output shows
 one structural level; `--json` returns canonical JSON without following stored
-Refs. Ejected Runs and Steps remain hidden from ordinary inspection.
+Refs. Physical Runs and Steps remain inspectable after Thread rewind; only
+Thread-selected collections apply logical history membership. Retry physically
+deletes its invalid Steps and child Runs.
 
 Ownership can be inspected without constructing an execution tree:
 
@@ -198,6 +201,6 @@ scope, target, and index. Record selection still uses the canonical ID.
 All other reference-bearing columns store the complete canonical Ref string.
 `BEGIN IMMEDIATE` serializes local index allocation and related mutations.
 
-The current RunStore schema is version 34. Every older or newer version is
+The current RunStore schema is version 36. Every older or newer version is
 rejected before reading or writing. There is no migration or legacy reference
 parser at this boundary, and incompatible stores remain unchanged.

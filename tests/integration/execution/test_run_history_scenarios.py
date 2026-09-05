@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
@@ -169,7 +170,10 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
         store.close()
 
 
-def test_run_history_resolves_pass_through_control_output(tmp_path: Path) -> None:
+@pytest.mark.parametrize("reopen", (False, True))
+def test_run_history_resolves_pass_through_control_output(
+    tmp_path: Path, reopen: bool
+) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
         run = project_run_start(
@@ -183,10 +187,13 @@ def test_run_history_resolves_pass_through_control_output(tmp_path: Path) -> Non
             store,
             run_id=run.id,
             output=FieldRef.from_path(
-                ControlRef.for_run(run.id, 0), "payload", "locals", 0, "value"
+                ControlRef.for_run(run.id, 0), "payload", "input", 0, "value"
             ),
         )
 
+        if reopen:
+            store.close()
+            store = RunStore(tmp_path / "runs.db")
         stored = store.get_run(run_id=run.id)
         detail = RunHistory(store).get_run(run.id)
 
@@ -195,7 +202,7 @@ def test_run_history_resolves_pass_through_control_output(tmp_path: Path) -> Non
         assert stored.output == Local.typed(
             "Part[]",
             FieldRef.from_path(
-                ControlRef.for_run(run.id, 0), "payload", "locals", 0, "value"
+                ControlRef.for_run(run.id, 0), "payload", "input", 0, "value"
             ),
             "_",
             0,
@@ -205,7 +212,7 @@ def test_run_history_resolves_pass_through_control_output(tmp_path: Path) -> Non
         assert detail.output == Local.typed(
             "Part[]",
             FieldRef.from_path(
-                ControlRef.for_run(run.id, 0), "payload", "locals", 0, "value"
+                ControlRef.for_run(run.id, 0), "payload", "input", 0, "value"
             ),
             "_",
             0,
@@ -230,7 +237,7 @@ def test_resolve_local_rejects_a_pointer_to_a_different_type(tmp_path: Path) -> 
                 Local.typed(
                     "Number",
                     FieldRef.from_path(
-                        ControlRef.for_run(run.id, 0), "payload", "locals", 0, "value"
+                        ControlRef.for_run(run.id, 0), "payload", "input", 0, "value"
                     ),
                     "_",
                     0,
@@ -273,7 +280,7 @@ def test_run_history_keeps_rewound_records_outside_the_thread_view(
 
         rewound = RunHistory(store).get_run(second.id)
         assert rewound is not None
-        assert rewound.ejected is None
+        assert "ejected" not in {field.name for field in fields(rewound)}
         assert RunHistory(store).list_runs(thread_id="term_thread") == []
     finally:
         store.close()

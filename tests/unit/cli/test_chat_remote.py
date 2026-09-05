@@ -238,7 +238,6 @@ def _detail(
         summary="remote answer",
         status=status,  # type: ignore[arg-type]
         error=None,
-        ejected=None,
         created_at="2026-08-25T00:00:00Z",
         started_at="2026-08-25T00:00:00Z",
         finished_at="2026-08-25T00:00:01Z" if terminal else None,

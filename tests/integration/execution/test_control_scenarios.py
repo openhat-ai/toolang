@@ -152,7 +152,7 @@ agic revise(_: Part[]) -> Part[]:
                 FieldRef.from_path(
                     ControlRef.for_run(record.id, control.index),
                     "payload",
-                    "locals",
+                    "input",
                     0,
                     "value",
                 ),
@@ -234,7 +234,7 @@ agic calculate(_: Part[]) -> Part[]:
                 FieldRef.from_path(
                     ControlRef.for_run(record.id, control.index),
                     "payload",
-                    "locals",
+                    "input",
                     0,
                     "value",
                 ),
@@ -514,16 +514,16 @@ agic revise(_: Text) -> Text:
             second_step = harness.store.list_steps(run_id=record.id)[1]
             assert second_step.input == (
                 FieldRef.from_path(
-                    ControlRef.for_run(record.id, 0), "payload", "locals", 0, "value"
+                    ControlRef.for_run(record.id, 0), "payload", "input", 0, "value"
                 ),
                 FieldRef.from_path(
-                    ControlRef.for_run(record.id, 1), "payload", "locals", 0, "value"
+                    ControlRef.for_run(record.id, 1), "payload", "input", 0, "value"
                 ),
                 FieldRef.from_path(
-                    ControlRef.for_run(record.id, 2), "payload", "locals", 0, "value"
+                    ControlRef.for_run(record.id, 2), "payload", "input", 0, "value"
                 ),
                 FieldRef.from_path(
-                    ControlRef.for_run(record.id, 3), "payload", "locals", 0, "value"
+                    ControlRef.for_run(record.id, 3), "payload", "input", 0, "value"
                 ),
             )
             stored_controls = [

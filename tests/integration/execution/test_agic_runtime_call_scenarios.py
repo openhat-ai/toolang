@@ -1456,8 +1456,8 @@ agic target(_: Text) -> Text:
             assert execute.payload.runnable == "agic:target"
             assert execute.payload.module == "agent"
             assert execute.payload.source == source
-            assert len(execute.payload.locals) == 1
-            control_local = execute.payload.locals[0]
+            assert len(execute.payload.input) == 1
+            control_local = execute.payload.input[0]
             assert control_local.type == "Json"
             assert isinstance(control_local.value, TypedRef)
             assert control_local.value.ref == source.select("input", "input", "_")
