@@ -58,7 +58,7 @@ def models_command(
     ] = None,
     json_: Annotated[
         bool,
-        typer.Option("--json", help="Write filtered catalog providers as JSON."),
+        typer.Option("--json", help="Write filtered models as JSON."),
     ] = False,
 ) -> None:
     """List or export model catalog entries."""

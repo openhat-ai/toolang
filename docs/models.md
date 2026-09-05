@@ -61,7 +61,7 @@ level, preserves unknown additive fields, parses prices as decimal values, and
 rejects an invalid complete snapshot. Canonical model metadata from the
 combined input is not retained in the runtime snapshot. `Provider.to_data()`
 and `Model.to_data()` emit only raw provider catalog data, so `too models
---json` remains a provider-map export.
+--json` remains a round-trippable filtered catalog export.
 
 ## Catalog Plugins
 

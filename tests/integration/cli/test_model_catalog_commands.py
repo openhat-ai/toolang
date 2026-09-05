@@ -80,7 +80,7 @@ def test_models_is_a_leaf_command_without_file_output_options() -> None:
     assert "too query" in models_help
     assert "models'." in models_help
     assert "--json" in models_help
-    assert "Write filtered catalog providers as JSON." in models_help
+    assert "Write filtered models as JSON." in models_help
     assert "--output" not in models_help
     assert "--force" not in models_help
     assert "Write catalog providers as JSON." in unstyle(providers_result.stdout)
