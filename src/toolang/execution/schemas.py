@@ -513,7 +513,7 @@ class ThreadRunInfo:
 
 @dataclass(frozen=True, slots=True)
 class ThreadInfo:
-    """One thread summary schema."""
+    """One thread summary, with latest_run identifying its latest visible root."""
 
     id: str
     title: str
@@ -558,6 +558,7 @@ class ThreadInfo:
                 active_run=None,
             )
         last = runs[-1]
+        latest_root = next(run for run in reversed(runs) if run.parent is None)
         active = next((run for run in reversed(runs) if run.status == "running"), None)
         return cls(
             id=thread.id,
@@ -571,7 +572,7 @@ class ThreadInfo:
             created_by=ThreadControlRefData(thread=thread.id, index=0),
             head=ThreadControlRefData.from_ref(head),
             run_count=len(runs),
-            latest_run=ThreadRunInfo.from_record(last),
+            latest_run=ThreadRunInfo.from_record(latest_root),
             active_run=(
                 ThreadRunInfo.from_record(active) if active is not None else None
             ),

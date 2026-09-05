@@ -102,7 +102,7 @@ def retry_command(
     ctx: typer.Context,
     run: str = typer.Argument(
         ...,
-        help="Run id to retry. Thread id means its latest visible run.",
+        help="Run id to retry. Thread id means its latest visible root run.",
     ),
     model_catalog: ModelCatalogOption = None,
     anchor: Annotated[
@@ -167,7 +167,7 @@ def rerun_command(
     ctx: typer.Context,
     run: str = typer.Argument(
         ...,
-        help="Run id to rerun. Thread id means its latest visible run.",
+        help="Run id to rerun. Thread id means its latest visible root run.",
     ),
     model_catalog: ModelCatalogOption = None,
     sandbox: Annotated[
@@ -240,7 +240,7 @@ def rewind_command(
     ctx: typer.Context,
     point: str = typer.Argument(
         ...,
-        help="Run id to rewind before. Thread id means rewind before its latest run.",
+        help="Run id to rewind before. Thread id means rewind before its latest root run.",
     ),
     chat: Annotated[
         bool, typer.Option("--chat", help="Open chat on the rewound thread.")
@@ -267,7 +267,7 @@ def fork_command(
     ctx: typer.Context,
     point: str = typer.Argument(
         ...,
-        help="Run id to fork through. Thread id means fork through its latest run.",
+        help="Run id to fork through. Thread id means fork through its latest root run.",
     ),
     chat: Annotated[
         bool, typer.Option("--chat", help="Open chat on the forked thread.")
