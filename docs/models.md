@@ -23,8 +23,12 @@ availability.
 
 ## Static Catalog
 
-The static catalog is one complete models.dev-compatible `models.json`. Toolang
-selects it in this order:
+The preferred static catalog is the combined `{models, providers}` object from
+models.dev `catalog.json`. Toolang currently consumes its `providers` map and
+also accepts that provider map directly from `api.json` as a smaller,
+provider-only input. The provider-agnostic `models.json` does not contain
+execution routes or pricing and is not a valid static catalog. Toolang selects
+the catalog file in this order:
 
 1. command-level `--models PATH`, where supported;
 2. `TOOLANG_MODEL_CATALOG`;

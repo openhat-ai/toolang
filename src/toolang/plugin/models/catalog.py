@@ -147,7 +147,7 @@ def read_model_catalog_snapshot(
     *,
     max_bytes: int = DEFAULT_MAX_CATALOG_BYTES,
 ) -> ModelCatalogSnapshot:
-    """Load one complete validated models.dev-compatible provider map."""
+    """Load one complete validated models.dev provider or combined catalog."""
 
     resolved = path.expanduser().resolve(strict=True)
     payload_bytes = resolved.read_bytes()
@@ -221,8 +221,7 @@ def _parse_model_catalog_data(
     catalog: str | None = None,
     catalog_revision: str | None = None,
 ) -> dict[str, Provider]:
-    if not isinstance(data, Mapping):
-        raise TypeError("model catalog must be a provider object")
+    data = _provider_map_from_catalog_data(data)
     providers: dict[str, Provider] = {}
     for raw_provider_id, raw_provider in data.items():
         if not isinstance(raw_provider_id, str) or not raw_provider_id.strip():
@@ -237,6 +236,39 @@ def _parse_model_catalog_data(
             catalog_revision=catalog_revision,
         )
     return providers
+
+
+def _provider_map_from_catalog_data(data: object) -> Mapping[object, object]:
+    if not isinstance(data, Mapping):
+        raise TypeError("model catalog must be a provider or combined catalog object")
+    mapping = cast(Mapping[object, object], data)
+    if set(mapping) == {"models", "providers"}:
+        raw_models = mapping["models"]
+        raw_providers = mapping["providers"]
+        if not isinstance(raw_models, Mapping):
+            raise TypeError("combined model catalog models must be an object")
+        if not isinstance(raw_providers, Mapping):
+            raise TypeError("combined model catalog providers must be an object")
+        return cast(Mapping[object, object], raw_providers)
+    if _is_provider_agnostic_model_map(mapping):
+        raise ValueError(
+            "models.dev models.json contains provider-agnostic metadata and cannot "
+            "configure model execution; use https://models.dev/catalog.json or "
+            "https://models.dev/api.json"
+        )
+    return mapping
+
+
+def _is_provider_agnostic_model_map(data: Mapping[object, object]) -> bool:
+    if not data:
+        return False
+    for key, value in data.items():
+        if not isinstance(key, str) or not isinstance(value, Mapping):
+            return False
+        record = cast(Mapping[object, object], value)
+        if record.get("id") != key or "models" in record:
+            return False
+    return True
 
 
 def catalog_json_dumps(data: object, *, indent: int | None = 2) -> str:

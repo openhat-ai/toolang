@@ -109,8 +109,10 @@ caps [agent] skill list              # List skills
 caps [agent] list                    # List all caps
 ```
 
-The model catalog comes from a models.dev-compatible `models.json`. Commands
-that expose `--models` use that override first, followed by
+The preferred model catalog is the combined models.dev `catalog.json`; Toolang
+currently consumes its `providers` map and also accepts the smaller provider map
+from `api.json`. Provider-agnostic `models.json` lacks the execution data Toolang
+requires. Commands that expose `--models` use that override first, followed by
 `TOOLANG_MODEL_CATALOG`, agent-home, root, and then the packaged catalog. To
 update it, replace the selected root or agent-home file with a complete
 downloaded snapshot. `toolang models` is inspection-only and never downloads

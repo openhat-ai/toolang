@@ -138,6 +138,46 @@ def test_models_table_reports_invalid_query_without_a_traceback(
     assert "Traceback" not in result.stderr
 
 
+def test_models_rejects_provider_agnostic_models_dev_file_without_a_traceback(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    catalog = tmp_path / "models.json"
+    catalog.write_text(
+        json.dumps(
+            {
+                "swiss-ai/apertus-8b": {
+                    "id": "swiss-ai/apertus-8b",
+                    "name": "Apertus 8B",
+                    "tool_call": True,
+                    "modalities": {"input": ["text"], "output": ["text"]},
+                    "limit": {"context": 65_536, "output": 8_192},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    _disable_local_discovery(monkeypatch)
+
+    exit_code = cli.main(
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "models",
+            "--models",
+            str(catalog),
+        ],
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "models.dev models.json contains provider-agnostic metadata" in captured.err
+    assert "https://models.dev/catalog.json" in captured.err
+    assert "https://models.dev/api.json" in captured.err
+    assert "Traceback" not in captured.err
+
+
 def test_models_accepts_month_precision_catalog_dates(
     tmp_path: Path,
     monkeypatch,

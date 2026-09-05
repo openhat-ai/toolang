@@ -135,6 +135,30 @@ def test_catalog_import_preserves_unknown_fields_and_decimal_prices(
     assert exported["test"]["models"]["one"]["future_model_field"] == ["value"]
 
 
+def test_catalog_import_accepts_combined_models_dev_catalog(tmp_path: Path) -> None:
+    path = tmp_path / "catalog.json"
+    path.write_text(
+        json.dumps(
+            {
+                "models": {
+                    "test/one": {
+                        "id": "test/one",
+                        "name": "One",
+                        "description": "Provider-agnostic metadata",
+                    }
+                },
+                "providers": _catalog_data(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = read_model_catalog_snapshot(path)
+
+    assert tuple(snapshot.providers) == ("test",)
+    assert snapshot.find("test", "one") is not None
+
+
 def test_catalog_values_are_deeply_immutable(tmp_path: Path) -> None:
     path = tmp_path / "models.json"
     payload = _catalog_data()
