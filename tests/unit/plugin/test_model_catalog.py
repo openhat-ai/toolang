@@ -54,6 +54,8 @@ class _SnapshotCatalog(ModelCatalog):
 def test_packaged_catalog_is_small_valid_and_covers_mainstream_providers() -> None:
     snapshot = read_model_catalog_snapshot(PACKAGED_MODEL_CATALOG)
 
+    assert PACKAGED_MODEL_CATALOG.name == "catalog.json"
+    assert not PACKAGED_MODEL_CATALOG.with_name("models.json").exists()
     assert set(snapshot.providers) == {
         "anthropic",
         "deepseek",
@@ -135,6 +137,56 @@ def test_catalog_import_preserves_unknown_fields_and_decimal_prices(
     assert exported["test"]["models"]["one"]["future_model_field"] == ["value"]
 
 
+def test_catalog_import_accepts_combined_models_dev_catalog(tmp_path: Path) -> None:
+    path = tmp_path / "catalog.json"
+    providers = _catalog_data()
+    canonical_models = {
+        "test/one": {
+            "id": "test/one",
+            "name": "One",
+            "description": "Provider-agnostic metadata",
+        }
+    }
+    path.write_text(
+        json.dumps({"models": canonical_models, "providers": providers}),
+        encoding="utf-8",
+    )
+
+    combined = read_model_catalog_snapshot(path)
+    first_revision = combined.revision
+    api_path = tmp_path / "api.json"
+    api_path.write_text(json.dumps(providers), encoding="utf-8")
+    direct = read_model_catalog_snapshot(api_path)
+    canonical_models["test/one"]["description"] = "Updated metadata"
+    path.write_text(
+        json.dumps({"models": canonical_models, "providers": providers}),
+        encoding="utf-8",
+    )
+    updated = read_model_catalog_snapshot(path)
+
+    assert combined.to_data() == updated.to_data()
+    assert combined.to_data() == direct.to_data()
+    assert updated.revision != first_revision
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("models", []), ("providers", [])),
+)
+def test_catalog_import_validates_combined_top_level_members(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    payload: dict[str, object] = {"models": {}, "providers": _catalog_data()}
+    payload[field] = value
+    path = tmp_path / "catalog.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=rf"combined model catalog {field}"):
+        read_model_catalog_snapshot(path)
+
+
 def test_catalog_values_are_deeply_immutable(tmp_path: Path) -> None:
     path = tmp_path / "models.json"
     payload = _catalog_data()
@@ -170,29 +222,61 @@ def test_catalog_rejects_inconsistent_identity_as_a_complete_snapshot() -> None:
 def test_catalog_source_precedence_and_explicit_failure(tmp_path: Path) -> None:
     layout = AgentLayout.resident(tmp_path / "root", "alice")
     layout.home.mkdir(parents=True)
-    root = layout.root / "models.json"
-    home = layout.home / "models.json"
-    explicit = tmp_path / "explicit.json"
-    for path in (root, home, explicit):
+    root = layout.root / "catalog.json"
+    home = layout.home / "catalog.json"
+    configured = tmp_path / "models.json"
+    explicit = tmp_path / "explicit-models.json"
+    for path in (root, home, configured, explicit):
         path.write_text(json.dumps(_catalog_data()), encoding="utf-8")
 
     assert resolve_model_catalog_path(layout) == home.resolve()
     assert resolve_model_catalog_path(layout, include_agent=False) == root.resolve()
     assert (
-        resolve_model_catalog_path(layout, environ={"TOOLANG_MODEL_CATALOG": str(root)})
-        == root.resolve()
+        resolve_model_catalog_path(
+            layout,
+            environ={"TOOLANG_MODEL_CATALOG": str(configured)},
+        )
+        == configured.resolve()
     )
     assert (
         resolve_model_catalog_path(
             layout,
             explicit=explicit,
-            environ={"TOOLANG_MODEL_CATALOG": str(root)},
+            environ={"TOOLANG_MODEL_CATALOG": str(configured)},
         )
         == explicit.resolve()
     )
 
     with pytest.raises(FileNotFoundError, match="explicit model catalog"):
         resolve_model_catalog_path(layout, explicit=tmp_path / "missing.json")
+
+
+def test_catalog_source_rejects_legacy_implicit_models_file(tmp_path: Path) -> None:
+    layout = AgentLayout.resident(tmp_path / "root", "alice")
+    layout.home.mkdir(parents=True)
+    legacy = layout.home / "models.json"
+    legacy.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="legacy implicit model catalog") as error:
+        resolve_model_catalog_path(layout)
+
+    message = str(error.value)
+    assert str(legacy) in message
+    assert "rename it to catalog.json" in message
+    assert "https://models.dev/catalog.json" in message
+
+
+def test_root_catalog_prevents_legacy_file_from_being_silently_selected(
+    tmp_path: Path,
+) -> None:
+    layout = AgentLayout.resident(tmp_path / "root", "alice")
+    layout.home.mkdir(parents=True)
+    legacy = layout.home / "models.json"
+    root = layout.root / "catalog.json"
+    legacy.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+    root.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+
+    assert resolve_model_catalog_path(layout) == root.resolve()
 
 
 def test_catalog_query_handles_nested_identity_schema_fields_and_nullable_boolean() -> (

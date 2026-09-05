@@ -29,6 +29,7 @@ def test_model_catalog_override_is_scoped_to_consuming_commands() -> None:
     assert "models" in stdout
     assert "providers" in stdout
     assert "adapters" in stdout
+    assert "--catalog" not in stdout
     assert "--models" not in stdout
     assert "List models." in stdout
     assert "--model-catalog" not in stdout
@@ -46,16 +47,24 @@ def test_model_catalog_override_is_scoped_to_consuming_commands() -> None:
     ):
         command_result = runner.invoke(cli.app, command)
         assert command_result.exit_code == 0, command_result.stderr
-        assert "--models" in unstyle(command_result.stdout)
+        command_help = unstyle(command_result.stdout)
+        assert "--catalog" in command_help
+        assert "--models" not in command_help
 
     for command in (["list", "--help"], ["adapters", "--help"]):
         command_result = runner.invoke(cli.app, command)
         assert command_result.exit_code == 0, command_result.stderr
-        assert "--models" not in unstyle(command_result.stdout)
+        command_help = unstyle(command_result.stdout)
+        assert "--catalog" not in command_help
+        assert "--models" not in command_help
 
-    unsupported = runner.invoke(cli.app, ["--models", "models.json", "list"])
+    unsupported = runner.invoke(cli.app, ["--catalog", "catalog.json", "list"])
     assert unsupported.exit_code == 2
-    assert "No such option: --models" in unstyle(unsupported.stderr)
+    assert "No such option: --catalog" in unstyle(unsupported.stderr)
+
+    removed = runner.invoke(cli.app, ["models", "--models", "models.json"])
+    assert removed.exit_code == 2
+    assert "No such option: --models" in unstyle(removed.stderr)
 
 
 def test_models_is_a_leaf_command_without_file_output_options() -> None:
@@ -71,6 +80,7 @@ def test_models_is_a_leaf_command_without_file_output_options() -> None:
     assert "too query" in models_help
     assert "models'." in models_help
     assert "--json" in models_help
+    assert "Write filtered catalog providers as JSON." in models_help
     assert "--output" not in models_help
     assert "--force" not in models_help
     assert "Write catalog providers as JSON." in unstyle(providers_result.stdout)
@@ -85,7 +95,7 @@ def test_models_query_exports_a_valid_complete_catalog(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    catalog = tmp_path / "catalog.json"
+    catalog = tmp_path / "api.json"
     catalog.write_text(json.dumps(_catalog_data()), encoding="utf-8")
     _disable_local_discovery(monkeypatch)
 
@@ -95,7 +105,7 @@ def test_models_query_exports_a_valid_complete_catalog(
             "--root",
             str(tmp_path / "root"),
             "models",
-            "--models",
+            "--catalog",
             str(catalog),
             "--query",
             "test/two[reasoning=false]",
@@ -109,6 +119,88 @@ def test_models_query_exports_a_valid_complete_catalog(
     providers = parse_model_catalog_data(data)
     assert tuple(providers) == ("test",)
     assert tuple(providers["test"].models) == ("two",)
+
+
+def test_models_query_accepts_combined_models_dev_catalog(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(
+        json.dumps(
+            {
+                "models": {
+                    "test/one": {
+                        "id": "test/one",
+                        "name": "One",
+                    }
+                },
+                "providers": _catalog_data(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    _disable_local_discovery(monkeypatch)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "models",
+            "--catalog",
+            str(catalog),
+            "--query",
+            "test/one",
+            "--json",
+        ],
+        env={},
+    )
+
+    assert result.exit_code == 0, result.stderr
+    providers = parse_model_catalog_data(json.loads(result.stdout, parse_float=Decimal))
+    assert tuple(providers) == ("test",)
+    assert tuple(providers["test"].models) == ("one",)
+
+
+def test_models_rejects_provider_agnostic_models_dev_file_without_a_traceback(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    catalog = tmp_path / "models.json"
+    catalog.write_text(
+        json.dumps(
+            {
+                "swiss-ai/apertus-8b": {
+                    "id": "swiss-ai/apertus-8b",
+                    "name": "Apertus 8B",
+                    "tool_call": True,
+                    "modalities": {"input": ["text"], "output": ["text"]},
+                    "limit": {"context": 65_536, "output": 8_192},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    _disable_local_discovery(monkeypatch)
+
+    exit_code = cli.main(
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "models",
+            "--catalog",
+            str(catalog),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "models.dev models.json contains provider-agnostic metadata" in captured.err
+    assert "https://models.dev/catalog.json" in captured.err
+    assert "https://models.dev/api.json" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_models_table_reports_invalid_query_without_a_traceback(
@@ -125,7 +217,7 @@ def test_models_table_reports_invalid_query_without_a_traceback(
             "--root",
             str(tmp_path / "root"),
             "models",
-            "--models",
+            "--catalog",
             str(catalog),
             "--query",
             "*[missing=value]",
@@ -157,7 +249,7 @@ def test_models_accepts_month_precision_catalog_dates(
             "--root",
             str(tmp_path / "root"),
             "models",
-            "--models",
+            "--catalog",
             str(catalog),
             "--query",
             "test/one[release_date=2025-04-01;last_updated=2026-01-01]",
@@ -184,7 +276,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
             "--root",
             str(tmp_path / "root"),
             "models",
-            "--models",
+            "--catalog",
             str(catalog),
             "--query",
             "test/one",
@@ -239,7 +331,7 @@ def test_models_explicit_missing_catalog_does_not_fall_back(tmp_path: Path) -> N
             "--root",
             str(tmp_path / "root"),
             "models",
-            "--models",
+            "--catalog",
             str(tmp_path / "missing.json"),
         ],
         env={},
@@ -248,6 +340,29 @@ def test_models_explicit_missing_catalog_does_not_fall_back(tmp_path: Path) -> N
     assert result.exit_code != 0
     assert result.exception is not None
     assert "explicit model catalog" in str(result.exception)
+
+
+def test_models_rejects_legacy_implicit_catalog_without_a_traceback(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "models.json").write_text(
+        json.dumps(_catalog_data()),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("TOOLANG_MODEL_CATALOG", raising=False)
+
+    exit_code = cli.main(["--root", str(root), "models"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "legacy implicit model catalog found" in captured.err
+    assert "rename it to" in captured.err
+    assert "catalog.json" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
@@ -316,7 +431,7 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
             "--root",
             str(tmp_path / "root"),
             "models",
-            "--models",
+            "--catalog",
             str(catalog),
         ],
         env={},
@@ -348,7 +463,7 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
             "--root",
             str(tmp_path / "root"),
             "providers",
-            "--models",
+            "--catalog",
             str(catalog),
         ],
         env={},
@@ -401,7 +516,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
             "--root",
             str(tmp_path / "root"),
             "providers",
-            "--models",
+            "--catalog",
             str(catalog),
         ],
         env={},
@@ -425,7 +540,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
             "--root",
             str(tmp_path / "root"),
             "models",
-            "--models",
+            "--catalog",
             str(catalog),
             "--query",
             "*[adapter=messages]",
@@ -455,7 +570,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
             "--root",
             str(tmp_path / "root"),
             "providers",
-            "--models",
+            "--catalog",
             str(catalog),
         ],
         env={},
@@ -483,7 +598,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
             "--root",
             str(tmp_path / "root"),
             "providers",
-            "--models",
+            "--catalog",
             str(catalog),
             "--json",
         ],

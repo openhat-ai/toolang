@@ -35,7 +35,7 @@ from toolang.plugin.models.collections import (
 CACHE_SCHEMA = 3
 CATALOG_PARSER_SCHEMA = 1
 _CATALOG_FILE = "catalog.json"
-_CONTEXT_FILE = "models.json"
+_CONTEXT_FILE = "effective.json"
 _CONTEXT_IDENTITY_FILE = "identity.json"
 _MAX_CACHE_BYTES = 128 * 1024 * 1024
 _REVISION_RE = re.compile(r"^sha256:([0-9a-f]{64})$")
