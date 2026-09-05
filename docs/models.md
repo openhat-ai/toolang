@@ -46,9 +46,8 @@ Toolang selects the catalog file in this order:
 A higher-priority file fully replaces lower-priority files. Toolang does not
 merge multiple static files and does not download catalog data during startup.
 Explicit CLI and environment paths are filename-agnostic. Implicit discovery
-uses only `catalog.json`; if no catalog is selected and an applicable legacy
-`models.json` exists, Toolang stops with a migration error instead of loading
-it or silently falling back to packaged data.
+recognizes only `catalog.json`; `models.json` has no special legacy meaning and
+is ignored. If no catalog is selected, Toolang uses the packaged data.
 
 When no agent is selected, inspection uses only the root source and root model
 context; it does not read an implicit `agents/default`. In a Docker guest, an

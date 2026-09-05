@@ -116,7 +116,7 @@ the combined catalog with
 expose `--catalog` use that override first, followed by
 `TOOLANG_MODEL_CATALOG`, agent-home `catalog.json`, root `catalog.json`, and the
 packaged catalog. Provider-agnostic `models.json` is not a valid execution
-catalog, and the legacy implicit filename is rejected with a migration error.
+catalog, and implicit discovery ignores that filename.
 `toolang models` is inspection-only and never downloads during startup.
 
 ## Links

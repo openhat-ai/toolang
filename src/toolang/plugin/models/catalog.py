@@ -21,7 +21,6 @@ DEFAULT_MAX_CATALOG_BYTES = 32 * 1024 * 1024
 PACKAGED_MODEL_CATALOG = Path(__file__).parent / "data" / "catalog.json"
 
 _CATALOG_FILENAME = "catalog.json"
-_LEGACY_CATALOG_FILENAME = "models.json"
 
 _PROVIDER_FIELDS = frozenset({"id", "env", "npm", "api", "name", "doc", "models"})
 _MODEL_FIELDS = frozenset(
@@ -141,22 +140,6 @@ def resolve_model_catalog_path(
     for path in catalog_candidates:
         if path.is_file() or path.is_symlink():
             return path.resolve(strict=False)
-    legacy_candidates = (
-        (
-            layout.home / _LEGACY_CATALOG_FILENAME,
-            layout.root / _LEGACY_CATALOG_FILENAME,
-        )
-        if include_agent
-        else (layout.root / _LEGACY_CATALOG_FILENAME,)
-    )
-    for path in legacy_candidates:
-        if path.is_file() or path.is_symlink():
-            raise ValueError(
-                f"legacy implicit model catalog found: {path}; "
-                f"rename it to {_CATALOG_FILENAME} if it contains a supported "
-                "models.dev catalog.json or api.json payload, or replace it with "
-                "https://models.dev/catalog.json"
-            )
     _require_catalog_candidate(PACKAGED_MODEL_CATALOG, label="packaged model catalog")
     return PACKAGED_MODEL_CATALOG.resolve(strict=False)
 

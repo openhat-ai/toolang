@@ -251,22 +251,23 @@ def test_catalog_source_precedence_and_explicit_failure(tmp_path: Path) -> None:
         resolve_model_catalog_path(layout, explicit=tmp_path / "missing.json")
 
 
-def test_catalog_source_rejects_legacy_implicit_models_file(tmp_path: Path) -> None:
+def test_catalog_source_ignores_implicit_models_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     layout = AgentLayout.resident(tmp_path / "root", "alice")
     layout.home.mkdir(parents=True)
-    legacy = layout.home / "models.json"
-    legacy.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+    for path in (layout.home / "models.json", layout.root / "models.json"):
+        path.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+    packaged = tmp_path / "packaged-catalog.json"
+    packaged.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+    monkeypatch.setattr(catalog_module, "PACKAGED_MODEL_CATALOG", packaged)
 
-    with pytest.raises(ValueError, match="legacy implicit model catalog") as error:
-        resolve_model_catalog_path(layout)
-
-    message = str(error.value)
-    assert str(legacy) in message
-    assert "rename it to catalog.json" in message
-    assert "https://models.dev/catalog.json" in message
+    assert resolve_model_catalog_path(layout) == packaged.resolve()
+    assert resolve_model_catalog_path(layout, include_agent=False) == packaged.resolve()
 
 
-def test_root_catalog_prevents_legacy_file_from_being_silently_selected(
+def test_root_catalog_is_selected_despite_unrecognized_models_file(
     tmp_path: Path,
 ) -> None:
     layout = AgentLayout.resident(tmp_path / "root", "alice")

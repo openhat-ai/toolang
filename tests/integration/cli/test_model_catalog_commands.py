@@ -342,10 +342,9 @@ def test_models_explicit_missing_catalog_does_not_fall_back(tmp_path: Path) -> N
     assert "explicit model catalog" in str(result.exception)
 
 
-def test_models_rejects_legacy_implicit_catalog_without_a_traceback(
+def test_models_ignores_implicit_models_file(
     tmp_path: Path,
     monkeypatch,
-    capsys,
 ) -> None:
     root = tmp_path / "root"
     root.mkdir()
@@ -354,15 +353,16 @@ def test_models_rejects_legacy_implicit_catalog_without_a_traceback(
         encoding="utf-8",
     )
     monkeypatch.delenv("TOOLANG_MODEL_CATALOG", raising=False)
+    _disable_local_discovery(monkeypatch)
 
-    exit_code = cli.main(["--root", str(root), "models"])
-    captured = capsys.readouterr()
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(root), "models", "--json"],
+        env={},
+    )
 
-    assert exit_code == 1
-    assert "legacy implicit model catalog found" in captured.err
-    assert "rename it to" in captured.err
-    assert "catalog.json" in captured.err
-    assert "Traceback" not in captured.err
+    assert result.exit_code == 0, result.stderr
+    assert "test" not in json.loads(result.stdout)
 
 
 def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
