@@ -255,13 +255,10 @@ def test_rewind_controls_form_a_monotonic_head_chain(
                 harness.store.get_run(run_id=run.id) for run in runs
             )
             replacement_record = harness.store.get_run(run_id=replacement.id)
-            assert first is not None and first.ejected_by is None
+            assert first is not None
             assert second is not None
-            assert second.ejected_by is None
             assert third is not None
-            assert third.ejected_by is None
             assert replacement_record is not None
-            assert replacement_record.ejected_by is None
             assert [
                 run.id
                 for run in harness.store.list_thread_history_chronological(
@@ -515,7 +512,6 @@ def test_failed_thread_controls_leave_no_record_or_event(
             assert len(harness.store.list_threads()) == 1
             stored_run = harness.store.get_run(run_id=run.id)
             assert stored_run is not None
-            assert stored_run.ejected_by is None
             assert [event.type for event in listener.events] == ["thread_created"]
 
     asyncio.run(scenario())

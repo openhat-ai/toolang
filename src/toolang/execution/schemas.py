@@ -345,9 +345,6 @@ class RunControlRefData:
         return cls(run=str(ref.target), index=ref.index)
 
 
-EjectionRefData = ThreadControlRefData | RunControlRefData
-
-
 StepInputData = FieldRef
 
 
@@ -596,7 +593,6 @@ class RunInfo:
     summary: str
     status: RunStatus
     error: ErrorMessage | ErrorRef | None
-    ejected: EjectionRefData | None
     created_at: str
     started_at: str
     finished_at: str | None
@@ -611,7 +607,6 @@ class RunInfo:
         steps: Sequence[StepRecord],
         root_run_id: str,
         error_message: str | None,
-        ejection_scope: Literal["run", "thread"] | None,
         input_parts: Sequence[Part],
     ) -> RunInfo:
         """Build one run summary from durable records."""
@@ -652,7 +647,6 @@ class RunInfo:
             summary=summary,
             status=run.status,
             error=run.error,
-            ejected=_ejection_ref_data(run.ejected_by, scope=ejection_scope),
             created_at=run.created_at,
             started_at=run.started_at,
             finished_at=run.finished_at,
@@ -705,7 +699,6 @@ class StepData:
     noted: StepNoted = None
     status: StepStatus = "running"
     error: ErrorMessage | ErrorRef | None = None
-    ejected_by: RunControlRefData | None = None
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
@@ -739,11 +732,6 @@ class StepData:
             noted=step.noted,
             status=step.status,
             error=step.error,
-            ejected_by=(
-                RunControlRefData.from_ref(step.ejected_by)
-                if step.ejected_by is not None
-                else None
-            ),
             created_at=step.created_at,
             started_at=step.started_at,
             finished_at=step.finished_at,
@@ -769,7 +757,6 @@ class RunDetail(RunInfo):
         model_calls: Mapping[StepRef, ModelCall] | None = None,
         root_run_id: str,
         error_message: str | None,
-        ejection_scope: Literal["run", "thread"] | None,
         input_parts: Sequence[Part],
     ) -> RunDetail:
         """Build complete caller-facing run detail from durable records."""
@@ -780,7 +767,6 @@ class RunDetail(RunInfo):
             steps=steps,
             root_run_id=root_run_id,
             error_message=error_message,
-            ejection_scope=ejection_scope,
             input_parts=input_parts,
         )
         return cls(
@@ -838,17 +824,3 @@ def _local_parts(local: Local | None) -> tuple[Part, ...]:
     if local is None:
         return ()
     return parts_from_local(local)
-
-
-def _ejection_ref_data(
-    ref: ControlRef | None,
-    *,
-    scope: Literal["run", "thread"] | None,
-) -> EjectionRefData | None:
-    if ref is None:
-        return None
-    if scope == "thread":
-        return ThreadControlRefData.from_ref(ref)
-    if scope == "run":
-        return RunControlRefData.from_ref(ref)
-    raise ValueError(f"ejection scope is required: {ref.target}@{ref.index}")

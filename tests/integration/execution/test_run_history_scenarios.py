@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
@@ -273,7 +274,7 @@ def test_run_history_keeps_rewound_records_outside_the_thread_view(
 
         rewound = RunHistory(store).get_run(second.id)
         assert rewound is not None
-        assert rewound.ejected is None
+        assert "ejected" not in {field.name for field in fields(rewound)}
         assert RunHistory(store).list_runs(thread_id="term_thread") == []
     finally:
         store.close()

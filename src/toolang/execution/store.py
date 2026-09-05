@@ -103,7 +103,7 @@ from .schemas import Record, RecordSelection, select_record
 from .thread_views import ThreadViews
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 35
+_SCHEMA_VERSION = 36
 _SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -379,11 +379,11 @@ class RunStore:
                     """
                     INSERT INTO runs(
                         id, parent, thread, control, state,
-                        output, occur, status, error, ejected_by,
+                        output, occur, status, error,
                         created_at, started_at, finished_at
                     ) VALUES (
                         ?, ?, ?, ?, ?,
-                        NULL, ?, 'pending', NULL, NULL,
+                        NULL, ?, 'pending', NULL,
                         ?, NULL, NULL
                     )
                     """,
@@ -1478,7 +1478,7 @@ class RunStore:
         return [_thread_from_row(row) for row in rows]
 
     def list_controls(self) -> tuple[ControlRecord, ...]:
-        """Return every visible control in deterministic newest-first order."""
+        """Return Thread controls and controls of existing Runs, newest first."""
 
         with self._lock:
             rows = self._conn.execute(
@@ -1491,15 +1491,6 @@ class RunStore:
                    OR (
                        controls.scope = 'run'
                        AND runs.id IS NOT NULL
-                       AND runs.ejected_by IS NULL
-                       AND (
-                           runs.parent IS NULL
-                           OR runs.parent NOT IN (
-                               SELECT steps.run || '.' || steps.path
-                               FROM steps
-                               WHERE steps.ejected_by IS NOT NULL
-                           )
-                       )
                    )
                 ORDER BY controls.created_at DESC,
                          controls.target ASC,
@@ -1700,40 +1691,13 @@ class RunStore:
                 return _thread_from_row(row) if row is not None else None
             if isinstance(record, RunRef):
                 row = self._conn.execute(
-                    """
-                    SELECT runs.* FROM runs
-                    WHERE runs.id = ?
-                      AND runs.ejected_by IS NULL
-                      AND (
-                          runs.parent IS NULL
-                          OR runs.parent NOT IN (
-                              SELECT steps.run || '.' || steps.path
-                              FROM steps
-                              WHERE steps.ejected_by IS NOT NULL
-                          )
-                      )
-                    """,
+                    "SELECT * FROM runs WHERE id = ?",
                     (str(record),),
                 ).fetchone()
                 return _run_from_row(row) if row is not None else None
             if isinstance(record, StepRef):
                 row = self._conn.execute(
-                    """
-                    SELECT steps.*
-                    FROM steps
-                    JOIN runs ON runs.id = steps.run
-                    WHERE steps.id = ?
-                      AND steps.ejected_by IS NULL
-                      AND runs.ejected_by IS NULL
-                      AND (
-                          runs.parent IS NULL
-                          OR runs.parent NOT IN (
-                              SELECT parent_steps.run || '.' || parent_steps.path
-                              FROM steps AS parent_steps
-                              WHERE parent_steps.ejected_by IS NOT NULL
-                          )
-                      )
-                    """,
+                    "SELECT * FROM steps WHERE id = ?",
                     (str(record),),
                 ).fetchone()
                 return _step_from_row(row) if row is not None else None
@@ -1747,15 +1711,6 @@ class RunStore:
                     FROM controls
                     JOIN runs ON runs.id = controls.target
                     WHERE controls.id = ?
-                      AND runs.ejected_by IS NULL
-                      AND (
-                          runs.parent IS NULL
-                          OR runs.parent NOT IN (
-                              SELECT steps.run || '.' || steps.path
-                              FROM steps
-                              WHERE steps.ejected_by IS NOT NULL
-                          )
-                      )
                     """,
                     (str(record),),
                 ).fetchone()
@@ -1778,19 +1733,6 @@ class RunStore:
         """Resolve one run or step error pointer to its concrete message."""
 
         return self._resolve_error(error, seen=set())
-
-    def control_scope(self, ref: ControlRef) -> Literal["run", "thread"]:
-        """Return the durable scope of one globally addressed control."""
-
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM controls WHERE id = ?",
-                (str(ref),),
-            ).fetchone()
-        if row is None:
-            raise ValueError(f"control not found: {ref}")
-        control = _control_from_row(row)
-        return "run" if isinstance(control.target, RunRef) else "thread"
 
     def _resolve_error(
         self,
@@ -1861,7 +1803,7 @@ class RunStore:
         limit: int | None = 50,
         thread_id: str | ThreadRef | None = None,
         status: RunStatus | None = None,
-        include_ejected: bool = False,
+        include_rewound: bool = False,
     ) -> list[RunRecord]:
         """List physical Runs, or logical membership when a Thread is selected."""
 
@@ -1871,7 +1813,7 @@ class RunStore:
                 run
                 for run in reversed(
                     views.tree(
-                        views.history(str(thread_id), include_rewound=include_ejected)
+                        views.history(str(thread_id), include_rewound=include_rewound)
                     )
                 )
                 if status is None or run.status == status
@@ -1882,15 +1824,6 @@ class RunStore:
         if status is not None:
             clauses.append("status = ?")
             params.append(status)
-        if not include_ejected:
-            clauses.extend(
-                (
-                    "ejected_by IS NULL",
-                    "(parent IS NULL OR parent NOT IN ("
-                    "SELECT run || '.' || path FROM steps "
-                    "WHERE ejected_by IS NOT NULL))",
-                )
-            )
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         query = f"SELECT * FROM runs {where} ORDER BY created_at DESC"
         if limit is not None:
@@ -1911,21 +1844,17 @@ class RunStore:
                 )
         with self._read_transaction():
             rows = self._conn.execute(
-                "SELECT runs.* FROM runs WHERE runs.ejected_by IS NULL "
-                "AND (runs.parent IS NULL OR runs.parent NOT IN ("
-                "SELECT steps.run || '.' || steps.path FROM steps "
-                "WHERE steps.ejected_by IS NOT NULL)) "
-                "ORDER BY runs.created_at DESC, runs.id ASC"
+                "SELECT * FROM runs ORDER BY created_at DESC, id ASC"
             ).fetchall()
             records = tuple(_run_from_row(row) for row in rows)
             return self._inspect_runs_locked(records)
 
     def inspect_steps(self, *, run_id: str) -> tuple[InspectedStep, ...]:
-        """Return all visible Steps physically owned by one Run."""
+        """Return all Steps physically owned by one Run."""
 
         with self._read_transaction():
             rows = self._conn.execute(
-                "SELECT * FROM steps WHERE run = ? AND ejected_by IS NULL",
+                "SELECT * FROM steps WHERE run = ?",
                 (run_id,),
             ).fetchall()
             records = tuple(
@@ -1937,15 +1866,11 @@ class RunStore:
             return self._inspect_steps_locked(records)
 
     def inspect_child_runs(self, *, parent: StepRecord) -> tuple[InspectedRun, ...]:
-        """Return visible Runs directly accepted by one Step."""
+        """Return Runs directly accepted by one Step."""
 
         with self._read_transaction():
             rows = self._conn.execute(
-                "SELECT * FROM runs WHERE parent = ? "
-                "AND ejected_by IS NULL "
-                "AND parent NOT IN (SELECT steps.run || '.' || steps.path "
-                "FROM steps WHERE steps.ejected_by IS NOT NULL) "
-                "ORDER BY created_at ASC, id ASC",
+                "SELECT * FROM runs WHERE parent = ? ORDER BY created_at ASC, id ASC",
                 (str(parent.ref),),
             ).fetchall()
             records = tuple(_run_from_row(row) for row in rows)
@@ -1958,13 +1883,12 @@ class RunStore:
         )
 
     def inspect_child_steps(self, *, parent: StepRecord) -> tuple[InspectedStep, ...]:
-        """Return direct visible same-Run Steps owned by one loop Step."""
+        """Return direct same-Run Steps owned by one loop Step."""
 
         prefix = f"{parent.ref.local}."
         with self._read_transaction():
             rows = self._conn.execute(
-                "SELECT * FROM steps WHERE run = ? "
-                "AND substr(path, 1, ?) = ? AND ejected_by IS NULL",
+                "SELECT * FROM steps WHERE run = ? AND substr(path, 1, ?) = ?",
                 (parent.run_id, len(prefix), prefix),
             ).fetchall()
             records = tuple(
@@ -1984,7 +1908,7 @@ class RunStore:
         *,
         root: str | StepRef,
     ) -> ExecutionSnapshot:
-        """Read one complete visible execution subtree in a single transaction."""
+        """Read one complete physical execution subtree in a single transaction."""
 
         with self._read_transaction():
             runs: dict[str, RunRecord] = {}
@@ -1992,18 +1916,7 @@ class RunStore:
             pending_runs: list[str] = []
             if isinstance(root, StepRef):
                 row = self._conn.execute(
-                    """
-                    SELECT steps.* FROM steps
-                    JOIN runs ON runs.id = steps.run
-                    WHERE steps.id = ?
-                      AND steps.ejected_by IS NULL
-                      AND runs.ejected_by IS NULL
-                      AND (runs.parent IS NULL OR runs.parent NOT IN (
-                          SELECT hidden.run || '.' || hidden.path
-                          FROM steps AS hidden
-                          WHERE hidden.ejected_by IS NOT NULL
-                      ))
-                    """,
+                    "SELECT * FROM steps WHERE id = ?",
                     (str(root),),
                 ).fetchone()
                 if row is None:
@@ -2012,18 +1925,14 @@ class RunStore:
                 prefix = f"{root.local}."
                 rows = self._conn.execute(
                     "SELECT * FROM steps WHERE run = ? "
-                    "AND (path = ? OR substr(path, 1, ?) = ?) "
-                    "AND ejected_by IS NULL",
+                    "AND (path = ? OR substr(path, 1, ?) = ?)",
                     (root.run_id, root.local, len(prefix), prefix),
                 ).fetchall()
                 for step_row in rows:
                     step = _step_from_row(step_row)
                     steps[step.ref] = step
                 child_rows = self._conn.execute(
-                    "SELECT * FROM runs WHERE ejected_by IS NULL "
-                    "AND parent NOT IN (SELECT steps.run || '.' || steps.path "
-                    "FROM steps WHERE steps.ejected_by IS NOT NULL) "
-                    "AND (parent = ? OR substr(parent, 1, ?) = ?)",
+                    "SELECT * FROM runs WHERE parent = ? OR substr(parent, 1, ?) = ?",
                     (str(root), len(f"{root}."), f"{root}."),
                 ).fetchall()
                 for run_row in child_rows:
@@ -2033,14 +1942,7 @@ class RunStore:
                         pending_runs.append(run.id)
             else:
                 row = self._conn.execute(
-                    """
-                    SELECT * FROM runs WHERE id = ?
-                      AND ejected_by IS NULL
-                      AND (parent IS NULL OR parent NOT IN (
-                          SELECT steps.run || '.' || steps.path FROM steps
-                          WHERE steps.ejected_by IS NOT NULL
-                      ))
-                    """,
+                    "SELECT * FROM runs WHERE id = ?",
                     (root,),
                 ).fetchone()
                 if row is None:
@@ -2056,7 +1958,7 @@ class RunStore:
                     continue
                 loaded_runs.add(run_id)
                 step_rows = self._conn.execute(
-                    "SELECT * FROM steps WHERE run = ? AND ejected_by IS NULL",
+                    "SELECT * FROM steps WHERE run = ?",
                     (run_id,),
                 ).fetchall()
                 for step_row in step_rows:
@@ -2064,10 +1966,7 @@ class RunStore:
                     steps[step.ref] = step
                 parent_prefix = f"{run_id}."
                 run_rows = self._conn.execute(
-                    "SELECT * FROM runs WHERE ejected_by IS NULL "
-                    "AND parent NOT IN (SELECT steps.run || '.' || steps.path "
-                    "FROM steps WHERE steps.ejected_by IS NOT NULL) "
-                    "AND substr(parent, 1, ?) = ?",
+                    "SELECT * FROM runs WHERE substr(parent, 1, ?) = ?",
                     (len(parent_prefix), parent_prefix),
                 ).fetchall()
                 for run_row in run_rows:
@@ -2108,7 +2007,7 @@ class RunStore:
                 controls[control.ref] = control
             count_rows = self._conn.execute(
                 f"SELECT run, COUNT(*) AS count FROM steps "
-                f"WHERE run IN ({placeholders}) AND ejected_by IS NULL "
+                f"WHERE run IN ({placeholders}) "
                 "GROUP BY run",
                 run_ids,
             ).fetchall()
@@ -2136,8 +2035,7 @@ class RunStore:
             chunk = pointers[offset : offset + 400]
             placeholders = ", ".join("?" for _ in chunk)
             rows = self._conn.execute(
-                f"SELECT * FROM runs "
-                f"WHERE parent IN ({placeholders}) AND ejected_by IS NULL ",
+                f"SELECT * FROM runs WHERE parent IN ({placeholders})",
                 chunk,
             ).fetchall()
             for row in rows:
@@ -2151,8 +2049,7 @@ class RunStore:
             chunk = run_ids[offset : offset + 400]
             placeholders = ", ".join("?" for _ in chunk)
             rows = self._conn.execute(
-                f"SELECT run, path FROM steps WHERE run IN ({placeholders}) "
-                "AND ejected_by IS NULL",
+                f"SELECT run, path FROM steps WHERE run IN ({placeholders})",
                 chunk,
             ).fetchall()
             for row in rows:
@@ -2176,24 +2073,13 @@ class RunStore:
         *,
         thread_id: str,
         limit: int | None = None,
-        include_ejected: bool = False,
     ) -> tuple[RunRecord, ...]:
         """Return physically owned Runs, including those removed by Thread rewind."""
 
-        clauses = ["thread = ?"]
         params: list[object] = [thread_id]
-        if not include_ejected:
-            clauses.extend(
-                (
-                    "ejected_by IS NULL",
-                    "(parent IS NULL OR parent NOT IN ("
-                    "SELECT run || '.' || path FROM steps "
-                    "WHERE ejected_by IS NOT NULL))",
-                )
-            )
-        query = f"""
+        query = """
             SELECT * FROM runs
-            WHERE {" AND ".join(clauses)}
+            WHERE thread = ?
             ORDER BY rowid ASC
         """
         if limit is not None:
@@ -2208,14 +2094,14 @@ class RunStore:
         *,
         thread_id: str,
         limit: int | None = None,
-        include_ejected: bool = False,
+        include_rewound: bool = False,
     ) -> tuple[RunRecord, ...]:
         """Return projected history, following a fork's source prefix."""
 
         return self.list_thread_histories_chronological(
             thread_ids=(thread_id,),
             limit=limit,
-            include_ejected=include_ejected,
+            include_rewound=include_rewound,
         ).get(thread_id, ())
 
     def list_thread_histories_chronological(
@@ -2223,14 +2109,14 @@ class RunStore:
         *,
         thread_ids: Sequence[str],
         limit: int | None = None,
-        include_ejected: bool = False,
+        include_rewound: bool = False,
     ) -> dict[str, tuple[RunRecord, ...]]:
         """Return logical histories and their child Runs from one store snapshot."""
 
         views = self.thread_views()
         return {
             thread_id: _history_tail(
-                views.tree(views.history(thread_id, include_rewound=include_ejected)),
+                views.tree(views.history(thread_id, include_rewound=include_rewound)),
                 limit=limit,
             )
             for thread_id in dict.fromkeys(thread_ids)
@@ -2623,15 +2509,10 @@ class RunStore:
             raise ValueError(f"conflicting step_end event: {ref}")
         return step
 
-    def list_steps(
-        self, *, run_id: str, include_ejected: bool = False
-    ) -> list[StepRecord]:
-        clauses = ["run = ?"]
-        if not include_ejected:
-            clauses.append("ejected_by IS NULL")
+    def list_steps(self, *, run_id: str) -> list[StepRecord]:
         with self._lock:
             rows = self._conn.execute(
-                f"SELECT * FROM steps WHERE {' AND '.join(clauses)}",
+                "SELECT * FROM steps WHERE run = ?",
                 (run_id,),
             ).fetchall()
         return sorted(
@@ -2640,32 +2521,27 @@ class RunStore:
         )
 
     def get_step(self, *, ref: StepRef) -> StepRecord | None:
-        """Return one visible durable Step by its canonical reference."""
+        """Return one durable Step by its canonical reference."""
 
         with self._lock:
             row = self._conn.execute(
-                """
-                SELECT * FROM steps
-                WHERE id = ? AND ejected_by IS NULL
-                """,
+                "SELECT * FROM steps WHERE id = ?",
                 (str(ref),),
             ).fetchone()
         return _step_from_row(row) if row is not None else None
 
     def list_steps_for_runs(
-        self, *, run_ids: Sequence[str], include_ejected: bool = False
+        self, *, run_ids: Sequence[str]
     ) -> dict[str, list[StepRecord]]:
         run_id_list = [item for item in run_ids if item]
         if not run_id_list:
             return {}
         placeholders = ", ".join("?" for _ in run_id_list)
-        visible = "" if include_ejected else "AND ejected_by IS NULL"
         with self._lock:
             rows = self._conn.execute(
                 f"""
                 SELECT * FROM steps
                 WHERE run IN ({placeholders})
-                {visible}
                 """,
                 tuple(run_id_list),
             ).fetchall()
@@ -3196,7 +3072,6 @@ class RunStore:
                     occur TEXT,
                     status TEXT NOT NULL,
                     error TEXT,
-                    ejected_by TEXT,
                     created_at TEXT NOT NULL,
                     started_at TEXT,
                     finished_at TEXT
@@ -3300,7 +3175,6 @@ def _create_steps_table(connection: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             started_at TEXT NOT NULL,
             finished_at TEXT,
-            ejected_by TEXT,
             UNIQUE(run, path)
         )
         """
@@ -3508,11 +3382,6 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
         occur=occurrence_from_data(occurrence_data),
         status=cast(RunStatus, row["status"]),
         error=_load_execution_error(row["error"]),
-        ejected_by=(
-            ControlRef.parse(str(row["ejected_by"]))
-            if row["ejected_by"] is not None
-            else None
-        ),
         created_at=str(row["created_at"]),
         started_at=str(row["started_at"] or ""),
         finished_at=str(row["finished_at"]) if row["finished_at"] is not None else None,
@@ -3558,11 +3427,6 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
         noted=step_noted_from_data(kind, noted_data),
         status=cast(StepStatus, raw["status"]),
         error=_load_execution_error(raw["error"]),
-        ejected_by=(
-            ControlRef.parse(str(raw["ejected_by"]))
-            if raw.get("ejected_by") is not None
-            else None
-        ),
         created_at=str(raw["created_at"]),
         started_at=str(raw["started_at"]),
         finished_at=str(raw["finished_at"]) if raw["finished_at"] is not None else None,

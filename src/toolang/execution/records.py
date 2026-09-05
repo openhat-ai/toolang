@@ -94,7 +94,6 @@ class RunRecord:
     occur: Occurrence | None = None
     status: RunStatus = "pending"
     error: ErrorMessage | ErrorRef | None = None
-    ejected_by: ControlRef | None = None
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
@@ -117,8 +116,6 @@ class RunRecord:
         if self.output is not None and not isinstance(self.output, Local):
             raise TypeError("run output requires a Local or None")
         _validate_record_error(self.error, label="run")
-        if self.ejected_by is not None and not isinstance(self.ejected_by, ControlRef):
-            raise TypeError("run ejected_by requires a ControlRef or None")
         validate_occurrence(self.occur)
 
 
@@ -486,7 +483,6 @@ class StepRecord:
     noted: StepNoted = None
     status: StepStatus = "running"
     error: ErrorMessage | ErrorRef | None = None
-    ejected_by: ControlRef | None = None
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
@@ -504,8 +500,6 @@ class StepRecord:
         if self.output is not None and not isinstance(self.output, Local):
             raise TypeError("step output requires a Local or None")
         _validate_record_error(self.error, label="step")
-        if self.ejected_by is not None and not isinstance(self.ejected_by, ControlRef):
-            raise TypeError("step ejected_by requires a ControlRef or None")
         validate_occurrence(self.occur)
         if isinstance(self.given, StoredModelStepGiven):
             if self.kind != "model":

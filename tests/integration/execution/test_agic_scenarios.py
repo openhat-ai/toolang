@@ -233,13 +233,7 @@ agic reply(_: Part[]) -> Part[]:
             assert [(step.ref.index, step.status) for step in active] == [
                 (0, "succeeded")
             ]
-            current = harness.store.list_steps(
-                run_id=run.id,
-                include_ejected=True,
-            )
-            assert current == active
-            assert current[0].ejected_by is None
-            assert current[0].input == (
+            assert active[0].input == (
                 FieldRef.from_path(
                     ControlRef.for_run(run.id, 1), "payload", "locals", 0, "value"
                 ),

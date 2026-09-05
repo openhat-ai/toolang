@@ -346,10 +346,10 @@ Collections are unbounded and preserve durable ordering. Their JSON form is a
 bare array of canonical record objects; every object is identical to inspecting
 its printed Pointer individually. A missing `runs.db` is an error, while an
 existing store with no matching records returns an empty collection.
-`controls` combines all Thread Controls with Controls belonging to visible Runs.
-It excludes a Run Control when its owning Run or parent Step is ejected and
-orders records by creation time descending, target ascending, then Control index
-descending.
+`controls` combines all Thread Controls with Controls belonging to existing Runs,
+including rewound Runs. It excludes a Run Control when retry deleted its owning
+Run and orders records by creation time descending, target ascending, then
+Control index descending.
 
 A Pointer still selects one durable Thread, Control, Run, or Step record, or a
 field inside that record:

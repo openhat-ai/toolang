@@ -133,7 +133,6 @@ def _detail(run_id: str = "run_remote") -> RunDetail:
         summary="done",
         status="succeeded",
         error=None,
-        ejected=None,
         created_at="2026-08-25T00:00:00Z",
         started_at="2026-08-25T00:00:00Z",
         finished_at="2026-08-25T00:00:01Z",

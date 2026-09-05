@@ -461,13 +461,6 @@ flow staged(_: Part[]) -> Part[]:
             assert active[0].output is not None
             assert isinstance(active[0].output.value, Array)
             assert tuple(active[0].output.value) == (TextPart("committed"),)
-            assert (
-                harness.store.list_steps(
-                    run_id=retried.id,
-                    include_ejected=True,
-                )
-                == active
-            )
             retry = harness.store.list_run_controls(run_id=retried.id)[-1]
             run_control = harness.store.get_run_control(run_id=retried.id, index=0)
             assert run_control is not None
@@ -484,7 +477,6 @@ flow staged(_: Part[]) -> Part[]:
             runs = harness.store.list_runs(
                 thread_id=thread,
                 limit=None,
-                include_ejected=True,
             )
             assert harness.store.get_run(run_id=previous_child.id) is None
             replacement_child = next(run for run in runs if run.parent == before[1].ref)
@@ -545,15 +537,11 @@ flow staged(_: Part[]) -> Part[]:
             assert retry.kind == "retry"
             assert isinstance(retry.payload, RetryControlPayload)
             assert retry.payload.retry_from == original[0].ref
-            current = harness.store.list_steps(
-                run_id=run.id,
-                include_ejected=True,
-            )
+            current = harness.store.list_steps(run_id=run.id)
             assert [(step.ref.index, step.kind) for step in current] == [
                 (0, "run"),
                 (1, "value"),
             ]
-            assert all(step.ejected_by is None for step in current)
 
     asyncio.run(scenario())
 
@@ -612,7 +600,6 @@ agic reply(_: Part[], tone: Text, tags: Text[]) -> Part[]:
             assert harness.store.run_output(run_id=rerun.id) == (TextPart("second"),)
             stored_source = harness.store.get_run(run_id=source.id)
             assert stored_source is not None
-            assert stored_source.ejected_by is None
             visible = harness.store.list_runs(thread_id=thread, limit=None)
             assert [run.id for run in visible] == [rerun.id, source.id]
             rerun_control = harness.store.get_run_control(run_id=rerun.id, index=0)
@@ -693,12 +680,6 @@ flow staged(_: Part[]) -> Part[]:
             assert [
                 step.ref.index for step in harness.store.list_steps(run_id=run.id)
             ] == [0, 1]
-            current = harness.store.list_steps(
-                run_id=run.id,
-                include_ejected=True,
-            )
-            assert [step.ref.index for step in current] == [0, 1]
-            assert all(step.ejected_by is None for step in current)
 
     asyncio.run(scenario())
 

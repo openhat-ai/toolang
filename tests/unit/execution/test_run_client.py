@@ -542,10 +542,7 @@ def test_executor_rejects_retry_when_recorded_state_is_unavailable_without_mutat
         assert source.status == "failed"
         before_run = harness.store.get_run(run_id=source.id)
         before_controls = harness.store.list_run_controls(run_id=source.id)
-        before_steps = harness.store.list_steps(
-            run_id=source.id,
-            include_ejected=True,
-        )
+        before_steps = harness.store.list_steps(run_id=source.id)
 
         with pytest.raises(
             ValueError,
@@ -561,13 +558,7 @@ def test_executor_rejects_retry_when_recorded_state_is_unavailable_without_mutat
 
         assert harness.store.get_run(run_id=source.id) == before_run
         assert harness.store.list_run_controls(run_id=source.id) == before_controls
-        assert (
-            harness.store.list_steps(
-                run_id=source.id,
-                include_ejected=True,
-            )
-            == before_steps
-        )
+        assert harness.store.list_steps(run_id=source.id) == before_steps
         await client.disconnect()
 
     try:

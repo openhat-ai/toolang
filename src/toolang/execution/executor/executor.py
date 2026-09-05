@@ -1498,7 +1498,7 @@ class _Execution:
     def next_step(self, run_id: str) -> int:
         """Return the next unused top-level physical step index."""
 
-        steps = self.store.list_steps(run_id=run_id, include_ejected=True)
+        steps = self.store.list_steps(run_id=run_id)
         return (
             max(
                 (step.index for step in steps if step.parent is None),
