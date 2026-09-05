@@ -8,7 +8,7 @@ from dataclasses import replace
 from toolang.base.types.message import Part, TextPart
 from toolang.base.types.run import ModelCall
 from .records import (
-    PreparationControlPayload,
+    RunControlPayload,
     ControlRecord,
     RunRecord,
     StepRecord,
@@ -242,7 +242,7 @@ class RunHistory:
     ) -> tuple[Part, ...]:
         for control in reversed(controls):
             if control.index > run.control.index or not isinstance(
-                control.payload, PreparationControlPayload
+                control.payload, RunControlPayload
             ):
                 continue
             authored = control.payload.authored_input

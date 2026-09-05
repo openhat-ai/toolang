@@ -39,7 +39,7 @@ from toolang.execution.client import LocalRunClient
 from toolang.execution.executor import RunExecutor
 from toolang.execution.history import RunHistory
 from toolang.execution.records import (
-    RerunControlPayload,
+    RunControlPayload,
     RetryControlPayload,
     SteerControlPayload,
 )
@@ -1421,7 +1421,7 @@ def test_inspect_structural_projection_handles_empty_and_bounded_errors(
     assert len(empty_data) == 1
     assert empty_data[0]["pointer"] == empty.id
     assert empty_data[0]["parent"] is None
-    assert empty_data[0]["operation"] == "agic:test"
+    assert empty_data[0]["operation"] == "agent$agic:test"
     assert empty_data[0]["status"] == "succeeded"
     assert empty_data[0]["finished_at"] is not None
     assert empty_data[0]["metrics"] == {
@@ -2199,9 +2199,9 @@ agic reply(_: Part[]) -> Part[]:
         assert isinstance(retry_control.payload, RetryControlPayload)
         assert retry_control.payload.limits.tokens == 10
         assert rerun_control is not None
-        assert rerun_control.kind == "rerun"
-        assert isinstance(rerun_control.payload, RerunControlPayload)
-        assert str(rerun_control.payload.rerun_from) == source.id
+        assert rerun_control.kind == "run"
+        assert isinstance(rerun_control.payload, RunControlPayload)
+        assert not hasattr(rerun_control.payload, "rerun_from")
         assert rerun_control.payload.limits.time == 30
     finally:
         harness.store.close()

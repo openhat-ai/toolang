@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from toolang.base.types.message import (
     TextDelta,
     TextPart,
-    ToolCallPart,
-    ToolResultPart,
 )
 from toolang.execution.events import (
     PartBegin,
@@ -28,6 +28,7 @@ from toolang.execution.types import (
     RunStatus,
     RunRef,
     StepRef,
+    ToolStepGiven,
 )
 from toolang.lang.ast import (
     DropStmt,
@@ -216,7 +217,7 @@ class ProgressProjector:
         self._runs[event.run] = RunState(
             event,
             lane_owner,
-            agic=event.runnable.startswith("agic:"),
+            agic=event.runnable.rpartition("$")[2].startswith("agic:"),
         )
         if event.parent is not None:
             self._note_iteration(event.parent, event.occurrence)
@@ -330,7 +331,7 @@ class ProgressProjector:
         run = self._runs.get(event.step.run_id)
         if run is None or run.end is not None:
             raise _PresentationError(f"StepBegin without active Run {event.step.run}")
-        execute_rows, handoff = self._advance_execute(run, event)
+        handoff = self._advance_execute(run, event)
         ordinal = event.step.index
         parent = self._steps.get(event.step.parent) if event.step.parent else None
         if (
@@ -358,6 +359,7 @@ class ProgressProjector:
             dynamic_run=(event.kind == "run" and run.agic),
         )
         self._steps[event.step] = state
+        self._begin_execute(run, state)
         self._note_iteration(event.step, event.occurrence)
 
         if state.lane_owner is not None:
@@ -366,8 +368,12 @@ class ProgressProjector:
                 state.model.lane_preview if event.kind == "model" else "",
                 dynamic_run=state.is_dynamic_run,
             )
-            if execute_rows:
-                activity = f"{execute_rows[0].text} · {activity.removeprefix('• ')}"
+            if handoff is not None:
+                activity = (
+                    f"• Handoff to {handoff.runnable} · {activity.removeprefix('• ')}"
+                )
+            elif pending := self._pending_execute(run, event):
+                activity = f"• Executing {pending.runnable}..."
             self._set_lane_activity(
                 state.lane_owner,
                 activity,
@@ -379,7 +385,7 @@ class ProgressProjector:
             return None
         rows = self._rows_for_boundaries(state.boundaries)
         if not rows:
-            return self._execute_prelude(state, None, execute_rows, handoff)
+            return self._execute_prelude(state, None, handoff)
         self._commit_boundaries(state.boundaries)
         state.boundaries = ()
         block = ProgressBlock(
@@ -387,7 +393,7 @@ class ProgressProjector:
             rows,
             gap_before=not self._ends_with_blank,
         )
-        return self._execute_prelude(state, block, execute_rows, handoff)
+        return self._execute_prelude(state, block, handoff)
 
     def _end_step(self, event: StepEnd) -> ProgressBlock | None:
         state = self._steps.get(event.step)
@@ -422,7 +428,7 @@ class ProgressProjector:
                 )
         run = self._runs[event.step.run_id]
         run.metrics.record_step(event)
-        self._capture_execute(run, state, event)
+        execute = self._complete_execute(run, state.begin, event)
         if isinstance(event.noted, CollectionStepNoted) and event.kind == "par":
             if state.par.total_items not in {None, event.noted.total_items}:
                 raise _PresentationError(
@@ -442,7 +448,18 @@ class ProgressProjector:
         if state.lane_owner is not None:
             if not isinstance(event.error, ErrorRef):
                 statement = state.statement
-                if state.is_flow:
+                if execute is not None:
+                    terminal = (
+                        ()
+                        if event.status == "succeeded"
+                        else tuple(
+                            row.text
+                            for row in self._execute_failure_rows(
+                                execute, self._error_text(event.error) or event.status
+                            )
+                        )
+                    )
+                elif state.is_flow:
                     assert statement is not None
                     terminal = flow_lane_terminal_lines(
                         event,
@@ -472,6 +489,16 @@ class ProgressProjector:
                             terminal,
                             status=event.status,
                         )
+        elif execute is not None:
+            if event.status != "succeeded":
+                block = self._commit_block(
+                    state,
+                    self._execute_failure_rows(
+                        execute, self._error_text(event.error) or event.status
+                    ),
+                )
+            else:
+                self._release_boundaries(state.boundaries)
         elif state.is_dynamic_run:
             if state.dynamic_child_run_id is None:
                 if isinstance(event.error, ErrorRef):
@@ -824,6 +851,8 @@ class ProgressProjector:
         for state in self._steps.values():
             if state.lane_owner is not None:
                 continue
+            if self._pending_execute(self._runs[state.begin.step.run_id], state.begin):
+                continue
             if state.is_dynamic_run:
                 if state.dynamic_child_run_id is None:
                     rows = (
@@ -970,87 +999,73 @@ class ProgressProjector:
             include_runs=True,
         )
 
-    def _capture_execute(
-        self,
-        run: RunState,
-        state: StepState,
-        event: StepEnd,
-    ) -> None:
-        """Start presentation for execute requests in one Model Step output."""
+    def _begin_execute(self, run: RunState, state: StepState) -> None:
+        """Start execute presentation from its Tool Step, not the model's intent."""
 
-        if event.kind != "model" or event.status != "succeeded":
-            return
-        parts = output_parts(event)
-        tool_calls = tuple(part for part in parts if isinstance(part, ToolCallPart))
-        execute_calls = tuple(
-            part for part in tool_calls if part.tool_name == "_too__execute"
-        )
-        for call in execute_calls:
-            pending = PendingExecute(
-                tool_call_id=call.tool_call_id,
-                runnable=self._safe_runnable_label(call.input.get("runnable")),
-                sequence=state.sequence,
-                can_start=len(tool_calls) == 1,
-            )
-            run.pending_executes.append(pending)
-            if run.lane_owner is not None:
-                self._set_lane_activity(
-                    run.lane_owner,
-                    f"• Executing {pending.runnable}...",
+        given = state.begin.given
+        if isinstance(given, ToolStepGiven) and given.call.name == "_too__execute":
+            run.pending_executes.append(
+                PendingExecute(
+                    tool_call_id=given.call.tool_call_id,
+                    runnable=self._safe_runnable_label(
+                        given.call.input.get("runnable")
+                    ),
+                    sequence=state.sequence,
                 )
+            )
+
+    @staticmethod
+    def _pending_execute(run: RunState, event: StepBegin) -> PendingExecute | None:
+        if not isinstance(event.given, ToolStepGiven):
+            return None
+        call = event.given.call
+        if call.name != "_too__execute":
+            return None
+        return next(
+            (
+                item
+                for item in run.pending_executes
+                if item.tool_call_id == call.tool_call_id
+            ),
+            None,
+        )
+
+    def _complete_execute(
+        self, run: RunState, begin: StepBegin, end: StepEnd
+    ) -> PendingExecute | None:
+        """Confirm or reject a handoff from its actual Tool Step result."""
+
+        pending = self._pending_execute(run, begin)
+        if pending is not None:
+            index = run.pending_executes.index(pending)
+            if end.status == "succeeded":
+                run.pending_executes[index] = replace(pending, ready=True)
+            else:
+                run.pending_executes.pop(index)
+        return pending
 
     def _advance_execute(
         self,
         run: RunState,
         event: StepBegin,
-    ) -> tuple[tuple[ProgressRow, ...], PendingExecute | None]:
-        """Resolve pending execute attempts at the next natural Step boundary."""
+    ) -> PendingExecute | None:
+        """Attach a confirmed handoff to the first target Step."""
 
-        if not run.pending_executes:
-            return (), None
-        results: dict[str, ToolResultPart] = {}
-        if isinstance(event.given, ModelStepGiven):
-            for message in event.given.call.messages:
-                for part in message.parts:
-                    if (
-                        isinstance(part, ToolResultPart)
-                        and part.tool_name == "_too__execute"
-                    ):
-                        results[part.tool_call_id] = part
-
-        rows: list[ProgressRow] = []
-        remaining: list[PendingExecute] = []
-        for pending in run.pending_executes:
-            result = results.get(pending.tool_call_id)
-            if result is None:
-                remaining.append(pending)
-                continue
-            rows.extend(
-                self._execute_failure_rows(
-                    pending,
-                    result.error or "execute did not start",
-                )
-            )
-
-        handoff = next((item for item in remaining if item.can_start), None)
+        handoff = next((item for item in run.pending_executes if item.ready), None)
         if handoff is not None:
-            remaining.remove(handoff)
+            run.pending_executes.remove(handoff)
             run.agic = isinstance(event.given, ModelStepGiven)
-        run.pending_executes = remaining
-        return tuple(rows), handoff
+        return handoff
 
     def _execute_prelude(
         self,
         state: StepState,
         block: ProgressBlock | None,
-        failure_rows: tuple[ProgressRow, ...],
         handoff: PendingExecute | None,
     ) -> ProgressBlock | None:
-        """Attach execute failure or handoff presentation to one natural Step."""
+        """Attach confirmed handoff presentation to one natural Step."""
 
-        rows: list[ProgressRow] = list(failure_rows)
-        if rows and (handoff is not None or block is not None):
-            rows.append(ProgressRow(""))
+        rows: list[ProgressRow] = []
         if handoff is not None and state.lane_owner is None:
             rows.extend(
                 (
@@ -1095,7 +1110,7 @@ class ProgressProjector:
 
         rows: list[ProgressRow] = []
         for pending in run.pending_executes:
-            if event.status == "succeeded" and pending.can_start:
+            if event.status == "succeeded" and pending.ready:
                 rows.extend(
                     (
                         ProgressRow(

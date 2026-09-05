@@ -186,20 +186,6 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         output=dict(record.output),
         error=record.error,
     )
-    await state.emit(
-        PartBegin(
-            step=StepRef.from_local(run.run_id, (step_index,)),
-            part=0,
-            part_type=part.type,
-        )
-    )
-    await state.emit(
-        PartEnd(
-            step=StepRef.from_local(run.run_id, (step_index,)),
-            part=0,
-            data=part,
-        )
-    )
     status = "failed" if record.error is not None else "succeeded"
     log_tool_call_output(
         record,
@@ -208,19 +194,13 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         step_index=step_index,
         plugin_name=plugin_name,
     )
-    await state.emit(
-        StepEnd(
-            step=StepRef.from_local(run.run_id, (step_index,)),
-            kind="tool",
-            status=status,
-            output=Local.typed("ToolResultPart", part, None, 0),
-            noted=ToolStepNoted(summary=_tool_summary(summary_context, status)),
-            finished_at=utc_now(),
-            error=ErrorMessage(record.error) if record.error is not None else None,
-        )
+    await finish(
+        state,
+        StepRef.from_local(run.run_id, (step_index,)),
+        part,
+        summary=_tool_summary(summary_context, status),
+        canceled_summary=_tool_summary(summary_context, "canceled"),
     )
-    state.messages.append(_followup_message(record))
-    state.last_step = step_index
     _LOGGER.info(
         "Step finished thread=%s run=%s step=%s kind=tool tool=%s status=%s duration_ms=%s",
         run.thread,
@@ -231,6 +211,54 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         elapsed_ms(step_started),
     )
     return record
+
+
+async def finish(
+    state: _AgicState,
+    step: StepRef,
+    part: ToolResultPart,
+    *,
+    summary: str | None = None,
+    canceled_summary: str = "canceled",
+) -> None:
+    """Persist a tool result even if its delivery is interrupted."""
+
+    output = Local.typed("ToolResultPart", part, None, 0)
+    end = PartEnd(step=step, part=0, data=part)
+    ended = False
+    try:
+        await state.emit(PartBegin(step=step, part=0, part_type=part.type))
+        ended = True
+        await state.emit(end)
+    except asyncio.CancelledError:
+        if not ended:
+            await state.emit(end)
+        await state.emit(
+            StepEnd(
+                step=step,
+                kind="tool",
+                status="canceled",
+                output=output,
+                noted=ToolStepNoted(summary=canceled_summary),
+                finished_at=utc_now(),
+            )
+        )
+        raise
+    await state.emit(
+        StepEnd(
+            step=step,
+            kind="tool",
+            status="failed" if part.error is not None else "succeeded",
+            output=output,
+            noted=ToolStepNoted(
+                summary=summary if summary is not None else part.tool_name
+            ),
+            error=ErrorMessage(part.error) if part.error is not None else None,
+            finished_at=utc_now(),
+        )
+    )
+    state.messages.append(Message(role="tool", parts=(part,)))
+    state.last_step = step.index
 
 
 def _plugin_name(tool: AgentTool | None) -> str:
@@ -410,20 +438,4 @@ def _tool_context(
         wd=layout.home,
         services=services,
         placement=layout.placement,
-    )
-
-
-def _followup_message(tool_call: ToolCallResult) -> Message:
-    return Message(
-        role="tool",
-        parts=(
-            ToolResultPart(
-                tool_call_id=tool_call.tool_call_id,
-                call_id=tool_call.call_id,
-                tool_name=tool_call.name,
-                tool_family=tool_call.name,
-                output=dict(tool_call.output),
-                error=tool_call.error,
-            ),
-        ),
     )

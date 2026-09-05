@@ -89,7 +89,7 @@ def test_remote_script_uses_a_script_thread_and_native_progress(
         assert core.store.run_output(run_id=record.id) == (TextPart("remote result"),)
         assert control is not None
         assert isinstance(control.payload, RunControlPayload)
-        assert control.payload.runnable == "agic:echo"
+        assert control.payload.runnable == "agent$agic:echo"
         output = capsys.readouterr()
         assert output.out == ""
         assert "• remote result" in output.err

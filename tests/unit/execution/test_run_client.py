@@ -484,14 +484,12 @@ prompt rewrite:
         assert rerun_control.request == "rerun_request"
         assert rerun_control.payload.limits.time == 30
         assert (
-            retry_control.payload.authored_input
-            == rerun_control.payload.authored_input
+            rerun_control.payload.authored_input
             == source_control.payload.authored_input
             == RunnableInputRaw(_="$rewrite style=brief -- hello")
         )
         assert (
-            retry_control.payload.prompt_invocations
-            == rerun_control.payload.prompt_invocations
+            rerun_control.payload.prompt_invocations
             == source_control.payload.prompt_invocations
         )
 

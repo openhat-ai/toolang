@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from functools import cached_property
 from typing import Annotated, Any, Literal, TypeAlias, cast
@@ -29,6 +29,7 @@ from toolang.lang.types import Array, Struct, Value, validate_type, value_type
 from .types import (
     CollectionStepNoted,
     ControlRef,
+    RecallTarget,
     ControlKind,
     ControlStatus,
     ControlTiming,
@@ -171,7 +172,7 @@ class RunControlPayload:
     prompt_invocations: tuple[PromptInvocation, ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_preparation_payload(
+        _validate_run_payload(
             self.state,
             self.runnable,
             self.model,
@@ -179,43 +180,6 @@ class RunControlPayload:
             self.input,
             self.sandbox,
         )
-        _validate_authored_facts(
-            self.authored_input,
-            self.authored_commands,
-            self.authored_session_commands,
-            self.prompt_invocations,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RerunControlPayload:
-    """Resolved preparation snapshot for one rerun."""
-
-    resources: AgentResources
-    limits: RunLimits
-    state: str
-    runnable: str
-    model: str
-    input: tuple[Local, ...]
-    rerun_from: RunRef
-    model_request: ModelRequest | None = None
-    sandbox: str | None = None
-    authored_input: RunnableInputRaw | None = None
-    authored_commands: tuple[RunCommand, ...] = ()
-    authored_session_commands: tuple[RunCommand, ...] = ()
-    prompt_invocations: tuple[PromptInvocation, ...] = ()
-
-    def __post_init__(self) -> None:
-        _validate_preparation_payload(
-            self.state,
-            self.runnable,
-            self.model,
-            self.model_request,
-            self.input,
-            self.sandbox,
-        )
-        if not isinstance(self.rerun_from, RunRef):
-            raise TypeError("rerun payload requires a RunRef")
         _validate_authored_facts(
             self.authored_input,
             self.authored_commands,
@@ -226,39 +190,16 @@ class RerunControlPayload:
 
 @dataclass(frozen=True, slots=True)
 class RetryControlPayload:
-    """Resolved preparation snapshot for one retry."""
+    """Effective settings and restart boundary for one retry."""
 
     resources: AgentResources
     limits: RunLimits
-    state: str | None
-    runnable: str
-    model: str
-    input: tuple[Local, ...] | None
     retry_from: StepRef | None
     model_request: ModelRequest | None = None
-    sandbox: str | None = None
-    authored_input: RunnableInputRaw | None = None
-    authored_commands: tuple[RunCommand, ...] = ()
-    authored_session_commands: tuple[RunCommand, ...] = ()
-    prompt_invocations: tuple[PromptInvocation, ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_preparation_payload(
-            self.state,
-            self.runnable,
-            self.model,
-            self.model_request,
-            self.input,
-            self.sandbox,
-        )
         if self.retry_from is not None and not isinstance(self.retry_from, StepRef):
             raise TypeError("retry payload requires a StepRef or None")
-        _validate_authored_facts(
-            self.authored_input,
-            self.authored_commands,
-            self.authored_session_commands,
-            self.prompt_invocations,
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,29 +218,30 @@ class ExecuteControlPayload:
 
     state: str
     runnable: str
-    module: str
-    source: FieldRef
     input: tuple[Local, ...]
 
     def __post_init__(self) -> None:
         _validate_state_revision(self.state, label="execute payload State")
         if not self.runnable or self.runnable != self.runnable.strip():
             raise ValueError("execute payload requires a canonical runnable")
-        if not self.module or self.module != self.module.strip():
-            raise ValueError("execute payload requires a canonical module")
-        if not isinstance(self.source, FieldRef):
-            raise TypeError("execute payload source requires a FieldRef")
         _validate_control_input(self.input)
         for local in self.input:
             if local.type != "Json":
                 raise TypeError("execute payload input must use raw Json values")
             if not isinstance(local.value, TypedRef):
                 raise TypeError("execute payload input must point to model input")
-            expected = self.source.select("input", "input", local.name or "")
-            if local.value.ref != expected:
-                raise ValueError(
-                    f"execute payload local {local.name} must point to {expected}"
-                )
+
+
+_RECALL_TARGET_ADAPTER = TypeAdapter(RecallTarget)
+
+
+@dataclass(frozen=True, slots=True)
+class RecallControlPayload:
+    """One immutable resource revision recalled by the runtime."""
+
+    target: RecallTarget
+    revision: str
+    content: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -366,26 +308,25 @@ class RewindControlPayload:
             raise TypeError("rewind payload requires a Thread-scoped ControlRef")
 
 
-PreparationControlPayload = (
-    RunControlPayload | RerunControlPayload | RetryControlPayload
-)
+PreparationControlPayload = RunControlPayload | RetryControlPayload
 RunScopedControlPayload = (
     PreparationControlPayload
     | ReloadControlPayload
     | ExecuteControlPayload
     | SteerControlPayload
     | CancelControlPayload
+    | RecallControlPayload
 )
 ThreadControlPayload = CreateControlPayload | ForkControlPayload | RewindControlPayload
 ControlPayload = RunScopedControlPayload | ThreadControlPayload
 _CONTROL_PAYLOAD_TYPES = {
     "run": RunControlPayload,
-    "rerun": RerunControlPayload,
     "retry": RetryControlPayload,
     "reload": ReloadControlPayload,
     "execute": ExecuteControlPayload,
     "steer": SteerControlPayload,
     "cancel": CancelControlPayload,
+    "recall": RecallControlPayload,
     "create": CreateControlPayload,
     "fork": ForkControlPayload,
     "rewind": RewindControlPayload,
@@ -410,6 +351,34 @@ ControlPayloadField = Annotated[
     ControlPayload,
     BeforeValidator(_control_payload_variant),
 ]
+
+
+def run_preparation(
+    run: RunRecord, controls: Sequence[ControlRecord]
+) -> RunControlPayload:
+    """Combine initial Run facts with the current attempt's effective settings."""
+
+    initial = next(
+        (
+            item.payload
+            for item in controls
+            if item.ref == ControlRef.for_run(run.id, 0)
+        ),
+        None,
+    )
+    current = next((item.payload for item in controls if item.ref == run.control), None)
+    if not isinstance(initial, RunControlPayload) or not isinstance(
+        current, PreparationControlPayload
+    ):
+        raise ValueError(f"run preparation control not found: {run.control}")
+    if isinstance(current, RetryControlPayload):
+        return replace(
+            initial,
+            resources=current.resources,
+            limits=current.limits,
+            model_request=current.model_request,
+        )
+    return initial
 
 
 @dataclass(frozen=True, slots=True)
@@ -479,6 +448,8 @@ class StepRecord:
     given: StoredStepGiven
     state: ControlRef
     output: Local | None
+    preceded_by: tuple[ControlRef, ...] = ()
+    aborted_by: ControlRef | None = None
     occur: Occurrence | None = None
     noted: StepNoted = None
     status: StepStatus = "running"
@@ -534,6 +505,7 @@ class ControlRecord:
     id: str
     kind: ControlKind
     payload: ControlPayloadField
+    triggered_by: StepRef | None = None
     request: str | None = None
     status: ControlStatus = "pending"
     timing: ControlTiming = "immediate"
@@ -771,7 +743,16 @@ def _control_payload_from_data(
     if not isinstance(data, Mapping):
         raise ValueError("control payload must be an object")
     payload = cast(Mapping[str, object], data)
-    if kind in {"run", "rerun", "retry"}:
+    if kind == "recall":
+        content = payload.get("content")
+        if not isinstance(content, str):
+            raise ValueError("recall content must be text")
+        return RecallControlPayload(
+            target=_RECALL_TARGET_ADAPTER.validate_python(payload["target"]),
+            revision=_required_payload_text(payload, "revision"),
+            content=content,
+        )
+    if kind in {"run", "retry"}:
         resources_raw = payload.get("resources")
         limits_raw = payload.get("limits")
         if not isinstance(resources_raw, Mapping) or not isinstance(
@@ -780,6 +761,19 @@ def _control_payload_from_data(
             raise ValueError(f"{kind} payload requires resources and limits")
         resources = AgentResources.from_data(cast(Mapping[str, object], resources_raw))
         limits = run_limits_from_data(limits_raw)
+        if kind == "retry":
+            return RetryControlPayload(
+                resources=resources,
+                limits=limits,
+                retry_from=StepRef.parse(cast(str, payload["retry_from"]))
+                if payload.get("retry_from") is not None
+                else None,
+                model_request=_MODEL_REQUEST_ADAPTER.validate_python(
+                    payload["model_request"]
+                )
+                if payload.get("model_request") is not None
+                else None,
+            )
         state = _optional_payload_text(payload, "state")
         runnable = _required_payload_text(payload, "runnable")
         model = _required_payload_text(payload, "model")
@@ -812,7 +806,7 @@ def _control_payload_from_data(
             )
         else:
             raise ValueError(f"{kind} payload input must be an array or null")
-        if kind != "retry" and input_value is None:
+        if input_value is None:
             raise ValueError(f"{kind} payload requires input")
         authored_input = _authored_input_from_data(payload.get("authored_input"))
         authored_commands = _run_commands_from_data(
@@ -826,52 +820,13 @@ def _control_payload_from_data(
         prompt_invocations = _prompt_invocations_from_data(
             payload.get("prompt_invocations", ())
         )
-        if kind == "run":
-            return RunControlPayload(
-                resources=resources,
-                limits=limits,
-                state=state,
-                runnable=runnable,
-                model=model,
-                input=input_value or (),
-                model_request=model_request,
-                sandbox=sandbox,
-                authored_input=authored_input,
-                authored_commands=authored_commands,
-                authored_session_commands=authored_session_commands,
-                prompt_invocations=prompt_invocations,
-            )
-        if kind == "rerun":
-            if state is None:
-                raise ValueError("rerun payload requires state")
-            return RerunControlPayload(
-                resources=resources,
-                limits=limits,
-                state=state,
-                runnable=runnable,
-                model=model,
-                input=input_value or (),
-                rerun_from=RunRef(_required_payload_text(payload, "rerun_from")),
-                model_request=model_request,
-                sandbox=sandbox,
-                authored_input=authored_input,
-                authored_commands=authored_commands,
-                authored_session_commands=authored_session_commands,
-                prompt_invocations=prompt_invocations,
-            )
-        raw_retry_from = payload.get("retry_from")
-        return RetryControlPayload(
+        return RunControlPayload(
             resources=resources,
             limits=limits,
             state=state,
             runnable=runnable,
             model=model,
             input=input_value,
-            retry_from=(
-                StepRef.parse(str(raw_retry_from))
-                if raw_retry_from is not None
-                else None
-            ),
             model_request=model_request,
             sandbox=sandbox,
             authored_input=authored_input,
@@ -894,8 +849,6 @@ def _control_payload_from_data(
         return ExecuteControlPayload(
             state=_required_payload_text(payload, "state"),
             runnable=_required_payload_text(payload, "runnable"),
-            module=_required_payload_text(payload, "module"),
-            source=FieldRef.parse(_required_payload_text(payload, "source")),
             input=tuple(
                 local_decoder(cast(Mapping[str, object], item)) for item in raw_input
             ),
@@ -941,18 +894,25 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
     """Serialize one typed control payload."""
 
     if isinstance(payload, RunControlPayload):
-        return _preparation_payload_data(payload)
-    if isinstance(payload, RerunControlPayload):
-        return {
-            **_preparation_payload_data(payload),
-            "rerun_from": str(payload.rerun_from),
-        }
+        return _run_payload_data(payload)
     if isinstance(payload, RetryControlPayload):
         return {
-            **_preparation_payload_data(payload),
+            "resources": payload.resources.to_data(),
+            "limits": run_limits_to_data(payload.limits),
+            "model_request": _MODEL_REQUEST_ADAPTER.dump_python(
+                payload.model_request, mode="json"
+            )
+            if payload.model_request is not None
+            else None,
             "retry_from": (
                 str(payload.retry_from) if payload.retry_from is not None else None
             ),
+        }
+    if isinstance(payload, RecallControlPayload):
+        return {
+            "target": _RECALL_TARGET_ADAPTER.dump_python(payload.target, mode="json"),
+            "revision": payload.revision,
+            "content": payload.content,
         }
     if isinstance(payload, ReloadControlPayload):
         return {"state": payload.state}
@@ -960,8 +920,6 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
         return {
             "state": payload.state,
             "runnable": payload.runnable,
-            "module": payload.module,
-            "source": str(payload.source),
             "input": [local_to_data(local) for local in payload.input],
         }
     if isinstance(payload, SteerControlPayload | CancelControlPayload):
@@ -1729,8 +1687,8 @@ def _optional_payload_text(payload: Mapping[str, object], name: str) -> str | No
     return value
 
 
-def _preparation_payload_data(
-    payload: RunControlPayload | RerunControlPayload | RetryControlPayload,
+def _run_payload_data(
+    payload: RunControlPayload,
 ) -> dict[str, object]:
     data: dict[str, object] = {
         "resources": payload.resources.to_data(),
@@ -1742,11 +1700,7 @@ def _preparation_payload_data(
             if payload.model_request is not None
             else None
         ),
-        "input": (
-            [local_to_data(local) for local in payload.input]
-            if payload.input is not None
-            else None
-        ),
+        "input": [local_to_data(local) for local in payload.input],
     }
     if payload.state is not None:
         data["state"] = payload.state
@@ -1900,7 +1854,7 @@ def _prompt_invocation_to_data(invocation: PromptInvocation) -> dict[str, object
     }
 
 
-def _validate_preparation_payload(
+def _validate_run_payload(
     state: str | None,
     runnable: str,
     model: str,

@@ -65,6 +65,7 @@ class StepBegin:
     given: StepGiven
     state: ControlRef | None = None
     input: tuple[FieldRef, ...] = ()
+    preceded_by: tuple[ControlRef, ...] = ()
     occurrence: Occurrence | None = None
     started_at: str = ""
     type: Literal["step_begin"] = field(default="step_begin", init=False)
@@ -114,6 +115,7 @@ class StepEnd:
     output: Local | None = None
     noted: StepNoted = None
     error: ErrorMessage | ErrorRef | None = None
+    aborted_by: ControlRef | None = None
     finished_at: str = ""
     type: Literal["step_end"] = field(default="step_end", init=False)
 

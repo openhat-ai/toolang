@@ -8,7 +8,7 @@ from toolang.lang import format_statement_head
 
 from .records import (
     ControlRecord,
-    PreparationControlPayload,
+    RunControlPayload,
     RunRecord,
     StepRecord,
     StoredModelStepGiven,
@@ -27,9 +27,7 @@ class InspectedRun:
     @property
     def runnable(self) -> str:
         payload = self.entry.payload
-        if self.entry.ref != self.record.control or not isinstance(
-            payload, PreparationControlPayload
-        ):
+        if self.entry.index != 0 or not isinstance(payload, RunControlPayload):
             raise ValueError(
                 f"run preparation control not found: {self.record.control}"
             )

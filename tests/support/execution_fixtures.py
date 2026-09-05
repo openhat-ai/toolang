@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from toolang.base.types.message import Message, Part
 from toolang.base.types.policy import RunBindings, RunLimits
@@ -84,8 +84,6 @@ def accept_run(
     context: Mapping[str, Any],
     request_id: str | None,
     created_at: str,
-    kind: Literal["run", "rerun"] = "run",
-    source: str | None = None,
     bindings: RunBindings | None = None,
     limits: RunLimits | None = None,
     resources: AgentResources | None = None,
@@ -137,7 +135,7 @@ def accept_run(
         thread=thread,
         resources=resources if resources is not None else AgentResources(),
         limits=limits if limits is not None else RunLimits(),
-        runnable=resolved_bindings.runnable or "agic:test",
+        runnable=f"agent${resolved_bindings.runnable or 'agic:test'}",
         model=resolved_bindings.model or "test",
         locals=tuple(locals_value),
         sandbox=sandbox
@@ -147,8 +145,6 @@ def accept_run(
         state=_TEST_STATE if parent is None else None,
         request_id=request_id,
         created_at=created_at,
-        kind=kind,
-        source=source,
         state_ref=state_ref,
     )
 
@@ -206,9 +202,9 @@ def project_run_start(
         resources=AgentResources(),
         limits=RunLimits(),
         runnable=(
-            f"{runnable_kind}:{runnable_name}"
+            f"agent${runnable_kind}:{runnable_name}"
             if runnable_name is not None
-            else f"{runnable_kind}:test"
+            else f"agent${runnable_kind}:test"
         ),
         model="test",
         locals=(Local.typed("Part[]", tuple(input.parts), "_", 0),),
@@ -226,9 +222,9 @@ def project_run_start(
             parent=parent_path,
             control=ControlRef.for_run(run_id, 0),
             runnable=(
-                f"{runnable_kind}:{runnable_name}"
+                f"agent${runnable_kind}:{runnable_name}"
                 if runnable_name is not None
-                else f"{runnable_kind}:test"
+                else f"agent${runnable_kind}:test"
             ),
             occurrence=_occurrence_from_context(run_context),
             started_at=started,

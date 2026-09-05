@@ -57,7 +57,8 @@ from ..calls import (
 )
 from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin, StepEnd
 from ..records import (
-    PreparationControlPayload,
+    RunControlPayload,
+    run_preparation,
     ControlRecord,
     RunRecord,
     StepRecord,
@@ -76,6 +77,8 @@ from ..types import (
     StepRef,
     RunRef,
     ModelStepNoted,
+    ModelStepGiven,
+    ToolStepGiven,
     Occurrence,
     OccurrencePosition,
     TypedRef,
@@ -100,6 +103,7 @@ from .common import (
     _StepFailed,
     control_text,
     initial_locals,
+    statement_has_call,
     value_parts,
     value_text,
 )
@@ -151,6 +155,7 @@ class _ActiveRun:
     root_run_id: str
     root_setup: AgentSetup
     loop: asyncio.AbstractEventLoop = field(repr=False)
+    interruption: ControlRecord | None = None
     controls: dict[str, dict[int, ControlRecord]] = field(
         default_factory=dict,
         repr=False,
@@ -406,6 +411,11 @@ class RunExecutor:
             model_override = None
         if setup is None or state is None:
             raise TypeError("rerun requires resolved setup and state")
+        original = self.store.get_run(run_id=source)
+        if original is None or original.parent is not None:
+            raise ValueError(f"source root run not found: {source}")
+        if original.status not in {"succeeded", "failed", "canceled"}:
+            raise ValueError(f"rerun source is not terminal: {source}")
         loop = asyncio.get_running_loop()
         sandbox = _setup_sandbox(setup)
         spec = self._source_spec(
@@ -442,8 +452,6 @@ class RunExecutor:
             occurrence=bound.occurrence,
             request_id=request_id,
             created_at=bound.created_at,
-            kind="rerun",
-            source=source,
             authored_input=spec.authored_input,
             authored_commands=spec.authored_commands,
             authored_session_commands=spec.authored_session_commands,
@@ -513,17 +521,10 @@ class RunExecutor:
             resources=resources,
             limits=bound.limits,
             state=bound.state.revision,
-            runnable=_bound_runnable(bound),
-            model=_bound_model(bound),
             model_request=bound.model_request,
-            locals=bound.control_locals,
             sandbox=sandbox,
             request_id=request_id,
             created_at=bound.created_at,
-            authored_input=spec.authored_input,
-            authored_commands=spec.authored_commands,
-            authored_session_commands=spec.authored_session_commands,
-            prompt_invocations=spec.prompt_invocations,
         )
         bound = replace(bound, control_index=control.index)
         return self._launch(
@@ -592,22 +593,17 @@ class RunExecutor:
         run = self.store.get_run(run_id=run_id)
         if run is None or run.parent is not None:
             raise ValueError(f"root run not found: {run_id}")
-        control = self.store.get_run_control(
-            run_id=str(run.control.target), index=run.control.index
+        preparation = run_preparation(run, self.store.list_run_controls(run_id=run_id))
+        module, _, ref = preparation.runnable.partition("$")
+        runnable, kind = parse_runnable_ref(ref)
+        resolved_module, declaration = resolve_state_runnable(
+            state, runnable, kind=kind
         )
-        if control is None or not isinstance(
-            control.payload, PreparationControlPayload
-        ):
-            raise ValueError(f"run input not found: {run_id}")
-        _kind, _separator, runnable = control.payload.runnable.partition(":")
-        if not runnable:
-            raise ValueError(f"run runnable not found: {run_id}")
-        _module, declaration = resolve_state_runnable(state, runnable)
-        persisted_model_request = control.payload.model_request
+        if resolved_module != module:
+            raise ValueError(f"run runnable module changed: {preparation.runnable}")
+        persisted_model_request = preparation.model_request
         persisted_model = (
-            None
-            if control.payload.model == "none"
-            else ModelRequest(control.payload.model)
+            None if preparation.model == "none" else ModelRequest(preparation.model)
         )
         selected_model_request = model_request or (
             ModelRequest(model)
@@ -661,16 +657,12 @@ class RunExecutor:
             ),
             input=_runnable_input_from_locals(
                 self.store,
-                _adopted_control_locals(
-                    self.store,
-                    run_id=run.id,
-                    through=control.index,
-                ),
+                preparation.input,
             ),
-            authored_input=control.payload.authored_input,
-            authored_commands=control.payload.authored_commands,
-            authored_session_commands=control.payload.authored_session_commands,
-            prompt_invocations=control.payload.prompt_invocations,
+            authored_input=preparation.authored_input,
+            authored_commands=preparation.authored_commands,
+            authored_session_commands=preparation.authored_session_commands,
+            prompt_invocations=preparation.prompt_invocations,
         )
 
     def _require_retry_compatible(
@@ -683,11 +675,9 @@ class RunExecutor:
             raise ValueError(f"root run not found: {run_id}")
         control = self.store.get_run_control(
             run_id=str(run.control.target),
-            index=run.control.index,
+            index=0,
         )
-        if control is None or not isinstance(
-            control.payload, PreparationControlPayload
-        ):
+        if control is None or not isinstance(control.payload, RunControlPayload):
             raise ValueError(f"run preparation not found: {run_id}")
         if self.store.resolve_state_revision(run.state) != state.revision:
             raise ValueError(
@@ -869,6 +859,7 @@ class RunExecutor:
         run_id: str,
         state: ExecutionState,
         request_id: str | None,
+        triggered_by: StepRef | None = None,
     ) -> ControlRecord:
         """Persist a reload and retain its process-local State snapshot."""
 
@@ -913,13 +904,16 @@ class RunExecutor:
                 state=state.revision,
                 request_id=request_id,
                 created_at=utc_now(),
+                triggered_by=triggered_by,
             )
             with self._active_lock:
                 active.reload_states[control.index] = state
             self._observe_control(control)
         return control
 
-    async def model_reload(self, *, run_id: str) -> dict[str, object]:
+    async def model_reload(
+        self, *, run_id: str, triggered_by: StepRef
+    ) -> dict[str, object]:
         """Refresh and synchronously apply State for one model runtime tool."""
 
         with self._active_lock:
@@ -948,6 +942,7 @@ class RunExecutor:
                 run_id=run_id,
                 state=refreshed.publication,
                 request_id=None,
+                triggered_by=triggered_by,
             )
             terminal = await self._wait_for_control(active, control)
             if terminal.status != "applied":
@@ -1060,6 +1055,12 @@ class RunExecutor:
         event_run = _run_event_id(event)
         if event_run in active.ended:
             return
+        if (
+            isinstance(event, StepEnd)
+            and event.status == "canceled"
+            and active.interruption is not None
+        ):
+            event = replace(event, aborted_by=active.interruption.ref)
         with self.store.write_transaction():
             self._persist.on_event(event)
             self._update_control_state(event)
@@ -1085,17 +1086,30 @@ class RunExecutor:
             )
             return
         if isinstance(event, StepBegin):
-            indexes = _control_indexes(event.input, run_id=event.step.run_id)
-            self.store.finish_run_controls(
-                run_id=event.step.run_id,
-                indexes=indexes,
-                finished_at=event.started_at,
+            for ref in event.preceded_by:
+                self.store.finish_run_controls(
+                    run_id=str(ref.target),
+                    indexes=(ref.index,),
+                    finished_at=event.started_at,
+                )
+            return
+        if isinstance(event, StepEnd) and event.aborted_by is not None:
+            control = self.store.get_run_control(
+                run_id=str(event.aborted_by.target), index=event.aborted_by.index
             )
+            # An immediate steer is adopted by the next model begin, not by the
+            # interrupted end. A cancel has no subsequent input consumer.
+            if control is not None and control.kind == "cancel":
+                self.store.finish_run_controls(
+                    run_id=str(control.target),
+                    indexes=(control.index,),
+                    finished_at=event.finished_at,
+                )
             return
         if isinstance(event, RunEnd):
             if event.control is not None:
                 self.store.finish_run_controls(
-                    run_id=event.run,
+                    run_id=str(event.control.target),
                     indexes=(event.control.index,),
                     finished_at=event.finished_at,
                 )
@@ -1152,14 +1166,26 @@ class RunExecutor:
                     active.reload_states.pop(control.index, None)
                     apply_reload = active
         if cancel is not None and loop is not None and not cancel.done():
-            if control.kind == "cancel":
-                claimed = self.store.claim_run_controls(
-                    run_id=str(control.target),
-                    indexes=(control.index,),
-                )
-                if control.index not in claimed:
+
+            def interrupt() -> None:
+                if cancel.done():
                     return
-            loop.call_soon_threadsafe(cancel.cancel)
+                if control.kind == "cancel":
+                    claimed = self.store.claim_run_controls(
+                        run_id=str(control.target), indexes=(control.index,)
+                    )
+                    if control.index not in claimed:
+                        return
+                else:
+                    current = self.store.get_run_control(
+                        run_id=str(control.target), index=control.index
+                    )
+                    if current is None or current.status != "pending":
+                        return
+                active.interruption = control
+                cancel.cancel()
+
+            loop.call_soon_threadsafe(interrupt)
         if apply_reload is not None:
             self._schedule_reload_application(apply_reload)
         self._notify_control_waiters(control)
@@ -1303,6 +1329,7 @@ class RunExecutor:
                         state,
                         ControlRef(RunRef(active.root_run_id), candidate.index),
                     )
+                    execution._preceding_controls.append(candidate.ref)
                     with self._active_lock:
                         controls.pop(candidate.index, None)
                         active.reload_states.pop(candidate.index, None)
@@ -1381,7 +1408,9 @@ class RunExecutor:
             return
         if isinstance(event, StepBegin):
             run_id = event.step.run_id
-            indexes = set(_control_indexes(event.input, run_id=run_id))
+            indexes = {
+                ref.index for ref in event.preceded_by if str(ref.target) == run_id
+            }
         elif isinstance(event, RunEnd):
             run_id = event.run
             indexes = None
@@ -1482,17 +1511,15 @@ class _Execution:
         self._emit_trace = emit
         self._current_state = (root.state, root.state_ref)
         self._step_states: dict[StepRef, tuple[ExecutionState, ControlRef]] = {}
+        self._preceding_controls: list[ControlRef] = []
         self._limits = _RunLimitState(root.limits)
         self._retry = retry
         if retry is not None:
             self._restore_model_limits(root.run_id)
         self._run_outputs: dict[str, RecordLocal] = {}
-        root_ref = root.bindings.runnable
-        if root_ref is None:  # pragma: no cover - bound run invariant
-            raise RuntimeError(f"run runnable binding is missing: {root.run_id}")
         self._active_bindings: dict[str, BoundRun] = {root.run_id: root}
-        self._run_lineages: dict[str, tuple[tuple[str, str], ...]] = {
-            root.run_id: ((root.module, root_ref),)
+        self._run_lineages: dict[str, tuple[str, ...]] = {
+            root.run_id: (_bound_runnable(root),)
         }
 
     def next_step(self, run_id: str) -> int:
@@ -1562,7 +1589,6 @@ class _Execution:
             return
         self.store.append_prompt_invocations(
             run_id=binding.run_id,
-            index=binding.control_index,
             invocations=invocations,
         )
 
@@ -1738,7 +1764,7 @@ class _Execution:
     ) -> None:
         """Reject a model route already active in this or an ancestor lineage."""
 
-        identity = (target.module, target.ref)
+        identity = target.qualified
         run_id: str | None = parent.run_id
         while run_id is not None:
             if identity in self._run_lineages.get(run_id, ()):
@@ -1794,27 +1820,25 @@ class _Execution:
         self,
         binding: BoundRun,
         *,
-        source: FieldRef,
+        triggered_by: StepRef,
     ) -> BoundRun:
         """Persist and activate one prepared same-Run runnable replacement."""
 
         lineage = self._run_lineages.get(binding.run_id)
         if lineage is None:  # pragma: no cover - active Run invariant
             raise RuntimeError(f"active Run lineage is missing: {binding.run_id}")
-        ref = binding.bindings.runnable
-        if ref is None:  # pragma: no cover - bound run invariant
-            raise RuntimeError(f"run runnable binding is missing: {binding.run_id}")
+        ref = _bound_runnable(binding)
         control = self.store.accept_execute_control(
             run_id=binding.run_id,
             state=binding.state.revision,
             runnable=ref,
-            module=binding.module,
-            source=source,
+            triggered_by=triggered_by,
             locals=binding.control_locals,
             created_at=utc_now(),
         )
         binding = replace(binding, control_index=control.index)
-        self._run_lineages[binding.run_id] = (*lineage, (binding.module, ref))
+        self._preceding_controls.append(control.ref)
+        self._run_lineages[binding.run_id] = (*lineage, ref)
         self._active_bindings[binding.run_id] = binding
         self._run_outputs.pop(binding.run_id, None)
         self.executor._observe_control(control)
@@ -1889,6 +1913,9 @@ class _Execution:
         )
         statement_start = 0
         step_start = self.next_step(binding.run_id)
+        self._preceding_controls.append(
+            ControlRef.for_run(binding.run_id, binding.control_index)
+        )
         if not begun:
             await self.emit(
                 RunBegin(
@@ -1962,6 +1989,10 @@ class _Execution:
             control = (
                 exc.control
                 if isinstance(exc, _RunCanceled)
+                else self._active.interruption
+                if self._active is not None
+                and self._active.interruption is not None
+                and self._active.interruption.kind == "cancel"
                 else next(
                     (
                         item
@@ -1975,9 +2006,7 @@ class _Execution:
                 RunEnd(
                     run=binding.run_id,
                     status="canceled",
-                    control=ControlRef(RunRef(binding.run_id), control.index)
-                    if control is not None
-                    else None,
+                    control=control.ref if control is not None else None,
                     output=self.run_output(binding.run_id),
                     error=ErrorMessage(control_text(control) or "canceled"),
                     finished_at=utc_now(),
@@ -2301,9 +2330,7 @@ class _Execution:
                 raise RuntimeError(f"run resources missing: {binding.run_id}")
             try:
                 self._active_bindings[binding.run_id] = binding
-                self._run_lineages[binding.run_id] = (
-                    (binding.module, _bound_runnable(binding)),
-                )
+                self._run_lineages[binding.run_id] = (_bound_runnable(binding),)
                 self.store.accept_run(
                     run_id=binding.run_id,
                     parent=binding.parent,
@@ -2554,6 +2581,8 @@ class _Execution:
             controls=(control,),
         )
         if claimed:
+            if self._active is not None:
+                self._active.interruption = claimed[0]
             raise _RunCanceled(claimed[0])
 
     def record_output(self, run_id: str, ref: FieldRef) -> None:
@@ -2606,15 +2635,60 @@ class _Execution:
                 raise RuntimeError("execution event emitter is missing")
             state, state_ref = self._current_state
             event = build(state, state_ref)
+            event = self._step_relations(event)
             await emit(event)
+            await self._check_step_cancel(event, emit)
             self._step_states[event.step] = (state, state_ref)
             return state, state_ref
         async with self._active.event_lock:
             state, state_ref = self._current_state
             event = build(state, state_ref)
+            event = self._step_relations(event)
             await self.executor._emit_event_locked(self._active, event)
+            await self._check_step_cancel(
+                event,
+                lambda end: self.executor._emit_event_locked(
+                    cast(_ActiveRun, self._active), end
+                ),
+            )
             self._step_states[event.step] = (state, state_ref)
-            return state, state_ref
+        return state, state_ref
+
+    async def _check_step_cancel(self, event: StepBegin, emit: EventEmitter) -> None:
+        try:
+            self.raise_if_canceling(
+                event.step.run_id,
+                call=isinstance(event.given, (ModelStepGiven, ToolStepGiven))
+                or statement_has_call(event.given),
+            )
+        except _RunCanceled as exc:
+            await emit(
+                StepEnd(
+                    step=event.step,
+                    kind=event.kind,
+                    status="canceled",
+                    aborted_by=exc.control.ref,
+                    finished_at=utc_now(),
+                )
+            )
+            raise
+
+    def _step_relations(self, event: StepBegin) -> StepBegin:
+        targets = {RunRef(event.step.run_id)}
+        if self._active is not None:
+            targets.add(RunRef(self._active.root_run_id))
+        preceding = [ref for ref in self._preceding_controls if ref.target in targets]
+        self._preceding_controls = [
+            ref for ref in self._preceding_controls if ref.target not in targets
+        ]
+        refs = tuple(dict.fromkeys((*preceding, *event.preceded_by)))
+        if (
+            self._active is not None
+            and self._active.interruption is not None
+            and self._active.interruption.ref in refs
+        ):
+            self._active.interruption = None
+        return replace(event, preceded_by=refs)
 
     def state_for_step(self, step: StepRef) -> tuple[ExecutionState, ControlRef]:
         """Return the immutable State snapshot captured by one started step."""
@@ -3088,27 +3162,11 @@ def _runnable_input_from_values(
     return RunnableInput(primary=primary, named=named)
 
 
-def _adopted_control_locals(
-    store: RunStore,
-    *,
-    run_id: str,
-    through: int,
-) -> tuple[RecordLocal, ...]:
-    for control in reversed(store.list_run_controls(run_id=run_id)):
-        if control.index > through or not isinstance(
-            control.payload, PreparationControlPayload
-        ):
-            continue
-        if control.payload.input is not None:
-            return control.payload.input
-    raise ValueError(f"run control locals are missing: {run_id}@{through}")
-
-
 def _bound_runnable(binding: BoundRun) -> str:
     runnable = binding.bindings.runnable
     if not runnable:
         raise RuntimeError(f"run runnable binding is missing: {binding.run_id}")
-    return runnable
+    return f"{binding.module}${runnable}"
 
 
 def _bound_model(binding: BoundRun) -> str:
@@ -3172,17 +3230,3 @@ def _run_result_local(
         name=name,
         dim=1 if result.shape == "list" else 0,
     )
-
-
-def _control_indexes(
-    pointers: Sequence[FieldRef],
-    *,
-    run_id: str,
-) -> tuple[int, ...]:
-    indexes: list[int] = []
-    for pointer in pointers:
-        if not isinstance(pointer.record, ControlRef):
-            continue
-        if pointer.record.target == RunRef(run_id):
-            indexes.append(pointer.record.index)
-    return tuple(dict.fromkeys(indexes))

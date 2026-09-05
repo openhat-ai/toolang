@@ -59,7 +59,6 @@ from ..types import (
     StepNoted,
     StepRef,
     StepStatus,
-    RunRef,
     TypedRef,
 )
 
@@ -199,6 +198,7 @@ async def execute_step(
             kind=kind,
             state=state_ref,
             input=step_inputs,
+            preceded_by=tuple(item.ref for item in controls),
             occurrence=occurrence,
             given=statement,
             started_at=started_at,
@@ -520,7 +520,7 @@ def initial_locals(
             continue
         index, record = found
         pointer = FieldRef.from_path(
-            ControlRef(RunRef(binding.run_id), binding.control_index),
+            ControlRef.for_run(binding.run_id, 0),
             "payload",
             "input",
             index,
@@ -539,7 +539,7 @@ def initial_locals(
             raise RuntimeError(f"run primary control local missing: {binding.run_id}")
         index, record = found
         pointer = FieldRef.from_path(
-            ControlRef(RunRef(binding.run_id), binding.control_index),
+            ControlRef.for_run(binding.run_id, 0),
             "payload",
             "input",
             index,

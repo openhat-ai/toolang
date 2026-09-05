@@ -183,7 +183,7 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
             control = harness.store.get_run_control(run_id=runs[0].id, index=0)
             assert control is not None
             assert isinstance(control.payload, RunControlPayload)
-            assert control.payload.runnable == "agic:review"
+            assert control.payload.runnable == "agent$agic:review"
             assert control.payload.input == (
                 Local.typed("Part[]", Message.user("Review this.").parts, "_"),
                 Local.typed("Text", "security", "focus"),

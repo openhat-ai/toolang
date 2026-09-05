@@ -46,16 +46,25 @@ from toolang.base.types.run import (
     ToolCall,
 )
 from toolang.common.errors import ToolangError
-from toolang.execution.events import PartDelta, RunBegin, RunEnd
+from toolang.execution.events import (
+    PartBegin,
+    PartDelta,
+    PartEnd,
+    RunBegin,
+    RunEnd,
+    RunEvent,
+)
 from toolang.execution.executor import RunLimits
 from toolang.execution.records import (
-    RerunControlPayload,
     RetryControlPayload,
     RunControlPayload,
 )
 from toolang.execution.schemas import RerunRequest
+from toolang.execution.store import RunStore
+from toolang.execution.values import parts_from_local
 from toolang.execution.types import (
     ControlRef,
+    Pointer,
     ErrorMessage,
     ErrorRef,
     FieldRef,
@@ -192,8 +201,10 @@ agic decide(_: Text) -> Boolean:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("retries", [1, 2])
 def test_retry_restarts_an_agic_cycle_with_a_fresh_step_index(
     tmp_path: Path,
+    retries: int,
 ) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
@@ -205,7 +216,7 @@ agic reply(_: Part[]) -> Part[]:
   user: {{_}}
 """,
         responses=[
-            RuntimeError("temporary failure"),
+            *[RuntimeError("temporary failure") for _ in range(retries)],
             ModelCallResult(message=Message.assistant("recovered")),
         ],
     )
@@ -222,11 +233,12 @@ agic reply(_: Part[]) -> Part[]:
             )
             assert run.status == "failed"
 
-            run = await harness.executor.retry(
-                run.id,
-                setup=harness.setup,
-                state=harness.state,
-            )
+            for _attempt in range(retries):
+                run = await harness.executor.retry(
+                    run.id,
+                    setup=harness.setup,
+                    state=harness.state,
+                )
 
             assert run.status == "succeeded"
             active = harness.store.list_steps(run_id=run.id)
@@ -235,13 +247,17 @@ agic reply(_: Part[]) -> Part[]:
             ]
             assert active[0].input == (
                 FieldRef.from_path(
-                    ControlRef.for_run(run.id, 1), "payload", "input", 0, "value"
+                    ControlRef.for_run(run.id, 0), "payload", "input", 0, "value"
                 ),
             )
             assert [call.call.messages for call in harness.adapter.invocations] == [
-                [Message.user("hello")],
-                [Message.user("hello")],
-            ]
+                [Message.user("hello")]
+            ] * (retries + 1)
+            assert active[0].preceded_by == (ControlRef.for_run(run.id, retries),)
+            assert (
+                harness.store.select_pointer(Pointer(active[0].input[0])).runtime
+                is not None
+            )
 
     asyncio.run(scenario())
 
@@ -352,7 +368,7 @@ agic reply(_: Part[]) -> Part[]:
                 index=0,
             )
             assert preserved_control is not None
-            assert isinstance(preserved_control.payload, RerunControlPayload)
+            assert isinstance(preserved_control.payload, RunControlPayload)
             assert preserved_control.payload.model_request == high
 
             sparse = await harness.executor.rerun(
@@ -368,7 +384,7 @@ agic reply(_: Part[]) -> Part[]:
                 index=0,
             )
             assert sparse_control is not None
-            assert isinstance(sparse_control.payload, RerunControlPayload)
+            assert isinstance(sparse_control.payload, RunControlPayload)
             assert sparse_control.payload.model_request == low
 
             replacement = await harness.executor.rerun(
@@ -382,7 +398,7 @@ agic reply(_: Part[]) -> Part[]:
                 index=0,
             )
             assert replacement_control is not None
-            assert isinstance(replacement_control.payload, RerunControlPayload)
+            assert isinstance(replacement_control.payload, RunControlPayload)
             assert replacement_control.payload.model_request == low
 
             automatic_spec = replace(
@@ -850,6 +866,267 @@ agic illustrate(_: Text) -> Part[]:
                 f"step_end:{record.id}.0:model:succeeded",
                 f"run_end:{record.id}:succeeded",
             ]
+            assert_run_event_integrity(tracer.events)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("interruption", ["cancel", "steer", "error"])
+@pytest.mark.parametrize("completed_text", [False, True])
+def test_interrupted_model_persists_partial_output(
+    tmp_path: Path, interruption: str, completed_text: bool
+) -> None:
+    gate = AsyncGate()
+    image = ImagePart(file_id="image-1", filename="result.png")
+    call = ToolCallPart(
+        tool_call_id="complete", tool_name="unused", tool_family="unused", input={}
+    )
+    updates = [
+        ModelPartEnd(data=image),
+        ModelPartDelta(delta=TextDelta("partial")),
+    ]
+    if completed_text:
+        updates.append(ModelPartEnd(data=TextPart("partial complete")))
+    updates.extend(
+        [
+            ModelPartEnd(data=call),
+            ModelPartDelta(delta=ToolCallDelta('{"unfinished":', "incomplete")),
+        ]
+    )
+    expected = (
+        image,
+        TextPart("partial complete" if completed_text else "partial"),
+        call,
+    )
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic reply(_: Part[]) -> Part[]:\n  recall = none\n  user: {{_}}\n",
+        responses=[
+            ScriptedModelTurn(
+                result=ModelCallResult(),
+                updates=tuple(updates),
+                after_updates_gate=gate,
+                error=RuntimeError("stream disconnected")
+                if interruption == "error"
+                else None,
+            ),
+            ModelCallResult(message=Message.assistant("revised")),
+        ],
+        streaming=True,
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario() -> None:
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="reply",
+                    primary=resolve_input_parts("write"),
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
+            control = None
+            if interruption == "cancel":
+                control = handle.cancel(timing="immediate")
+            elif interruption == "steer":
+                control = handle.steer(
+                    Message.user("change direction"), timing="immediate"
+                )
+            else:
+                gate.release()
+            run = await asyncio.wait_for(handle, timeout=2)
+            assert (
+                run.status
+                == {"cancel": "canceled", "steer": "succeeded", "error": "failed"}[
+                    interruption
+                ]
+            )
+            steps = harness.store.list_steps(run_id=run.id)
+            first = steps[0]
+            assert first.status == ("failed" if interruption == "error" else "canceled")
+            assert first.aborted_by == (control.ref if control is not None else None)
+            assert first.output is not None
+            assert parts_from_local(first.output) == expected
+            assert all(step.kind == "model" for step in steps)
+            assert len(harness.adapter.invocations) == (
+                2 if interruption == "steer" else 1
+            )
+            assert_run_event_integrity(tracer.events)
+        reopened = RunStore(tmp_path / "agents/alice/.runtime/runs.db")
+        try:
+            assert reopened.get_step(ref=first.ref) == first
+        finally:
+            reopened.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("boundary", ["part_begin", "part_end", "step_end"])
+@pytest.mark.parametrize("interruption", ["cancel", "steer"])
+def test_interrupting_model_result_delivery_preserves_step_output(
+    tmp_path: Path, boundary: str, interruption: str
+) -> None:
+    gate = AsyncGate()
+
+    class DeliveryTracer(RecordingRunTracer):
+        waiting = False
+
+        async def on_event(self, event: RunEvent) -> None:
+            await super().on_event(event)
+            if event.type == boundary and not self.waiting:
+                self.waiting = True
+                await gate.wait()
+
+    parts = (TextPart("complete"), ImagePart(file_id="image-1"))
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic reply() -> Part[]:\n  recall = none\n  user: Draw.\n",
+        responses=[
+            ModelCallResult(message=Message(role="assistant", parts=parts)),
+            ModelCallResult(message=Message.assistant("revised")),
+        ],
+    )
+    tracer = DeliveryTracer()
+
+    async def scenario() -> None:
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="reply",
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
+            if interruption == "cancel":
+                control = handle.cancel(timing="immediate")
+            else:
+                control = handle.steer(
+                    Message.user("change direction"), timing="immediate"
+                )
+            run = await asyncio.wait_for(handle, timeout=2)
+            assert run.status == (
+                "canceled" if interruption == "cancel" else "succeeded"
+            )
+            first = harness.store.list_steps(run_id=run.id)[0]
+            assert first.status == (
+                "succeeded" if boundary == "step_end" else "canceled"
+            )
+            assert first.aborted_by == (None if boundary == "step_end" else control.ref)
+            assert first.output is not None
+            assert parts_from_local(first.output) == parts
+            assert_run_event_integrity(tracer.events)
+
+    asyncio.run(scenario())
+
+
+def test_streaming_completed_images_preserve_order_without_duplicates(
+    tmp_path: Path,
+) -> None:
+    image = ImagePart(file_id="image-1", filename="result.png")
+    parts = (image, TextPart("caption"), image)
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic reply() -> Part[]:\n  user: Draw.\n",
+        responses=[
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message(role="assistant", parts=parts)),
+                updates=tuple(ModelPartEnd(data=part) for part in parts),
+            )
+        ],
+        streaming=True,
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario() -> None:
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="reply",
+                ),
+                tracer=tracer,
+            )
+            assert run.status == "succeeded"
+            assert harness.store.run_output(run_id=run.id) == parts
+            assert_run_event_integrity(tracer.events)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("boundary", ["part_begin", "part_end"])
+@pytest.mark.parametrize("tool_name", ["math__double", "_too__reload", "_too__execute"])
+def test_cancel_during_tool_result_delivery_preserves_output(
+    tmp_path: Path, boundary: str, tool_name: str
+) -> None:
+    gate = AsyncGate()
+
+    class DeliveryTracer(RecordingRunTracer):
+        waiting = False
+
+        async def on_event(self, event: RunEvent) -> None:
+            await super().on_event(event)
+            if (
+                isinstance(event, (PartBegin, PartEnd))
+                and event.type == boundary
+                and event.step.index == 1
+                and not self.waiting
+            ):
+                self.waiting = True
+                await gate.wait()
+
+    tool = RecordingTool("math__double", output={"value": 6})
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic caller() -> Text:\n  handoffs = agic:target\n  user: Call.\n\nagic target() -> Text:\n  user: Done.\n",
+        tools={tool.name: tool},
+        responses=[
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="call-1",
+                        call_id="provider-1",
+                        name=tool_name,
+                        input={"runnable": "agic:target"}
+                        if tool_name == "_too__execute"
+                        else {},
+                    ),
+                )
+            )
+        ],
+    )
+    tracer = DeliveryTracer()
+
+    async def scenario() -> None:
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="caller",
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
+            control = handle.cancel(timing="immediate")
+            run = await asyncio.wait_for(handle, timeout=2)
+            assert run.status == "canceled"
+            step = harness.store.list_steps(run_id=run.id)[1]
+            assert step.status == "canceled"
+            assert step.aborted_by == control.ref
+            assert step.output is not None
+            (part,) = parts_from_local(step.output)
+            assert isinstance(part, ToolResultPart)
+            assert part.tool_call_id == "call-1" and part.tool_name == tool_name
+            if tool_name == "math__double":
+                assert part.output == {"value": 6}
+            elif tool_name == "_too__execute":
+                assert part.output == {"executed": "agent$agic:target"}
+            else:
+                assert (
+                    part.error == "Agent State refresh is unavailable in this executor"
+                )
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())

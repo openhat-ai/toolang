@@ -108,7 +108,7 @@ agic child(_: Text) -> Text:
             )
             assert child_control is not None
             assert isinstance(child_control.payload, RunControlPayload)
-            assert child_control.payload.runnable == "agic:child"
+            assert child_control.payload.runnable == "agent$agic:child"
             assert all(step.kind != "tool" for step in root_steps)
             followup = harness.adapter.invocations[2].call
             result = followup.messages[-1].parts[0]
@@ -561,6 +561,7 @@ flow -> Text:
             steps = harness.store.list_steps(run_id=caller.id)
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "succeeded"),
+                ("tool", "succeeded"),
                 ("run", "failed"),
                 ("model", "succeeded"),
             ]
@@ -722,7 +723,9 @@ agic child(_: Text) -> Text:
     asyncio.run(scenario())
 
 
-def test_reload_has_no_step_and_new_flow_runs_in_same_root(tmp_path: Path) -> None:
+def test_reload_records_a_tool_step_and_new_flow_runs_in_same_root(
+    tmp_path: Path,
+) -> None:
     source = """
 agic parent(_: Text) -> Text:
   recall = none
@@ -800,12 +803,14 @@ flow new_flow(_: Text, brief: Brief) -> Text:
             steps = harness.store.list_steps(run_id=root.id)
             assert [step.kind for step in steps] == [
                 "model",
+                "tool",
                 "model",
                 "run",
                 "model",
             ]
-            assert steps[0].state != steps[1].state
-            assert steps[1].state == steps[2].state == steps[3].state
+            assert steps[0].state == steps[1].state
+            assert steps[0].state != steps[2].state
+            assert steps[2].state == steps[3].state == steps[4].state
             controls = harness.store.list_run_controls(run_id=root.id)
             reload_control = next(item for item in controls if item.kind == "reload")
             assert reload_control.status == "applied"
@@ -815,16 +820,16 @@ flow new_flow(_: Text, brief: Brief) -> Text:
             assert reload_result.error is None
             assert reload_result.output["applied"] is True
             assert "flow:new_flow" in second_call.instructions
-            dynamic = steps[2]
+            dynamic = steps[3]
             assert isinstance(dynamic.given, RunStmt)
             assert dynamic.given.runnable == "flow:new_flow"
-            assert all(step.kind != "tool" for step in steps)
+            assert reload_control.triggered_by == steps[1].ref
+            assert steps[2].preceded_by == (reload_control.ref,)
             history = harness.store.recent_conversation_messages(
                 thread_id=thread,
             )
-            assert all(
-                not isinstance(part, ToolResultPart)
-                or part.tool_call_id != "call-reload"
+            assert any(
+                isinstance(part, ToolResultPart) and part.tool_call_id == "call-reload"
                 for message in history
                 for part in message.parts
             )
@@ -903,13 +908,14 @@ flow target(_: Text) -> Text:
             steps = harness.store.list_steps(run_id=root.id)
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "succeeded"),
+                ("tool", "succeeded"),
                 ("run", "succeeded"),
             ]
-            assert steps[0].state != steps[1].state
+            assert steps[0].state != steps[2].state
             child = next(
                 run
                 for run in harness.store.list_run_tree(root_run_id=root.id)
-                if run.parent == steps[1].ref
+                if run.parent == steps[2].ref
             )
             assert child.status == "succeeded"
             assert all(
@@ -974,7 +980,7 @@ agic parent(_: Text) -> Text:
 
             assert root.status == "failed"
             steps = harness.store.list_steps(run_id=root.id)
-            assert [step.kind for step in steps] == ["model"]
+            assert [step.kind for step in steps] == ["model", "tool"]
             reload_control = next(
                 item
                 for item in harness.store.list_run_controls(run_id=root.id)
@@ -1175,10 +1181,10 @@ agic parent(_: Text) -> Text:
 
             assert root.status == "succeeded", root.error
             steps = harness.store.list_steps(run_id=root.id)
-            assert [step.kind for step in steps] == ["model", "model"]
-            assert steps[0].state != steps[1].state
+            assert [step.kind for step in steps] == ["model", "tool", "model"]
+            assert steps[0].state != steps[2].state
             assert harness.store.resolve_state_revision(steps[0].state) == (
-                harness.store.resolve_state_revision(steps[1].state)
+                harness.store.resolve_state_revision(steps[2].state)
             )
             reload_control = next(
                 item
@@ -1368,7 +1374,7 @@ flow research(brief: Brief, prefix?: Text) -> Text:
             accepted = harness.store.get_run_control(run_id=child.id, index=0)
             assert accepted is not None
             assert isinstance(accepted.payload, RunControlPayload)
-            assert accepted.payload.runnable == "flow:research"
+            assert accepted.payload.runnable == "_flow_research$flow:research"
             result = harness.adapter.invocations[2].call.messages[-1].parts[0]
             assert isinstance(result, ToolResultPart)
             assert result.error is None
@@ -1445,7 +1451,13 @@ agic target(_: Text) -> Text:
             assert harness.store.resolve_value(root.output.value) == "completed"
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
             steps = harness.store.list_steps(run_id=root.id)
-            assert [step.kind for step in steps] == ["model", "model", "tool", "model"]
+            assert [step.kind for step in steps] == [
+                "model",
+                "tool",
+                "model",
+                "tool",
+                "model",
+            ]
             controls = harness.store.list_run_controls(run_id=root.id, kind="execute")
             assert len(controls) == 1
             execute = controls[0]
@@ -1453,16 +1465,16 @@ agic target(_: Text) -> Text:
             assert isinstance(execute.payload, ExecuteControlPayload)
             source = FieldRef.from_path(steps[0].ref, "output", "value", 0)
             assert execute.payload.state == harness.state.revision
-            assert execute.payload.runnable == "agic:target"
-            assert execute.payload.module == "agent"
-            assert execute.payload.source == source
+            assert execute.payload.runnable == "agent$agic:target"
+            assert execute.triggered_by == steps[1].ref
+            assert steps[2].preceded_by == (execute.ref,)
             assert len(execute.payload.input) == 1
             control_local = execute.payload.input[0]
             assert control_local.type == "Json"
             assert isinstance(control_local.value, TypedRef)
             assert control_local.value.ref == source.select("input", "input", "_")
             assert harness.store.resolve_local(control_local).value == "work"
-            assert steps[1].input == (source.select("input", "input", "_"),)
+            assert steps[2].input == (source.select("input", "input", "_"),)
             target_call = harness.adapter.invocations[1].call
             assert {
                 tool.name for tool in harness.adapter.invocations[0].call.tools
@@ -1598,6 +1610,7 @@ agic blocked -> Text:
             steps = harness.store.list_steps(run_id=root.id)
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "succeeded"),
+                ("tool", "failed"),
                 ("model", "succeeded"),
             ]
             assert not harness.store.list_run_controls(run_id=root.id, kind="execute")
@@ -1648,6 +1661,7 @@ agic caller() -> Text:
             assert root.status == "succeeded", root.error
             assert [step.kind for step in harness.store.list_steps(run_id=root.id)] == [
                 "model",
+                "tool",
                 "model",
             ]
             first_call = harness.adapter.invocations[0].call
@@ -1703,6 +1717,7 @@ agic caller() -> Text:
             assert root.status == "succeeded", root.error
             assert [step.kind for step in harness.store.list_steps(run_id=root.id)] == [
                 "model",
+                "tool",
                 "model",
             ]
             assert not harness.store.list_run_controls(run_id=root.id, kind="reload")
@@ -1760,6 +1775,8 @@ agic target() -> Text:
             steps = harness.store.list_steps(run_id=root.id)
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "succeeded"),
+                ("tool", "failed"),
+                ("tool", "failed"),
                 ("model", "succeeded"),
             ]
             assert not harness.store.list_run_controls(run_id=root.id, kind="execute")
@@ -1835,13 +1852,15 @@ agic target() -> Text:
             steps = harness.store.list_steps(run_id=root.id)
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "succeeded"),
+                ("tool", "succeeded"),
                 ("model", "succeeded"),
+                ("tool", "failed"),
                 ("model", "succeeded"),
             ]
             controls = harness.store.list_run_controls(run_id=root.id, kind="execute")
             assert len(controls) == 1
             assert isinstance(controls[0].payload, ExecuteControlPayload)
-            assert controls[0].payload.runnable == "agic:target"
+            assert controls[0].payload.runnable == "agent$agic:target"
             result = harness.adapter.invocations[2].call.messages[-1].parts[0]
             assert isinstance(result, ToolResultPart)
             assert result.error == (
@@ -1912,7 +1931,9 @@ flow deliver(_: Text) -> Text:
             steps = harness.store.list_steps(run_id=root.id)
             assert [step.kind for step in steps] == [
                 "model",
+                "tool",
                 "model",
+                "tool",
                 "value",
             ]
             controls = harness.store.list_run_controls(run_id=root.id, kind="execute")
@@ -1921,8 +1942,8 @@ flow deliver(_: Text) -> Text:
                 for control in controls
                 if isinstance(control.payload, ExecuteControlPayload)
             ] == [
-                "agic:middle",
-                "flow:deliver",
+                "agent$agic:middle",
+                "agent$flow:deliver",
             ]
 
     asyncio.run(scenario())
@@ -2023,6 +2044,7 @@ agic target() -> Text:
             assert len(harness.adapter.invocations) == 2
             assert [step.kind for step in harness.store.list_steps(run_id=root.id)] == [
                 "model",
+                "tool",
                 "model",
             ]
             controls = harness.store.list_run_controls(run_id=root.id, kind="execute")
@@ -2069,6 +2091,7 @@ agic target() -> Text:
             steps = harness.store.list_steps(run_id=root.id)
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "succeeded"),
+                ("tool", "succeeded"),
                 ("model", "succeeded"),
             ]
 

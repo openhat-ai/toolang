@@ -25,7 +25,7 @@ from toolang.execution.client import RunClient, RunHandle
 from toolang.execution.executor import RunExecutor
 from toolang.execution.history import RunHistory
 from toolang.execution.records import (
-    PreparationControlPayload,
+    RunControlPayload,
 )
 from toolang.execution.schemas import (
     RerunRequest,
@@ -462,9 +462,9 @@ def _retry_sandbox(
         raise ValueError(f"root run not found: {run_id}")
     control = resources.store.get_run_control(
         run_id=str(run.control.target),
-        index=run.control.index,
+        index=0,
     )
-    if control is None or not isinstance(control.payload, PreparationControlPayload):
+    if control is None or not isinstance(control.payload, RunControlPayload):
         raise ValueError(f"run preparation not found: {run_id}")
     if control.payload.sandbox is None:
         raise ValueError(f"retry sandbox is unknown for run {run_id}; use rerun")

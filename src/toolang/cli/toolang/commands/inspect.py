@@ -483,13 +483,15 @@ def _tree_activity(
 
 def _replace_runnable_tokens(operation: str) -> str:
     return " ".join(
-        _runnable_activity(word) if word.partition(":")[0] in {"flow", "agic"} else word
+        _runnable_activity(word)
+        if word.rpartition("$")[2].partition(":")[0] in {"flow", "agic"}
+        else word
         for word in operation.split()
     )
 
 
 def _runnable_activity(runnable: str) -> str:
-    kind, separator, name = runnable.partition(":")
+    kind, separator, name = runnable.rpartition("$")[2].partition(":")
     if separator and kind in {"flow", "agic"} and name:
         return f"<{kind}>".ljust(7) + f" {name}"
     return "<?>".ljust(7) + f" {runnable}"
