@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Literal, cast
 
 import pytest
@@ -628,6 +629,11 @@ def test_retry_payload_distinguishes_inherited_and_empty_input() -> None:
         == inherited
     )
     assert control_payload_from_data("retry", control_payload_to_data(empty)) == empty
+    value = Local.typed("Text", "retry", "_")
+    populated = replace(empty, input=(value,))
+    data = control_payload_to_data(populated)
+    assert data["input"] == [local_to_data(value)]
+    assert control_payload_from_data("retry", data) == populated
 
 
 def test_reload_and_inherited_preparation_payloads_round_trip_without_revision_duplication() -> (

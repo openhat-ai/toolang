@@ -950,11 +950,6 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
     if isinstance(payload, RetryControlPayload):
         return {
             **_preparation_payload_data(payload),
-            "input": (
-                [local_to_data(local) for local in payload.input]
-                if payload.input is not None
-                else None
-            ),
             "retry_from": (
                 str(payload.retry_from) if payload.retry_from is not None else None
             ),

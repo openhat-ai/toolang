@@ -333,12 +333,12 @@ missing `runs.db` is an error rather than an empty successful result.
 The initial collection and relation subjects are:
 
 ```text
-threads                 every visible Thread record
-runs                    every visible Run record
-controls                every visible Control record
-THREAD runs             every visible Run belonging to THREAD
-RUN steps               every visible Step physically owned by RUN
-STEP runs               every visible Run directly accepted by STEP
+threads                 every Thread record
+runs                    every physical Run record, including rewound Runs
+controls                Thread controls and controls of existing Runs
+THREAD runs             Runs in THREAD's logical history, including child Runs
+RUN steps               every Step physically owned by RUN
+STEP runs               every Run directly accepted by STEP
 LOOP_STEP steps         every direct same-Run Step owned by LOOP_STEP
 ```
 

@@ -4,6 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from pydantic import TypeAdapter
 
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.policy import RunLimits
@@ -531,7 +532,12 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
         (
             "run",
             RunControlPayload(
-                resources, limits, revision, "agic:test", "test/model", ()
+                resources,
+                limits,
+                revision,
+                "agic:test",
+                "test/model",
+                (Local.typed("Json", {"locals": {"input": "unchanged"}}, "_"),),
             ),
             {
                 "resources",
@@ -645,9 +651,12 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
         target = (
             "term_control" if kind in {"create", "fork", "rewind"} else "run_control"
         )
-        data = record_to_data(
-            ControlRecord(id=f"{target}@{index}", kind=kind, payload=payload)  # type: ignore[arg-type]
+        record = ControlRecord(
+            id=f"{target}@{index}",
+            kind=kind,  # type: ignore[arg-type]
+            payload=payload,
         )
+        data = record_to_data(record)
 
         assert set(data) == {
             "id",
@@ -661,3 +670,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
             "finished_at",
         }
         assert set(data["payload"]) == payload_fields  # type: ignore[arg-type]
+        adapter = TypeAdapter(ControlRecord)
+        protocol = adapter.dump_python(record, mode="json")
+        assert set(protocol["payload"]) == payload_fields
+        assert adapter.validate_python(protocol) == record

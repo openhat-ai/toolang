@@ -170,7 +170,10 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
         store.close()
 
 
-def test_run_history_resolves_pass_through_control_output(tmp_path: Path) -> None:
+@pytest.mark.parametrize("reopen", (False, True))
+def test_run_history_resolves_pass_through_control_output(
+    tmp_path: Path, reopen: bool
+) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
         run = project_run_start(
@@ -188,6 +191,9 @@ def test_run_history_resolves_pass_through_control_output(tmp_path: Path) -> Non
             ),
         )
 
+        if reopen:
+            store.close()
+            store = RunStore(tmp_path / "runs.db")
         stored = store.get_run(run_id=run.id)
         detail = RunHistory(store).get_run(run.id)
 

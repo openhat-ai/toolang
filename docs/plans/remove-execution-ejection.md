@@ -28,8 +28,8 @@ assembly.
 
 Update execution records, store, history, schemas, and their readers/tests.
 Verify canonical fields and payload round trips, CLI rejection of removed fields,
-input field references, unchanged fork/rewind
-physical records, logical visibility, child/subtree inspection, retry deletion,
+input field references, unchanged fork/rewind physical records, logical
+visibility, child/subtree inspection, retry deletion,
 orphan control filtering, and restart reconstruction. Run the default offline
 verification suite.
 
