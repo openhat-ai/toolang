@@ -56,9 +56,10 @@ class RunHistory:
     ) -> list[ThreadInfo]:
         """Build summaries for a caller-selected sequence of Thread records."""
 
-        runs_by_thread = self._store.list_thread_histories_chronological(
-            thread_ids=tuple(thread.id for thread in threads)
-        )
+        views = self._store.thread_views()
+        runs_by_thread = {
+            thread.id: views.tree(views.history(thread.id)) for thread in threads
+        }
         run_ids = tuple(
             dict.fromkeys(run.id for runs in runs_by_thread.values() for run in runs)
         )
@@ -72,6 +73,7 @@ class RunHistory:
                 ThreadInfo.from_records(
                     thread,
                     runs,
+                    head=views.head(thread.id),
                     input_parts=(
                         self._input_parts(
                             runs[0],
@@ -93,17 +95,15 @@ class RunHistory:
         thread = self._store.get_thread(thread_id=thread_id)
         if thread is None:
             return None
-        runs = list(
-            self._store.list_thread_histories_chronological(
-                thread_ids=(thread_id,),
-            ).get(thread_id, ())
-        )
+        views = self._store.thread_views()
+        runs = list(views.tree(views.history(thread_id)))
         controls_by_run = self._store.list_run_controls_for_runs(
             run_ids=tuple(run.id for run in runs)
         )
         info = ThreadInfo.from_records(
             thread,
             runs,
+            head=views.head(thread_id),
             input_parts=(
                 self._input_parts(runs[0], controls_by_run.get(runs[0].id, ()))
                 if runs

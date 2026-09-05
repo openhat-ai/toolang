@@ -535,6 +535,7 @@ class ThreadInfo:
         thread: ThreadRecord,
         runs: Sequence[RunRecord] = (),
         *,
+        head: ControlRef,
         input_parts: Sequence[Part],
     ) -> ThreadInfo:
         """Build one thread summary from durable records."""
@@ -550,8 +551,8 @@ class ThreadInfo:
                 status="idle",
                 updated_at=thread.updated_at,
                 peer=ThreadPeerInfo.from_peer(thread.peer),
-                created_by=ThreadControlRefData.from_ref(thread.created_by),
-                head=ThreadControlRefData.from_ref(thread.head),
+                created_by=ThreadControlRefData(thread=thread.id, index=0),
+                head=ThreadControlRefData.from_ref(head),
                 run_count=0,
                 latest_run=None,
                 active_run=None,
@@ -567,8 +568,8 @@ class ThreadInfo:
             status="running" if active is not None else "idle",
             updated_at=max(last.finished_at or last.started_at, thread.updated_at),
             peer=ThreadPeerInfo.from_peer(thread.peer),
-            created_by=ThreadControlRefData.from_ref(thread.created_by),
-            head=ThreadControlRefData.from_ref(thread.head),
+            created_by=ThreadControlRefData(thread=thread.id, index=0),
+            head=ThreadControlRefData.from_ref(head),
             run_count=len(runs),
             latest_run=ThreadRunInfo.from_record(last),
             active_run=(

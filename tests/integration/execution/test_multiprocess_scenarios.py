@@ -283,6 +283,117 @@ def _race_processes(
             queue.join_thread()
 
 
+def _race_fork_retry_prefix(
+    db_path: str,
+    ready: Any,
+    start: Any,
+    results: Any,
+) -> None:
+    store = RunStore(Path(db_path))
+    try:
+        ready.put("fork")
+        start.wait()
+        store.fork_thread(
+            thread_id="term_fork_retry",
+            source="term_retry_race",
+            anchor="run_later_anchor",
+            request_id="fork-race",
+            created_at="2026-01-01T00:00:03Z",
+        )
+        results.put(("accepted", "fork-race"))
+    except ValueError as exc:
+        results.put(("rejected", "fork-race", str(exc)))
+    finally:
+        store.close()
+
+
+def test_fork_and_retry_of_an_earlier_root_are_linearizable(tmp_path: Path) -> None:
+    db_path = tmp_path / "runs.db"
+    store = RunStore(db_path)
+    try:
+        root = project_run_start(
+            store,
+            run_id="run_retry_race",
+            thread_id="term_retry_race",
+            origin="chat",
+            input=Message.user("root"),
+        )
+        parent = project_step(
+            store,
+            run_id=root.id,
+            step_index=0,
+            kind="run",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        child = project_run_start(
+            store,
+            run_id="run_child_retry_race",
+            thread_id="term_retry_race",
+            parent=parent.ref,
+            origin="chat",
+            input=Message.user("child"),
+        )
+        child_step = project_step(
+            store,
+            run_id=child.id,
+            step_index=0,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        project_run_end(store, run_id=child.id)
+        project_run_end(store, run_id=root.id)
+        project_run_start(
+            store,
+            run_id="run_later_anchor",
+            thread_id="term_retry_race",
+            origin="chat",
+            input=Message.user("anchor"),
+        )
+        project_run_end(store, run_id="run_later_anchor")
+    finally:
+        store.close()
+
+    outcomes = _race_processes(
+        (_race_retry, (str(db_path), "retry-race")),
+        (_race_fork_retry_prefix, (str(db_path),)),
+    )
+    accepted = [outcome for outcome in outcomes if outcome[0] == "accepted"]
+    rejected = [outcome for outcome in outcomes if outcome[0] == "rejected"]
+    assert len(accepted) == len(rejected) == 1
+    reopened = RunStore(db_path)
+    try:
+        if accepted[0][1] == "fork-race":
+            assert "durable fork prefix" in str(rejected[0][2])
+            assert reopened.list_steps(run_id=root.id) == [parent]
+            assert reopened.list_steps(run_id=child.id) == [child_step]
+            assert [
+                r.id
+                for r in reopened.list_thread_history_chronological(
+                    thread_id="term_fork_retry"
+                )
+            ] == [
+                root.id,
+                child.id,
+                "run_later_anchor",
+            ]
+        else:
+            assert "nonterminal run" in str(rejected[0][2])
+            assert reopened.get_thread(thread_id="term_fork_retry") is None
+            assert reopened.list_thread_controls(thread_id="term_fork_retry") == ()
+            assert reopened.list_steps(run_id=root.id) == []
+            assert reopened.get_run(run_id=child.id) is None
+    finally:
+        reopened.close()
+
+
 def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
     gate = AsyncGate()
     harness = ExecutionHarness.create(
@@ -677,7 +788,9 @@ def test_concurrent_forks_preserve_one_terminal_anchor(
         for thread_id in forked:
             thread = reopened.get_thread(thread_id=thread_id)
             assert thread is not None
-            assert thread.created_by == ControlRef.for_thread(thread_id, 0)
+            assert reopened.thread_views().head(thread_id) == ControlRef.for_thread(
+                thread_id, 0
+            )
             assert [
                 run.id
                 for run in reopened.list_thread_history_chronological(
@@ -724,10 +837,12 @@ def test_run_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
         rewind = by_kind["rewind"]
         if rewind[1] == "accepted":
             assert rewind[2:] == (1, ("run_race_anchor",))
-            assert thread.head == ControlRef.for_thread("term_race", 1)
+            assert reopened.thread_views().head(thread.id) == ControlRef.for_thread(
+                "term_race", 1
+            )
             anchor = reopened.get_run(run_id="run_race_anchor")
             assert anchor is not None
-            assert anchor.ejected_by == ControlRef.for_thread("term_race", 1)
+            assert anchor.ejected_by is None
             assert [
                 run.id
                 for run in reopened.list_thread_history_chronological(
@@ -736,7 +851,9 @@ def test_run_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
             ] == ["run_racing_run"]
         else:
             assert str(rewind[1]).startswith("rejected:thread is running")
-            assert thread.head == ControlRef.for_thread("term_race", 0)
+            assert reopened.thread_views().head(thread.id) == ControlRef.for_thread(
+                "term_race", 0
+            )
             assert [
                 run.id
                 for run in reopened.list_thread_history_chronological(

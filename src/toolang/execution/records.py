@@ -336,12 +336,18 @@ class ForkControlPayload:
 
     fork_from: ThreadRef
     fork_at: RunRef
+    fork_head: ControlRef
 
     def __post_init__(self) -> None:
         if not isinstance(self.fork_from, ThreadRef):
             raise TypeError("fork payload requires a ThreadRef")
         if not isinstance(self.fork_at, RunRef):
             raise TypeError("fork payload requires a RunRef")
+        if (
+            not isinstance(self.fork_head, ControlRef)
+            or self.fork_head.target != self.fork_from
+        ):
+            raise TypeError("fork head must reference the source Thread")
 
 
 @dataclass(frozen=True, slots=True)
@@ -349,10 +355,13 @@ class RewindControlPayload:
     """Rewind one thread with an optimistic head check."""
 
     rewind_from: RunRef
+    rewind_through: RunRef
     rewind_if: ControlRef
 
     def __post_init__(self) -> None:
-        if not isinstance(self.rewind_from, RunRef):
+        if not isinstance(self.rewind_from, RunRef) or not isinstance(
+            self.rewind_through, RunRef
+        ):
             raise TypeError("rewind payload requires a RunRef")
         if not isinstance(self.rewind_if, ControlRef) or not isinstance(
             self.rewind_if.target, ThreadRef
@@ -413,19 +422,12 @@ class ThreadRecord:
     id: str
     origin: str
     peer: ThreadPeer
-    created_by: ControlRef
-    head: ControlRef
     created_at: str
     updated_at: str
 
     def __post_init__(self) -> None:
         if not valid_thread_id(self.id):
             raise ValueError(f"invalid thread id: {self.id!r}")
-        for name, ref in (("created_by", self.created_by), ("head", self.head)):
-            if not isinstance(ref, ControlRef):
-                raise TypeError(f"thread {name} requires a ControlRef")
-            if not isinstance(ref.target, ThreadRef) or str(ref.target) != self.id:
-                raise ValueError(f"thread {name} must reference this Thread")
 
 
 @dataclass(frozen=True, slots=True)
@@ -930,10 +932,12 @@ def _control_payload_from_data(
         return ForkControlPayload(
             fork_from=ThreadRef(_required_payload_text(payload, "fork_from")),
             fork_at=RunRef(_required_payload_text(payload, "fork_at")),
+            fork_head=ControlRef.parse(_required_payload_text(payload, "fork_head")),
         )
     if kind == "rewind":
         return RewindControlPayload(
             rewind_from=RunRef(_required_payload_text(payload, "rewind_from")),
+            rewind_through=RunRef(_required_payload_text(payload, "rewind_through")),
             rewind_if=ControlRef.parse(_required_payload_text(payload, "rewind_if")),
         )
     raise ValueError(f"unknown control kind: {kind}")
@@ -979,9 +983,11 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
         return {
             "fork_from": str(payload.fork_from),
             "fork_at": str(payload.fork_at),
+            "fork_head": str(payload.fork_head),
         }
     return {
         "rewind_from": str(payload.rewind_from),
+        "rewind_through": str(payload.rewind_through),
         "rewind_if": str(payload.rewind_if),
     }
 

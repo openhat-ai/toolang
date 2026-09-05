@@ -14,7 +14,6 @@ from tests.support.execution_fixtures import (
 from toolang.base.types.message import Message, TextPart
 from toolang.common.ids import IdIssuer
 from toolang.execution.history import RunHistory
-from toolang.execution.schemas import ThreadControlRefData
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ControlRef, FieldRef, Local, ThreadPrefix
@@ -241,7 +240,7 @@ def test_resolve_local_rejects_a_pointer_to_a_different_type(tmp_path: Path) -> 
         store.close()
 
 
-def test_run_history_reads_thread_ejection_scope_from_the_control_record(
+def test_run_history_keeps_rewound_records_outside_the_thread_view(
     tmp_path: Path,
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
@@ -268,15 +267,13 @@ def test_run_history_reads_thread_ejection_scope_from_the_control_record(
             thread_id="term_thread",
             anchor=first.id,
             request_id=None,
-            expected_head=thread.head,
+            expected_head=store.thread_views().head(thread.id),
             created_at="2026-01-01T00:00:05Z",
         )
 
-        rewind_ejected = RunHistory(store).get_run(second.id)
-        assert rewind_ejected is not None
-        assert rewind_ejected.ejected == ThreadControlRefData(
-            thread="term_thread",
-            index=1,
-        )
+        rewound = RunHistory(store).get_run(second.id)
+        assert rewound is not None
+        assert rewound.ejected is None
+        assert RunHistory(store).list_runs(thread_id="term_thread") == []
     finally:
         store.close()

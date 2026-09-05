@@ -184,7 +184,7 @@ class ThreadForked:
 
 @dataclass(frozen=True, slots=True)
 class ThreadRewound:
-    """A thread was rewound successfully."""
+    """Runs were removed from a Thread's logical history, not from storage."""
 
     thread: str
     control: ControlRef
