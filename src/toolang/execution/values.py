@@ -17,7 +17,7 @@ from toolang.base.types.message import (
 )
 from toolang.lang.types import Array, Struct
 
-from .types import Local, TypedPointer
+from .types import Local, TypedRef
 
 _PART_TYPES = (
     TextPart,
@@ -69,7 +69,7 @@ def parts_from_local(local: Local) -> tuple[Part, ...]:
 
 
 def _contains_pointer(value: object) -> bool:
-    if isinstance(value, TypedPointer):
+    if isinstance(value, TypedRef):
         return True
     if isinstance(value, Array | tuple):
         return any(_contains_pointer(item) for item in value)

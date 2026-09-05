@@ -55,7 +55,7 @@ def test_focused_relations_preserve_run_and_step_ownership(tmp_path: Path) -> No
         )
         nested = project_step(
             store,
-            parent=loop.path,
+            parent=loop.ref,
             index=0,
             kind="value",
             status="succeeded",
@@ -70,7 +70,7 @@ def test_focused_relations_preserve_run_and_step_ownership(tmp_path: Path) -> No
             thread_id=root.thread,
             origin="test",
             input=Message.user("Child"),
-            parent=run_step.path,
+            parent=run_step.ref,
             runnable_name="child",
         )
         child_step = project_step(
@@ -87,7 +87,7 @@ def test_focused_relations_preserve_run_and_step_ownership(tmp_path: Path) -> No
         project_run_end(store, run_id=child.id)
         project_run_end(store, run_id=root.id)
 
-        runs = store.inspect_runs(thread_id=root.thread)
+        runs = store.inspect_runs(thread_id=str(root.thread))
         root_steps = store.inspect_steps(run_id=root.id)
         child_runs = store.inspect_child_runs(parent=run_step)
         nested_steps = store.inspect_child_steps(parent=loop)
@@ -99,10 +99,10 @@ def test_focused_relations_preserve_run_and_step_ownership(tmp_path: Path) -> No
     assert by_id[root.id].runnable == "flow:root"
     assert by_id[root.id].step_count == 3
     assert by_id[child.id].step_count == 1
-    assert [item.record.path for item in root_steps] == [
-        run_step.path,
-        loop.path,
-        nested.path,
+    assert [item.record.ref for item in root_steps] == [
+        run_step.ref,
+        loop.ref,
+        nested.ref,
     ]
     assert root_steps[0].child_run_count == 1
     assert root_steps[0].child_step_count == 0
@@ -111,8 +111,8 @@ def test_focused_relations_preserve_run_and_step_ownership(tmp_path: Path) -> No
     assert root_steps[1].child_run_count == 0
     assert root_steps[1].child_step_count == 1
     assert [item.record.id for item in child_runs] == [child.id]
-    assert [item.record.path for item in nested_steps] == [nested.path]
-    assert [item.record.path for item in child_steps] == [child_step.path]
+    assert [item.record.ref for item in nested_steps] == [nested.ref]
+    assert [item.record.ref for item in child_steps] == [child_step.ref]
 
 
 def test_child_step_counts_do_not_decode_unrelated_step_payloads(
@@ -140,7 +140,7 @@ def test_child_step_counts_do_not_decode_unrelated_step_payloads(
         )
         nested = project_step(
             store,
-            parent=loop.path,
+            parent=loop.ref,
             index=0,
             kind="value",
             status="succeeded",
@@ -163,14 +163,14 @@ def test_child_step_counts_do_not_decode_unrelated_step_payloads(
         with store.write_transaction():
             store._conn.execute(
                 "UPDATE steps SET given = ? WHERE run = ? AND path = ?",
-                ("{", unrelated.run_id, unrelated.path.local),
+                ("{", unrelated.run_id, unrelated.ref.local),
             )
 
         inspected = store.inspect_child_steps(parent=loop)
     finally:
         store.close()
 
-    assert [item.record.path for item in inspected] == [nested.path]
+    assert [item.record.ref for item in inspected] == [nested.ref]
     assert inspected[0].child_step_count == 0
 
 
@@ -266,7 +266,7 @@ def test_run_inspection_reads_only_each_run_entry_control(tmp_path: Path) -> Non
         with store.write_transaction():
             store._conn.execute(
                 'UPDATE controls SET payload = ? WHERE target = ? AND "index" = ?',
-                ("{", unrelated.target, unrelated.index),
+                ("{", str(unrelated.target), unrelated.index),
             )
 
         inspected = store.inspect_runs()
@@ -277,7 +277,7 @@ def test_run_inspection_reads_only_each_run_entry_control(tmp_path: Path) -> Non
     assert [item.record.id for item in inspected] == [run.id]
     assert inspected[0].runnable == "agic:test"
     assert [(entry.target, entry.index) for entry in snapshot.entries] == [
-        (run.id, run.control.index)
+        (run.control.target, run.control.index)
     ]
 
 
@@ -321,7 +321,7 @@ def test_direct_child_run_order_keeps_semantic_coordinates_separate(
             thread_id=root.thread,
             origin="test",
             input=Message.user("Z"),
-            parent=parallel.path,
+            parent=parallel.ref,
             created_at="2026-01-01T00:00:00Z",
             context={
                 "occurrence": Occurrence(
@@ -336,7 +336,7 @@ def test_direct_child_run_order_keeps_semantic_coordinates_separate(
             thread_id=root.thread,
             origin="test",
             input=Message.user("A"),
-            parent=parallel.path,
+            parent=parallel.ref,
             created_at="2026-01-01T00:00:01Z",
             context={
                 "occurrence": Occurrence(
@@ -351,7 +351,7 @@ def test_direct_child_run_order_keeps_semantic_coordinates_separate(
             thread_id=root.thread,
             origin="test",
             input=Message.user("Body"),
-            parent=loop.path,
+            parent=loop.ref,
             context={
                 "occurrence": Occurrence(
                     item=OccurrencePosition(index=1_000_001, count=1_000_002),
@@ -365,7 +365,7 @@ def test_direct_child_run_order_keeps_semantic_coordinates_separate(
             thread_id=root.thread,
             origin="test",
             input=Message.user("Until"),
-            parent=loop.path,
+            parent=loop.ref,
             context={
                 "occurrence": Occurrence(
                     item=OccurrencePosition(index=0, count=1),
@@ -377,7 +377,7 @@ def test_direct_child_run_order_keeps_semantic_coordinates_separate(
         parallel_children = store.inspect_child_runs(parent=parallel)
         loop_children = store.inspect_child_runs(parent=loop)
         inspected_steps = {
-            item.record.path: item for item in store.inspect_steps(run_id=root.id)
+            item.record.ref: item for item in store.inspect_steps(run_id=root.id)
         }
     finally:
         store.close()
@@ -390,7 +390,7 @@ def test_direct_child_run_order_keeps_semantic_coordinates_separate(
         loop_body.id,
         loop_until.id,
     ]
-    assert inspected_steps[parallel.path].child_occurrence_totals.items == 1
-    assert inspected_steps[parallel.path].child_occurrence_totals.lanes == 1
-    assert inspected_steps[loop.path].child_occurrence_totals.items is None
-    assert inspected_steps[loop.path].child_occurrence_totals.lanes is None
+    assert inspected_steps[parallel.ref].child_occurrence_totals.items == 1
+    assert inspected_steps[parallel.ref].child_occurrence_totals.lanes == 1
+    assert inspected_steps[loop.ref].child_occurrence_totals.items is None
+    assert inspected_steps[loop.ref].child_occurrence_totals.lanes is None

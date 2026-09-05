@@ -68,15 +68,17 @@ from ..types import (
     ControlTiming,
     AgentResources,
     ControlRef,
-    ExecutionError,
+    ErrorMessage,
+    ErrorRef,
+    FieldRef,
     Local as RecordLocal,
     ControlKind,
-    StepPath,
-    Pointer,
+    StepRef,
+    RunRef,
     ModelStepNoted,
     Occurrence,
     OccurrencePosition,
-    TypedPointer,
+    TypedRef,
     RunCommand,
 )
 from ..runnables import (
@@ -455,7 +457,7 @@ class RunExecutor:
         *,
         setup: AgentSetup | None = None,
         state: ExecutionState | None = None,
-        anchor: StepPath | str | None = None,
+        anchor: StepRef | str | None = None,
         ceiling: AgentCeiling = AgentCeiling(),
         limits: RunLimits | None = None,
         request_id: str | None = None,
@@ -507,7 +509,7 @@ class RunExecutor:
         )
         _reopened, control, _trimmed = self.store.accept_retry(
             run_id=run_id,
-            anchor=StepPath.parse(anchor) if anchor is not None else None,
+            anchor=StepRef.parse(anchor) if anchor is not None else None,
             resources=resources,
             limits=bound.limits,
             state=bound.state.revision,
@@ -591,7 +593,7 @@ class RunExecutor:
         if run is None or run.parent is not None:
             raise ValueError(f"root run not found: {run_id}")
         control = self.store.get_run_control(
-            run_id=run.control.target, index=run.control.index
+            run_id=str(run.control.target), index=run.control.index
         )
         if control is None or not isinstance(
             control.payload, PreparationControlPayload
@@ -631,7 +633,7 @@ class RunExecutor:
         return RunSpec(
             setup=setup,
             state=state,
-            thread=run.thread,
+            thread=str(run.thread),
             bindings=RunBindings(
                 runnable=f"{declaration.kind}:{runnable}",
                 model=(
@@ -680,7 +682,7 @@ class RunExecutor:
         if run is None or run.parent is not None:
             raise ValueError(f"root run not found: {run_id}")
         control = self.store.get_run_control(
-            run_id=run.control.target,
+            run_id=str(run.control.target),
             index=run.control.index,
         )
         if control is None or not isinstance(
@@ -776,7 +778,7 @@ class RunExecutor:
                 bound.run_id,
                 emit=emit,
                 status="failed",
-                error=str(exc) or type(exc).__name__,
+                error=ErrorMessage(str(exc) or type(exc).__name__),
             )
         finally:
             if timeout is not None:
@@ -959,7 +961,7 @@ class RunExecutor:
                 "from_state": current.revision,
                 "state": refreshed.publication.revision,
                 "control": {
-                    "target": terminal.target,
+                    "target": str(terminal.target),
                     "index": terminal.index,
                 },
                 "diagnostics": [],
@@ -1083,9 +1085,9 @@ class RunExecutor:
             )
             return
         if isinstance(event, StepBegin):
-            indexes = _control_indexes(event.input, run_id=event.step.run)
+            indexes = _control_indexes(event.input, run_id=event.step.run_id)
             self.store.finish_run_controls(
-                run_id=event.step.run,
+                run_id=event.step.run_id,
                 indexes=indexes,
                 finished_at=event.started_at,
             )
@@ -1126,10 +1128,10 @@ class RunExecutor:
         loop: asyncio.AbstractEventLoop | None = None
         apply_reload: _ActiveRun | None = None
         with self._active_lock:
-            active = self._active.get(control.target)
+            active = self._active.get(str(control.target))
             if active is None:
                 return
-            controls = active.controls.setdefault(control.target, {})
+            controls = active.controls.setdefault(str(control.target), {})
             if control.status == "pending":
                 observed = control.index in controls
                 controls[control.index] = control
@@ -1145,14 +1147,14 @@ class RunExecutor:
             else:
                 controls.pop(control.index, None)
                 if not controls:
-                    active.controls.pop(control.target, None)
+                    active.controls.pop(str(control.target), None)
                 if control.kind == "reload":
                     active.reload_states.pop(control.index, None)
                     apply_reload = active
         if cancel is not None and loop is not None and not cancel.done():
             if control.kind == "cancel":
                 claimed = self.store.claim_run_controls(
-                    run_id=control.target,
+                    run_id=str(control.target),
                     indexes=(control.index,),
                 )
                 if control.index not in claimed:
@@ -1166,11 +1168,11 @@ class RunExecutor:
         if control.status == "pending":
             return
         with self._active_lock:
-            active = self._active.get(control.target)
+            active = self._active.get(str(control.target))
             if active is None:
                 return
             waiters = tuple(
-                active.control_waiters.pop((control.target, control.index), ())
+                active.control_waiters.pop((str(control.target), control.index), ())
             )
         for waiter in waiters:
             if not waiter.done():
@@ -1189,11 +1191,11 @@ class RunExecutor:
             return control
         loop = asyncio.get_running_loop()
         waiter: asyncio.Future[ControlRecord] = loop.create_future()
-        key = (control.target, control.index)
+        key = (str(control.target), control.index)
         with self._active_lock:
             active.control_waiters.setdefault(key, set()).add(waiter)
         terminal = self.store.get_run_control(
-            run_id=control.target,
+            run_id=str(control.target),
             index=control.index,
         )
         if terminal is None:
@@ -1209,12 +1211,12 @@ class RunExecutor:
         except asyncio.CancelledError:
             try:
                 self.cancel_control(
-                    run_id=control.target,
+                    run_id=str(control.target),
                     index=control.index,
                 )
             except ValueError:
                 terminal = self.store.get_run_control(
-                    run_id=control.target,
+                    run_id=str(control.target),
                     index=control.index,
                 )
                 if terminal is not None and terminal.status != "pending":
@@ -1299,7 +1301,7 @@ class RunExecutor:
                     )
                     execution._current_state = (
                         state,
-                        ControlRef(active.root_run_id, candidate.index),
+                        ControlRef(RunRef(active.root_run_id), candidate.index),
                     )
                     with self._active_lock:
                         controls.pop(candidate.index, None)
@@ -1378,7 +1380,7 @@ class RunExecutor:
         if isinstance(event, RunBegin):
             return
         if isinstance(event, StepBegin):
-            run_id = event.step.run
+            run_id = event.step.run_id
             indexes = set(_control_indexes(event.input, run_id=run_id))
         elif isinstance(event, RunEnd):
             run_id = event.run
@@ -1428,7 +1430,7 @@ class RunExecutor:
         *,
         emit: EventEmitter,
         status: Literal["failed", "canceled"],
-        error: ExecutionError | None = None,
+        error: ErrorMessage | ErrorRef | None = None,
     ) -> None:
         record = self.store.get_run(run_id=run_id)
         if record is not None and record.status not in {"pending", "running"}:
@@ -1442,11 +1444,11 @@ class RunExecutor:
                 run=run_id,
                 status=status,
                 control=(
-                    ControlRef(run_id, cancellation.index)
+                    ControlRef(RunRef(run_id), cancellation.index)
                     if cancellation is not None
                     else None
                 ),
-                error=error or control_text(cancellation) or status,
+                error=error or ErrorMessage(control_text(cancellation) or status),
                 finished_at=utc_now(),
             )
         )
@@ -1479,7 +1481,7 @@ class _Execution:
         self._active = active
         self._emit_trace = emit
         self._current_state = (root.state, root.state_ref)
-        self._step_states: dict[StepPath, tuple[ExecutionState, ControlRef]] = {}
+        self._step_states: dict[StepRef, tuple[ExecutionState, ControlRef]] = {}
         self._limits = _RunLimitState(root.limits)
         self._retry = retry
         if retry is not None:
@@ -1605,7 +1607,7 @@ class _Execution:
             and binding.parent is not None
             and binding.flow_resources is not None
         ):
-            parent = self._active_bindings.get(binding.parent.run)
+            parent = self._active_bindings.get(binding.parent.run_id)
             if parent is not None:
                 parent_binding = parent
                 parent_ref = parent_binding.bindings.runnable
@@ -1745,7 +1747,9 @@ class _Execution:
                     f"{target.ref}"
                 )
             active = self._active_bindings.get(run_id)
-            run_id = active.parent.run if active and active.parent is not None else None
+            run_id = (
+                active.parent.run_id if active and active.parent is not None else None
+            )
 
     def prepare_execute(
         self,
@@ -1753,7 +1757,7 @@ class _Execution:
         target: ResolvedRunnable,
         input: RunnableInput,
         *,
-        source: Pointer,
+        source: FieldRef,
         state: ExecutionState,
         state_ref: ControlRef,
     ) -> tuple[BoundRun, dict[str, Local]]:
@@ -1790,7 +1794,7 @@ class _Execution:
         self,
         binding: BoundRun,
         *,
-        source: Pointer,
+        source: FieldRef,
     ) -> BoundRun:
         """Persist and activate one prepared same-Run runnable replacement."""
 
@@ -1889,7 +1893,7 @@ class _Execution:
             await self.emit(
                 RunBegin(
                     run=binding.run_id,
-                    control=ControlRef(binding.run_id, binding.control_index),
+                    control=ControlRef(RunRef(binding.run_id), binding.control_index),
                     runnable=_bound_runnable(binding),
                     parent=binding.parent,
                     occurrence=binding.occurrence,
@@ -1899,7 +1903,7 @@ class _Execution:
         try:
             if (
                 self._retry is not None
-                and binding.run_id == self._retry.target
+                and binding.run_id == str(self._retry.target)
                 and isinstance(runnable, FlowDecl)
             ):
                 current, statement_start = self._resume_flow(
@@ -1907,7 +1911,7 @@ class _Execution:
                     runnable,
                     current,
                 )
-            if self._retry is not None and binding.run_id == self._retry.target:
+            if self._retry is not None and binding.run_id == str(self._retry.target):
                 self._limits.check_restored()
             while True:
                 try:
@@ -1950,7 +1954,7 @@ class _Execution:
                         run=binding.run_id,
                         status="failed",
                         output=self.run_output(binding.run_id),
-                        error=error,
+                        error=ErrorMessage(error),
                         finished_at=utc_now(),
                     )
                 )
@@ -1971,11 +1975,11 @@ class _Execution:
                 RunEnd(
                     run=binding.run_id,
                     status="canceled",
-                    control=ControlRef(binding.run_id, control.index)
+                    control=ControlRef(RunRef(binding.run_id), control.index)
                     if control is not None
                     else None,
                     output=self.run_output(binding.run_id),
-                    error=control_text(control) or "canceled",
+                    error=ErrorMessage(control_text(control) or "canceled"),
                     finished_at=utc_now(),
                 )
             )
@@ -1998,7 +2002,7 @@ class _Execution:
                     run=binding.run_id,
                     status="failed",
                     output=self.run_output(binding.run_id),
-                    error=error,
+                    error=ErrorMessage(error),
                     finished_at=utc_now(),
                 )
             )
@@ -2030,21 +2034,21 @@ class _Execution:
             statement = flow.stmts[index]
             if step.given != statement:
                 raise ValueError(
-                    f"retry prefix no longer matches flow statement: {step.path}"
+                    f"retry prefix no longer matches flow statement: {step.ref}"
                 )
             if step.status != "succeeded":
-                raise ValueError(f"retry prefix step is not committed: {step.path}")
+                raise ValueError(f"retry prefix step is not committed: {step.ref}")
             if isinstance(statement, RepeatStmt):
                 for descendant in self.store.list_steps(run_id=binding.run_id):
                     if (
-                        len(descendant.path.indices) <= len(step.path.indices)
-                        or descendant.path.indices[: len(step.path.indices)]
-                        != step.path.indices
+                        len(descendant.ref.indices) <= len(step.ref.indices)
+                        or descendant.ref.indices[: len(step.ref.indices)]
+                        != step.ref.indices
                     ):
                         continue
                     if descendant.status != "succeeded":
                         raise ValueError(
-                            f"retry prefix step is not committed: {descendant.path}"
+                            f"retry prefix step is not committed: {descendant.ref}"
                         )
                     self._restore_step_local(binding.run_id, descendant, current)
                 continue
@@ -2055,7 +2059,7 @@ class _Execution:
             if statement.binding == "_":
                 self.record_output(
                     binding.run_id,
-                    local.ref or Pointer.step(step.path, "output", "value"),
+                    local.ref or FieldRef.from_path(step.ref, "output", "value"),
                 )
         return current, len(committed)
 
@@ -2074,14 +2078,14 @@ class _Execution:
         if step.output.name == "_":
             self.record_output(
                 run_id,
-                local.ref or Pointer.step(step.path, "output", "value"),
+                local.ref or FieldRef.from_path(step.ref, "output", "value"),
             )
 
     async def execute_child(
         self,
         parent: BoundRun,
         locals: Mapping[str, Local],
-        step: StepPath,
+        step: StepRef,
         name: str,
         occurrence: Occurrence | None,
         *,
@@ -2190,7 +2194,7 @@ class _Execution:
         runnable: AgicDecl | FlowDecl,
         input: RunnableInput,
         *,
-        parent_step: StepPath,
+        parent_step: StepRef,
         state: ExecutionState,
         state_ref: ControlRef,
         validate_input: bool = True,
@@ -2323,7 +2327,7 @@ class _Execution:
                 )
                 event = RunBegin(
                     run=binding.run_id,
-                    control=ControlRef(binding.run_id, binding.control_index),
+                    control=ControlRef(RunRef(binding.run_id), binding.control_index),
                     runnable=_bound_runnable(binding),
                     parent=binding.parent,
                     occurrence=binding.occurrence,
@@ -2372,8 +2376,10 @@ class _Execution:
             child = self.store.get_run(run_id=binding.run_id)
             if child is None or child.status in {"pending", "running"}:
                 raise
-            raise _ExecutionFailed(Pointer.run(binding.run_id, "error"), exc) from exc
-        pointer = Pointer.run(binding.run_id, "output", "value")
+            raise _ExecutionFailed(
+                ErrorRef(FieldRef.from_path(RunRef(binding.run_id), "error")), exc
+            ) from exc
+        pointer = FieldRef.from_path(RunRef(binding.run_id), "output", "value")
         item_type = result.type_name or "Json"
         source_pointer = (
             result.ref
@@ -2395,7 +2401,7 @@ class _Execution:
         self,
         binding: BoundRun,
         locals: Mapping[str, Local],
-        parent: StepPath,
+        parent: StepRef,
         runnable: str,
         inputs: Sequence[Any],
         *,
@@ -2481,7 +2487,7 @@ class _Execution:
         statements: Sequence[FlowStmt],
         locals: dict[str, Local],
         *,
-        parent: StepPath,
+        parent: StepRef,
         start: int = 0,
         occurrence: Occurrence | None = None,
     ) -> int:
@@ -2550,12 +2556,12 @@ class _Execution:
         if claimed:
             raise _RunCanceled(claimed[0])
 
-    def record_output(self, run_id: str, ref: Pointer) -> None:
+    def record_output(self, run_id: str, ref: FieldRef) -> None:
         step = next(
             (
                 item
                 for item in reversed(self.store.list_steps(run_id=run_id))
-                if Pointer.step(item.path, "output", "value") == ref
+                if FieldRef.from_path(item.ref, "output", "value") == ref
                 and item.output is not None
             ),
             None,
@@ -2563,7 +2569,7 @@ class _Execution:
         if step is not None and step.output is not None:
             self._run_outputs[run_id] = replace(
                 step.output,
-                value=TypedPointer(step.output.type, ref),
+                value=TypedRef(ref, step.output.type),
                 name="_",
             )
 
@@ -2610,7 +2616,7 @@ class _Execution:
             self._step_states[event.step] = (state, state_ref)
             return state, state_ref
 
-    def state_for_step(self, step: StepPath) -> tuple[ExecutionState, ControlRef]:
+    def state_for_step(self, step: StepRef) -> tuple[ExecutionState, ControlRef]:
         """Return the immutable State snapshot captured by one started step."""
 
         try:
@@ -2638,7 +2644,7 @@ def _child_binding(
     runnable: AgicDecl | FlowDecl,
     locals: Mapping[str, Local],
     *,
-    parent_step: StepPath,
+    parent_step: StepRef,
     occurrence: Occurrence | None,
     state: ExecutionState,
     state_ref: ControlRef,
@@ -2759,7 +2765,7 @@ def _bind_run(
         input=_runnable_input_from_values(control_locals),
         control_locals=control_locals,
         state=spec.state,
-        state_ref=ControlRef(run_id, 0),
+        state_ref=ControlRef(RunRef(run_id), 0),
         setup=spec.setup,
         module=module,
         limits=spec.limits,
@@ -2779,8 +2785,8 @@ def _step_local(step: StepRecord, store: RunStore) -> Local:
         shape="list" if step.output.dim == 1 else "item",
         ref=(
             store.resolve_value_pointer(step.output.value)
-            if isinstance(step.output.value, TypedPointer)
-            else Pointer.step(step.path, "output", "value")
+            if isinstance(step.output.value, TypedRef)
+            else FieldRef.from_path(step.ref, "output", "value")
         ),
         type_name=step.output.item_type,
     )
@@ -2953,7 +2959,7 @@ def _validate_inputs(
 def _run_event_id(event: RunEvent) -> str:
     if isinstance(event, RunBegin | RunEnd):
         return event.run
-    return event.step.run
+    return event.step.run_id
 
 
 def _input_locals(
@@ -2985,7 +2991,7 @@ def _input_locals(
 def _execute_control_locals(
     input: RunnableInput,
     *,
-    source: Pointer,
+    source: FieldRef,
 ) -> tuple[RecordLocal, ...]:
     """Point raw replacement inputs into the originating Model ToolCall."""
 
@@ -3015,12 +3021,12 @@ def _execute_locals(
     }
     result: dict[str, Local] = {"_": Local()}
     for record in records:
-        if record.name is None or not isinstance(record.value, TypedPointer):
+        if record.name is None or not isinstance(record.value, TypedRef):
             raise RuntimeError("execute input local is not a named pointer")
         result[record.name] = Local(
             values[record.name],
             "item",
-            record.value.pointer,
+            record.value.ref,
             types[record.name],
             record,
         )
@@ -3073,7 +3079,7 @@ def _runnable_input_from_values(
     primary: Value | None = None
     named: dict[str, Value] = {}
     for local in locals:
-        if isinstance(local.value, TypedPointer):
+        if isinstance(local.value, TypedRef):
             raise TypeError("top-level input local cannot be a pointer")
         if local.name == "_":
             primary = local.value
@@ -3169,15 +3175,14 @@ def _run_result_local(
 
 
 def _control_indexes(
-    pointers: Sequence[Pointer],
+    pointers: Sequence[FieldRef],
     *,
     run_id: str,
 ) -> tuple[int, ...]:
     indexes: list[int] = []
     for pointer in pointers:
-        if pointer.kind != "control":
+        if not isinstance(pointer.record, ControlRef):
             continue
-        target, raw_index = pointer.record.split("@", 1)
-        if target == run_id:
-            indexes.append(int(raw_index))
+        if pointer.record.target == RunRef(run_id):
+            indexes.append(pointer.record.index)
     return tuple(dict.fromkeys(indexes))

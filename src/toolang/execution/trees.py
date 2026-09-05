@@ -16,14 +16,14 @@ from .records import (
 )
 from .schemas import Record, select_record
 from .types import (
-    ExecutionError,
-    Local,
+    ErrorMessage,
+    ErrorRef,
+    FieldRef,
     ModelStepNoted,
     Occurrence,
     Pointer,
     StepKind,
-    StepPath,
-    TypedPointer,
+    StepRef,
 )
 
 
@@ -58,7 +58,7 @@ class ExecutionTreeNode:
     occur: Occurrence | None
     started_at: str
     finished_at: str | None
-    error: ExecutionError | None
+    error: ErrorMessage | ErrorRef | None
     metrics: TreeMetrics
 
 
@@ -70,35 +70,33 @@ class ExecutionTree:
     records: tuple[Record, ...]
     entries: tuple[ControlRecord, ...]
 
-    def resolve_error(self, error: ExecutionError | None) -> str | None:
-        """Best-effort resolve one error Pointer without leaving the snapshot."""
+    def resolve_error(self, error: ErrorMessage | ErrorRef | None) -> str | None:
+        """Best-effort resolve one error reference without leaving the snapshot."""
 
-        if error is None or isinstance(error, str):
-            return error
+        if error is None:
+            return None
+        if isinstance(error, ErrorMessage):
+            return error.message
         records = {_record_pointer(record): record for record in self.records}
-        controls = {
-            str(Pointer.control(control.target, control.index)): control
-            for control in self.entries
-        }
-        selected: str | Pointer | object = error
-        seen: set[Pointer] = set()
-        while isinstance(selected, Pointer):
-            if selected in seen:
-                return f"{selected} (unresolved cycle)"
-            seen.add(selected)
-            record = records.get(selected.record) or controls.get(selected.record)
+        records.update({_record_pointer(control): control for control in self.entries})
+        selected: ErrorMessage | ErrorRef = error
+        seen: set[FieldRef] = set()
+        while isinstance(selected, ErrorRef):
+            if selected.ref in seen:
+                return f"{selected.ref} (unresolved cycle)"
+            seen.add(selected.ref)
+            record = records.get(str(selected.ref.record))
             if record is None:
-                return f"{selected} (unresolved)"
+                return f"{selected.ref} (unresolved)"
             try:
-                value = select_record(record, selected)
+                value = select_record(record, Pointer(selected.ref))
             except (TypeError, ValueError):
-                return f"{selected} (unresolved)"
-            selected = value.runtime
-            if isinstance(selected, Local):
-                selected = selected.value
-            if isinstance(selected, TypedPointer):
-                selected = selected.pointer
-        return selected if isinstance(selected, str) else f"{error} (unresolved)"
+                return f"{selected.ref} (unresolved)"
+            runtime = value.runtime
+            if not isinstance(runtime, ErrorMessage | ErrorRef):
+                return f"{error.ref} (unresolved)"
+            selected = runtime
+        return selected.message
 
 
 @dataclass(slots=True)
@@ -135,46 +133,38 @@ def build_execution_tree(snapshot: ExecutionSnapshot) -> ExecutionTree:
     """Validate and project one durable execution snapshot."""
 
     runs = {run.id: run for run in snapshot.runs}
-    steps = {step.path: step for step in snapshot.steps}
+    steps = {step.ref: step for step in snapshot.steps}
     if len(runs) != len(snapshot.runs) or len(steps) != len(snapshot.steps):
         raise ValueError("execution tree contains duplicate records")
-    entries = {(item.target, item.index): item for item in snapshot.entries}
+    entries = {item.ref: item for item in snapshot.entries}
     operations: dict[str, str] = {}
     for run in snapshot.runs:
-        if run.control.target != run.id:
-            raise ValueError(
-                f"run preparation control not found: {run.id}@{run.control.index}"
-            )
-        entry = entries.get((run.control.target, run.control.index))
+        entry = entries.get(run.control)
         if entry is None:
-            raise ValueError(
-                f"run preparation control not found: {run.id}@{run.control.index}"
-            )
+            raise ValueError(f"run preparation control not found: {run.control}")
         payload = entry.payload
         runnable = getattr(payload, "runnable", None)
         if not isinstance(runnable, str) or not runnable:
-            raise ValueError(
-                f"run preparation control not found: {run.id}@{run.control.index}"
-            )
+            raise ValueError(f"run preparation control not found: {run.control}")
         operations[run.id] = runnable
     for step in snapshot.steps:
-        operations[str(step.path)] = step_operation(step)
+        operations[str(step.ref)] = step_operation(step)
 
     root_pointer = _record_pointer(snapshot.root)
     if isinstance(snapshot.root, RunRecord):
         if runs.get(snapshot.root.id) != snapshot.root:
             raise ValueError(f"execution tree root is missing: {snapshot.root.id}")
-    elif steps.get(snapshot.root.path) != snapshot.root:
-        raise ValueError(f"execution tree root is missing: {snapshot.root.path}")
+    elif steps.get(snapshot.root.ref) != snapshot.root:
+        raise ValueError(f"execution tree root is missing: {snapshot.root.ref}")
 
     top_steps: dict[str, list[StepRecord]] = {}
-    nested_steps: dict[StepPath, list[StepRecord]] = {}
+    nested_steps: dict[StepRef, list[StepRecord]] = {}
     for step in snapshot.steps:
         if step.parent is None:
             top_steps.setdefault(step.run_id, []).append(step)
         else:
             nested_steps.setdefault(step.parent, []).append(step)
-    child_runs: dict[StepPath, list[RunRecord]] = {}
+    child_runs: dict[StepRef, list[RunRecord]] = {}
     for run in snapshot.runs:
         if run.id == root_pointer:
             continue
@@ -182,7 +172,7 @@ def build_execution_tree(snapshot: ExecutionSnapshot) -> ExecutionTree:
             child_runs.setdefault(run.parent, []).append(run)
 
     for owner, children in top_steps.items():
-        children.sort(key=lambda step: step.path.indices)
+        children.sort(key=lambda step: step.ref.indices)
         if owner not in runs and not (
             isinstance(snapshot.root, StepRecord) and owner == snapshot.root.run_id
         ):
@@ -192,10 +182,10 @@ def build_execution_tree(snapshot: ExecutionSnapshot) -> ExecutionTree:
     for run in snapshot.runs:
         adjacency[run.id] = tuple(top_steps.get(run.id, ()))
     for step in snapshot.steps:
-        adjacency[str(step.path)] = _ordered_step_children(
+        adjacency[str(step.ref)] = _ordered_step_children(
             step,
-            nested_steps.get(step.path, ()),
-            child_runs.get(step.path, ()),
+            nested_steps.get(step.ref, ()),
+            child_runs.get(step.ref, ()),
         )
 
     visiting: set[str] = set()
@@ -222,7 +212,7 @@ def build_execution_tree(snapshot: ExecutionSnapshot) -> ExecutionTree:
             (child, pointer, depth + 1, False)
             for child in reversed(adjacency.get(pointer, ()))
         )
-    all_pointers = set(runs) | {str(path) for path in steps}
+    all_pointers = set(runs) | {str(ref) for ref in steps}
     remaining = sorted(all_pointers - visited)
     if remaining:
         raise ValueError(
@@ -269,9 +259,7 @@ def tree_to_data(tree: ExecutionTree) -> list[dict[str, object]]:
             "occur": occurrence_to_data(node.occur),
             "started_at": node.started_at,
             "finished_at": node.finished_at,
-            "error": (
-                str(node.error) if isinstance(node.error, Pointer) else node.error
-            ),
+            "error": node.error.to_data() if node.error is not None else None,
             "metrics": {
                 "runs": node.metrics.runs,
                 "model_calls": node.metrics.model_calls,
@@ -298,12 +286,12 @@ def _ordered_step_children(
     nested = tuple(same_run)
     child_runs = tuple(runs)
     if parent.kind not in {"run", "par", "loop"} and (nested or child_runs):
-        raise ValueError(f"{parent.kind} Step cannot own execution: {parent.path}")
+        raise ValueError(f"{parent.kind} Step cannot own execution: {parent.ref}")
     if parent.kind != "loop" and nested:
-        raise ValueError(f"{parent.kind} Step cannot own nested Steps: {parent.path}")
+        raise ValueError(f"{parent.kind} Step cannot own nested Steps: {parent.ref}")
     if parent.kind == "run":
         if len(child_runs) > 1:
-            raise ValueError(f"run Step has multiple child Runs: {parent.path}")
+            raise ValueError(f"run Step has multiple child Runs: {parent.ref}")
         return child_runs
     if parent.kind == "par":
         for run in child_runs:
@@ -330,7 +318,7 @@ def _loop_child_order(record: RunRecord | StepRecord) -> tuple[object, ...]:
     iteration = occur.iteration
     phase = 0 if iteration.phase == "body" else 1
     if isinstance(record, StepRecord):
-        return (iteration.index, phase, 0, record.path.indices, record.created_at)
+        return (iteration.index, phase, 0, record.ref.indices, record.created_at)
     item = occur.item.index if occur.item is not None else 0
     return (iteration.index, phase, 1, (item,), record.created_at, record.id)
 
@@ -385,7 +373,7 @@ def _record_metrics(record: RunRecord | StepRecord) -> _MetricAccumulator:
         try:
             accumulator.cost_usd = Decimal(cost)
         except InvalidOperation as exc:  # pragma: no cover - record validation
-            raise ValueError(f"invalid model cost for {record.path}: {cost}") from exc
+            raise ValueError(f"invalid model cost for {record.ref}: {cost}") from exc
         accumulator.cost_known = 1
         accumulator.cost_complete = int(complete)
         accumulator.cost_approximate = approximate
@@ -437,9 +425,9 @@ def _record_pointer(record: Record) -> str:
     if isinstance(record, RunRecord):
         return record.id
     if isinstance(record, StepRecord):
-        return str(record.path)
+        return str(record.ref)
     if isinstance(record, ControlRecord):
-        return str(Pointer.control(record.target, record.index))
+        return record.id
     return record.id
 
 

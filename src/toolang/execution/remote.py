@@ -27,7 +27,7 @@ from toolang.execution.schemas import (
     RunDetail,
     RunRequest,
 )
-from toolang.execution.types import ControlTiming, RunCommand, validate_execution_id
+from toolang.execution.types import ControlTiming, RunCommand, RunRef
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -205,7 +205,7 @@ class RemoteRunClient:
         request_id: str | None = None,
         reason: str | None = None,
     ) -> ControlInfo:
-        validate_execution_id(run_id, label="run id")
+        RunRef.parse(run_id)
         return await self._post_control(
             run_id,
             "cancel",
@@ -224,7 +224,7 @@ class RemoteRunClient:
         timing: ControlTiming = "next_step",
         request_id: str | None = None,
     ) -> ControlInfo:
-        validate_execution_id(run_id, label="run id")
+        RunRef.parse(run_id)
         if message.role != "user":
             raise ValueError("run steer requires a user message")
         return await self._post_control(
@@ -379,7 +379,7 @@ class RemoteRunClient:
         )
 
     async def _run_detail(self, run_id: str) -> RunDetail:
-        validate_execution_id(run_id, label="run id")
+        RunRef.parse(run_id)
         response = await self._request(
             "GET",
             f"/api/v1/runs/{run_id}",
@@ -589,8 +589,8 @@ def _require_event_stream(response: httpx.Response) -> None:
 def _response_run_id(response: httpx.Response) -> str:
     value = response.headers.get(_RUN_ID_HEADER)
     try:
-        return validate_execution_id(value, label="accepted run id")
-    except ValueError as exc:
+        return str(RunRef.parse(value))
+    except (TypeError, ValueError) as exc:
         raise RemoteRunClientError(
             "remote run returned an invalid accepted run ID"
         ) from exc

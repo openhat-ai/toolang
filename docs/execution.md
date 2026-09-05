@@ -43,7 +43,7 @@ records and observes only new live events.
 
 Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
-process exits. Schema version 32 is an incompatible Pointer boundary: both
+process exits. Schema version 34 is an incompatible reference boundary: both
 read-only and writable opens reject every other version unchanged. This build
 does not migrate older stores.
 
@@ -65,8 +65,9 @@ Runs within one thread use their durable SQLite acceptance order for history,
 fork, and rewind boundaries. Wall-clock timestamps remain display metadata and
 are not used to decide which runs follow an anchor.
 
-Each `StepPath` includes its owning run. SQLite stores the run and local index
-path separately and protects the `(run, path)` primary key. One process owns
+Each `StepRef` combines an owning Run with a Run-relative `StepPath`. SQLite
+stores the canonical StepRef as `steps.id`, retains the Run and relative path as
+private indexed columns, and protects both identities. One process owns
 execution of a run tree.
 
 

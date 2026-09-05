@@ -17,7 +17,7 @@ from toolang.execution.history import RunHistory
 from toolang.execution.schemas import ThreadControlRefData
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import ControlRef, Local, ThreadPrefix, Pointer
+from toolang.execution.types import ControlRef, FieldRef, Local, ThreadPrefix
 
 
 def test_run_history_batches_thread_and_run_summaries(
@@ -48,7 +48,7 @@ def test_run_history_batches_thread_and_run_summaries(
 
         threads = history.list_threads(limit=None)
         runs = history.list_runs(limit=None)
-        thread = history.get_thread(run.thread)
+        thread = history.get_thread(str(run.thread))
 
         assert [(item.id, item.run_count) for item in threads] == [("term_history", 1)]
         assert [item.id for item in runs] == ["run_history"]
@@ -114,7 +114,7 @@ def test_run_history_zero_detail_limit_returns_only_thread_summary(
         )
         project_run_end(store, run_id=run.id)
 
-        thread = RunHistory(store).get_thread(run.thread, run_limit=0)
+        thread = RunHistory(store).get_thread(str(run.thread), run_limit=0)
 
         assert thread is not None
         assert thread.run_count == 1
@@ -150,18 +150,18 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
             store,
             run_id=run.id,
             output=Local.typed(
-                "Part", Pointer.step(step.path, "output", "value", 1), "_", 0
+                "Part", FieldRef.from_path(step.ref, "output", "value", 1), "_", 0
             ),
         )
 
         history = RunHistory(store)
         detail = history.get_run(run.id)
-        thread = history.get_thread(run.thread)
+        thread = history.get_thread(str(run.thread))
 
         assert store.run_output(run_id=run.id) == (TextPart("result"),)
         assert detail is not None
         expected = Local.typed(
-            "Part", Pointer.step(step.path, "output", "value", 1), "_", 0
+            "Part", FieldRef.from_path(step.ref, "output", "value", 1), "_", 0
         )
         assert detail.output == expected
         assert thread is not None
@@ -183,17 +183,21 @@ def test_run_history_resolves_pass_through_control_output(tmp_path: Path) -> Non
         project_run_end(
             store,
             run_id=run.id,
-            output=Pointer.control(run.id, 0, "payload", "locals", 0, "value"),
+            output=FieldRef.from_path(
+                ControlRef.for_run(run.id, 0), "payload", "locals", 0, "value"
+            ),
         )
 
         stored = store.get_run(run_id=run.id)
         detail = RunHistory(store).get_run(run.id)
 
         assert stored is not None
-        assert stored.control == ControlRef(run.id, 0)
+        assert stored.control == ControlRef.for_run(run.id, 0)
         assert stored.output == Local.typed(
             "Part[]",
-            Pointer.control(run.id, 0, "payload", "locals", 0, "value"),
+            FieldRef.from_path(
+                ControlRef.for_run(run.id, 0), "payload", "locals", 0, "value"
+            ),
             "_",
             0,
         )
@@ -201,7 +205,9 @@ def test_run_history_resolves_pass_through_control_output(tmp_path: Path) -> Non
         assert detail is not None
         assert detail.output == Local.typed(
             "Part[]",
-            Pointer.control(run.id, 0, "payload", "locals", 0, "value"),
+            FieldRef.from_path(
+                ControlRef.for_run(run.id, 0), "payload", "locals", 0, "value"
+            ),
             "_",
             0,
         )
@@ -224,7 +230,9 @@ def test_resolve_local_rejects_a_pointer_to_a_different_type(tmp_path: Path) -> 
             store.resolve_local(
                 Local.typed(
                     "Number",
-                    Pointer.control(run.id, 0, "payload", "locals", 0, "value"),
+                    FieldRef.from_path(
+                        ControlRef.for_run(run.id, 0), "payload", "locals", 0, "value"
+                    ),
                     "_",
                     0,
                 )

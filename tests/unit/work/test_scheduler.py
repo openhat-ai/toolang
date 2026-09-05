@@ -179,7 +179,7 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
 
             runs = harness.store.list_runs(limit=None)
             assert len(runs) == 1
-            assert runs[0].thread == "task_review"
+            assert str(runs[0].thread) == "task_review"
             control = harness.store.get_run_control(run_id=runs[0].id, index=0)
             assert control is not None
             assert isinstance(control.payload, RunControlPayload)
@@ -390,7 +390,7 @@ def test_scheduler_serializes_revisions_of_one_task(tmp_path) -> None:
                     await asyncio.sleep(0.01)
 
             runs = harness.store.list_runs(limit=None)
-            assert {run.thread for run in runs} == {"task_review"}
+            assert {str(run.thread) for run in runs} == {"task_review"}
             assert len(harness.adapter.invocations) == 2
         finally:
             gate.release()

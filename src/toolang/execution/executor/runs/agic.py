@@ -23,10 +23,11 @@ from ...events import StepBegin
 from ...records import RunControlPayload, ControlRecord
 from ...types import (
     ControlRef,
+    FieldRef,
     Local as RecordLocal,
-    StepPath,
-    Pointer,
-    TypedPointer,
+    RunRef,
+    StepRef,
+    TypedRef,
     local_to_protocol_data,
 )
 from ..common import (
@@ -86,17 +87,17 @@ class _AgicState:
     )
     record_accounting: Callable[[_ModelAccounting], None] = lambda _accounting: None
     limits: RunLimits = RunLimits()
-    record_output: Callable[[Pointer], None] = lambda _ref: None
-    output: Pointer | None = None
+    record_output: Callable[[FieldRef], None] = lambda _ref: None
+    output: FieldRef | None = None
     continuation: ModelContinuation | None = None
     output_binding: _OutputBinding = field(default_factory=_OutputBinding)
     next_step: int = 0
     last_step: int | None = None
-    next_model_inputs: tuple[Pointer, ...] | None = None
+    next_model_inputs: tuple[FieldRef, ...] | None = None
     model_calls: int = 0
     tool_calls: int = 0
     tool_call_sources: dict[str, tuple[int, int]] = field(default_factory=dict)
-    initial_inputs: tuple[Pointer, ...] = ()
+    initial_inputs: tuple[FieldRef, ...] = ()
     claimed_inputs: tuple[ControlRecord, ...] = ()
     repairing_output: bool = False
     begin_step: (
@@ -292,8 +293,8 @@ async def _execute(state: _AgicState) -> Message | None:
             raise
         if state.last_step is None:
             raise RuntimeError("model step did not record its index")
-        ref = Pointer.step(
-            StepPath(state.prepared.run.run_id, (state.last_step,)),
+        ref = FieldRef.from_path(
+            StepRef.from_local(state.prepared.run.run_id, (state.last_step,)),
             "output",
             "value",
         )
@@ -384,7 +385,7 @@ async def _run(
     step_index = state.next_step
     state.next_step += 1
     run = state.prepared.run
-    path = StepPath(run.run_id, (step_index,))
+    path = StepRef.from_local(run.run_id, (step_index,))
     requested = call.input.get("runnable")
     statement = RunStmt(
         binding="_",
@@ -417,7 +418,7 @@ async def _run(
             authorize=lambda target: _authorize_run(state, target),
         )
         part = _run_success_part(execution, call, result)
-        state.output = Pointer.step(path, "output", "value")
+        state.output = FieldRef.from_path(path, "output", "value")
         state.record_output(state.output)
     except asyncio.CancelledError:
         raise
@@ -548,16 +549,16 @@ def _run_success_part(
     record = result.record
     target = record.value if record is not None else None
     if (
-        not isinstance(target, TypedPointer)
-        or target.pointer.kind != "run"
-        or target.pointer.tokens != ("output", "value")
+        not isinstance(target, TypedRef)
+        or not isinstance(target.ref.record, RunRef)
+        or target.ref.tokens != ("output", "value")
     ):
         raise RuntimeError("Run Step result is missing its child run reference")
-    child = execution.store.get_run(run_id=target.pointer.record)
+    child = execution.store.get_run(run_id=str(target.ref.record))
     if child is None:
-        raise RuntimeError(f"child run not found: {target.pointer.record}")
+        raise RuntimeError(f"child run not found: {target.ref.record}")
     control = execution.store.get_run_control(
-        run_id=child.control.target,
+        run_id=str(child.control.target),
         index=child.control.index,
     )
     if control is None or not isinstance(control.payload, RunControlPayload):
@@ -590,12 +591,12 @@ def _run_success_part(
     )
 
 
-def _run_call_inputs(state: _AgicState, call: ToolCall) -> tuple[Pointer, ...]:
+def _run_call_inputs(state: _AgicState, call: ToolCall) -> tuple[FieldRef, ...]:
     source = state.tool_call_sources.get(call.tool_call_id)
     if source is not None:
         return (
-            Pointer.step(
-                StepPath(state.prepared.run.run_id, (source[0],)),
+            FieldRef.from_path(
+                StepRef.from_local(state.prepared.run.run_id, (source[0],)),
                 "output",
                 "value",
                 source[1],
@@ -603,8 +604,8 @@ def _run_call_inputs(state: _AgicState, call: ToolCall) -> tuple[Pointer, ...]:
         )
     if state.last_step is not None:
         return (
-            Pointer.step(
-                StepPath(state.prepared.run.run_id, (state.last_step,)),
+            FieldRef.from_path(
+                StepRef.from_local(state.prepared.run.run_id, (state.last_step,)),
                 "output",
                 "value",
             ),
@@ -612,14 +613,14 @@ def _run_call_inputs(state: _AgicState, call: ToolCall) -> tuple[Pointer, ...]:
     return state.initial_inputs
 
 
-def _runtime_call_source(state: _AgicState, call: ToolCall) -> Pointer:
+def _runtime_call_source(state: _AgicState, call: ToolCall) -> FieldRef:
     """Return the authoritative Model ToolCall part for one runtime request."""
 
     source = state.tool_call_sources.get(call.tool_call_id)
     if source is None:
         raise RuntimeError(f"runtime ToolCall source is missing: {call.tool_call_id}")
-    return Pointer.step(
-        StepPath(state.prepared.run.run_id, (source[0],)),
+    return FieldRef.from_path(
+        StepRef.from_local(state.prepared.run.run_id, (source[0],)),
         "output",
         "value",
         source[1],
@@ -633,8 +634,8 @@ def _append_canceled_tool_results(
     """Complete skipped tool calls in model history without executing them."""
 
     state.next_model_inputs = tuple(
-        Pointer.step(
-            StepPath(state.prepared.run.run_id, (source[0],)),
+        FieldRef.from_path(
+            StepRef.from_local(state.prepared.run.run_id, (source[0],)),
             "output",
             "value",
             source[1],

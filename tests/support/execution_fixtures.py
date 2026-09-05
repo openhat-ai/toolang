@@ -28,6 +28,9 @@ from toolang.execution.types import (
     ControlRef,
     ControlTiming,
     ControlKind,
+    ErrorMessage,
+    ErrorRef,
+    FieldRef,
     IterationOccurrence,
     RunStatus,
     ModelStepGiven,
@@ -40,9 +43,9 @@ from toolang.execution.types import (
     StepKind,
     StepNoted,
     StepStatus,
-    StepPath,
+    StepRef,
     Local,
-    Pointer,
+    ThreadRef,
     ToolStepGiven,
 )
 from toolang.lang.ast import (
@@ -75,7 +78,7 @@ def accept_run(
     store: RunStore,
     *,
     run_id: str,
-    parent: StepPath | None,
+    parent: StepRef | None,
     thread: str,
     input: Message | RunnableInput,
     context: Mapping[str, Any],
@@ -120,8 +123,8 @@ def accept_run(
         parent_record = next(
             (
                 step
-                for step in store.list_steps(run_id=parent.run)
-                if step.path == parent
+                for step in store.list_steps(run_id=parent.run_id)
+                if step.ref == parent
             ),
             None,
         )
@@ -154,7 +157,7 @@ def project_run_start(
     store: RunStore,
     *,
     run_id: str,
-    thread_id: str,
+    thread_id: str | ThreadRef,
     origin: str,
     input: Message,
     root_run_id: str | None = None,
@@ -165,7 +168,7 @@ def project_run_start(
     request_id: str | None = None,
     created_at: str | None = None,
     started_at: str | None = None,
-    parent: StepPath | str | None = None,
+    parent: StepRef | str | None = None,
     context: Mapping[str, Any] | None = None,
 ) -> RunRecord:
     """Project accepted and begun run events, returning durable run truth."""
@@ -175,20 +178,21 @@ def project_run_start(
     run_context = dict(context or metadata or {})
     del root_run_id
     del call_kind
+    thread_id = str(thread_id)
     if store.get_thread(thread_id=thread_id) is None:
         store.create_thread(
             thread_id=thread_id,
             origin=origin,
             created_at=created,
         )
-    parent_path = StepPath.parse(parent) if parent is not None else None
+    parent_path = StepRef.parse(parent) if parent is not None else None
     state_ref = None
     if parent_path is not None:
         parent_record = next(
             (
                 step
-                for step in store.list_steps(run_id=parent_path.run)
-                if step.path == parent_path
+                for step in store.list_steps(run_id=parent_path.run_id)
+                if step.ref == parent_path
             ),
             None,
         )
@@ -220,7 +224,7 @@ def project_run_start(
         RunBegin(
             run=run_id,
             parent=parent_path,
-            control=ControlRef(run_id, 0),
+            control=ControlRef.for_run(run_id, 0),
             runnable=(
                 f"{runnable_kind}:{runnable_name}"
                 if runnable_name is not None
@@ -275,14 +279,14 @@ def project_step(
     *,
     run_id: str | None = None,
     step_index: int | None = None,
-    parent: StepPath | str | None = None,
+    parent: StepRef | str | None = None,
     index: int | None = None,
     kind: StepKind,
     status: StepStatus,
-    input: Sequence[Pointer],
+    input: Sequence[FieldRef],
     output: Sequence[Part] | Local | None,
     detail: Mapping[str, Any] | None = None,
-    error: str | None = None,
+    error: str | ErrorMessage | ErrorRef | None = None,
     started_at: str,
     finished_at: str | None,
     context: Mapping[str, Any] | None = None,
@@ -295,9 +299,9 @@ def project_step(
             "project_step requires parent with index or run_id with step_index"
         )
     path = (
-        StepPath.parse(parent).child(resolved_index)
+        StepRef.parse(parent).child(resolved_index)
         if parent is not None
-        else StepPath(str(run_id), (resolved_index,))
+        else StepRef.from_local(str(run_id), (resolved_index,))
     )
     persist_event(
         store,
@@ -323,12 +327,12 @@ def project_step(
                     else Local.typed("Part[]", tuple(output), "_", 0)
                 ),
                 noted=_step_noted(kind, detail),
-                error=error,
+                error=ErrorMessage(error) if isinstance(error, str) else error,
                 finished_at=finished_at or started_at,
             ),
         )
     step = next(
-        (item for item in store.list_steps(run_id=path.run) if item.path == path),
+        (item for item in store.list_steps(run_id=path.run_id) if item.ref == path),
         None,
     )
     if step is None:
@@ -476,9 +480,9 @@ def project_run_end(
     *,
     run_id: str,
     status: RunStatus = "succeeded",
-    error: str | None = None,
+    error: str | ErrorMessage | ErrorRef | None = None,
     finished_at: str | None = None,
-    output: Local | Pointer | None = None,
+    output: Local | FieldRef | None = None,
 ) -> RunRecord:
     """Project one terminal run event, returning durable run truth."""
 
@@ -489,10 +493,10 @@ def project_run_end(
             status=status,
             output=(
                 Local.typed("Part[]", output, "_", 0)
-                if isinstance(output, Pointer)
+                if isinstance(output, FieldRef)
                 else output
             ),
-            error=error,
+            error=ErrorMessage(error) if isinstance(error, str) else error,
             finished_at=finished_at or utc_now(),
         ),
     )

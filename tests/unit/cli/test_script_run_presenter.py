@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from io import StringIO
 import re
+from io import StringIO
 from os import terminal_size
 
 import pytest
@@ -38,12 +38,14 @@ from toolang.execution.events import (
 )
 from toolang.execution.types import (
     ControlRef,
+    ErrorMessage,
+    ErrorRef,
+    FieldRef,
     Local,
     ModelStepGiven,
     ModelStepNoted,
     ModelTokenCount,
-    Pointer,
-    StepPath,
+    StepRef,
     ToolStepGiven,
 )
 from toolang.lang.ast import GatherStmt, Span
@@ -93,7 +95,7 @@ def _render(events: list[RunEvent], *, tty: bool = False) -> str:
 def _root_begin() -> RunBegin:
     return RunBegin(
         run="run_one",
-        control=ControlRef("run_one", 0),
+        control=ControlRef.for_run("run_one", 0),
         runnable="agic:demo",
         started_at="2026-01-01T00:00:00Z",
     )
@@ -104,13 +106,13 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
         [
             _root_begin(),
             StepBegin(
-                step=StepPath.parse("run_one.0"),
+                step=StepRef.parse("run_one.0"),
                 kind="model",
                 given=_model(),
                 started_at="2026-01-01T00:00:00Z",
             ),
             StepEnd(
-                step=StepPath.parse("run_one.0"),
+                step=StepRef.parse("run_one.0"),
                 kind="model",
                 status="succeeded",
                 output=_parts("Use a shared reducer."),
@@ -125,7 +127,7 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
                 status="succeeded",
                 output=Local.typed(
                     "Part[]",
-                    Pointer.step(StepPath.parse("run_one.0"), "output", "value"),
+                    FieldRef.from_path(StepRef.parse("run_one.0"), "output", "value"),
                     "_",
                     0,
                 ),
@@ -225,7 +227,7 @@ def test_script_tool_call_only_model_step_clears_live_without_scrollback(
 ) -> None:
     stream = _TtyStream() if tty else StringIO()
     presenter = ScriptRunPresenter(run_id="run_one", stream=stream)
-    path = StepPath.parse("run_one.0")
+    path = StepRef.parse("run_one.0")
 
     async def scenario() -> None:
         await presenter.on_event(_root_begin())
@@ -272,12 +274,12 @@ def test_tty_model_output_uses_normal_style() -> None:
         [
             _root_begin(),
             StepBegin(
-                step=StepPath.parse("run_one.0"),
+                step=StepRef.parse("run_one.0"),
                 kind="model",
                 given=_model(),
             ),
             StepEnd(
-                step=StepPath.parse("run_one.0"),
+                step=StepRef.parse("run_one.0"),
                 kind="model",
                 status="succeeded",
                 output=_parts("Use a shared reducer."),
@@ -296,12 +298,12 @@ def test_tool_output_uses_one_unmarked_continuation() -> None:
         [
             _root_begin(),
             StepBegin(
-                step=StepPath.parse("run_one.0"),
+                step=StepRef.parse("run_one.0"),
                 kind="tool",
                 given=_tool(),
             ),
             StepEnd(
-                step=StepPath.parse("run_one.0"),
+                step=StepRef.parse("run_one.0"),
                 kind="tool",
                 status="succeeded",
                 output=Local.typed(
@@ -370,7 +372,7 @@ def test_tty_replaces_live_rows_and_clears_them_on_shutdown() -> None:
         [
             _root_begin(),
             StepBegin(
-                step=StepPath.parse("run_one.0"),
+                step=StepRef.parse("run_one.0"),
                 kind="model",
                 given=_model(),
             ),
@@ -387,20 +389,20 @@ def test_step_error_and_ownerless_run_error_use_bullet_rows() -> None:
         [
             _root_begin(),
             StepBegin(
-                step=StepPath.parse("run_one.0"),
+                step=StepRef.parse("run_one.0"),
                 kind="tool",
                 given=_tool(),
             ),
             StepEnd(
-                step=StepPath.parse("run_one.0"),
+                step=StepRef.parse("run_one.0"),
                 kind="tool",
                 status="failed",
-                error="provider returned status 429",
+                error=ErrorMessage("provider returned status 429"),
             ),
             RunEnd(
                 run="run_one",
                 status="failed",
-                error=Pointer.step(StepPath.parse("run_one.0"), "error"),
+                error=ErrorRef(FieldRef.from_path(StepRef.parse("run_one.0"), "error")),
             ),
         ]
     )
@@ -410,7 +412,7 @@ def test_step_error_and_ownerless_run_error_use_bullet_rows() -> None:
             RunEnd(
                 run="run_one",
                 status="failed",
-                error="progress stream ended early",
+                error=ErrorMessage("progress stream ended early"),
             ),
         ]
     )
@@ -780,14 +782,14 @@ def test_tty_hides_cursor_for_the_lifetime_of_parallel_live_output() -> None:
 def test_single_run_gather_progressively_commits_markdown() -> None:
     stream = _TtyStream()
     presenter = ScriptRunPresenter(run_id="run_root", stream=stream, width=40)
-    gather = StepPath.parse("run_root.0")
-    model = StepPath.parse("run_merge.0")
+    gather = StepRef.parse("run_root.0")
+    model = StepRef.parse("run_merge.0")
 
     async def scenario() -> None:
         await presenter.on_event(
             RunBegin(
                 run="run_root",
-                control=ControlRef("run_root", 0),
+                control=ControlRef.for_run("run_root", 0),
                 runnable="flow:summary",
             )
         )
@@ -802,7 +804,7 @@ def test_single_run_gather_progressively_commits_markdown() -> None:
             RunBegin(
                 run="run_merge",
                 parent=gather,
-                control=ControlRef("run_merge", 0),
+                control=ControlRef.for_run("run_merge", 0),
                 runnable="agic:merge",
             )
         )

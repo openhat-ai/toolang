@@ -41,7 +41,7 @@ class RunExecutor:
         *,
         setup: AgentSetup,
         state: StatePublication,
-        anchor: StepPath | str | None = None,
+        anchor: StepRef | str | None = None,
         ceiling: AgentCeiling = AgentCeiling(),
         model: str | None = None,
         limits: RunLimits | None = None,

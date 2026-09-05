@@ -22,13 +22,14 @@ from toolang.cli.toolang.commands.chat import blocks, rendering
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from toolang.execution.types import (
     ControlRef,
+    ErrorMessage,
     Local,
     ModelStepGiven,
     ModelStepNoted,
     ModelTokenCount,
     Occurrence,
     OccurrencePosition,
-    StepPath,
+    StepRef,
 )
 from toolang.lang.ast import MapStmt, RunStmt, Span
 
@@ -80,12 +81,12 @@ def _render_chat_progress(block: ProgressBlock, *, width: int = 80) -> str:
 
 def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
     projector = ProgressProjector(show_boundaries=False)
-    dynamic = StepPath.parse("run_root.0")
-    child_model = StepPath.parse("run_child.0")
+    dynamic = StepRef.parse("run_root.0")
+    child_model = StepRef.parse("run_child.0")
     projector.handle(
         RunBegin(
             run="run_root",
-            control=ControlRef("run_root", 0),
+            control=ControlRef.for_run("run_root", 0),
             runnable="agic:parent",
             started_at="2026-01-01T00:00:00Z",
         )
@@ -107,7 +108,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
     header = projector.handle(
         RunBegin(
             run="run_child",
-            control=ControlRef("run_child", 0),
+            control=ControlRef.for_run("run_child", 0),
             runnable="agic:summarize",
             parent=dynamic,
             started_at="2026-01-01T00:00:00.100Z",
@@ -168,11 +169,11 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
 
 def test_dynamic_run_preaccept_failure_uses_a_trace_marker_without_boundaries() -> None:
     projector = ProgressProjector(show_boundaries=False)
-    path = StepPath.parse("run_root.0")
+    path = StepRef.parse("run_root.0")
     projector.handle(
         RunBegin(
             run="run_root",
-            control=ControlRef("run_root", 0),
+            control=ControlRef.for_run("run_root", 0),
             runnable="agic:parent",
         )
     )
@@ -193,7 +194,7 @@ def test_dynamic_run_preaccept_failure_uses_a_trace_marker_without_boundaries() 
             step=path,
             kind="run",
             status="failed",
-            error="Runnable not found: missing",
+            error=ErrorMessage("Runnable not found: missing"),
         )
     )
 
@@ -212,12 +213,12 @@ def test_dynamic_run_preaccept_failure_uses_a_trace_marker_without_boundaries() 
 
 def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
     projector = ProgressProjector(show_boundaries=False)
-    caller = StepPath.parse("run_root.0")
-    target = StepPath.parse("run_root.1")
+    caller = StepRef.parse("run_root.0")
+    target = StepRef.parse("run_root.1")
     projector.handle(
         RunBegin(
             run="run_root",
-            control=ControlRef("run_root", 0),
+            control=ControlRef.for_run("run_root", 0),
             runnable="agic:caller",
         )
     )
@@ -255,12 +256,12 @@ def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
 
 def test_execute_prestart_failure_uses_a_correlated_trace_marker() -> None:
     projector = ProgressProjector(show_boundaries=False)
-    caller = StepPath.parse("run_root.0")
-    recovery = StepPath.parse("run_root.1")
+    caller = StepRef.parse("run_root.0")
+    recovery = StepRef.parse("run_root.1")
     projector.handle(
         RunBegin(
             run="run_root",
-            control=ControlRef("run_root", 0),
+            control=ControlRef.for_run("run_root", 0),
             runnable="agic:caller",
         )
     )
@@ -309,12 +310,12 @@ def test_execute_prestart_failure_uses_a_correlated_trace_marker() -> None:
 
 def test_handoff_to_flow_keeps_the_first_run_statement_flow_owned() -> None:
     projector = ProgressProjector()
-    caller = StepPath.parse("run_root.0")
-    target = StepPath.parse("run_root.1")
+    caller = StepRef.parse("run_root.0")
+    target = StepRef.parse("run_root.1")
     projector.handle(
         RunBegin(
             run="run_root",
-            control=ControlRef("run_root", 0),
+            control=ControlRef.for_run("run_root", 0),
             runnable="agic:caller",
         )
     )
@@ -446,11 +447,11 @@ def test_dynamic_run_dividers_align_and_preserve_complete_identity_when_narrow()
 
 def test_flow_owned_run_step_keeps_numbered_header_and_step_path_footer() -> None:
     projector = ProgressProjector()
-    step = StepPath.parse("run_root.0")
+    step = StepRef.parse("run_root.0")
     projector.handle(
         RunBegin(
             run="run_root",
-            control=ControlRef("run_root", 0),
+            control=ControlRef.for_run("run_root", 0),
             runnable="flow:publish",
         )
     )
@@ -466,7 +467,7 @@ def test_flow_owned_run_step_keeps_numbered_header_and_step_path_footer() -> Non
     projector.handle(
         RunBegin(
             run="run_child",
-            control=ControlRef("run_child", 0),
+            control=ControlRef.for_run("run_child", 0),
             runnable="agic:summarize",
             parent=step,
         )
@@ -483,12 +484,12 @@ def test_flow_owned_run_step_keeps_numbered_header_and_step_path_footer() -> Non
 
 def test_agic_to_flow_keeps_child_flow_run_steps_numbered() -> None:
     projector = ProgressProjector()
-    dynamic = StepPath.parse("run_root.0")
-    authored = StepPath.parse("run_publish.0")
+    dynamic = StepRef.parse("run_root.0")
+    authored = StepRef.parse("run_publish.0")
     projector.handle(
         RunBegin(
             run="run_root",
-            control=ControlRef("run_root", 0),
+            control=ControlRef.for_run("run_root", 0),
             runnable="agic:parent",
         )
     )
@@ -502,7 +503,7 @@ def test_agic_to_flow_keeps_child_flow_run_steps_numbered() -> None:
     outer_header = projector.handle(
         RunBegin(
             run="run_publish",
-            control=ControlRef("run_publish", 0),
+            control=ControlRef.for_run("run_publish", 0),
             runnable="flow:publish",
             parent=dynamic,
         )
@@ -518,7 +519,7 @@ def test_agic_to_flow_keeps_child_flow_run_steps_numbered() -> None:
     projector.handle(
         RunBegin(
             run="run_validate",
-            control=ControlRef("run_validate", 0),
+            control=ControlRef.for_run("run_validate", 0),
             runnable="agic:validate",
             parent=authored,
         )
@@ -543,12 +544,12 @@ def test_agic_to_flow_keeps_child_flow_run_steps_numbered() -> None:
 
 def test_nested_dynamic_run_footers_pair_with_their_direct_children() -> None:
     projector = ProgressProjector(show_boundaries=False)
-    outer = StepPath.parse("run_root.0")
-    inner = StepPath.parse("run_child.0")
+    outer = StepRef.parse("run_root.0")
+    inner = StepRef.parse("run_child.0")
     projector.handle(
         RunBegin(
             run="run_root",
-            control=ControlRef("run_root", 0),
+            control=ControlRef.for_run("run_root", 0),
             runnable="agic:parent",
         )
     )
@@ -556,7 +557,7 @@ def test_nested_dynamic_run_footers_pair_with_their_direct_children() -> None:
     outer_header = projector.handle(
         RunBegin(
             run="run_child",
-            control=ControlRef("run_child", 0),
+            control=ControlRef.for_run("run_child", 0),
             runnable="agic:child",
             parent=outer,
         )
@@ -565,7 +566,7 @@ def test_nested_dynamic_run_footers_pair_with_their_direct_children() -> None:
     inner_header = projector.handle(
         RunBegin(
             run="run_leaf",
-            control=ControlRef("run_leaf", 0),
+            control=ControlRef.for_run("run_leaf", 0),
             runnable="agic:leaf",
             parent=inner,
         )
@@ -592,12 +593,12 @@ def test_nested_dynamic_run_footers_pair_with_their_direct_children() -> None:
 
 def test_dynamic_run_inside_parallel_lane_stays_on_one_lane_row() -> None:
     projector = ProgressProjector()
-    parallel = StepPath.parse("run_root.0")
-    dynamic = StepPath.parse("run_child.0")
+    parallel = StepRef.parse("run_root.0")
+    dynamic = StepRef.parse("run_child.0")
     projector.handle(
         RunBegin(
             run="run_root",
-            control=ControlRef("run_root", 0),
+            control=ControlRef.for_run("run_root", 0),
             runnable="flow:batch",
         )
     )
@@ -611,7 +612,7 @@ def test_dynamic_run_inside_parallel_lane_stays_on_one_lane_row() -> None:
     projector.handle(
         RunBegin(
             run="run_child",
-            control=ControlRef("run_child", 0),
+            control=ControlRef.for_run("run_child", 0),
             runnable="agic:worker",
             parent=parallel,
             occurrence=Occurrence(
@@ -633,7 +634,7 @@ def test_dynamic_run_inside_parallel_lane_stays_on_one_lane_row() -> None:
     projector.handle(
         RunBegin(
             run="run_leaf",
-            control=ControlRef("run_leaf", 0),
+            control=ControlRef.for_run("run_leaf", 0),
             runnable="agic:leaf",
             parent=dynamic,
         )
@@ -700,12 +701,12 @@ def test_dynamic_footer_colors_only_the_terminal_border(
 
 def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> None:
     projector = ProgressProjector(show_boundaries=False)
-    model = StepPath.parse("run_root.0")
-    dynamic = StepPath.parse("run_root.1")
+    model = StepRef.parse("run_root.0")
+    dynamic = StepRef.parse("run_root.1")
     projector.handle(
         RunBegin(
             run="run_root",
-            control=ControlRef("run_root", 0),
+            control=ControlRef.for_run("run_root", 0),
             runnable="agic:parent",
         )
     )
@@ -734,7 +735,7 @@ def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> No
     header = projector.handle(
         RunBegin(
             run="run_child",
-            control=ControlRef("run_child", 0),
+            control=ControlRef.for_run("run_child", 0),
             runnable="agic:child",
             parent=dynamic,
         )
@@ -775,11 +776,11 @@ def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> No
 
 def test_dynamic_header_normalizes_untrusted_runnable_text() -> None:
     projector = ProgressProjector(show_boundaries=False)
-    path = StepPath.parse("run_root.0")
+    path = StepRef.parse("run_root.0")
     projector.handle(
         RunBegin(
             run="run_root",
-            control=ControlRef("run_root", 0),
+            control=ControlRef.for_run("run_root", 0),
             runnable="agic:parent",
         )
     )
@@ -794,7 +795,7 @@ def test_dynamic_header_normalizes_untrusted_runnable_text() -> None:
     header = projector.handle(
         RunBegin(
             run="run_child",
-            control=ControlRef("run_child", 0),
+            control=ControlRef.for_run("run_child", 0),
             runnable="flow:missing",
             parent=path,
         )

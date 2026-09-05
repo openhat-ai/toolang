@@ -30,11 +30,12 @@ from toolang.execution.events import RunEnd, RunEvent, StepEnd
 from toolang.execution.policy import apply_session_setting
 from toolang.execution.schemas import RunRequest, RunnableRequest
 from toolang.execution.types import (
+    ErrorMessage,
     Local,
     ModelOverride,
     RunOverride,
     SessionSetting,
-    StepPath,
+    StepRef,
 )
 from toolang.lang.input import RunnableInputRaw
 from toolang.up.types import AgentServerRef
@@ -181,7 +182,7 @@ class _FailedRunClient(_Client):
             RunEnd(
                 run="run_failed",
                 status="failed",
-                error="provider failed",
+                error=ErrorMessage("provider failed"),
             )
         )
 
@@ -361,7 +362,7 @@ def test_scripted_renderer_uses_model_step_output_without_deltas(
 
     renderer.render(
         StepEnd(
-            step=StepPath.parse("run_success.1"),
+            step=StepRef.parse("run_success.1"),
             kind="model",
             status="succeeded",
             output=Local.typed("Part[]", (TextPart("complete answer"),), "_"),

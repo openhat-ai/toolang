@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import AsyncIterator, Callable, Collection, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal
 from io import StringIO
-import threading
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 
+import pytest
 from prompt_toolkit.application.current import create_app_session, set_app
 from prompt_toolkit.completion import CompleteEvent, Completion
 from prompt_toolkit.data_structures import Size
@@ -17,21 +18,21 @@ from prompt_toolkit.document import Document
 from prompt_toolkit.input import DummyInput
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyPress
+from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import ConditionalContainer, HSplit, VSplit, Window
 from prompt_toolkit.layout.controls import BufferControl
 from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
 from prompt_toolkit.layout.screen import Screen
-from prompt_toolkit.keys import Keys
-from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.output import DummyOutput
+from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.styles import Attrs
 from prompt_toolkit.utils import get_cwidth
 from rich.color import Color, ColorType
 from rich.console import RenderableType
 from rich.segment import Segment
 from rich.text import Text
-import pytest
 
+from tests.support import chat_tui_pty
 from toolang.base.types.message import (
     Part,
     TextDelta,
@@ -39,8 +40,24 @@ from toolang.base.types.message import (
     ToolCallPart,
     ToolResultPart,
 )
+from toolang.base.types.model import (
+    ModelParameters,
+    ModelRequest,
+    ReasoningParameters,
+)
+from toolang.base.types.policy import RunPolicy
 from toolang.base.types.run import ModelCall, ToolCall
-from toolang.common.errors import ToolangError
+from toolang.cli.common.execution_progress import (
+    ProgressBlock,
+    ProgressRow,
+    ProgressUpdate,
+)
+from toolang.cli.common.execution_progress.state import Metrics
+from toolang.cli.common.script_progress.console import ProgressConsole
+from toolang.cli.common.terminal_surfaces import (
+    DARK_TERMINAL_SURFACES,
+    TerminalSurfaces,
+)
 from toolang.cli.toolang.commands.chat import (
     blocks,
     completion,
@@ -51,9 +68,6 @@ from toolang.cli.toolang.commands.chat import (
     tui,
     widgets,
 )
-from toolang.cli.toolang.commands.chat.policy import update_session_setting
-from toolang.cli.toolang.commands.chat.input import QuickCommand
-from toolang.cli.toolang.commands.chat.events import ChatUIEvent
 from toolang.cli.toolang.commands.chat.base import (
     ChatClient,
     ChatExecutorMetadata,
@@ -65,18 +79,11 @@ from toolang.cli.toolang.commands.chat.base import (
     RunDisconnected,
     RunRecovered,
 )
+from toolang.cli.toolang.commands.chat.events import ChatUIEvent
+from toolang.cli.toolang.commands.chat.input import QuickCommand
+from toolang.cli.toolang.commands.chat.policy import update_session_setting
 from toolang.cli.toolang.commands.chat.presenter import ChatRunPresenter
-from toolang.cli.common.execution_progress import (
-    ProgressBlock,
-    ProgressRow,
-    ProgressUpdate,
-)
-from toolang.cli.common.script_progress.console import ProgressConsole
-from toolang.cli.common.terminal_surfaces import (
-    DARK_TERMINAL_SURFACES,
-    TerminalSurfaces,
-)
-from toolang.cli.common.execution_progress.state import Metrics
+from toolang.common.errors import ToolangError
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
@@ -87,20 +94,17 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.base.types.model import (
-    ModelParameters,
-    ModelRequest,
-    ReasoningParameters,
-)
-from toolang.base.types.policy import RunPolicy
 from toolang.execution.schemas import (
     RunControlRefData,
     RunDetail,
-    RunRequest,
     RunnableRequest,
+    RunRequest,
 )
 from toolang.execution.types import (
     ControlRef,
+    ErrorMessage,
+    ErrorRef,
+    FieldRef,
     Local,
     ModelAccounting,
     ModelCost,
@@ -114,14 +118,11 @@ from toolang.execution.types import (
     OccurrencePosition,
     RunOverride,
     SessionSetting,
-    StepPath,
-    Pointer,
+    StepRef,
     ToolStepGiven,
 )
 from toolang.lang.ast import MapStmt, RunStmt, Span
 from toolang.lang.input import RunnableInputRaw
-from tests.support import chat_tui_pty
-
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
 _HOST_DESCRIPTION = "macOS 27.0 arm64"
@@ -182,8 +183,8 @@ def _parts(*parts: Part) -> Local:
     return Local.typed("Part[]", tuple(parts), "_", 0)
 
 
-def _output(step: StepPath) -> Local:
-    return Local.typed("Part[]", Pointer.step(step, "output", "value"), "_", 0)
+def _output(step: StepRef) -> Local:
+    return Local.typed("Part[]", FieldRef.from_path(step, "output", "value"), "_", 0)
 
 
 def _model_given(model: str = "test/model") -> ModelStepGiven:
@@ -237,6 +238,21 @@ def test_chat_run_begin_finalizes_local_submission_block() -> None:
     assert "run_1" not in _render_text(app.finalized[0].render())
 
 
+def test_chat_step_begin_finalizes_matching_steer_block() -> None:
+    app = FakeApp()
+    steer = blocks.RunSteerBlock.create(
+        message="adjust",
+        run_id="run_1",
+    )
+    app.live_blocks.append(steer)
+
+    events.handle_run_event(_run_begin(), app)
+    events.handle_run_event(_model_step_begin(), app)
+
+    assert steer in app.finalized
+    assert steer not in app.live_blocks
+
+
 def test_chat_first_agic_step_has_exactly_one_gap_after_submission() -> None:
     app = FakeApp()
     app.live_blocks.append(blocks.RunControlBlock.create("hello"))
@@ -267,7 +283,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
 
     events.handle_run_event(
         PartBegin(
-            step=StepPath.parse("run_1.1"),
+            step=StepRef.parse("run_1.1"),
             part=0,
             part_type="text",
         ),
@@ -275,7 +291,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
     )
     events.handle_run_event(
         PartDelta(
-            step=StepPath.parse("run_1.1"),
+            step=StepRef.parse("run_1.1"),
             part=0,
             delta=TextDelta(text="drafting"),
         ),
@@ -286,7 +302,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
     assert "Thinking..." not in streamed
     events.handle_run_event(
         PartEnd(
-            step=StepPath.parse("run_1.1"),
+            step=StepRef.parse("run_1.1"),
             part=0,
             data=TextPart("drafting"),
         ),
@@ -332,7 +348,7 @@ def test_chat_tool_call_only_model_step_vacates_live_position_for_tool() -> None
 
     events.handle_run_event(
         StepEnd(
-            step=StepPath.parse("run_1.1"),
+            step=StepRef.parse("run_1.1"),
             kind="model",
             status="succeeded",
             output=_parts(
@@ -386,7 +402,7 @@ def test_chat_flow_keeps_one_blank_row_at_each_finalized_boundary() -> None:
 
 def test_chat_moves_stable_markdown_to_scrollback_while_the_tail_stays_live() -> None:
     app = FakeApp()
-    path = StepPath.parse("run_1.1")
+    path = StepRef.parse("run_1.1")
 
     events.handle_run_event(_run_begin(), app)
     events.handle_run_event(_model_step_begin(), app)
@@ -436,7 +452,7 @@ def test_chat_moves_stable_markdown_to_scrollback_while_the_tail_stays_live() ->
 
 def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
     app = FakeApp()
-    par_path = StepPath.parse("run_1.1")
+    par_path = StepRef.parse("run_1.1")
 
     events.handle_run_event(_run_begin(runnable_kind="flow"), app)
     events.handle_run_event(
@@ -452,7 +468,7 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
             RunBegin(
                 run=f"run_child_{item}",
                 parent=par_path,
-                control=ControlRef(f"run_child_{item}", 0),
+                control=ControlRef.for_run(f"run_child_{item}", 0),
                 runnable="agic:summarize",
                 occurrence=Occurrence(
                     item=OccurrencePosition(index=item, count=2),
@@ -472,10 +488,10 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
 
     events.handle_run_event(
         StepEnd(
-            step=StepPath.parse("run_child_0.0"),
+            step=StepRef.parse("run_child_0.0"),
             kind="model",
             status="failed",
-            error="model unavailable",
+            error=ErrorMessage("model unavailable"),
         ),
         app,
     )
@@ -483,13 +499,13 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
         RunEnd(
             run="run_child_0",
             status="failed",
-            error=Pointer.step(StepPath.parse("run_child_0.0"), "error"),
+            error=ErrorRef(FieldRef.from_path(StepRef.parse("run_child_0.0"), "error")),
         ),
         app,
     )
     events.handle_run_event(
         StepEnd(
-            step=StepPath.parse("run_child_1.0"),
+            step=StepRef.parse("run_child_1.0"),
             kind="model",
             status="canceled",
         ),
@@ -501,7 +517,7 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
             step=par_path,
             kind="par",
             status="failed",
-            error="parallel step stopped because lane 0 (#0) failed",
+            error=ErrorMessage("parallel step stopped because lane 0 (#0) failed"),
         ),
         app,
     )
@@ -652,7 +668,7 @@ def test_progress_marks_complete_zero_price_as_exact() -> None:
     metrics = Metrics()
     metrics.record_step(
         StepEnd(
-            step=StepPath.parse("run_1.0"),
+            step=StepRef.parse("run_1.0"),
             kind="model",
             status="succeeded",
             noted=ModelStepNoted(
@@ -746,7 +762,7 @@ def test_progress_marks_partial_reasoning_as_a_lower_bound() -> None:
     ):
         metrics.record_step(
             StepEnd(
-                step=StepPath.parse(f"run_1.{metrics.model_calls}"),
+                step=StepRef.parse(f"run_1.{metrics.model_calls}"),
                 kind="model",
                 status="succeeded",
                 noted=ModelStepNoted(accounting=accounting),
@@ -5140,10 +5156,10 @@ def test_chat_tui_replaces_failed_model_live_state_in_scrollback_transaction(
 
     app.handle_run_event(
         StepEnd(
-            step=StepPath.parse("run_1.1"),
+            step=StepRef.parse("run_1.1"),
             kind="model",
             status="failed",
-            error="You have no credits remaining.",
+            error=ErrorMessage("You have no credits remaining."),
             finished_at="2026-01-01T00:00:02Z",
         )
     )
@@ -5248,9 +5264,9 @@ def _run_begin(
 ) -> RunBegin:
     return RunBegin(
         run=run_id,
-        control=ControlRef(run_id, 0),
+        control=ControlRef.for_run(run_id, 0),
         parent=(
-            StepPath.parse(f"{parent_run_id}.2") if parent_run_id is not None else None
+            StepRef.parse(f"{parent_run_id}.2") if parent_run_id is not None else None
         ),
         started_at="2026-01-01T00:00:00Z",
         runnable=f"{runnable_kind}:{runnable_name}",
@@ -5267,7 +5283,7 @@ def _run_end(
         run=run_id,
         status=status,
         output=(
-            _output(StepPath.parse(f"{run_id}.{output_step_index}"))
+            _output(StepRef.parse(f"{run_id}.{output_step_index}"))
             if run_id == "run_1" and status == "succeeded"
             else None
         ),
@@ -5282,7 +5298,7 @@ def _model_step_begin(
     model: str | None = None,
 ) -> StepBegin:
     return StepBegin(
-        step=StepPath.parse(f"{run_id}.{step_index}"),
+        step=StepRef.parse(f"{run_id}.{step_index}"),
         kind="model",
         input=(),
         given=_model_given(model or "test/model"),
@@ -5292,7 +5308,7 @@ def _model_step_begin(
 
 def _tool_step_begin(*, step_index: int = 1) -> StepBegin:
     return StepBegin(
-        step=StepPath.parse(f"run_1.{step_index}"),
+        step=StepRef.parse(f"run_1.{step_index}"),
         kind="tool",
         input=(),
         given=_tool_given(),
@@ -5308,7 +5324,7 @@ def _model_step_end(
     finished_at: str = "2026-01-01T00:00:02Z",
 ) -> StepEnd:
     return StepEnd(
-        step=StepPath.parse(f"{run_id}.{step_index}"),
+        step=StepRef.parse(f"{run_id}.{step_index}"),
         kind="model",
         status="succeeded",
         output=_parts(TextPart(text=output)),
@@ -5319,7 +5335,7 @@ def _model_step_end(
 
 def _flow_step_begin(*, step_index: int = 1) -> StepBegin:
     return StepBegin(
-        step=StepPath.parse(f"run_1.{step_index}"),
+        step=StepRef.parse(f"run_1.{step_index}"),
         kind="par",
         input=(),
         started_at="2026-01-01T00:00:01Z",
@@ -5329,7 +5345,7 @@ def _flow_step_begin(*, step_index: int = 1) -> StepBegin:
 
 def _flow_step_end(*, step_index: int = 1) -> StepEnd:
     return StepEnd(
-        step=StepPath.parse(f"run_1.{step_index}"),
+        step=StepRef.parse(f"run_1.{step_index}"),
         kind="par",
         status="succeeded",
         output=Local.typed("Json[]", (), "_", 1),
@@ -5338,10 +5354,10 @@ def _flow_step_end(*, step_index: int = 1) -> StepEnd:
 
 
 def _child_run_step_begin(
-    *, step_index: int = 2, step: StepPath | str | None = None
+    *, step_index: int = 2, step: StepRef | str | None = None
 ) -> StepBegin:
     return StepBegin(
-        step=StepPath.parse(step or f"run_1.{step_index}"),
+        step=StepRef.parse(step or f"run_1.{step_index}"),
         kind="run",
         input=(),
         started_at="2026-01-01T00:00:01Z",
@@ -5350,10 +5366,10 @@ def _child_run_step_begin(
 
 
 def _child_run_step_end(
-    *, step_index: int = 2, step: StepPath | str | None = None
+    *, step_index: int = 2, step: StepRef | str | None = None
 ) -> StepEnd:
     return StepEnd(
-        step=StepPath.parse(step or f"run_1.{step_index}"),
+        step=StepRef.parse(step or f"run_1.{step_index}"),
         kind="run",
         status="succeeded",
         output=_parts(TextPart(text="done")),
@@ -5368,7 +5384,7 @@ def _tool_step_end(
     finished_at: str = "2026-01-01T00:00:02Z",
 ) -> StepEnd:
     return StepEnd(
-        step=StepPath.parse(f"{run_id}.{step_index}"),
+        step=StepRef.parse(f"{run_id}.{step_index}"),
         kind="tool",
         status="succeeded",
         output=_parts(

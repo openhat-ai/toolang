@@ -1,31 +1,38 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import sqlite3
+import sys
+from collections.abc import Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
-import json
 from pathlib import Path
-from collections.abc import Mapping
-import sqlite3
-import sys
 from typing import Any, cast
 
 import click
-from click.utils import strip_ansi
 import pytest
 from click.testing import CliRunner
+from click.utils import strip_ansi
 
+import toolang.cli.toolang.commands.agent as agent_commands
+import toolang.cli.toolang.commands.plugin as plugin_commands
+import toolang.cli.toolang.commands.thread as thread_commands
+import toolang.cli.toolang.main as cli
+from tests.support.execution_fixtures import (
+    project_run_control,
+    project_run_end,
+    project_run_start,
+    project_step,
+)
+from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import Message, TextPart, ToolResultPart
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.catalog import templates
 from toolang.catalog.agent import LocalAgents
 from toolang.catalog.job import AuthoredJobs, JobFile
-import toolang.cli.toolang.commands.agent as agent_commands
-import toolang.cli.toolang.commands.plugin as plugin_commands
-import toolang.cli.toolang.commands.thread as thread_commands
-import toolang.cli.toolang.main as cli
 from toolang.cli.common.output import shorten_home_path
 from toolang.common.layout import AgentLayout
 from toolang.execution.client import LocalRunClient
@@ -36,16 +43,16 @@ from toolang.execution.records import (
     RetryControlPayload,
     SteerControlPayload,
 )
-from toolang.execution.store import RunStore
 from toolang.execution.schemas import RerunRequest, RetryRequest
+from toolang.execution.store import RunStore
 from toolang.execution.types import (
     ControlRef,
+    FieldRef,
     Local,
     ModelStepGiven,
     Occurrence,
     OccurrencePosition,
-    Pointer,
-    StepPath,
+    StepRef,
     ThreadPrefix,
     ToolStepGiven,
 )
@@ -55,14 +62,6 @@ from toolang.up import process as agents
 from toolang.up.types import AgentServerRef
 from toolang.work.state import load_ready_jobs
 from toolang.work.store import JobStore
-from tests.support.execution_fixtures import (
-    project_run_control,
-    project_run_end,
-    project_run_start,
-    project_step,
-)
-from tests.support.execution_harness import ExecutionHarness
-
 
 runner = CliRunner()
 
@@ -144,7 +143,7 @@ def test_local_agent_clone_copies_workspace_config_unchanged(tmp_path: Path) -> 
 
 @pytest.mark.parametrize("value", ("2.3", "run_root.2.3"))
 def test_retry_anchor_accepts_only_dot_separated_step_paths(value: str) -> None:
-    assert thread_commands._retry_anchor("run_root", value) == StepPath(
+    assert thread_commands._retry_anchor("run_root", value) == StepRef.from_local(
         "run_root", (2, 3)
     )
 
@@ -312,7 +311,11 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
             step_index=0,
             kind="value",
             status="succeeded",
-            input=(Pointer.control(run.id, 0, "payload", "locals", 0, "value"),),
+            input=(
+                FieldRef.from_path(
+                    ControlRef.for_run(run.id, 0), "payload", "locals", 0, "value"
+                ),
+            ),
             output=(TextPart(text="prepared"),),
             started_at="2026-07-25T01:00:00Z",
             finished_at="2026-07-25T01:00:01Z",
@@ -333,7 +336,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     document = json.loads(result.stdout)
-    assert document["path"] == "run_inspect.0"
+    assert document["id"] == "run_inspect.0"
     assert document["kind"] == "value"
     assert document["occur"] == {
         "item": None,
@@ -413,10 +416,11 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     assert "has type" not in human.stdout
     assert "append a FIELD" not in human.stdout
     assert "TYPE" in human.stdout
-    assert "StepPath" in human.stdout
+    assert "/id" in human.stdout
+    assert "str" in human.stdout
     assert "ControlRef?" in human.stdout
     assert "ControlRef | None" not in human.stdout
-    assert "/path" in human.stdout
+    assert "/path" not in human.stdout
     assert "/output" in human.stdout
     assert "run_inspect.0/path" not in human.stdout
     assert "run_inspect.0/output" not in human.stdout
@@ -429,7 +433,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     ]
     assert "FIELD TYPE VALUE" in resolved_lines
     resolved_row = next(line for line in resolved_lines if line.startswith("/0 "))
-    assert resolved_row.split()[:2] == ["/0", "Pointer"]
+    assert resolved_row.split()[:2] == ["/0", "FieldRef"]
     assert "→" not in resolved.stdout
     assert "run_inspect.0/input/0" not in resolved.stdout
     assert "run_inspect@0/payload/locals/0/value" in resolved.stdout
@@ -474,7 +478,7 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
         )
         project_step(
             store,
-            parent=StepPath(first.id, (2,)),
+            parent=StepRef.from_local(first.id, (2,)),
             index=10,
             kind="value",
             status="succeeded",
@@ -502,7 +506,7 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
             origin="test",
             input=Message.user("Child"),
             created_at="2026-01-01T12:00:00Z",
-            parent=StepPath(first.id, (2,)),
+            parent=StepRef.from_local(first.id, (2,)),
         )
         project_run_end(store, run_id=child.id)
         second = project_run_start(
@@ -614,7 +618,7 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
     assert scoped_first_line.split()[-1] == "2026-01-01T00:00:00Z"
     assert steps.exit_code == 0, steps.stderr
     step_documents = json.loads(steps.stdout)
-    assert [item["path"] for item in step_documents] == [
+    assert [item["id"] for item in step_documents] == [
         "run_subject_first.2",
         "run_subject_first.2.10",
         "run_subject_first.11",
@@ -624,7 +628,7 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
             root,
             "alice",
             "inspect",
-            document["path"],
+            document["id"],
             "--json",
         )
         assert selected.exit_code == 0, selected.stderr
@@ -684,7 +688,7 @@ def test_inspect_lists_mixed_control_subjects(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.stderr
     documents = json.loads(result.stdout)
-    pointers = [f"{item['target']}@{item['index']}" for item in documents]
+    pointers = [item["id"] for item in documents]
     assert pointers == [
         "controls@0",
         "run_control_subject@1",
@@ -931,15 +935,15 @@ def test_inspect_projects_complete_persisted_model_call(
             continuation={"provider_cursor": "next"},
         )
         store.begin_step(
-            path=StepPath(run.id, (0,)),
+            ref=StepRef.from_local(run.id, (0,)),
             kind="model",
             input=(),
             given=ModelStepGiven(model="test/model", call=call),
-            state=ControlRef(run.id, 0),
+            state=ControlRef.for_run(run.id, 0),
             started_at="2026-01-01T00:00:00Z",
         )
         store.finish_step(
-            path=StepPath(run.id, (0,)),
+            ref=StepRef.from_local(run.id, (0,)),
             kind="model",
             status="succeeded",
             output=Local.typed(
@@ -1155,7 +1159,7 @@ def test_inspect_projects_run_tree_and_container_step_call(tmp_path: Path) -> No
             input=Message.user("Child"),
             runnable_kind="agic",
             runnable_name="child",
-            parent=run_step.path,
+            parent=run_step.ref,
             started_at="2026-01-01T00:00:01Z",
             context={
                 "occurrence": Occurrence(
@@ -1191,10 +1195,10 @@ def test_inspect_projects_run_tree_and_container_step_call(tmp_path: Path) -> No
         store.close()
 
     tree = _invoke(root, "alice", "inspect", parent.id, "tree", "--json")
-    call = _invoke(root, "alice", "inspect", str(run_step.path), "call", "--json")
+    call = _invoke(root, "alice", "inspect", str(run_step.ref), "call", "--json")
     human = _invoke(root, "alice", "inspect", parent.id, "tree")
-    child_runs = _invoke(root, "alice", "inspect", str(run_step.path), "runs", "--json")
-    human_child_runs = _invoke(root, "alice", "inspect", str(run_step.path), "runs")
+    child_runs = _invoke(root, "alice", "inspect", str(run_step.ref), "runs", "--json")
+    human_child_runs = _invoke(root, "alice", "inspect", str(run_step.ref), "runs")
 
     assert tree.exit_code == 0, tree.stderr
     tree_data = json.loads(tree.stdout)
@@ -1214,14 +1218,14 @@ def test_inspect_projects_run_tree_and_container_step_call(tmp_path: Path) -> No
     ]
     assert [node["pointer"] for node in tree_data] == [
         parent.id,
-        str(run_step.path),
+        str(run_step.ref),
         child.id,
         f"{child.id}.0",
     ]
     assert [node["parent"] for node in tree_data] == [
         None,
         parent.id,
-        str(run_step.path),
+        str(run_step.ref),
         child.id,
     ]
     assert tree_data[0]["metrics"] == {
@@ -1239,7 +1243,7 @@ def test_inspect_projects_run_tree_and_container_step_call(tmp_path: Path) -> No
     }
     assert call.exit_code == 0, call.stderr
     assert [node["pointer"] for node in json.loads(call.stdout)] == [
-        str(run_step.path),
+        str(run_step.ref),
         child.id,
         f"{child.id}.0",
     ]
@@ -1255,7 +1259,7 @@ def test_inspect_projects_run_tree_and_container_step_call(tmp_path: Path) -> No
     assert "[run]   <agic>  test" in human.stdout
     assert "<agic>  child" in human.stdout
     assert "[model] openai/gpt-5" in human.stdout
-    parent_step_line = next(line for line in human_lines if str(run_step.path) in line)
+    parent_step_line = next(line for line in human_lines if str(run_step.ref) in line)
     child_line = next(line for line in human_lines if child.id in line)
     assert parent_step_line.endswith("3 items · 2 lanes")
     assert child_line.endswith("item 2 · lane 1")
@@ -1285,7 +1289,7 @@ def test_inspect_projects_exact_tool_call_and_persisted_result(
             origin="test",
             input=Message.user("Tool"),
         )
-        path = StepPath(run.id, (0,))
+        path = StepRef.from_local(run.id, (0,))
         query = f"toolang {'q' * 200} input-end"
         result_detail = f"detail {'r' * 200} result-end"
         call = ToolCall(
@@ -1295,15 +1299,15 @@ def test_inspect_projects_exact_tool_call_and_persisted_result(
             input={"query": query},
         )
         store.begin_step(
-            path=path,
+            ref=path,
             kind="tool",
             input=(),
             given=ToolStepGiven(plugin="web", call=call),
-            state=ControlRef(run.id, 0),
+            state=ControlRef.for_run(run.id, 0),
             started_at="2026-01-01T00:00:00Z",
         )
         store.finish_step(
-            path=path,
+            ref=path,
             kind="tool",
             status="succeeded",
             output=Local.typed(
@@ -1402,8 +1406,8 @@ def test_inspect_structural_projection_handles_empty_and_bounded_errors(
     empty_tree = _invoke(root, "alice", "inspect", empty.id, "tree", "--json")
     failed_json = _invoke(root, "alice", "inspect", failed.id, "tree", "--json")
     failed_human = _invoke(root, "alice", "inspect", failed.id, "tree")
-    failed_fields = _invoke(root, "alice", "inspect", str(step.path))
-    failed_error = _invoke(root, "alice", "inspect", f"{step.path}/error")
+    failed_fields = _invoke(root, "alice", "inspect", str(step.ref))
+    failed_error = _invoke(root, "alice", "inspect", f"{step.ref}/error")
 
     assert empty_tree.exit_code == 0, empty_tree.stderr
     empty_data = json.loads(empty_tree.stdout)
@@ -1428,10 +1432,9 @@ def test_inspect_structural_projection_handles_empty_and_bounded_errors(
     }
     assert failed_json.exit_code == 0, failed_json.stderr
     failed_data = json.loads(failed_json.stdout)
-    assert (
-        next(node for node in failed_data if node["pointer"] == str(step.path))["error"]
-        == error
-    )
+    assert next(node for node in failed_data if node["pointer"] == str(step.ref))[
+        "error"
+    ] == {"type": "message", "message": error}
     assert failed_human.exit_code == 0, failed_human.stderr
     failed_lines = [
         " ".join(line.split()) for line in strip_ansi(failed_human.stdout).splitlines()
@@ -1487,13 +1490,13 @@ def test_inspect_empty_step_relations_and_container_call_succeed(
         store.close()
 
     run_children = _invoke(
-        root, "alice", "inspect", str(run_step.path), "runs", "--json"
+        root, "alice", "inspect", str(run_step.ref), "runs", "--json"
     )
-    loop_runs = _invoke(root, "alice", "inspect", str(loop.path), "runs", "--json")
-    loop_steps = _invoke(root, "alice", "inspect", str(loop.path), "steps", "--json")
-    loop_steps_human = _invoke(root, "alice", "inspect", str(loop.path), "steps")
-    loop_call = _invoke(root, "alice", "inspect", str(loop.path), "call", "--json")
-    invalid_steps = _invoke(root, "alice", "inspect", str(run_step.path), "steps")
+    loop_runs = _invoke(root, "alice", "inspect", str(loop.ref), "runs", "--json")
+    loop_steps = _invoke(root, "alice", "inspect", str(loop.ref), "steps", "--json")
+    loop_steps_human = _invoke(root, "alice", "inspect", str(loop.ref), "steps")
+    loop_call = _invoke(root, "alice", "inspect", str(loop.ref), "call", "--json")
+    invalid_steps = _invoke(root, "alice", "inspect", str(run_step.ref), "steps")
 
     assert run_children.exit_code == 0 and json.loads(run_children.stdout) == []
     assert loop_runs.exit_code == 0 and json.loads(loop_runs.stdout) == []
@@ -1504,9 +1507,7 @@ def test_inspect_empty_step_relations_and_container_call_succeed(
     )
     assert "PARENT STEP" not in loop_steps_human.stdout
     assert loop_call.exit_code == 0, loop_call.stderr
-    assert [item["pointer"] for item in json.loads(loop_call.stdout)] == [
-        str(loop.path)
-    ]
+    assert [item["pointer"] for item in json.loads(loop_call.stdout)] == [str(loop.ref)]
     assert invalid_steps.exit_code == 2
     assert "allowed: runs, call" in " ".join(
         strip_ansi(invalid_steps.stderr).replace("│", "").split()
@@ -1623,8 +1624,8 @@ def test_inspect_validates_tree_and_call_before_specialized_reads(
     )
 
     run_call = _invoke(root, "alice", "inspect", run.id, "call")
-    step_tree = _invoke(root, "alice", "inspect", str(model.path), "tree")
-    value_call = _invoke(root, "alice", "inspect", str(value.path), "call")
+    step_tree = _invoke(root, "alice", "inspect", str(model.ref), "tree")
+    value_call = _invoke(root, "alice", "inspect", str(value.ref), "call")
 
     assert run_call.exit_code == 2
     assert "allowed: steps, tree" in " ".join(
@@ -1709,8 +1710,8 @@ def test_inspect_human_reports_pointer_resolution_errors(tmp_path: Path) -> None
             origin="test",
             input=Message.user("hello"),
         )
-        first = StepPath(run.id, (0,))
-        second = StepPath(run.id, (1,))
+        first = StepRef.from_local(run.id, (0,))
+        second = StepRef.from_local(run.id, (1,))
         project_step(
             store,
             run_id=run.id,
@@ -1718,7 +1719,9 @@ def test_inspect_human_reports_pointer_resolution_errors(tmp_path: Path) -> None
             kind="value",
             status="succeeded",
             input=(),
-            output=Local.typed("Text", Pointer.step(second, "output", "value"), "_"),
+            output=Local.typed(
+                "Text", FieldRef.from_path(second, "output", "value"), "_"
+            ),
             started_at="2026-01-01T00:00:00Z",
             finished_at="2026-01-01T00:00:01Z",
         )
@@ -1729,7 +1732,9 @@ def test_inspect_human_reports_pointer_resolution_errors(tmp_path: Path) -> None
             kind="value",
             status="succeeded",
             input=(),
-            output=Local.typed("Text", Pointer.step(first, "output", "value"), "_"),
+            output=Local.typed(
+                "Text", FieldRef.from_path(first, "output", "value"), "_"
+            ),
             started_at="2026-01-01T00:00:01Z",
             finished_at="2026-01-01T00:00:02Z",
         )
@@ -1742,7 +1747,7 @@ def test_inspect_human_reports_pointer_resolution_errors(tmp_path: Path) -> None
             input=(),
             output=Local.typed(
                 "Text",
-                Pointer("run_missing/output/value"),
+                FieldRef.parse("run_missing/output/value"),
                 "_",
             ),
             started_at="2026-01-01T00:00:02Z",
@@ -1757,7 +1762,9 @@ def test_inspect_human_reports_pointer_resolution_errors(tmp_path: Path) -> None
             input=(),
             output=Local.typed(
                 "Text",
-                Pointer.step(StepPath(run.id, (4,)), "output", "value", 0),
+                FieldRef.from_path(
+                    StepRef.from_local(run.id, (4,)), "output", "value", 0
+                ),
                 "_",
             ),
             started_at="2026-01-01T00:00:03Z",
@@ -1806,7 +1813,7 @@ def test_inspect_human_reports_pointer_resolution_errors(tmp_path: Path) -> None
         assert "Local?" in fields.stdout
     assert f"{second}/output/value" in cycle_fields.stdout
     assert "run_missing/output/value" in missing_fields.stdout
-    assert f"{run.id}.4/output/value/0" in mismatch_fields.stdout
+    assert f"{run.id}.4/output/value/" in mismatch_fields.stdout
     assert cycle.exit_code == 1
     assert "Pointer cycle" in cycle.stderr
     assert f"{first}/output/value" in cycle.stderr
@@ -1846,7 +1853,7 @@ def test_inspect_step_path_does_not_cross_run_boundaries(tmp_path: Path) -> None
             thread_id=parent.thread,
             origin="chat",
             input=Message.user("Inspect child"),
-            parent=parent_step.path,
+            parent=parent_step.ref,
         )
         project_step(
             store,
@@ -1868,7 +1875,7 @@ def test_inspect_step_path_does_not_cross_run_boundaries(tmp_path: Path) -> None
     synthetic_result = _invoke(root, "alice", "inspect", "run_parent.0.0", "--json")
 
     assert child_result.exit_code == 0
-    assert json.loads(child_result.stdout)["path"] == "run_child.0"
+    assert json.loads(child_result.stdout)["id"] == "run_child.0"
     assert synthetic_result.exit_code == 1
     assert "record not found: run_parent.0.0" in synthetic_result.stderr
 
@@ -1918,7 +1925,7 @@ def test_roaming_source_reads_inspect_collections_and_records(
     assert "run_roaming" in runs_output.out
     assert inspect == 0
     document = json.loads(inspect_output.out)
-    assert document["path"] == "run_roaming.0"
+    assert document["id"] == "run_roaming.0"
     assert document["output"] == {
         "type": "Part[]",
         "value": [{"text": "ready", "type": "text"}],
@@ -1973,7 +1980,7 @@ def test_visiting_selector_reads_inspection_without_fetching(
 
     assert result == 0
     document = json.loads(output.out)
-    assert document["path"] == "run_visiting.0"
+    assert document["id"] == "run_visiting.0"
     assert document["output"] == {
         "type": "Part[]",
         "value": [{"text": "cached", "type": "text"}],
@@ -2187,7 +2194,7 @@ agic reply(_: Part[]) -> Part[]:
         assert rerun_control is not None
         assert rerun_control.kind == "rerun"
         assert isinstance(rerun_control.payload, RerunControlPayload)
-        assert rerun_control.payload.rerun_from == source.id
+        assert str(rerun_control.payload.rerun_from) == source.id
         assert rerun_control.payload.limits.time == 30
     finally:
         harness.store.close()

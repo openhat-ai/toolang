@@ -147,9 +147,7 @@ _RICH_RENDERERS: dict[str, _RichRenderer] = {
     "Part": lambda value: _part_renderable(value, "Part"),
     "Part[]": lambda value: _part_renderable(value, "Part[]"),
     "Text": _text_renderable,
-    "ExecutionError": _text_renderable,
 }
 _SCALAR_RENDERERS: dict[str, _ScalarRenderer] = {
     "Text": _text_scalar,
-    "ExecutionError": _text_scalar,
 }

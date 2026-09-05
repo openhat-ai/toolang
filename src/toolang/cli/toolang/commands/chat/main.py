@@ -32,7 +32,7 @@ from toolang.execution.types import (
     LimitOverride,
     RunOverride,
     SessionSetting,
-    StepPath,
+    StepRef,
 )
 from toolang.lang.types import Array
 from toolang.cli.common.context import (
@@ -487,7 +487,7 @@ class _ScriptedRunRenderer:
 
     def __init__(self) -> None:
         self._assistant_open = False
-        self._text_delta_steps: set[StepPath] = set()
+        self._text_delta_steps: set[StepRef] = set()
         self._terminal: RunEnd | None = None
         self._state_failure: str | None = None
 

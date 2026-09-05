@@ -29,7 +29,7 @@ from toolang.execution.schemas import (
     RunRequest,
     RunnableRequest,
 )
-from toolang.execution.types import RunCommand, StepPath
+from toolang.execution.types import RunCommand, StepRef
 from toolang.lang.input import NamedInputSource, RunnableInputRaw
 
 
@@ -192,7 +192,7 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
         source="run_source",
         commands=(RunCommand("limit", "cost", Decimal("2.50")),),
         request_id="retry_request",
-        anchor=StepPath("run_source", (1, 2)),
+        anchor=StepRef.from_local("run_source", (1, 2)),
     )
     assert parse_authored_rerun("run_source", rerun_payload) == RerunRequest(
         source="run_source",

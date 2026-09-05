@@ -35,14 +35,14 @@ class _PersistSink:
     def _begin_step(self, event: StepBegin) -> None:
         state = event.state
         if state is None:
-            run = self._store.get_run(run_id=event.step.run)
+            run = self._store.get_run(run_id=event.step.run_id)
             if run is None:
                 raise ValueError(
                     f"step begin requires an Agent State reference: {event.step}"
                 )
             state = run.state
         self._store.begin_step(
-            path=event.step,
+            ref=event.step,
             kind=event.kind,
             input=event.input,
             occurrence=event.occurrence,
@@ -53,7 +53,7 @@ class _PersistSink:
 
     def _finish_step(self, event: StepEnd) -> None:
         self._store.finish_step(
-            path=event.step,
+            ref=event.step,
             kind=event.kind,
             status=event.status,
             output=event.output,

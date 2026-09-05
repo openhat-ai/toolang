@@ -23,7 +23,7 @@ from toolang.lang.ast import (
     StormStmt,
 )
 
-from ...records import ControlRecord, StepPath
+from ...records import ControlRecord, StepRef
 from ...types import Occurrence
 from ..common import BoundRun
 from ..common import Local
@@ -51,7 +51,7 @@ async def execute(
     binding: BoundRun,
     locals: dict[str, Local],
     *,
-    path: StepPath,
+    path: StepRef,
     statement: FlowStmt,
     controls: Sequence[ControlRecord],
     occurrence: Occurrence | None,

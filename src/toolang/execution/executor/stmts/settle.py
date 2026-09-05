@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from toolang.lang.ast import SettleStmt
 from toolang.base.types.message import TextPart
 
-from ...records import ControlRecord, StepPath
+from ...records import ControlRecord, StepRef
 from ...types import IterationOccurrence, Occurrence, OccurrencePosition
 from ..common import BoundRun
 from ..common import Local, require_list
@@ -22,7 +22,7 @@ async def execute(
     execution: _Execution,
     binding: BoundRun,
     locals: Mapping[str, Local],
-    path: StepPath,
+    path: StepRef,
     statement: SettleStmt,
     controls: Sequence[ControlRecord],
     occurrence: Occurrence | None,

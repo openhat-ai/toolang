@@ -19,7 +19,7 @@ from toolang.base.types.message import Part
 from toolang.cli.common.output import toolang_logo, toolang_logo_text
 from toolang.cli.common.terminal_surfaces import DARK_TERMINAL_SURFACES
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
-from toolang.execution.types import ExecutionError
+from toolang.execution.types import ErrorMessage, ErrorRef
 
 from toolang.cli.common.execution_progress import ProgressBlock
 from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
@@ -64,7 +64,7 @@ _HEADER_COLUMN_GAP = 4
 _HEADER_FIELD_GAP = 2
 
 
-def _terminal_diagnostic(status: str, error: ExecutionError) -> str:
+def _terminal_diagnostic(status: str, error: str | ErrorMessage | ErrorRef) -> str:
     value = friendly_error(error) if error else ""
     normalized = re.sub(r"[\s._-]+", " ", value.casefold()).strip(" .:!")
     if status == "canceled" and normalized in {

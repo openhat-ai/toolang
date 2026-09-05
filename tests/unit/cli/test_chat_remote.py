@@ -253,7 +253,7 @@ def _detail(
 def _begin(run_id: str = "run_remote") -> RunBegin:
     return RunBegin(
         run=run_id,
-        control=ControlRef(run_id, 0),
+        control=ControlRef.for_run(run_id, 0),
         runnable="agic:chat",
         started_at="2026-08-25T00:00:00Z",
     )

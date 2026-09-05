@@ -22,13 +22,13 @@ from toolang.base.types.model import (
 )
 from toolang.base.types.policy import RunLimits
 from toolang.execution.records import (
-    ExecuteControlPayload,
+    CancelControlPayload,
     ControlRecord,
+    ExecuteControlPayload,
     ReloadControlPayload,
     RetryControlPayload,
     RunControlPayload,
     SteerControlPayload,
-    CancelControlPayload,
     control_payload_from_data,
     control_payload_to_data,
     local_from_data,
@@ -37,11 +37,12 @@ from toolang.execution.records import (
 from toolang.execution.schemas import ControlInfo
 from toolang.execution.types import (
     AgentResources,
+    FieldRef,
     Local,
     Pointer,
     RunCommand,
-    StepPath,
-    TypedPointer,
+    StepRef,
+    TypedRef,
     local_from_protocol_data,
     local_to_protocol_data,
 )
@@ -51,17 +52,19 @@ from toolang.lang.types import Array, Struct
 
 
 def test_pointer_accepts_run_step_control_and_json_paths() -> None:
-    assert Pointer("term_1").kind == "thread"
-    assert Pointer("run_1").kind == "run"
-    assert Pointer("run_1.0.2/key~1name/1").kind == "step"
-    assert Pointer("run_1.0.2/key~1name/1").record == "run_1.0.2"
-    assert Pointer("run_1.0.2/key~1name/1").field == "/key~1name/1"
-    assert Pointer("run_1.0.2/key~1name/1").tokens == ("key/name", "1")
-    assert Pointer("run_1@3/payload/locals/1").kind == "control"
-    assert Pointer("term_1@0").kind == "control"
-    assert str(Pointer.step(StepPath("run_1", (0, 2)), "output", "value")) == (
-        "run_1.0.2/output/value"
-    )
+    assert Pointer.parse("term_1").kind == "thread"
+    assert Pointer.parse("run_1").kind == "run"
+    pointer = Pointer.parse("run_1.0.2/key~1name/1")
+    field = pointer.field_ref()
+    assert pointer.kind == "step"
+    assert pointer.record_ref() == StepRef.parse("run_1.0.2")
+    assert field is not None and str(field.field) == "/key~1name/1"
+    assert pointer.tokens == ("key/name", "1")
+    assert Pointer.parse("run_1@3/payload/locals/1").kind == "control"
+    assert Pointer.parse("term_1@0").kind == "control"
+    assert str(
+        FieldRef.from_path(StepRef.from_local("run_1", (0, 2)), "output", "value")
+    ) == ("run_1.0.2/output/value")
 
 
 @pytest.mark.parametrize(
@@ -75,28 +78,29 @@ def test_pointer_accepts_run_step_control_and_json_paths() -> None:
         "run_1@0@1",
         "run@file",
         "term_1.0",
-        "run_1/field:name",
     ),
 )
 def test_pointer_rejects_noncanonical_values(value: str) -> None:
     with pytest.raises(ValueError):
-        Pointer(value)
+        Pointer.parse(value)
 
 
 def test_pointer_accepts_a_whole_value_slash() -> None:
-    assert Pointer("term_1/").field == "/"
-    assert Pointer("term_1/").tokens == ("",)
+    pointer = Pointer.parse("term_1/")
+    field = pointer.field_ref()
+    assert field is not None and str(field.field) == "/"
+    assert pointer.tokens == ("",)
 
 
 def test_typed_pointer_uses_pointer_then_type() -> None:
-    typed = TypedPointer.parse("run_1.0/output/value:Part[]")
+    typed = TypedRef.parse("run_1.0/output/value:Part[]")
 
-    assert typed == TypedPointer("Part[]", Pointer("run_1.0/output/value"))
+    assert typed == TypedRef(FieldRef.parse("run_1.0/output/value"), "Part[]")
     assert str(typed) == "run_1.0/output/value:Part[]"
-    with pytest.raises(ValueError, match="invalid typed pointer"):
-        TypedPointer.parse("Part[]@run_1.0/output/value")
-    with pytest.raises(ValueError, match="invalid typed pointer"):
-        TypedPointer.parse("run_1/output/value:Part[]:Json")
+    with pytest.raises(ValueError, match="invalid typed ref"):
+        TypedRef.parse("Part[]@run_1.0/output/value")
+    with pytest.raises(ValueError, match="invalid typed ref"):
+        TypedRef.parse("run_1/output/value:Part[]:Json")
 
 
 def test_local_keeps_complete_type_separate_from_execution_dimension() -> None:
@@ -108,15 +112,15 @@ def test_local_keeps_complete_type_separate_from_execution_dimension() -> None:
     )
     scattered = Local.typed(
         type_name="Part[]",
-        value=Pointer("run_1.0/output/value"),
+        value=TypedRef(FieldRef.parse("run_1.0/output/value"), "Part[]"),
         name="_",
         dim=1,
     )
     batches = Local.typed(
         type_name="Part[][]",
         value=(
-            Pointer("run_a/output/value"),
-            Pointer("run_b/output/value"),
+            TypedRef(FieldRef.parse("run_a/output/value"), "Part[]"),
+            TypedRef(FieldRef.parse("run_b/output/value"), "Part[]"),
         ),
         name="_",
         dim=1,
@@ -139,7 +143,7 @@ def test_local_codec_round_trips_mixed_concrete_and_pointer_items() -> None:
         type_name="Part[]",
         value=(
             TextPart("kept"),
-            Pointer("run_1.0/output/value/2"),
+            TypedRef(FieldRef.parse("run_1.0/output/value/2"), "Part"),
             ToolCallPart(
                 tool_call_id="call_1",
                 tool_name="search",
@@ -306,7 +310,10 @@ def test_local_codec_reserves_the_pointer_marker() -> None:
 def test_local_storage_tags_do_not_leak_to_the_protocol_projection() -> None:
     local = Local.typed(
         "Part[]",
-        (TextPart("hello"), Pointer("run_1.0/output/value/2")),
+        (
+            TextPart("hello"),
+            TypedRef(FieldRef.parse("run_1.0/output/value/2"), "Part"),
+        ),
         "_",
         1,
     )
@@ -602,7 +609,7 @@ def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:
         model="test/model",
         model_request=ModelRequest("test/model"),
         locals=None,
-        retry_from=StepPath("run_1", (2,)),
+        retry_from=StepRef.from_local("run_1", (2,)),
     )
     empty = RetryControlPayload(
         resources=inherited.resources,
@@ -653,7 +660,7 @@ def test_reload_payload_rejects_noncanonical_revisions(revision: str) -> None:
 
 
 def test_execute_payload_round_trips_source_pointing_locals() -> None:
-    source = Pointer.step(StepPath.parse("run_1.2"), "output", "value", 1)
+    source = FieldRef.from_path(StepRef.parse("run_1.2"), "output", "value", 1)
     payload = ExecuteControlPayload(
         state="a" * 64,
         runnable="flow:deliver",
@@ -692,8 +699,7 @@ def test_control_protocol_uses_kind_to_restore_payload_variant(
     payload: SteerControlPayload | CancelControlPayload,
 ) -> None:
     record = ControlRecord(
-        target="run_test",
-        index=1,
+        id="run_test@1",
         kind=kind,
         payload=payload,
     )

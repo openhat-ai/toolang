@@ -26,7 +26,7 @@ from toolang.execution.types import (
     ControlRef,
     ControlTiming,
     Occurrence,
-    StepPath,
+    StepRef,
     ThreadPrefix,
 )
 from toolang.state.cache import agent_revision_dir
@@ -141,20 +141,22 @@ def test_reload_orders_step_state_and_child_acceptance_at_one_boundary(
                 request_id="reload-state",
             )
             active = harness.executor._active[handle.run_id]
-            assert control.target == handle.run_id
+            assert str(control.target) == handle.run_id
             await _wait_until_applied(harness, handle.run_id, control.index)
             assert control.index not in active.reload_states
             first_call.release()
             root = await handle
 
             assert root.status == "succeeded", root.error
-            assert root.state == ControlRef(root.id, 0)
+            assert root.state == ControlRef.for_run(root.id, 0)
             assert (
                 harness.store.resolve_state_revision(root.state)
                 == harness.state.revision
             )
             assert (
-                harness.store.resolve_state_revision(ControlRef(root.id, control.index))
+                harness.store.resolve_state_revision(
+                    ControlRef.for_run(root.id, control.index)
+                )
                 == reloaded.revision
             )
 
@@ -164,8 +166,8 @@ def test_reload_orders_step_state_and_child_acceptance_at_one_boundary(
                 if step.kind == "run"
             ]
             assert [step.state for step in parent_steps] == [
-                ControlRef(root.id, 0),
-                ControlRef(root.id, control.index),
+                ControlRef.for_run(root.id, 0),
+                ControlRef.for_run(root.id, control.index),
             ]
             children = [
                 run
@@ -173,7 +175,7 @@ def test_reload_orders_step_state_and_child_acceptance_at_one_boundary(
                 if run.parent is not None
             ]
             children_by_parent = {child.parent: child for child in children}
-            assert [children_by_parent[step.path].state for step in parent_steps] == [
+            assert [children_by_parent[step.ref].state for step in parent_steps] == [
                 step.state for step in parent_steps
             ]
             for child in children:
@@ -333,8 +335,8 @@ def test_reload_refreshes_the_next_step_of_an_active_agic(tmp_path: Path) -> Non
                 if step.kind == "model"
             ]
             assert [step.state for step in steps] == [
-                ControlRef(root.id, 0),
-                ControlRef(root.id, control.index),
+                ControlRef.for_run(root.id, 0),
+                ControlRef.for_run(root.id, control.index),
             ]
             assert "old state" in harness.adapter.invocations[0].call.instructions
             assert "new state" in harness.adapter.invocations[1].call.instructions
@@ -378,7 +380,7 @@ def test_parallel_steps_record_the_state_on_their_boundary_side(
             execution: _Execution,
             parent: BoundRun,
             locals: Mapping[str, Local],
-            step: StepPath,
+            step: StepRef,
             name: str,
             occurrence: Occurrence | None,
             *,
@@ -440,8 +442,8 @@ def test_parallel_steps_record_the_state_on_their_boundary_side(
             ]
             assert len(children) == 2
             assert {child.state for child in children} == {
-                ControlRef(root.id, 0),
-                ControlRef(root.id, control.index),
+                ControlRef.for_run(root.id, 0),
+                ControlRef.for_run(root.id, control.index),
             }
             child_steps = [
                 step
@@ -451,14 +453,14 @@ def test_parallel_steps_record_the_state_on_their_boundary_side(
             ]
             calls = harness.store.rebuild_model_calls(child_steps)
             by_instruction = {
-                calls[step.path].instructions.partition(
+                calls[step.ref].instructions.partition(
                     "\n\nThe inner runtime tools are available"
                 )[0]: step.state
                 for step in child_steps
             }
             assert by_instruction == {
-                "old state": ControlRef(root.id, 0),
-                "new state": ControlRef(root.id, control.index),
+                "old state": ControlRef.for_run(root.id, 0),
+                "new state": ControlRef.for_run(root.id, control.index),
             }
 
     asyncio.run(scenario())

@@ -20,12 +20,14 @@ from toolang.execution.events import (
 )
 from toolang.execution.types import (
     CollectionStepNoted,
-    ExecutionError,
+    ErrorMessage,
+    ErrorRef,
+    FieldRef,
     ModelStepGiven,
     Occurrence,
-    Pointer,
     RunStatus,
-    StepPath,
+    RunRef,
+    StepRef,
 )
 from toolang.lang.ast import (
     DropStmt,
@@ -79,15 +81,15 @@ class ProgressProjector:
         self._root_ended = False
         self._broken = False
         self._runs: dict[str, RunState] = {}
-        self._steps: dict[StepPath, StepState] = {}
+        self._steps: dict[StepRef, StepState] = {}
         self._seen_runs: set[str] = set()
-        self._seen_steps: set[StepPath] = set()
-        self._parts: dict[tuple[StepPath, int], str] = {}
-        self._errors: dict[Pointer, ExecutionError] = {}
+        self._seen_steps: set[StepRef] = set()
+        self._parts: dict[tuple[StepRef, int], str] = {}
+        self._errors: dict[FieldRef, ErrorMessage | ErrorRef] = {}
         self._boundary_rows: dict[str, tuple[ProgressRow, ...]] = {}
         self._boundary_claims: dict[str, str] = {}
         self._committed_boundaries: set[str] = set()
-        self._repeat_ordinals: dict[tuple[StepPath, int], int] = {}
+        self._repeat_ordinals: dict[tuple[StepRef, int], int] = {}
         self._sequence = 0
         self._ends_with_blank = False
 
@@ -228,16 +230,16 @@ class ProgressProjector:
         run = self._runs.get(event.run)
         if run is None or run.end is not None:
             raise _PresentationError(f"RunEnd without active RunBegin for {event.run}")
-        if any(step.begin.step.run == event.run for step in self._steps.values()):
+        if any(step.begin.step.run_id == event.run for step in self._steps.values()):
             raise _PresentationError(f"RunEnd with active Step for {event.run}")
         if any(
-            child.begin.parent is not None and child.begin.parent.run == event.run
+            child.begin.parent is not None and child.begin.parent.run_id == event.run
             for child in self._runs.values()
         ):
             raise _PresentationError(f"RunEnd with active child Run for {event.run}")
         run.end = event
         if event.error is not None:
-            self._errors[Pointer.run(event.run, "error")] = event.error
+            self._errors[FieldRef.from_path(RunRef(event.run), "error")] = event.error
         execute_rows = self._finish_execute(run, event)
 
         owner = (
@@ -247,7 +249,7 @@ class ProgressProjector:
             owner.metrics.add(run.metrics)
             for ancestor in self._flow_ancestors_in_run(owner.begin.step):
                 ancestor.metrics.add(run.metrics)
-            parent_run = self._runs.get(owner.begin.step.run)
+            parent_run = self._runs.get(owner.begin.step.run_id)
             if parent_run is not None:
                 parent_run.metrics.add(run.metrics)
             if owner.begin.kind == "par" and owner.lane_owner is None:
@@ -267,7 +269,7 @@ class ProgressProjector:
 
         block: ProgressBlock | None = None
         if run.lane_owner is not None:
-            if isinstance(event.error, str):
+            if isinstance(event.error, ErrorMessage):
                 self._set_lane_terminal(
                     run.lane_owner,
                     lane_run_error_lines(self._error_text(event.error)),
@@ -279,7 +281,7 @@ class ProgressProjector:
                     ("• canceled",),
                     status=event.status,
                 )
-        elif run.begin.parent is not None and isinstance(event.error, str):
+        elif run.begin.parent is not None and isinstance(event.error, ErrorMessage):
             if not (
                 event.status == "canceled"
                 and run.cancellation_reported
@@ -290,14 +292,14 @@ class ProgressProjector:
                     self._mark_cancellation_reported(run.begin.parent)
         elif run.begin.parent is None:
             self._root_ended = True
-            if isinstance(event.error, str):
+            if isinstance(event.error, ErrorMessage):
                 if not (
                     event.status == "canceled"
                     and run.cancellation_reported
                     and self._is_generic_cancellation(event.error)
                 ):
                     block = self._diagnostic_block(self._error_text(event.error))
-            elif isinstance(event.error, Pointer) and not self._pointer_resolves(
+            elif isinstance(event.error, ErrorRef) and not self._pointer_resolves(
                 event.error
             ):
                 block = self._diagnostic_block(
@@ -325,7 +327,7 @@ class ProgressProjector:
         if event.step in self._seen_steps:
             raise _PresentationError(f"duplicate StepBegin for {event.step}")
         self._seen_steps.add(event.step)
-        run = self._runs.get(event.step.run)
+        run = self._runs.get(event.step.run_id)
         if run is None or run.end is not None:
             raise _PresentationError(f"StepBegin without active Run {event.step.run}")
         execute_rows, handoff = self._advance_execute(run, event)
@@ -405,7 +407,7 @@ class ProgressProjector:
         if any(child.begin.parent == event.step for child in self._runs.values()):
             raise _PresentationError(f"StepEnd with active child Run for {event.step}")
         if event.error is not None:
-            self._errors[Pointer.step(event.step, "error")] = event.error
+            self._errors[FieldRef.from_path(event.step, "error")] = event.error
         if (
             event.kind == "model"
             and event.status == "succeeded"
@@ -418,7 +420,7 @@ class ProgressProjector:
                 raise _PresentationError(
                     f"StepEnd output does not match completed Parts for {event.step}"
                 )
-        run = self._runs[event.step.run]
+        run = self._runs[event.step.run_id]
         run.metrics.record_step(event)
         self._capture_execute(run, state, event)
         if isinstance(event.noted, CollectionStepNoted) and event.kind == "par":
@@ -438,7 +440,7 @@ class ProgressProjector:
 
         block: ProgressBlock | None = None
         if state.lane_owner is not None:
-            if not isinstance(event.error, Pointer):
+            if not isinstance(event.error, ErrorRef):
                 statement = state.statement
                 if state.is_flow:
                     assert statement is not None
@@ -472,7 +474,7 @@ class ProgressProjector:
                         )
         elif state.is_dynamic_run:
             if state.dynamic_child_run_id is None:
-                if isinstance(event.error, Pointer):
+                if isinstance(event.error, ErrorRef):
                     self._release_boundaries(state.boundaries)
                 else:
                     rows = trace_terminal_rows(
@@ -482,7 +484,7 @@ class ProgressProjector:
                         dynamic_run=True,
                     )
                     block = self._commit_block(state, rows) if rows else None
-            elif isinstance(event.error, Pointer):
+            elif isinstance(event.error, ErrorRef):
                 rows = self._dynamic_run_terminal_rows(state, event)
                 block = self._commit_block(
                     state,
@@ -505,7 +507,7 @@ class ProgressProjector:
                     gap_before=not self._ends_with_blank,
                 )
         elif not state.is_flow:
-            if isinstance(event.error, Pointer):
+            if isinstance(event.error, ErrorRef):
                 self._release_boundaries(state.boundaries)
             else:
                 rows = trace_terminal_rows(
@@ -706,7 +708,7 @@ class ProgressProjector:
                     error=self._error_text(event.error),
                 )
             )
-        elif isinstance(event.error, Pointer):
+        elif isinstance(event.error, ErrorRef):
             rows = []
         else:
             rows = list(flow_terminal_rows(event, error=self._error_text(event.error)))
@@ -784,7 +786,7 @@ class ProgressProjector:
             )
         return tuple(rows)
 
-    def _run_error_block(self, run: RunState, error: str) -> ProgressBlock:
+    def _run_error_block(self, run: RunState, error: ErrorMessage) -> ProgressBlock:
         owner = self._steps.get(run.begin.parent) if run.begin.parent else None
         boundaries = ()
         if owner is not None:
@@ -1251,7 +1253,7 @@ class ProgressProjector:
         chain.reverse()
         return chain
 
-    def _flow_ancestors_in_run(self, path: StepPath) -> list[StepState]:
+    def _flow_ancestors_in_run(self, path: StepRef) -> list[StepState]:
         ancestors: list[StepState] = []
         parent = path.parent
         while parent is not None:
@@ -1262,10 +1264,10 @@ class ProgressProjector:
             parent = parent.parent
         return ancestors
 
-    def _parent_flow_path(self, path: StepPath) -> StepPath | None:
+    def _parent_flow_path(self, path: StepRef) -> StepRef | None:
         if path.parent is not None and path.parent in self._steps:
             return path.parent
-        run = self._runs.get(path.run)
+        run = self._runs.get(path.run_id)
         return run.begin.parent if run is not None else None
 
     def _repeat_occurrence(
@@ -1278,7 +1280,7 @@ class ProgressProjector:
             return chain[repeat_index + 1].begin.occurrence
         if target.begin.occurrence is not None:
             return target.begin.occurrence
-        run = self._runs.get(target.begin.step.run)
+        run = self._runs.get(target.begin.step.run_id)
         return run.begin.occurrence if run is not None else None
 
     def _rows_for_boundaries(self, keys: tuple[str, ...]) -> tuple[ProgressRow, ...]:
@@ -1299,14 +1301,14 @@ class ProgressProjector:
             self._boundary_claims.pop(key, None)
             self._boundary_rows.pop(key, None)
 
-    def _note_iteration(self, path: StepPath, occurrence: Occurrence | None) -> None:
+    def _note_iteration(self, path: StepRef, occurrence: Occurrence | None) -> None:
         if occurrence is None or occurrence.iteration is None:
             return
         parent = self._steps.get(path)
         if parent is None or parent.begin.kind != "loop":
             parent = self._steps.get(path.parent) if path.parent is not None else None
         if parent is None:
-            run = self._runs.get(path.run)
+            run = self._runs.get(path.run_id)
             parent = (
                 self._steps.get(run.begin.parent)
                 if run is not None and run.begin.parent is not None
@@ -1357,15 +1359,15 @@ class ProgressProjector:
             if lane.active:
                 lane.activity = "• canceling"
 
-    def _mark_cancellation_reported(self, path: StepPath) -> None:
-        current: StepPath | None = path
-        seen: set[StepPath] = set()
+    def _mark_cancellation_reported(self, path: StepRef) -> None:
+        current: StepRef | None = path
+        seen: set[StepRef] = set()
         while current is not None and current not in seen:
             seen.add(current)
             state = self._steps.get(current)
             if state is not None:
                 state.cancellation_reported = True
-            run = self._runs.get(current.run)
+            run = self._runs.get(current.run_id)
             if run is not None:
                 run.cancellation_reported = True
             current = self._parent_flow_path(current)
@@ -1379,7 +1381,7 @@ class ProgressProjector:
 
     @staticmethod
     def _direct_lane_owner(
-        path: StepPath,
+        path: StepRef,
         occurrence: Occurrence | None,
         run_id: str,
     ) -> LaneOwner:
@@ -1394,32 +1396,32 @@ class ProgressProjector:
             run_id,
         )
 
-    def _active_step(self, path: StepPath) -> StepState:
+    def _active_step(self, path: StepRef) -> StepState:
         state = self._steps.get(path)
         if state is None:
             raise _PresentationError(f"event requires active Step {path}")
         return state
 
-    def _pointer_resolves(self, pointer: Pointer) -> bool:
-        seen: set[Pointer] = set()
-        current: ExecutionError = pointer
-        while isinstance(current, Pointer):
-            if current in seen:
+    def _pointer_resolves(self, error: ErrorRef) -> bool:
+        seen: set[FieldRef] = set()
+        current: ErrorMessage | ErrorRef = error
+        while isinstance(current, ErrorRef):
+            if current.ref in seen:
                 return False
-            seen.add(current)
-            next_error = self._errors.get(current)
+            seen.add(current.ref)
+            next_error = self._errors.get(current.ref)
             if next_error is None:
                 return False
             current = next_error
         return True
 
     @staticmethod
-    def _error_text(error: ExecutionError | None) -> str:
-        return error.strip() if isinstance(error, str) else ""
+    def _error_text(error: ErrorMessage | ErrorRef | None) -> str:
+        return error.message.strip() if isinstance(error, ErrorMessage) else ""
 
     @staticmethod
-    def _is_generic_cancellation(error: str) -> bool:
-        return error.casefold().strip(" .:!") in {
+    def _is_generic_cancellation(error: ErrorMessage) -> bool:
+        return error.message.casefold().strip(" .:!") in {
             "canceled",
             "cancelled",
             "run canceled",

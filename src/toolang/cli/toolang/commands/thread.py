@@ -35,7 +35,7 @@ from toolang.execution.schemas import (
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import (
     RunCommand,
-    StepPath,
+    StepRef,
 )
 from toolang.up.types import AgentServerRef
 
@@ -334,7 +334,7 @@ def _run_retry_or_rerun(
     layout: AgentLayout,
     kind: Literal["retry", "rerun"],
     source: str,
-    anchor: StepPath | None,
+    anchor: StepRef | None,
     sandbox: str | None,
     dev: Path | None,
     commands: tuple[RunCommand, ...],
@@ -398,7 +398,7 @@ async def _execute_retry_or_rerun(
     server: AgentServerRef | None,
     kind: Literal["retry", "rerun"],
     source: str,
-    anchor: StepPath | None,
+    anchor: StepRef | None,
     commands: tuple[RunCommand, ...],
     model_override: ModelOverride | None,
     show_progress: bool,
@@ -461,7 +461,7 @@ def _retry_sandbox(
     if run is None or run.parent is not None:
         raise ValueError(f"root run not found: {run_id}")
     control = resources.store.get_run_control(
-        run_id=run.control.target,
+        run_id=str(run.control.target),
         index=run.control.index,
     )
     if control is None or not isinstance(control.payload, PreparationControlPayload):
@@ -491,15 +491,18 @@ async def _cancel_restart(
         pass
 
 
-def _retry_anchor(run_id: str, value: str | None) -> StepPath | None:
+def _retry_anchor(run_id: str, value: str | None) -> StepRef | None:
     if value is None:
         return None
     text = value.strip()
     if not text:
         raise click.ClickException("--anchor requires a step path")
-    if text.startswith("run_"):
-        return StepPath.parse(text)
-    return StepPath.from_local(run_id, text)
+    try:
+        if text.startswith("run_"):
+            return StepRef.parse(text)
+        return StepRef.from_local(run_id, text)
+    except ValueError as exc:
+        raise ValueError(f"invalid step path: {text!r}") from exc
 
 
 def _display_status(value: object) -> str:

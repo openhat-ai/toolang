@@ -50,14 +50,17 @@ from ..types import (
     AgentResources,
     CollectionStepNoted,
     ControlRef,
+    ErrorMessage,
+    ErrorRef,
+    FieldRef,
     Local as RecordLocal,
     Occurrence,
     StepKind,
     StepNoted,
-    StepPath,
+    StepRef,
     StepStatus,
-    Pointer,
-    TypedPointer,
+    RunRef,
+    TypedRef,
 )
 
 Shape = Literal["none", "item", "list"]
@@ -75,7 +78,7 @@ _TEMPLATE_LOCAL_RE = re.compile(
 class _ExecutionFailed(Exception):
     """Carry one durable failure reference across execution layers."""
 
-    def __init__(self, error: Pointer, cause: BaseException) -> None:
+    def __init__(self, error: ErrorRef, cause: BaseException) -> None:
         super().__init__(str(cause) or type(cause).__name__)
         self.error = error
 
@@ -83,8 +86,8 @@ class _ExecutionFailed(Exception):
 class _StepFailed(_ExecutionFailed):
     """Carry one failed-step reference across enclosing execution layers."""
 
-    def __init__(self, step: StepPath, cause: BaseException) -> None:
-        super().__init__(Pointer.step(step, "error"), cause)
+    def __init__(self, step: StepRef, cause: BaseException) -> None:
+        super().__init__(ErrorRef(FieldRef.from_path(step, "error")), cause)
 
 
 class _RunRejected(Exception):
@@ -123,7 +126,7 @@ class BoundRun:
     resources: AgentResources | None = None
     flow_resources: AgentResources | None = None
     call: Literal["top", "run"] = "top"
-    parent: StepPath | None = None
+    parent: StepRef | None = None
     occurrence: Occurrence | None = None
 
 
@@ -133,7 +136,7 @@ class Local:
 
     value: Any = None
     shape: Shape = "none"
-    ref: Pointer | None = None
+    ref: FieldRef | None = None
     type_name: str | None = None
     record: RecordLocal | None = None
 
@@ -158,7 +161,7 @@ async def execute_step(
     *,
     begin_step: StepBoundary | None = None,
     kind: StepKind,
-    path: StepPath,
+    path: StepRef,
     binding: BoundRun,
     statement: FlowStmt,
     locals: Mapping[str, Local],
@@ -166,7 +169,7 @@ async def execute_step(
     occurrence: Occurrence | None,
     evaluate: Callable[[], Awaitable[Local]],
     note: Callable[[StepStatus], StepNoted] | None = None,
-    inputs: Sequence[Pointer] | None = None,
+    inputs: Sequence[FieldRef] | None = None,
 ) -> Local:
     """Evaluate, transform, and commit one Flow statement Step."""
 
@@ -257,7 +260,7 @@ async def execute_step(
                     result=None,
                     note=note,
                 ),
-                error=message,
+                error=ErrorMessage(message),
                 finished_at=utc_now(),
             )
         )
@@ -282,7 +285,7 @@ async def execute_step(
     return (
         replace(
             result,
-            ref=result.ref or Pointer.step(path, "output", "value"),
+            ref=result.ref or FieldRef.from_path(path, "output", "value"),
         )
         if output is not None
         else result
@@ -445,7 +448,7 @@ def statement_input_refs(
     binding: BoundRun,
     statement: FlowStmt,
     locals: Mapping[str, Local],
-) -> tuple[Pointer, ...]:
+) -> tuple[FieldRef, ...]:
     """Return the durable locals directly read by one flow statement."""
 
     names: set[str] = set()
@@ -516,9 +519,8 @@ def initial_locals(
         if found is None:
             continue
         index, record = found
-        pointer = Pointer.control(
-            binding.run_id,
-            binding.control_index,
+        pointer = FieldRef.from_path(
+            ControlRef(RunRef(binding.run_id), binding.control_index),
             "payload",
             "locals",
             index,
@@ -536,9 +538,8 @@ def initial_locals(
         if found is None:
             raise RuntimeError(f"run primary control local missing: {binding.run_id}")
         index, record = found
-        pointer = Pointer.control(
-            binding.run_id,
-            binding.control_index,
+        pointer = FieldRef.from_path(
+            ControlRef(RunRef(binding.run_id), binding.control_index),
             "payload",
             "locals",
             index,
@@ -556,7 +557,7 @@ def initial_locals(
     return locals
 
 
-def control_local_pointer(control: ControlRecord, name: str) -> Pointer:
+def control_local_pointer(control: ControlRecord, name: str) -> FieldRef:
     """Point to one control payload local by its immutable list index."""
 
     locals_value = getattr(control.payload, "locals", None)
@@ -572,9 +573,8 @@ def control_local_pointer(control: ControlRecord, name: str) -> Pointer:
         raise ValueError(
             f"control local is missing: {control.target}@{control.index}/{name}"
         )
-    return Pointer.control(
-        control.target,
-        control.index,
+    return FieldRef.from_path(
+        control.ref,
         "payload",
         "locals",
         index,
@@ -716,7 +716,7 @@ def control_text(control: ControlRecord | None) -> str:
     if not isinstance(control.payload, SteerControlPayload | CancelControlPayload):
         return ""
     primary = next((item for item in control.payload.locals if item.name == "_"), None)
-    if primary is None or isinstance(primary.value, TypedPointer):
+    if primary is None or isinstance(primary.value, TypedRef):
         return ""
     if isinstance(primary.value, str):
         return primary.value
@@ -724,8 +724,8 @@ def control_text(control: ControlRecord | None) -> str:
     return message_text(parts) if parts is not None else ""
 
 
-def _unique_step_inputs(items: Sequence[Pointer]) -> tuple[Pointer, ...]:
-    result: list[Pointer] = []
+def _unique_step_inputs(items: Sequence[FieldRef]) -> tuple[FieldRef, ...]:
+    result: list[FieldRef] = []
     for item in items:
         if item not in result:
             result.append(item)

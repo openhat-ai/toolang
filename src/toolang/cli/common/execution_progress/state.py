@@ -16,7 +16,7 @@ from toolang.execution.types import (
     ModelStepNoted,
     RunStatus,
     StepKind,
-    StepPath,
+    StepRef,
 )
 from toolang.lang.ast import FlowStmt
 
@@ -28,7 +28,7 @@ from .formatting import flow_statement
 class LaneOwner:
     """Nearest parallel Step that owns one descendant Run's presentation."""
 
-    step: StepPath
+    step: StepRef
     lane: int
     item: int
     run_id: str

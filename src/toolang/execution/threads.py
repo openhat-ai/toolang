@@ -23,7 +23,7 @@ from .records import (
     ThreadRecord,
 )
 from .store import RunStore
-from .types import ControlRef, ThreadPrefix
+from .types import ControlRef, ThreadPrefix, ThreadRef
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ class ThreadManager:
         self._notify(
             ThreadCreated(
                 thread=thread.id,
-                control=ControlRef(thread.id, control.index),
+                control=ControlRef(ThreadRef(thread.id), control.index),
                 origin=thread.origin,
                 peer=thread.peer,
                 created_at=created_at,
@@ -134,9 +134,9 @@ class ThreadManager:
         self._notify(
             ThreadForked(
                 thread=thread.id,
-                control=ControlRef(thread.id, control.index),
+                control=ControlRef(ThreadRef(thread.id), control.index),
                 source_thread=source.id,
-                anchor_run=control.payload.fork_at,
+                anchor_run=str(control.payload.fork_at),
                 created_at=created_at,
             )
         )
@@ -163,8 +163,8 @@ class ThreadManager:
         self._notify(
             ThreadRewound(
                 thread=updated.id,
-                control=ControlRef(updated.id, control.index),
-                anchor_run=control.payload.rewind_from,
+                control=ControlRef(ThreadRef(updated.id), control.index),
+                anchor_run=str(control.payload.rewind_from),
                 ejected_runs=ejected,
                 created_at=created_at,
             )
