@@ -20,7 +20,6 @@ from toolang.base.types.tool import ToolDefinition
 from toolang.execution.errors import RunStoreSchemaError
 from toolang.execution.records import (
     ReloadControlPayload,
-    RerunControlPayload,
     RetryControlPayload,
     RunControlPayload,
 )
@@ -94,7 +93,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             assert connection.execute(
                 "SELECT parent FROM runs WHERE id = 'run_dot_child'"
             ).fetchone() == ("run_dot_path.2.3",)
-            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 36
+            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 37
         finally:
             connection.close()
     finally:
@@ -217,9 +216,6 @@ def test_list_controls_retains_rewound_runs_but_excludes_deleted_children(
             resources=payload.resources,
             limits=payload.limits,
             state=payload.state,
-            runnable=payload.runnable,
-            model=payload.model,
-            locals=payload.input,
             sandbox="host",
             request_id=None,
             created_at="2026-01-01T00:04:00Z",
@@ -237,7 +233,7 @@ def test_list_controls_retains_rewound_runs_but_excludes_deleted_children(
         assert store.get_run(run_id=child.id) is None
         assert store.get_step(ref=parent.ref) is None
         # Retry leaves audit controls, but collections exclude their deleted owner.
-        assert store.get_run_control(run_id=child.id, index=0) is not None
+        assert store.get_run_control(run_id=child.id, index=0) is None
         assert store.get_record(Pointer(ControlRef.for_run(hidden.id, 0))) is not None
     finally:
         store.close()
@@ -469,9 +465,6 @@ def test_retry_reopens_root_from_a_failed_value_step(
                 anchor=None,
                 resources=run_control.payload.resources,
                 limits=run_control.payload.limits,
-                runnable=run_control.payload.runnable,
-                model=run_control.payload.model,
-                locals=run_control.payload.input,
                 sandbox="host",
                 state="1" * 64,
                 request_id="retry-mismatch",
@@ -497,9 +490,6 @@ def test_retry_reopens_root_from_a_failed_value_step(
                 anchor=None,
                 resources=run_control.payload.resources,
                 limits=run_control.payload.limits,
-                runnable=run_control.payload.runnable,
-                model=run_control.payload.model,
-                locals=run_control.payload.input,
                 sandbox="host",
                 state=run_control.payload.state,
                 request_id="retry-rollback",
@@ -516,9 +506,6 @@ def test_retry_reopens_root_from_a_failed_value_step(
             anchor=None,
             resources=run_control.payload.resources,
             limits=run_control.payload.limits,
-            runnable=run_control.payload.runnable,
-            model=run_control.payload.model,
-            locals=run_control.payload.input,
             sandbox="host",
             state=run_control.payload.state,
             request_id="retry-rollback",
@@ -659,16 +646,13 @@ def test_retry_allows_unapplied_reload_history(
             resources=entry.payload.resources,
             limits=entry.payload.limits,
             state=entry.payload.state,
-            runnable=entry.payload.runnable,
-            model=entry.payload.model,
-            locals=entry.payload.input,
             sandbox="host",
             request_id=f"retry-{unapplied_status}",
             created_at="2026-01-01T00:00:03Z",
         )
         assert reopened.state == ControlRef.for_run(run.id, 0)
         assert isinstance(retry.payload, RetryControlPayload)
-        assert retry.payload.state is None
+        assert not hasattr(retry.payload, "state")
     finally:
         store.close()
 
@@ -709,9 +693,6 @@ def test_retry_rejects_applied_reload_history_without_mutation(tmp_path: Path) -
                 resources=entry.payload.resources,
                 limits=entry.payload.limits,
                 state=entry.payload.state,
-                runnable=entry.payload.runnable,
-                model=entry.payload.model,
-                locals=entry.payload.input,
                 sandbox="host",
                 request_id="retry-applied-reload",
                 created_at="2026-01-01T00:00:03Z",
@@ -757,12 +738,22 @@ def test_retry_rejects_applied_execute_history_without_mutation(
         assert entry is not None and isinstance(entry.payload, RunControlPayload)
         assert entry.payload.state is not None
         source = FieldRef.from_path(model.ref, "output", "value", 0)
+        trigger = project_step(
+            store,
+            run_id=run.id,
+            step_index=1,
+            kind="tool",
+            status="running",
+            input=(source,),
+            output=None,
+            started_at="2026-01-01T00:00:03Z",
+            finished_at=None,
+        )
         execute = store.accept_execute_control(
             run_id=run.id,
             state=entry.payload.state,
-            runnable="agic:target",
-            module="agent",
-            source=source,
+            runnable="agent$agic:target",
+            triggered_by=trigger.ref,
             locals=(Local.typed("Json", source.select("input", "input", "_"), "_"),),
             created_at="2026-01-01T00:00:03Z",
         )
@@ -776,9 +767,6 @@ def test_retry_rejects_applied_execute_history_without_mutation(
                 resources=entry.payload.resources,
                 limits=entry.payload.limits,
                 state=entry.payload.state,
-                runnable=entry.payload.runnable,
-                model=entry.payload.model,
-                locals=entry.payload.input,
                 sandbox="host",
                 request_id="retry-applied-execute",
                 created_at="2026-01-01T00:00:04Z",
@@ -815,9 +803,6 @@ def test_retry_rejects_unknown_or_mismatched_sandbox_without_mutation(
                 resources=run_payload.resources,
                 limits=run_payload.limits,
                 state=run_payload.state,
-                runnable=run_payload.runnable,
-                model=run_payload.model,
-                locals=run_payload.input,
                 sandbox=sandbox,
                 request_id=None,
                 created_at="2026-01-01T00:00:03Z",
@@ -916,9 +901,6 @@ def test_retry_preserves_child_controls_and_revision_monotonicity(
             resources=payload.resources,
             limits=payload.limits,
             state=payload.state,
-            runnable=payload.runnable,
-            model=payload.model,
-            locals=payload.input,
             sandbox="host",
             request_id="retry-control-request",
             created_at="2026-01-01T00:00:03Z",
@@ -931,7 +913,7 @@ def test_retry_preserves_child_controls_and_revision_monotonicity(
             (RunRef(child.id), "steer", "wontapply"),
         ]
         assert store.get_run(run_id=child.id) is None
-        assert store.get_run_control(run_id=child.id, index=0) is not None
+        assert store.get_run_control(run_id=child.id, index=0) is None
         stored_pending = store.get_run_control(run_id=child.id, index=pending.index)
         assert stored_pending is not None
         assert stored_pending.status == "wontapply"
@@ -1034,9 +1016,6 @@ def test_retry_anchor_selection_distinguishes_run_outcomes_and_explicit_values(
             anchor=steps[explicit_anchor].ref if explicit_anchor is not None else None,
             resources=run_control.payload.resources,
             limits=run_control.payload.limits,
-            runnable=run_control.payload.runnable,
-            model=run_control.payload.model,
-            locals=run_control.payload.input,
             sandbox="host",
             state=run_control.payload.state,
             request_id=None,
@@ -1083,8 +1062,6 @@ def test_rerun_acceptance_preserves_the_source_and_allows_repeated_reruns(
             context={"root": "run_rerun"},
             request_id="rerun-1",
             created_at="2026-01-01T00:00:02Z",
-            kind="rerun",
-            source=source.id,
         )
 
         second_rerun, second_control = accept_run(
@@ -1096,18 +1073,16 @@ def test_rerun_acceptance_preserves_the_source_and_allows_repeated_reruns(
             context={"root": "run_rerun_again"},
             request_id="rerun-2",
             created_at="2026-01-01T00:00:03Z",
-            kind="rerun",
-            source=source.id,
         )
 
         stored_source = store.get_run(run_id=source.id)
         assert stored_source is not None
-        assert control.kind == "rerun"
-        assert isinstance(control.payload, RerunControlPayload)
-        assert str(control.payload.rerun_from) == source.id
-        assert second_control.kind == "rerun"
-        assert isinstance(second_control.payload, RerunControlPayload)
-        assert str(second_control.payload.rerun_from) == source.id
+        assert control.kind == "run"
+        assert isinstance(control.payload, RunControlPayload)
+        assert not hasattr(control.payload, "rerun_from")
+        assert second_control.kind == "run"
+        assert isinstance(second_control.payload, RunControlPayload)
+        assert not hasattr(second_control.payload, "rerun_from")
         assert [run.id for run in store.list_runs(limit=None)] == [
             second_rerun.id,
             rerun.id,
@@ -1157,16 +1132,14 @@ def test_rerun_preserves_its_rewound_source(tmp_path: Path) -> None:
             context={},
             request_id="rerun-rewound-source",
             created_at="2026-01-01T00:00:03Z",
-            kind="rerun",
-            source=source.id,
         )
 
         unchanged_source = store.get_run(run_id=source.id)
         assert unchanged_source is not None
         assert unchanged_source == rewound_source
         assert store.list_thread_history_chronological(thread_id=thread.id) == (rerun,)
-        assert isinstance(control.payload, RerunControlPayload)
-        assert str(control.payload.rerun_from) == source.id
+        assert isinstance(control.payload, RunControlPayload)
+        assert not hasattr(control.payload, "rerun_from")
     finally:
         store.close()
 
@@ -1242,9 +1215,6 @@ def test_retry_physically_trims_steps_without_restoring_rewound_history(
             resources=payload.resources,
             limits=payload.limits,
             state=payload.state,
-            runnable=payload.runnable,
-            model=payload.model,
-            locals=payload.input,
             sandbox="host",
             request_id="retry-rewound-source",
             created_at="2026-01-01T00:00:05Z",

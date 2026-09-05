@@ -13,13 +13,14 @@ from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelContinuation, ModelUsage, ToolCall
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
+from toolang.common.time import utc_now
 from toolang.lang.ast import AgicDecl, RunStmt, Span, StructDecl
 from toolang.lang.errors import ToolangOutputError
 from toolang.lang.input import coerce_output, output_json_schema
 from toolang.state.state import AgentState, StatePublication
 from toolang.state.state import state_program
 
-from ...events import StepBegin
+from ...events import StepBegin, StepEnd
 from ...records import RunControlPayload, ControlRecord
 from ...types import (
     ControlRef,
@@ -28,6 +29,8 @@ from ...types import (
     RunRef,
     StepRef,
     TypedRef,
+    ToolStepGiven,
+    ToolStepNoted,
     local_to_protocol_data,
 )
 from ..common import (
@@ -112,7 +115,6 @@ class _AgicState:
     def before_model_call(self) -> None:
         """Apply one model-call checkpoint and reserve its agic-local count."""
 
-        self.before_call()
         limit = self.limits.agic_model_calls
         if limit is not None and self.model_calls >= limit:
             raise ToolangError(f"Agic model call limit exceeded: {limit}")
@@ -121,7 +123,6 @@ class _AgicState:
     def before_tool_call(self) -> None:
         """Apply one tool-call checkpoint and reserve its agic-local count."""
 
-        self.before_call()
         limit = self.limits.agic_tool_calls
         if limit is not None and self.tool_calls >= limit:
             raise ToolangError(f"Agic tool call limit exceeded: {limit}")
@@ -345,14 +346,15 @@ async def _reload(
     state: _AgicState,
     call: ToolCall,
 ) -> None:
-    """Consume one runtime reload without creating a Step."""
+    """Execute and record one model-requested State reload."""
 
-    state.before_tool_call()
+    step = await _begin_runtime_tool(state, call)
     try:
         if call.input:
             raise ToolangError("_too/reload does not accept input")
         output = await execution.executor.model_reload(
             run_id=state.prepared.run.run_id,
+            triggered_by=step,
         )
         part = ToolResultPart(
             tool_call_id=call.tool_call_id,
@@ -362,6 +364,7 @@ async def _reload(
             output=output,
         )
     except asyncio.CancelledError:
+        await _cancel_runtime_tool(state, step)
         raise
     except Exception as exc:
         part = ToolResultPart(
@@ -371,7 +374,7 @@ async def _reload(
             tool_family=call.name,
             error=str(exc) or type(exc).__name__,
         )
-    state.messages.append(Message(role="tool", parts=(part,)))
+    await tool_step.finish(state, step, part)
 
 
 async def _run(
@@ -453,9 +456,9 @@ async def _execute_transfer(
     *,
     tool_call_count: int,
 ) -> None:
-    """Commit one authorized same-Run runnable replacement without a Step."""
+    """Record one runtime tool and commit its same-Run replacement."""
 
-    state.before_tool_call()
+    step = await _begin_runtime_tool(state, call)
     requested = call.input.get("runnable")
     captured_state = state.prepared.run.state
     captured_ref = state.prepared.run.state_ref
@@ -496,29 +499,69 @@ async def _execute_transfer(
             state=captured_state,
             state_ref=captured_ref,
         )
+        committed = execution.commit_execute(binding, triggered_by=step)
     except asyncio.CancelledError:
+        await _cancel_runtime_tool(state, step)
         raise
-    except (_RunRejected, ToolangError, TypeError, ValueError) as exc:
+    except Exception as exc:
         message = (str(exc) or type(exc).__name__)[:2048]
         details = exc.details if isinstance(exc, _RunRejected) else {}
-        state.messages.append(
-            Message(
-                role="tool",
-                parts=(
-                    ToolResultPart(
-                        tool_call_id=call.tool_call_id,
-                        call_id=call.call_id,
-                        tool_name=call.name,
-                        tool_family=call.name,
-                        output={"error": message, **details},
-                        error=message,
-                    ),
-                ),
-            )
+        await tool_step.finish(
+            state,
+            step,
+            ToolResultPart(
+                tool_call_id=call.tool_call_id,
+                call_id=call.call_id,
+                tool_name=call.name,
+                tool_family=call.name,
+                output={"error": message, **details},
+                error=message,
+            ),
         )
+        if not isinstance(exc, (_RunRejected, ToolangError, TypeError, ValueError)):
+            raise _StepFailed(step, exc) from exc
         return
-    committed = execution.commit_execute(binding, source=source)
+    await tool_step.finish(
+        state,
+        step,
+        ToolResultPart(
+            tool_call_id=call.tool_call_id,
+            call_id=call.call_id,
+            tool_name=call.name,
+            tool_family=call.name,
+            output={"executed": target.qualified},
+        ),
+    )
     raise _ExecuteCommitted(committed, target.executable, locals)
+
+
+async def _begin_runtime_tool(state: _AgicState, call: ToolCall) -> StepRef:
+    state.before_tool_call()
+    step = StepRef.from_local(state.prepared.run.run_id, (state.next_step,))
+    state.next_step += 1
+    await state.start_step(
+        lambda _state, ref: StepBegin(
+            step=step,
+            kind="tool",
+            state=ref,
+            input=(_runtime_call_source(state, call),),
+            given=ToolStepGiven(plugin="_too", call=call),
+            started_at=utc_now(),
+        )
+    )
+    return step
+
+
+async def _cancel_runtime_tool(state: _AgicState, step: StepRef) -> None:
+    await state.emit(
+        StepEnd(
+            step=step,
+            kind="tool",
+            status="canceled",
+            noted=ToolStepNoted(summary="canceled"),
+            finished_at=utc_now(),
+        )
+    )
 
 
 def _reject_runtime_tool(state: _AgicState, call: ToolCall) -> None:
@@ -584,7 +627,7 @@ def _run_success_part(
         tool_family=call.name,
         output={
             "run_id": child.id,
-            "runnable": control.payload.runnable,
+            "runnable": control.payload.runnable.rpartition("$")[2],
             "output_type": output_type,
             "output": encoded,
         },

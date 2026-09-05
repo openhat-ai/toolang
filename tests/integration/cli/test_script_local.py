@@ -153,7 +153,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
     assert durable_output == (TextPart("done"),)
     assert control is not None
     assert isinstance(control.payload, RunControlPayload)
-    assert control.payload.runnable == "agic:echo"
+    assert control.payload.runnable == "agent$agic:echo"
 
 
 def test_local_script_renders_composite_flow_progress(

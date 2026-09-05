@@ -42,6 +42,7 @@ class _PersistSink:
                 )
             state = run.state
         self._store.begin_step(
+            preceded_by=event.preceded_by,
             ref=event.step,
             kind=event.kind,
             input=event.input,
@@ -53,6 +54,7 @@ class _PersistSink:
 
     def _finish_step(self, event: StepEnd) -> None:
         self._store.finish_step(
+            aborted_by=event.aborted_by,
             ref=event.step,
             kind=event.kind,
             status=event.status,

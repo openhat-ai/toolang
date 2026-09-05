@@ -27,7 +27,7 @@ from toolang.lang.input import RunnableInputRaw
 from toolang.lang.types import Array, Struct
 from .records import (
     ControlPayloadField,
-    PreparationControlPayload,
+    run_preparation,
     ControlRecord,
     RunRecord,
     StepRecord,
@@ -611,9 +611,9 @@ class RunInfo:
     ) -> RunInfo:
         """Build one run summary from durable records."""
 
-        preparation = _preparation_payload(run, controls)
+        preparation = run_preparation(run, controls)
         input_text = message_summary(input_parts)
-        kind, separator, name = preparation.runnable.partition(":")
+        kind, separator, name = preparation.runnable.partition("$")[2].partition(":")
         last_message_step = next(
             (
                 step
@@ -668,6 +668,7 @@ class ControlInfo:
     error: str | None
     created_at: str
     finished_at: str | None
+    triggered_by: StepRef | None = None
 
     @classmethod
     def from_record(cls, run: RunRecord, control: ControlRecord) -> ControlInfo:
@@ -679,6 +680,7 @@ class ControlInfo:
             request_id=control.request,
             status=control.status,
             payload=control.payload,
+            triggered_by=control.triggered_by,
             error=control.error,
             created_at=control.created_at,
             finished_at=control.finished_at,
@@ -695,6 +697,8 @@ class StepData:
     given: StepGiven
     state: RunControlRefData
     output: Local | None
+    preceded_by: tuple[ControlRef, ...] = ()
+    aborted_by: ControlRef | None = None
     occurrence: Occurrence | None = None
     noted: StepNoted = None
     status: StepStatus = "running"
@@ -726,6 +730,8 @@ class StepData:
             kind=step.kind,
             input=list(step.input),
             output=step.output,
+            preceded_by=step.preceded_by,
+            aborted_by=step.aborted_by,
             occurrence=step.occur,
             given=given,
             state=RunControlRefData.from_ref(step.state),
@@ -806,18 +812,6 @@ def _thread_channel(thread_id: str, origin: str) -> str:
     if thread_id.startswith("script_tg_"):
         return "tg"
     return "terminal"
-
-
-def _preparation_payload(
-    run: RunRecord,
-    controls: Sequence[ControlRecord],
-) -> PreparationControlPayload:
-    for control in controls:
-        if control.ref == run.control and isinstance(
-            control.payload, PreparationControlPayload
-        ):
-            return control.payload
-    raise ValueError(f"run preparation control not found: {run.control}")
 
 
 def _local_parts(local: Local | None) -> tuple[Part, ...]:

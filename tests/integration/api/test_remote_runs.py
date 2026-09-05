@@ -27,7 +27,6 @@ from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.catalog import CapsManager, JobsManager
 from toolang.execution.calls import resolve_run_request
 from toolang.execution.records import (
-    RerunControlPayload,
     RetryControlPayload,
     RunControlPayload,
 )
@@ -395,7 +394,7 @@ agic chat(_: Part[]) -> Part[]:
         assert isinstance(retry_detail.controls[-1].payload, RetryControlPayload)
         assert retry_detail.controls[-1].payload.limits.tokens == 10
         assert rerun_detail.controls[0].request_id == "rerun_request"
-        assert isinstance(rerun_detail.controls[0].payload, RerunControlPayload)
+        assert isinstance(rerun_detail.controls[0].payload, RunControlPayload)
         assert rerun_detail.controls[0].payload.limits.time == 30
         assert duplicate.status_code == 409
         assert duplicate.json()["detail"] == (

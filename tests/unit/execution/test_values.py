@@ -601,39 +601,22 @@ def test_preparation_payload_rejects_instead_of_dropping_invalid_input() -> None
         control_payload_from_data("run", data)
 
 
-def test_retry_payload_distinguishes_inherited_and_empty_input() -> None:
-    inherited = RetryControlPayload(
+def test_retry_payload_stores_only_attempt_settings_and_anchor() -> None:
+    payload = RetryControlPayload(
         resources=AgentResources(models=("test/model",)),
         limits=RunLimits(),
-        state="0" * 64,
-        runnable="flow:worker",
-        model="test/model",
         model_request=ModelRequest("test/model"),
-        input=None,
         retry_from=StepRef.from_local("run_1", (2,)),
     )
-    empty = RetryControlPayload(
-        resources=inherited.resources,
-        limits=inherited.limits,
-        state=inherited.state,
-        runnable=inherited.runnable,
-        model=inherited.model,
-        model_request=inherited.model_request,
-        input=(),
-        retry_from=None,
-    )
-
-    assert control_payload_to_data(inherited)["retry_from"] == "run_1.2"
+    data = control_payload_to_data(payload)
+    assert set(data) == {"resources", "limits", "model_request", "retry_from"}
+    assert data["retry_from"] == "run_1.2"
+    assert control_payload_from_data("retry", data) == payload
+    unanchored = replace(payload, retry_from=None)
     assert (
-        control_payload_from_data("retry", control_payload_to_data(inherited))
-        == inherited
+        control_payload_from_data("retry", control_payload_to_data(unanchored))
+        == unanchored
     )
-    assert control_payload_from_data("retry", control_payload_to_data(empty)) == empty
-    value = Local.typed("Text", "retry", "_")
-    populated = replace(empty, input=(value,))
-    data = control_payload_to_data(populated)
-    assert data["input"] == [local_to_data(value)]
-    assert control_payload_from_data("retry", data) == populated
 
 
 def test_reload_and_inherited_preparation_payloads_round_trip_without_revision_duplication() -> (
@@ -669,9 +652,7 @@ def test_execute_payload_round_trips_source_pointing_locals() -> None:
     source = FieldRef.from_path(StepRef.parse("run_1.2"), "output", "value", 1)
     payload = ExecuteControlPayload(
         state="a" * 64,
-        runnable="flow:deliver",
-        module="_flow_deliver",
-        source=source,
+        runnable="_flow_deliver$flow:deliver",
         input=(
             Local.typed("Json", source.select("input", "input", "_"), "_"),
             Local.typed(

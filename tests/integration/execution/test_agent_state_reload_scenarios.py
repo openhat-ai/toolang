@@ -219,6 +219,7 @@ def test_concurrent_reloads_apply_in_control_index_order(
         timing: ControlTiming = "immediate",
         request_id: str | None,
         created_at: str,
+        triggered_by: StepRef | None = None,
     ) -> ControlRecord:
         control = original_accept(
             run_id=run_id,
@@ -226,6 +227,7 @@ def test_concurrent_reloads_apply_in_control_index_order(
             timing=timing,
             request_id=request_id,
             created_at=created_at,
+            triggered_by=triggered_by,
         )
         if request_id == "reload-first":
             first_accepted.set()

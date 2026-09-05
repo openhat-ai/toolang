@@ -70,6 +70,7 @@ class _ModelStream:
     text_part: int | None = None
     tool_parts: dict[str, int] = field(default_factory=dict)
     started_parts: set[int] = field(default_factory=set)
+    ended_parts: set[int] = field(default_factory=set)
     part_types: dict[int, PartType] = field(default_factory=dict)
     text_chunks: list[str] = field(default_factory=list)
     tool_chunks: dict[str, list[str]] = field(default_factory=dict)
@@ -127,6 +128,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             kind="model",
             state=state_ref,
             input=step_input,
+            preceded_by=tuple(item.ref for item in consumed_inputs),
             started_at=started_at,
             given=ModelStepGiven(model=prepared.model.ref, call=request),
         )
@@ -152,6 +154,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
         step_index=step_index,
     )
     try:
+        state.before_call()
         if prepared.model.streaming:
             current = await prepared.adapter.stream(
                 prepared.model,
@@ -161,25 +164,28 @@ async def execute(state: _AgicState) -> ModelCallResult:
         else:
             current = await prepared.adapter.invoke(prepared.model, request)
         _validate_stream_result(stream, current)
+        output = await _emit_response_parts(state, stream, current)
     except asyncio.CancelledError:
-        await _close_open_parts(state, stream)
+        output = await _close_open_parts(state, stream)
         await state.emit(
             StepEnd(
                 step=StepRef.from_local(run.run_id, (step_index,)),
                 kind="model",
                 status="canceled",
+                output=Local.typed("Part[]", output, "_", 0) if output else None,
                 finished_at=utc_now(),
             )
         )
         raise
     except Exception as exc:
         message = str(exc) or type(exc).__name__
-        await _close_open_parts(state, stream)
+        output = await _close_open_parts(state, stream)
         await state.emit(
             StepEnd(
                 step=StepRef.from_local(run.run_id, (step_index,)),
                 kind="model",
                 status="failed",
+                output=Local.typed("Part[]", output, "_", 0) if output else None,
                 error=ErrorMessage(message),
                 finished_at=utc_now(),
             )
@@ -195,8 +201,8 @@ async def execute(state: _AgicState) -> ModelCallResult:
         raise _StepFailed(StepRef.from_local(run.run_id, (step_index,)), exc) from exc
     return await _apply_response(
         state,
-        stream,
         current,
+        output,
         step_index=step_index,
         duration_ms=elapsed_ms(step_started),
     )
@@ -225,28 +231,27 @@ def _model_tools(prepared: _AgicFrame) -> tuple[ToolDefinition, ...]:
     return tuple(definitions[name] for name in sorted(definitions))
 
 
-async def _apply_response(
+async def _emit_response_parts(
     state: _AgicState,
     stream: _ModelStream,
     current: ModelCallResult,
-    *,
-    step_index: int,
-    duration_ms: int,
-) -> ModelCallResult:
-    prepared = state.prepared
-    run = prepared.run
+) -> tuple[Part, ...]:
+    """Publish completed Parts inside the model's interruption boundary."""
+
+    run = state.prepared.run
     parsed_calls = tuple(current.tool_calls)
     log_model_result(
         current,
         thread_id=run.thread,
         run_id=run.run_id,
-        step_index=step_index,
+        step_index=stream.step,
     )
     output_parts = _output_parts(
         stream,
         current=current,
         tool_calls=parsed_calls,
     )
+    stream.completed_parts.update(output_parts)
     for part_index, part in output_parts:
         await _emit_part_begin(
             state,
@@ -254,20 +259,26 @@ async def _apply_response(
             part_index=part_index,
             kind=part.type,
         )
-        await state.emit(
-            PartEnd(
-                step=StepRef.from_local(run.run_id, (step_index,)),
-                part=part_index,
-                data=part,
-            )
-        )
+        await _emit_part_end(state, stream, part_index, part)
         if isinstance(part, ToolCallPart):
-            state.tool_call_sources[part.tool_call_id] = (step_index, part_index)
-    output = tuple(part for _, part in sorted(output_parts, key=lambda item: item[0]))
+            state.tool_call_sources[part.tool_call_id] = (stream.step, part_index)
+    return tuple(part for _, part in sorted(output_parts, key=lambda item: item[0]))
+
+
+async def _apply_response(
+    state: _AgicState,
+    current: ModelCallResult,
+    output: tuple[Part, ...],
+    *,
+    step_index: int,
+    duration_ms: int,
+) -> ModelCallResult:
+    run = state.prepared.run
     if output:
         state.messages.append(Message(role="assistant", parts=output))
     state.continuation = current.continuation
     accounting = state.account_usage(current.usage)
+    state.last_step = step_index
     await state.emit(
         StepEnd(
             step=StepRef.from_local(run.run_id, (step_index,)),
@@ -281,7 +292,6 @@ async def _apply_response(
             finished_at=utc_now(),
         )
     )
-    state.last_step = step_index
     state.record_accounting(accounting)
     usage = current.usage
     _LOGGER.info(
@@ -291,7 +301,7 @@ async def _apply_response(
         step_index,
         usage.input_tokens if usage is not None else 0,
         usage.output_tokens if usage is not None else 0,
-        len(parsed_calls),
+        len(current.tool_calls),
         duration_ms,
     )
     return current
@@ -365,14 +375,14 @@ async def _handle_event(
         elif isinstance(event.data, ToolCallPart):
             part_index = _ensure_tool_part_index(stream, event.data.tool_call_id)
         else:
-            return
+            part_index = _next_part_index(stream)
+        stream.completed_parts[part_index] = event.data
         await _emit_part_begin(
             state,
             stream,
             part_index=part_index,
             kind=event.data.type,
         )
-        stream.completed_parts[part_index] = event.data
         return
 
 
@@ -429,7 +439,18 @@ def _output_parts(
                 items.append((part_index, part))
                 seen_tool_calls.add(part.tool_call_id)
                 continue
-            items.append((_next_part_index(stream), part))
+            used = {index for index, _ in items}
+            part_index = next(
+                (
+                    index
+                    for index, completed in stream.completed_parts.items()
+                    if index not in used and completed == part
+                ),
+                None,
+            )
+            items.append(
+                (_next_part_index(stream) if part_index is None else part_index, part)
+            )
     current_text = message_text(message.parts) if message is not None else ""
     if not saw_text and current_text:
         part_index = _ensure_text_part_index(stream)
@@ -524,6 +545,8 @@ async def _emit_part_begin(
 ) -> None:
     if part_index in stream.started_parts:
         return
+    stream.started_parts.add(part_index)
+    stream.part_types[part_index] = kind
     await state.emit(
         PartBegin(
             step=StepRef.from_local(state.prepared.run.run_id, (stream.step,)),
@@ -531,22 +554,39 @@ async def _emit_part_begin(
             part_type=kind,
         )
     )
-    stream.started_parts.add(part_index)
-    stream.part_types[part_index] = kind
 
 
-async def _close_open_parts(state: _AgicState, stream: _ModelStream) -> None:
-    """Close every streamed Part before emitting a terminal Model Step."""
-
-    for part_index in sorted(stream.started_parts):
-        await state.emit(
-            PartEnd(
-                step=StepRef.from_local(state.prepared.run.run_id, (stream.step,)),
-                part=part_index,
-                data=stream.completed_parts.get(part_index)
-                or _partial_part(stream, part_index),
-            )
+async def _emit_part_end(
+    state: _AgicState, stream: _ModelStream, part_index: int, part: Part
+) -> None:
+    # Events are projected before awaiting observers; cancellation there must not
+    # cause an already-delivered terminal event to be emitted again.
+    stream.ended_parts.add(part_index)
+    await state.emit(
+        PartEnd(
+            step=StepRef.from_local(state.prepared.run.run_id, (stream.step,)),
+            part=part_index,
+            data=part,
         )
+    )
+
+
+async def _close_open_parts(
+    state: _AgicState, stream: _ModelStream
+) -> tuple[Part, ...]:
+    """Close display events and retain only complete Parts or partial text."""
+
+    output: list[Part] = []
+    for part_index in sorted(stream.started_parts | stream.completed_parts.keys()):
+        completed = stream.completed_parts.get(part_index)
+        part = completed or _partial_part(stream, part_index)
+        if part_index not in stream.ended_parts:
+            await _emit_part_begin(state, stream, part_index=part_index, kind=part.type)
+            await _emit_part_end(state, stream, part_index, part)
+        # An unfinished ToolCall placeholder closes the display event only.
+        if completed is not None or isinstance(part, TextPart):
+            output.append(part)
+    return tuple(output)
 
 
 def _partial_part(stream: _ModelStream, part_index: int) -> Part:

@@ -15,7 +15,6 @@ from ..common import (
     Local,
     bind_flow_result,
     program_structs,
-    statement_has_call,
 )
 from .. import stmts
 
@@ -88,10 +87,6 @@ async def execute_statements(
 
     index = start
     for statement in statements:
-        execution.raise_if_canceling(
-            binding.run_id,
-            call=statement_has_call(statement),
-        )
         path = (
             StepRef.from_local(binding.run_id, (index,))
             if parent is None

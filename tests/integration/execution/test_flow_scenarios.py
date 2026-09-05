@@ -29,7 +29,6 @@ from toolang.execution.events import RunBegin, RunEnd
 from toolang.execution.executor import RunExecutor, RunLimits
 from toolang.execution.history import RunHistory
 from toolang.execution.records import (
-    RerunControlPayload,
     RetryControlPayload,
     RunControlPayload,
 )
@@ -156,7 +155,7 @@ flow relay(_: Part[]) -> Part[]:
             assert root_run_control is not None
             assert isinstance(child_run_control.payload, RunControlPayload)
             assert isinstance(root_run_control.payload, RunControlPayload)
-            assert child_run_control.payload.runnable == "agic:echo"
+            assert child_run_control.payload.runnable == "agent$agic:echo"
             assert child_run_control.payload.sandbox is None
             assert root_run_control.payload.sandbox == "host"
             assert harness.store.run_output(run_id=root.id) == (TextPart("relayed"),)
@@ -468,12 +467,12 @@ flow staged(_: Part[]) -> Part[]:
             assert isinstance(retry.payload, RetryControlPayload)
             assert isinstance(run_control.payload, RunControlPayload)
             assert retry.payload.retry_from == before[1].ref
-            assert retry.payload.runnable == run_control.payload.runnable
-            assert retry.payload.model == run_control.payload.model
+            assert not hasattr(retry.payload, "runnable")
+            assert not hasattr(retry.payload, "model")
             assert retry.payload.limits == run_control.payload.limits
-            assert retry.payload.input == run_control.payload.input
+            assert not hasattr(retry.payload, "input")
             assert retry.payload.resources == run_control.payload.resources
-            assert retry.payload.sandbox == run_control.payload.sandbox == "host"
+            assert run_control.payload.sandbox == "host"
             runs = harness.store.list_runs(
                 thread_id=thread,
                 limit=None,
@@ -604,12 +603,12 @@ agic reply(_: Part[], tone: Text, tags: Text[]) -> Part[]:
             assert [run.id for run in visible] == [rerun.id, source.id]
             rerun_control = harness.store.get_run_control(run_id=rerun.id, index=0)
             assert rerun_control is not None
-            assert rerun_control.kind == "rerun"
-            assert isinstance(rerun_control.payload, RerunControlPayload)
+            assert rerun_control.kind == "run"
+            assert isinstance(rerun_control.payload, RunControlPayload)
             assert isinstance(source_control.payload, RunControlPayload)
             assert source_control.payload.sandbox == "host"
             assert rerun_control.payload.sandbox == "docker:python:3.13-slim"
-            assert str(rerun_control.payload.rerun_from) == source.id
+            assert not hasattr(rerun_control.payload, "rerun_from")
             assert rerun_control.payload.runnable == source_control.payload.runnable
             assert rerun_control.payload.model == source_control.payload.model
             assert rerun_control.payload.limits == source_control.payload.limits
@@ -619,8 +618,8 @@ agic reply(_: Part[], tone: Text, tags: Text[]) -> Part[]:
             assert projected is not None
             assert [run.id for run in projected.runs] == [source.id, rerun.id]
             payload = projected.runs[1].controls[0].payload
-            assert isinstance(payload, RerunControlPayload)
-            assert str(payload.rerun_from) == source.id
+            assert isinstance(payload, RunControlPayload)
+            assert not hasattr(payload, "rerun_from")
             assert [call.call.messages for call in harness.adapter.invocations] == [
                 [Message.user('Reply to hello in brief with ["one","two"].')],
                 [Message.user('Reply to hello in brief with ["one","two"].')],
@@ -920,7 +919,7 @@ flow research(brief: Brief) -> Text:
             accepted = harness.store.get_run_control(run_id=root.id, index=0)
             assert accepted is not None
             assert isinstance(accepted.payload, RunControlPayload)
-            assert accepted.payload.runnable == "flow:research"
+            assert accepted.payload.runnable == "_flow_research$flow:research"
             child = next(
                 run
                 for run in harness.store.list_runs(thread_id=thread, limit=None)
@@ -929,7 +928,7 @@ flow research(brief: Brief) -> Text:
             child_run_control = harness.store.get_run_control(run_id=child.id, index=0)
             assert child_run_control is not None
             assert isinstance(child_run_control.payload, RunControlPayload)
-            assert child_run_control.payload.runnable == "agic:echo"
+            assert child_run_control.payload.runnable == "_flow_research$agic:echo"
             assert "Module-Local Input" in message_text(
                 harness.adapter.invocations[0].call.messages[0].parts
             )

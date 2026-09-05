@@ -96,7 +96,7 @@ def test_focused_relations_preserve_run_and_step_ownership(tmp_path: Path) -> No
         store.close()
 
     by_id = {item.record.id: item for item in runs}
-    assert by_id[root.id].runnable == "flow:root"
+    assert by_id[root.id].runnable == "agent$flow:root"
     assert by_id[root.id].step_count == 3
     assert by_id[child.id].step_count == 1
     assert [item.record.ref for item in root_steps] == [
@@ -275,7 +275,7 @@ def test_run_inspection_reads_only_each_run_entry_control(tmp_path: Path) -> Non
         store.close()
 
     assert [item.record.id for item in inspected] == [run.id]
-    assert inspected[0].runnable == "agic:test"
+    assert inspected[0].runnable == "agent$agic:test"
     assert [(entry.target, entry.index) for entry in snapshot.entries] == [
         (run.control.target, run.control.index)
     ]

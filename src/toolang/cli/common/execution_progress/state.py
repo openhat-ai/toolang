@@ -93,7 +93,7 @@ class PendingExecute:
     tool_call_id: str
     runnable: str
     sequence: int
-    can_start: bool
+    ready: bool = False
 
 
 @dataclass(frozen=True, slots=True)

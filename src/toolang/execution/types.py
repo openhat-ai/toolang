@@ -10,7 +10,7 @@ import math
 import re
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import BeforeValidator, WrapSerializer
+from pydantic import BeforeValidator, Field, WrapSerializer
 from pydantic_core import core_schema
 
 from toolang.base.types.message import (
@@ -1800,10 +1800,33 @@ def _validate_decimal_text(value: str | None, *, label: str) -> None:
         raise ValueError(f"{label} must be finite and non-negative")
 
 
+@dataclass(frozen=True, slots=True)
+class RulesRecallTarget:
+    workspace: str
+    path: str
+    kind: Literal["rules"] = field(default="rules", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class SkillRecallTarget:
+    ref: str
+    kind: Literal["skill"] = field(default="skill", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceRecallTarget:
+    ref: str
+    kind: Literal["service"] = field(default="service", init=False)
+
+
+RecallTarget = Annotated[
+    RulesRecallTarget | SkillRecallTarget | ServiceRecallTarget,
+    Field(discriminator="kind"),
+]
 ControlTiming = Literal["immediate", "next_step", "next_call"]
 ControlKind = Literal[
     "run",
-    "rerun",
+    "recall",
     "retry",
     "reload",
     "execute",

@@ -81,6 +81,8 @@ agic wait(_: Part[]) -> Part[]:
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "canceled")
             ]
+            assert steps[0].aborted_by == control.ref
+            assert steps[0].preceded_by == (ControlRef.for_run(record.id, 0),)
             assert_run_event_integrity(tracer.events)
             assert event_labels(tracer.events) == [
                 f"run_begin:{record.id}",
@@ -147,6 +149,7 @@ agic revise(_: Part[]) -> Part[]:
             assert stored_control is not None
             assert stored_control.status == "applied"
             steps = harness.store.list_steps(run_id=record.id)
+            assert steps[1].preceded_by == (control.ref,)
             assert steps[1].input == (
                 FieldRef.from_path(StepRef.parse(f"{record.id}.0"), "output", "value"),
                 FieldRef.from_path(
@@ -161,6 +164,164 @@ agic revise(_: Part[]) -> Part[]:
             assert_run_event_integrity(tracer.events)
             assert [event.type for event in tracer.events].count("run_begin") == 1
             assert [event.type for event in tracer.events].count("run_end") == 1
+
+    asyncio.run(scenario())
+
+
+def test_immediate_steer_links_the_interrupted_step_and_the_next_begin(
+    tmp_path: Path,
+) -> None:
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic reply(_: Part[]) -> Part[]:\n  recall = none\n  user: {{_}}\n",
+        responses=[
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message.assistant("discarded")),
+                gate=gate,
+            ),
+            ModelCallResult(message=Message.assistant("revised")),
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    primary=resolve_input_parts("write"),
+                )
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
+            control = handle.steer(Message.user("change direction"), timing="immediate")
+            run = await asyncio.wait_for(handle, timeout=2)
+            assert run.status == "succeeded", run.error
+            first, second = harness.store.list_steps(run_id=run.id)
+            assert first.status == "canceled" and first.aborted_by == control.ref
+            assert second.status == "succeeded" and second.aborted_by is None
+            assert second.preceded_by == (control.ref,)
+            stored = harness.store.get_run_control(run_id=run.id, index=control.index)
+            assert stored is not None and stored.status == "applied"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("timing", ["immediate", "next_step", "next_call"])
+def test_cancel_before_first_model_call_has_a_step_boundary(
+    tmp_path: Path, timing: ControlTiming
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic reply(_: Part[]) -> Part[]:\n  user: {{_}}\n",
+        responses=[ModelCallResult(message=Message.assistant("unused"))],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    primary=resolve_input_parts("write"),
+                )
+            )
+            control = handle.cancel(timing=timing)
+            run = await asyncio.wait_for(handle, timeout=2)
+            assert run.status == "canceled"
+            steps = harness.store.list_steps(run_id=run.id)
+            assert len(steps) == 1
+            assert steps[0].status == "canceled"
+            assert steps[0].aborted_by == control.ref
+            assert steps[0].preceded_by == (ControlRef.for_run(run.id, 0),)
+            assert harness.adapter.invocations == []
+
+    asyncio.run(scenario())
+
+
+def test_immediate_steer_consumed_before_interrupt_is_not_applied_twice(
+    tmp_path: Path,
+) -> None:
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic reply(_: Part[]) -> Part[]:\n  recall = none\n  user: {{_}}\n",
+        responses=[
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message.assistant("revised")), gate=gate
+            )
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="reply",
+                    primary=resolve_input_parts("write"),
+                )
+            )
+            steer = handle.steer(Message.user("keep it short"), timing="immediate")
+            await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
+            gate.release()
+            run = await asyncio.wait_for(handle, timeout=2)
+            assert run.status == "succeeded", run.error
+            (step,) = harness.store.list_steps(run_id=run.id)
+            assert step.aborted_by is None
+            assert step.preceded_by == (ControlRef.for_run(run.id, 0), steer.ref)
+            assert harness.adapter.invocations[0].call.messages[-1] == Message.user(
+                "keep it short"
+            )
+            assert len(harness.adapter.invocations) == 1
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("timing", ["next_step", "next_call"])
+def test_cancel_before_tool_call_has_a_step_boundary(
+    tmp_path: Path, timing: ControlTiming
+) -> None:
+    gate = AsyncGate()
+    tool = RecordingTool("math__slow", output={"value": 6})
+    call = ToolCall(tool_call_id="tool-1", call_id="call-1", name=tool.name, input={})
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic reply(_: Part[]) -> Part[]:\n  user: {{_}}\n",
+        responses=[
+            ScriptedModelTurn(result=ModelCallResult(tool_calls=(call,)), gate=gate)
+        ],
+        tools={tool.name: tool},
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    primary=resolve_input_parts("calculate"),
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
+            control = handle.cancel(timing=timing)
+            gate.release()
+            run = await asyncio.wait_for(handle, timeout=2)
+            assert run.status == "canceled"
+            steps = harness.store.list_steps(run_id=run.id)
+            assert [(step.kind, step.status) for step in steps] == [
+                ("model", "succeeded"),
+                ("tool", "canceled"),
+            ]
+            assert steps[1].aborted_by == control.ref
+            assert steps[1].output is None
+            assert tool.calls == []
+            assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
 
@@ -299,6 +460,7 @@ agic calculate(_: Part[]) -> Part[]:
                 ("tool", "canceled"),
             ]
             assert steps[1].noted == ToolStepNoted(summary="Canceled slow 3")
+            assert steps[1].aborted_by == control.ref
             stored_control = harness.store.get_run_control(
                 run_id=record.id,
                 index=control.index,
@@ -325,10 +487,10 @@ agic calculate(_: Part[]) -> Part[]:
     ("timing", "expected_steps"),
     [
         ("immediate", [("run", "canceled")]),
-        ("next_step", [("run", "succeeded")]),
+        ("next_step", [("run", "succeeded"), ("value", "canceled")]),
         (
             "next_call",
-            [("run", "succeeded"), ("value", "succeeded")],
+            [("run", "succeeded"), ("value", "succeeded"), ("run", "canceled")],
         ),
     ],
 )
@@ -396,6 +558,9 @@ flow sequence(_: Text) -> Text:
                 if step.parent is None
             ]
             assert root_steps == expected_steps
+            assert (
+                harness.store.list_steps(run_id=record.id)[-1].aborted_by == control.ref
+            )
             assert harness.adapter.pending_responses == 1
             assert_run_event_integrity(tracer.events)
 
