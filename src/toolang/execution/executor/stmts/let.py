@@ -10,7 +10,7 @@ from toolang.lang.input import resolve_input_parts_with_provenance
 from toolang.state.state import StatePublication, state_program
 
 from ...calls import prompt_definitions
-from ...records import ControlRecord, StepPath
+from ...records import ControlRecord, StepRef
 from ...types import Occurrence
 from ..common import BoundRun
 from ..common import Local
@@ -25,7 +25,7 @@ async def execute(
     execution: _Execution,
     binding: BoundRun,
     locals: Mapping[str, Local],
-    path: StepPath,
+    path: StepRef,
     statement: LetStmt,
     controls: Sequence[ControlRecord],
     occurrence: Occurrence | None,

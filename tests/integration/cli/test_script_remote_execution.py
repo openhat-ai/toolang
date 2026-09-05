@@ -83,7 +83,7 @@ def test_remote_script_uses_a_script_thread_and_native_progress(
         control = core.store.get_run_control(run_id=record.id, index=0)
 
         assert record.status == "succeeded"
-        assert record.thread == threads[0].id
+        assert str(record.thread) == threads[0].id
         assert threads[0].id.startswith("script_")
         assert threads[0].origin == "script"
         assert core.store.run_output(run_id=record.id) == (TextPart("remote result"),)

@@ -18,7 +18,7 @@ from toolang.execution.schemas import (
     RunDetail,
     ThreadInfo,
 )
-from toolang.execution.types import StepPath
+from toolang.execution.types import StepRef
 from toolang.lang.types import parse_public_runnable_ref
 
 
@@ -347,7 +347,7 @@ class AuthoredRetryRequest(ApiRequest):
 
     request_id: StrictText
     commands: list[RunOverridePayload] = Field(default_factory=list)
-    anchor: StepPath | None = None
+    anchor: StepRef | None = None
 
 
 class RuntimeSandboxPayload(ApiRequest):
@@ -378,7 +378,7 @@ class RunRetryRequest(ApiRequest):
     """Request retry from one durable step boundary."""
 
     request_id: str | None = Field(default=None, min_length=1)
-    anchor: StepPath | None = None
+    anchor: StepRef | None = None
     limits: RunLimitsPayload | None = None
 
 

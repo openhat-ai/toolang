@@ -2809,8 +2809,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
     )
     pending = [
         ControlRecord(
-            target="run_1",
-            index=1,
+            id="run_1@1",
             kind="steer",
             timing="next_call",
             payload=SteerControlPayload(
@@ -2872,8 +2871,7 @@ def test_agic_commits_steer_messages_after_step_begin() -> None:
         ),
     )
     control = ControlRecord(
-        target="run_1",
-        index=1,
+        id="run_1@1",
         kind="steer",
         timing="next_call",
         payload=SteerControlPayload(
@@ -3202,7 +3200,7 @@ def _prepared_agic(
             input=RunnableInput(),
             control_locals=(),
             state=cast(Any, state),
-            state_ref=ControlRef("run_1", 0),
+            state_ref=ControlRef.for_run("run_1", 0),
             setup=AgentSetup(
                 layout=AgentLayout.resident(Path("/"), "alice"),
                 providers={},

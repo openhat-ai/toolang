@@ -12,6 +12,9 @@ from toolang.execution.inspection import ExecutionSnapshot
 from toolang.execution.store import RunStore
 from toolang.execution.trees import build_execution_tree, tree_to_data
 from toolang.execution.types import (
+    ControlRef,
+    ErrorRef,
+    FieldRef,
     IterationOccurrence,
     ModelAccounting,
     ModelCost,
@@ -19,9 +22,7 @@ from toolang.execution.types import (
     ModelUsageMeter,
     Occurrence,
     OccurrencePosition,
-    ControlRef,
-    Pointer,
-    StepPath,
+    StepRef,
 )
 from toolang.lang.ast import RunStmt, Span
 from tests.support.execution_fixtures import (
@@ -58,7 +59,7 @@ def test_tree_orders_parallel_runs_by_item_and_keeps_lane(tmp_path: Path) -> Non
             thread_id=root.thread,
             origin="test",
             input=Message.user("Second"),
-            parent=parent.path,
+            parent=parent.ref,
             context={
                 "occurrence": Occurrence(
                     item=OccurrencePosition(index=1, count=2),
@@ -72,7 +73,7 @@ def test_tree_orders_parallel_runs_by_item_and_keeps_lane(tmp_path: Path) -> Non
             thread_id=root.thread,
             origin="test",
             input=Message.user("First"),
-            parent=parent.path,
+            parent=parent.ref,
             context={
                 "occurrence": Occurrence(
                     item=OccurrencePosition(index=0, count=2),
@@ -90,7 +91,7 @@ def test_tree_orders_parallel_runs_by_item_and_keeps_lane(tmp_path: Path) -> Non
     data = tree_to_data(tree)
     assert [item["pointer"] for item in data] == [
         root.id,
-        str(parent.path),
+        str(parent.ref),
         first.id,
         second.id,
     ]
@@ -130,7 +131,7 @@ def test_tree_merges_loop_steps_and_runs_by_iteration_and_phase(
             thread_id=root.thread,
             origin="test",
             input=Message.user("Until"),
-            parent=loop.path,
+            parent=loop.ref,
             context={
                 "occurrence": Occurrence(
                     iteration=IterationOccurrence(index=0, count=1, phase="until")
@@ -139,7 +140,7 @@ def test_tree_merges_loop_steps_and_runs_by_iteration_and_phase(
         )
         body = project_step(
             store,
-            parent=loop.path,
+            parent=loop.ref,
             index=0,
             kind="value",
             status="succeeded",
@@ -161,8 +162,8 @@ def test_tree_merges_loop_steps_and_runs_by_iteration_and_phase(
 
     assert [node.pointer for node in tree.nodes] == [
         root.id,
-        str(loop.path),
-        str(body.path),
+        str(loop.ref),
+        str(body.ref),
         until_run.id,
     ]
 
@@ -196,7 +197,7 @@ def test_tree_rejects_missing_parallel_coordinates_and_multiple_run_children(
             thread_id=root.thread,
             origin="test",
             input=Message.user("Missing lane"),
-            parent=parallel.path,
+            parent=parallel.ref,
             context={
                 "occurrence": Occurrence(item=OccurrencePosition(index=0, count=1))
             },
@@ -219,14 +220,19 @@ def test_tree_rejects_missing_parallel_coordinates_and_multiple_run_children(
     duplicate = replace(
         child,
         id="run_corrupt_duplicate",
-        control=ControlRef("run_corrupt_duplicate", 0),
+        control=ControlRef.for_run("run_corrupt_duplicate", 0),
     )
-    child_entry = next(entry for entry in snapshot.entries if entry.target == child.id)
+    child_entry = next(
+        entry for entry in snapshot.entries if entry.target == child.control.target
+    )
     corrupted = ExecutionSnapshot(
         root=snapshot.root,
         runs=(*snapshot.runs, duplicate),
         steps=(run_step,),
-        entries=(*snapshot.entries, replace(child_entry, target=duplicate.id)),
+        entries=(
+            *snapshot.entries,
+            replace(child_entry, id=str(duplicate.control)),
+        ),
     )
     with pytest.raises(ValueError, match="multiple child Runs"):
         build_execution_tree(corrupted)
@@ -290,7 +296,7 @@ def test_tree_aggregates_partial_accounting_without_inventing_values(
     snapshot = replace(
         snapshot,
         steps=tuple(
-            known if step.path == first.path else step for step in snapshot.steps
+            known if step.ref == first.ref else step for step in snapshot.steps
         ),
     )
     metrics = tree_to_data(build_execution_tree(snapshot))[0]["metrics"]
@@ -337,7 +343,7 @@ def test_tree_aggregates_exact_reasoning_through_nested_runs(tmp_path: Path) -> 
             thread_id=root.thread,
             origin="test",
             input=Message.user("Child"),
-            parent=parent.path,
+            parent=parent.ref,
         )
         model = project_step(
             store,
@@ -365,7 +371,7 @@ def test_tree_aggregates_exact_reasoning_through_nested_runs(tmp_path: Path) -> 
         snapshot,
         steps=tuple(
             replace(step, noted=ModelStepNoted(accounting=accounting))
-            if step.path == model.path
+            if step.ref == model.ref
             else step
             for step in snapshot.steps
         ),
@@ -375,7 +381,7 @@ def test_tree_aggregates_exact_reasoning_through_nested_runs(tmp_path: Path) -> 
     metrics = {
         node.pointer: node.metrics
         for node in tree.nodes
-        if node.pointer in {root.id, str(parent.path), child.id, str(model.path)}
+        if node.pointer in {root.id, str(parent.ref), child.id, str(model.ref)}
     }
 
     assert all(item.reasoning_tokens == 3 for item in metrics.values())
@@ -407,7 +413,7 @@ def test_step_root_snapshot_ignores_external_parent_but_rejects_internal_orphan(
         )
         child = project_step(
             store,
-            parent=loop.path,
+            parent=loop.ref,
             index=0,
             kind="value",
             status="succeeded",
@@ -421,14 +427,14 @@ def test_step_root_snapshot_ignores_external_parent_but_rejects_internal_orphan(
             started_at="2026-01-01T00:00:00Z",
             finished_at="2026-01-01T00:00:01Z",
         )
-        snapshot = store.load_execution_snapshot(root=loop.path)
+        snapshot = store.load_execution_snapshot(root=loop.ref)
     finally:
         store.close()
 
     tree = build_execution_tree(snapshot)
-    assert [node.pointer for node in tree.nodes] == [str(loop.path), str(child.path)]
+    assert [node.pointer for node in tree.nodes] == [str(loop.ref), str(child.ref)]
 
-    orphan = replace(child, path=StepPath(root.id, (0, 1, 0)))
+    orphan = replace(child, id=str(StepRef.from_local(root.id, (0, 1, 0))))
     corrupted = replace(snapshot, steps=(loop, orphan))
     with pytest.raises(ValueError, match="orphan or cycle"):
         build_execution_tree(corrupted)
@@ -474,21 +480,24 @@ def test_tree_keeps_canonical_error_pointers_and_resolves_only_its_snapshot(
     finally:
         store.close()
 
-    first_pointer = Pointer.step(second.path, "error")
-    second_pointer = Pointer.step(first.path, "error")
+    first_pointer = FieldRef.from_path(second.ref, "error")
+    second_pointer = FieldRef.from_path(first.ref, "error")
     snapshot = replace(
         snapshot,
         steps=(
-            replace(first, error=first_pointer),
-            replace(second, error=second_pointer),
+            replace(first, error=ErrorRef(first_pointer)),
+            replace(second, error=ErrorRef(second_pointer)),
         ),
     )
     tree = build_execution_tree(snapshot)
-    first_node = next(node for node in tree.nodes if node.pointer == str(first.path))
+    first_node = next(node for node in tree.nodes if node.pointer == str(first.ref))
 
-    assert tree_to_data(tree)[1]["error"] == str(first_pointer)
+    assert tree_to_data(tree)[1]["error"] == {
+        "type": "ref",
+        "ref": str(first_pointer),
+    }
     assert tree.resolve_error(first_node.error) == (
         f"{first_pointer} (unresolved cycle)"
     )
-    missing = Pointer.step(StepPath(root.id, (9,)), "error")
-    assert tree.resolve_error(missing) == f"{missing} (unresolved)"
+    missing = ErrorRef(FieldRef.from_path(StepRef.from_local(root.id, (9,)), "error"))
+    assert tree.resolve_error(missing) == f"{missing.ref} (unresolved)"

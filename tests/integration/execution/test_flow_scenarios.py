@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -16,8 +16,8 @@ from tests.support.execution_assertions import (
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
-    RecordingTool,
     RecordingRunTracer,
+    RecordingTool,
     ScriptedModelAdapter,
     ScriptedModelTurn,
 )
@@ -28,24 +28,28 @@ from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.execution.events import RunBegin, RunEnd
 from toolang.execution.executor import RunExecutor, RunLimits
 from toolang.execution.history import RunHistory
-from toolang.execution.schemas import RunRequest, RunnableRequest
 from toolang.execution.records import (
     RerunControlPayload,
     RetryControlPayload,
     RunControlPayload,
 )
+from toolang.execution.schemas import RunnableRequest, RunRequest
 from toolang.execution.trees import build_execution_tree
 from toolang.execution.types import (
     CollectionStepNoted,
+    ControlRef,
+    ErrorMessage,
+    ErrorRef,
+    FieldRef,
     IterationOccurrence,
     Local,
     LoopStepNoted,
     Occurrence,
     OccurrencePosition,
-    StepPath,
+    RunRef,
+    StepRef,
     ThreadPrefix,
-    Pointer,
-    TypedPointer,
+    TypedRef,
 )
 from toolang.lang.input import RunnableInputRaw, resolve_input_parts
 from toolang.lang.types import Array
@@ -144,7 +148,7 @@ flow relay(_: Part[]) -> Part[]:
             assert len(children) == 1
             child = children[0]
             assert child.status == "succeeded"
-            assert child.parent == StepPath.parse(f"{root.id}.0")
+            assert child.parent == StepRef.parse(f"{root.id}.0")
             assert harness.store.root_run_id(run_id=child.id) == root.id
             child_run_control = harness.store.get_run_control(run_id=child.id, index=0)
             root_run_control = harness.store.get_run_control(run_id=root.id, index=0)
@@ -180,7 +184,7 @@ flow relay(_: Part[]) -> Part[]:
             ]
             call = build_execution_tree(
                 harness.store.load_execution_snapshot(
-                    root=StepPath.parse(f"{root.id}.0")
+                    root=StepRef.parse(f"{root.id}.0")
                 )
             )
             assert [node.pointer for node in call.nodes] == [
@@ -403,17 +407,19 @@ flow staged(_: Part[]) -> Part[]:
             )
             assert failed.status == "failed"
             before = harness.store.list_steps(run_id=failed.id)
-            assert [(step.path.index, step.status) for step in before] == [
+            assert [(step.ref.index, step.status) for step in before] == [
                 (0, "succeeded"),
                 (1, "failed"),
             ]
             assert before[1].input == (
-                Pointer.control(failed.id, 0, "payload", "locals", 0, "value"),
+                FieldRef.from_path(
+                    ControlRef.for_run(failed.id, 0), "payload", "locals", 0, "value"
+                ),
             )
             previous_child = next(
                 run
                 for run in harness.store.list_runs(thread_id=thread, limit=None)
-                if run.parent == before[1].path
+                if run.parent == before[1].ref
             )
             environment = harness.setup.environment
             assert environment is not None
@@ -448,7 +454,7 @@ flow staged(_: Part[]) -> Part[]:
                 TextPart("recovered"),
             )
             active = harness.store.list_steps(run_id=retried.id)
-            assert [(step.path.index, step.status) for step in active] == [
+            assert [(step.ref.index, step.status) for step in active] == [
                 (0, "succeeded"),
                 (1, "succeeded"),
             ]
@@ -468,7 +474,7 @@ flow staged(_: Part[]) -> Part[]:
             assert retry.kind == "retry"
             assert isinstance(retry.payload, RetryControlPayload)
             assert isinstance(run_control.payload, RunControlPayload)
-            assert retry.payload.retry_from == before[1].path
+            assert retry.payload.retry_from == before[1].ref
             assert retry.payload.runnable == run_control.payload.runnable
             assert retry.payload.model == run_control.payload.model
             assert retry.payload.limits == run_control.payload.limits
@@ -481,9 +487,7 @@ flow staged(_: Part[]) -> Part[]:
                 include_ejected=True,
             )
             assert harness.store.get_run(run_id=previous_child.id) is None
-            replacement_child = next(
-                run for run in runs if run.parent == before[1].path
-            )
+            replacement_child = next(run for run in runs if run.parent == before[1].ref)
             assert replacement_child.id != previous_child.id
             assert len(harness.adapter.invocations) == 2
 
@@ -540,12 +544,12 @@ flow staged(_: Part[]) -> Part[]:
             retry = harness.store.list_run_controls(run_id=run.id)[-1]
             assert retry.kind == "retry"
             assert isinstance(retry.payload, RetryControlPayload)
-            assert retry.payload.retry_from == original[0].path
+            assert retry.payload.retry_from == original[0].ref
             current = harness.store.list_steps(
                 run_id=run.id,
                 include_ejected=True,
             )
-            assert [(step.path.index, step.kind) for step in current] == [
+            assert [(step.ref.index, step.kind) for step in current] == [
                 (0, "run"),
                 (1, "value"),
             ]
@@ -618,7 +622,7 @@ agic reply(_: Part[], tone: Text, tags: Text[]) -> Part[]:
             assert isinstance(source_control.payload, RunControlPayload)
             assert source_control.payload.sandbox == "host"
             assert rerun_control.payload.sandbox == "docker:python:3.13-slim"
-            assert rerun_control.payload.rerun_from == source.id
+            assert str(rerun_control.payload.rerun_from) == source.id
             assert rerun_control.payload.runnable == source_control.payload.runnable
             assert rerun_control.payload.model == source_control.payload.model
             assert rerun_control.payload.limits == source_control.payload.limits
@@ -629,7 +633,7 @@ agic reply(_: Part[], tone: Text, tags: Text[]) -> Part[]:
             assert [run.id for run in projected.runs] == [source.id, rerun.id]
             payload = projected.runs[1].controls[0].payload
             assert isinstance(payload, RerunControlPayload)
-            assert payload.rerun_from == source.id
+            assert str(payload.rerun_from) == source.id
             assert [call.call.messages for call in harness.adapter.invocations] == [
                 [Message.user('Reply to hello in brief with ["one","two"].')],
                 [Message.user('Reply to hello in brief with ["one","two"].')],
@@ -687,13 +691,13 @@ flow staged(_: Part[]) -> Part[]:
 
             assert run.status == "succeeded"
             assert [
-                step.path.index for step in harness.store.list_steps(run_id=run.id)
+                step.ref.index for step in harness.store.list_steps(run_id=run.id)
             ] == [0, 1]
             current = harness.store.list_steps(
                 run_id=run.id,
                 include_ejected=True,
             )
-            assert [step.path.index for step in current] == [0, 1]
+            assert [step.ref.index for step in current] == [0, 1]
             assert all(step.ejected_by is None for step in current)
 
     asyncio.run(scenario())
@@ -748,7 +752,9 @@ flow twice(_: Part[]) -> Part[]:
             )
 
             assert run.status == "failed"
-            assert run.error == Pointer.step(StepPath(run.id, (1,)), "error")
+            assert run.error == ErrorRef(
+                FieldRef.from_path(StepRef.from_local(run.id, (1,)), "error")
+            )
             retry = harness.store.list_run_controls(run_id=run.id)[-1]
             assert isinstance(retry.payload, RetryControlPayload)
             assert retry.payload.limits == RunLimits(tokens=2)
@@ -810,16 +816,18 @@ flow parallel(_: Part[]):
                 "failed",
             ]
             failed_child = next(run for run in children if run.status == "failed")
-            leaf_path = StepPath(failed_child.id, (0,))
-            root_path = StepPath(root.id, (0,))
+            leaf_path = StepRef.from_local(failed_child.id, (0,))
+            root_path = StepRef.from_local(root.id, (0,))
             root_step = harness.store.list_steps(run_id=root.id)[0]
             leaf_step = harness.store.list_steps(run_id=failed_child.id)[0]
-            assert root.error == Pointer.step(root_path, "error")
+            assert root.error == ErrorRef(FieldRef.from_path(root_path, "error"))
             boundary_error = "parallel step stopped because lane 0 (#0) failed"
-            assert root_step.error == boundary_error
-            assert failed_child.error == Pointer.step(leaf_path, "error")
-            assert leaf_step.error == "worker failed"
-            assert isinstance(root.error, Pointer)
+            assert root_step.error == ErrorMessage(boundary_error)
+            assert failed_child.error == ErrorRef(
+                FieldRef.from_path(leaf_path, "error")
+            )
+            assert leaf_step.error == ErrorMessage("worker failed")
+            assert isinstance(root.error, ErrorRef)
             assert harness.store.resolve_error(root.error) == boundary_error
             detail = RunHistory(harness.store).get_run(root.id)
             assert detail is not None
@@ -867,8 +875,8 @@ flow fail(_: Part[]) -> Number:
             )
 
             assert record.status == "failed"
-            assert isinstance(record.error, str)
-            assert record.error.startswith("output is not valid Number")
+            assert isinstance(record.error, ErrorMessage)
+            assert record.error.message.startswith("output is not valid Number")
             steps = harness.store.list_steps(run_id=record.id)
             assert [(step.kind, step.status) for step in steps] == [
                 ("value", "succeeded"),
@@ -981,11 +989,13 @@ flow parent(_: Part[]) -> Number:
                 if run.parent is not None
             )
             parent_step = harness.store.list_steps(run_id=root.id)[0]
-            assert isinstance(child.error, str)
-            assert child.error.startswith("output is not valid Number")
-            assert isinstance(parent_step.error, Pointer)
-            assert parent_step.error == Pointer.run(child.id, "error")
-            assert harness.store.resolve_error(parent_step.error) == child.error
+            assert isinstance(child.error, ErrorMessage)
+            assert child.error.message.startswith("output is not valid Number")
+            assert isinstance(parent_step.error, ErrorRef)
+            assert parent_step.error == ErrorRef(
+                FieldRef.from_path(RunRef.parse(child.id), "error")
+            )
+            assert harness.store.resolve_error(parent_step.error) == child.error.message
 
     asyncio.run(scenario())
 
@@ -1042,7 +1052,7 @@ flow mapped(_: Text) -> Text[]:
                     thread_id=thread,
                     limit=None,
                 )
-                if run.parent == StepPath.parse(f"{root.id}.1")
+                if run.parent == StepRef.parse(f"{root.id}.1")
             ]
             assert sorted(
                 run.occur.item.index
@@ -1796,7 +1806,9 @@ flow repeated(_: Text) -> Text:
                 if run.parent is not None
             ]
             assert root.status == "failed"
-            assert root.error == Pointer.step(StepPath(root.id, (0,)), "error")
+            assert root.error == ErrorRef(
+                FieldRef.from_path(StepRef.from_local(root.id, (0,)), "error")
+            )
             assert len(harness.adapter.invocations) == 2
             assert sorted(run.status for run in children) == ["failed", "succeeded"]
             root_run_control = harness.store.get_run_control(run_id=root.id, index=0)
@@ -1879,7 +1891,7 @@ flow repeated(_: Text) -> Text:
             tree = build_execution_tree(
                 harness.store.load_execution_snapshot(root=root.id)
             )
-            direct = [node for node in tree.nodes if node.parent == str(loop.path)]
+            direct = [node for node in tree.nodes if node.parent == str(loop.ref)]
             iterations = []
             for node in direct:
                 assert node.occur is not None
@@ -1943,14 +1955,16 @@ flow invalid(_: Text) -> Text:
 
             error = f"{operation} requires current shape list, got item"
             assert root.status == "failed"
-            assert root.error == Pointer.step(StepPath(root.id, (0,)), "error")
+            assert root.error == ErrorRef(
+                FieldRef.from_path(StepRef.from_local(root.id, (0,)), "error")
+            )
             steps = [
                 step
                 for step in harness.store.list_steps(run_id=root.id)
                 if step.parent is None
             ]
             assert [(step.kind, step.status, step.error) for step in steps] == [
-                (step_kind, "failed", error)
+                (step_kind, "failed", ErrorMessage(error))
             ]
             assert harness.adapter.invocations == []
             assert_run_event_integrity(tracer.events)
@@ -2110,14 +2124,20 @@ flow relay(_: Text, suffix: Text) -> Text:
             suffix = next(
                 local for local in run_control.payload.locals if local.name == "suffix"
             )
-            assert suffix.value == TypedPointer(
+            assert suffix.value == TypedRef(
+                FieldRef.from_path(
+                    ControlRef.for_run(root.id, 0), "payload", "locals", 1, "value"
+                ),
                 "Text",
-                Pointer.control(root.id, 0, "payload", "locals", 1, "value"),
             )
             parent_step = harness.store.list_steps(run_id=root.id)[0]
             assert parent_step.input == (
-                Pointer.control(root.id, 0, "payload", "locals", 0, "value"),
-                Pointer.control(root.id, 0, "payload", "locals", 1, "value"),
+                FieldRef.from_path(
+                    ControlRef.for_run(root.id, 0), "payload", "locals", 0, "value"
+                ),
+                FieldRef.from_path(
+                    ControlRef.for_run(root.id, 0), "payload", "locals", 1, "value"
+                ),
             )
             assert harness.store.run_output_text(run_id=root.id) == "hello!"
 

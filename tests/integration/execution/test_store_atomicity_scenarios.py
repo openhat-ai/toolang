@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -19,19 +19,21 @@ from toolang.base.types.run import ModelCall
 from toolang.base.types.tool import ToolDefinition
 from toolang.execution.errors import RunStoreSchemaError
 from toolang.execution.records import (
-    RerunControlPayload,
     ReloadControlPayload,
+    RerunControlPayload,
     RetryControlPayload,
     RunControlPayload,
 )
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     ControlRef,
+    FieldRef,
     Local,
     ModelStepGiven,
     Pointer,
+    RunRef,
     RunStatus,
-    StepPath,
+    StepRef,
 )
 from toolang.lang.ast import LetStmt, Span
 
@@ -66,7 +68,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
         )
         step = project_step(
             store,
-            parent=StepPath(root.id, (2,)),
+            parent=StepRef.from_local(root.id, (2,)),
             index=3,
             kind="value",
             status="succeeded",
@@ -81,7 +83,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             thread_id=root.thread,
             origin="chat",
             input=Message.user("child"),
-            parent=step.path,
+            parent=step.ref,
         )
 
         connection = sqlite3.connect(store.db_path)
@@ -92,7 +94,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             assert connection.execute(
                 "SELECT parent FROM runs WHERE id = 'run_dot_child'"
             ).fetchone() == ("run_dot_path.2.3",)
-            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 33
+            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 34
         finally:
             connection.close()
     finally:
@@ -126,9 +128,7 @@ def test_list_controls_orders_mixed_scopes_without_status_reordering(
         )
 
         before = store.list_controls()
-        pointers = tuple(
-            str(Pointer.control(control.target, control.index)) for control in before
-        )
+        pointers = tuple(control.id for control in before)
         assert pointers == (
             "term_control_new@0",
             "run_control_order@1",
@@ -146,12 +146,7 @@ def test_list_controls_orders_mixed_scopes_without_status_reordering(
         )
 
         after = store.list_controls()
-        assert (
-            tuple(
-                str(Pointer.control(control.target, control.index)) for control in after
-            )
-            == pointers
-        )
+        assert tuple(control.id for control in after) == pointers
         assert next(
             control for control in after if control.index == steer.index
         ).status == ("applied")
@@ -187,7 +182,7 @@ def test_list_controls_excludes_controls_for_hidden_runs(tmp_path: Path) -> None
             thread_id=visible.thread,
             origin="chat",
             input=Message.user("child"),
-            parent=parent.path,
+            parent=parent.ref,
             created_at="2026-01-01T00:01:00Z",
         )
         project_run_end(store, run_id=child.id)
@@ -201,7 +196,7 @@ def test_list_controls_excludes_controls_for_hidden_runs(tmp_path: Path) -> None
             created_at="2026-01-01T00:02:00Z",
         )
         project_run_end(store, run_id=hidden.id)
-        thread = store.get_thread(thread_id=visible.thread)
+        thread = store.get_thread(thread_id=str(visible.thread))
         assert thread is not None
         _updated, rewind, _ejected = store.rewind_thread(
             thread_id=thread.id,
@@ -214,23 +209,19 @@ def test_list_controls_excludes_controls_for_hidden_runs(tmp_path: Path) -> None
             store.db_path,
             f"""
             UPDATE steps
-            SET ejected_by_target = '{rewind.target}',
-                ejected_by_index = {rewind.index}
-            WHERE run = '{parent.path.run}' AND path = '{parent.path.local}';
+            SET ejected_by = '{rewind.ref}'
+            WHERE run = '{parent.ref.run}' AND path = '{parent.ref.local}';
             """,
         )
 
-        pointers = {
-            str(Pointer.control(control.target, control.index))
-            for control in store.list_controls()
-        }
+        pointers = {control.id for control in store.list_controls()}
         assert pointers == {
             "term_control_visibility@0",
             f"term_control_visibility@{rewind.index}",
             "run_control_visible@0",
         }
-        assert store.get_record(Pointer.control(child.id, 0)) is None
-        assert store.get_record(Pointer.control(hidden.id, 0)) is None
+        assert store.get_record(Pointer(ControlRef.for_run(child.id, 0))) is None
+        assert store.get_record(Pointer(ControlRef.for_run(hidden.id, 0))) is None
     finally:
         store.close()
 
@@ -523,9 +514,9 @@ def test_retry_reopens_root_from_a_failed_value_step(
         assert reopened.error is None
         assert control.kind == "retry"
         assert isinstance(control.payload, RetryControlPayload)
-        assert control.payload.retry_from == failed.path
+        assert control.payload.retry_from == failed.ref
         assert control.status == "applied"
-        assert trimmed == (failed.path,)
+        assert trimmed == (failed.ref,)
         assert store.list_steps(run_id=run.id) == [first, upstream]
         assert store.list_steps(run_id=run.id, include_ejected=True) == [
             first,
@@ -548,7 +539,7 @@ def test_reload_control_records_state_and_has_one_claim_or_revocation_winner(
             input=Message.user("hello"),
             runnable_kind="flow",
         )
-        assert run.state == ControlRef(run.id, 0)
+        assert run.state == ControlRef.for_run(run.id, 0)
         step = project_step(
             store,
             run_id=run.id,
@@ -577,9 +568,9 @@ def test_reload_control_records_state_and_has_one_claim_or_revocation_winner(
             created_at="2026-01-01T00:00:02Z",
         )
         assert isinstance(claimed.payload, ReloadControlPayload)
-        assert store.resolve_state_revision(ControlRef(run.id, claimed.index)) == (
-            "1" * 64
-        )
+        assert store.resolve_state_revision(
+            ControlRef.for_run(run.id, claimed.index)
+        ) == ("1" * 64)
         assert store.claim_run_controls(run_id=run.id, indexes=(claimed.index,)) == {
             claimed.index
         }
@@ -662,7 +653,7 @@ def test_retry_allows_unapplied_reload_history(
             request_id=f"retry-{unapplied_status}",
             created_at="2026-01-01T00:00:03Z",
         )
-        assert reopened.state == ControlRef(run.id, 0)
+        assert reopened.state == ControlRef.for_run(run.id, 0)
         assert isinstance(retry.payload, RetryControlPayload)
         assert retry.payload.state is None
     finally:
@@ -752,7 +743,7 @@ def test_retry_rejects_applied_execute_history_without_mutation(
         entry = store.get_run_control(run_id=run.id, index=0)
         assert entry is not None and isinstance(entry.payload, RunControlPayload)
         assert entry.payload.state is not None
-        source = Pointer.step(model.path, "output", "value", 0)
+        source = FieldRef.from_path(model.ref, "output", "value", 0)
         execute = store.accept_execute_control(
             run_id=run.id,
             state=entry.payload.state,
@@ -879,7 +870,7 @@ def test_retry_preserves_child_controls_and_revision_monotonicity(
             thread_id=root.thread,
             origin="chat",
             input=Message.user("child"),
-            parent=parent.path,
+            parent=parent.ref,
         )
         pending = store.accept_run_control(
             run_id=child.id,
@@ -923,8 +914,8 @@ def test_retry_preserves_child_controls_and_revision_monotonicity(
         latest, changed = store.changed_run_controls(after_revision=revision)
         assert latest > revision
         assert [(item.target, item.kind, item.status) for item in changed] == [
-            (root.id, "retry", "applied"),
-            (child.id, "steer", "wontapply"),
+            (RunRef(root.id), "retry", "applied"),
+            (RunRef(child.id), "steer", "wontapply"),
         ]
         assert store.get_run(run_id=child.id) is None
         assert store.get_run_control(run_id=child.id, index=0) is not None
@@ -1027,7 +1018,7 @@ def test_retry_anchor_selection_distinguishes_run_outcomes_and_explicit_values(
         assert isinstance(run_control.payload, RunControlPayload)
         _reopened, control, trimmed = store.accept_retry(
             run_id=run.id,
-            anchor=steps[explicit_anchor].path if explicit_anchor is not None else None,
+            anchor=steps[explicit_anchor].ref if explicit_anchor is not None else None,
             resources=run_control.payload.resources,
             limits=run_control.payload.limits,
             runnable=run_control.payload.runnable,
@@ -1040,12 +1031,12 @@ def test_retry_anchor_selection_distinguishes_run_outcomes_and_explicit_values(
         )
 
         assert isinstance(control.payload, RetryControlPayload)
-        assert control.payload.retry_from == steps[expected_anchor].path
-        expected_paths = tuple(steps[index].path for index in expected_trimmed)
+        assert control.payload.retry_from == steps[expected_anchor].ref
+        expected_paths = tuple(steps[index].ref for index in expected_trimmed)
         assert trimmed == expected_paths
         assert {
-            step.path for step in store.list_steps(run_id=run.id, include_ejected=True)
-        } == {step.path for step in steps} - set(expected_paths)
+            step.ref for step in store.list_steps(run_id=run.id, include_ejected=True)
+        } == {step.ref for step in steps} - set(expected_paths)
     finally:
         store.close()
 
@@ -1074,7 +1065,7 @@ def test_rerun_acceptance_preserves_the_source_and_allows_repeated_reruns(
             store,
             run_id="run_rerun",
             parent=None,
-            thread=source.thread,
+            thread=str(source.thread),
             input=Message.user("hello"),
             context={"root": "run_rerun"},
             request_id="rerun-1",
@@ -1087,7 +1078,7 @@ def test_rerun_acceptance_preserves_the_source_and_allows_repeated_reruns(
             store,
             run_id="run_rerun_again",
             parent=None,
-            thread=source.thread,
+            thread=str(source.thread),
             input=Message.user("hello"),
             context={"root": "run_rerun_again"},
             request_id="rerun-2",
@@ -1101,10 +1092,10 @@ def test_rerun_acceptance_preserves_the_source_and_allows_repeated_reruns(
         assert stored_source.ejected_by is None
         assert control.kind == "rerun"
         assert isinstance(control.payload, RerunControlPayload)
-        assert control.payload.rerun_from == source.id
+        assert str(control.payload.rerun_from) == source.id
         assert second_control.kind == "rerun"
         assert isinstance(second_control.payload, RerunControlPayload)
-        assert second_control.payload.rerun_from == source.id
+        assert str(second_control.payload.rerun_from) == source.id
         assert [run.id for run in store.list_runs(limit=None)] == [
             second_rerun.id,
             rerun.id,
@@ -1133,10 +1124,10 @@ def test_rerun_does_not_read_or_write_source_ejection(tmp_path: Path) -> None:
             input=Message.user("source"),
         )
         project_run_end(store, run_id=source.id)
-        thread = store.get_thread(thread_id=source.thread)
+        thread = store.get_thread(thread_id=str(source.thread))
         assert thread is not None
         store.rewind_thread(
-            thread_id=source.thread,
+            thread_id=str(source.thread),
             anchor=anchor.id,
             request_id=None,
             expected_head=thread.head,
@@ -1149,7 +1140,7 @@ def test_rerun_does_not_read_or_write_source_ejection(tmp_path: Path) -> None:
             store,
             run_id="run_from_ejected_source",
             parent=None,
-            thread=source.thread,
+            thread=str(source.thread),
             input=Message.user("source"),
             context={},
             request_id="rerun-ejected-source",
@@ -1163,7 +1154,7 @@ def test_rerun_does_not_read_or_write_source_ejection(tmp_path: Path) -> None:
         assert unchanged_source.ejected_by == ejected_source.ejected_by
         assert rerun.ejected_by is None
         assert isinstance(control.payload, RerunControlPayload)
-        assert control.payload.rerun_from == source.id
+        assert str(control.payload.rerun_from) == source.id
     finally:
         store.close()
 
@@ -1216,10 +1207,10 @@ def test_retry_does_not_read_or_write_ejection_fields(tmp_path: Path) -> None:
             status="failed",
             error="temporary failure",
         )
-        thread = store.get_thread(thread_id=source.thread)
+        thread = store.get_thread(thread_id=str(source.thread))
         assert thread is not None
         _thread, rewind, _ejected = store.rewind_thread(
-            thread_id=source.thread,
+            thread_id=str(source.thread),
             anchor=anchor.id,
             request_id=None,
             expected_head=thread.head,
@@ -1229,9 +1220,8 @@ def test_retry_does_not_read_or_write_ejection_fields(tmp_path: Path) -> None:
             store.db_path,
             f"""
             UPDATE steps
-            SET ejected_by_target = '{rewind.target}',
-                ejected_by_index = {rewind.index}
-            WHERE run = '{source.id}' AND path = '{failed.path.local}';
+            SET ejected_by = '{rewind.ref}'
+            WHERE run = '{source.id}' AND path = '{failed.ref.local}';
             """,
         )
         ejected_source = store.get_run(run_id=source.id)
@@ -1256,8 +1246,8 @@ def test_retry_does_not_read_or_write_ejection_fields(tmp_path: Path) -> None:
 
         assert reopened.ejected_by == ejected_source.ejected_by
         assert isinstance(retry.payload, RetryControlPayload)
-        assert retry.payload.retry_from == failed.path
-        assert trimmed == (failed.path,)
+        assert retry.payload.retry_from == failed.ref
+        assert trimmed == (failed.ref,)
         assert store.list_steps(run_id=source.id, include_ejected=True) == [retained]
     finally:
         store.close()
@@ -1302,12 +1292,11 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
         with pytest.raises(sqlite3.IntegrityError):
             with store.write_transaction():
                 store.begin_step(
-                    path=StepPath("run_atomic_event", (0,)),
+                    ref=StepRef.from_local("run_atomic_event", (0,)),
                     kind="value",
                     input=(
-                        Pointer.control(
-                            "run_atomic_event",
-                            control.index,
+                        FieldRef.from_path(
+                            ControlRef.for_run("run_atomic_event", control.index),
                             "payload",
                             "locals",
                             0,
@@ -1364,12 +1353,12 @@ def test_model_blobs_roll_back_when_the_model_step_cannot_be_inserted(
         )
         with pytest.raises(sqlite3.IntegrityError):
             store.begin_step(
-                path=StepPath("run_atomic_model", (0,)),
+                ref=StepRef.from_local("run_atomic_model", (0,)),
                 kind="model",
                 input=(),
                 occurrence=None,
                 given=ModelStepGiven(model="test/model", call=call),
-                state=ControlRef("run_atomic_model", 0),
+                state=ControlRef.for_run("run_atomic_model", 0),
                 started_at="2026-01-01T00:00:00Z",
             )
 
@@ -1422,7 +1411,7 @@ def test_run_control_revision_only_advances_when_control_state_changes(
         )
 
         canceled = store.cancel_run_control(
-            run_id=steer.target,
+            run_id=str(steer.target),
             index=steer.index,
             canceled_at="2026-01-01T00:00:02Z",
         )
@@ -1491,17 +1480,17 @@ def test_claimed_control_cannot_be_canceled_before_its_event_is_persisted(
         )
 
         assert store.claim_run_controls(
-            run_id=control.target,
+            run_id=str(control.target),
             indexes=(control.index,),
         ) == {control.index}
         with pytest.raises(ValueError, match="already being applied"):
             store.cancel_run_control(
-                run_id=control.target,
+                run_id=str(control.target),
                 index=control.index,
                 canceled_at="2026-01-01T00:00:02Z",
             )
         unchanged = store.get_run_control(
-            run_id=control.target,
+            run_id=str(control.target),
             index=control.index,
         )
         assert unchanged is not None

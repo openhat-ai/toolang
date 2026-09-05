@@ -31,7 +31,7 @@ from toolang.execution.schemas import (
     RunRequest,
     RunnableRequest,
 )
-from toolang.execution.types import RunCommand, StepPath, ThreadPrefix
+from toolang.execution.types import ErrorMessage, RunCommand, StepRef, ThreadPrefix
 from toolang.execution.values import parts_from_local
 from toolang.lang import Program
 from toolang.lang.input import RunnableInputRaw
@@ -152,7 +152,7 @@ def test_restart_requests_keep_retry_and_rerun_inputs_unambiguous() -> None:
         source="run_source",
         commands=(RunCommand("limit", "tokens", 10),),
         request_id="retry_request",
-        anchor=StepPath("run_source", (1,)),
+        anchor=StepRef.from_local("run_source", (1,)),
     )
     rerun = RerunRequest(
         source="run_source",
@@ -173,11 +173,11 @@ def test_restart_requests_keep_retry_and_rerun_inputs_unambiguous() -> None:
         "model",
         "model_override",
     }
-    assert retry.anchor == StepPath("run_source", (1,))
+    assert retry.anchor == StepRef.from_local("run_source", (1,))
     assert rerun.source == retry.source
 
     with pytest.raises(ValueError, match="anchor must belong"):
-        replace(retry, anchor=StepPath("run_other", (1,)))
+        replace(retry, anchor=StepRef.from_local("run_other", (1,)))
     with pytest.raises(ValueError, match="cannot replace the persisted runnable"):
         replace(
             rerun,
@@ -725,7 +725,7 @@ def test_local_client_returns_caller_facing_steer_and_cancel_controls(
             TextPart("user canceled"),
         )
         assert detail.status == "canceled"
-        assert detail.error == "user canceled"
+        assert detail.error == ErrorMessage("user canceled")
 
         await client.disconnect()
 

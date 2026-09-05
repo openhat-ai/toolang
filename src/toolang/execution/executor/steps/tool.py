@@ -25,9 +25,10 @@ from toolang.state.state import AgentState, StatePublication
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
 from ...types import (
     ControlRef,
+    ErrorMessage,
+    FieldRef,
     Local,
-    Pointer,
-    StepPath,
+    StepRef,
     ToolStepGiven,
     ToolStepNoted,
 )
@@ -74,11 +75,11 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     step_started = time.perf_counter()
     started_at = utc_now()
     source = state.tool_call_sources.get(call.tool_call_id)
-    step_input: tuple[Pointer, ...]
+    step_input: tuple[FieldRef, ...]
     if source is not None:
         step_input = (
-            Pointer.step(
-                StepPath(run.run_id, (source[0],)),
+            FieldRef.from_path(
+                StepRef.from_local(run.run_id, (source[0],)),
                 "output",
                 "value",
                 source[1],
@@ -86,8 +87,8 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         )
     elif state.last_step is not None:
         step_input = (
-            Pointer.step(
-                StepPath(run.run_id, (state.last_step,)),
+            FieldRef.from_path(
+                StepRef.from_local(run.run_id, (state.last_step,)),
                 "output",
                 "value",
             ),
@@ -115,7 +116,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         plugin_name = _plugin_name(tool)
         summary_context = _tool_summary_context(call, tool)
         return StepBegin(
-            step=StepPath(run.run_id, (step_index,)),
+            step=StepRef.from_local(run.run_id, (step_index,)),
             kind="tool",
             state=state_ref,
             input=step_input,
@@ -147,7 +148,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     except asyncio.CancelledError:
         await state.emit(
             StepEnd(
-                step=StepPath(run.run_id, (step_index,)),
+                step=StepRef.from_local(run.run_id, (step_index,)),
                 kind="tool",
                 status="canceled",
                 noted=ToolStepNoted(summary=_tool_summary(summary_context, "canceled")),
@@ -159,11 +160,11 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         error = str(exc) or type(exc).__name__
         await state.emit(
             StepEnd(
-                step=StepPath(run.run_id, (step_index,)),
+                step=StepRef.from_local(run.run_id, (step_index,)),
                 kind="tool",
                 status="failed",
                 noted=ToolStepNoted(summary=_tool_summary(summary_context, "failed")),
-                error=error,
+                error=ErrorMessage(error),
                 finished_at=utc_now(),
             )
         )
@@ -176,7 +177,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             error,
             elapsed_ms(step_started),
         )
-        raise _StepFailed(StepPath(run.run_id, (step_index,)), exc) from exc
+        raise _StepFailed(StepRef.from_local(run.run_id, (step_index,)), exc) from exc
     part = ToolResultPart(
         tool_call_id=record.tool_call_id,
         call_id=record.call_id,
@@ -187,14 +188,14 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     )
     await state.emit(
         PartBegin(
-            step=StepPath(run.run_id, (step_index,)),
+            step=StepRef.from_local(run.run_id, (step_index,)),
             part=0,
             part_type=part.type,
         )
     )
     await state.emit(
         PartEnd(
-            step=StepPath(run.run_id, (step_index,)),
+            step=StepRef.from_local(run.run_id, (step_index,)),
             part=0,
             data=part,
         )
@@ -209,13 +210,13 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     )
     await state.emit(
         StepEnd(
-            step=StepPath(run.run_id, (step_index,)),
+            step=StepRef.from_local(run.run_id, (step_index,)),
             kind="tool",
             status=status,
             output=Local.typed("ToolResultPart", part, None, 0),
             noted=ToolStepNoted(summary=_tool_summary(summary_context, status)),
             finished_at=utc_now(),
-            error=record.error,
+            error=ErrorMessage(record.error) if record.error is not None else None,
         )
     )
     state.messages.append(_followup_message(record))

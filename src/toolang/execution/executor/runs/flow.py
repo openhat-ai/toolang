@@ -9,7 +9,7 @@ from toolang.common.errors import ToolangError
 from toolang.lang.ast import FlowDecl, FlowStmt, RepeatStmt
 from toolang.lang.input import coerce_output
 
-from ...types import Occurrence, StepPath
+from ...types import Occurrence, StepRef
 from ..common import BoundRun
 from ..common import (
     Local,
@@ -80,7 +80,7 @@ async def execute_statements(
     statements: Sequence[FlowStmt],
     locals: dict[str, Local],
     *,
-    parent: StepPath | None,
+    parent: StepRef | None,
     start: int = 0,
     occurrence: Occurrence | None = None,
 ) -> int:
@@ -93,7 +93,7 @@ async def execute_statements(
             call=statement_has_call(statement),
         )
         path = (
-            StepPath(binding.run_id, (index,))
+            StepRef.from_local(binding.run_id, (index,))
             if parent is None
             else parent.child(index)
         )

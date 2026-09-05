@@ -14,7 +14,7 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.types import StepPath, Pointer, TypedPointer
+from toolang.execution.types import FieldRef, RunRef, StepRef, TypedRef
 from toolang.lang.types import Array
 
 
@@ -45,10 +45,10 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
 
     active_runs: set[str] = set()
     ended_runs: set[str] = set()
-    active_steps: dict[StepPath, StepBegin] = {}
-    ended_steps: dict[StepPath, StepEnd] = {}
-    active_parts: dict[tuple[StepPath, int], PartBegin] = {}
-    ended_parts: dict[tuple[StepPath, int], PartEnd] = {}
+    active_steps: dict[StepRef, StepBegin] = {}
+    ended_steps: dict[StepRef, StepEnd] = {}
+    active_parts: dict[tuple[StepRef, int], PartBegin] = {}
+    ended_parts: dict[tuple[StepRef, int], PartEnd] = {}
 
     for position, event in enumerate(events):
         where = f"event {position} ({event.type})"
@@ -59,7 +59,7 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
             continue
 
         if isinstance(event, StepBegin):
-            run_id = event.step.run
+            run_id = event.step.run_id
             assert run_id in active_runs, f"step outside active run at {where}"
             assert event.step not in active_steps, f"duplicate step begin at {where}"
             assert event.step not in ended_steps, f"step restarted at {where}"
@@ -107,7 +107,7 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
                     for key, ended in sorted(
                         ended_parts.items(),
                         key=lambda item: (
-                            item[0][0].run,
+                            item[0][0].run_id,
                             item[0][0].indices,
                             item[0][1],
                         ),
@@ -128,19 +128,19 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
         assert isinstance(event, RunEnd)
         assert event.run in active_runs, f"run end without begin at {where}"
         assert event.run not in ended_runs, f"duplicate run end at {where}"
-        assert not any(step.run == event.run for step in active_steps), (
+        assert not any(step.run_id == event.run for step in active_steps), (
             f"run ended with active steps at {where}"
         )
-        if event.output is not None and isinstance(event.output.value, TypedPointer):
-            pointer = event.output.value.pointer
-            if pointer.kind == "step":
+        if event.output is not None and isinstance(event.output.value, TypedRef):
+            pointer = event.output.value.ref
+            if isinstance(pointer.record, StepRef):
                 assert any(
-                    Pointer.step(step, "output", "value") == pointer
+                    FieldRef.from_path(step, "output", "value") == pointer
                     for step in ended_steps
                 ), f"run output references an incomplete step at {where}"
-            elif pointer.kind == "run":
-                assert pointer == Pointer.run(pointer.record, "output", "value")
-                assert pointer.record in ended_runs, (
+            elif isinstance(pointer.record, RunRef):
+                assert pointer == FieldRef.from_path(pointer.record, "output", "value")
+                assert str(pointer.record) in ended_runs, (
                     f"run output references an incomplete child run at {where}"
                 )
         active_runs.remove(event.run)

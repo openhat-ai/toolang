@@ -21,9 +21,11 @@ from tests.support.execution_harness import (
 from toolang.base.types.message import Message, TextPart, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.types import (
+    ControlRef,
     ControlTiming,
-    Pointer,
-    StepPath,
+    ErrorMessage,
+    FieldRef,
+    StepRef,
     ThreadPrefix,
     ToolStepNoted,
 )
@@ -68,7 +70,7 @@ agic wait(_: Part[]) -> Part[]:
             record = await asyncio.wait_for(handle, timeout=2)
 
             assert record.status == "canceled"
-            assert record.error == "user canceled"
+            assert record.error == ErrorMessage("user canceled")
             stored_control = harness.store.get_run_control(
                 run_id=record.id,
                 index=control.index,
@@ -146,9 +148,13 @@ agic revise(_: Part[]) -> Part[]:
             assert stored_control.status == "applied"
             steps = harness.store.list_steps(run_id=record.id)
             assert steps[1].input == (
-                Pointer.step(StepPath.parse(f"{record.id}.0"), "output", "value"),
-                Pointer.control(
-                    record.id, control.index, "payload", "locals", 0, "value"
+                FieldRef.from_path(StepRef.parse(f"{record.id}.0"), "output", "value"),
+                FieldRef.from_path(
+                    ControlRef.for_run(record.id, control.index),
+                    "payload",
+                    "locals",
+                    0,
+                    "value",
                 ),
             )
             assert harness.store.run_output(run_id=record.id) == (TextPart("revised"),)
@@ -222,9 +228,15 @@ agic calculate(_: Part[]) -> Part[]:
             assert messages[3] == Message.user("skip tools")
             second = harness.store.list_steps(run_id=record.id)[1]
             assert second.input == (
-                Pointer.step(StepPath.parse(f"{record.id}.0"), "output", "value", 0),
-                Pointer.control(
-                    record.id, control.index, "payload", "locals", 0, "value"
+                FieldRef.from_path(
+                    StepRef.parse(f"{record.id}.0"), "output", "value", 0
+                ),
+                FieldRef.from_path(
+                    ControlRef.for_run(record.id, control.index),
+                    "payload",
+                    "locals",
+                    0,
+                    "value",
                 ),
             )
 
@@ -372,7 +384,7 @@ flow sequence(_: Text) -> Text:
             record = await asyncio.wait_for(handle, timeout=2)
 
             assert record.status == "canceled"
-            assert record.error == f"cancel at {timing}"
+            assert record.error == ErrorMessage(f"cancel at {timing}")
             stored = harness.store.get_run_control(
                 run_id=record.id,
                 index=control.index,
@@ -501,10 +513,18 @@ agic revise(_: Text) -> Text:
             assert [control.index for control in controls] == [1, 2, 3]
             second_step = harness.store.list_steps(run_id=record.id)[1]
             assert second_step.input == (
-                Pointer.control(record.id, 0, "payload", "locals", 0, "value"),
-                Pointer.control(record.id, 1, "payload", "locals", 0, "value"),
-                Pointer.control(record.id, 2, "payload", "locals", 0, "value"),
-                Pointer.control(record.id, 3, "payload", "locals", 0, "value"),
+                FieldRef.from_path(
+                    ControlRef.for_run(record.id, 0), "payload", "locals", 0, "value"
+                ),
+                FieldRef.from_path(
+                    ControlRef.for_run(record.id, 1), "payload", "locals", 0, "value"
+                ),
+                FieldRef.from_path(
+                    ControlRef.for_run(record.id, 2), "payload", "locals", 0, "value"
+                ),
+                FieldRef.from_path(
+                    ControlRef.for_run(record.id, 3), "payload", "locals", 0, "value"
+                ),
             )
             stored_controls = [
                 harness.store.get_run_control(

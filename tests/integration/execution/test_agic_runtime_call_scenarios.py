@@ -11,8 +11,8 @@ import pytest
 from tests.support.execution_assertions import assert_run_event_integrity
 from tests.support.execution_harness import (
     ExecutionHarness,
-    RecordingTool,
     RecordingRunTracer,
+    RecordingTool,
 )
 from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
@@ -20,9 +20,12 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.executor.steps.tool import invoke_tool_call
 from toolang.execution.records import ExecuteControlPayload, RunControlPayload
 from toolang.execution.types import (
-    Pointer,
+    ErrorMessage,
+    ErrorRef,
+    FieldRef,
+    RunRef,
     ThreadPrefix,
-    TypedPointer,
+    TypedRef,
 )
 from toolang.lang.ast import RunStmt
 from toolang.lang.input import resolve_input_parts
@@ -86,11 +89,11 @@ agic child(_: Text) -> Text:
             assert isinstance(dynamic.given, RunStmt)
             assert dynamic.given.runnable == "agic:child"
             assert dynamic.input == (
-                Pointer.step(root_steps[0].path, "output", "value", 0),
+                FieldRef.from_path(root_steps[0].ref, "output", "value", 0),
             )
             dynamic_output = dynamic.output
             assert dynamic_output is not None
-            assert isinstance(dynamic_output.value, TypedPointer)
+            assert isinstance(dynamic_output.value, TypedRef)
             assert harness.store.resolve_value(dynamic_output.value) == "child output"
             children = [
                 run
@@ -98,9 +101,9 @@ agic child(_: Text) -> Text:
                 if run.parent is not None
             ]
             assert len(children) == 1
-            assert children[0].parent == dynamic.path
+            assert children[0].parent == dynamic.ref
             child_control = harness.store.get_run_control(
-                run_id=children[0].control.target,
+                run_id=str(children[0].control.target),
                 index=children[0].control.index,
             )
             assert child_control is not None
@@ -705,10 +708,12 @@ agic child(_: Text) -> Text:
             child = next(
                 run
                 for run in harness.store.list_run_tree(root_run_id=root.id)
-                if run.parent == dynamic.path
+                if run.parent == dynamic.ref
             )
             assert child.status == "failed"
-            assert dynamic.error == Pointer.run(child.id, "error")
+            assert dynamic.error == ErrorRef(
+                FieldRef.from_path(RunRef.parse(child.id), "error")
+            )
             result = harness.adapter.invocations[2].call.messages[-1].parts[0]
             assert isinstance(result, ToolResultPart)
             assert result.tool_call_id == "failed-child"
@@ -904,7 +909,7 @@ flow target(_: Text) -> Text:
             child = next(
                 run
                 for run in harness.store.list_run_tree(root_run_id=root.id)
-                if run.parent == steps[1].path
+                if run.parent == steps[1].ref
             )
             assert child.status == "succeeded"
             assert all(
@@ -1044,8 +1049,8 @@ flow child(_: Text) -> Text:
                 ("model", "succeeded"),
                 ("run", "failed"),
             ]
-            assert root.error == Pointer.step(steps[1].path, "error")
-            assert steps[1].error == "child persistence failed"
+            assert root.error == ErrorRef(FieldRef.from_path(steps[1].ref, "error"))
+            assert steps[1].error == ErrorMessage("child persistence failed")
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
             assert len(harness.adapter.invocations) == 1
 
@@ -1358,7 +1363,7 @@ flow research(brief: Brief, prefix?: Text) -> Text:
             child = next(
                 run
                 for run in harness.store.list_run_tree(root_run_id=root.id)
-                if run.parent == steps[1].path
+                if run.parent == steps[1].ref
             )
             accepted = harness.store.get_run_control(run_id=child.id, index=0)
             assert accepted is not None
@@ -1446,7 +1451,7 @@ agic target(_: Text) -> Text:
             execute = controls[0]
             assert execute.status == "applied"
             assert isinstance(execute.payload, ExecuteControlPayload)
-            source = Pointer.step(steps[0].path, "output", "value", 0)
+            source = FieldRef.from_path(steps[0].ref, "output", "value", 0)
             assert execute.payload.state == harness.state.revision
             assert execute.payload.runnable == "agic:target"
             assert execute.payload.module == "agent"
@@ -1454,8 +1459,8 @@ agic target(_: Text) -> Text:
             assert len(execute.payload.locals) == 1
             control_local = execute.payload.locals[0]
             assert control_local.type == "Json"
-            assert isinstance(control_local.value, TypedPointer)
-            assert control_local.value.pointer == source.select("input", "input", "_")
+            assert isinstance(control_local.value, TypedRef)
+            assert control_local.value.ref == source.select("input", "input", "_")
             assert harness.store.resolve_local(control_local).value == "work"
             assert steps[1].input == (source.select("input", "input", "_"),)
             target_call = harness.adapter.invocations[1].call

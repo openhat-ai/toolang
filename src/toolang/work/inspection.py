@@ -9,7 +9,7 @@ from typing import Mapping, Protocol
 from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.catalog.types import JobKind, JobStage
 from toolang.common.layout import AgentLayout
-from toolang.execution.types import ExecutionError
+from toolang.execution.types import ErrorMessage, ErrorRef
 from .authoring import assign_missing_authored_job_ids
 from .records import JobRecord
 from .schemas import JobDetail, JobInfo, LastRunInfo
@@ -26,7 +26,7 @@ class JobRun(Protocol):
     created_at: str
     started_at: str | None
     finished_at: str | None
-    error: ExecutionError | None
+    error: ErrorMessage | ErrorRef | None
 
 
 class JobInspection:
@@ -73,9 +73,9 @@ class JobInspection:
                 job_store.close()
         latest_runs: dict[str, JobRun] = {}
         for run in runs:
-            current = latest_runs.get(run.thread)
+            current = latest_runs.get(str(run.thread))
             if current is None or run.created_at > current.created_at:
-                latest_runs[run.thread] = run
+                latest_runs[str(run.thread)] = run
         return cls(
             catalog=catalog,
             home=layout.home,

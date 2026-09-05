@@ -18,7 +18,7 @@ from .records import (
 )
 from .schemas import RunDetail, RunInfo, ThreadDetail, ThreadInfo
 from .store import RunStore
-from .types import ControlRef, ExecutionError, RunStatus, StepPath
+from .types import ControlRef, ErrorMessage, ErrorRef, RunStatus, StepRef
 from .values import parts_from_local
 
 
@@ -225,7 +225,7 @@ class RunHistory:
             return self.get_run_result(run.id)
         return None
 
-    def _error_message(self, error: ExecutionError | None) -> str | None:
+    def _error_message(self, error: ErrorMessage | ErrorRef | None) -> str | None:
         if error is None:
             return None
         return self._store.resolve_error(error)
@@ -239,7 +239,7 @@ class RunHistory:
 
     def _model_calls(
         self, steps_by_run: Mapping[str, Sequence[StepRecord]]
-    ) -> dict[StepPath, ModelCall]:
+    ) -> dict[StepRef, ModelCall]:
         return self._store.rebuild_model_calls(
             tuple(
                 step for steps in steps_by_run.values() for step in _model_steps(steps)

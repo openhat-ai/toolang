@@ -20,7 +20,7 @@ from toolang.lang.types import Array
 
 
 def test_human_type_labels_use_nullable_suffix() -> None:
-    assert _human_type_label("StepPath | None") == "StepPath?"
+    assert _human_type_label("StepRef | None") == "StepRef?"
     assert _human_type_label("str | int | None") == "(str | int)?"
     assert _human_type_label("RunRecord") == "RunRecord"
 
@@ -33,7 +33,7 @@ def test_human_type_labels_use_nullable_suffix() -> None:
         ({}, {}, "Json", "value"),
         ([], [], "str[]", "value"),
         ([{"type": "text"}], [TextPart("value")], "Part[]", "value"),
-        ("term_target", Pointer("term_target"), "ThreadRecord", "value"),
+        ("term_target", Pointer.parse("term_target"), "ThreadRecord", "value"),
     ),
 )
 def test_implicit_pointer_projector_preserves_existing_browsing_rules(
@@ -46,13 +46,13 @@ def test_implicit_pointer_projector_preserves_existing_browsing_rules(
         id="term_render",
         origin="test",
         peer=ThreadPeer(),
-        created_by=ControlRef("term_render", 0),
-        head=ControlRef("term_render", 0),
+        created_by=ControlRef.for_thread("term_render", 0),
+        head=ControlRef.for_thread("term_render", 0),
         created_at="",
         updated_at="",
     )
     selected = RecordSelection(
-        pointer=Pointer("term_render/peer"),
+        pointer=Pointer.parse("term_render/peer"),
         record=record,
         value=value,
         runtime=runtime,
@@ -87,13 +87,13 @@ def test_human_table_never_truncates_a_pointer_in_a_narrow_terminal() -> None:
 def test_human_multiline_cell_never_wraps_its_pointer() -> None:
     output = StringIO()
     console = Console(file=output, width=20, force_terminal=False)
-    pointer = Pointer(f"term_{'x' * 80}/peer")
+    pointer = Pointer.parse(f"term_{'x' * 80}/peer")
     record = ThreadRecord(
         id="term_render",
         origin="test",
         peer=ThreadPeer(),
-        created_by=ControlRef("term_render", 0),
-        head=ControlRef("term_render", 0),
+        created_by=ControlRef.for_thread("term_render", 0),
+        head=ControlRef.for_thread("term_render", 0),
         created_at="",
         updated_at="",
     )
@@ -120,14 +120,14 @@ def test_human_multiline_cell_never_wraps_its_pointer() -> None:
 def test_human_resolved_pointer_marks_the_type_not_the_field() -> None:
     output = StringIO()
     console = Console(file=output, width=80, force_terminal=False)
-    base = Pointer("term_render")
+    base = Pointer.parse("term_render")
     pointer = base.select("peer")
     record = ThreadRecord(
         id="term_render",
         origin="test",
         peer=ThreadPeer(),
-        created_by=ControlRef("term_render", 0),
-        head=ControlRef("term_render", 0),
+        created_by=ControlRef.for_thread("term_render", 0),
+        head=ControlRef.for_thread("term_render", 0),
         created_at="",
         updated_at="",
     )
@@ -157,14 +157,14 @@ def test_human_resolved_pointer_marks_the_type_not_the_field() -> None:
 def test_human_parts_align_in_the_value_cell_without_a_bullet() -> None:
     output = StringIO()
     console = Console(file=output, width=80, force_terminal=False)
-    base = Pointer("term_render")
+    base = Pointer.parse("term_render")
     pointer = base.select("peer")
     record = ThreadRecord(
         id="term_render",
         origin="test",
         peer=ThreadPeer(),
-        created_by=ControlRef("term_render", 0),
-        head=ControlRef("term_render", 0),
+        created_by=ControlRef.for_thread("term_render", 0),
+        head=ControlRef.for_thread("term_render", 0),
         created_at="",
         updated_at="",
     )

@@ -235,7 +235,7 @@ class ChatRunPresenter:
         event: RunBegin | StepBegin | RunEnd,
     ) -> None:
         target_run = (
-            event.run if isinstance(event, (RunBegin, RunEnd)) else event.step.run
+            event.run if isinstance(event, (RunBegin, RunEnd)) else event.step.run_id
         )
         for block in list(app.get_live_blocks()):
             if not isinstance(block, block_type):

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 import sqlite3
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -30,13 +30,13 @@ from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, RunTracer, StepBegin
 from toolang.execution.executor import RunExecutor, RunSpec
-from toolang.execution.executor.common import BoundRun, Local, output_parts
 from toolang.execution.executor._persist import _PersistSink
+from toolang.execution.executor.common import BoundRun, Local, output_parts
 from toolang.execution.executor.prepare import _recalls_history, prepare_agic
 from toolang.execution.history import RunHistory
 from toolang.execution.records import (
-    StoredModelStepGiven,
     RunControlPayload,
+    StoredModelStepGiven,
     model_call_from_data,
 )
 from toolang.execution.schemas import RunDetail
@@ -45,18 +45,20 @@ from toolang.execution.types import (
     AgentResources,
     AgentToolResource,
     ControlRef,
+    FieldRef,
     Local as RecordLocal,
     ModelStepGiven,
     ModelStepNoted,
-    Pointer,
 )
 from toolang.lang.ast import (
     AgicDecl,
     Directive,
-    Message as AstMessage,
     Parameter,
     Program,
     Span,
+)
+from toolang.lang.ast import (
+    Message as AstMessage,
 )
 from toolang.lang.input import resolve_runnable_input
 from toolang.plugin.toolsets.registry import tool_ref_for_model_tool
@@ -278,7 +280,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
         ),
         control_locals=(),
         state=state,
-        state_ref=ControlRef("run_1", 0),
+        state_ref=ControlRef.for_run("run_1", 0),
         setup=setup,
         resources=_resources(setup),
         created_at="2026-01-01T00:00:00Z",
@@ -373,7 +375,7 @@ def test_prepare_agic_keeps_declared_output_contract_out_of_instructions(
         ),
         control_locals=(),
         state=state,
-        state_ref=ControlRef("run_1", 0),
+        state_ref=ControlRef.for_run("run_1", 0),
         setup=setup,
         resources=_resources(setup),
         created_at="2026-01-01T00:00:00Z",
@@ -454,7 +456,7 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
         ),
         control_locals=(),
         state=state,
-        state_ref=ControlRef("run_1", 0),
+        state_ref=ControlRef.for_run("run_1", 0),
         setup=setup,
         resources=_resources(setup),
         created_at="2026-01-01T00:00:00Z",
@@ -601,7 +603,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         )
         assert detail.output == RecordLocal.typed(
             "Part[]",
-            Pointer.step(steps[0].path, "output", "value"),
+            FieldRef.from_path(steps[0].ref, "output", "value"),
             "_",
         )
         assert detail.steps[0].given == begin.given

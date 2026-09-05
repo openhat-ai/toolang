@@ -13,7 +13,7 @@ from .records import (
     StepRecord,
     StoredModelStepGiven,
 )
-from .types import StepPath, ToolStepGiven
+from .types import StepRef, ToolStepGiven
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,16 +27,11 @@ class InspectedRun:
     @property
     def runnable(self) -> str:
         payload = self.entry.payload
-        if (
-            self.record.control.target != self.record.id
-            or self.entry.target != self.record.id
-            or self.entry.target != self.record.control.target
-            or self.entry.index != self.record.control.index
-            or not isinstance(payload, PreparationControlPayload)
+        if self.entry.ref != self.record.control or not isinstance(
+            payload, PreparationControlPayload
         ):
             raise ValueError(
-                "run preparation control not found: "
-                f"{self.record.id}@{self.record.control.index}"
+                f"run preparation control not found: {self.record.control}"
             )
         return payload.runnable
 
@@ -83,10 +78,10 @@ def step_operation(step: StepRecord) -> str:
     return format_statement_head(step.given)
 
 
-def direct_step_parent(path: StepPath) -> StepPath | None:
-    """Return the same-Run parent encoded by a StepPath."""
+def direct_step_parent(ref: StepRef) -> StepRef | None:
+    """Return the same-Run parent encoded by a StepRef."""
 
-    return path.parent
+    return ref.parent
 
 
 def run_fallback_order(run: RunRecord) -> tuple[str, str]:

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
-from decimal import Decimal
 import json
-from pathlib import Path
 import threading
 import time
+from dataclasses import replace
+from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -14,6 +14,8 @@ from fastapi import Request
 from fastapi.testclient import TestClient
 from pydantic import TypeAdapter
 
+from tests.support.execution_fixtures import project_run_start, project_step
+from tests.support.execution_harness import TEST_MODEL_REF, ExecutionHarness
 from toolang.api.app import create_app
 from toolang.api.common import LiveEventRelay, sse_stream
 from toolang.base.types.message import DocumentPart, Message, TextPart
@@ -34,16 +36,13 @@ from toolang.execution.events import (
 from toolang.execution.records import (
     RerunControlPayload,
     RetryControlPayload,
-    ThreadControlRef,
     ThreadPeer,
 )
 from toolang.execution.schemas import RunDetail, ThreadDetail
-from toolang.execution.types import ControlRef, Local, StepPath, Pointer
+from toolang.execution.types import ControlRef, FieldRef, Local, StepRef
 from toolang.lang.ast import LetStmt, RunStmt, Span
-from toolang.up import AgentCore
 from toolang.state.prepare import prepare_agent_state
-from tests.support.execution_fixtures import project_run_start, project_step
-from tests.support.execution_harness import ExecutionHarness, TEST_MODEL_REF
+from toolang.up import AgentCore
 
 
 def _direct_request(
@@ -254,9 +253,12 @@ agic answer(_: Part[]) -> Part[]:
             detail = client.get(f"/api/v1/runs/{run_id}").json()
 
         error = f"{run_id}.0/error"
-        assert events[-1][1]["error"] == {"?": f"@{error}"}
-        assert detail["error"] == {"?": f"@{error}"}
-        assert detail["steps"][0]["error"] == "provider unavailable"
+        assert events[-1][1]["error"] == {"type": "ref", "ref": error}
+        assert detail["error"] == {"type": "ref", "ref": error}
+        assert detail["steps"][0]["error"] == {
+            "type": "message",
+            "message": "provider unavailable",
+        }
         assert "failure" not in detail
     finally:
         asyncio.run(core.close())
@@ -506,28 +508,28 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
         events = (
             RunBegin(
                 run="run_test",
-                control=ControlRef("run_test", 0),
+                control=ControlRef.for_run("run_test", 0),
                 started_at="2026-01-01T00:00:00Z",
             ),
             StepBegin(
-                step=StepPath.parse("run_test.0"),
+                step=StepRef.parse("run_test.0"),
                 kind="run",
                 given=RunStmt(span=Span(line=1), runnable="agic:test"),
                 started_at="2026-01-01T00:00:01Z",
             ),
             RunBegin(
                 run="run_child",
-                control=ControlRef("run_child", 0),
+                control=ControlRef.for_run("run_child", 0),
                 started_at="2026-01-01T00:00:02Z",
             ),
             StepBegin(
-                step=StepPath.parse("run_child.0"),
+                step=StepRef.parse("run_child.0"),
                 kind="value",
                 given=LetStmt(span=Span(line=1), value="test"),
                 started_at="2026-01-01T00:00:03Z",
             ),
             StepEnd(
-                step=StepPath.parse("run_child.0"),
+                step=StepRef.parse("run_child.0"),
                 kind="value",
                 status="succeeded",
                 finished_at="2026-01-01T00:00:04Z",
@@ -538,7 +540,7 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
                 finished_at="2026-01-01T00:00:05Z",
             ),
             StepEnd(
-                step=StepPath.parse("run_test.0"),
+                step=StepRef.parse("run_test.0"),
                 kind="run",
                 status="succeeded",
                 finished_at="2026-01-01T00:00:06Z",
@@ -571,7 +573,7 @@ def test_live_relay_accepts_thread_events_from_worker_threads() -> None:
         subscription = relay.subscribe_thread("term_test")
         event = ThreadCreated(
             thread="term_test",
-            control=ThreadControlRef("term_test", 0),
+            control=ControlRef.for_thread("term_test", 0),
             origin="chat",
             peer=ThreadPeer(),
             created_at="2026-01-01T00:00:00Z",
@@ -628,7 +630,7 @@ def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
             await tracer.on_event(
                 RunBegin(
                     run="run_live",
-                    control=ControlRef("run_live", 0),
+                    control=ControlRef.for_run("run_live", 0),
                     started_at="2026-01-01T00:00:00Z",
                 )
             )
@@ -678,7 +680,11 @@ def test_child_run_stream_redirects_client_to_root_run(tmp_path: Path) -> None:
         step_index=0,
         kind="run",
         status="running",
-        input=(Pointer.control("run_root", 0, "payload", "locals", 0, "value"),),
+        input=(
+            FieldRef.from_path(
+                ControlRef.for_run("run_root", 0), "payload", "locals", 0, "value"
+            ),
+        ),
         output=(),
         started_at="2026-01-01T00:00:01Z",
         finished_at=None,
@@ -690,7 +696,7 @@ def test_child_run_stream_redirects_client_to_root_run(tmp_path: Path) -> None:
         origin="script",
         input=Message.user("child"),
         root_run_id="run_root",
-        parent=StepPath.parse("run_root.0"),
+        parent=StepRef.parse("run_root.0"),
     )
     app = create_app(
         core,
@@ -764,7 +770,7 @@ def test_sse_generator_close_removes_subscription() -> None:
         await tracer.on_event(
             RunBegin(
                 run="run_test",
-                control=ControlRef("run_test", 0),
+                control=ControlRef.for_run("run_test", 0),
                 started_at="2026-01-01T00:00:00Z",
             )
         )

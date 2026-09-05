@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from toolang.lang.ast import FlowStmt
 
-from ...records import ControlRecord, StepPath
+from ...records import ControlRecord, StepRef
 from ...types import LoopStepNoted, LoopTermination, Occurrence, StepStatus
 from ..common import BoundRun, EventEmitter, Local, StepBoundary, execute_step
 
@@ -36,7 +36,7 @@ async def execute(
     *,
     begin_step: StepBoundary | None = None,
     binding: BoundRun,
-    path: StepPath,
+    path: StepRef,
     statement: FlowStmt,
     locals: Mapping[str, Local],
     controls: Sequence[ControlRecord],

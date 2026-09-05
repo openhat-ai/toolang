@@ -18,7 +18,7 @@ from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from toolang.execution.types import (
-    StepPath,
+    StepRef,
     ThreadPrefix,
     ToolStepGiven,
     ToolStepNoted,
@@ -108,7 +108,7 @@ agic calculate(_: Text) -> Text:
             stored_tool = next(
                 step
                 for step in harness.store.list_steps(run_id=run.id)
-                if step.path == tool_begin.step
+                if step.ref == tool_begin.step
             )
             assert isinstance(stored_tool.given, ToolStepGiven)
             assert stored_tool.given.summary == "Executing double 3 ..."
@@ -217,7 +217,7 @@ flow parallel(_: Text) -> Text[]:
             ]
 
             assert_run_event_integrity(tracer.events)
-            root_step = StepPath.parse(f"{root.id}.0")
+            root_step = StepRef.parse(f"{root.id}.0")
             parent_begin = tracer.events.index(
                 next(
                     event

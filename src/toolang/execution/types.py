@@ -10,7 +10,7 @@ import math
 import re
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import BeforeValidator, PlainSerializer, WrapSerializer
+from pydantic import BeforeValidator, WrapSerializer
 from pydantic_core import core_schema
 
 from toolang.base.types.message import (
@@ -356,160 +356,502 @@ def _resource_object(
 
 
 @dataclass(frozen=True, slots=True)
-class Pointer:
-    """Address one durable execution record or one of its JSON fields."""
+class ThreadRef:
+    """Reference one durable Thread record."""
+
+    id: str
+
+    def __post_init__(self) -> None:
+        if not valid_thread_id(self.id):
+            raise ValueError(f"invalid thread ref: {self.id!r}")
+
+    @classmethod
+    def parse(cls, value: ThreadRef | str) -> ThreadRef:
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, str):
+            raise TypeError("thread ref must be text")
+        return cls(value)
+
+    def __str__(self) -> str:
+        return self.id
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, _source_type: Any, _handler: Any
+    ) -> core_schema.CoreSchema:
+        return _text_ref_schema(cls)
+
+
+@dataclass(frozen=True, slots=True)
+class RunRef:
+    """Reference one durable Run record."""
+
+    id: str
+
+    def __post_init__(self) -> None:
+        if not valid_run_id(self.id):
+            raise ValueError(f"invalid run ref: {self.id!r}")
+
+    @classmethod
+    def parse(cls, value: RunRef | str) -> RunRef:
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, str):
+            raise TypeError("run ref must be text")
+        return cls(value)
+
+    def __str__(self) -> str:
+        return self.id
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, _source_type: Any, _handler: Any
+    ) -> core_schema.CoreSchema:
+        return _text_ref_schema(cls)
+
+
+@dataclass(frozen=True, slots=True)
+class StepPath:
+    """Identify one Step relative to its owning Run."""
+
+    indices: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        if not self.indices or any(
+            isinstance(index, bool) or not isinstance(index, int) or index < 0
+            for index in self.indices
+        ):
+            raise ValueError("step path requires non-negative indices")
+
+    @classmethod
+    def parse(cls, value: StepPath | tuple[int, ...] | str) -> StepPath:
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, tuple):
+            return cls(value)
+        if not isinstance(value, str):
+            raise TypeError("step path must be text")
+        raw_indices = value.split(".")
+        if any(not _canonical_index(item) for item in raw_indices):
+            raise ValueError(f"invalid step path: {value!r}")
+        return cls(tuple(int(item) for item in raw_indices))
+
+    @property
+    def parent(self) -> StepPath | None:
+        if len(self.indices) == 1:
+            return None
+        return StepPath(self.indices[:-1])
+
+    @property
+    def index(self) -> int:
+        return self.indices[-1]
+
+    def child(self, index: int) -> StepPath:
+        return StepPath((*self.indices, index))
+
+    def __str__(self) -> str:
+        return ".".join(str(index) for index in self.indices)
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, _source_type: Any, _handler: Any
+    ) -> core_schema.CoreSchema:
+        return _text_ref_schema(cls)
+
+
+@dataclass(frozen=True, slots=True)
+class StepRef:
+    """Reference one durable Step record."""
+
+    run: RunRef
+    path: StepPath
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.run, RunRef):
+            raise TypeError("step ref requires a RunRef")
+        if not isinstance(self.path, StepPath):
+            raise TypeError("step ref requires a StepPath")
+
+    @classmethod
+    def parse(cls, value: StepRef | str) -> StepRef:
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, str):
+            raise TypeError("step ref must be text")
+        run, separator, path = value.partition(".")
+        if not separator:
+            raise ValueError(f"invalid step ref: {value!r}")
+        return cls(RunRef(run), StepPath.parse(path))
+
+    @classmethod
+    def from_local(
+        cls,
+        run: RunRef | str,
+        path: StepPath | tuple[int, ...] | str,
+    ) -> StepRef:
+        return cls(RunRef.parse(run), StepPath.parse(path))
+
+    @property
+    def run_id(self) -> str:
+        return str(self.run)
+
+    @property
+    def local(self) -> str:
+        return str(self.path)
+
+    @property
+    def indices(self) -> tuple[int, ...]:
+        return self.path.indices
+
+    @property
+    def parent(self) -> StepRef | None:
+        parent = self.path.parent
+        return StepRef(self.run, parent) if parent is not None else None
+
+    @property
+    def index(self) -> int:
+        return self.path.index
+
+    def child(self, index: int) -> StepRef:
+        return StepRef(self.run, self.path.child(index))
+
+    def __str__(self) -> str:
+        return f"{self.run}.{self.path}"
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, _source_type: Any, _handler: Any
+    ) -> core_schema.CoreSchema:
+        return _text_ref_schema(cls)
+
+
+@dataclass(frozen=True, slots=True)
+class ControlRef:
+    """Reference one durable Control record."""
+
+    target: ThreadRef | RunRef
+    index: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.target, ThreadRef | RunRef):
+            raise TypeError("control ref requires a ThreadRef or RunRef")
+        if isinstance(self.index, bool) or not isinstance(self.index, int):
+            raise TypeError("control index must be an integer")
+        if self.index < 0:
+            raise ValueError("control index must be non-negative")
+
+    @classmethod
+    def parse(cls, value: ControlRef | str) -> ControlRef:
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, str):
+            raise TypeError("control ref must be text")
+        target, separator, raw_index = value.partition("@")
+        if not separator or "@" in raw_index or not _canonical_index(raw_index):
+            raise ValueError(f"invalid control ref: {value!r}")
+        target_ref: ThreadRef | RunRef
+        target_ref = RunRef(target) if target.startswith("run_") else ThreadRef(target)
+        return cls(target_ref, int(raw_index))
+
+    @classmethod
+    def for_run(cls, target: RunRef | str, index: int) -> ControlRef:
+        """Build a Run-scoped control reference at a string boundary."""
+
+        return cls(RunRef.parse(target), index)
+
+    @classmethod
+    def for_thread(cls, target: ThreadRef | str, index: int) -> ControlRef:
+        """Build a Thread-scoped control reference at a string boundary."""
+
+        return cls(ThreadRef.parse(target), index)
+
+    def __str__(self) -> str:
+        return f"{self.target}@{self.index}"
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, _source_type: Any, _handler: Any
+    ) -> core_schema.CoreSchema:
+        return _text_ref_schema(cls)
+
+
+_CONTENT_REF_RE = re.compile(r"^sha256_[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True, slots=True)
+class ContentRef:
+    """Reference one content-addressed blob."""
+
+    id: str
+
+    def __post_init__(self) -> None:
+        if _CONTENT_REF_RE.fullmatch(self.id) is None:
+            raise ValueError(f"invalid content ref: {self.id!r}")
+
+    @classmethod
+    def parse(cls, value: ContentRef | str) -> ContentRef:
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, str):
+            raise TypeError("content ref must be text")
+        return cls(value)
+
+    def __str__(self) -> str:
+        return self.id
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, _source_type: Any, _handler: Any
+    ) -> core_schema.CoreSchema:
+        return _text_ref_schema(cls)
+
+
+RecordRef: TypeAlias = ThreadRef | RunRef | StepRef | ControlRef | ContentRef
+_RECORD_REF_TYPES = (ThreadRef, RunRef, StepRef, ControlRef, ContentRef)
+
+
+@dataclass(frozen=True, slots=True)
+class JsonPointer:
+    """One non-empty RFC 6901 JSON Pointer."""
 
     value: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.value, str) or not self.value:
-            raise ValueError("pointer must be non-empty text")
-        if ":" in self.value:
-            raise ValueError(f"invalid pointer: {self.value!r}")
-        record, separator, field = self.value.partition("/")
-        if not record or any(character.isspace() for character in record):
-            raise ValueError(f"invalid pointer: {self.value!r}")
-        if separator:
-            _validate_json_pointer(field, source=self.value)
-        if "@" in record:
-            target, marker, raw_index = record.partition("@")
-            if (
-                marker != "@"
-                or "@" in raw_index
-                or not (valid_run_id(target) or valid_thread_id(target))
-                or not _canonical_index(raw_index)
-            ):
-                raise ValueError(f"invalid control pointer: {self.value!r}")
-            return
-        target, *indices = record.split(".")
-        if target.startswith("run_"):
-            if not valid_run_id(target) or any(
-                not _canonical_index(index) for index in indices
-            ):
-                raise ValueError(f"invalid pointer: {self.value!r}")
-            return
-        if indices or not valid_thread_id(target):
-            raise ValueError(f"invalid pointer: {self.value!r}")
+        if not isinstance(self.value, str) or not self.value.startswith("/"):
+            raise ValueError("JSON pointer must begin with '/'")
+        _validate_json_pointer(self.value, source=self.value)
 
-    @property
-    def record(self) -> str:
-        """Return the record portion of this Pointer."""
-
-        return self.value.partition("/")[0]
-
-    @property
-    def field(self) -> str:
-        """Return the RFC 6901 field suffix, including its leading slash."""
-
-        _record, separator, field = self.value.partition("/")
-        return f"/{field}" if separator else ""
-
-    @property
-    def kind(self) -> Literal["thread", "control", "run", "step"]:
-        """Return the record kind identified by this Pointer."""
-
-        record = self.record
-        if "@" in record:
-            return "control"
-        if record.startswith("run_"):
-            return "step" if "." in record else "run"
-        return "thread"
+    @classmethod
+    def parse(cls, value: JsonPointer | str) -> JsonPointer:
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, str):
+            raise TypeError("JSON pointer must be text")
+        return cls(value)
 
     @property
     def tokens(self) -> tuple[str, ...]:
-        """Return decoded RFC 6901 field tokens."""
-
-        if not self.field:
-            return ()
         return tuple(
             token.replace("~1", "/").replace("~0", "~")
-            for token in self.field[1:].split("/")
+            for token in self.value[1:].split("/")
         )
+
+    def select(self, *path: str | int) -> JsonPointer:
+        if not path:
+            return self
+        return JsonPointer(f"{self.value}/{_pointer_suffix(path)}")
 
     def __str__(self) -> str:
         return self.value
 
-    def select(self, *path: str | int) -> Pointer:
-        """Return a Pointer to fields nested below the current selection."""
-
-        if not path:
-            return self
-        suffix = _pointer_suffix(path)
-        return Pointer(f"{self.value}/{suffix}")
-
-    @classmethod
-    def run(cls, run_id: str, *path: str | int) -> Pointer:
-        """Point to one run record or a field within it."""
-
-        return cls(_pointer_value(run_id, path))
-
-    @classmethod
-    def step(cls, step: StepPath, *path: str | int) -> Pointer:
-        """Point to one step record or a field within it."""
-
-        return cls(_pointer_value(str(step), path))
-
-    @classmethod
-    def control(
-        cls,
-        target: str,
-        index: int,
-        *path: str | int,
-    ) -> Pointer:
-        """Point to one control record or a field within it."""
-
-        return cls(_pointer_value(f"{target}@{index}", path))
-
     @classmethod
     def __get_pydantic_core_schema__(
-        cls,
-        _source_type: Any,
-        _handler: Any,
+        cls, _source_type: Any, _handler: Any
     ) -> core_schema.CoreSchema:
-        return core_schema.json_or_python_schema(
-            json_schema=core_schema.no_info_after_validator_function(
-                cls,
-                core_schema.str_schema(),
-            ),
-            python_schema=core_schema.union_schema(
-                [
-                    core_schema.is_instance_schema(cls),
-                    core_schema.no_info_after_validator_function(
-                        cls,
-                        core_schema.str_schema(),
-                    ),
-                ]
-            ),
-            serialization=core_schema.plain_serializer_function_ser_schema(
-                str,
-                return_schema=core_schema.str_schema(),
-            ),
-        )
+        return _text_ref_schema(cls)
 
 
 @dataclass(frozen=True, slots=True)
-class TypedPointer:
-    """One value pointer paired with its expected resolved type."""
+class FieldRef:
+    """Reference one JSON field within a durable record."""
 
-    type: str
-    pointer: Pointer
+    record: RecordRef
+    field: JsonPointer
 
     def __post_init__(self) -> None:
-        validate_type(self.type)
-        if not isinstance(self.pointer, Pointer):
-            raise TypeError("typed pointer requires a Pointer")
+        if not isinstance(self.record, _RECORD_REF_TYPES):
+            raise TypeError("field ref requires a RecordRef")
+        if not isinstance(self.field, JsonPointer):
+            raise TypeError("field ref requires a JsonPointer")
 
     @classmethod
-    def parse(cls, value: str) -> TypedPointer:
-        """Parse the canonical POINTER:TYPE representation."""
+    def parse(cls, value: FieldRef | str) -> FieldRef:
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, str):
+            raise TypeError("field ref must be text")
+        record, separator, field = value.partition("/")
+        if not separator:
+            raise ValueError(f"invalid field ref: {value!r}")
+        return cls(_parse_record_ref(record), JsonPointer(f"/{field}"))
 
-        if not isinstance(value, str) or value.count(":") != 1:
-            raise ValueError(f"invalid typed pointer: {value!r}")
-        pointer, type_name = value.split(":", 1)
-        return cls(type_name, Pointer(pointer))
+    @classmethod
+    def from_path(
+        cls,
+        record: RecordRef,
+        *path: str | int,
+    ) -> FieldRef:
+        """Build a field reference from decoded record and field components."""
+
+        if not path:
+            raise ValueError("field ref requires a non-empty path")
+        return cls(record, JsonPointer(f"/{_pointer_suffix(path)}"))
+
+    @property
+    def tokens(self) -> tuple[str, ...]:
+        return self.field.tokens
+
+    def select(self, *path: str | int) -> FieldRef:
+        if not path:
+            return self
+        return FieldRef(self.record, self.field.select(*path))
 
     def __str__(self) -> str:
-        return f"{self.pointer}:{self.type}"
+        return f"{self.record}{self.field}"
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, _source_type: Any, _handler: Any
+    ) -> core_schema.CoreSchema:
+        return _text_ref_schema(cls)
+
+
+@dataclass(frozen=True, slots=True)
+class TypedRef:
+    """Reference one field together with its expected runtime type."""
+
+    ref: FieldRef
+    type: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.ref, FieldRef):
+            raise TypeError("typed ref requires a FieldRef")
+        validate_type(self.type)
+
+    @classmethod
+    def parse(cls, value: TypedRef | str) -> TypedRef:
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, str) or value.count(":") != 1:
+            raise ValueError(f"invalid typed ref: {value!r}")
+        ref, type_name = value.rsplit(":", 1)
+        return cls(FieldRef.parse(ref), type_name)
+
+    def __str__(self) -> str:
+        return f"{self.ref}:{self.type}"
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, _source_type: Any, _handler: Any
+    ) -> core_schema.CoreSchema:
+        return _text_ref_schema(cls)
+
+
+PointerValue: TypeAlias = RecordRef | FieldRef | TypedRef
+_POINTER_VALUE_TYPES = (*_RECORD_REF_TYPES, FieldRef, TypedRef)
+
+
+class PointerType(StrEnum):
+    """Concrete Ref variant wrapped by a Pointer."""
+
+    THREAD_REF = "ThreadRef"
+    RUN_REF = "RunRef"
+    STEP_REF = "StepRef"
+    CONTROL_REF = "ControlRef"
+    CONTENT_REF = "ContentRef"
+    FIELD_REF = "FieldRef"
+    TYPED_REF = "TypedRef"
+
+
+@dataclass(frozen=True, slots=True)
+class Pointer:
+    """Wrap one parsed durable reference of an otherwise unknown kind."""
+
+    _ref: PointerValue
+
+    def __post_init__(self) -> None:
+        if not isinstance(self._ref, _POINTER_VALUE_TYPES):
+            raise TypeError("pointer requires a Ref")
+
+    @classmethod
+    def parse(cls, value: Pointer | str) -> Pointer:
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, str):
+            raise TypeError("pointer must be text")
+        if ":" in value:
+            return cls(TypedRef.parse(value))
+        if "/" in value:
+            return cls(FieldRef.parse(value))
+        return cls(_parse_record_ref(value))
+
+    @property
+    def type(self) -> PointerType:
+        return PointerType(type(self._ref).__name__)
+
+    def ref(self) -> PointerValue:
+        return self._ref
+
+    def thread_ref(self) -> ThreadRef | None:
+        return self._ref if isinstance(self._ref, ThreadRef) else None
+
+    def run_ref(self) -> RunRef | None:
+        return self._ref if isinstance(self._ref, RunRef) else None
+
+    def step_ref(self) -> StepRef | None:
+        return self._ref if isinstance(self._ref, StepRef) else None
+
+    def control_ref(self) -> ControlRef | None:
+        return self._ref if isinstance(self._ref, ControlRef) else None
+
+    def content_ref(self) -> ContentRef | None:
+        return self._ref if isinstance(self._ref, ContentRef) else None
+
+    def field_ref(self) -> FieldRef | None:
+        return self._ref if isinstance(self._ref, FieldRef) else None
+
+    def typed_ref(self) -> TypedRef | None:
+        return self._ref if isinstance(self._ref, TypedRef) else None
+
+    def record_ref(self) -> RecordRef:
+        ref = self._ref
+        if isinstance(ref, TypedRef):
+            return ref.ref.record
+        if isinstance(ref, FieldRef):
+            return ref.record
+        return ref
+
+    @property
+    def kind(self) -> Literal["thread", "control", "run", "step", "content"]:
+        ref = self.record_ref()
+        if isinstance(ref, ThreadRef):
+            return "thread"
+        if isinstance(ref, ControlRef):
+            return "control"
+        if isinstance(ref, RunRef):
+            return "run"
+        if isinstance(ref, StepRef):
+            return "step"
+        return "content"
+
+    @property
+    def tokens(self) -> tuple[str, ...]:
+        ref = self._ref
+        if isinstance(ref, TypedRef):
+            return ref.ref.tokens
+        if isinstance(ref, FieldRef):
+            return ref.tokens
+        return ()
+
+    def select(self, *path: str | int) -> Pointer:
+        if not path:
+            return self
+        ref = self._ref
+        if isinstance(ref, TypedRef):
+            raise ValueError("cannot select below a TypedRef")
+        if isinstance(ref, FieldRef):
+            return Pointer(ref.select(*path))
+        return Pointer(FieldRef(ref, JsonPointer(f"/{_pointer_suffix(path)}")))
+
+    def __str__(self) -> str:
+        return str(self._ref)
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, _source_type: Any, _handler: Any
+    ) -> core_schema.CoreSchema:
+        return _text_ref_schema(cls)
 
 
 _PART_TYPES = (
@@ -538,7 +880,7 @@ _PART_PROTOCOL_TYPES = frozenset(
 class Local:
     """One runtime value and its local-table binding semantics."""
 
-    value: Value | TypedPointer
+    value: Value | TypedRef
     name: str | None = None
     dim: Literal[0, 1] = 0
 
@@ -563,7 +905,7 @@ class Local:
             raise ValueError(f"invalid local name: {self.name!r}")
         if self.dim not in {0, 1}:
             raise ValueError(f"unsupported local dimension: {self.dim!r}")
-        if not isinstance(self.value, TypedPointer):
+        if not isinstance(self.value, TypedRef):
             object.__setattr__(
                 self,
                 "value",
@@ -572,14 +914,14 @@ class Local:
         validate_runtime_value(self.value, self.type)
         if self.dim == 1 and not self.type.endswith("[]"):
             raise ValueError("dim=1 requires an array value type")
-        if self.dim == 1 and not isinstance(self.value, Array | TypedPointer):
+        if self.dim == 1 and not isinstance(self.value, Array | TypedRef):
             raise TypeError("dim=1 requires an array value or whole-value pointer")
 
     @property
     def type(self) -> str:
         """Return the canonical runtime or expected pointer type."""
 
-        if isinstance(self.value, TypedPointer):
+        if isinstance(self.value, TypedRef):
             return self.value.type
         return value_type(self.value)
 
@@ -673,13 +1015,13 @@ def local_to_protocol_data(local: Local) -> dict[str, object]:
     }
 
 
-def value_from_protocol_data(data: object, type_name: str) -> Value | TypedPointer:
+def value_from_protocol_data(data: object, type_name: str) -> Value | TypedRef:
     """Parse one canonical protocol value at an explicit type boundary."""
 
     if isinstance(data, Mapping) and set(data) == {"?"}:
         raw_tag = cast(Mapping[str, object], data).get("?")
         if isinstance(raw_tag, str):
-            typed = TypedPointer.parse(raw_tag)
+            typed = TypedRef.parse(raw_tag)
             if not type_assignable(typed.type, type_name):
                 raise TypeError(f"protocol pointer is {typed.type}, not {type_name}")
             return typed
@@ -731,7 +1073,7 @@ def _protocol_json_value_from_data(data: object) -> object:
 
 
 def _protocol_value_to_data(value: object) -> object:
-    if isinstance(value, TypedPointer):
+    if isinstance(value, TypedRef):
         return {"?": str(value)}
     if isinstance(value, _PART_TYPES):
         return value.to_data()
@@ -752,7 +1094,7 @@ def validate_runtime_value(
     """Validate one concrete or referenced execution value against a type."""
 
     validate_type(type_name)
-    if isinstance(value, TypedPointer):
+    if isinstance(value, TypedRef):
         if not type_assignable(value.type, type_name):
             raise TypeError(f"{path} pointer is {value.type}, not {type_name}")
         return
@@ -782,14 +1124,14 @@ def validate_runtime_value(
         raise TypeError(f"{path} is not {type_name}")
 
 
-def value_for_type(type_name: str, value: object) -> Value | TypedPointer:
+def value_for_type(type_name: str, value: object) -> Value | TypedRef:
     """Normalize one value at an explicit Toolang typed boundary."""
 
     validate_type(type_name)
-    if isinstance(value, TypedPointer):
+    if isinstance(value, TypedRef):
         result: object = value
-    elif isinstance(value, Pointer):
-        result = TypedPointer(type_name, value)
+    elif isinstance(value, FieldRef):
+        result = TypedRef(value, type_name)
     elif type_name.endswith("[]"):
         if isinstance(value, Array):
             result = value
@@ -822,7 +1164,7 @@ def value_for_type(type_name: str, value: object) -> Value | TypedPointer:
     else:
         result = value
     validate_runtime_value(result, type_name)
-    return cast(Value | TypedPointer, result)
+    return cast(Value | TypedRef, result)
 
 
 def _normalize_json_value(value: object) -> object:
@@ -840,7 +1182,7 @@ def _normalize_json_value(value: object) -> object:
 
 
 def _validate_open_local_value(value: object, *, path: str) -> None:
-    if isinstance(value, (TypedPointer, *_PART_TYPES)):
+    if isinstance(value, (TypedRef, *_PART_TYPES)):
         return
     if value is None or isinstance(value, str | bool | int):
         return
@@ -875,144 +1217,79 @@ def type_assignable(actual: str, expected: str) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
-class ControlRef:
-    """Reference one globally addressed durable control."""
+class ErrorMessage:
+    """A directly owned execution error message."""
 
-    target: str
-    index: int
-
-    def __post_init__(self) -> None:
-        if not valid_execution_id(self.target):
-            raise ValueError(f"invalid control target: {self.target!r}")
-        if self.index < 0:
-            raise ValueError("control index must be non-negative")
-
-    @property
-    def run(self) -> str:
-        """Return the target when this reference is used for a run control."""
-
-        return self.target
-
-    @property
-    def thread(self) -> str:
-        """Return the target when this reference is used for a thread control."""
-
-        return self.target
-
-
-@dataclass(frozen=True, slots=True)
-class StepPath:
-    """Globally address one step within its owning run."""
-
-    run: str
-    indices: tuple[int, ...]
+    message: str
 
     def __post_init__(self) -> None:
-        if not valid_run_id(self.run):
-            raise ValueError(f"invalid step run id: {self.run!r}")
-        if not self.indices or any(index < 0 for index in self.indices):
-            raise ValueError("step path requires non-negative indices")
+        if not isinstance(self.message, str) or not self.message:
+            raise ValueError("error message must be non-empty text")
 
     @classmethod
-    def parse(cls, value: StepPath | str) -> StepPath:
-        """Parse one canonical step path."""
-
+    def from_data(cls, value: object) -> ErrorMessage:
         if isinstance(value, cls):
             return value
-        if not isinstance(value, str):
-            raise TypeError("step path must be a string")
-        run, separator, suffix = value.partition(".")
-        if not separator or not run or not suffix:
-            raise ValueError(f"invalid step path: {value!r}")
-        raw_indices = suffix.split(".")
-        if any(
-            not item.isascii() or not item.isdigit() or str(int(item)) != item
-            for item in raw_indices
-        ):
-            raise ValueError(f"invalid step path: {value!r}")
-        return cls(run=run, indices=tuple(int(item) for item in raw_indices))
+        if not isinstance(value, Mapping) or set(value) != {"type", "message"}:
+            raise ValueError("error message requires type and message")
+        payload = cast(Mapping[str, object], value)
+        if payload.get("type") != "message":
+            raise ValueError("error message type must be 'message'")
+        message = payload.get("message")
+        if not isinstance(message, str):
+            raise ValueError("error message must be text")
+        return cls(message)
 
-    @classmethod
-    def from_local(cls, run: str, path: str) -> StepPath:
-        """Build one step path from separately stored run and local path."""
-
-        return cls.parse(f"{run}.{path}")
-
-    @property
-    def local(self) -> str:
-        """Return the run-local index path."""
-
-        return ".".join(str(index) for index in self.indices)
-
-    @property
-    def parent(self) -> StepPath | None:
-        """Return the enclosing step within the same run."""
-
-        if len(self.indices) == 1:
-            return None
-        return StepPath(self.run, self.indices[:-1])
-
-    @property
-    def index(self) -> int:
-        """Return the final step index."""
-
-        return self.indices[-1]
-
-    def child(self, index: int) -> StepPath:
-        """Return one direct child step."""
-
-        return StepPath(self.run, (*self.indices, index))
-
-    def __str__(self) -> str:
-        return f"{self.run}.{self.local}"
+    def to_data(self) -> dict[str, str]:
+        return {"type": "message", "message": self.message}
 
     @classmethod
     def __get_pydantic_core_schema__(
-        cls,
-        _source_type: Any,
-        _handler: Any,
+        cls, _source_type: Any, _handler: Any
     ) -> core_schema.CoreSchema:
-        return core_schema.json_or_python_schema(
-            json_schema=core_schema.no_info_after_validator_function(
-                cls.parse,
-                core_schema.str_schema(),
-            ),
-            python_schema=core_schema.union_schema(
-                [
-                    core_schema.is_instance_schema(cls),
-                    core_schema.no_info_after_validator_function(
-                        cls.parse,
-                        core_schema.str_schema(),
-                    ),
-                ]
-            ),
-            serialization=core_schema.plain_serializer_function_ser_schema(
-                str,
-                return_schema=core_schema.str_schema(),
-            ),
-        )
+        return _tagged_value_schema(cls, cls.from_data, cls.to_data)
 
 
-def _parse_execution_error(value: object) -> str | Pointer:
-    if isinstance(value, Pointer | str):
-        return value
-    if isinstance(value, Mapping):
+@dataclass(frozen=True, slots=True)
+class ErrorRef:
+    """Reference the Run or Step field that owns an execution error."""
+
+    ref: FieldRef
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.ref, FieldRef):
+            raise TypeError("error ref requires a FieldRef")
+        if not isinstance(self.ref.record, RunRef | StepRef):
+            raise ValueError("error ref must reference a Run or Step")
+        if self.ref.field.value != "/error":
+            raise ValueError("error ref must reference exactly /error")
+
+    @classmethod
+    def from_data(cls, value: object) -> ErrorRef:
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, Mapping) or set(value) != {"type", "ref"}:
+            raise ValueError("error ref requires type and ref")
         payload = cast(Mapping[str, object], value)
-        tag = payload.get("?") if set(payload) == {"?"} else None
-        if isinstance(tag, str) and tag.startswith("@") and len(tag) > 1:
-            return Pointer(tag[1:])
-    raise ValueError("invalid execution error")
+        if payload.get("type") != "ref":
+            raise ValueError("error ref type must be 'ref'")
+        raw_ref = payload.get("ref")
+        if not isinstance(raw_ref, str):
+            raise ValueError("error ref must be text")
+        return cls(FieldRef.parse(raw_ref))
 
+    def to_data(self) -> dict[str, str]:
+        return {"type": "ref", "ref": str(self.ref)}
 
-def _serialize_execution_error(error: str | Pointer) -> str | dict[str, str]:
-    return error if isinstance(error, str) else {"?": f"@{error}"}
+    def __str__(self) -> str:
+        return str(self.ref)
 
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, _source_type: Any, _handler: Any
+    ) -> core_schema.CoreSchema:
+        return _tagged_value_schema(cls, cls.from_data, cls.to_data)
 
-ExecutionError: TypeAlias = Annotated[
-    str | Pointer,
-    BeforeValidator(_parse_execution_error),
-    PlainSerializer(_serialize_execution_error, return_type=object),
-]
 
 RunStatus = Literal["pending", "running", "succeeded", "failed", "canceled"]
 StepStatus = Literal[
@@ -1562,7 +1839,11 @@ def valid_run_id(value: object) -> bool:
 def valid_thread_id(value: object) -> bool:
     """Return whether a thread id is disjoint from the run namespace."""
 
-    return valid_execution_id(value) and not cast(str, value).startswith("run_")
+    return (
+        valid_execution_id(value)
+        and not cast(str, value).startswith("run_")
+        and not cast(str, value).startswith("sha256_")
+    )
 
 
 def validate_execution_id(value: object, *, label: str) -> str:
@@ -1579,6 +1860,65 @@ def _canonical_index(value: str) -> bool:
     )
 
 
+def _parse_record_ref(value: str) -> RecordRef:
+    if value.startswith("sha256_"):
+        return ContentRef(value)
+    if "@" in value:
+        return ControlRef.parse(value)
+    if value.startswith("run_"):
+        return StepRef.parse(value) if "." in value else RunRef(value)
+    return ThreadRef(value)
+
+
+def _text_ref_schema(value_type: type[Any]) -> core_schema.CoreSchema:
+    parse = value_type.parse
+    return core_schema.json_or_python_schema(
+        json_schema=core_schema.no_info_after_validator_function(
+            parse,
+            core_schema.str_schema(),
+        ),
+        python_schema=core_schema.union_schema(
+            [
+                core_schema.is_instance_schema(value_type),
+                core_schema.no_info_after_validator_function(
+                    parse,
+                    core_schema.str_schema(),
+                ),
+            ]
+        ),
+        serialization=core_schema.plain_serializer_function_ser_schema(
+            str,
+            return_schema=core_schema.str_schema(),
+        ),
+    )
+
+
+def _tagged_value_schema(
+    value_type: type[Any],
+    parse: Any,
+    serialize: Any,
+) -> core_schema.CoreSchema:
+    return core_schema.json_or_python_schema(
+        json_schema=core_schema.no_info_after_validator_function(
+            parse,
+            core_schema.dict_schema(),
+        ),
+        python_schema=core_schema.union_schema(
+            [
+                core_schema.is_instance_schema(value_type),
+                core_schema.no_info_after_validator_function(
+                    parse,
+                    core_schema.dict_schema(),
+                ),
+            ]
+        ),
+        serialization=core_schema.plain_serializer_function_ser_schema(
+            serialize,
+            return_schema=core_schema.dict_schema(),
+        ),
+    )
+
+
 def _validate_json_pointer(value: str, *, source: str) -> None:
     if ":" in value:
         raise ValueError(f"pointer field names cannot contain ':': {source!r}")
@@ -1590,12 +1930,6 @@ def _validate_json_pointer(value: str, *, source: str) -> None:
         if index + 1 >= len(value) or value[index + 1] not in {"0", "1"}:
             raise ValueError(f"invalid JSON pointer escape: {source!r}")
         index += 2
-
-
-def _pointer_value(anchor: str, path: Sequence[str | int]) -> str:
-    if not path:
-        return anchor
-    return f"{anchor}/{_pointer_suffix(path)}"
 
 
 def _pointer_suffix(path: Sequence[str | int]) -> str:

@@ -25,11 +25,10 @@ from toolang.execution.executor import RunExecutor
 from toolang.execution.records import (
     RunControlPayload,
     SteerControlPayload,
-    ThreadControlRef,
 )
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import Local, ThreadPrefix
+from toolang.execution.types import ControlRef, Local, ThreadPrefix
 from toolang.lang.input import resolve_input_parts
 
 _CHAT_SOURCE = """
@@ -162,7 +161,7 @@ def _race_rewind(
             thread_id="term_race",
             anchor=None,
             request_id="racing-rewind",
-            expected_head=ThreadControlRef("term_race", 0),
+            expected_head=ControlRef.for_thread("term_race", 0),
             created_at="2026-01-01T00:00:04Z",
         )
         results.put(("rewind", "accepted", control.index, superseded))
@@ -581,11 +580,11 @@ def test_control_claim_and_cross_process_cancellation_are_linearizable(
     outcomes = _race_processes(
         (
             _race_claim_control,
-            (str(db_path), control.target, control.index),
+            (str(db_path), str(control.target), control.index),
         ),
         (
             _race_cancel_control,
-            (str(db_path), control.target, control.index),
+            (str(db_path), str(control.target), control.index),
         ),
     )
     kinds = {str(outcome[0]) for outcome in outcomes}
@@ -594,7 +593,7 @@ def test_control_claim_and_cross_process_cancellation_are_linearizable(
     reopened = RunStore(db_path)
     try:
         stored = reopened.get_run_control(
-            run_id=control.target,
+            run_id=str(control.target),
             index=control.index,
         )
         assert stored is not None
@@ -630,8 +629,8 @@ def test_only_one_process_can_claim_a_pending_control(tmp_path: Path) -> None:
         store.close()
 
     outcomes = _race_processes(
-        (_race_claim_control, (str(db_path), control.target, control.index)),
-        (_race_claim_control, (str(db_path), control.target, control.index)),
+        (_race_claim_control, (str(db_path), str(control.target), control.index)),
+        (_race_claim_control, (str(db_path), str(control.target), control.index)),
     )
 
     assert [outcome[0] for outcome in outcomes].count("claimed") == 1
@@ -678,7 +677,7 @@ def test_concurrent_forks_preserve_one_terminal_anchor(
         for thread_id in forked:
             thread = reopened.get_thread(thread_id=thread_id)
             assert thread is not None
-            assert thread.created_by == ThreadControlRef(thread_id, 0)
+            assert thread.created_by == ControlRef.for_thread(thread_id, 0)
             assert [
                 run.id
                 for run in reopened.list_thread_history_chronological(
@@ -725,10 +724,10 @@ def test_run_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
         rewind = by_kind["rewind"]
         if rewind[1] == "accepted":
             assert rewind[2:] == (1, ("run_race_anchor",))
-            assert thread.head == ThreadControlRef("term_race", 1)
+            assert thread.head == ControlRef.for_thread("term_race", 1)
             anchor = reopened.get_run(run_id="run_race_anchor")
             assert anchor is not None
-            assert anchor.ejected_by == ThreadControlRef("term_race", 1)
+            assert anchor.ejected_by == ControlRef.for_thread("term_race", 1)
             assert [
                 run.id
                 for run in reopened.list_thread_history_chronological(
@@ -737,7 +736,7 @@ def test_run_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
             ] == ["run_racing_run"]
         else:
             assert str(rewind[1]).startswith("rejected:thread is running")
-            assert thread.head == ThreadControlRef("term_race", 0)
+            assert thread.head == ControlRef.for_thread("term_race", 0)
             assert [
                 run.id
                 for run in reopened.list_thread_history_chronological(

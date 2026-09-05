@@ -137,7 +137,7 @@ async def _retry_authored_stream(
     try:
         handle = core.executor.retry(
             request,
-            tracer=live.trace(thread_id=source.thread),
+            tracer=live.trace(thread_id=str(source.thread)),
         )
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -160,7 +160,7 @@ async def _rerun_authored_stream(
     try:
         handle = core.executor.rerun(
             request,
-            tracer=live.trace(thread_id=source.thread),
+            tracer=live.trace(thread_id=str(source.thread)),
         )
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -441,7 +441,7 @@ async def retry_run(
                 else None
             ),
             request_id=request.request_id,
-            tracer=live.trace(thread_id=source.thread),
+            tracer=live.trace(thread_id=str(source.thread)),
         )
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -481,7 +481,7 @@ async def rerun_run(
                 else None
             ),
             request_id=request.request_id,
-            tracer=live.trace(thread_id=source.thread),
+            tracer=live.trace(thread_id=str(source.thread)),
         )
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

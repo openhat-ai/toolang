@@ -12,7 +12,12 @@ from toolang.base.types.message import Part
 from toolang.execution.events import RunEvent
 from toolang.execution.records import execution_error_message
 from toolang.execution.schemas import RunDetail, RunRequest
-from toolang.execution.types import ExecutionError, RunOverride, SessionSetting
+from toolang.execution.types import (
+    ErrorMessage,
+    ErrorRef,
+    RunOverride,
+    SessionSetting,
+)
 from toolang.lang.input import RunnableInputRaw
 
 if TYPE_CHECKING:
@@ -213,8 +218,10 @@ def chat_status_label(setting: SessionSetting) -> str:
     )
 
 
-def friendly_error(message: ExecutionError) -> str:
-    text = (execution_error_message(message) or "").strip()
+def friendly_error(message: str | ErrorMessage | ErrorRef) -> str:
+    text = (
+        message if isinstance(message, str) else execution_error_message(message) or ""
+    ).strip()
     extracted = _extract_error_message(text)
     if extracted:
         return extracted

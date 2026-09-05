@@ -48,12 +48,20 @@ from toolang.execution.schemas import (
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     CollectionStepNoted,
+    ContentRef,
+    ControlRef,
+    ErrorMessage,
+    ErrorRef,
+    FieldRef,
     Local,
     ModelStepNoted,
     Occurrence,
     Pointer,
+    RunRef,
+    StepRef,
+    ThreadRef,
     ToolStepGiven,
-    TypedPointer,
+    TypedRef,
     local_to_protocol_data,
     validate_runtime_value,
 )
@@ -138,11 +146,12 @@ def _load_controls(store: RunStore, _source: _InspectSubject) -> _InspectSubject
 
 
 def _load_runs(store: RunStore, source: _InspectSubject) -> _InspectSubject:
-    thread_id = (
-        source.selection.pointer.record
+    thread_ref = (
+        source.selection.pointer.thread_ref()
         if source.kind == "thread" and source.selection is not None
         else None
     )
+    thread_id = str(thread_ref) if thread_ref is not None else None
     inspected = store.inspect_runs(thread_id=thread_id)
     return _InspectSubject(
         kind="runs",
@@ -155,7 +164,10 @@ def _load_runs(store: RunStore, source: _InspectSubject) -> _InspectSubject:
 def _load_steps(store: RunStore, source: _InspectSubject) -> _InspectSubject:
     if source.selection is None:  # pragma: no cover - registry source guarantees this
         raise RuntimeError("run subject has no record selection")
-    run_id = source.selection.pointer.record
+    run_ref = source.selection.pointer.run_ref()
+    if run_ref is None:  # pragma: no cover - registry source guarantees this
+        raise RuntimeError("run subject does not identify a Run")
+    run_id = str(run_ref)
     inspected = store.inspect_steps(run_id=run_id)
     return _InspectSubject(
         kind="steps",
@@ -171,7 +183,7 @@ def _load_child_runs(store: RunStore, source: _InspectSubject) -> _InspectSubjec
     return _InspectSubject(
         kind="runs",
         records=tuple(item.record for item in inspected),
-        scope=str(step.path),
+        scope=str(step.ref),
         inspected=inspected,
     )
 
@@ -182,7 +194,7 @@ def _load_child_steps(store: RunStore, source: _InspectSubject) -> _InspectSubje
     return _InspectSubject(
         kind="steps",
         records=tuple(item.record for item in inspected),
-        scope=str(step.path),
+        scope=str(step.ref),
         inspected=inspected,
     )
 
@@ -202,7 +214,7 @@ def _project_model_call(store: RunStore, source: _InspectSubject) -> object:
 def _project_tool_call(_store: RunStore, source: _InspectSubject) -> object:
     step = _selected_step(source)
     if not isinstance(step.given, ToolStepGiven):
-        raise ValueError(f"step is not a tool call: {step.path}")
+        raise ValueError(f"step is not a tool call: {step.ref}")
     call = step.given.call
     data = {
         "tool_call_id": call.tool_call_id,
@@ -219,7 +231,7 @@ def _project_structural_tree(store: RunStore, source: _InspectSubject) -> object
     if source.selection is None:
         raise RuntimeError("structural projection has no record selection")
     record = source.selection.record
-    root = record.id if isinstance(record, RunRecord) else _selected_step(source).path
+    root = record.id if isinstance(record, RunRecord) else _selected_step(source).ref
     tree = build_execution_tree(store.load_execution_snapshot(root=root))
     return _ProjectedValue(json=tree_to_data(tree), human=tree)
 
@@ -232,7 +244,7 @@ def _project_step_call(store: RunStore, source: _InspectSubject) -> object:
         return _project_tool_call(store, source)
     if step.kind in {"run", "par", "loop"}:
         return _project_structural_tree(store, source)
-    raise click.UsageError(f"{step.path} does not support projector call")
+    raise click.UsageError(f"{step.ref} does not support projector call")
 
 
 def _render_model_call(
@@ -347,7 +359,7 @@ def _render_execution_tree(
         children.setdefault(node.parent, []).append(node.pointer)
     last = {pointer for pointers in children.values() for pointer in pointers[-1:]}
     steps = {
-        str(record.path): record
+        str(record.ref): record
         for record in value.records
         if isinstance(record, StepRecord)
     }
@@ -694,9 +706,9 @@ def _parse_inspect_query(values: Sequence[str]) -> _InspectQuery:
         root_pointer = None
     else:
         try:
-            root_pointer = Pointer(head)
+            root_pointer = Pointer.parse(head)
         except (TypeError, ValueError) as exc:
-            raise click.UsageError(str(exc)) from exc
+            raise click.UsageError(f"invalid pointer: {exc}") from exc
     return _InspectQuery(
         subjects=subjects,
         root_pointer=root_pointer,
@@ -722,7 +734,7 @@ def _resolve_inspect_subject(store: RunStore, query: _InspectQuery) -> _InspectS
             current = _InspectSubject(
                 kind=(
                     "field"
-                    if query.root_pointer.field
+                    if query.root_pointer.tokens
                     else record_kind(selection.record)
                 ),
                 selection=selection,
@@ -848,7 +860,10 @@ def _resolve_inspect_projection(
 def _implicit_pointer_projector(
     selected: RecordSelection,
 ) -> Literal["fields", "value"]:
-    if isinstance(selected.runtime, Local) or selected.is_pointer:
+    if (
+        isinstance(selected.runtime, ErrorMessage | ErrorRef | Local)
+        or selected.is_pointer
+    ):
         return "value"
     if selected.render_type in {"Part", "Part[]"}:
         return "value"
@@ -916,7 +931,7 @@ def _render_collection(
         controls = cast(tuple[ControlRecord, ...], subject.records)
         rows = [
             (
-                str(Pointer.control(control.target, control.index)),
+                control.id,
                 control.kind,
                 _display_status(control.status),
                 control.created_at,
@@ -996,7 +1011,7 @@ def _render_collection(
                 _runnable_activity(item.runnable),
                 _display_status(item.record.status),
                 str(item.step_count),
-                item.record.thread,
+                str(item.record.thread),
                 str(item.record.parent) if item.record.parent is not None else "-",
                 item.record.created_at,
             )
@@ -1023,7 +1038,7 @@ def _render_collection(
         if child_steps:
             rows = [
                 (
-                    str(item.record.path),
+                    str(item.record.ref),
                     _status_activity(
                         item.record.status,
                         _tree_activity("step", item.record.kind, item.operation),
@@ -1052,7 +1067,7 @@ def _render_collection(
             return
         rows = [
             (
-                str(item.record.path),
+                str(item.record.ref),
                 _status_activity(
                     item.record.status,
                     _tree_activity("step", item.record.kind, item.operation),
@@ -1234,7 +1249,7 @@ def _call_summary_renderables(
 ) -> tuple[Text, ...]:
     lines: list[Text] = []
     _append_model_call_section(lines, title, width=80)
-    lines.append(Text(f"Step         {step.path}"))
+    lines.append(Text(f"Step         {step.ref}"))
     if isinstance(step.given, StoredModelStepGiven):
         lines.append(Text(f"Model        {step.given.model}"))
     elif isinstance(step.given, ToolStepGiven):
@@ -1544,10 +1559,15 @@ def _raw_human_children(
         keys = range(len(cast(Sequence[object], selected.value)))
     for key in keys:
         child = selected.child(key)
+        data = child.value
+        if isinstance(child.runtime, ErrorMessage):
+            data = child.runtime.message
+        elif isinstance(child.runtime, ErrorRef):
+            data = str(child.runtime)
         yield (
             child,
             _HumanValue(
-                data=child.value,
+                data=data,
                 runtime=child.value,
                 render_type=child.type_name,
                 resolved=False,
@@ -1571,11 +1591,14 @@ def _human_value(store: RunStore, selected: RecordSelection) -> _HumanValue:
             data = protocol["value"]
             runtime = runtime.value
             render_type = local_type
-        if isinstance(runtime, TypedPointer):
+        if isinstance(runtime, TypedRef):
             expected.append(runtime.type)
-            pointer = runtime.pointer
-        elif isinstance(runtime, Pointer):
-            pointer = runtime
+            pointer = Pointer(runtime.ref)
+        elif isinstance(
+            runtime,
+            (ThreadRef, RunRef, StepRef, ControlRef, ContentRef, FieldRef),
+        ):
+            pointer = Pointer(runtime)
         else:
             break
         if pointer in visited:
@@ -1680,6 +1703,10 @@ def _human_block(value: _HumanValue) -> RenderableType | None:
 
 def _human_summary(value: _HumanValue) -> str:
     data = value.data
+    if isinstance(value.runtime, ErrorMessage):
+        return value.runtime.message
+    if isinstance(value.runtime, ErrorRef):
+        return str(value.runtime)
     natural = human_scalar_text(value.runtime, value.render_type)
     if natural is not None:
         return natural

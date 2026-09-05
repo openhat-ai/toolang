@@ -1,68 +1,47 @@
-# Execution Records And Pointers
+# Execution Records And References
 
-This document describes durable execution records, their canonical JSON, and
-the Pointers used to address them. Run events remain the transient projection
-input; records are the durable source of truth.
+Execution records are the durable source of truth. Run events are their
+transient projection input.
 
-## Pointer
+## References
 
-One `Pointer` addresses any Thread, Control, Run, or Step record and any field
-inside its canonical JSON:
+Durable references have explicit types:
 
 ```text
-POINTER = THREAD_ID [ "@" INDEX ] *( "/" TOKEN )
-        | RUN_ID [ 1*( "." INDEX ) | "@" INDEX ] *( "/" TOKEN )
+RecordRef = ThreadRef | RunRef | StepRef | ControlRef | ContentRef
+FieldRef  = RecordRef + JsonPointer
+TypedRef  = FieldRef + RuntimeType
 ```
 
-Run ids occupy the reserved `run_` namespace. Thread ids cannot begin with
-`run_`. `.` enters the Step hierarchy, `@` selects a Control index, and `/`
-enters a field. A Control belongs to a Thread or Run, never a Step.
+`StepPath` is only the Run-relative tuple of Step indexes. `StepRef` combines it
+with a `RunRef`. `Pointer` is the generic facade used where the concrete Ref
+kind is not known before parsing, such as CLI inspection.
 
 ```text
-term_ab12                         ThreadRecord
-term_ab12@0                       ControlRecord
-run_ab12                          RunRecord
-run_ab12@1                        ControlRecord
-run_ab12.0.1                      StepRecord
-run_ab12/output/value             Run field
-run_ab12.0/output/value/0         Step field
-run_ab12@1/payload/locals/0/value Control field
+term_ab12                              ThreadRef
+run_ab12                               RunRef
+run_ab12.0.1                           StepRef
+term_ab12@0                            ControlRef
+run_ab12@1                             ControlRef
+sha256_<64 lowercase hex digits>       ContentRef
+run_ab12.0/output/value                FieldRef
+run_ab12.0/output/value:Part[]         TypedRef
 ```
 
-Field tokens use RFC 6901: `~0` represents `~`, `~1` represents `/`, and an
-empty token addresses an empty member name. Array indexes are canonical
-non-negative decimal integers. `-` is not a readable index. `:` is reserved and
-cannot occur in a field name stored in execution history.
+Run IDs reserve `run_`; content IDs reserve `sha256_`; Thread IDs may use
+neither prefix. Step and Control indexes use canonical non-negative decimal
+text. Field tokens use RFC 6901 escaping. `:` is reserved for the TypedRef
+suffix; durable record field names are assumed not to contain it. Legacy forms
+are rejected.
 
-A `TypedPointer` adds the runtime type expected after resolution:
+## Canonical Records
 
-```text
-run_ab12.0/output/value:Part[]
-```
+Canonical JSON contains the record itself, without an inspection envelope,
+embedded children, summaries, or SQLite-only columns. Every record exposes its
+canonical identity as `id: str`. Fields referring elsewhere use their concrete
+Ref type and serialize to canonical text.
 
-The canonical form is always `POINTER:TYPE`. The former implicit output/local
-semantics and `TYPE@POINTER` form are not accepted. Record roots mean records;
-runtime value and error Pointers therefore name `/output/value` or `/error`
-explicitly.
-
-## Canonical JSON
-
-Canonical record JSON is the record itself, without an inspection envelope,
-embedded children, summaries, or SQLite-only columns. `StepPath` and `Pointer`
-fields are strings. `ControlRef` retains `target` and `index`. `Local` uses:
-
-```text
-type
-value
-name
-dim
-```
-
-A `TypedPointer` inside a Local value uses its canonical `POINTER:TYPE` text.
-Every object member name, including names in user JSON and structured values,
-is checked for the reserved `:` before the value enters durable state.
-
-## ThreadRecord
+### ThreadRecord
 
 ```text
 id
@@ -75,16 +54,13 @@ updated_at
 ```
 
 `created_by` identifies the successful create or fork Control at index zero.
-`head` identifies the latest successful thread Control and provides optimistic
+`head` identifies the latest successful thread Control and supports optimistic
 concurrency for rewind and fork operations.
 
-## ControlRecord
-
-Run and thread Controls share one durable model:
+### ControlRecord
 
 ```text
-target
-index
+id
 kind
 payload
 request
@@ -95,9 +71,10 @@ created_at
 finished_at
 ```
 
-`target` plus `index` is the identity. The target namespace determines whether
-the Control belongs to a Run or Thread; canonical JSON does not add a synthetic
-scope field.
+`id` is the complete `ControlRef`. Its target determines whether the Control
+belongs to a Run or Thread; canonical JSON does not repeat target, index, or a
+synthetic scope field. SQLite retains private scope, target, and index columns
+for queries.
 
 Current kinds are:
 
@@ -106,19 +83,11 @@ run | rerun | retry | reload | execute | steer | cancel
 create | fork | rewind
 ```
 
-`kind` selects the typed payload variant. Run preparation payloads contain the
-resolved resources, limits, State revision, runnable, model, input Locals, and
-sandbox. Retry and rerun add their source boundary. Reload stores a State
-revision. Execute stores the source ToolCall Pointer and Pointer-backed input
-Locals. Steer and cancel store injected Locals. Create has an empty payload;
-fork and rewind store their thread-history boundaries.
-
 Control status is `pending`, `applied`, `wontapply`, or `revoked`. Timing is
-`immediate`, `next_step`, or `next_call`. The database also maintains claim and
-change-revision columns for concurrency and polling; these are not part of
-canonical record JSON.
+`immediate`, `next_step`, or `next_call`. Private claim and revision columns
+support concurrency and polling.
 
-## RunRecord
+### RunRecord
 
 ```text
 id
@@ -136,17 +105,14 @@ started_at
 finished_at
 ```
 
-`parent` is the calling `StepPath` for a child Run. `control` is the preparation
-Control for the attempt. `state` identifies the preparation or reload Control
-that supplied immutable Agent State. `output` is a typed Local and may contain
-a `TypedPointer` to an explicit `/output/value` field. `error` is either a
-message or a Pointer to an explicit `/error` field. `ejected_by` identifies the
-Control that removed the Run from the visible projection.
+`parent` is the calling `StepRef` for a child Run. `thread`, `control`, `state`,
+and `ejected_by` are typed references. `output` is a Local and may contain a
+`TypedRef` to an explicit `/output/value` field.
 
-## StepRecord
+### StepRecord
 
 ```text
-path
+id
 kind
 input
 given
@@ -162,41 +128,46 @@ started_at
 finished_at
 ```
 
-`path` is the complete `StepPath`. `input` is an ordered tuple of explicit
-Pointers. `state` captures the immutable State Control used for the entire
-Step. `output` is a typed Local. `given` contains facts known at `StepBegin`;
-`noted` contains kind-specific facts committed at `StepEnd`. Neither repeats
-input, output, status, or error.
+`id` is the complete `StepRef`. `input` is an ordered tuple of `FieldRef`s.
+`state` identifies the immutable State Control used for the Step. `given`
+contains facts known at `StepBegin`; `noted` contains kind-specific facts
+committed at `StepEnd`. Neither repeats input, output, status, or error.
 
-Step kinds are:
+Model `given` data contains normalized-call references. Large instructions,
+messages, and toolsets are content-addressed; provider request bodies and
+credentials are not stored. Model `noted` records continuation and accounting.
 
-```text
-run | agent | human | model | tool | par | loop | value
+## Content And Errors
+
+The `contents` table stores `(id, value)` only. `id` is the complete
+`ContentRef`, `sha256_<digest>`, and `value` is the raw blob. Writes and reads
+verify the digest, and identical bytes deduplicate. The referring field supplies
+the text, JSON, or file codec.
+
+Run and Step errors use exactly one of:
+
+```json
+null
+{"type": "message", "message": "model request timed out"}
+{"type": "ref", "ref": "run_ab12.0/error"}
 ```
 
-Model `given` data contains the durable normalized-call references. Large
-instructions, messages, and toolsets are content-addressed; provider request
-bodies and credentials are not stored. Model `noted` data records continuation
-and accounting facts. Preparing or sending a provider request is outside
-historical record inspection.
+An `ErrorRef` can target only `/error` on a Run or Step. Resolution follows the
+chain to an `ErrorMessage` and rejects missing targets, null targets, and cycles.
 
 ## Resolution And Inspection
 
-Resolution parses the Pointer, loads its one owning record, converts the record
-to canonical JSON, and traverses slash tokens. Canonical traversal never
-follows a Pointer stored as data. Missing records, missing members, invalid
-array indexes, scalar traversal, and explicit `null` are distinct outcomes.
+Resolution parses a Pointer, fetches its owning record by canonical ID, converts
+the record to canonical JSON, and traverses slash tokens. It never follows a Ref
+stored as data unless the caller explicitly requests value or error resolution.
+Missing records, missing members, invalid array indexes, scalar traversal, and
+explicit `null` remain distinct outcomes.
 
-`toolang AGENT inspect POINTER` opens the store read-only. Human output shows one
-structural level using the CLI's horizontal-rule Rich table, relative field
-suffixes, and TYPE in the second column. Nullable Human type labels use the
-compact `T?` form. Human strings have no JSON quotes, multiline Parts align
-within VALUE without a bullet, and resolved rows carry a presentation-only
-`*TYPE` marker. `--json` never follows a stored Pointer, and `--type` is not an
-option. Ejected Runs and Steps remain hidden from ordinary inspection.
+`toolang AGENT inspect POINTER` opens the store read-only. Human output shows
+one structural level; `--json` returns canonical JSON without following stored
+Refs. Ejected Runs and Steps remain hidden from ordinary inspection.
 
-Ownership remains directly investigable without constructing an execution
-tree:
+Ownership can be inspected without constructing an execution tree:
 
 ```text
 THREAD runs
@@ -205,52 +176,28 @@ THREAD runs
        -> LOOP_STEP steps
 ```
 
-`RUN steps` lists every visible Step physically owned by that Run, including
-nested same-Run Steps but excluding child-Run Steps. `STEP runs` lists only
-Runs whose `parent` equals the selected StepPath. `LOOP_STEP steps` lists only
-direct same-Run children whose `path.parent` equals the selected loop StepPath.
-Their JSON forms are bare canonical record arrays. Human Run rows expose the
-parent Step, stored runnable, occurrence, and physical Step count; Step rows
-expose their same-Run parent, durable activity, occurrence, and direct child-Run
-count.
+`inspect RUN tree` produces a transactionally consistent structural projection.
+`inspect STEP call` exposes normalized model or tool calls and structural calls
+for run, par, and loop Steps. These projections are not persisted event journals
+or exact timelines.
 
-`inspect RUN tree` builds a transactionally consistent structural snapshot and
-renders the selected Run, its top-level Steps, direct same-Run nested Steps, and
-accepted child Runs in depth-first order. `inspect STEP call` dispatches by the
-durable Step kind: model and tool Steps expose their normalized stored calls;
-run, par, and loop Steps render the execution tree rooted at that Step. A
-container Step and its accepted child Run are always separate nodes. Agent,
-human, and value Steps have no `call`; Steps have no `tree`; Runs have no
-`call`; and `model-call` is not an alias.
+## Persistence
 
-The structural projection combines durable records, timestamps, occurrence,
-errors, and accounting. It is not a persisted event journal, exact timeline,
-or live trace. Primitive fields and ownership relations do not import, validate,
-or aggregate the tree and remain usable independently.
-
-## Projection Ownership
-
-Control acceptance is direct durable mutation:
+SQLite uses canonical primary keys:
 
 ```text
-RunExecutor operations    -> RunStore -> ControlRecord
-ThreadManager operations  -> RunStore -> ControlRecord
+threads.id
+runs.id
+steps.id
+controls.id
+contents.id
 ```
 
-Run and Step facts are event projection:
+Private indexed columns may retain a Step's Run and relative path or a Control's
+scope, target, and index. Record selection still uses the canonical ID.
+All other reference-bearing columns store the complete canonical Ref string.
+`BEGIN IMMEDIATE` serializes local index allocation and related mutations.
 
-```text
-runtime -> RunEvent -> executor persistence -> RunRecord / StepRecord
-```
-
-The runtime projects event facts and referenced Control transitions in one
-SQLite transaction. Primary keys protect record identities; non-null request
-ids are unique, and `BEGIN IMMEDIATE` serializes index allocation across local
-processes.
-
-## Compatibility
-
-The current RunStore schema is version 33. It intentionally rejects every
-older and newer version, including version 32, before reading or writing. There
-is no migration or legacy Pointer parser at this boundary; incompatible stores
-remain unchanged.
+The current RunStore schema is version 34. Every older or newer version is
+rejected before reading or writing. There is no migration or legacy reference
+parser at this boundary, and incompatible stores remain unchanged.

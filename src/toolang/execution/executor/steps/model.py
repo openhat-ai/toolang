@@ -48,8 +48,9 @@ from ...types import (
     ModelTokenCount,
     ModelTokenPrice,
     ControlRef,
-    Pointer,
-    StepPath,
+    ErrorMessage,
+    FieldRef,
+    StepRef,
 )
 from ..common import _StepFailed, control_local_pointer
 from ..diagnostics import log_model_request, log_model_result, log_model_target
@@ -122,7 +123,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             continuation=state.continuation,
         )
         return StepBegin(
-            step=StepPath(run.run_id, (step_index,)),
+            step=StepRef.from_local(run.run_id, (step_index,)),
             kind="model",
             state=state_ref,
             input=step_input,
@@ -164,7 +165,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
         await _close_open_parts(state, stream)
         await state.emit(
             StepEnd(
-                step=StepPath(run.run_id, (step_index,)),
+                step=StepRef.from_local(run.run_id, (step_index,)),
                 kind="model",
                 status="canceled",
                 finished_at=utc_now(),
@@ -176,10 +177,10 @@ async def execute(state: _AgicState) -> ModelCallResult:
         await _close_open_parts(state, stream)
         await state.emit(
             StepEnd(
-                step=StepPath(run.run_id, (step_index,)),
+                step=StepRef.from_local(run.run_id, (step_index,)),
                 kind="model",
                 status="failed",
-                error=message,
+                error=ErrorMessage(message),
                 finished_at=utc_now(),
             )
         )
@@ -191,7 +192,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             str(exc),
             elapsed_ms(step_started),
         )
-        raise _StepFailed(StepPath(run.run_id, (step_index,)), exc) from exc
+        raise _StepFailed(StepRef.from_local(run.run_id, (step_index,)), exc) from exc
     return await _apply_response(
         state,
         stream,
@@ -255,7 +256,7 @@ async def _apply_response(
         )
         await state.emit(
             PartEnd(
-                step=StepPath(run.run_id, (step_index,)),
+                step=StepRef.from_local(run.run_id, (step_index,)),
                 part=part_index,
                 data=part,
             )
@@ -269,7 +270,7 @@ async def _apply_response(
     accounting = state.account_usage(current.usage)
     await state.emit(
         StepEnd(
-            step=StepPath(run.run_id, (step_index,)),
+            step=StepRef.from_local(run.run_id, (step_index,)),
             kind="model",
             status="succeeded",
             output=Local.typed("Part[]", output, "_", 0),
@@ -323,7 +324,9 @@ async def _handle_event(
             if event.delta.text:
                 await state.emit(
                     PartDelta(
-                        step=StepPath(state.prepared.run.run_id, (stream.step,)),
+                        step=StepRef.from_local(
+                            state.prepared.run.run_id, (stream.step,)
+                        ),
                         part=part_index,
                         delta=event.delta,
                     )
@@ -343,7 +346,9 @@ async def _handle_event(
             if event.delta.text:
                 await state.emit(
                     PartDelta(
-                        step=StepPath(state.prepared.run.run_id, (stream.step,)),
+                        step=StepRef.from_local(
+                            state.prepared.run.run_id, (stream.step,)
+                        ),
                         part=part_index,
                         delta=event.delta,
                     )
@@ -448,7 +453,7 @@ def _output_parts(
     return items
 
 
-def _step_input(state: _AgicState) -> tuple[Pointer, ...]:
+def _step_input(state: _AgicState) -> tuple[FieldRef, ...]:
     if state.next_model_inputs is not None:
         inputs = state.next_model_inputs
         state.next_model_inputs = None
@@ -456,8 +461,8 @@ def _step_input(state: _AgicState) -> tuple[Pointer, ...]:
     if state.last_step is None:
         return state.initial_inputs
     return (
-        Pointer.step(
-            StepPath(state.prepared.run.run_id, (state.last_step,)),
+        FieldRef.from_path(
+            StepRef.from_local(state.prepared.run.run_id, (state.last_step,)),
             "output",
             "value",
         ),
@@ -521,7 +526,7 @@ async def _emit_part_begin(
         return
     await state.emit(
         PartBegin(
-            step=StepPath(state.prepared.run.run_id, (stream.step,)),
+            step=StepRef.from_local(state.prepared.run.run_id, (stream.step,)),
             part=part_index,
             part_type=kind,
         )
@@ -536,7 +541,7 @@ async def _close_open_parts(state: _AgicState, stream: _ModelStream) -> None:
     for part_index in sorted(stream.started_parts):
         await state.emit(
             PartEnd(
-                step=StepPath(state.prepared.run.run_id, (stream.step,)),
+                step=StepRef.from_local(state.prepared.run.run_id, (stream.step,)),
                 part=part_index,
                 data=stream.completed_parts.get(part_index)
                 or _partial_part(stream, part_index),

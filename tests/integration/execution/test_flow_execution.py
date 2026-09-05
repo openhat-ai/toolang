@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from multiprocessing import get_context
 from pathlib import Path
-import threading
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+from tests.support.execution_fixtures import accept_run
+from tests.support.execution_harness import FakeModels, RecordingTool
 from toolang.base.types.message import ImagePart, Message, TextPart
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunBindings, RunDefaults
@@ -27,33 +29,33 @@ from toolang.execution.events import (
     ThreadListener,
 )
 from toolang.execution.executor import AgentCeiling, RunExecutor, RunSpec
-from toolang.execution.executor.resources import resolve_agent_resources
+from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.executor.common import (
     BoundRun,
     Local,
     transform_flow_result,
 )
 from toolang.execution.executor.executor import _Execution
+from toolang.execution.executor.resources import resolve_agent_resources
 from toolang.execution.executor.runs import agic as agic_run
 from toolang.execution.history import RunHistory
 from toolang.execution.records import (
     ForkControlPayload,
     RunControlPayload,
-    ThreadControlRef,
 )
-from toolang.execution.executor._persist import _PersistSink
+from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import (
     ControlRef,
+    ErrorMessage,
+    FieldRef,
     Local as RecordLocal,
     Occurrence,
-    StepPath,
+    RunRef,
+    StepRef,
     ThreadPrefix,
-    Pointer,
 )
-from toolang.lang.input import RunnableInput, resolve_runnable_input
-from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.lang.ast import (
     AgicDecl,
     Directive,
@@ -64,10 +66,9 @@ from toolang.lang.ast import (
     RunStmt,
     Span,
 )
+from toolang.lang.input import RunnableInput, resolve_runnable_input
 from toolang.plugin.models.resolution import build_model_collection
 from toolang.setup import AgentEnvironment, AgentSetup, ModelCollection, ToolCollection
-from tests.support.execution_fixtures import accept_run
-from tests.support.execution_harness import FakeModels, RecordingTool
 
 
 class _RecordingTracer(RunTracer):
@@ -82,7 +83,7 @@ class _RecordingTracer(RunTracer):
         assert not self._handling
         self._handling = True
         run_id = event.run if isinstance(event, RunBegin | RunEnd) else event.step.run
-        assert self.store.get_run(run_id=run_id) is not None
+        assert self.store.get_run(run_id=str(run_id)) is not None
         self.thread_ids.add(threading.get_ident())
         try:
             await asyncio.sleep(0)
@@ -155,7 +156,7 @@ def _model_setup() -> AgentSetup:
 
 
 def test_flow_item_transform_normalizes_a_list_result_to_dim_zero() -> None:
-    pointer = Pointer.run("run_child", "output", "value")
+    pointer = FieldRef.from_path(RunRef.parse("run_child"), "output", "value")
     evaluated = Local(
         ["one", "two"],
         "list",
@@ -459,7 +460,7 @@ def test_runtime_failure_is_recorded_directly_on_the_run(
     )
 
     assert record.status == "failed"
-    assert record.error == "runtime failed"
+    assert record.error == ErrorMessage("runtime failed")
     assert [event.type for event in tracer.events] == ["run_begin", "run_end"]
     assert executor.store.list_steps(run_id=record.id) == []
     asyncio.run(executor.stop())
@@ -644,7 +645,7 @@ def test_child_runs_are_persisted_without_starting_event(tmp_path: Path) -> None
 
     runs = store.list_runs(limit=None)
     child_run = next(run for run in runs if run.id != root.id)
-    assert child_run.parent == StepPath.parse(f"{root.id}.0")
+    assert child_run.parent == StepRef.parse(f"{root.id}.0")
     assert child_run.status == "succeeded"
     assert [event.type for event in tracer.events] == [
         "run_begin",
@@ -769,7 +770,7 @@ def test_parallel_children_preserve_input_and_output_types(
         input=RunnableInput(),
         control_locals=(),
         state=state,
-        state_ref=ControlRef("run_root", 0),
+        state_ref=ControlRef.for_run("run_root", 0),
         setup=setup,
         agent_resources=resolve_agent_resources(setup, state, AgentCeiling()),
         created_at="2026-01-01T00:00:00Z",
@@ -797,7 +798,7 @@ def test_parallel_children_preserve_input_and_output_types(
         execution.parallel_children(
             binding,
             {"_": Local(["one", "two"], "list", type_name="Text")},
-            StepPath.parse("run_root.0"),
+            StepRef.parse("run_root.0"),
             child.name,
             ["one", "two"],
             limit=2,
@@ -826,7 +827,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
         input=RunnableInput(),
         control_locals=(),
         state=state,
-        state_ref=ControlRef("run_root", 0),
+        state_ref=ControlRef.for_run("run_root", 0),
         setup=setup,
         agent_resources=resolve_agent_resources(setup, state, AgentCeiling()),
         created_at="2026-01-01T00:00:00Z",
@@ -861,7 +862,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
             execution.parallel_children(
                 binding,
                 {"_": Local(list(range(5)), "list", type_name="Number")},
-                StepPath.parse("run_root.0"),
+                StepRef.parse("run_root.0"),
                 child.name,
                 list(range(5)),
                 limit=4,
@@ -983,7 +984,7 @@ def test_run_control_request_is_unique_across_runs(tmp_path: Path) -> None:
             created_at="2026-01-01T00:00:03Z",
         )
 
-    assert first.target == "run_test"
+    assert str(first.target) == "run_test"
     store.close()
 
 
@@ -1051,7 +1052,7 @@ def test_internal_event_projection_does_not_update_control_status(
     sink.on_event(
         RunBegin(
             run="run_test",
-            control=ControlRef("run_test", 0),
+            control=ControlRef.for_run("run_test", 0),
             started_at="2026-01-01T00:00:01Z",
         )
     )
@@ -1147,7 +1148,7 @@ def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
     sink.on_event(
         RunBegin(
             run=anchor_id,
-            control=ControlRef(anchor_id, 0),
+            control=ControlRef.for_run(anchor_id, 0),
             started_at="2026-01-01T00:00:01Z",
         )
     )
@@ -1203,7 +1204,7 @@ def test_thread_fork_rejects_duplicate_request_without_starting_runs(
     sink.on_event(
         RunBegin(
             run="run_anchor",
-            control=ControlRef("run_anchor", 0),
+            control=ControlRef.for_run("run_anchor", 0),
             started_at="2026-01-01T00:00:01Z",
         )
     )
@@ -1264,7 +1265,7 @@ def test_rewind_uses_durable_acceptance_order_instead_of_timestamps(
         sink.on_event(
             RunBegin(
                 run=run_id,
-                control=ControlRef(run_id, 0),
+                control=ControlRef.for_run(run_id, 0),
                 started_at=timestamp,
             )
         )
@@ -1303,7 +1304,7 @@ def test_rewind_can_trim_inherited_fork_history(tmp_path: Path) -> None:
         sink.on_event(
             RunBegin(
                 run=run_id,
-                control=ControlRef(run_id, 0),
+                control=ControlRef.for_run(run_id, 0),
                 started_at="2026-01-01T00:00:01Z",
             )
         )
@@ -1346,17 +1347,23 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
         sink.on_event(
             RunBegin(
                 run=run_id,
-                control=ControlRef(run_id, 0),
+                control=ControlRef.for_run(run_id, 0),
                 started_at="2026-01-01T00:00:01Z",
             )
         )
         sink.on_event(
             StepBegin(
-                step=StepPath.parse("run_root.0"),
+                step=StepRef.parse("run_root.0"),
                 kind="run",
                 given=RunStmt(span=Span(line=1), runnable="flow:test"),
                 input=(
-                    Pointer.control("run_root", 0, "payload", "locals", 0, "value"),
+                    FieldRef.from_path(
+                        ControlRef.for_run("run_root", 0),
+                        "payload",
+                        "locals",
+                        0,
+                        "value",
+                    ),
                 ),
                 started_at="2026-01-01T00:00:02Z",
             )
@@ -1365,7 +1372,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
     accept_run(
         store,
         run_id="run_child",
-        parent=StepPath.parse("run_root.0"),
+        parent=StepRef.parse("run_root.0"),
         thread=source,
         input=Message.user("run_child"),
         context={"runnable": {"kind": "flow", "name": "test"}},
@@ -1375,7 +1382,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
     sink.on_event(
         RunBegin(
             run="run_child",
-            control=ControlRef("run_child", 0),
+            control=ControlRef.for_run("run_child", 0),
             started_at="2026-01-01T00:00:04Z",
         )
     )
@@ -1388,7 +1395,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
     )
     sink.on_event(
         StepEnd(
-            step=StepPath.parse("run_root.0"),
+            step=StepRef.parse("run_root.0"),
             kind="run",
             status="succeeded",
             finished_at="2026-01-01T00:00:06Z",
@@ -1407,7 +1414,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
 
     assert control is not None
     assert isinstance(control.payload, ForkControlPayload)
-    assert control.payload.fork_at == "run_root"
+    assert str(control.payload.fork_at) == "run_root"
     asyncio.run(executor.stop())
 
 
@@ -1478,7 +1485,7 @@ def _rewind_thread(db_path: str, request_id: str) -> int | None:
             thread_id="term_thread_controls",
             anchor="run_thread_anchor",
             request_id=request_id,
-            expected_head=ThreadControlRef("term_thread_controls", 0),
+            expected_head=ControlRef.for_thread("term_thread_controls", 0),
             created_at="2026-01-01T00:00:03Z",
         )
         return control.index
@@ -1558,7 +1565,7 @@ def test_remote_process_can_cancel_an_owned_run(
         await runtime.emit(
             RunBegin(
                 run=binding.run_id,
-                control=ControlRef(binding.run_id, 0),
+                control=ControlRef.for_run(binding.run_id, 0),
                 started_at="2026-01-01T00:00:00Z",
             )
         )
@@ -1613,7 +1620,7 @@ def test_executor_stop_cancels_and_persists_active_runs(
         await runtime.emit(
             RunBegin(
                 run=binding.run_id,
-                control=ControlRef(binding.run_id, 0),
+                control=ControlRef.for_run(binding.run_id, 0),
                 started_at="2026-01-01T00:00:00Z",
             )
         )
@@ -1692,7 +1699,7 @@ def test_thread_control_indexes_and_head_are_process_safe(tmp_path: Path) -> Non
     sink.on_event(
         RunBegin(
             run="run_thread_anchor",
-            control=ControlRef("run_thread_anchor", 0),
+            control=ControlRef.for_run("run_thread_anchor", 0),
             started_at="2026-01-01T00:00:01Z",
         )
     )
@@ -1739,22 +1746,26 @@ def test_private_event_projector_persists_run_and_step_records(
     sink.on_event(
         RunBegin(
             run="run_test",
-            control=ControlRef("run_test", 0),
+            control=ControlRef.for_run("run_test", 0),
             started_at="2026-01-01T00:00:01Z",
         )
     )
     sink.on_event(
         StepBegin(
-            step=StepPath.parse("run_test.0"),
+            step=StepRef.parse("run_test.0"),
             kind="value",
             given=LetStmt(span=Span(line=1), value="done"),
-            input=(Pointer.control("run_test", 0, "payload", "locals", 0, "value"),),
+            input=(
+                FieldRef.from_path(
+                    ControlRef.for_run("run_test", 0), "payload", "locals", 0, "value"
+                ),
+            ),
             started_at="2026-01-01T00:00:02Z",
         )
     )
     sink.on_event(
         StepEnd(
-            step=StepPath.parse("run_test.0"),
+            step=StepRef.parse("run_test.0"),
             kind="value",
             status="succeeded",
             output=RecordLocal.typed("Part[]", (TextPart(text="done"),), "_", 0),
@@ -1767,7 +1778,7 @@ def test_private_event_projector_persists_run_and_step_records(
             status="succeeded",
             output=RecordLocal.typed(
                 "Part[]",
-                Pointer.step(StepPath.parse("run_test.0"), "output", "value"),
+                FieldRef.from_path(StepRef.parse("run_test.0"), "output", "value"),
                 "_",
                 0,
             ),
@@ -1800,13 +1811,13 @@ def test_step_queries_use_exact_canonical_run_ids(tmp_path: Path) -> None:
         sink.on_event(
             RunBegin(
                 run=run_id,
-                control=ControlRef(run_id, 0),
+                control=ControlRef.for_run(run_id, 0),
                 started_at="2026-01-01T00:00:01Z",
             )
         )
         sink.on_event(
             StepBegin(
-                step=StepPath.parse(f"{run_id}.0"),
+                step=StepRef.parse(f"{run_id}.0"),
                 kind="value",
                 given=LetStmt(span=Span(line=1), value=text),
                 started_at="2026-01-01T00:00:02Z",
@@ -1814,7 +1825,7 @@ def test_step_queries_use_exact_canonical_run_ids(tmp_path: Path) -> None:
         )
         sink.on_event(
             StepEnd(
-                step=StepPath.parse(f"{run_id}.0"),
+                step=StepRef.parse(f"{run_id}.0"),
                 kind="value",
                 status="succeeded",
                 output=RecordLocal.typed("Part[]", (TextPart(text=text),), "_", 0),
@@ -1829,14 +1840,14 @@ def test_step_queries_use_exact_canonical_run_ids(tmp_path: Path) -> None:
             )
         )
 
-    assert [step.path for step in store.list_steps(run_id="run_literal")] == [
-        StepPath.parse("run_literal.0")
+    assert [step.ref for step in store.list_steps(run_id="run_literal")] == [
+        StepRef.parse("run_literal.0")
     ]
     grouped = store.list_steps_for_runs(run_ids=("run_literal", "run_ax"))
-    assert [step.path for step in grouped["run_literal"]] == [
-        StepPath.parse("run_literal.0")
+    assert [step.ref for step in grouped["run_literal"]] == [
+        StepRef.parse("run_literal.0")
     ]
-    assert [step.path for step in grouped["run_ax"]] == [StepPath.parse("run_ax.0")]
+    assert [step.ref for step in grouped["run_ax"]] == [StepRef.parse("run_ax.0")]
     with pytest.raises(ValueError, match="invalid run id"):
         accept_run(
             store,

@@ -17,7 +17,13 @@ from toolang.cli.toolang.commands import script
 from toolang.common.layout import AgentLayout
 from toolang.execution.calls import parse_call
 from toolang.execution.records import RunRecord
-from toolang.execution.types import ControlRef, RunOverride, RunStatus
+from toolang.execution.types import (
+    ControlRef,
+    ErrorMessage,
+    RunOverride,
+    RunStatus,
+    ThreadRef,
+)
 from toolang.lang.input import NamedInputSource, RunnableInputRaw
 from toolang.up.types import AgentServerRef
 from tests.support.execution_harness import ExecutionHarness
@@ -711,9 +717,9 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
         return RunRecord(
             id="run_remote",
             parent=None,
-            thread="script_remote",
-            control=ControlRef("run_remote", 0),
-            state=ControlRef("run_remote", 0),
+            thread=ThreadRef("script_remote"),
+            control=ControlRef.for_run("run_remote", 0),
+            state=ControlRef.for_run("run_remote", 0),
             output=None,
             status="succeeded",
             error=None,
@@ -1055,12 +1061,12 @@ def test_script_does_not_save_an_unsuccessful_run(
         RunRecord(
             id=f"run_{status}",
             parent=None,
-            thread="script_thread",
-            control=ControlRef(f"run_{status}", 0),
-            state=ControlRef(f"run_{status}", 0),
+            thread=ThreadRef("script_thread"),
+            control=ControlRef.for_run(f"run_{status}", 0),
+            state=ControlRef.for_run(f"run_{status}", 0),
             output=None,
             status=status,
-            error="output is not valid Number",
+            error=ErrorMessage("output is not valid Number"),
         ),
         store_path=tmp_path / "runs.db",
         log_path=None,
@@ -1082,12 +1088,12 @@ def test_quiet_unsuccessful_run_reports_fallback_error(
         RunRecord(
             id="run_failed",
             parent=None,
-            thread="script_thread",
-            control=ControlRef("run_failed", 0),
-            state=ControlRef("run_failed", 0),
+            thread=ThreadRef("script_thread"),
+            control=ControlRef.for_run("run_failed", 0),
+            state=ControlRef.for_run("run_failed", 0),
             output=None,
             status="failed",
-            error="provider unavailable",
+            error=ErrorMessage("provider unavailable"),
         ),
         store_path=tmp_path / "runs.db",
         log_path=None,

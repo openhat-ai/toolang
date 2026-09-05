@@ -39,7 +39,7 @@ from toolang.execution.schemas import (
     RunRequest,
     RunnableRequest,
 )
-from toolang.execution.types import ControlRef, Local, RunCommand, StepPath
+from toolang.execution.types import ControlRef, Local, RunCommand, StepRef
 from toolang.lang.input import NamedInputSource, RunnableInputRaw
 
 
@@ -104,7 +104,7 @@ def _request() -> RunRequest:
 def _begin(run_id: str = "run_remote") -> RunBegin:
     return RunBegin(
         run=run_id,
-        control=ControlRef(run_id, 0),
+        control=ControlRef.for_run(run_id, 0),
         runnable="agic:chat",
         started_at="2026-08-25T00:00:00Z",
     )
@@ -304,7 +304,7 @@ def test_remote_client_reuses_the_run_stream_protocol_for_restarts(
                 source="run_source",
                 commands=(RunCommand("limit", "cost", Decimal("2.50")),),
                 request_id="retry_request",
-                anchor=StepPath("run_source", (1, 2)),
+                anchor=StepRef.from_local("run_source", (1, 2)),
             )
             if operation == "retry"
             else RerunRequest(
@@ -688,7 +688,7 @@ def test_remote_client_preserves_http_error_detail() -> None:
             httpx.Response(
                 200,
                 json=_DETAIL_ADAPTER.dump_python(
-                    replace(_detail(), parent=StepPath("run_parent", (0,))),
+                    replace(_detail(), parent=StepRef.from_local("run_parent", (0,))),
                     mode="json",
                 ),
             ),

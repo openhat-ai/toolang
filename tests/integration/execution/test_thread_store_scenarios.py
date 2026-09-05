@@ -33,7 +33,7 @@ from toolang.execution.types import (
     ControlRef,
     ModelStepGiven,
     ModelStepNoted,
-    StepPath,
+    StepRef,
     ThreadPrefix,
 )
 from toolang.lang.input import resolve_input_parts
@@ -55,11 +55,11 @@ def _capture_replayable_model_step(store: RunStore) -> StepRecord:
         ),
     )
     return store.begin_step(
-        path=StepPath("run_replayable_model", (0,)),
+        ref=StepRef.from_local("run_replayable_model", (0,)),
         kind="model",
         input=(),
         given=given,
-        state=ControlRef("run_replayable_model", 0),
+        state=ControlRef.for_run("run_replayable_model", 0),
         started_at="2026-01-01T00:00:00Z",
     )
 
@@ -548,7 +548,7 @@ def test_recent_history_never_splits_a_complete_tool_exchange(
         project_run_end(store, run_id=run.id)
 
         complete = store.recent_conversation_messages(
-            thread_id=run.thread,
+            thread_id=str(run.thread),
             limit=4,
         )
         assert complete == [
@@ -557,7 +557,7 @@ def test_recent_history_never_splits_a_complete_tool_exchange(
             final,
         ]
         assert store.recent_conversation_messages(
-            thread_id=run.thread,
+            thread_id=str(run.thread),
             limit=3,
         ) == [final]
     finally:
@@ -632,7 +632,7 @@ def test_recent_history_skips_incomplete_and_orphan_tool_messages(
         )
         project_run_end(store, run_id=run.id)
 
-        assert store.recent_conversation_messages(thread_id=run.thread) == [
+        assert store.recent_conversation_messages(thread_id=str(run.thread)) == [
             Message.user("calculate"),
             final,
         ]

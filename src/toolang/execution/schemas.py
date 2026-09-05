@@ -43,7 +43,10 @@ from .types import (
     ControlTiming,
     ControlKind,
     ControlStatus,
-    ExecutionError,
+    ContentRef,
+    ErrorMessage,
+    ErrorRef,
+    FieldRef,
     Local,
     ModelStepGiven,
     Occurrence,
@@ -51,13 +54,14 @@ from .types import (
     StepKind,
     StepGiven,
     StepNoted,
-    StepPath,
+    StepRef,
     StepStatus,
+    ThreadRef,
     ThreadPeerType,
     Pointer,
+    RunRef,
     RunCommand,
-    TypedPointer,
-    validate_execution_id,
+    TypedRef,
     validate_occurrence,
     validate_step_given,
     validate_step_noted,
@@ -94,7 +98,18 @@ class RecordSelection:
     def is_pointer(self) -> bool:
         """Return whether the selected field contains a domain Pointer."""
 
-        return isinstance(self.runtime, Pointer | TypedPointer)
+        return isinstance(
+            self.runtime,
+            (
+                ThreadRef,
+                RunRef,
+                StepRef,
+                ControlRef,
+                ContentRef,
+                FieldRef,
+                TypedRef,
+            ),
+        )
 
     def child(self, token: str | int) -> RecordSelection:
         """Select one direct child without another store lookup."""
@@ -127,9 +142,6 @@ def record_to_data(record: Record) -> dict[str, object]:
     if isinstance(record, StepRecord):
         data["given"] = stored_step_given_to_data(record.kind, record.given)
         data["noted"] = step_noted_to_data(record.kind, record.noted)
-    if isinstance(record, RunRecord | StepRecord) and isinstance(record.error, Pointer):
-        data["error"] = str(record.error)
-    validate_field_names(data)
     return data
 
 
@@ -162,22 +174,6 @@ def select_record(record: Record, pointer: Pointer) -> RecordSelection:
         type_name=name,
         render_type=render_type,
     )
-
-
-def validate_field_names(value: object) -> None:
-    """Reject colon-bearing object member names at a durable record boundary."""
-
-    if isinstance(value, Mapping):
-        for name, child in value.items():
-            if not isinstance(name, str):
-                raise ValueError("record field names must be text")
-            if ":" in name:
-                raise ValueError(f"record field name cannot contain ':': {name!r}")
-            validate_field_names(child)
-        return
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        for child in value:
-            validate_field_names(child)
 
 
 def _select_json_child(value: object, token: str, *, source: str) -> object:
@@ -252,7 +248,7 @@ def _select_local_child(
     if token == "type":
         return local.type, str, "str", "Text"
     if token == "value":
-        return local.value, Any, "Value | TypedPointer", local.type
+        return local.value, Any, "Value | TypedRef", local.type
     if token == "name":
         return local.name, str | None, "str | None", "Text"
     if token == "dim":
@@ -307,14 +303,12 @@ def _declared_name(raw: object, annotation: object) -> str:
 
 
 def _render_type(value: object, declared: str) -> str:
-    if isinstance(value, TypedPointer):
+    if isinstance(value, TypedRef):
         return value.type
     if isinstance(value, Local):
         return value.type
     if isinstance(value, Array | Struct):
         return value.type
-    if isinstance(value, str) and "ExecutionError" in declared:
-        return "ExecutionError"
     return declared
 
 
@@ -336,7 +330,7 @@ class ThreadControlRefData:
 
     @classmethod
     def from_ref(cls, ref: ControlRef) -> ThreadControlRefData:
-        return cls(thread=ref.target, index=ref.index)
+        return cls(thread=str(ref.target), index=ref.index)
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,13 +342,13 @@ class RunControlRefData:
 
     @classmethod
     def from_ref(cls, ref: ControlRef) -> RunControlRefData:
-        return cls(run=ref.target, index=ref.index)
+        return cls(run=str(ref.target), index=ref.index)
 
 
 EjectionRefData = ThreadControlRefData | RunControlRefData
 
 
-StepInputData = Pointer
+StepInputData = FieldRef
 
 
 @dataclass(frozen=True, slots=True)
@@ -407,7 +401,7 @@ class RetryRequest:
     source: str
     commands: tuple[RunCommand, ...]
     request_id: str
-    anchor: StepPath | None = None
+    anchor: StepRef | None = None
 
     def __post_init__(self) -> None:
         _validate_restart_request(
@@ -420,9 +414,9 @@ class RetryRequest:
             for command in self.commands
         ):
             raise ValueError("retry request cannot replace the persisted model")
-        if self.anchor is not None and not isinstance(self.anchor, StepPath):
-            raise TypeError("retry request anchor must be a StepPath or none")
-        if self.anchor is not None and self.anchor.run != self.source:
+        if self.anchor is not None and not isinstance(self.anchor, StepRef):
+            raise TypeError("retry request anchor must be a StepRef or none")
+        if self.anchor is not None and str(self.anchor.run) != self.source:
             raise ValueError("retry request anchor must belong to its source run")
 
 
@@ -462,7 +456,10 @@ def _validate_restart_request(
     commands: tuple[RunCommand, ...],
     request_id: str,
 ) -> None:
-    validate_execution_id(source, label="restart source run")
+    try:
+        RunRef.parse(source)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid restart source run: {source!r}") from exc
     if not isinstance(commands, tuple) or not all(
         isinstance(command, RunCommand) for command in commands
     ):
@@ -585,7 +582,7 @@ class RunInfo:
     """One caller-facing run summary and identity schema."""
 
     id: str
-    parent: StepPath | None
+    parent: StepRef | None
     thread_id: str
     root_run_id: str
     runnable_kind: str
@@ -596,7 +593,7 @@ class RunInfo:
     input_text: str
     summary: str
     status: RunStatus
-    error: ExecutionError | None
+    error: ErrorMessage | ErrorRef | None
     ejected: EjectionRefData | None
     created_at: str
     started_at: str
@@ -642,7 +639,7 @@ class RunInfo:
         return cls(
             id=run.id,
             parent=run.parent,
-            thread_id=run.thread,
+            thread_id=str(run.thread),
             root_run_id=root_run_id,
             runnable_kind=kind if separator else "",
             runnable_name=name if separator else preparation.runnable,
@@ -696,7 +693,7 @@ class ControlInfo:
 class StepData:
     """One caller-facing execution step."""
 
-    path: StepPath
+    path: StepRef
     kind: StepKind
     input: list[StepInputData]
     given: StepGiven
@@ -705,7 +702,7 @@ class StepData:
     occurrence: Occurrence | None = None
     noted: StepNoted = None
     status: StepStatus = "running"
-    error: ExecutionError | None = None
+    error: ErrorMessage | ErrorRef | None = None
     ejected_by: RunControlRefData | None = None
     created_at: str = ""
     started_at: str = ""
@@ -725,12 +722,12 @@ class StepData:
     ) -> StepData:
         if isinstance(step.given, StoredModelStepGiven):
             if call is None:
-                raise ValueError(f"model call is missing for Step {step.path}")
+                raise ValueError(f"model call is missing for Step {step.ref}")
             given: StepGiven = ModelStepGiven(model=step.given.model, call=call)
         else:
             given = step.given
         return cls(
-            path=step.path,
+            path=step.ref,
             kind=step.kind,
             input=list(step.input),
             output=step.output,
@@ -767,7 +764,7 @@ class RunDetail(RunInfo):
         *,
         steps: Sequence[StepRecord],
         controls: Sequence[ControlRecord] = (),
-        model_calls: Mapping[StepPath, ModelCall] | None = None,
+        model_calls: Mapping[StepRef, ModelCall] | None = None,
         root_run_id: str,
         error_message: str | None,
         ejection_scope: Literal["run", "thread"] | None,
@@ -792,7 +789,7 @@ class RunDetail(RunInfo):
             steps=[
                 StepData.from_record(
                     step,
-                    call=(model_calls or {}).get(step.path),
+                    call=(model_calls or {}).get(step.ref),
                 )
                 for step in steps
             ],
@@ -828,11 +825,11 @@ def _preparation_payload(
     controls: Sequence[ControlRecord],
 ) -> PreparationControlPayload:
     for control in controls:
-        if control.index == run.control.index and isinstance(
+        if control.ref == run.control and isinstance(
             control.payload, PreparationControlPayload
         ):
             return control.payload
-    raise ValueError(f"run preparation control not found: {run.id}@{run.control.index}")
+    raise ValueError(f"run preparation control not found: {run.control}")
 
 
 def _local_parts(local: Local | None) -> tuple[Part, ...]:

@@ -9,8 +9,8 @@ from toolang.lang.ast import FlowStmt
 from toolang.state.state import AgentState, StatePublication
 
 from ...events import StepBegin
-from ...records import ControlRecord, StepPath
-from ...types import ControlRef, Occurrence, Pointer
+from ...records import ControlRecord
+from ...types import ControlRef, FieldRef, Occurrence, StepRef
 from ..common import BoundRun
 from ..common import Local, StepBoundary, _RunRejected, execute_step
 
@@ -23,7 +23,7 @@ async def execute(
     execution: _Execution,
     *,
     binding: BoundRun,
-    path: StepPath,
+    path: StepRef,
     statement: FlowStmt,
     locals: Mapping[str, Local],
     controls: Sequence[ControlRecord],
@@ -32,7 +32,7 @@ async def execute(
     validate: Callable[[], None] | None = None,
     resolution: Literal["module", "state"] = "module",
     raw_input: object | None = None,
-    inputs: Sequence[Pointer] | None = None,
+    inputs: Sequence[FieldRef] | None = None,
     begin_step: StepBoundary | None = None,
     authorize: Callable[[ResolvedRunnable], None] | None = None,
 ) -> Local:

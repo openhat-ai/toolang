@@ -27,6 +27,9 @@ from toolang.execution.types import (
     CollectionStepNoted,
     ControlRef,
     ControlStatus,
+    ErrorMessage,
+    ErrorRef,
+    FieldRef,
     Local,
     LoopStepNoted,
     ModelStepGiven,
@@ -34,37 +37,38 @@ from toolang.execution.types import (
     ModelTokenCount,
     Occurrence,
     OccurrencePosition,
-    Pointer,
+    RunRef,
     RunStatus,
-    StepPath,
+    StepRef,
     StepStatus,
     ToolStepGiven,
     ToolStepNoted,
 )
 from toolang.lang.ast import KeepStmt, RepeatStmt, RunStmt, ScatterStmt, Span
 
-
 _EVENTS: tuple[RunEvent, ...] = (
     RunBegin(
         run="run_root",
-        control=ControlRef("run_root", 0),
+        control=ControlRef.for_run("run_root", 0),
         runnable="agic:test",
         occurrence=Occurrence(item=OccurrencePosition(index=0, count=2)),
         started_at="2026-01-01T00:00:00Z",
     ),
     StepBegin(
-        step=StepPath.parse("run_root.0"),
+        step=StepRef.parse("run_root.0"),
         kind="model",
-        state=ControlRef("run_root", 0),
+        state=ControlRef.for_run("run_root", 0),
         given=ModelStepGiven(model="test/model", call=ModelCall("", [])),
         input=(
-            Pointer.control("run_root", 0, "payload", "locals", 0, "value"),
-            Pointer.step(StepPath.parse("run_root.1"), "output", "value"),
+            FieldRef.from_path(
+                ControlRef.for_run("run_root", 0), "payload", "locals", 0, "value"
+            ),
+            FieldRef.from_path(StepRef.parse("run_root.1"), "output", "value"),
         ),
         started_at="2026-01-01T00:00:01Z",
     ),
     StepBegin(
-        step=StepPath.parse("run_root.1"),
+        step=StepRef.parse("run_root.1"),
         kind="run",
         given=RunStmt(
             span=Span(line=4),
@@ -73,7 +77,7 @@ _EVENTS: tuple[RunEvent, ...] = (
         ),
     ),
     StepBegin(
-        step=StepPath.parse("run_root.2"),
+        step=StepRef.parse("run_root.2"),
         kind="tool",
         given=ToolStepGiven(
             plugin="shell",
@@ -81,20 +85,20 @@ _EVENTS: tuple[RunEvent, ...] = (
         ),
     ),
     StepBegin(
-        step=StepPath.parse("run_root.3"),
+        step=StepRef.parse("run_root.3"),
         kind="run",
-        input=(Pointer.step(StepPath.parse("run_root.0"), "output", "value", 1),),
+        input=(FieldRef.from_path(StepRef.parse("run_root.0"), "output", "value", 1),),
         given=RunStmt(
             binding="_",
             runnable="flow:research",
             span=Span(line=1),
         ),
     ),
-    PartBegin(step=StepPath.parse("run_root.0"), part=0, part_type="text"),
-    PartDelta(step=StepPath.parse("run_root.0"), part=0, delta=TextDelta("hello")),
-    PartEnd(step=StepPath.parse("run_root.0"), part=0, data=TextPart("hello")),
+    PartBegin(step=StepRef.parse("run_root.0"), part=0, part_type="text"),
+    PartDelta(step=StepRef.parse("run_root.0"), part=0, delta=TextDelta("hello")),
+    PartEnd(step=StepRef.parse("run_root.0"), part=0, data=TextPart("hello")),
     StepEnd(
-        step=StepPath.parse("run_root.0"),
+        step=StepRef.parse("run_root.0"),
         kind="model",
         status="succeeded",
         output=Local.typed("Part[]", (TextPart("hello"),), "_", 0),
@@ -106,7 +110,7 @@ _EVENTS: tuple[RunEvent, ...] = (
         status="succeeded",
         output=Local.typed(
             "Part[]",
-            Pointer.step(StepPath.parse("run_root.0"), "output", "value"),
+            FieldRef.from_path(StepRef.parse("run_root.0"), "output", "value"),
             "_",
             0,
         ),
@@ -122,15 +126,15 @@ def test_run_event_codec_round_trips_every_event_variant() -> None:
 
 def test_step_begin_codec_rejects_malformed_state_control_reference() -> None:
     payload = run_event_to_data(_EVENTS[1])
-    payload["state"] = {"target": "run.invalid", "index": 0}
+    payload["state"] = "run.invalid@0"
 
-    with pytest.raises(ValueError, match="invalid control target"):
+    with pytest.raises(ValueError, match="invalid thread ref"):
         run_event_from_data(payload)
 
 
 def test_step_schema_preserves_the_flow_statement_discriminator() -> None:
     step = StepData(
-        path=StepPath.parse("run_root.1"),
+        path=StepRef.parse("run_root.1"),
         kind="run",
         input=[],
         given=ScatterStmt(span=Span(line=4), count=2, runnable="agic:child"),
@@ -160,34 +164,34 @@ def test_run_event_codec_rejects_unknown_discriminator() -> None:
 def test_step_events_reject_mismatched_typed_facts() -> None:
     with pytest.raises(TypeError, match="value Step requires a compatible FlowStmt"):
         StepBegin(
-            step=StepPath.parse("run_root.0"),
+            step=StepRef.parse("run_root.0"),
             kind="value",
             given=ModelStepGiven(model="test/model", call=ModelCall("", [])),
         )
     with pytest.raises(TypeError, match="tool Step noted requires ToolStepNoted"):
         StepEnd(
-            step=StepPath.parse("run_root.0"),
+            step=StepRef.parse("run_root.0"),
             kind="tool",
             status="succeeded",
             noted=ModelStepNoted(),
         )
     with pytest.raises(ValueError, match="successful termination"):
         StepEnd(
-            step=StepPath.parse("run_root.1"),
+            step=StepRef.parse("run_root.1"),
             kind="loop",
             status="succeeded",
             noted=LoopStepNoted(iterations=1, termination="failed"),
         )
     with pytest.raises(ValueError, match="requires collection output items"):
         StepEnd(
-            step=StepPath.parse("run_root.2"),
+            step=StepRef.parse("run_root.2"),
             kind="value",
             status="succeeded",
             noted=CollectionStepNoted(total_items=2),
         )
     with pytest.raises(ValueError, match="cannot have collection output items"):
         StepEnd(
-            step=StepPath.parse("run_root.3"),
+            step=StepRef.parse("run_root.3"),
             kind="par",
             status="failed",
             noted=CollectionStepNoted(total_items=2, output_items=1),
@@ -196,10 +200,10 @@ def test_step_events_reject_mismatched_typed_facts() -> None:
 
 def test_loop_step_noted_round_trips_with_its_terminal_cause() -> None:
     begin = StepBegin(
-        step=StepPath.parse("run_root.1"),
+        step=StepRef.parse("run_root.1"),
         kind="loop",
         given=RepeatStmt(span=Span(line=4), count=3),
-        state=ControlRef("run_root", 0),
+        state=ControlRef.for_run("run_root", 0),
     )
     end = StepEnd(
         step=begin.step,
@@ -214,7 +218,7 @@ def test_loop_step_noted_round_trips_with_its_terminal_cause() -> None:
 
 def test_tool_step_summary_round_trips_and_accepts_legacy_given() -> None:
     begin = StepBegin(
-        step=StepPath.parse("run_root.1"),
+        step=StepRef.parse("run_root.1"),
         kind="tool",
         given=ToolStepGiven(
             plugin="fs",
@@ -247,7 +251,7 @@ def test_tool_step_summary_round_trips_and_accepts_legacy_given() -> None:
 
 def test_loop_step_noted_round_trips_through_the_step_schema() -> None:
     step = StepData(
-        path=StepPath.parse("run_root.1"),
+        path=StepRef.parse("run_root.1"),
         kind="loop",
         input=[],
         given=RepeatStmt(span=Span(line=4), count=3),
@@ -270,7 +274,7 @@ def test_loop_step_noted_round_trips_through_the_step_schema() -> None:
 
 def test_collection_step_noted_round_trips_with_cardinality() -> None:
     begin = StepBegin(
-        step=StepPath.parse("run_root.1"),
+        step=StepRef.parse("run_root.1"),
         kind="value",
         given=KeepStmt(span=Span(line=4), position="first", count=2),
     )
@@ -289,7 +293,7 @@ def test_step_schema_and_record_reject_mismatched_typed_facts() -> None:
     statement = RunStmt(span=Span(line=4), runnable="agic:child")
     with pytest.raises(TypeError, match="tool Step requires ToolStepGiven"):
         StepData(
-            path=StepPath.parse("run_root.0"),
+            path=StepRef.parse("run_root.0"),
             kind="tool",
             input=[],
             given=statement,
@@ -298,16 +302,16 @@ def test_step_schema_and_record_reject_mismatched_typed_facts() -> None:
         )
     with pytest.raises(TypeError, match="tool Step requires ToolStepGiven"):
         StepRecord(
-            path=StepPath.parse("run_root.0"),
+            id="run_root.0",
             kind="tool",
             input=(),
             given=statement,
-            state=ControlRef("run_root", 0),
+            state=ControlRef.for_run("run_root", 0),
             output=None,
         )
 
     canonical = StepData(
-        path=StepPath.parse("run_root.1"),
+        path=StepRef.parse("run_root.1"),
         kind="run",
         input=[],
         given=statement,
@@ -324,7 +328,7 @@ def test_begin_events_reject_loose_occurrence_payloads() -> None:
     with pytest.raises(TypeError, match="Occurrence or None"):
         RunBegin(
             run="run_root",
-            control=ControlRef("run_root", 0),
+            control=ControlRef.for_run("run_root", 0),
             occurrence={  # type: ignore[arg-type]
                 "item": {"index": 0, "count": 1}
             },
@@ -334,7 +338,7 @@ def test_begin_events_reject_loose_occurrence_payloads() -> None:
 def test_flow_given_codec_rejects_noncanonical_fields() -> None:
     payload = run_event_to_data(
         StepBegin(
-            step=StepPath.parse("run_root.0"),
+            step=StepRef.parse("run_root.0"),
             kind="run",
             given=RunStmt(span=Span(line=4), runnable="agic:child"),
         )
@@ -379,7 +383,7 @@ def test_execution_status_vocabulary_has_canonical_order() -> None:
         "revoked",
     )
     reserved = StepEnd(
-        step=StepPath.parse("run_root.0"),
+        step=StepRef.parse("run_root.0"),
         kind="value",
         status="pending",
     )
@@ -390,12 +394,12 @@ def test_run_event_codec_serializes_step_error_references() -> None:
     event = RunEnd(
         run="run_root",
         status="failed",
-        error=Pointer.step(StepPath.parse("run_root.2"), "error"),
+        error=ErrorRef(FieldRef.from_path(StepRef.parse("run_root.2"), "error")),
     )
 
     data = run_event_to_data(event)
 
-    assert data["error"] == {"?": "@run_root.2/error"}
+    assert data["error"] == {"type": "ref", "ref": "run_root.2/error"}
     assert run_event_from_data(data) == event
 
 
@@ -403,18 +407,21 @@ def test_run_event_codec_distinguishes_run_error_pointers_from_messages() -> Non
     pointer = RunEnd(
         run="run_root",
         status="failed",
-        error=Pointer.run("run_child", "error"),
+        error=ErrorRef(FieldRef.from_path(RunRef.parse("run_child"), "error")),
     )
-    message = RunEnd(run="run_root", status="failed", error="timeout")
+    message = RunEnd(run="run_root", status="failed", error=ErrorMessage("timeout"))
 
-    assert run_event_to_data(pointer)["error"] == {"?": "@run_child/error"}
+    assert run_event_to_data(pointer)["error"] == {
+        "type": "ref",
+        "ref": "run_child/error",
+    }
     assert run_event_from_data(run_event_to_data(pointer)) == pointer
     assert run_event_from_data(run_event_to_data(message)) == message
 
 
 def test_run_event_codec_round_trips_struct_output() -> None:
     event = StepEnd(
-        step=StepPath.parse("run_root.0"),
+        step=StepRef.parse("run_root.0"),
         kind="run",
         status="succeeded",
         output=Local.typed("Review", {"score": 1}, "_"),

@@ -17,7 +17,7 @@ from tests.support.execution_harness import (
     ExecutionHarness,
     ScriptedModelTurn,
 )
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ErrorMessage, ThreadPrefix
 from toolang.lang.input import resolve_input_parts
 from toolang.state.state import publish_state_resources
 from toolang.state.watcher import StateRefresh
@@ -250,7 +250,7 @@ def test_script_cancellation_cancels_its_owned_run(tmp_path: Path) -> None:
             record = harness.store.get_run(run_id=handle.run_id)
             assert record is not None
             assert record.status == "canceled"
-            assert record.error == "script interrupted"
+            assert record.error == ErrorMessage("script interrupted")
             controls = harness.store.list_run_controls(run_id=handle.run_id)
             assert [(item.kind, item.status) for item in controls] == [
                 ("run", "applied"),

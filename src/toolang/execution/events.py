@@ -21,16 +21,17 @@ from .records import (
 )
 from .types import (
     ControlRef,
-    ExecutionError,
+    ErrorMessage,
+    ErrorRef,
+    FieldRef,
     Local,
     Occurrence,
     RunStatus,
     StepGiven,
     StepKind,
     StepNoted,
-    StepPath,
+    StepRef,
     StepStatus,
-    Pointer,
     local_from_protocol_data,
     local_to_protocol_data,
     validate_occurrence,
@@ -46,7 +47,7 @@ class RunBegin:
     run: str
     control: ControlRef
     runnable: str = ""
-    parent: StepPath | None = None
+    parent: StepRef | None = None
     occurrence: Occurrence | None = None
     started_at: str = ""
     type: Literal["run_begin"] = field(default="run_begin", init=False)
@@ -59,11 +60,11 @@ class RunBegin:
 class StepBegin:
     """A run step started executing."""
 
-    step: StepPath
+    step: StepRef
     kind: StepKind
     given: StepGiven
     state: ControlRef | None = None
-    input: tuple[Pointer, ...] = ()
+    input: tuple[FieldRef, ...] = ()
     occurrence: Occurrence | None = None
     started_at: str = ""
     type: Literal["step_begin"] = field(default="step_begin", init=False)
@@ -77,7 +78,7 @@ class StepBegin:
 class PartBegin:
     """A streamed step part started."""
 
-    step: StepPath
+    step: StepRef
     part: int
     part_type: PartType
     type: Literal["part_begin"] = field(default="part_begin", init=False)
@@ -87,7 +88,7 @@ class PartBegin:
 class PartDelta:
     """A streamed step part produced a delta."""
 
-    step: StepPath
+    step: StepRef
     part: int
     delta: Delta
     type: Literal["part_delta"] = field(default="part_delta", init=False)
@@ -97,7 +98,7 @@ class PartDelta:
 class PartEnd:
     """A streamed step part completed."""
 
-    step: StepPath
+    step: StepRef
     part: int
     data: Part
     type: Literal["part_end"] = field(default="part_end", init=False)
@@ -107,17 +108,21 @@ class PartEnd:
 class StepEnd:
     """A run step reached a terminal state."""
 
-    step: StepPath
+    step: StepRef
     kind: StepKind
     status: StepStatus
     output: Local | None = None
     noted: StepNoted = None
-    error: ExecutionError | None = None
+    error: ErrorMessage | ErrorRef | None = None
     finished_at: str = ""
     type: Literal["step_end"] = field(default="step_end", init=False)
 
     def __post_init__(self) -> None:
         validate_step_noted(self.kind, self.noted, self.status)
+        if self.error is not None and not isinstance(
+            self.error, ErrorMessage | ErrorRef
+        ):
+            raise TypeError("step error requires ErrorMessage or ErrorRef")
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,9 +133,15 @@ class RunEnd:
     status: RunStatus
     control: ControlRef | None = None
     output: Local | None = None
-    error: ExecutionError | None = None
+    error: ErrorMessage | ErrorRef | None = None
     finished_at: str = ""
     type: Literal["run_end"] = field(default="run_end", init=False)
+
+    def __post_init__(self) -> None:
+        if self.error is not None and not isinstance(
+            self.error, ErrorMessage | ErrorRef
+        ):
+            raise TypeError("run error requires ErrorMessage or ErrorRef")
 
 
 RunEvent = Annotated[
