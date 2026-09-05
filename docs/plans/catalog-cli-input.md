@@ -19,8 +19,8 @@ published as `api.json`.
 - A models.dev `api.json` provider-map payload remains valid input.
 - A provider-agnostic `models.json` payload fails without a traceback and names
   the two supported models.dev endpoints.
-- Implicit static catalog resolution uses `catalog.json` only and rejects a
-  legacy implicit `models.json` source with an actionable migration error.
+- Implicit static catalog resolution recognizes `catalog.json` only;
+  `models.json` has no special legacy meaning and is ignored.
 - Internal static artifacts use `catalog.json`, effective model-set caches use
   `effective.json`, and no active catalog or context file is named `models.json`.
 - Catalog export, runtime execution, caching, sandbox mounting, and environment
@@ -62,12 +62,9 @@ The static source precedence becomes:
 4. root `catalog.json`;
 5. the packaged provider-map fallback.
 
-Agent-home scope continues to win over root scope. Before selecting the
-packaged fallback, resolution checks the applicable agent-home and root scopes
-for a legacy `models.json`. If one exists without any selected `catalog.json`,
-resolution fails and directs the user to rename or replace it. The legacy file
-is never loaded implicitly and never silently bypassed in favor of packaged
-data.
+Agent-home scope continues to win over root scope. Implicit resolution does not
+inspect, load, or diagnose `models.json`; when no selected `catalog.json`
+exists, resolution proceeds to the packaged fallback.
 
 Filename restrictions apply only to implicit discovery. An explicit
 `--catalog PATH` or `TOOLANG_MODEL_CATALOG` path may have any filename; its
@@ -112,8 +109,8 @@ external-input mechanics remain unchanged.
 
 - `src/toolang/cli/common/context.py`: rename the shared public option.
 - `src/toolang/plugin/models/catalog.py`: accept the combined wrapper, detect
-  provider-agnostic input, discover only `catalog.json`, reject legacy implicit
-  input, and point the packaged fallback at `data/catalog.json`.
+  provider-agnostic explicit input, discover only `catalog.json`, and point the
+  packaged fallback at `data/catalog.json`.
 - `src/toolang/plugin/models/cache.py`: rename the effective model-set cache
   file to `effective.json`; retain `catalog.json` and `identity.json` for
   their existing distinct roles.
@@ -125,7 +122,7 @@ external-input mechanics remain unchanged.
 - `tests/unit/plugin/test_model_catalog.py`: cover source precedence and input
   shape normalization.
 - `README.md` and `docs/models.md`: document the endpoint distinction,
-  preferred download, option name, and legacy filename rejection.
+  preferred download, option name, and implicit filename rule.
 - `docs/layout.md`: document `catalog.json`, `effective.json`, and
   `identity.json` according to their distinct stored meanings.
 - Sandbox tests change only if their fixtures exercise the new preferred
@@ -145,9 +142,8 @@ Historical plans retain their original approved `--models` wording.
 5. Passing a provider-agnostic `models.json` map exits with status 1, recommends
    `catalog.json` and `api.json`, and prints no Python traceback.
 6. Agent-home `catalog.json` wins over root `catalog.json`. With neither
-   present, a legacy implicit `models.json` produces an actionable migration
-   error instead of loading that file or silently selecting packaged data.
-   Environment, explicit, and packaged precedence otherwise stays intact.
+   present, implicit `models.json` files are ignored and the packaged fallback
+   is selected. Environment and explicit precedence otherwise stays intact.
 7. Docker and foreground/background runtime tests preserve the resolved catalog
    path through `TOOLANG_MODEL_CATALOG` when invoked with `--catalog`.
 8. `too models --json` remains a round-trippable provider map.
@@ -162,8 +158,8 @@ Historical plans retain their original approved `--models` wording.
 - Removing `--models` is an intentional public CLI compatibility break. Scripts
   must migrate to `--catalog` immediately.
 - Removing implicit `models.json` discovery is an intentional compatibility
-  break. The migration error prevents an existing customized source from being
-  silently replaced by packaged data; explicit paths remain filename-agnostic.
+  break. Existing files with that name are ignored without diagnosis; explicit
+  paths remain filename-agnostic.
 - Renaming rebuildable context-cache files causes one cache miss per affected
   context after upgrade and leaves old files unreferenced on disk. No durable
   user data is migrated or deleted.
