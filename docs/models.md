@@ -23,29 +23,44 @@ availability.
 
 ## Static Catalog
 
-The static catalog is one complete models.dev-compatible `models.json`. Toolang
-selects it in this order:
+The preferred static input is the combined `{models, providers}` object from
+models.dev `catalog.json`. Toolang currently consumes its `providers` member
+and also accepts the provider map from `api.json` directly. The
+provider-agnostic `models.json` lacks provider execution records and is not a
+valid static catalog.
 
-1. command-level `--models PATH`, where supported;
+Download the preferred input as:
+
+```bash
+curl -fsSL https://models.dev/catalog.json -o catalog.json
+```
+
+Toolang selects the catalog file in this order:
+
+1. command-level `--catalog PATH`, where supported;
 2. `TOOLANG_MODEL_CATALOG`;
-3. the active agent home `models.json`;
-4. `${TOOLANG_ROOT}/models.json`;
+3. the active agent home `catalog.json`;
+4. `${TOOLANG_ROOT}/catalog.json`;
 5. the lightweight catalog packaged with Toolang.
 
 A higher-priority file fully replaces lower-priority files. Toolang does not
 merge multiple static files and does not download catalog data during startup.
-Users can replace a root or home file with any externally downloaded complete
-snapshot.
+Explicit CLI and environment paths are filename-agnostic. Implicit discovery
+recognizes only `catalog.json`; `models.json` has no special legacy meaning and
+is ignored. If no catalog is selected, Toolang uses the packaged data.
 
 When no agent is selected, inspection uses only the root source and root model
 context; it does not read an implicit `agents/default`. In a Docker guest, an
-external `--models` source is mounted read-only and
+external `--catalog` source is mounted read-only and
 `TOOLANG_MODEL_CATALOG` is rewritten to its guest path.
 
-The importer keeps models.dev provider and model fields at the top level,
-preserves unknown additive fields, parses prices as decimal values, and rejects
-an invalid complete snapshot. `Provider.to_data()` and `Model.to_data()` emit
-only raw catalog data.
+The importer validates both members of a combined catalog before selecting its
+provider map. It keeps models.dev provider and provider-model fields at the top
+level, preserves unknown additive fields, parses prices as decimal values, and
+rejects an invalid complete snapshot. Canonical model metadata from the
+combined input is not retained in the runtime snapshot. `Provider.to_data()`
+and `Model.to_data()` emit only raw provider catalog data, so `too models
+--json` remains a round-trippable filtered catalog export.
 
 ## Catalog Plugins
 
@@ -74,17 +89,18 @@ callers only read the published Setup. Persistent caching applies to the static
 catalog and derived model query facts, not to dynamic probe results or a fallback
 runtime snapshot.
 
-The static file is cached by a portable content revision below root `.setup`.
-Each root or agent model context has its own content-addressed projection below
-the owning `.setup`, including all model sizes and query facts. A compact
-`identity.json` beside each projection supports query miss checks without
-loading the full model context. Cache identities cover model-affecting
-configuration, plugin provenance, environment readiness, catalog revisions,
-and effective `allow.models`; they contain neither absolute paths nor
-environment values. A cache produced on the host is therefore reusable when
-the same root and home are mounted at different guest paths. Invalid or unsafe
-entries are misses, and a cache write failure does not reject a valid in-memory
-Setup.
+The static file is cached as a normalized `catalog.json` artifact by a portable
+content revision below root `.setup`. Each root or agent model context has its
+own content-addressed `effective.json` projection below the owning `.setup`,
+including all effective models and query facts. A compact `identity.json`
+beside each projection supports query miss checks without loading the full
+effective set. Cache identities cover model-affecting configuration, plugin
+provenance, environment readiness, catalog revisions, and effective
+`allow.models`; they contain neither absolute paths nor environment values. A
+cache produced on the host is therefore reusable when the same root and home
+are mounted at different guest paths. Invalid, unsafe, or legacy `models.json`
+cache entries are misses, and a cache write failure does not reject a valid
+in-memory Setup.
 
 External catalog entry points are opt-in. Configure one by its entry-point name:
 

@@ -89,10 +89,10 @@ def test_cli_normalize_routes_resident_target_before_command() -> None:
 
 def test_cli_normalize_preserves_a_command_models_catalog_override() -> None:
     args, agent = normalize(
-        ["alice", "retry", "run_1", "--models", "/tmp/models.json"],
+        ["alice", "retry", "run_1", "--catalog", "/tmp/models.json"],
     )
 
-    assert args == ["retry", "run_1", "--models", "/tmp/models.json"]
+    assert args == ["retry", "run_1", "--catalog", "/tmp/models.json"]
     assert agent == "alice"
 
 

@@ -69,7 +69,7 @@ def test_setup_watcher_persists_secret_free_model_projection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one", "two"))
+    _write_catalog(tmp_path / "catalog.json", ("one", "two"))
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
 
     setup = asyncio.run(watcher.refresh())
@@ -91,7 +91,7 @@ def test_setup_watcher_keeps_runtime_sandbox_separate_from_dotenv(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one",))
+    _write_catalog(tmp_path / "catalog.json", ("one",))
     watcher = _watcher(
         monkeypatch,
         tmp_path,
@@ -117,7 +117,7 @@ def test_setup_watcher_reuses_static_parse_and_reprobes_local_sources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one",))
+    _write_catalog(tmp_path / "catalog.json", ("one",))
     parse_calls = 0
     local_calls = 0
     model_info_calls = 0
@@ -238,7 +238,7 @@ def test_setup_watcher_warm_process_reuses_persistent_projection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one", "two"))
+    _write_catalog(tmp_path / "catalog.json", ("one", "two"))
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     expected = asyncio.run(watcher.refresh())
     asyncio.run(watcher.refresh())
@@ -266,7 +266,7 @@ def test_setup_watcher_reuses_portable_cache_after_root_remount(
     guest_root = tmp_path / "guest"
     host_root.mkdir()
     guest_root.mkdir()
-    _write_catalog(host_root / "models.json", ("one", "two"))
+    _write_catalog(host_root / "catalog.json", ("one", "two"))
     expected = asyncio.run(
         _watcher(
             monkeypatch,
@@ -282,7 +282,7 @@ def test_setup_watcher_reuses_portable_cache_after_root_remount(
             *_context_identity_files(host_root, "alice"),
         )
     )
-    shutil.copy2(host_root / "models.json", guest_root / "models.json")
+    shutil.copy2(host_root / "catalog.json", guest_root / "catalog.json")
     shutil.copytree(host_root / ".setup", guest_root / ".setup")
     source_home_cache = host_root / "agents" / "alice" / ".setup"
     target_home_cache = guest_root / "agents" / "alice" / ".setup"
@@ -313,7 +313,7 @@ def test_setup_watcher_keeps_allow_model_cache_variants(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one", "two"))
+    _write_catalog(tmp_path / "catalog.json", ("one", "two"))
     _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     layout = AgentLayout.resident(tmp_path, "alice")
     one = SetupWatcher(layout, allow_overrides={"models": ("test/one",)})
@@ -336,7 +336,7 @@ def test_model_context_ignores_defaults_limits_and_tool_allow(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one",))
+    _write_catalog(tmp_path / "catalog.json", ("one",))
     _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     layout = AgentLayout.resident(tmp_path, "alice")
     asyncio.run(SetupWatcher(layout).refresh())
@@ -393,7 +393,7 @@ def test_setup_watcher_allows_equivalent_concurrent_cache_writers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one", "two"))
+    _write_catalog(tmp_path / "catalog.json", ("one", "two"))
     _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     layout = AgentLayout.resident(tmp_path, "alice")
 
@@ -415,7 +415,7 @@ def test_model_cache_separates_root_and_agent_contexts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one",))
+    _write_catalog(tmp_path / "catalog.json", ("one",))
     envs = {"TEST_API_KEY": "secret"}
     _watcher(monkeypatch, tmp_path, envs=envs)
     monkeypatch.setattr(catalog_module, "load_setup_config", lambda _layout: {})
@@ -449,7 +449,7 @@ def test_setup_watcher_model_cache_preserves_decimal_catalog_values(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    path = tmp_path / "models.json"
+    path = tmp_path / "catalog.json"
     _write_catalog(path, ("one",))
     path.write_text(
         path.read_text(encoding="utf-8").replace(
@@ -477,7 +477,7 @@ def test_setup_watcher_catalog_artifact_preserves_empty_providers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    path = tmp_path / "models.json"
+    path = tmp_path / "catalog.json"
     _write_catalog(path, ("one",))
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["empty"] = {
@@ -503,7 +503,7 @@ def test_setup_watcher_retries_transient_model_cache_write_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one",))
+    _write_catalog(tmp_path / "catalog.json", ("one",))
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     original_store = watcher._model_cache.store_context
     store_calls = 0
@@ -530,7 +530,7 @@ def test_catalog_inspection_reuses_catalog_artifact_and_its_projection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    path = tmp_path / "models.json"
+    path = tmp_path / "catalog.json"
     _write_catalog(path, ("one", "two"))
     path.write_text(
         path.read_text(encoding="utf-8").replace(
@@ -586,7 +586,7 @@ def test_matching_catalog_inspection_uses_one_probe_cycle_and_short_circuits_mis
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one", "two"))
+    _write_catalog(tmp_path / "catalog.json", ("one", "two"))
     envs = {"TEST_API_KEY": "secret"}
     _watcher(monkeypatch, tmp_path, envs=envs)
     adapters = {
@@ -658,7 +658,7 @@ def test_matching_catalog_inspection_uses_one_probe_cycle_and_short_circuits_mis
     assert matched.models.refs() == ("test/one", "test/two")
     assert probe_calls == 4
     assert adapter_loads == 1
-    assert "models.json" in loaded_cache_files
+    assert "effective.json" in loaded_cache_files
 
     monkeypatch.setattr(catalog_module, "load_setup_envs", lambda _layout: {})
     changed = asyncio.run(
@@ -683,7 +683,7 @@ def test_setup_watcher_treats_invalid_context_cache_as_a_miss(
     monkeypatch: pytest.MonkeyPatch,
     cache_content: str,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one",))
+    _write_catalog(tmp_path / "catalog.json", ("one",))
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     asyncio.run(watcher.refresh())
     cache = _context_cache_files(tmp_path, "alice")[0]
@@ -704,11 +704,39 @@ def test_setup_watcher_treats_invalid_context_cache_as_a_miss(
     assert projection_calls == 1
 
 
+def test_setup_watcher_ignores_legacy_models_context_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "catalog.json", ("one",))
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    asyncio.run(watcher.refresh())
+    effective = _context_cache_files(tmp_path, "alice")[0]
+    legacy = effective.with_name("models.json")
+    effective.replace(legacy)
+    projection_calls = 0
+    original_projection = watcher_module.model_info_from_catalog
+
+    def count_projection(model: Model) -> ModelInfo:
+        nonlocal projection_calls
+        projection_calls += 1
+        return original_projection(model)
+
+    monkeypatch.setattr(watcher_module, "model_info_from_catalog", count_projection)
+    fresh = SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
+
+    asyncio.run(fresh.refresh())
+
+    assert projection_calls == 1
+    assert effective.is_file()
+    assert legacy.is_file()
+
+
 def test_setup_watcher_treats_stale_model_cache_as_a_miss(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    path = tmp_path / "models.json"
+    path = tmp_path / "catalog.json"
     _write_catalog(path, ("one",))
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     asyncio.run(watcher.refresh())
@@ -735,7 +763,7 @@ def test_model_cache_does_not_bypass_catalog_size_limit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one",))
+    _write_catalog(tmp_path / "catalog.json", ("one",))
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     expected = asyncio.run(watcher.refresh())
     asyncio.run(watcher.refresh())
@@ -778,7 +806,7 @@ def test_large_model_cache_avoids_duplicate_derived_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model_ids = tuple(f"model-{index}" for index in range(7_250))
-    _write_catalog(tmp_path / "models.json", model_ids)
+    _write_catalog(tmp_path / "catalog.json", model_ids)
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     expected = asyncio.run(watcher.refresh())
     cache = _context_cache_files(tmp_path, "alice")[0]
@@ -819,7 +847,7 @@ def test_model_cache_rebinds_secret_model_headers_without_persisting_them(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    path = tmp_path / "models.json"
+    path = tmp_path / "catalog.json"
     _write_catalog(path, ("one",))
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["test"]["api"] = "https://gateway.test/v1?api_key=secret"
@@ -874,7 +902,7 @@ def test_setup_watcher_detects_local_models_without_force(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one",))
+    _write_catalog(tmp_path / "catalog.json", ("one",))
     calls = 0
 
     async def changing_ollama(_self: object) -> ModelCatalogSnapshot:
@@ -927,7 +955,7 @@ def test_setup_watcher_serializes_refreshes_and_probes_catalogs_concurrently(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one",))
+    _write_catalog(tmp_path / "catalog.json", ("one",))
     active = 0
     maximum = 0
 
@@ -964,7 +992,7 @@ def test_setup_watcher_retains_last_setup_when_catalog_probe_raises(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one",))
+    _write_catalog(tmp_path / "catalog.json", ("one",))
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     expected = asyncio.run(watcher.refresh())
 
@@ -996,7 +1024,7 @@ def test_setup_watcher_rebuilds_when_selected_catalog_file_changes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    path = tmp_path / "models.json"
+    path = tmp_path / "catalog.json"
     _write_catalog(path, ("one",))
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     first = asyncio.run(watcher.refresh())
@@ -1012,7 +1040,7 @@ def test_setup_watcher_rebuilds_when_environment_changes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one",))
+    _write_catalog(tmp_path / "catalog.json", ("one",))
     envs = {"TEST_API_KEY": "first"}
     watcher = _watcher(monkeypatch, tmp_path, envs=envs)
     first = asyncio.run(watcher.refresh())
@@ -1029,7 +1057,7 @@ def test_setup_watcher_failed_refresh_keeps_last_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    path = tmp_path / "models.json"
+    path = tmp_path / "catalog.json"
     _write_catalog(path, ("one",))
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     expected = asyncio.run(watcher.refresh())
@@ -1047,7 +1075,7 @@ def test_setup_watcher_routes_only_each_plugins_canonical_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one",))
+    _write_catalog(tmp_path / "catalog.json", ("one",))
     root_config = {
         "plugin": {
             "toolset": {"fs": {"max_chars": 1000}},
@@ -1126,7 +1154,7 @@ def test_setup_watcher_publishes_only_effective_resources_and_policy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one", "two"))
+    _write_catalog(tmp_path / "catalog.json", ("one", "two"))
     root_config = {
         "allow": {"models": ["test/*"], "tools": ["none"]},
         "default": {"model": "test/two", "runnable": "agic:chat"},
@@ -1178,7 +1206,7 @@ def test_setup_watcher_keeps_missing_default_absent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one",))
+    _write_catalog(tmp_path / "catalog.json", ("one",))
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
 
     setup = asyncio.run(watcher.refresh())
@@ -1190,7 +1218,7 @@ def test_setup_watcher_rejects_default_excluded_from_effective_models(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one", "two"))
+    _write_catalog(tmp_path / "catalog.json", ("one", "two"))
     config = {
         "allow": {"models": ["test/one"]},
         "default": {"model": "test/two"},
@@ -1206,7 +1234,7 @@ def test_setup_watcher_validates_default_model_parameters_before_publication(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one",), reasoning=True)
+    _write_catalog(tmp_path / "catalog.json", ("one",), reasoning=True)
     config: dict[str, object] = {"default": {"model": "test/one effort=high"}}
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
@@ -1231,7 +1259,7 @@ def test_setup_watcher_retains_last_setup_when_default_becomes_unavailable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    path = tmp_path / "models.json"
+    path = tmp_path / "catalog.json"
     _write_catalog(path, ("one", "two"))
     config = {"default": {"model": "test/two"}}
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
@@ -1250,7 +1278,7 @@ def test_setup_watcher_reuses_publication_for_state_only_config_changes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_catalog(tmp_path / "models.json", ("one",))
+    _write_catalog(tmp_path / "catalog.json", ("one",))
     config: dict[str, object] = {"allow": {"prompts": ["prompt/one"]}}
     watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
     monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
@@ -1389,7 +1417,7 @@ def _context_cache_files(root: Path, agent: str) -> tuple[Path, ...]:
     return tuple(
         sorted(
             (root / "agents" / agent / ".setup" / "models" / "contexts" / "revs").glob(
-                "*/models.json"
+                "*/effective.json"
             )
         )
     )
@@ -1407,5 +1435,7 @@ def _context_identity_files(root: Path, agent: str) -> tuple[Path, ...]:
 
 def _root_context_cache_files(root: Path) -> tuple[Path, ...]:
     return tuple(
-        sorted((root / ".setup" / "models" / "contexts" / "revs").glob("*/models.json"))
+        sorted(
+            (root / ".setup" / "models" / "contexts" / "revs").glob("*/effective.json")
+        )
     )

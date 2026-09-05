@@ -309,7 +309,7 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
             str(root),
             "run",
             "alice",
-            "--models",
+            "--catalog",
             str(model_catalog),
             "--sandbox",
             "docker:registry.example/a:b",
@@ -446,6 +446,8 @@ def test_start_launches_in_background_and_reports_endpoint(
 ) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
+    model_catalog = tmp_path / "models.json"
+    model_catalog.write_text("{}", encoding="utf-8")
     dev = tmp_path / "dist" / "toolang-1.2.3-py3-none-any.whl"
     captured: dict[str, Any] = {}
 
@@ -490,6 +492,8 @@ def test_start_launches_in_background_and_reports_endpoint(
             str(root),
             "start",
             "alice",
+            "--catalog",
+            str(model_catalog),
             "--sandbox",
             "docker",
             "--dev",
@@ -510,6 +514,7 @@ def test_start_launches_in_background_and_reports_endpoint(
     ]
     resolved = captured["resolve"]
     assert resolved["sandbox"] == "docker"
+    assert resolved["environ"]["TOOLANG_MODEL_CATALOG"] == str(model_catalog)
     assert resolved["dev"] == dev
     assert resolved["log_path"] == root / "agents" / "alice" / ".runtime" / "agent.log"
     assert resolved["output"] == "file"

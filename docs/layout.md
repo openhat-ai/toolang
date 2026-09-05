@@ -28,8 +28,8 @@ ${TOOLANG_ROOT}/
     models/
       catalogs/revs/<catalog-artifact-key>/catalog.json
       contexts/revs/<root-context-revision>/
+        effective.json
         identity.json
-        models.json
   .state/
   .runtime/
   .sandbox/
@@ -49,8 +49,8 @@ ${TOOLANG_ROOT}/
       .setup/
         models/
           contexts/revs/<agent-context-revision>/
+            effective.json
             identity.json
-            models.json
       .state/
       .runtime/
 ```
@@ -118,12 +118,12 @@ Rebuildable environment discovery data lives under:
 | Path | Purpose |
 | --- | --- |
 | `models/catalogs/revs/<revision>/catalog.json` | Portable normalized static catalog artifacts shared by root and agents |
-| `models/contexts/revs/<revision>/models.json` | Root inspection model contexts |
+| `models/contexts/revs/<revision>/effective.json` | Root effective model sets and query facts |
 | `models/contexts/revs/<revision>/identity.json` | Compact identity indexes for cached model contexts |
 
 Agent-specific model contexts live under
 `${TOOLANG_ROOT}/agents/<agent>/.setup/models/contexts/revs/<revision>/`, with
-the same `models.json` and `identity.json` files.
+the same `effective.json` and `identity.json` files.
 These Setup entries are rebuildable, immutable, content-addressed, and safe to
 reuse after root/home mount paths change. Absolute filesystem observations are
 process-local and are not persisted as cache identity.
