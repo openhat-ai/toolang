@@ -127,8 +127,7 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
         source_thread = reopened.get_thread(thread_id=source)
         assert source_thread is not None
         assert source_thread.peer == peer
-        assert source_thread.created_by == ControlRef.for_thread(source, 0)
-        assert source_thread.head == ControlRef.for_thread(source, 0)
+        assert reopened.thread_views().head(source) == ControlRef.for_thread(source, 0)
         create_control = reopened.list_thread_controls(thread_id=source)
         assert len(create_control) == 1
         assert create_control[0].kind == "create"
@@ -140,13 +139,13 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
         forked_thread = reopened.get_thread(thread_id=forked)
         assert forked_thread is not None
         assert forked_thread.peer == peer
-        assert forked_thread.created_by == ControlRef.for_thread(forked, 0)
-        assert forked_thread.head == ControlRef.for_thread(forked, 0)
+        assert reopened.thread_views().head(forked) == ControlRef.for_thread(forked, 0)
         fork_control = reopened.list_thread_controls(thread_id=forked)
         assert len(fork_control) == 1
         assert fork_control[0].kind == "fork"
         assert fork_control[0].payload == ForkControlPayload(
             fork_from=ThreadRef(source),
+            fork_head=ControlRef.for_thread(source, 0),
             fork_at=RunRef(first_run),
         )
         assert fork_control[0].request == "thread-fork-1"
@@ -228,10 +227,12 @@ def test_rewind_controls_form_a_monotonic_head_chain(
                 CreateControlPayload(),
                 RewindControlPayload(
                     rewind_from=RunRef(runs[1].id),
+                    rewind_through=RunRef(runs[2].id),
                     rewind_if=ControlRef.for_thread(thread, 0),
                 ),
                 RewindControlPayload(
                     rewind_from=RunRef(replacement.id),
+                    rewind_through=RunRef(replacement.id),
                     rewind_if=ControlRef.for_thread(thread, 1),
                 ),
             ]
@@ -247,22 +248,20 @@ def test_rewind_controls_form_a_monotonic_head_chain(
 
             record = harness.store.get_thread(thread_id=thread)
             assert record is not None
-            assert record.created_by == ControlRef.for_thread(thread, 0)
-            assert record.head == ControlRef.for_thread(thread, 2)
+            assert harness.store.thread_views().head(thread) == ControlRef.for_thread(
+                thread, 2
+            )
             first, second, third = (
                 harness.store.get_run(run_id=run.id) for run in runs
             )
             replacement_record = harness.store.get_run(run_id=replacement.id)
             assert first is not None and first.ejected_by is None
             assert second is not None
-            assert second.ejected_by == ControlRef.for_thread(thread, 1)
+            assert second.ejected_by is None
             assert third is not None
-            assert third.ejected_by == ControlRef.for_thread(thread, 1)
+            assert third.ejected_by is None
             assert replacement_record is not None
-            assert replacement_record.ejected_by == ControlRef.for_thread(
-                thread,
-                2,
-            )
+            assert replacement_record.ejected_by is None
             assert [
                 run.id
                 for run in harness.store.list_thread_history_chronological(
@@ -349,6 +348,7 @@ def test_fork_accepts_an_earlier_terminal_anchor_while_source_runs(
             assert fork_control is not None
             assert fork_control.payload == ForkControlPayload(
                 fork_from=ThreadRef(source),
+                fork_head=ControlRef.for_thread(source, 0),
                 fork_at=RunRef(terminal.id),
             )
             assert [event.type for event in listener.events] == [
@@ -438,6 +438,7 @@ def test_rewind_rejects_a_running_thread_without_canceling_it(
             assert rewind is not None
             assert rewind.payload == RewindControlPayload(
                 rewind_from=RunRef(canceled.id),
+                rewind_through=RunRef(canceled.id),
                 rewind_if=ControlRef.for_thread(thread, 0),
             )
             assert [
@@ -549,6 +550,8 @@ def test_listener_failure_does_not_roll_back_a_thread_control(
             assert record is not None
             assert control is not None
             assert control.status == "applied"
-            assert record.head == ControlRef.for_thread(thread, 0)
+            assert harness.store.thread_views().head(thread) == ControlRef.for_thread(
+                thread, 0
+            )
 
     asyncio.run(scenario())

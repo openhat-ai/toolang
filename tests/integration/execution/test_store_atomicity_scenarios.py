@@ -94,7 +94,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             assert connection.execute(
                 "SELECT parent FROM runs WHERE id = 'run_dot_child'"
             ).fetchone() == ("run_dot_path.2.3",)
-            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 34
+            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 35
         finally:
             connection.close()
     finally:
@@ -154,7 +154,9 @@ def test_list_controls_orders_mixed_scopes_without_status_reordering(
         store.close()
 
 
-def test_list_controls_excludes_controls_for_hidden_runs(tmp_path: Path) -> None:
+def test_list_controls_retains_rewound_runs_but_excludes_ejected_steps(
+    tmp_path: Path,
+) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
         visible = project_run_start(
@@ -202,7 +204,7 @@ def test_list_controls_excludes_controls_for_hidden_runs(tmp_path: Path) -> None
             thread_id=thread.id,
             anchor=hidden.id,
             request_id=None,
-            expected_head=thread.head,
+            expected_head=store.thread_views().head(thread.id),
             created_at="2026-01-01T00:03:00Z",
         )
         _execute_sql(
@@ -219,9 +221,10 @@ def test_list_controls_excludes_controls_for_hidden_runs(tmp_path: Path) -> None
             "term_control_visibility@0",
             f"term_control_visibility@{rewind.index}",
             "run_control_visible@0",
+            "run_control_hidden@0",
         }
         assert store.get_record(Pointer(ControlRef.for_run(child.id, 0))) is None
-        assert store.get_record(Pointer(ControlRef.for_run(hidden.id, 0))) is None
+        assert store.get_record(Pointer(ControlRef.for_run(hidden.id, 0))) is not None
     finally:
         store.close()
 
@@ -1130,11 +1133,11 @@ def test_rerun_does_not_read_or_write_source_ejection(tmp_path: Path) -> None:
             thread_id=str(source.thread),
             anchor=anchor.id,
             request_id=None,
-            expected_head=thread.head,
+            expected_head=store.thread_views().head(thread.id),
             created_at="2026-01-01T00:00:02Z",
         )
         ejected_source = store.get_run(run_id=source.id)
-        assert ejected_source is not None and ejected_source.ejected_by is not None
+        assert ejected_source is not None and ejected_source.ejected_by is None
 
         rerun, control = accept_run(
             store,
@@ -1213,7 +1216,7 @@ def test_retry_does_not_read_or_write_ejection_fields(tmp_path: Path) -> None:
             thread_id=str(source.thread),
             anchor=anchor.id,
             request_id=None,
-            expected_head=thread.head,
+            expected_head=store.thread_views().head(thread.id),
             created_at="2026-01-01T00:00:04Z",
         )
         _execute_sql(
@@ -1225,7 +1228,7 @@ def test_retry_does_not_read_or_write_ejection_fields(tmp_path: Path) -> None:
             """,
         )
         ejected_source = store.get_run(run_id=source.id)
-        assert ejected_source is not None and ejected_source.ejected_by is not None
+        assert ejected_source is not None and ejected_source.ejected_by is None
         control = store.get_run_control(run_id=source.id, index=0)
         assert control is not None and isinstance(control.payload, RunControlPayload)
         payload = control.payload

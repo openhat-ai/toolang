@@ -10,7 +10,7 @@ from toolang.execution.store import RunStore
 from toolang.execution.types import ContentRef
 
 
-@pytest.mark.parametrize("schema_version", (28, 29, 30, 31, 32, 33, 35))
+@pytest.mark.parametrize("schema_version", (28, 29, 30, 31, 32, 33, 34, 36))
 @pytest.mark.parametrize("read_only", (False, True))
 def test_run_store_rejects_any_other_schema_without_modifying_it(
     tmp_path: Path,
@@ -30,7 +30,7 @@ def test_run_store_rejects_any_other_schema_without_modifying_it(
         RunStore(path, read_only=read_only)
 
     assert raised.value.version == schema_version
-    assert raised.value.current == 34
+    assert raised.value.current == 35
     assert raised.value.read_only is read_only
     assert path.read_bytes() == before
     connection = sqlite3.connect(path)
@@ -85,7 +85,7 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
 
     connection = sqlite3.connect(path)
     try:
-        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 34
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 35
         columns = {
             table: {
                 str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
@@ -97,8 +97,6 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
                 "id",
                 "origin",
                 "peer",
-                "created_by",
-                "head",
                 "created_at",
                 "updated_at",
             },

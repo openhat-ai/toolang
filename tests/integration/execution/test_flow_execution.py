@@ -1070,7 +1070,8 @@ def test_thread_manager_emits_only_successful_events(tmp_path: Path) -> None:
     thread_id = manager.create(prefix=ThreadPrefix.TERM)
     created = executor.store.get_thread(thread_id=thread_id)
 
-    assert created is not None and created.created_by.index == 0
+    assert created is not None
+    assert executor.store.thread_views().head(thread_id).index == 0
     assert [event.type for event in listener.events] == ["thread_created"]
     with pytest.raises(ValueError, match="thread has no runs"):
         manager.fork(thread_id=thread_id, run_id="run_missing")
@@ -1165,7 +1166,10 @@ def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
 
     forked = manager.fork(thread_id=created)
 
-    assert store.list_runs(thread_id=forked, limit=None) == []
+    assert store.list_thread_runs_chronological(thread_id=forked) == ()
+    assert [run.id for run in store.list_runs(thread_id=forked, limit=None)] == [
+        anchor_id
+    ]
     assert [
         run.id for run in store.list_thread_history_chronological(thread_id=forked)
     ] == [anchor_id]
@@ -1173,7 +1177,7 @@ def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
     rewound = store.get_thread(thread_id=created)
     anchor = store.get_run(run_id=anchor_id)
     assert anchor is not None and rewound is not None
-    assert anchor.ejected_by == rewound.head
+    assert anchor.ejected_by is None
     assert [event.type for event in listener.events] == [
         "thread_created",
         "thread_forked",
@@ -1279,8 +1283,8 @@ def test_rewind_uses_durable_acceptance_order_instead_of_timestamps(
     rewound = store.get_thread(thread_id=created)
     assert before is not None and before.ejected_by is None
     assert rewound is not None
-    assert anchor is not None and anchor.ejected_by == rewound.head
-    assert after is not None and after.ejected_by == rewound.head
+    assert anchor is not None and anchor.ejected_by is None
+    assert after is not None and after.ejected_by is None
     asyncio.run(executor.stop())
 
 

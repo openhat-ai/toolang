@@ -2385,6 +2385,95 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
     assert [run.id for run in rewound.runs] == ["run_first"]
 
 
+@pytest.mark.parametrize("command", ("fork", "rewind"))
+@pytest.mark.parametrize("inherited", (False, True), ids=("owned", "inherited"))
+def test_thread_commands_anchor_on_roots_with_child_runs(
+    tmp_path: Path, command: str, inherited: bool
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    layout = AgentLayout.resident(root, "alice")
+    store = RunStore(layout.run_store)
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_parent",
+            thread_id="term_source",
+            origin="chat",
+            input=Message.user("Parent"),
+        )
+        parent_step = project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="run",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        child = project_run_start(
+            store,
+            run_id="run_child",
+            thread_id="term_source",
+            parent=parent_step.ref,
+            origin="chat",
+            input=Message.user("Child"),
+        )
+        project_run_end(store, run_id=child.id)
+        project_run_end(store, run_id=run.id)
+        thread_id = "term_source"
+        if inherited:
+            thread_id = "term_branch"
+            store.fork_thread(
+                thread_id=thread_id,
+                source="term_source",
+                anchor=run.id,
+                request_id=None,
+                created_at="2026-01-01T00:00:03Z",
+            )
+        physical_runs = store.list_runs(limit=None)
+        physical_steps = store.list_steps(run_id=run.id)
+    finally:
+        store.close()
+
+    result = _invoke(root, "alice", command, thread_id)
+
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.strip().endswith(
+        f"through {run.id}" if command == "fork" else f"before {run.id}"
+    )
+    reopened = RunStore(layout.run_store)
+    try:
+        target = result.stdout.split()[1] if command == "fork" else thread_id
+        detail = RunHistory(reopened).get_thread(target, run_limit=0)
+        assert detail is not None
+        if command == "fork":
+            assert detail.latest_run is not None and detail.latest_run.id == run.id
+            assert thread_commands._anchor(RunHistory(reopened), target) == (
+                target,
+                run.id,
+            )
+        else:
+            assert detail.latest_run is None
+        assert [
+            item.id
+            for item in reopened.list_thread_history_chronological(thread_id=target)
+        ] == ([run.id, child.id] if command == "fork" else [])
+        assert reopened.list_runs(limit=None) == physical_runs
+        assert reopened.list_steps(run_id=run.id) == physical_steps
+        if inherited:
+            assert [
+                item.id
+                for item in reopened.list_thread_history_chronological(
+                    thread_id="term_source"
+                )
+            ] == [run.id, child.id]
+    finally:
+        reopened.close()
+
+
 def test_tools_uses_tool_only_snapshot(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "toolang"
     layout = AgentLayout.resident(root, "default")

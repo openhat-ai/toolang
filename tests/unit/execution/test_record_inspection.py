@@ -229,8 +229,6 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
             "id",
             "origin",
             "peer",
-            "created_by",
-            "head",
             "created_at",
             "updated_at",
         }
@@ -403,7 +401,7 @@ def test_control_pointer_uses_one_record_lookup(tmp_path: Path) -> None:
         store.close()
 
 
-def test_record_lookup_hides_steps_owned_by_an_ejected_run(tmp_path: Path) -> None:
+def test_record_lookup_retains_steps_owned_by_a_rewound_run(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
         run = project_run_start(
@@ -431,11 +429,12 @@ def test_record_lookup_hides_steps_owned_by_an_ejected_run(tmp_path: Path) -> No
             thread_id=thread.id,
             anchor=run.id,
             request_id=None,
-            expected_head=thread.head,
+            expected_head=store.thread_views().head(thread.id),
             created_at="2026-01-01T00:00:03Z",
         )
 
-        assert store.get_record(Pointer.parse(str(step.ref))) is None
+        assert store.get_record(Pointer(step.ref)) == step
+        assert store.inspect_runs(thread_id=thread.id) == ()
     finally:
         store.close()
 
@@ -603,15 +602,21 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
         ("create", CreateControlPayload(), set()),
         (
             "fork",
-            ForkControlPayload(ThreadRef("term_source"), RunRef("run_source")),
-            {"fork_from", "fork_at"},
+            ForkControlPayload(
+                ThreadRef("term_source"),
+                RunRef("run_source"),
+                ControlRef.for_thread("term_source", 0),
+            ),
+            {"fork_from", "fork_at", "fork_head"},
         ),
         (
             "rewind",
             RewindControlPayload(
-                RunRef("run_source"), ControlRef.for_thread("term_control", 2)
+                RunRef("run_source"),
+                RunRef("run_end"),
+                ControlRef.for_thread("term_control", 2),
             ),
-            {"rewind_from", "rewind_if"},
+            {"rewind_from", "rewind_through", "rewind_if"},
         ),
     )
 

@@ -100,9 +100,10 @@ from .types import (
     valid_thread_id,
 )
 from .schemas import Record, RecordSelection, select_record
+from .thread_views import ThreadViews
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 34
+_SCHEMA_VERSION = 35
 _SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -783,6 +784,10 @@ class RunStore:
                 run = _run_from_row(run_row)
                 if run.status not in {"succeeded", "failed", "canceled"}:
                     raise ValueError(f"run is not terminal: {run_id}")
+                if self.thread_views().is_forked(run_id):
+                    raise ValueError(
+                        f"run belongs to a durable fork prefix: {run_id}; use rerun"
+                    )
                 applied_reload = self._conn.execute(
                     """
                     SELECT 1 FROM controls
@@ -1210,16 +1215,14 @@ class RunStore:
                 self._conn.execute(
                     """
                     INSERT INTO threads(
-                        id, origin, peer, created_by, head,
+                        id, origin, peer,
                         created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?)
                     """,
                     (
                         thread_id,
                         origin,
                         _dump_json(effective_peer.to_data()),
-                        str(control_ref),
-                        str(control_ref),
                         now,
                         now,
                     ),
@@ -1282,11 +1285,25 @@ class RunStore:
                 if source_row is None:
                     raise ValueError(f"thread not found: {source}")
                 source_record = _thread_from_row(source_row)
+                views = self.thread_views()
                 anchor_record = self._resolve_thread_anchor(
+                    views=views,
                     thread_id=source_record.id,
                     run_id=anchor,
                     require_idle=False,
                 )
+                payload = ForkControlPayload(
+                    fork_from=ThreadRef(source),
+                    fork_at=RunRef(anchor_record.id),
+                    fork_head=views.head(source),
+                )
+                if any(
+                    run.status not in {"succeeded", "failed", "canceled"}
+                    for run in views.tree(views.prefix(payload))
+                ):
+                    raise ValueError(
+                        f"fork prefix contains a nonterminal run: {source}"
+                    )
                 if (
                     self._conn.execute(
                         "SELECT 1 FROM threads WHERE id = ?", (thread_id,)
@@ -1299,10 +1316,7 @@ class RunStore:
                     ref=control_ref,
                     kind="fork",
                     timing="immediate",
-                    payload=ForkControlPayload(
-                        fork_from=ThreadRef(source_record.id),
-                        fork_at=RunRef(anchor_record.id),
-                    ),
+                    payload=payload,
                     request=request_id,
                     status="applied",
                     error=None,
@@ -1313,16 +1327,14 @@ class RunStore:
                 self._conn.execute(
                     """
                     INSERT INTO threads(
-                        id, origin, peer, created_by, head,
+                        id, origin, peer,
                         created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?)
                     """,
                     (
                         thread_id,
                         source_record.origin,
                         _dump_json(source_record.peer.to_data()),
-                        str(control_ref),
-                        str(control_ref),
                         created_at,
                         created_at,
                     ),
@@ -1382,20 +1394,20 @@ class RunStore:
                 ).fetchone()
                 if thread_row is None:
                     raise ValueError(f"thread not found: {thread_id}")
-                thread = _thread_from_row(thread_row)
-                if thread.head != expected_head:
+                views = self.thread_views()
+                if views.head(thread_id) != expected_head:
                     raise ValueError(f"thread head changed: {thread_id}")
                 anchor_record = self._resolve_thread_anchor(
+                    views=views,
                     thread_id=thread_id,
                     run_id=anchor,
                     require_idle=True,
                 )
-                anchor = self._conn.execute(
-                    "SELECT rowid, thread FROM runs WHERE id = ?",
-                    (anchor_record.id,),
-                ).fetchone()
-                if anchor is None:
-                    raise ValueError(f"run not found: {anchor_record.id}")
+                history = views.history(thread_id)
+                start = next(
+                    i for i, run in enumerate(history) if run.id == anchor_record.id
+                )
+                ejected = tuple(run.id for run in views.tree(history[start:]))
                 index_row = self._conn.execute(
                     'SELECT COALESCE(MAX("index"), -1) + 1 AS next_index '
                     "FROM controls WHERE target = ?",
@@ -1409,6 +1421,7 @@ class RunStore:
                     timing="immediate",
                     payload=RewindControlPayload(
                         rewind_from=RunRef(anchor_record.id),
+                        rewind_through=RunRef(history[-1].id),
                         rewind_if=expected_head,
                     ),
                     request=request_id,
@@ -1418,47 +1431,11 @@ class RunStore:
                     finished_at=created_at,
                     claimed=True,
                 )
-                if str(anchor["thread"]) == thread_id:
-                    rows = self._conn.execute(
-                        """
-                        SELECT id FROM runs
-                        WHERE thread = ?
-                          AND rowid >= ?
-                          AND ejected_by IS NULL
-                        ORDER BY rowid ASC
-                        """,
-                        (thread_id, int(anchor["rowid"])),
-                    ).fetchall()
-                else:
-                    rows = self._conn.execute(
-                        """
-                        SELECT id FROM runs
-                        WHERE thread = ?
-                          AND ejected_by IS NULL
-                        ORDER BY rowid ASC
-                        """,
-                        (thread_id,),
-                    ).fetchall()
-                ejected = tuple(str(row["id"]) for row in rows)
-                self._conn.executemany(
-                    """
-                    UPDATE runs
-                    SET ejected_by = ?
-                    WHERE id = ?
-                    """,
-                    ((str(control_ref), run_id) for run_id in ejected),
-                )
                 self._conn.execute(
                     """
-                    UPDATE threads SET head = ?, updated_at = ?
-                    WHERE id = ? AND head = ?
+                    UPDATE threads SET updated_at = ? WHERE id = ?
                     """,
-                    (
-                        str(control_ref),
-                        created_at,
-                        thread_id,
-                        str(expected_head),
-                    ),
+                    (created_at, thread_id),
                 )
                 updated_thread = self._conn.execute(
                     "SELECT * FROM threads WHERE id = ?", (thread_id,)
@@ -1882,15 +1859,26 @@ class RunStore:
         self,
         *,
         limit: int | None = 50,
-        thread_id: str | None = None,
+        thread_id: str | ThreadRef | None = None,
         status: RunStatus | None = None,
         include_ejected: bool = False,
     ) -> list[RunRecord]:
+        """List physical Runs, or logical membership when a Thread is selected."""
+
+        if thread_id is not None:
+            views = self.thread_views()
+            runs = [
+                run
+                for run in reversed(
+                    views.tree(
+                        views.history(str(thread_id), include_rewound=include_ejected)
+                    )
+                )
+                if status is None or run.status == status
+            ]
+            return runs if limit is None else runs[:limit]
         clauses: list[str] = []
         params: list[object] = []
-        if thread_id is not None:
-            clauses.append("thread = ?")
-            params.append(str(thread_id))
         if status is not None:
             clauses.append("status = ?")
             params.append(status)
@@ -1915,21 +1903,19 @@ class RunStore:
     def inspect_runs(self, *, thread_id: str | None = None) -> tuple[InspectedRun, ...]:
         """Return one focused, consistent Run collection for inspection."""
 
-        clauses = [
-            "runs.ejected_by IS NULL",
-            "(runs.parent IS NULL OR runs.parent NOT IN ("
-            "SELECT steps.run || '.' || steps.path FROM steps "
-            "WHERE steps.ejected_by IS NOT NULL))",
-        ]
-        params: tuple[object, ...] = ()
         if thread_id is not None:
-            clauses.append("runs.thread = ?")
-            params = (str(thread_id),)
+            with self._read_transaction():
+                views = self.thread_views()
+                return self._inspect_runs_locked(
+                    tuple(reversed(views.tree(views.history(thread_id))))
+                )
         with self._read_transaction():
             rows = self._conn.execute(
-                f"SELECT runs.* FROM runs WHERE {' AND '.join(clauses)} "
-                "ORDER BY runs.created_at DESC, runs.id ASC",
-                params,
+                "SELECT runs.* FROM runs WHERE runs.ejected_by IS NULL "
+                "AND (runs.parent IS NULL OR runs.parent NOT IN ("
+                "SELECT steps.run || '.' || steps.path FROM steps "
+                "WHERE steps.ejected_by IS NOT NULL)) "
+                "ORDER BY runs.created_at DESC, runs.id ASC"
             ).fetchall()
             records = tuple(_run_from_row(row) for row in rows)
             return self._inspect_runs_locked(records)
@@ -2192,7 +2178,7 @@ class RunStore:
         limit: int | None = None,
         include_ejected: bool = False,
     ) -> tuple[RunRecord, ...]:
-        """Return one thread's runs in durable chronological order."""
+        """Return physically owned Runs, including those removed by Thread rewind."""
 
         clauses = ["thread = ?"]
         params: list[object] = [thread_id]
@@ -2239,155 +2225,48 @@ class RunStore:
         limit: int | None = None,
         include_ejected: bool = False,
     ) -> dict[str, tuple[RunRecord, ...]]:
-        """Return projected histories for several threads from one store snapshot."""
+        """Return logical histories and their child Runs from one store snapshot."""
 
-        selected = tuple(dict.fromkeys(item for item in thread_ids if item))
-        if not selected:
-            return {}
-        with self._lock:
-            owner = not self._conn.in_transaction
-            if owner:
-                self._conn.execute("BEGIN")
-            try:
-                thread_rows = self._conn.execute("SELECT * FROM threads").fetchall()
-                control_rows = self._conn.execute(
-                    "SELECT * FROM controls WHERE scope = 'thread' "
-                    'ORDER BY target ASC, "index" ASC'
-                ).fetchall()
-                run_rows = self._conn.execute(
-                    "SELECT * FROM runs ORDER BY rowid ASC"
-                ).fetchall()
-                ejected_step_rows = self._conn.execute(
-                    "SELECT run, path FROM steps WHERE ejected_by IS NOT NULL"
-                ).fetchall()
-                if owner:
-                    self._conn.commit()
-            except BaseException:
-                if owner:
-                    self._conn.rollback()
-                raise
-        threads = {
-            record.id: record
-            for record in (_thread_from_row(row) for row in thread_rows)
-        }
-        controls_by_thread: dict[str, list[ControlRecord]] = {}
-        for row in control_rows:
-            control = _control_from_row(row)
-            controls_by_thread.setdefault(str(control.target), []).append(control)
-        runs_by_thread: dict[str, list[RunRecord]] = {}
-        for row in run_rows:
-            run = _run_from_row(row)
-            runs_by_thread.setdefault(str(run.thread), []).append(run)
-        ejected_steps = {
-            str(StepRef.from_local(str(row["run"]), str(row["path"])))
-            for row in ejected_step_rows
-        }
-        cache: dict[tuple[str, bool], tuple[RunRecord, ...]] = {}
-
-        def history(
-            thread_id: str,
-            *,
-            include_hidden: bool,
-            visited: set[str],
-        ) -> list[RunRecord]:
-            key = (thread_id, include_hidden)
-            cached = cache.get(key)
-            if cached is not None:
-                return list(cached)
-            if thread_id in visited:
-                raise ValueError(f"thread fork cycle: {thread_id}")
-            visited.add(thread_id)
-            try:
-                thread = threads.get(thread_id)
-                controls = controls_by_thread.get(thread_id, ())
-                prefix: list[RunRecord] = []
-                if thread is not None:
-                    created_by = next(
-                        (
-                            control
-                            for control in controls
-                            if control.ref == thread.created_by
-                        ),
-                        None,
-                    )
-                    if (
-                        created_by is not None
-                        and created_by.kind == "fork"
-                        and isinstance(created_by.payload, ForkControlPayload)
-                    ):
-                        source = history(
-                            str(created_by.payload.fork_from),
-                            include_hidden=True,
-                            visited=visited,
-                        )
-                        for run in source:
-                            prefix.append(run)
-                            if run.id == str(created_by.payload.fork_at):
-                                break
-                        else:
-                            raise ValueError(
-                                "fork anchor is missing from source history: "
-                                f"{created_by.payload.fork_at}"
-                            )
-                    if prefix:
-                        positions = {
-                            run.id: position for position, run in enumerate(prefix)
-                        }
-                        cuts = tuple(
-                            positions[str(control.payload.rewind_from)]
-                            for control in controls
-                            if control.kind == "rewind"
-                            and isinstance(control.payload, RewindControlPayload)
-                            and str(control.payload.rewind_from) in positions
-                        )
-                        if cuts:
-                            prefix = prefix[: min(cuts)]
-                own = [
-                    run
-                    for run in runs_by_thread.get(thread_id, ())
-                    if include_hidden
-                    or (
-                        run.ejected_by is None
-                        and (run.parent is None or str(run.parent) not in ejected_steps)
-                    )
-                ]
-                result = [*prefix, *own]
-                cache[key] = tuple(result)
-                return result
-            finally:
-                visited.remove(thread_id)
-
-        result: dict[str, tuple[RunRecord, ...]] = {}
-        for thread_id in selected:
-            runs = history(
-                thread_id,
-                include_hidden=include_ejected,
-                visited=set(),
+        views = self.thread_views()
+        return {
+            thread_id: _history_tail(
+                views.tree(views.history(thread_id, include_rewound=include_ejected)),
+                limit=limit,
             )
-            result[thread_id] = _history_tail(runs, limit=limit)
-        return result
+            for thread_id in dict.fromkeys(thread_ids)
+        }
+
+    def thread_views(self) -> ThreadViews:
+        """Read ordered Runs and Thread controls in one transaction."""
+
+        with self._read_transaction():
+            runs = self._conn.execute(
+                "SELECT * FROM runs ORDER BY rowid ASC"
+            ).fetchall()
+            controls = self._conn.execute(
+                "SELECT * FROM controls WHERE scope = 'thread' "
+                'ORDER BY target ASC, "index" ASC'
+            ).fetchall()
+            return ThreadViews(
+                tuple(_run_from_row(row) for row in runs),
+                tuple(_control_from_row(row) for row in controls),
+            )
 
     def _resolve_thread_anchor(
         self,
         *,
+        views: ThreadViews,
         thread_id: str,
         run_id: str | None,
         require_idle: bool,
     ) -> RunRecord:
         """Resolve one visible terminal root run inside a write transaction."""
 
-        history = tuple(
-            run
-            for run in self.list_thread_history_chronological(
-                thread_id=thread_id,
-                include_ejected=False,
-            )
-            if run.parent is None
-        )
+        history = views.history(thread_id)
         if not history:
             raise ValueError(f"thread has no runs: {thread_id}")
         if require_idle and any(
-            run.status in {"pending", "running"} for run in history
+            run.status in {"pending", "running"} for run in views.tree(history)
         ):
             raise ValueError(f"thread is running: {thread_id}")
         anchor = (
@@ -3300,8 +3179,6 @@ class RunStore:
                     id TEXT PRIMARY KEY,
                     origin TEXT NOT NULL,
                     peer TEXT NOT NULL,
-                    created_by TEXT NOT NULL,
-                    head TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -3649,8 +3526,6 @@ def _thread_from_row(row: sqlite3.Row) -> ThreadRecord:
         id=str(raw["id"]),
         origin=str(raw["origin"]),
         peer=ThreadPeer.from_data(peer_raw if isinstance(peer_raw, Mapping) else None),
-        created_by=ControlRef.parse(str(raw["created_by"])),
-        head=ControlRef.parse(str(raw["head"])),
         created_at=str(raw["created_at"]),
         updated_at=str(raw["updated_at"]),
     )

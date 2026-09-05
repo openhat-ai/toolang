@@ -15,7 +15,7 @@ from toolang.cli.toolang.commands.inspect import (
 )
 from toolang.execution.records import ThreadPeer, ThreadRecord
 from toolang.execution.schemas import RecordSelection
-from toolang.execution.types import ControlRef, Pointer
+from toolang.execution.types import Pointer
 from toolang.lang.types import Array
 
 
@@ -46,8 +46,6 @@ def test_implicit_pointer_projector_preserves_existing_browsing_rules(
         id="term_render",
         origin="test",
         peer=ThreadPeer(),
-        created_by=ControlRef.for_thread("term_render", 0),
-        head=ControlRef.for_thread("term_render", 0),
         created_at="",
         updated_at="",
     )
@@ -92,8 +90,6 @@ def test_human_multiline_cell_never_wraps_its_pointer() -> None:
         id="term_render",
         origin="test",
         peer=ThreadPeer(),
-        created_by=ControlRef.for_thread("term_render", 0),
-        head=ControlRef.for_thread("term_render", 0),
         created_at="",
         updated_at="",
     )
@@ -126,8 +122,6 @@ def test_human_resolved_pointer_marks_the_type_not_the_field() -> None:
         id="term_render",
         origin="test",
         peer=ThreadPeer(),
-        created_by=ControlRef.for_thread("term_render", 0),
-        head=ControlRef.for_thread("term_render", 0),
         created_at="",
         updated_at="",
     )
@@ -163,8 +157,6 @@ def test_human_parts_align_in_the_value_cell_without_a_bullet() -> None:
         id="term_render",
         origin="test",
         peer=ThreadPeer(),
-        created_by=ControlRef.for_thread("term_render", 0),
-        head=ControlRef.for_thread("term_render", 0),
         created_at="",
         updated_at="",
     )
