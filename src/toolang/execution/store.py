@@ -407,7 +407,7 @@ class RunStore:
                         runnable=runnable,
                         model=model,
                         model_request=model_request,
-                        locals=locals,
+                        input=locals,
                         sandbox=sandbox,
                         authored_input=authored_input,
                         authored_commands=authored_commands,
@@ -422,7 +422,7 @@ class RunStore:
                         runnable=runnable,
                         model=model,
                         model_request=model_request,
-                        locals=locals,
+                        input=locals,
                         rerun_from=RunRef(cast(str, source)),
                         sandbox=sandbox,
                         authored_input=authored_input,
@@ -554,7 +554,7 @@ class RunStore:
             runnable=runnable,
             module=module,
             source=source,
-            locals=locals,
+            input=locals,
         )
         if not isinstance(source.record, StepRef):
             raise ValueError("execute source must point to one Model Step output part")
@@ -884,7 +884,7 @@ class RunStore:
                         runnable=runnable,
                         model=model,
                         model_request=model_request,
-                        locals=locals,
+                        input=locals,
                         retry_from=resolved_anchor,
                         sandbox=sandbox,
                         authored_input=authored_input,
@@ -2780,7 +2780,7 @@ class RunStore:
                     PreparationControlPayload | SteerControlPayload,
                 ):
                     continue
-                locals_value = item.payload.locals
+                locals_value = item.payload.input
                 if locals_value is None:
                     continue
                 primary = next(

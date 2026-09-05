@@ -705,14 +705,14 @@ def test_local_client_returns_caller_facing_steer_and_cancel_controls(
             "steer_request",
         )
         assert isinstance(steer.payload, SteerControlPayload)
-        assert parts_from_local(steer.payload.locals[0]) == (TextPart("new direction"),)
+        assert parts_from_local(steer.payload.input[0]) == (TextPart("new direction"),)
         assert (cancellation.kind, cancellation.timing, cancellation.request_id) == (
             "cancel",
             "immediate",
             "cancel_request",
         )
         assert isinstance(cancellation.payload, CancelControlPayload)
-        assert parts_from_local(cancellation.payload.locals[0]) == (
+        assert parts_from_local(cancellation.payload.input[0]) == (
             TextPart("user canceled"),
         )
         assert detail.status == "canceled"

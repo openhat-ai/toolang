@@ -477,7 +477,7 @@ def _messages_with_inputs(
     for input in inputs:
         if isinstance(input.payload, SteerControlPayload):
             primary = next(
-                (item for item in input.payload.locals if item.name == "_"), None
+                (item for item in input.payload.input if item.name == "_"), None
             )
             if (
                 primary is not None

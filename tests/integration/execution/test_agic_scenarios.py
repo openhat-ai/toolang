@@ -108,10 +108,10 @@ agic reply(_: Part[], tone: Text) -> Part[]:
             assert [step.kind for step in steps] == ["model"]
             assert steps[0].input == (
                 FieldRef.from_path(
-                    ControlRef.for_run(record.id, 0), "payload", "locals", 0, "value"
+                    ControlRef.for_run(record.id, 0), "payload", "input", 0, "value"
                 ),
                 FieldRef.from_path(
-                    ControlRef.for_run(record.id, 0), "payload", "locals", 1, "value"
+                    ControlRef.for_run(record.id, 0), "payload", "input", 1, "value"
                 ),
             )
             assert [event.type for event in tracer.events] == [
@@ -235,7 +235,7 @@ agic reply(_: Part[]) -> Part[]:
             ]
             assert active[0].input == (
                 FieldRef.from_path(
-                    ControlRef.for_run(run.id, 1), "payload", "locals", 0, "value"
+                    ControlRef.for_run(run.id, 1), "payload", "input", 0, "value"
                 ),
             )
             assert [call.call.messages for call in harness.adapter.invocations] == [
@@ -469,7 +469,7 @@ agic reply(topic: Text) -> Part[]:
             assert len(steps) == 1
             assert steps[0].input == (
                 FieldRef.from_path(
-                    ControlRef.for_run(record.id, 0), "payload", "locals", 0, "value"
+                    ControlRef.for_run(record.id, 0), "payload", "input", 0, "value"
                 ),
             )
 

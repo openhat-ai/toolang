@@ -195,7 +195,7 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
             status="succeeded",
             input=(
                 FieldRef.from_path(
-                    ControlRef.for_run(run.id, 0), "payload", "locals", 0, "value"
+                    ControlRef.for_run(run.id, 0), "payload", "input", 0, "value"
                 ),
             ),
             output=(TextPart("result"),),
@@ -274,7 +274,7 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
         }
         assert "scope" not in control_data
         assert control_data["id"] == f"{run.id}@0"
-        assert step_data["input"] == [f"{run.id}@0/payload/locals/0/value"]
+        assert step_data["input"] == [f"{run.id}@0/payload/input/0/value"]
         assert run_data["output"] == {
             "type": "Part[]",
             "value": {"?": f"{step.ref}/output/value:Part[]"},
@@ -540,7 +540,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 "runnable",
                 "model",
                 "model_request",
-                "locals",
+                "input",
                 "sandbox",
                 "authored_input",
                 "authored_commands",
@@ -566,7 +566,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 "runnable",
                 "model",
                 "model_request",
-                "locals",
+                "input",
                 "rerun_from",
                 "sandbox",
                 "authored_input",
@@ -593,7 +593,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 "runnable",
                 "model",
                 "model_request",
-                "locals",
+                "input",
                 "retry_from",
                 "sandbox",
                 "authored_input",
@@ -612,14 +612,14 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 source,
                 (Local.typed("Json", source.select("input", "input", "_"), "_"),),
             ),
-            {"state", "runnable", "module", "source", "locals"},
+            {"state", "runnable", "module", "source", "input"},
         ),
         (
             "steer",
             SteerControlPayload((Local.typed("Text", "continue", "_"),)),
-            {"locals"},
+            {"input"},
         ),
-        ("cancel", CancelControlPayload(), {"locals"}),
+        ("cancel", CancelControlPayload(), {"input"}),
         ("create", CreateControlPayload(), set()),
         (
             "fork",

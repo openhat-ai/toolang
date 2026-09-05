@@ -361,7 +361,7 @@ run_ab12.0                        Step record
 term_ab12@0                       Thread Control record
 run_ab12@1                        Run Control record
 run_ab12.0/output/value/0         nested field
-run_ab12@1/payload/locals/0/value nested Control field
+run_ab12@1/payload/input/0/value nested Control field
 ```
 
 `.` enters the Step hierarchy, `@` selects a Control index, and `/` enters a

@@ -236,7 +236,7 @@ def _race_retry(
             state=payload.state,
             runnable=payload.runnable,
             model=payload.model,
-            locals=payload.locals,
+            locals=payload.input,
             sandbox="host",
             request_id=request_id,
             created_at="2026-01-01T00:00:03Z",
@@ -440,7 +440,7 @@ def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
             assert control is not None
             assert control.status == "applied"
             assert control.payload == SteerControlPayload(
-                locals=(
+                input=(
                     Local.typed(
                         "Part[]",
                         Message.user("Use the remote guidance.").parts,

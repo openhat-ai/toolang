@@ -3099,8 +3099,8 @@ def _adopted_control_locals(
             control.payload, PreparationControlPayload
         ):
             continue
-        if control.payload.locals is not None:
-            return control.payload.locals
+        if control.payload.input is not None:
+            return control.payload.input
     raise ValueError(f"run control locals are missing: {run_id}@{through}")
 
 

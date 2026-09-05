@@ -279,7 +279,7 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     assert run_control.payload.runnable == "flow:pipeline"
     assert run_control.payload.model == "none"
     assert run_control.payload.limits == _setup().limits
-    assert run_control.payload.locals == ()
+    assert run_control.payload.input == ()
     assert run_control.payload.resources is not None
     detail = RunHistory(store).get_run(record.id)
     assert detail is not None
@@ -1361,7 +1361,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
                     FieldRef.from_path(
                         ControlRef.for_run("run_root", 0),
                         "payload",
-                        "locals",
+                        "input",
                         0,
                         "value",
                     ),
@@ -1758,7 +1758,7 @@ def test_private_event_projector_persists_run_and_step_records(
             given=LetStmt(span=Span(line=1), value="done"),
             input=(
                 FieldRef.from_path(
-                    ControlRef.for_run("run_test", 0), "payload", "locals", 0, "value"
+                    ControlRef.for_run("run_test", 0), "payload", "input", 0, "value"
                 ),
             ),
             started_at="2026-01-01T00:00:02Z",

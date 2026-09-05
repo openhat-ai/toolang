@@ -313,7 +313,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
             status="succeeded",
             input=(
                 FieldRef.from_path(
-                    ControlRef.for_run(run.id, 0), "payload", "locals", 0, "value"
+                    ControlRef.for_run(run.id, 0), "payload", "input", 0, "value"
                 ),
             ),
             output=(TextPart(text="prepared"),),
@@ -445,7 +445,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     assert resolved_row.split()[:2] == ["/0", "FieldRef"]
     assert "→" not in resolved.stdout
     assert "run_inspect.0/input/0" not in resolved.stdout
-    assert "run_inspect@0/payload/locals/0/value" in resolved.stdout
+    assert "run_inspect@0/payload/input/0/value" in resolved.stdout
     assert "Inspect this" not in resolved.stdout
     assert resolved_value.exit_code == 0
     assert "resolves to" not in resolved_value.stdout
@@ -2030,7 +2030,7 @@ def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> Non
         ("cancel", "immediate", "pending"),
     ]
     assert isinstance(controls[1].payload, SteerControlPayload)
-    assert controls[1].payload.locals == (
+    assert controls[1].payload.input == (
         Local.typed("Part[]", Message.user("Focus on tests").parts, "_", 0),
     )
 

@@ -248,7 +248,7 @@ class RunHistory:
             authored = control.payload.authored_input
             if authored is not None and authored._ is not None:
                 return (TextPart(authored._),)
-            locals_value = control.payload.locals
+            locals_value = control.payload.input
             if locals_value is None:
                 continue
             primary = next(

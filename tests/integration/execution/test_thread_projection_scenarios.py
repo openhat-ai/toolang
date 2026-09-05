@@ -104,7 +104,7 @@ def _retry(store: RunStore, run: str) -> None:
         state=payload.state,
         runnable=payload.runnable,
         model=payload.model,
-        locals=payload.locals,
+        locals=payload.input,
         sandbox="host",
         request_id=None,
         created_at="2026-01-01T00:00:05Z",

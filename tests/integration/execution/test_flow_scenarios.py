@@ -413,7 +413,7 @@ flow staged(_: Part[]) -> Part[]:
             ]
             assert before[1].input == (
                 FieldRef.from_path(
-                    ControlRef.for_run(failed.id, 0), "payload", "locals", 0, "value"
+                    ControlRef.for_run(failed.id, 0), "payload", "input", 0, "value"
                 ),
             )
             previous_child = next(
@@ -471,7 +471,7 @@ flow staged(_: Part[]) -> Part[]:
             assert retry.payload.runnable == run_control.payload.runnable
             assert retry.payload.model == run_control.payload.model
             assert retry.payload.limits == run_control.payload.limits
-            assert retry.payload.locals == run_control.payload.locals
+            assert retry.payload.input == run_control.payload.input
             assert retry.payload.resources == run_control.payload.resources
             assert retry.payload.sandbox == run_control.payload.sandbox == "host"
             runs = harness.store.list_runs(
@@ -613,7 +613,7 @@ agic reply(_: Part[], tone: Text, tags: Text[]) -> Part[]:
             assert rerun_control.payload.runnable == source_control.payload.runnable
             assert rerun_control.payload.model == source_control.payload.model
             assert rerun_control.payload.limits == source_control.payload.limits
-            assert rerun_control.payload.locals == source_control.payload.locals
+            assert rerun_control.payload.input == source_control.payload.input
             assert rerun_control.payload.resources == source_control.payload.resources
             projected = RunHistory(harness.store).get_thread(thread)
             assert projected is not None
@@ -2103,21 +2103,21 @@ flow relay(_: Text, suffix: Text) -> Text:
             assert run_control is not None
             assert isinstance(run_control.payload, RunControlPayload)
             suffix = next(
-                local for local in run_control.payload.locals if local.name == "suffix"
+                local for local in run_control.payload.input if local.name == "suffix"
             )
             assert suffix.value == TypedRef(
                 FieldRef.from_path(
-                    ControlRef.for_run(root.id, 0), "payload", "locals", 1, "value"
+                    ControlRef.for_run(root.id, 0), "payload", "input", 1, "value"
                 ),
                 "Text",
             )
             parent_step = harness.store.list_steps(run_id=root.id)[0]
             assert parent_step.input == (
                 FieldRef.from_path(
-                    ControlRef.for_run(root.id, 0), "payload", "locals", 0, "value"
+                    ControlRef.for_run(root.id, 0), "payload", "input", 0, "value"
                 ),
                 FieldRef.from_path(
-                    ControlRef.for_run(root.id, 0), "payload", "locals", 1, "value"
+                    ControlRef.for_run(root.id, 0), "payload", "input", 1, "value"
                 ),
             )
             assert harness.store.run_output_text(run_id=root.id) == "hello!"
@@ -2162,10 +2162,8 @@ flow relay(_: Text) -> Number:
             run_control = harness.store.get_run_control(run_id=child.id, index=0)
             assert run_control is not None
             assert isinstance(run_control.payload, RunControlPayload)
-            assert run_control.payload.locals == (Local.typed("Number", 42, "_", 0),)
-            assert (
-                harness.store.resolve_local(run_control.payload.locals[0]).value == 42
-            )
+            assert run_control.payload.input == (Local.typed("Number", 42, "_", 0),)
+            assert harness.store.resolve_local(run_control.payload.input[0]).value == 42
             assert harness.store.run_output_text(run_id=root.id) == "7"
 
     asyncio.run(scenario())

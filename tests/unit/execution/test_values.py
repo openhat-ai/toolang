@@ -60,7 +60,7 @@ def test_pointer_accepts_run_step_control_and_json_paths() -> None:
     assert pointer.record_ref() == StepRef.parse("run_1.0.2")
     assert field is not None and str(field.field) == "/key~1name/1"
     assert pointer.tokens == ("key/name", "1")
-    assert Pointer.parse("run_1@3/payload/locals/1").kind == "control"
+    assert Pointer.parse("run_1@3/payload/input/1").kind == "control"
     assert Pointer.parse("term_1@0").kind == "control"
     assert str(
         FieldRef.from_path(StepRef.from_local("run_1", (0, 2)), "output", "value")
@@ -376,7 +376,7 @@ def test_protocol_projection_does_not_reinterpret_ordinary_json(
     assert local_from_protocol_data(local_to_protocol_data(local)) == local
 
 
-def test_preparation_payload_round_trips_resolved_locals() -> None:
+def test_preparation_payload_round_trips_resolved_input() -> None:
     payload = RunControlPayload(
         resources=AgentResources(models=("test/model",)),
         limits=RunLimits(tokens=10),
@@ -384,7 +384,7 @@ def test_preparation_payload_round_trips_resolved_locals() -> None:
         runnable="agic:worker",
         model="test/model",
         model_request=ModelRequest("test/model"),
-        locals=(Local.typed("Part[]", (TextPart("hello"),), "_", 0),),
+        input=(Local.typed("Part[]", (TextPart("hello"),), "_", 0),),
         sandbox="docker:python:3.13-slim",
     )
 
@@ -414,7 +414,7 @@ def test_preparation_payload_omits_inactive_reasoning_controls(
             "test/model",
             ModelParameters(reasoning),
         ),
-        locals=(),
+        input=(),
     )
 
     data = control_payload_to_data(payload)
@@ -433,7 +433,7 @@ def test_preparation_payload_preserves_an_absent_model_request() -> None:
         runnable="flow:worker",
         model="none",
         model_request=None,
-        locals=(),
+        input=(),
     )
 
     data = control_payload_to_data(payload)
@@ -451,7 +451,7 @@ def test_preparation_payload_materializes_a_legacy_model_field() -> None:
         runnable="agic:worker",
         model="test/model",
         model_request=ModelRequest("test/model"),
-        locals=(),
+        input=(),
     )
     data = control_payload_to_data(payload)
     data.pop("model_request")
@@ -470,7 +470,7 @@ def test_preparation_payload_preserves_a_legacy_model_free_run() -> None:
         runnable="flow:worker",
         model="none",
         model_request=None,
-        locals=(),
+        input=(),
     )
     data = control_payload_to_data(payload)
     data.pop("model_request")
@@ -489,7 +489,7 @@ def test_preparation_payload_rejects_a_legacy_non_exact_model_ref() -> None:
         runnable="agic:worker",
         model="test/*",
         model_request=None,
-        locals=(),
+        input=(),
     )
     data = control_payload_to_data(payload)
     data.pop("model_request")
@@ -507,7 +507,7 @@ def test_preparation_payload_rejects_a_mismatched_model_request() -> None:
             runnable="agic:worker",
             model="test/model",
             model_request=ModelRequest("other/model"),
-            locals=(),
+            input=(),
         )
 
 
@@ -519,7 +519,7 @@ def test_preparation_payload_round_trips_authored_prompt_facts() -> None:
         runnable="agic:worker",
         model="test/model",
         model_request=ModelRequest("test/model"),
-        locals=(Local.typed("Part[]", (TextPart("expanded"),), "_", 0),),
+        input=(Local.typed("Part[]", (TextPart("expanded"),), "_", 0),),
         authored_input=RunnableInputRaw(
             _="$review focus=security -- inspect",
             named=(NamedInputSource("tone", "$brief"),),
@@ -558,7 +558,7 @@ def test_preparation_payload_reads_legacy_missing_sandbox_as_unknown() -> None:
         state="0" * 64,
         runnable="flow:worker",
         model="none",
-        locals=(),
+        input=(),
     )
 
     restored = control_payload_from_data("run", control_payload_to_data(payload))
@@ -577,30 +577,30 @@ def test_preparation_payload_rejects_noncanonical_sandbox(sandbox: str) -> None:
             state="0" * 64,
             runnable="flow:worker",
             model="none",
-            locals=(),
+            input=(),
             sandbox=sandbox,
         )
 
 
-def test_preparation_payload_rejects_instead_of_dropping_invalid_locals() -> None:
+def test_preparation_payload_rejects_instead_of_dropping_invalid_input() -> None:
     payload = RunControlPayload(
         resources=AgentResources(models=("test/model",)),
         limits=RunLimits(),
         state="0" * 64,
         runnable="agic:worker",
         model="test/model",
-        locals=(Local.typed("Text", "hello", "_", 0),),
+        input=(Local.typed("Text", "hello", "_", 0),),
     )
     data = control_payload_to_data(payload)
-    raw_locals = data["locals"]
-    assert isinstance(raw_locals, list)
-    cast(list[object], raw_locals).append("invalid")
+    raw_input = data["input"]
+    assert isinstance(raw_input, list)
+    cast(list[object], raw_input).append("invalid")
 
     with pytest.raises(ValueError, match="invalid local"):
         control_payload_from_data("run", data)
 
 
-def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:
+def test_retry_payload_distinguishes_inherited_and_empty_input() -> None:
     inherited = RetryControlPayload(
         resources=AgentResources(models=("test/model",)),
         limits=RunLimits(),
@@ -608,7 +608,7 @@ def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:
         runnable="flow:worker",
         model="test/model",
         model_request=ModelRequest("test/model"),
-        locals=None,
+        input=None,
         retry_from=StepRef.from_local("run_1", (2,)),
     )
     empty = RetryControlPayload(
@@ -618,7 +618,7 @@ def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:
         runnable=inherited.runnable,
         model=inherited.model,
         model_request=inherited.model_request,
-        locals=(),
+        input=(),
         retry_from=None,
     )
 
@@ -641,7 +641,7 @@ def test_reload_and_inherited_preparation_payloads_round_trip_without_revision_d
         runnable="agic:child",
         model="test/model",
         model_request=ModelRequest("test/model"),
-        locals=(),
+        input=(),
     )
 
     assert (
@@ -666,7 +666,7 @@ def test_execute_payload_round_trips_source_pointing_locals() -> None:
         runnable="flow:deliver",
         module="_flow_deliver",
         source=source,
-        locals=(
+        input=(
             Local.typed("Json", source.select("input", "input", "_"), "_"),
             Local.typed(
                 "Json",

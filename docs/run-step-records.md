@@ -87,6 +87,9 @@ Control status is `pending`, `applied`, `wontapply`, or `revoked`. Timing is
 `immediate`, `next_step`, or `next_call`. Private claim and revision columns
 support concurrency and polling.
 
+Run, Rerun, Retry, Execute, Steer, and Cancel payloads store primary and named
+values in `input`. Execution-time local variables remain locals.
+
 ### RunRecord
 
 ```text
