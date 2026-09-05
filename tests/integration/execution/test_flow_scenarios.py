@@ -33,6 +33,7 @@ from toolang.execution.records import (
     RunControlPayload,
 )
 from toolang.execution.schemas import RunnableRequest, RunRequest
+from toolang.execution.store import RunStore
 from toolang.execution.trees import build_execution_tree
 from toolang.execution.types import (
     CollectionStepNoted,
@@ -663,12 +664,27 @@ flow staged(_: Part[]) -> Part[]:
                 )
             )
             assert run.status == "failed"
+            prefix, original_call = harness.store.list_steps(run_id=run.id)
+            assert prefix.preceded_by == (ControlRef.for_run(run.id, 0),)
+            assert original_call.preceded_by == ()
+            initial = harness.store.get_run_control(run_id=run.id, index=0)
+            original_children = harness.store.list_run_tree(root_run_id=run.id)[1:]
             run = await harness.executor.retry(
                 run.id,
                 setup=harness.setup,
                 state=harness.state,
             )
             assert run.status == "failed"
+            first_retry = run.control
+            retained, retried_call = harness.store.list_steps(run_id=run.id)
+            assert retained == prefix
+            assert retried_call.ref == original_call.ref
+            assert retried_call.preceded_by == (first_retry,)
+            assert retried_call.input == original_call.input
+            removed_children = (
+                *original_children,
+                *harness.store.list_run_tree(root_run_id=run.id)[1:],
+            )
             run = await harness.executor.retry(
                 run.id,
                 setup=harness.setup,
@@ -679,6 +695,36 @@ flow staged(_: Part[]) -> Part[]:
             assert [
                 step.ref.index for step in harness.store.list_steps(run_id=run.id)
             ] == [0, 1]
+            retained, final_call = harness.store.list_steps(run_id=run.id)
+            assert retained == prefix
+            assert final_call.preceded_by == (run.control,)
+            assert run.control.index > first_retry.index
+            assert final_call.ref == original_call.ref
+            assert final_call.input == original_call.input
+            assert all(step.aborted_by is None for step in (retained, final_call))
+            assert harness.store.get_run_control(run_id=run.id, index=0) == initial
+            for child in removed_children:
+                assert harness.store.get_run(run_id=child.id) is None
+                assert harness.store.list_steps(run_id=child.id) == []
+            current_runs = harness.store.list_run_tree(root_run_id=run.id)
+            snapshots = {
+                item.id: (
+                    harness.store.list_steps(run_id=item.id),
+                    harness.store.list_run_controls(run_id=item.id),
+                )
+                for item in current_runs
+            }
+            for child in current_runs[1:]:
+                (step,) = snapshots[child.id][0]
+                assert step.preceded_by == (ControlRef.for_run(child.id, 0),)
+        reopened = RunStore(harness.store.db_path)
+        try:
+            assert reopened.list_run_tree(root_run_id=run.id) == current_runs
+            for run_id, (steps, controls) in snapshots.items():
+                assert reopened.list_steps(run_id=run_id) == steps
+                assert reopened.list_run_controls(run_id=run_id) == controls
+        finally:
+            reopened.close()
 
     asyncio.run(scenario())
 

@@ -20,6 +20,7 @@ from tests.support.execution_harness import (
 )
 from toolang.base.types.message import Message, TextPart, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
+from toolang.execution.store import RunStore
 from toolang.execution.types import (
     ControlRef,
     ControlTiming,
@@ -237,6 +238,13 @@ def test_cancel_before_first_model_call_has_a_step_boundary(
             assert steps[0].aborted_by == control.ref
             assert steps[0].preceded_by == (ControlRef.for_run(run.id, 0),)
             assert harness.adapter.invocations == []
+        reopened = RunStore(harness.store.db_path)
+        try:
+            assert reopened.list_steps(run_id=run.id) == steps
+            stored = reopened.get_run_control(run_id=run.id, index=control.index)
+            assert stored is not None and stored.status == "applied"
+        finally:
+            reopened.close()
 
     asyncio.run(scenario())
 
@@ -676,7 +684,11 @@ agic revise(_: Text) -> Text:
                 Message.user("guidance 3"),
             ]
             assert [control.index for control in controls] == [1, 2, 3]
-            second_step = harness.store.list_steps(run_id=record.id)[1]
+            first_step, second_step = harness.store.list_steps(run_id=record.id)
+            assert first_step.preceded_by == (ControlRef.for_run(record.id, 0),)
+            assert first_step.aborted_by == controls[0].ref
+            assert second_step.preceded_by == tuple(control.ref for control in controls)
+            assert second_step.aborted_by is None
             assert second_step.input == (
                 FieldRef.from_path(
                     ControlRef.for_run(record.id, 0), "payload", "input", 0, "value"
@@ -702,5 +714,14 @@ agic revise(_: Text) -> Text:
             assert [
                 control.status for control in stored_controls if control is not None
             ] == ["applied", "applied", "applied"]
+        reopened = RunStore(harness.store.db_path)
+        try:
+            assert reopened.list_steps(run_id=record.id) == [first_step, second_step]
+            assert [
+                reopened.get_run_control(run_id=record.id, index=ref.index)
+                for ref in second_step.preceded_by
+            ] == stored_controls
+        finally:
+            reopened.close()
 
     asyncio.run(scenario())
