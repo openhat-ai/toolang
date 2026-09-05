@@ -18,6 +18,7 @@ from tests.support.execution_harness import (
     ScriptedModelTurn,
     RecordingRunTracer,
 )
+from tests.support.execution_assertions import assert_run_event_integrity
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.events import RunEnd
 from toolang.execution.types import ThreadPrefix
@@ -41,6 +42,7 @@ from toolang.execution.types import (
     StepRef,
 )
 from toolang.base.types.run import ModelCall
+from toolang.lang.input import resolve_input_parts
 
 
 @pytest.mark.parametrize("action", ["run", "execute"])
@@ -132,6 +134,115 @@ def test_child_control_relations_preserve_their_owner(tmp_path: Path) -> None:
                 assert first.aborted_by == cancel.ref
             ends = [event for event in tracer.events if isinstance(event, RunEnd)]
             assert [event.control for event in ends] == [cancel.ref, cancel.ref]
+
+    asyncio.run(scenario())
+
+
+def test_parallel_children_keep_separate_consumption_relations_after_restart(
+    tmp_path: Path,
+) -> None:
+    gates = [AsyncGate() for _ in range(3)]
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+flow outer(_: Part[]):
+  storm 2 inner par 2
+
+agic inner(_: Part[]) -> Text:
+  recall = none
+  user: Inner.
+""",
+        responses=[
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message.assistant("draft")), gate=gate
+            )
+            for gate in gates
+        ],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario() -> None:
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="outer",
+                    primary=resolve_input_parts("work"),
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(
+                asyncio.gather(*(gate.wait_until_entered() for gate in gates[:2])),
+                timeout=1,
+            )
+            children = [
+                run
+                for run in harness.store.list_run_tree(root_run_id=handle.run_id)
+                if run.parent is not None
+            ]
+            assert len(children) == 2
+            steers = {
+                child.id: harness.executor.steer(
+                    run_id=child.id,
+                    message=Message.user(f"Revise {child.id}"),
+                    timing="next_call",
+                )
+                for child in children
+            }
+            gates[0].release()
+            await asyncio.wait_for(gates[2].wait_until_entered(), timeout=1)
+            # Identify the consuming branch by its records, not sibling order.
+            consumer = next(
+                child.id
+                for child in children
+                if len(harness.store.list_steps(run_id=child.id)) == 2
+            )
+            pending = next(child.id for child in children if child.id != consumer)
+            cancel = handle.cancel(reason="stop parallel work")
+            root = await asyncio.wait_for(handle, timeout=2)
+            assert root.status == "canceled"
+            assert {item.index for item in steers.values()} == {cancel.index}
+            runs = harness.store.list_run_tree(root_run_id=root.id)
+            snapshots = {
+                run.id: (
+                    harness.store.list_steps(run_id=run.id),
+                    harness.store.list_run_controls(run_id=run.id),
+                )
+                for run in runs
+            }
+            for child in children:
+                first = snapshots[child.id][0][0]
+                assert first.preceded_by == (ControlRef.for_run(child.id, 0),)
+                assert first.aborted_by == (
+                    None if child.id == consumer else cancel.ref
+                )
+            first, second = snapshots[consumer][0]
+            assert first.status == "succeeded"
+            assert second.preceded_by == (steers[consumer].ref,)
+            assert second.aborted_by == cancel.ref
+            assert second.status == "canceled"
+            assert snapshots[consumer][1][-1].status == "applied"
+            assert snapshots[pending][1][-1].status == "wontapply"
+            assert all(run.status == "canceled" for run in runs)
+            assert_run_event_integrity(tracer.events)
+        reopened = RunStore(harness.store.db_path)
+        try:
+            for run_id, (steps, controls) in snapshots.items():
+                assert reopened.list_steps(run_id=run_id) == steps
+                assert reopened.list_run_controls(run_id=run_id) == controls
+                for step in steps:
+                    refs = (
+                        *step.preceded_by,
+                        *((step.aborted_by,) if step.aborted_by else ()),
+                    )
+                    assert steers[pending].ref not in refs
+                    for ref in refs:
+                        control = reopened.get_run_control(
+                            run_id=str(ref.target), index=ref.index
+                        )
+                        assert control is not None and control.status == "applied"
+        finally:
+            reopened.close()
 
     asyncio.run(scenario())
 
