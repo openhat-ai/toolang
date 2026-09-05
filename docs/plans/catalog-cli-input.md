@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed.
+Approved for implementation on 2026-09-05.
 
 ## Goal
 
