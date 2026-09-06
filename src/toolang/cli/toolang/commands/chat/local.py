@@ -359,22 +359,29 @@ class LocalChatSession:
         thread_id: str | None,
     ) -> ChatResult:
         if run_id is not None:
-            run = self.history.get_run_result(run_id)
-        elif thread_id is None:
-            raise ValueError("No run result is available in this chat.")
-        else:
             try:
-                run = self.history.latest_thread_result(thread_id)
+                local = self.history.get_output(run_id)
             except KeyError:
-                run = None
-        if run is None:
-            if run_id is not None:
-                raise ValueError(f"Run not found: {run_id}")
+                raise ValueError(f"Run not found: {run_id}") from None
+            output = parts_from_local(local) if local is not None else ()
+            if not output:
+                raise ValueError(f"Run has no result: {run_id}")
+            return ChatResult(run_id=run_id, output=output)
+        if thread_id is None:
             raise ValueError("No run result is available in this chat.")
-        output = parts_from_local(run.output) if run.output is not None else ()
-        if not output:
-            raise ValueError(f"Run has no result: {run.id}")
-        return ChatResult(run_id=run.id, output=output)
+        with self.store.read_transaction():
+            try:
+                view = self.history.thread_view(thread_id)
+            except KeyError:
+                raise ValueError("No run result is available in this chat.") from None
+            for run in view.runs(reverse=True):
+                if run.status != "succeeded" or run.output is None:
+                    continue
+                local = self.history.get_output(run.id)
+                output = parts_from_local(local) if local is not None else ()
+                if output:
+                    return ChatResult(run_id=run.id, output=output)
+        raise ValueError("No run result is available in this chat.")
 
     def run(
         self,

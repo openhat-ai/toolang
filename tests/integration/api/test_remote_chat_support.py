@@ -27,6 +27,9 @@ from toolang.catalog import CapsManager, JobsManager
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.execution.schemas import RunDetail
+from toolang.execution.records import RunControlPayload
+from toolang.execution.store import RunStore
+from toolang.execution.types import FieldRef, Local, RunRef
 from toolang.execution.values import parts_from_local
 from toolang.state.state import CapSource, StateCap, publish_state_resources
 from toolang.up import AgentCore, process as agents
@@ -34,6 +37,11 @@ from tests.support.execution_harness import (
     ExecutionHarness,
     RecordingTool,
     TEST_MODEL_REF,
+)
+from tests.support.execution_fixtures import (
+    project_run_end,
+    project_run_start,
+    project_step,
 )
 
 
@@ -55,6 +63,103 @@ class _BrokenSnapshot:
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
 _HOST_DESCRIPTION = "macOS 27.0 arm64"
+
+
+@pytest.mark.parametrize(
+    "endpoint", ["runs/run_a", "threads/term_a", "threads/term_a/result"]
+)
+def test_history_response_keeps_one_snapshot_during_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, endpoint: str
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path, source="agic chat:\n  hello\n", responses=()
+    )
+    harness.store.close()
+    core = AgentCore(harness.setup.layout)
+    writer = RunStore(core.store.db_path)
+    try:
+        project_run_start(
+            writer,
+            run_id="run_a",
+            thread_id="term_a",
+            origin="chat",
+            input=Message.user("input"),
+        )
+        parent = project_step(
+            writer,
+            run_id="run_a",
+            step_index=0,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(TextPart("original answer"),),
+            started_at="2026-09-01T00:00:01Z",
+            finished_at="2026-09-01T00:00:02Z",
+        )
+        project_run_start(
+            writer,
+            run_id="run_b",
+            thread_id="term_a",
+            parent=parent.ref,
+            origin="chat",
+            input=Message.user("child input"),
+        )
+        project_run_end(writer, run_id="run_b", output=Local("child answer"))
+        project_run_end(
+            writer,
+            run_id="run_a",
+            output=Local.typed(
+                "Part[]", FieldRef.from_path(parent.ref, "output", "value")
+            ),
+        )
+        control = writer.get_run_control(run_id="run_a", index=0)
+        assert control is not None and isinstance(control.payload, RunControlPayload)
+        payload = control.payload
+        get_output = core.history.get_output
+        retried = False
+
+        def retry_before_output(run: RunRef | str) -> Local | None:
+            nonlocal retried
+            if not retried:
+                writer.accept_retry(
+                    run_id="run_a",
+                    anchor=None,
+                    resources=payload.resources,
+                    limits=payload.limits,
+                    state=payload.state,
+                    sandbox="host",
+                    request_id=None,
+                    created_at="2026-09-01T00:00:00Z",
+                )
+                retried = True
+            return get_output(run)
+
+        monkeypatch.setattr(core.history, "get_output", retry_before_output)
+        app = create_app(
+            core,
+            CapsManager(core.layout),
+            JobsManager(core.layout),
+            cors_allowed_origins=(),
+        )
+        with TestClient(app) as client:
+            response = client.get(f"/api/v1/{endpoint}")
+        assert retried
+        assert response.status_code == 200
+        data = response.json()
+        detail = TypeAdapter(RunDetail).validate_python(
+            data["runs"][0] if endpoint == "threads/term_a" else data
+        )
+        assert detail.status == "succeeded"
+        assert detail.output is not None
+        assert parts_from_local(detail.output) == (TextPart("original answer"),)
+        if endpoint == "threads/term_a":
+            child = TypeAdapter(RunDetail).validate_python(data["runs"][1])
+            assert child.output == Local("child answer")
+        assert writer.get_run(run_id="run_b") is None
+        assert get_output("run_a") is None
+    finally:
+        writer.close()
+        asyncio.run(core.close())
 
 
 def test_resource_discovery_endpoints_filter_effective_collections(
@@ -245,6 +350,7 @@ agic chat(_: Part[]) -> Part[]:
             thread_id = created.json()["thread"]["id"]
             empty = client.get(f"/api/v1/threads/{thread_id}/result")
             unknown = client.get("/api/v1/threads/term_missing/result")
+            wrong_namespace = client.get("/api/v1/threads/run_missing/result")
             executed = client.post(
                 "/api/v1/runs/authored/stream",
                 json={
@@ -287,6 +393,8 @@ agic chat(_: Part[]) -> Part[]:
         assert empty.json()["detail"] == f"thread has no result: {thread_id}"
         assert unknown.status_code == 404
         assert unknown.json()["detail"] == "thread not found: term_missing"
+        assert wrong_namespace.status_code == 404
+        assert wrong_namespace.json()["detail"] == "thread not found: run_missing"
         assert explicit.id == latest.id == run_id
         assert explicit.output is not None
         assert latest.output is not None

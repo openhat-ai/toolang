@@ -17,6 +17,8 @@ Later contracts below describe integration requirements, not PR4 runtime work.
 `RunHistory` coordinates reads and constructs fixed-scope Views. Views interpret
 supplied records without database access, model budgets, or message generation.
 RunExecutor remains responsible for execution; ThreadManager for create/fork/rewind.
+Each history get/list read uses one Store snapshot. Callers supplying records to
+`describe_*` keep their selection and description in the same read transaction.
 
 Use output for the execution artifact and Run detail for inspection data.
 Keep Run selection separate from output reading.
@@ -36,9 +38,26 @@ Keep Run selection separate from output reading.
 The initial read sets bounds and page limits; continuation retains that scope.
 Pointer inspection and physical execution-tree queries retain existing Store APIs.
 
+Both View reads accept `begin`, `end`, `limit`, and `reverse`. Defaults read the
+whole scope; a positive limit pages it. `reverse` selects from the tail, but each
+page retains natural order. A View's optional `cursor` continues through
+`next_page(cursor)`. Cursors contain membership and lifecycle markers, not bodies,
+and work with a reopened read-only Store.
+
+Thread pages count root Runs and include their child membership. Run pages count
+Steps in numeric order; unbounded Run reads also page through all raw owned
+controls after the Steps. Step-bounded reads include only the selected Steps.
+Required controls appear in `RunView.dependencies` when absent from the page's
+`entries`; these are references' supporting facts, not extra messages.
+`timeline()` describes Step boundaries in the selected page, not a global ordering
+of raw record pages.
+Limits count primary records, not bytes; callers account for dependencies and
+oversized individual records in their own budgets.
+
 Replace `get_run_result` with composition of `get_run` and `get_output` where
 resolved output is needed in a detail response. Reuse an already-read detail;
-do not rebuild it. `get_run` retains its existing stored-output representation.
+do not rebuild it. Compose selection, detail, and output in one Store read
+transaction. `get_run` retains its existing stored-output representation.
 `get_output` returns None for an existing Run without output and raises KeyError
 for a missing Run; it does not flatten typed output into message Parts.
 

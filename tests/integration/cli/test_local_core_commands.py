@@ -4,7 +4,7 @@ import asyncio
 import json
 import sqlite3
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -42,8 +42,9 @@ from toolang.execution.records import (
     RunControlPayload,
     RetryControlPayload,
     SteerControlPayload,
+    ThreadRecord,
 )
-from toolang.execution.schemas import RerunRequest, RetryRequest
+from toolang.execution.schemas import RerunRequest, RetryRequest, ThreadInfo
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     ControlRef,
@@ -237,6 +238,47 @@ def test_inspect_thread_and_run_collections_read_local_history(tmp_path: Path) -
     assert "OCCUR" not in runs.stdout
     assert "<agic>  test" in runs.stdout
     assert "succeeded" in runs.stdout
+
+
+def test_inspect_thread_summary_keeps_selection_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    writer = RunStore(AgentLayout.resident(root, "alice").run_store)
+    try:
+        for run_id in ("run_a", "run_b"):
+            project_run_start(
+                writer,
+                run_id=run_id,
+                thread_id="term_a",
+                origin="chat",
+                input=Message.user(run_id),
+            )
+            project_run_end(writer, run_id=run_id)
+        expected = _invoke(root, "alice", "inspect", "threads")
+        assert expected.exit_code == 0
+        head = writer.thread_view("term_a").head
+        original = RunHistory.describe_threads
+
+        def interleave(
+            history: RunHistory, records: Sequence[ThreadRecord]
+        ) -> list[ThreadInfo]:
+            writer.rewind_thread(
+                thread_id="term_a",
+                anchor="run_b",
+                expected_head=head,
+                request_id=None,
+                created_at="2026-01-02T00:00:00Z",
+            )
+            return original(history, records)
+
+        monkeypatch.setattr(RunHistory, "describe_threads", interleave)
+        result = _invoke(root, "alice", "inspect", "threads")
+        assert result.exit_code == 0, result.stderr
+        assert result.stdout == expected.stdout
+    finally:
+        writer.close()
 
 
 def test_chore_list_shows_scheduler_and_latest_run_state(tmp_path: Path) -> None:

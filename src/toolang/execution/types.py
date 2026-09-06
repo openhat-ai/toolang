@@ -1314,6 +1314,28 @@ StepKind = Literal[
 
 
 @dataclass(frozen=True, slots=True)
+class StepBoundary:
+    """A Step boundary and the controls adopted before or aborting that boundary.
+
+    Begin controls precede execution; end controls follow the interrupted output.
+    These are associations, not Step input dependencies or generated messages.
+    """
+
+    step: StepRef
+    phase: Literal["begin", "end"]
+    controls: tuple[ControlRef, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RunLink:
+    """Physical ownership used to resolve membership without reading Run bodies."""
+
+    id: str
+    parent: StepRef | None
+    thread: ThreadRef
+
+
+@dataclass(frozen=True, slots=True)
 class ModelStepGiven:
     """Resolved model identity and normalized call known at Step begin."""
 

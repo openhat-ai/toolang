@@ -1,6 +1,7 @@
 """Run execution, inspection, control, and live event routes."""
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -341,10 +342,11 @@ async def run_defaults(core: AgentCoreDep) -> dict[str, object]:
 
 @router.get("/{run_id}", summary="Get Run", response_model=RunDetail)
 def run_detail(core: AgentCoreDep, run_id: str) -> RunDetail:
-    detail = core.history.get_run_result(run_id)
-    if detail is None:
-        raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
-    return detail
+    with core.store.read_transaction():
+        detail = core.history.get_run(run_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
+        return replace(detail, output=core.history.get_output(run_id))
 
 
 @router.get(

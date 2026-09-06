@@ -203,7 +203,7 @@ def test_list_controls_retains_rewound_runs_but_excludes_deleted_children(
             thread_id=thread.id,
             anchor=hidden.id,
             request_id=None,
-            expected_head=store.thread_views().head(thread.id),
+            expected_head=store.thread_view(thread.id).head,
             created_at="2026-01-01T00:03:00Z",
         )
         preparation = store.get_run_control(run_id=visible.id, index=0)
@@ -1117,7 +1117,7 @@ def test_rerun_preserves_its_rewound_source(tmp_path: Path) -> None:
             thread_id=str(source.thread),
             anchor=anchor.id,
             request_id=None,
-            expected_head=store.thread_views().head(thread.id),
+            expected_head=store.thread_view(thread.id).head,
             created_at="2026-01-01T00:00:02Z",
         )
         rewound_source = store.get_run(run_id=source.id)
@@ -1200,7 +1200,7 @@ def test_retry_physically_trims_steps_without_restoring_rewound_history(
             thread_id=str(source.thread),
             anchor=anchor.id,
             request_id=None,
-            expected_head=store.thread_views().head(thread.id),
+            expected_head=store.thread_view(thread.id).head,
             created_at="2026-01-01T00:00:04Z",
         )
         rewound_source = store.get_run(run_id=source.id)

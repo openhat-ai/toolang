@@ -430,7 +430,7 @@ def test_record_lookup_retains_steps_owned_by_a_rewound_run(tmp_path: Path) -> N
             thread_id=thread.id,
             anchor=run.id,
             request_id=None,
-            expected_head=store.thread_views().head(thread.id),
+            expected_head=store.thread_view(thread.id).head,
             created_at="2026-01-01T00:00:03Z",
         )
 
@@ -489,7 +489,7 @@ def test_record_lookup_retains_children_of_a_rewound_run(
             thread_id=str(root.thread),
             anchor=root.id,
             request_id=None,
-            expected_head=store.thread_views().head(str(root.thread)),
+            expected_head=store.thread_view(str(root.thread)).head,
             created_at="2026-01-01T00:00:05Z",
         )
         if reopen:

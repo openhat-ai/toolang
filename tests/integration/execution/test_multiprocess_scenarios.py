@@ -785,7 +785,7 @@ def test_concurrent_forks_preserve_one_terminal_anchor(
         for thread_id in forked:
             thread = reopened.get_thread(thread_id=thread_id)
             assert thread is not None
-            assert reopened.thread_views().head(thread_id) == ControlRef.for_thread(
+            assert reopened.thread_view(thread_id).head == ControlRef.for_thread(
                 thread_id, 0
             )
             assert [
@@ -832,7 +832,7 @@ def test_run_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
         rewind = by_kind["rewind"]
         if rewind[1] == "accepted":
             assert rewind[2:] == (1, ("run_race_anchor",))
-            assert reopened.thread_views().head(thread.id) == ControlRef.for_thread(
+            assert reopened.thread_view(thread.id).head == ControlRef.for_thread(
                 "term_race", 1
             )
             anchor = reopened.get_run(run_id="run_race_anchor")
@@ -845,7 +845,7 @@ def test_run_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
             ] == ["run_racing_run"]
         else:
             assert str(rewind[1]).startswith("rejected:thread is running")
-            assert reopened.thread_views().head(thread.id) == ControlRef.for_thread(
+            assert reopened.thread_view(thread.id).head == ControlRef.for_thread(
                 "term_race", 0
             )
             assert [

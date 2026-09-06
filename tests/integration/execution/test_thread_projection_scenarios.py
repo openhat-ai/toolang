@@ -84,7 +84,7 @@ def _rewind(store: RunStore, thread: str, anchor: str) -> None:
         thread_id=thread,
         anchor=anchor,
         request_id=None,
-        expected_head=store.thread_views().head(thread),
+        expected_head=store.thread_view(thread).head,
         created_at="2026-01-01T00:00:04Z",
     )
     assert _physical(store) == before
@@ -147,6 +147,9 @@ def test_nested_forks_capture_source_views_and_closed_rewinds_survive_restart(
                 assert [
                     r.record.id for r in reader.inspect_runs(thread_id=thread)
                 ] == ids[::-1]
+                view = RunHistory(reader).thread_view(thread)
+                assert [run.id for run in view.tree()] == ids
+                assert all(view.contains(run_id) for run_id in ids)
                 detail = RunHistory(reader).get_thread(thread)
                 assert detail is not None
                 assert [r.id for r in detail.runs] == ids
@@ -162,7 +165,7 @@ def test_nested_forks_capture_source_views_and_closed_rewinds_survive_restart(
                     thread_id="term_fork", include_rewound=True
                 )
             ] == ["run_z", "run_child", "run_b", "run_d", "run_e"]
-            assert [r.id for r in reader.thread_views().history("term_nested")] == [
+            assert [r.id for r in reader.thread_view("term_nested").runs()] == [
                 "run_z",
                 "run_b",
             ]
@@ -224,7 +227,7 @@ def test_fork_validates_every_run_in_the_prefix_tree(
 def test_stale_rewind_head_is_rejected_without_writes(store: RunStore) -> None:
     _append(store, "term_source", "run_first")
     _append(store, "term_source", "run_second")
-    head = store.thread_views().head("term_source")
+    head = store.thread_view("term_source").head
     _rewind(store, "term_source", "run_second")
     before = _physical(store)
     with pytest.raises(ValueError, match="head changed"):
