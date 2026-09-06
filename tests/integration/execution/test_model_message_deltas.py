@@ -1,0 +1,395 @@
+"""Online message assembly and durable replay use the same delta semantics."""
+
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+
+import pytest
+
+from tests.support.execution_harness import (
+    AsyncGate,
+    ExecutionHarness,
+    RecordingRunTracer,
+    RecordingTool,
+    ScriptedModelTurn,
+)
+from toolang.base.types.message import (
+    AudioPart,
+    DocumentPart,
+    ImagePart,
+    Message,
+    TextPart,
+)
+from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall
+from toolang.execution.events import RunEvent, StepBegin
+from toolang.execution.executor._messages import _MessageBuffer
+from toolang.execution.message_delta import delta_to_data
+from toolang.execution.records import StoredModelStepGiven
+from toolang.execution.store import RunStore
+from toolang.execution.types import (
+    ControlTiming,
+    FieldRef,
+    MessageDelta,
+    MessageTemplate,
+    ControlRef,
+    ModelStepGiven,
+    StepRef,
+    ThreadPrefix,
+    TypedRef,
+)
+
+
+SOURCE = """
+agic chat(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+"""
+
+
+def assert_replayed(path: Path, tracer: RecordingRunTracer) -> None:
+    expected = {
+        event.step: event.given.call
+        for event in tracer.events
+        if isinstance(event, StepBegin) and isinstance(event.given, ModelStepGiven)
+    }
+    store = RunStore(path, read_only=True)
+    try:
+        steps = [store.get_step(ref=ref) for ref in expected]
+        assert all(step is not None for step in steps)
+        saved = [step for step in steps if step is not None]
+        assert store.rebuild_model_calls(saved) == expected
+        for step in saved:
+            assert store.rebuild_model_call(step) == expected[step.ref]
+    finally:
+        store.close()
+
+
+def test_online_tool_loops_only_record_and_render_additions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = RecordingTool("lookup__item", output={"items": [{"?": "literal"}, [1, 2]]})
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        tools={tool.name: tool},
+        responses=[
+            *(
+                ModelCallResult(tool_calls=(ToolCall(str(i), str(i), tool.name, {}),))
+                for i in range(12)
+            ),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
+    )
+    tracer = RecordingRunTracer()
+    resolved = []
+    original_resolve = harness.store.resolve_value
+
+    def resolve(value):
+        resolved.append(value)
+        return original_resolve(value)
+
+    monkeypatch.setattr(harness.store, "resolve_value", resolve)
+    monkeypatch.setattr(
+        harness.store,
+        "rebuild_model_calls",
+        lambda _: pytest.fail("online execution must not rebuild history"),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                    primary=(
+                        TextPart("start"),
+                        ImagePart(file_id="image"),
+                        AudioPart(data="YQ==", format="wav"),
+                        DocumentPart(file_id="doc"),
+                    ),
+                ),
+                tracer=tracer,
+            )
+            assert root.status == "succeeded", root.error
+            steps = harness.store.list_steps(run_id=root.id)
+            model_steps = [
+                step for step in steps if isinstance(step.given, StoredModelStepGiven)
+            ]
+            assert [
+                len(step.given.call.delta.messages)
+                for step in model_steps
+                if isinstance(step.given, StoredModelStepGiven)
+            ] == [1, *([2] * 12)]
+            for step in model_steps[1:]:
+                assert isinstance(step.given, StoredModelStepGiven)
+                assert all(
+                    isinstance(message.segments[0], TypedRef)
+                    for message in step.given.call.delta.messages
+                )
+            historical_outputs = {step.ref for step in steps[:-1]}
+            assert not any(
+                isinstance(value, TypedRef) and value.ref.record in historical_outputs
+                for value in resolved
+            )
+            assert [
+                len(item.call.messages) for item in harness.adapter.invocations
+            ] == list(range(1, 27, 2))
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer)
+
+
+@pytest.mark.parametrize("timing", ["next_call", "immediate"])
+@pytest.mark.parametrize("at_begin", [False, True])
+def test_steer_and_interrupted_model_begin_replay_once(
+    tmp_path: Path, timing: ControlTiming, at_begin: bool
+) -> None:
+    gate = AsyncGate()
+
+    class Tracer(RecordingRunTracer):
+        async def on_event(self, event: RunEvent) -> None:
+            await super().on_event(event)
+            if (
+                at_begin
+                and isinstance(event, StepBegin)
+                and event.kind == "model"
+                and not gate.entered
+            ):
+                await gate.wait()
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        responses=[
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message.assistant("draft")),
+                gate=None if at_begin else gate,
+            ),
+            ModelCallResult(message=Message.assistant("revised")),
+        ],
+    )
+    tracer = Tracer()
+    steer = Message(
+        "user", (TextPart("new direction"), ImagePart(file_id="steer-image"))
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                    primary=(TextPart("start"),),
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), timeout=2)
+            handle.steer(steer, timing=timing)
+            gate.release()
+            root = await asyncio.wait_for(handle, timeout=2)
+            assert root.status == "succeeded", root.error
+            final = harness.adapter.invocations[-1].call.messages
+            assert final.count(Message.user("start")) == 1
+            assert final.count(steer) == 1
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer)
+
+
+@pytest.mark.parametrize("scenario_name", ["execute", "child", "parallel", "repair"])
+def test_execution_boundaries_keep_their_own_message_prefix(
+    tmp_path: Path, scenario_name: str
+) -> None:
+    if scenario_name in {"execute", "child"}:
+        action = "execute" if scenario_name == "execute" else "run"
+        source = """
+agic parent() -> Text:
+  recall = none
+  hands = agic:child
+  handoffs = agic:child
+  user: Parent.
+
+agic child() -> Text:
+  recall = none
+  user: Child.
+"""
+        responses = [
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "child", "child", f"_too__{action}", {"runnable": "agic:child"}
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("child result")),
+            ModelCallResult(message=Message.assistant("parent result")),
+        ]
+        runnable = "parent"
+    elif scenario_name == "parallel":
+        source = """
+flow parent(_: Text) -> Text[]:
+  storm 2 child par 2
+
+agic child(_: Text) -> Text:
+  recall = none
+  user: Child.
+"""
+        responses = [
+            ModelCallResult(message=Message.assistant(str(i))) for i in range(3)
+        ]
+        runnable = "parent"
+    else:
+        source = """
+agic parent() -> Boolean:
+  recall = none
+  user: Answer.
+"""
+        responses = [
+            ModelCallResult(message=Message.assistant("invalid")),
+            ModelCallResult(message=Message.assistant("true")),
+        ]
+        runnable = "parent"
+    harness = ExecutionHarness.create(tmp_path, source=source, responses=responses)
+    tracer = RecordingRunTracer()
+
+    async def scenario() -> None:
+        async with harness:
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable=runnable,
+                    primary=(TextPart("start"),)
+                    if scenario_name == "parallel"
+                    else None,
+                ),
+                tracer=tracer,
+            )
+            assert root.status == "succeeded", root.error
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer)
+
+
+def test_retry_deletes_its_deltas_and_can_reuse_step_ids(tmp_path: Path) -> None:
+    tool = RecordingTool("lookup__item", output={"result": 1})
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        tools={tool.name: tool},
+        responses=[
+            ModelCallResult(tool_calls=(ToolCall("old", "old", tool.name, {}),)),
+            RuntimeError("model failed"),
+            ModelCallResult(message=Message.assistant("new execution")),
+        ],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario() -> None:
+        async with harness:
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                    primary=(TextPart("start"),),
+                )
+            )
+            assert root.status == "failed"
+            old = harness.store.list_steps(run_id=root.id)
+            retried = await harness.executor.retry(
+                root.id, setup=harness.setup, state=harness.state, tracer=tracer
+            )
+            assert retried.status == "succeeded", retried.error
+            saved = harness.store.list_steps(run_id=root.id)
+            assert len(saved) == 1
+            assert saved[0].ref == old[0].ref
+            assert harness.store.get_step(ref=old[-1].ref) is None
+            assert harness.adapter.invocations[-1].call.messages == [
+                Message.user("start")
+            ]
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer)
+
+
+def test_long_delta_sequences_are_linear_and_batch_expansion_is_shared(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import toolang.execution.store as module
+
+    store = RunStore(tmp_path / "runs.db")
+    buffer = _MessageBuffer()
+    try:
+        steps = []
+        total_messages = 1200
+        for index in range(total_messages):
+            buffer.append(Message.user(str(index)))
+            steps.append(
+                store.begin_step(
+                    ref=StepRef.from_local("run_ab12", (index,)),
+                    kind="model",
+                    input=(),
+                    state=ControlRef.for_run("run_ab12", 0),
+                    started_at="now",
+                    given=ModelStepGiven(
+                        "test/model",
+                        ModelCall("", list(buffer.messages)),
+                        buffer.take_delta(),
+                    ),
+                )
+            )
+        assert all(
+            isinstance(step.given, StoredModelStepGiven)
+            and len(step.given.call.delta.messages) == 1
+            for step in steps
+        )
+        assert (
+            sum(
+                len(str(delta_to_data(step.given.call.delta)))
+                for step in steps
+                if isinstance(step.given, StoredModelStepGiven)
+            )
+            < total_messages * 100
+        )
+        rendered = []
+        original = module.render_delta
+
+        def render(delta, resolve):
+            rendered.append(delta)
+            return original(delta, resolve)
+
+        monkeypatch.setattr(module, "render_delta", render)
+        calls = store.rebuild_model_calls((steps[2], steps[10], steps[-1]))
+        assert len(rendered) == total_messages
+        assert calls[steps[-1].ref].messages == buffer.messages
+        assert calls[steps[10].ref].messages == buffer.messages[:11]
+    finally:
+        store.close()
+
+
+def test_missing_message_dependency_fails_without_a_snapshot_fallback(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        missing = TypedRef(
+            FieldRef.from_path(StepRef.parse("run_dead.0"), "output", "value"), "Part[]"
+        )
+        step = store.begin_step(
+            ref=StepRef.parse("run_ab12.0"),
+            kind="model",
+            input=(),
+            state=ControlRef.for_run("run_ab12", 0),
+            started_at="now",
+            given=ModelStepGiven(
+                "test/model",
+                ModelCall("", []),
+                MessageDelta(messages=(MessageTemplate("assistant", (missing,)),)),
+            ),
+        )
+        with pytest.raises(ValueError, match="record not found: run_dead.0"):
+            store.rebuild_model_call(step)
+    finally:
+        store.close()

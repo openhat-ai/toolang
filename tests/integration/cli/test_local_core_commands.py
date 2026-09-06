@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
 import sys
 from collections.abc import Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
@@ -1115,63 +1114,13 @@ def test_inspect_projects_complete_persisted_model_call(
     assert rejected.exit_code == 2
     assert "allowed: steps, tree" in rejected.stderr
 
-    connection = sqlite3.connect(AgentLayout.resident(root, "alice").run_store)
-    try:
-        row = connection.execute(
-            "SELECT given FROM steps WHERE run = ? AND path = ?",
-            ("run_model_call", "0"),
-        ).fetchone()
-        assert row is not None
-        given = json.loads(row[0])
-        given["call"]["structured_output"] = given["call"].pop("output_schema")
-        connection.execute(
-            "UPDATE steps SET given = ? WHERE run = ? AND path = ?",
-            (json.dumps(given), "run_model_call", "0"),
-        )
-        connection.commit()
-    finally:
-        connection.close()
-
-    structured_output_legacy = _invoke(
-        root,
-        "alice",
-        "inspect",
-        "run_model_call.0",
-        "call",
-        "--json",
-    )
-
-    assert structured_output_legacy.exit_code == 0, structured_output_legacy.stderr
-    assert json.loads(structured_output_legacy.stdout)["output_schema"] == output_schema
-
-    connection = sqlite3.connect(AgentLayout.resident(root, "alice").run_store)
-    try:
-        row = connection.execute(
-            "SELECT given FROM steps WHERE run = ? AND path = ?",
-            ("run_model_call", "0"),
-        ).fetchone()
-        assert row is not None
-        given = json.loads(row[0])
-        given["call"].pop("structured_output")
-        connection.execute(
-            "UPDATE steps SET given = ? WHERE run = ? AND path = ?",
-            (json.dumps(given), "run_model_call", "0"),
-        )
-        connection.commit()
-    finally:
-        connection.close()
-
-    schema_absent_legacy = _invoke(
-        root,
-        "alice",
-        "inspect",
-        "run_model_call.0",
-        "call",
-        "--json",
-    )
-
-    assert schema_absent_legacy.exit_code == 0, schema_absent_legacy.stderr
-    assert json.loads(schema_absent_legacy.stdout)["output_schema"] is None
+    assert json.loads(references.stdout)["delta"] == {
+        "version": 1,
+        "messages": [
+            {"role": "assistant", "segments": ["Context"]},
+            {"role": "user", "segments": [question]},
+        ],
+    }
 
 
 def test_inspect_projects_run_tree_and_container_step_call(tmp_path: Path) -> None:

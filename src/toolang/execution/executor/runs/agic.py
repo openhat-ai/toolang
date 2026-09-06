@@ -45,6 +45,7 @@ from ..common import (
 )
 
 from ..limits import _ModelAccounting
+from .._messages import _MessageBuffer
 from ..prepare import _AgicFrame, prepare_agic
 from ..steps import model as model_step
 from ..steps import tool as tool_step
@@ -82,7 +83,7 @@ class _AgicState:
     steer_before_next_step: Callable[[], bool]
     immediate_steer: Callable[[], bool]
     before_call: Callable[[], None]
-    messages: list[Message]
+    messages: _MessageBuffer
     execution: _Execution | None = None
     account_usage: Callable[[ModelUsage | None], _ModelAccounting] = lambda usage: (
         _ModelAccounting(usage=usage)
@@ -222,7 +223,7 @@ async def execute(
         ),
         limits=binding.limits,
         record_output=lambda ref: execution.record_output(binding.run_id, ref),
-        messages=list(prepared.messages),
+        messages=_MessageBuffer(),
         output_binding=output_binding,
         execution=execution,
         next_step=execution.next_step(binding.run_id),

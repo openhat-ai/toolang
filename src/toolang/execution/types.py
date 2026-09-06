@@ -17,6 +17,8 @@ from toolang.base.types.message import (
     AudioPart,
     DocumentPart,
     ImagePart,
+    MessageRole,
+    Part,
     TextPart,
     ToolCallPart,
     ToolResultPart,
@@ -1336,11 +1338,31 @@ class RunLink:
 
 
 @dataclass(frozen=True, slots=True)
+class MessageTemplate:
+    """One message represented by ordered literal content and field references."""
+
+    role: MessageRole
+    segments: tuple[str | Part | TypedRef, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MessageDelta:
+    """New message templates captured at one Model Step boundary."""
+
+    version: int = 1
+    messages: tuple[MessageTemplate, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ModelStepGiven:
     """Resolved model identity and normalized call known at Step begin."""
 
     model: str
     call: ModelCall
+    # Internal recording metadata; public event codecs expose only the call.
+    delta: MessageDelta | None = field(
+        default=None, compare=False, repr=False, metadata={"exclude": True}
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.model, str) or not self.model:

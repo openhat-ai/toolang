@@ -12,7 +12,7 @@ import time
 from typing import TYPE_CHECKING
 
 from toolang.base.protocols.tool import AgentTool
-from toolang.base.types.message import Message, ToolResultPart
+from toolang.base.types.message import ToolResultPart
 from toolang.base.types.run import ToolCall, ToolCallResult
 from toolang.base.types.tool import ToolContext, ToolService
 from toolang.base.errors import ToolFailure
@@ -256,7 +256,9 @@ async def finish(
 
     output = Local.typed("ToolResultPart", part, None, 0)
     # The result already exists, even if an interrupt prevents its delivery.
-    state.messages.append(Message(role="tool", parts=(part,)))
+    state.messages.append_ref(
+        "tool", FieldRef.from_path(step, "output", "value"), output
+    )
     state.last_step = step.index
     end = PartEnd(step=step, part=0, data=part)
     ended = False
@@ -311,7 +313,11 @@ async def cancel(
     if part is None and state.immediate_steer():
         part = canceled_result(call)
     if part is not None:
-        state.messages.append(Message(role="tool", parts=(part,)))
+        state.messages.append_ref(
+            "tool",
+            FieldRef.from_path(step, "output", "value"),
+            Local.typed("ToolResultPart", part, None, 0),
+        )
         state.last_step = step.index
     await _end(
         state,
@@ -378,7 +384,7 @@ def canceled_result(call: ToolCall) -> ToolResultPart:
 async def skip(state: _AgicState, calls: tuple[ToolCall, ...]) -> None:
     """Record steer-skipped calls without invoking handlers or reserving budget."""
 
-    message_start = len(state.messages)
+    message_start = len(state.messages.pending)
     inputs: list[FieldRef] = []
     control = (
         next(
@@ -439,16 +445,7 @@ async def skip(state: _AgicState, calls: tuple[ToolCall, ...]) -> None:
     if inputs:
         state.next_model_inputs = tuple(inputs)
         # Include begin-interruption results, preserving the batch's message shape.
-        state.messages[message_start:] = [
-            Message(
-                role="tool",
-                parts=tuple(
-                    part
-                    for message in state.messages[message_start:]
-                    for part in message.parts
-                ),
-            )
-        ]
+        state.messages.group_tools(message_start)
 
 
 def _plugin_name(tool: AgentTool | None) -> str:

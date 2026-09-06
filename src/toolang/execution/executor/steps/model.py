@@ -10,10 +10,9 @@ from decimal import Decimal
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from toolang.base.types.message import (
-    Message,
     Part,
     PartType,
     TextDelta,
@@ -55,6 +54,7 @@ from ...types import (
 from ..common import _StepFailed, control_local_pointer
 from ..diagnostics import log_model_request, log_model_result, log_model_target
 from ..limits import _ModelAccounting
+from .._messages import _MessageBuffer
 
 if TYPE_CHECKING:
     from ..prepare import _AgicFrame
@@ -100,21 +100,19 @@ async def execute(state: _AgicState) -> ModelCallResult:
     )
     prepared = state.prepared
     request: ModelCall | None = None
-    next_messages: list[Message] | None = None
+    next_messages = state.messages.copy()
 
     def begin_step(
         agent_state: AgentState | StatePublication,
         state_ref: ControlRef,
     ) -> StepBegin:
-        nonlocal prepared, request, next_messages
+        nonlocal prepared, request
         prepared = state.frame_for_step(agent_state, state_ref)
-        next_messages = _messages_with_inputs(
-            prepared.messages if state.last_step is None else state.messages,
-            consumed_inputs,
-        )
+        next_messages.initialize(prepared.messages)
+        _append_inputs(next_messages, consumed_inputs)
         request = ModelCall(
             instructions=_model_instructions(state, prepared),
-            messages=list(next_messages),
+            messages=list(next_messages.messages),
             tools=(
                 _model_tools(prepared)
                 if prepared.model.tools and not state.repairing_output
@@ -130,13 +128,28 @@ async def execute(state: _AgicState) -> ModelCallResult:
             input=step_input,
             preceded_by=tuple(item.ref for item in consumed_inputs),
             started_at=started_at,
-            given=ModelStepGiven(model=prepared.model.ref, call=request),
+            given=ModelStepGiven(
+                model=prepared.model.ref, call=request, delta=next_messages.take_delta()
+            ),
         )
 
-    await state.start_step(begin_step)
-    if (
-        request is None or next_messages is None
-    ):  # pragma: no cover - boundary builder invariant
+    try:
+        await state.start_step(begin_step)
+    except asyncio.CancelledError:
+        # Cancellation may interrupt delivery after the Step was committed.
+        # Its delta already belongs to the next call's prefix in that case.
+        if (
+            state.execution is not None
+            and state.execution.store.get_step(
+                ref=StepRef.from_local(run.run_id, (step_index,))
+            )
+            is not None
+        ):
+            state.messages = next_messages
+            state.prepared = prepared
+            state.claimed_inputs = ()
+        raise
+    if request is None:  # pragma: no cover - boundary builder invariant
         raise RuntimeError("model step boundary did not build its request")
     state.prepared = prepared
     state.claimed_inputs = ()
@@ -274,8 +287,15 @@ async def _apply_response(
     duration_ms: int,
 ) -> ModelCallResult:
     run = state.prepared.run
+    local = Local.typed("Part[]", output, "_", 0)
     if output:
-        state.messages.append(Message(role="assistant", parts=output))
+        state.messages.append_ref(
+            "assistant",
+            FieldRef.from_path(
+                StepRef.from_local(run.run_id, (step_index,)), "output", "value"
+            ),
+            local,
+        )
     state.continuation = current.continuation
     accounting = state.account_usage(current.usage)
     state.last_step = step_index
@@ -284,7 +304,7 @@ async def _apply_response(
             step=StepRef.from_local(run.run_id, (step_index,)),
             kind="model",
             status="succeeded",
-            output=Local.typed("Part[]", output, "_", 0),
+            output=local,
             noted=_model_step_noted(
                 accounting,
                 continuation=current.continuation,
@@ -490,11 +510,10 @@ def _step_input(state: _AgicState) -> tuple[FieldRef, ...]:
     )
 
 
-def _messages_with_inputs(
-    current: Sequence[Message],
+def _append_inputs(
+    messages: _MessageBuffer,
     inputs: Sequence[ControlRecord],
-) -> list[Message]:
-    messages = list(current)
+) -> None:
     for input in inputs:
         if isinstance(input.payload, SteerControlPayload):
             primary = next(
@@ -505,13 +524,7 @@ def _messages_with_inputs(
                 and isinstance(primary.value, Array)
                 and all(isinstance(item, Part) for item in primary.value)
             ):
-                messages.append(
-                    Message(
-                        role="user",
-                        parts=cast(tuple[Part, ...], tuple(primary.value)),
-                    )
-                )
-    return messages
+                messages.append_ref("user", control_local_pointer(input, "_"), primary)
 
 
 def _ensure_text_part_index(stream: _ModelStream) -> int:

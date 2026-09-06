@@ -827,6 +827,11 @@ flow new_flow(_: Text, brief: Brief) -> Text:
             assert dynamic.given.call.input["runnable"] == "flow:new_flow"
             assert reload_control.triggered_by == steps[1].ref
             assert steps[2].preceded_by == (reload_control.ref,)
+            assert [
+                harness.store.rebuild_model_call(step)
+                for step in steps
+                if step.kind == "model"
+            ] == [item.call for item in harness.adapter.invocations]
             history = harness.store.recent_conversation_messages(
                 thread_id=thread,
             )
