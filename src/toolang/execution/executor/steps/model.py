@@ -83,41 +83,32 @@ async def execute(state: _AgicState) -> ModelCallResult:
     """Perform one model call and emit its complete step event stream."""
 
     run = state.prepared.run
-    state.before_model_call()
+    state.check_model_call_limit()
     step_index = state.next_step
-    state.next_step += 1
-    step_started = time.perf_counter()
-    started_at = utc_now()
-    consumed_inputs = state.claimed_inputs or state.pending_inputs()
-    recalled = (
-        state.execution.store.unconsumed_recall_controls(run_id=run.run_id)
-        if state.execution is not None
-        else ()
-    )
-    preceding = tuple(
-        sorted((*consumed_inputs, *recalled), key=lambda control: control.index)
-    )
-    step_input = (
-        *_step_input(state),
-        *(control_local_pointer(item, "_") for item in consumed_inputs),
-    )
     stream = _ModelStream(step=step_index)
-    _LOGGER.info(
-        "Step started thread=%s run=%s step=%s kind=model",
-        run.thread,
-        run.run_id,
-        step_index,
-    )
     prepared = state.prepared
     request: ModelCall | None = None
-    next_messages = state.messages.copy()
+    next_messages = state.messages
 
     def begin_step(
         agent_state: AgentState | StatePublication,
         state_ref: ControlRef,
     ) -> StepBegin:
-        nonlocal prepared, request
+        nonlocal prepared, request, next_messages
         prepared = state.frame_for_step(agent_state, state_ref)
+        # Claims survive discarded preparation; adoption clears them after commit.
+        state.claimed_inputs = (*state.claimed_inputs, *state.pending_inputs())
+        recalled = (
+            state.execution.store.unconsumed_recall_controls(run_id=run.run_id)
+            if state.execution is not None
+            else ()
+        )
+        preceding = tuple(
+            sorted(
+                (*state.claimed_inputs, *recalled), key=lambda control: control.index
+            )
+        )
+        next_messages = state.messages.copy()
         next_messages.initialize(prepared.messages, context=prepared.prompt_context)
         _append_inputs(next_messages, preceding)
         request = ModelCall(
@@ -135,45 +126,66 @@ async def execute(state: _AgicState) -> ModelCallResult:
             step=StepRef.from_local(run.run_id, (step_index,)),
             kind="model",
             state=state_ref,
-            input=step_input,
+            input=(
+                *_step_input(state),
+                *(control_local_pointer(item, "_") for item in state.claimed_inputs),
+            ),
             preceded_by=tuple(item.ref for item in preceding),
-            started_at=started_at,
+            started_at=utc_now(),
             given=ModelStepGiven(
                 model=prepared.model.ref, call=request, delta=next_messages.take_delta()
             ),
         )
 
-    try:
-        await state.start_step(begin_step)
-    except asyncio.CancelledError:
-        # Cancellation may interrupt delivery after the Step was committed.
-        # Its delta already belongs to the next call's prefix in that case.
-        record = (
-            state.execution.store.get_step(
+    def adopt_begin() -> None:
+        state.prepared = prepared
+        state.messages = next_messages
+        state.claimed_inputs = ()
+        state.next_model_inputs = None
+        state.next_step = step_index + 1
+        state.model_calls += 1
+        _LOGGER.info(
+            "Step started thread=%s run=%s step=%s kind=model",
+            run.thread,
+            run.run_id,
+            step_index,
+        )
+
+    interruption: asyncio.CancelledError | None = None
+    while True:
+        try:
+            await state.start_step(begin_step)
+        except asyncio.CancelledError as exc:
+            interruption = exc
+            if state.execution is None:
+                raise
+            record = state.execution.store.get_step(
                 ref=StepRef.from_local(run.run_id, (step_index,))
             )
-            if state.execution is not None
-            else None
+            if record is None:
+                if state.immediate_steer():
+                    raise
+                # A real cancel still needs a begin/end boundary; no adapter runs.
+                continue
+            adopt_begin()
+            if record.status != "running":
+                raise
+        else:
+            if request is None:  # pragma: no cover - boundary builder invariant
+                raise RuntimeError("model step boundary did not build its request")
+            adopt_begin()
+            if interruption is None:
+                break
+        await state.end_step(
+            StepEnd(
+                step=StepRef.from_local(run.run_id, (step_index,)),
+                kind="model",
+                status="canceled",
+                finished_at=utc_now(),
+            )
         )
-        if record is not None:
-            state.messages = next_messages
-            state.prepared = prepared
-            state.claimed_inputs = ()
-            if record.status == "running":
-                await state.end_step(
-                    StepEnd(
-                        step=record.ref,
-                        kind="model",
-                        status="canceled",
-                        finished_at=utc_now(),
-                    )
-                )
-        raise
-    if request is None:  # pragma: no cover - boundary builder invariant
-        raise RuntimeError("model step boundary did not build its request")
-    state.prepared = prepared
-    state.claimed_inputs = ()
-    state.messages = next_messages
+        raise interruption
+    step_started = time.perf_counter()
     log_model_target(
         prepared.model,
         thread_id=run.thread,
@@ -504,9 +516,7 @@ def _output_parts(
 
 def _step_input(state: _AgicState) -> tuple[FieldRef, ...]:
     if state.next_model_inputs is not None:
-        inputs = state.next_model_inputs
-        state.next_model_inputs = None
-        return inputs
+        return state.next_model_inputs
     if state.last_step is None:
         return state.initial_inputs
     return (

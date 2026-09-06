@@ -1064,6 +1064,8 @@ class RunExecutor:
         with self.store.write_transaction():
             self._persist.on_event(event)
             self._update_control_state(event)
+        if isinstance(event, StepBegin) and active.execution is not None:
+            active.execution._adopt_step_relations(event)
         self._update_cached_control_state(event)
         self._track_active_run(event, active)
         if isinstance(event, RunEnd):
@@ -2641,6 +2643,7 @@ class _Execution:
             event = build(state, state_ref)
             event = self._step_relations(event)
             await emit(event)
+            self._adopt_step_relations(event)
             await self._check_step_cancel(event, emit)
             self._step_states[event.step] = (state, state_ref)
             return state, state_ref
@@ -2688,21 +2691,34 @@ class _Execution:
             raise
 
     def _step_relations(self, event: StepBegin) -> StepBegin:
+        """Prepare associations without consuming their live state."""
+
         targets = {RunRef(event.step.run_id)}
         if self._active is not None:
             targets.add(RunRef(self._active.root_run_id))
         preceding = [ref for ref in self._preceding_controls if ref.target in targets]
+        # Root controls precede child-local controls; indexes order each scope.
+        refs = tuple(
+            sorted(
+                set((*preceding, *event.preceded_by)),
+                key=lambda ref: (ref.target == event.step.run, ref.index),
+            )
+        )
+        return replace(event, preceded_by=refs)
+
+    def _adopt_step_relations(self, event: StepBegin) -> None:
+        """Advance control associations after begin commits, before delivery."""
+
+        refs = set(event.preceded_by)
         self._preceding_controls = [
-            ref for ref in self._preceding_controls if ref.target not in targets
+            ref for ref in self._preceding_controls if ref not in refs
         ]
-        refs = tuple(dict.fromkeys((*preceding, *event.preceded_by)))
         if (
             self._active is not None
             and self._active.interruption is not None
             and self._active.interruption.ref in refs
         ):
             self._active.interruption = None
-        return replace(event, preceded_by=refs)
 
     def state_for_step(self, step: StepRef) -> tuple[ExecutionState, ControlRef]:
         """Return the immutable State snapshot captured by one started step."""

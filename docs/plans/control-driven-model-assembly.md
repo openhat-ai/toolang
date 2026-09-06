@@ -57,6 +57,18 @@ Existing Step/control relations determine when changes take effect:
 `triggered_by` identifies the originating Tool Step when one exists. Control
 creation alone does not imply adoption.
 
+State publications are temporary, watcher-managed data, not replay inputs.
+Persist the resolved values used by a call before dispatch:
+
+- Store instructions and tool definitions in `contents`, referenced by hash.
+- Capture expanded messages/context in deltas and recalled rules/guidance in
+  recall controls, retaining their actual content.
+- Record the effective `recall` directive values in the Model Step's call
+  references, alongside the already-captured output schema and continuation.
+
+For replay, State revisions are provenance only. Replay never reloads current or
+historical State, resolves authored source again, or requires State directories.
+
 ## Executor and control-driven execution
 
 The executor holds the effective binding, horizon, resolved far/near/now, and
@@ -67,7 +79,7 @@ executor's decisions and outputs rather than deciding the next ModelCall.
 At each Step boundary, the executor applies adopted controls in durable
 control-index order. Replay feeds the recorded facts through the same rules in
 numeric Step order within each Run. A control affects its target Run: a child's
-run/execute/retry must not reset its parent's now. State propagation continues
+run/execute/retry must not reset its parent's now. Live State propagation continues
 to use each Step's recorded `state` reference, including root reloads first
 adopted at a child Step.
 
@@ -189,9 +201,10 @@ candidate call does not exist; after it, the recorded request is reproducible
 without volatile buffers. Do not infer that an in-flight external operation
 completed or automatically repeat it as part of replay.
 
-Use recorded templates and their format versions, not current runtime wording,
-current state, or the latest compact output. Do not copy historical bodies into
-every Run or ModelCall, or introduce a second database-driven assembly policy.
+Use recorded templates, their format versions, and captured binding values, not
+current runtime wording, State directories, or the latest compact output. Do not
+copy historical bodies into every Run or ModelCall, or introduce a second
+database-driven assembly policy.
 
 Preserve existing retry behavior and its physical-deletion policy. Assume users
 do not retry or alter referenced history in ways that invalidate replay; add no
@@ -207,6 +220,9 @@ timing, commit boundaries, cross-Run terminal messages, and live/replay divergen
 
 - Compare captured adapter requests with replay after restart and changed runtime
   wording, including roles, Parts, ordering, duplicates, and unchanged prefixes.
+- Remove State cache directories before replay; instructions, resources, recall
+  selection, and messages must reconstruct entirely from execution records and
+  `contents`, including calls made before and after reload.
 - Cover empty horizon, initial compact output, later compact adoption, wrong
   target Thread, incomplete coverage, at least one retained historical root,
   every recall selection, and unchanged recall with changed far.

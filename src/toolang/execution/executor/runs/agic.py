@@ -113,13 +113,12 @@ class _AgicState:
     ) = None
     refresh_frame: Callable[[ExecutionState, ControlRef], _AgicFrame] | None = None
 
-    def before_model_call(self) -> None:
-        """Apply one model-call checkpoint and reserve its agic-local count."""
+    def check_model_call_limit(self) -> None:
+        """Check the next call without counting an uncommitted preparation."""
 
         limit = self.limits.agic_model_calls
         if limit is not None and self.model_calls >= limit:
             raise ToolangError(f"Agic model call limit exceeded: {limit}")
-        self.model_calls += 1
 
     def before_tool_call(self) -> None:
         """Apply one tool-call checkpoint and reserve its agic-local count."""
