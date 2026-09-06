@@ -6,7 +6,7 @@ Provide modular, bounded execution-history reads for inspection, compaction,
 and ModelCall assembly. Keep `RunHistory` and `RunStore` as the public names.
 
 PR4 adds the record-reading foundation, Views, pagination, and lightweight
-result reads. Preserve existing CLI/API behavior. Do not change ModelCall
+output reads. Preserve existing CLI/API behavior. Do not change ModelCall
 assembly or message persistence, add runtime tools, trigger recalls, or execute
 compaction. No record schema change, MVCC, message log, or HistoryBlock abstraction.
 Later contracts below describe integration requirements, not PR4 runtime work.
@@ -18,21 +18,35 @@ Later contracts below describe integration requirements, not PR4 runtime work.
 supplied records without database access, model budgets, or message generation.
 RunExecutor remains responsible for execution; ThreadManager for create/fork/rewind.
 
+Use output for the execution artifact and Run detail for inspection data.
+Keep Run selection separate from output reading.
+
 | RunHistory method | Change | Responsibility |
 | --- | --- | --- |
 | `list_threads`, `list_runs` | Keep | Filtered lists and summaries. |
 | `describe_threads`, `describe_runs` | Keep | Batched summaries of selected records. |
 | `get_thread`, `get_run` | Keep | Existing inspection details. |
-| `get_run_result`, `latest_thread_result` | Keep | Existing resolved-result details. |
 | `thread_view(thread, ...)` | Add | Read a fixed logical Thread scope. |
 | `run_view(run, ...)` | Add | Read a fixed Run/Step scope and required dependencies. |
 | `next_page(cursor)` | Add | Continue the captured read without repeating its target. |
-| `get_output(run)` | Add | Resolve output without rebuilding full Run details. |
+| `get_output(run)` | Add | Return the resolved typed output, without Steps, controls, or ModelCall reconstruction. |
 | `get_model_call(step)` | Add facade | Reuse the existing stored-call reconstruction. |
 | `get_compaction(thread)` | Add reader | Locate the paired compact Thread's latest successful output and its reference; no execution. |
 
 The initial read sets bounds and page limits; continuation retains that scope.
 Pointer inspection and physical execution-tree queries retain existing Store APIs.
+
+Replace `get_run_result` with composition of `get_run` and `get_output` where
+resolved output is needed in a detail response. Reuse an already-read detail;
+do not rebuild it. `get_run` retains its existing stored-output representation.
+`get_output` returns None for an existing Run without output and raises KeyError
+for a missing Run; it does not flatten typed output into message Parts.
+
+Remove `latest_thread_result`: select through `ThreadView.runs(reverse=True)`,
+then read output or detail as needed. Thread-latest callers retain their selection
+policy: the latest succeeded visible root with nonempty rendered output. Preserve
+existing CLI/API names, response shapes, and errors, without retaining result-named
+aliases in RunHistory.
 
 | View method/property | Responsibility |
 | --- | --- |
@@ -153,12 +167,16 @@ thread/begin/end; that tool and existing runtime-tool changes are deferred.
 Implement record reads and coordination in `execution/history.py` and Store;
 extract pure `thread_view.py` and `run_view.py` with tests. Preserve transactional
 fork/rewind/retry checks. Keep schemas and errors in their owning modules.
+Adapt result consumers in the Run/Thread API routers and local chat backend to
+the consolidated methods without changing their public behavior.
 
 Acceptance covers existing inspection responses, nested fork/rewind membership,
 numeric Step order, control consumption/interruption relations, partial output,
 child isolation, page concatenation, bounded loading, appends/rewind/retry during
 paging, and restart reconstruction. Output-only reads must not rebuild calls.
-Test the compact result reader using persisted fixtures, without executing tools.
+Verify resolved typed outputs, missing Runs, absent outputs, and unchanged latest
+output selection and detail responses. Test the compaction output reader using
+persisted fixtures, without executing tools.
 Existing ModelCall assembly and exposed runtime tools must remain unchanged.
 
 Current storage has full per-call message-hash lists, not the template coverage
