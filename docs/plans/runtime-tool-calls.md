@@ -30,9 +30,10 @@ Tool calls
 └── User tool calls: history/*, me/*, fs/*, shell/*, service/*, ...
 ```
 
-Preserve existing run/execute/reload behavior. All additions use ordinary Tool
-Steps. History serves both user investigations and compact Runs; being called by
-a compact Run does not make it runtime-facing.
+Preserve existing run/execute/reload execution behavior, while removing control
+payload copies from their results. All additions use ordinary Tool Steps. History
+serves both user investigations and compact Runs; being called by a compact Run
+does not make it runtime-facing.
 
 | New call | Trigger | Input and responsibility | Durable result |
 | --- | --- | --- | --- |
@@ -86,6 +87,46 @@ The per-call context supplies the current agent, Thread, Run, Tool Step, effecti
 binding, and visible recall revisions. Callers cannot supply authority, recalled
 content, revisions, or the control's triggered_by. History gets a read-only
 interface; runtime tools get only the operations they require.
+
+### Control-producing results
+
+Control-only operations return one common receipt:
+
+```python
+ToolResultPart.output = {controls: ControlRef[]}
+```
+
+Pick, compact, reload, and execute return at most one reference; honor may return
+several. Include each committed control once, in control-index order. Reused
+controls keep their original triggered_by. Pick/honor/compact return an empty list
+when no further adoption is needed; do not create an audit duplicate just to
+populate a result. A receipt does not claim adoption: Step.preceded_by remains
+the adoption fact.
+
+| Fact | Authoritative location; never copied into the receipt |
+| --- | --- |
+| Recall target, revision, content | Recall control payload |
+| State selected by reload | Reload control payload |
+| State, runnable, input selected by execute | Execute control payload |
+| Horizon | Compact control payload |
+| Compacted range and summary | Compact Run output, referenced by horizon |
+
+Remove reload's from_state/state/applied echoes and execute's executed-runnable
+echo. Keep errors and validation diagnostics where they arise. A failed call
+does not imply rollback of an already committed control; any returned references
+must identify durable records, never a predicted effect. Change tool-facing
+results only, not ControlRecord encodings or CLI/API control responses.
+
+Run has a data result, not just a control receipt: retain
+`{run_id: RunRef, output_type: str, output: JSONValue}` and remove its duplicate
+runnable field. The Run reference already locates its run control. History's
+explicit record reads and Run's child output delivery remain unchanged.
+
+Tool results are receipts, not a second control/adoption protocol. Online execution
+retains committed control objects in memory; it must not reread the store or
+inline payloads into results to obtain freshly committed facts. Recovery and
+message assembly use the controls and Step adoption relations; recalled user
+messages reference control content, and far references the compact Run output.
 
 ## History
 
@@ -165,11 +206,10 @@ compact outputs; add no special recall directive or latest-compact tool.
 
 ```python
 _toolang/pick({kind: "skill" | "service", ref: str})
-  -> {target: {kind, ref}, revision: str, control: ControlRef | null}
+  -> {controls: ControlRef[]}  # zero or one
 
 _toolang/honor({paths: str[]})
-  -> {recalls: [{target: {kind: "rules", workspace: str, path: str},
-                 revision: str, control: ControlRef}]}
+  -> {controls: ControlRef[]}
 ```
 
 Pick takes one exact ref from the corresponding catalog. Honor takes a nonempty
@@ -178,12 +218,12 @@ rule-file paths. Runtime maps them to authorized workspaces and applicable rules
 Each rules target identifies a workspace name and its scope directory relative
 to the workspace root: `/` or, for example, `/src`.
 
-Revision fingerprints the exact recalled text. A non-null control identifies a
-new or reused, unadopted recall; pick returns null when that revision is already
-visible. Honor returns only the missing/outdated revisions, deduplicated by
-target; an empty result means none remain after rechecking. Loading failure is
-a tool error and never permits the original operation. Neither result repeats
-content or claims the consuming Model Step has adopted it.
+Revision fingerprints the exact recalled text and lives only in the recall
+payload. Pick returns an empty controls list when that revision is already visible.
+Otherwise, its receipt identifies the new or reused, unadopted recall. Honor
+returns control references for missing/outdated rules, deduplicated by target;
+an empty list means none remain after rechecking. Loading failure is a tool error
+and never permits the original operation.
 
 Persist recalled content in the existing applied recall control payload
 `{target, revision, content}`. Control.triggered_by identifies the creating Tool
@@ -224,7 +264,7 @@ of arbitrary shell commands/indirect paths or a sandbox guarantee.
 
 ```python
 _toolang/compact({thread: ThreadRef, begin: RunRef | null = null, end: RunRef})
-  -> {horizon: FieldRef | null, control: ControlRef | null}
+  -> {controls: ControlRef[]}  # zero or one
 
 # Input and output of the invoked compact.too Run
 input  = {thread, begin, end}
@@ -236,12 +276,13 @@ begin is null or its first logical root. End is exclusive and must leave at leas
 one historical root before the active root. This version accepts root boundaries
 only. Pass the range unchanged into compact.too; never accept summary as an argument.
 
-On success, horizon references the validated compact Run output, not a copied
-summary; control identifies the new or reused, unadopted compact control for the
-calling Run. Reuse requires the same Thread and range. If the permit recheck finds
-no work or adoption needed, return the effective horizon (possibly null) and a
-null control. If the requested range became invalid, return an error and let
-preflight reprepare instead of silently changing the recorded arguments.
+On success, return the new or reused, unadopted compact control for the calling
+Run. Its payload.horizon references the validated compact Run output; neither
+horizon nor the output fields are repeated in the Tool Step result. Reuse requires
+the same Thread and range. If the permit recheck finds no work or adoption needed,
+return an empty controls list and leave the effective horizon unchanged. If the
+requested range became invalid, return an error and let preflight reprepare
+instead of silently changing the recorded arguments.
 
 Output must echo the input range with a complete-prefix summary. History tools
 must be available to compact.too through its explicit authorized tool selection,
@@ -285,6 +326,8 @@ retry-required is not a completed read/write. Progress never changes execution.
   executor preparation/dispatch, pyproject.toml, defaults/docs/tests. Cover
   collisions, unchanged user permissions and runtime availability, rejected model
   calls to honor/compact, per-call context isolation, and execute control transfer.
+  Check reference-only control receipts, reload diagnostics, Run output delivery,
+  and the absence of duplicated state/runnable/recall/horizon payload fields.
 - [ ] Add the history toolset through execution/tools/history.py and RunHistory;
   add cursor paging for Thread listing without changing existing CLI readers.
   Cover all four input/result schemas, cursor-only continuation, wrong-tool cursors,
@@ -292,7 +335,7 @@ retry-required is not a completed read/write. Progress never changes execution.
   resolved output, missing targets, record limits, fork/rewind, child isolation,
   and restart. No message-group computation or ModelCall rebuilding.
 - [ ] Add pick and common recall handling in the executor and control messages.
-  Cover allowed refs, exact revisions/content, visible/null and pending/reused
+  Cover allowed refs, exact revisions/content, visible/empty and pending/reused
   receipts, deduplication, and live/replay equality.
 - [ ] Add tool call preflight and honor through tool preparation and fs/shell adapters.
   Cover nested rules, batches, failed loads, zero side effects before retry, changed
@@ -300,7 +343,8 @@ retry-required is not a completed read/write. Progress never changes execution.
 - [ ] Add model call preflight, the compact coordinator, and bundled compact.too
   after assembly is ready.
   Cover budgets/coverage, concurrent waiters, failure/cancel, restart, intervening
-  controls, exact output references, and unchanged earlier ModelCalls.
+  controls, reference-only receipts, no-op/empty results, exact compact output
+  references, and unchanged earlier ModelCalls.
 - [ ] Extend execution_progress and its Chat/Script tests for both trigger sources.
   Verify durable begin/end and control ordering, no fabricated exchanges or duplicate
   child results, canceled/failed activity, and recovery after commit/delivery failures.
