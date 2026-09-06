@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.support.execution_assertions import assert_run_event_integrity
+from tests.support.execution_assertions import assert_run_event_integrity, steer_message
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -353,7 +353,9 @@ def test_interrupting_runtime_child_terminates_owning_tool_step(
                     harness.adapter.invocations[-1].call.messages[-2].parts[0],
                 )
             else:
-                assert tool_step.output is None
+                assert tool_step.output is not None
+                assert isinstance(tool_step.output.value, ToolResultPart)
+                assert tool_step.output.value.error == "canceled"
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
@@ -469,7 +471,7 @@ def test_skipped_batch_is_durable_and_does_not_consume_call_budget(
                 messages = harness.adapter.invocations[1].call.messages
                 assert messages[-2].role == "tool"
                 assert len(messages[-2].parts) == 2
-                assert messages[-1] == Message.user("skip these calls")
+                assert messages[-1] == steer_message("skip these calls")
         finally:
             reopened.close()
 
@@ -523,7 +525,7 @@ def test_steer_during_execute_delivery_keeps_committed_transfer(tmp_path: Path) 
             assert root.status == "succeeded", root.error
             followup = harness.adapter.invocations[1].call.messages
             assert Message.user("Child task.") in followup
-            assert followup[-1] == Message.user("extra requirement")
+            assert followup[-1] == steer_message("extra requirement")
             steps = harness.store.list_steps(run_id=root.id)
             assert steps[1].output is not None
             (part,) = parts_from_local(steps[1].output)

@@ -949,7 +949,17 @@ def test_interrupted_model_persists_partial_output(
             assert first.aborted_by == (control.ref if control is not None else None)
             assert first.output is not None
             assert parts_from_local(first.output) == expected
-            assert all(step.kind == "model" for step in steps)
+            tool_steps = [step for step in steps if step.kind == "tool"]
+            if interruption == "error":
+                assert not tool_steps
+            else:
+                assert len(tool_steps) == 1
+                assert tool_steps[0].status == "canceled"
+                assert tool_steps[0].output is not None
+                (result,) = parts_from_local(tool_steps[0].output)
+                assert isinstance(result, ToolResultPart)
+                assert result.tool_call_id == "complete"
+                assert result.error is not None
             assert len(harness.adapter.invocations) == (
                 2 if interruption == "steer" else 1
             )

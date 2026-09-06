@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
+from toolang.base.types.message import Message, TextPart
 
 from toolang.execution.events import (
     PartBegin,
@@ -14,8 +16,43 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.types import FieldRef, RunRef, StepRef, TypedRef
+from toolang.execution.types import FieldRef, RunRef, StepRef, TypedRef, ModelStepGiven
+from toolang.execution.store import RunStore
 from toolang.lang.types import Array
+
+
+def assert_replayed(path: Path, events: Sequence[RunEvent]) -> None:
+    """Compare persisted replay with the exact calls captured online."""
+    expected = {
+        event.step: event.given.call
+        for event in events
+        if isinstance(event, StepBegin) and isinstance(event.given, ModelStepGiven)
+    }
+    store = RunStore(path, read_only=True)
+    try:
+        steps = [store.get_step(ref=ref) for ref in expected]
+        assert all(step is not None for step in steps)
+        saved = [step for step in steps if step is not None]
+        assert store.rebuild_model_calls(saved) == expected
+        for step in saved:
+            assert store.rebuild_model_call(step) == expected[step.ref]
+    finally:
+        store.close()
+
+
+def steer_message(value: str | Message) -> Message:
+    """Expected runtime wrapper, preserving each supplied Part."""
+    message = Message.user(value) if isinstance(value, str) else value
+    return Message(
+        "user",
+        (
+            TextPart(
+                '<steer description="The user supplied updated input for the current task.">'
+            ),
+            *message.parts,
+            TextPart("</steer>"),
+        ),
+    )
 
 
 def event_labels(events: Sequence[RunEvent]) -> list[str]:

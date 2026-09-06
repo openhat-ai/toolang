@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from toolang.base.types.message import Message, MessageRole
 
@@ -17,6 +17,7 @@ class _MessageBuffer:
         self.messages: list[Message] = []
         self.pending: list[MessageTemplate] = []
         self.started = False
+        self.context = ""
         self.initialize(messages)
 
     def copy(self) -> _MessageBuffer:
@@ -26,14 +27,18 @@ class _MessageBuffer:
         other.messages = list(self.messages)
         other.pending = list(self.pending)
         other.started = self.started
+        other.context = self.context
         return other
 
-    def initialize(self, messages: Sequence[Message]) -> None:
+    def initialize(self, messages: Sequence[Message], *, context: str = "") -> None:
         if not self.started:
             self.messages.clear()
             self.pending.clear()
             for template in literal_delta(messages).messages:
                 self._append(template)
+        elif context and context != self.context:
+            self.append(Message.user(context))
+        self.context = context
 
     def append(self, message: Message) -> None:
         """Append authored or runtime-rendered literal content."""
@@ -44,8 +49,12 @@ class _MessageBuffer:
         """Use the same field value online that the owning record will persist."""
 
         template = MessageTemplate(role, (TypedRef(ref, value.type),))
-        delta = MessageDelta(messages=(template,))
-        self.messages.extend(render_delta(delta, lambda _ref: value.value))
+        self.append_template(template, lambda _ref: value.value)
+
+    def append_template(
+        self, template: MessageTemplate, resolve: Callable[[TypedRef], object]
+    ) -> None:
+        self.messages.extend(render_delta(MessageDelta(messages=(template,)), resolve))
         self.pending.append(template)
 
     def _append(self, template: MessageTemplate) -> None:

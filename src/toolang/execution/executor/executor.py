@@ -2666,11 +2666,21 @@ class _Execution:
                 or statement_has_call(event.given),
             )
         except _RunCanceled as exc:
+            from .steps.tool import canceled_result
+
             await emit(
                 StepEnd(
                     step=event.step,
                     kind=event.kind,
                     status="canceled",
+                    output=RecordLocal.typed(
+                        "ToolResultPart",
+                        canceled_result(
+                            event.given.call, reason="canceled; operation not executed"
+                        ),
+                    )
+                    if isinstance(event.given, ToolStepGiven)
+                    else None,
                     aborted_by=exc.control.ref,
                     finished_at=utc_now(),
                 )

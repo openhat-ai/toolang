@@ -10,6 +10,7 @@ import pytest
 from tests.support.execution_assertions import (
     assert_run_event_integrity,
     event_labels,
+    steer_message,
 )
 from tests.support.execution_harness import (
     AsyncGate,
@@ -141,7 +142,7 @@ agic revise(_: Part[]) -> Part[]:
             assert harness.adapter.invocations[1].call.messages == [
                 Message.user("write"),
                 Message.assistant("draft"),
-                Message.user("make it shorter"),
+                steer_message("make it shorter"),
             ]
             stored_control = harness.store.get_run_control(
                 run_id=record.id,
@@ -280,7 +281,7 @@ def test_immediate_steer_consumed_before_interrupt_is_not_applied_twice(
             (step,) = harness.store.list_steps(run_id=run.id)
             assert step.aborted_by is None
             assert step.preceded_by == (ControlRef.for_run(run.id, 0), steer.ref)
-            assert harness.adapter.invocations[0].call.messages[-1] == Message.user(
+            assert harness.adapter.invocations[0].call.messages[-1] == steer_message(
                 "keep it short"
             )
             assert len(harness.adapter.invocations) == 1
@@ -327,7 +328,9 @@ def test_cancel_before_tool_call_has_a_step_boundary(
                 ("tool", "canceled"),
             ]
             assert steps[1].aborted_by == control.ref
-            assert steps[1].output is None
+            assert steps[1].output is not None
+            assert isinstance(steps[1].output.value, ToolResultPart)
+            assert steps[1].output.value.error == "canceled; operation not executed"
             assert tool.calls == []
             assert_run_event_integrity(tracer.events)
 
@@ -398,7 +401,7 @@ agic calculate(_: Part[]) -> Part[]:
             assert isinstance(canceled, ToolResultPart)
             assert canceled.tool_call_id == tool_call.tool_call_id
             assert canceled.error == "canceled by steer"
-            assert messages[3] == Message.user("skip tools")
+            assert messages[3] == steer_message("skip tools")
             skipped = harness.store.list_steps(run_id=record.id)[1]
             assert skipped.aborted_by == control.ref
             assert skipped.output is not None
@@ -685,9 +688,9 @@ agic revise(_: Text) -> Text:
             assert record.status == "succeeded"
             assert harness.adapter.invocations[1].call.messages == [
                 Message.user("start"),
-                Message.user("guidance 1"),
-                Message.user("guidance 2"),
-                Message.user("guidance 3"),
+                steer_message("guidance 1"),
+                steer_message("guidance 2"),
+                steer_message("guidance 3"),
             ]
             assert [control.index for control in controls] == [1, 2, 3]
             first_step, second_step = harness.store.list_steps(run_id=record.id)

@@ -362,6 +362,9 @@ async def _execute(state: _AgicState) -> Message | None:
                         await tool_step.execute(state, call)
                 except asyncio.CancelledError:
                     if not state.immediate_steer():
+                        await tool_step.skip(
+                            state, result.tool_calls[index + 1 :], canceled=True
+                        )
                         raise
                     await tool_step.skip(state, result.tool_calls[index + 1 :])
                     break
