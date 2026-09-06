@@ -548,9 +548,17 @@ RGB cells; they do not infer or preserve terminal transparency. A light
 terminal where OSC is unavailable must set `TOOLANG_COLOR_SCHEME=light` or an
 explicit three-color palette.
 
-Chat submission and steer controls contain only their authored message. Their
-left background-filled accent cells distinguish start from steer without
-displaying Run IDs or execution state. The start accent uses the same ANSI
+Chat submission and steer controls preserve their complete authored message
+between one top and one bottom padding row. Body text starts two cells from
+the left and leaves two cells at the right. Input uses the same insets. Padding
+never collapses into body rows as messages wrap. The bottom padding can hold a
+dim, single-line annotation ending two cells before the bar edge. Root inputs
+show `runnable · model · reasoning` from the submitted request; unspecified
+reasoning is omitted and an absent model reads `model unspecified`. The root
+RunBegin updates its runnable before the bar is committed. Long annotations
+shorten the runnable first, then the model, preserving explicit reasoning
+where space permits. Their left background-filled accent cells distinguish
+start from steer without displaying Run IDs. The start accent uses the same ANSI
 bright cyan as the banner logo and wordmark. Quick-command bars use the same
 background-cell treatment with their own accent, and the prompt uses the start
 accent. Control bars and the input box share Input background. Control-bar
@@ -565,6 +573,20 @@ lesser of the available width and `TOOLANG_PROGRESS_MAX_WIDTH`. On wider
 terminals, the terminal background visible to their right distinguishes these
 interactions from a new root Run. Quick-command result, help, table, and
 reopened-output content align to the same output boundary.
+
+Steer bars keep their original purple accent regardless of adoption. Pending
+bars have one aggregate `•` explanation below them, such as `3 steers will apply
+after the current step`; between steps it says `waiting for the next model
+call`. Until receipts arrive it says `Sending N steers`, or appends `· sending
+M more` to an accepted count. Continuations align after the marker, and live
+clipping reserves this feedback while preserving Input and Queue focus.
+Only matching `StepBegin.preceded_by` control references or durable applied
+status commit an adopted bar. Receipt/event reordering does not imply adoption.
+The aggregate disappears when no steers remain, with no applied message.
+At Run end, only confirmed unapplied steers show `not applied` in bottom-right
+padding; pending and adopted bars have no corner label during execution.
+Incomplete transport evidence keeps corners empty and uses existing recovery
+or error diagnostics. Late callbacks cannot change a completed transcript.
 
 The status bar does not paint a base background and therefore inherits the
 terminal background. Its left side begins in column zero with a runnable

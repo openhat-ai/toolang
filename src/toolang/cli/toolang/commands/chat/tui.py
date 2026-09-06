@@ -7,10 +7,12 @@ from collections.abc import Mapping, Sequence
 from contextlib import suppress
 import threading
 from typing import TypeGuard, cast
+from uuid import uuid4
 
 import click
 from prompt_toolkit.application import Application
 from prompt_toolkit.filters import Condition, has_completions, has_focus
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyProcessor
 from prompt_toolkit.keys import Keys
@@ -59,6 +61,8 @@ from .base import (
     RunBlocked,
     RunDisconnected,
     RunRecovered,
+    SteerError,
+    SteerReceipt,
     as_text,
     friendly_error,
 )
@@ -316,19 +320,55 @@ class ChatTuiApp:
 
     def _live_blocks_container(self) -> Window:
         return Window(
-            FormattedTextControl(
-                lambda: rendering.renderables_to_prompt_toolkit(
-                    self._live_renderables(),
-                    max_rows=self._available_live_rows(),
-                )
-            ),
+            FormattedTextControl(self._live_fragments),
             height=self._live_area_height,
             wrap_lines=False,
             always_hide_cursor=True,
         )
 
+    def _live_fragments(self) -> FormattedText:
+        renderables = self._live_renderables()
+        feedback = [
+            item for item in renderables if isinstance(item, blocks.SteerFeedbackBlock)
+        ]
+        other = [
+            item
+            for item in renderables
+            if not isinstance(item, blocks.SteerFeedbackBlock)
+        ]
+        available = self._available_live_rows()
+        feedback_rows = rendering.renderables_height(feedback)
+        fragments = rendering.renderables_to_prompt_toolkit(
+            other, max_rows=max(0, available - feedback_rows)
+        )
+        tail = rendering.renderables_to_prompt_toolkit(feedback, max_rows=available)
+        if fragments and tail:
+            fragments.append(("", "\n"))
+        return FormattedText([*fragments, *tail])
+
     def _live_renderables(self) -> list[RenderableType | None]:
-        return [block.render() for block in self.unfinalized_blocks]
+        has_feedback = any(
+            isinstance(block, blocks.SteerFeedbackBlock)
+            for block in self.unfinalized_blocks
+        )
+        return [
+            block.render()
+            for block in self.unfinalized_blocks
+            if not (
+                has_feedback
+                and isinstance(block, blocks.RunSummaryBlock)
+                and block.status == "running"
+            )
+        ]
+
+    def _steer_feedback_rows(self) -> int:
+        return rendering.renderables_height(
+            [
+                block.render()
+                for block in self.unfinalized_blocks
+                if isinstance(block, blocks.SteerFeedbackBlock)
+            ]
+        )
 
     def _live_area_height(self) -> int:
         return min(
@@ -349,10 +389,22 @@ class ChatTuiApp:
 
     def _available_input_rows(self) -> int:
         terminal_rows = self.app.output.get_size().rows
-        return max(0, terminal_rows - self.queue_panel.minimum_rows() - 1)
+        return max(
+            0,
+            terminal_rows
+            - self.queue_panel.minimum_rows()
+            - 1
+            - self._steer_feedback_rows(),
+        )
 
     def _available_queue_rows(self) -> int:
-        return max(0, self.app.output.get_size().rows - self.prompt.rows() - 1)
+        return max(
+            0,
+            self.app.output.get_size().rows
+            - self.prompt.rows()
+            - 1
+            - self._steer_feedback_rows(),
+        )
 
     def _available_live_rows(self) -> int:
         terminal_rows = self.app.output.get_size().rows
@@ -688,8 +740,15 @@ class ChatTuiApp:
             self._handle_run_state(event.value)
         elif kind == "cancel_error":
             self._handle_cancel_error(str(event.value or "cancel request failed"))
-        elif kind == "steer_error":
-            self._handle_steer_error(str(event.value or "steer request failed"))
+        elif kind == "steer_error" and isinstance(event.value, SteerError):
+            if self.app_context.get_presenter().handle_steer_error(
+                event.value, self.app_context
+            ):
+                self._handle_steer_error(event.value.message)
+        elif kind == "steer_receipt" and isinstance(event.value, SteerReceipt):
+            self.app_context.get_presenter().handle_steer_receipt(
+                event.value, self.app_context
+            )
         elif kind == "interrupt":
             return self._handle_interrupt()
         elif kind == "eof":
@@ -921,14 +980,16 @@ class ChatTuiApp:
             return False
         self.status_bar.clear_transient_error()
         run_id = self.active_run_id
-        self.unfinalized_blocks.insert(
-            max(len(self.unfinalized_blocks) - 1, 0),
+        submission_id = uuid4().hex
+        self.app_context.get_presenter().add_steer(
+            submission_id,
             blocks.RunSteerBlock.create(
                 message=message,
                 run_id=run_id,
                 max_width=self.progress_max_width,
                 input_background=self.surfaces.input_background,
             ),
+            self.app_context,
         )
 
         def consume() -> None:
@@ -936,7 +997,12 @@ class ChatTuiApp:
                 run_id,
                 message,
                 lambda error: self._enqueue_ui_event_from_thread(
-                    ChatUIEvent("steer_error", error)
+                    ChatUIEvent("steer_error", SteerError(submission_id, run_id, error))
+                ),
+                lambda control: self._enqueue_ui_event_from_thread(
+                    ChatUIEvent(
+                        "steer_receipt", SteerReceipt(submission_id, run_id, control)
+                    )
                 ),
             )
 
@@ -963,6 +1029,7 @@ class ChatTuiApp:
             return
         if isinstance(state, RunDisconnected):
             self.active_run_id = state.run_id
+            self.app_context.get_presenter().mark_disconnected()
             self.status_bar.set_error(
                 "Connection lost · Reconnecting…",
                 persistent=True,
@@ -987,6 +1054,7 @@ class ChatTuiApp:
         self.unfinalized_blocks.append(
             blocks.RunControlBlock.create(
                 call.source,
+                request=call.request,
                 input_background=self.surfaces.input_background,
             )
         )

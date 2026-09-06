@@ -4,7 +4,7 @@ import asyncio
 import threading
 from collections.abc import AsyncIterator, Callable, Collection, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from io import StringIO
 from types import SimpleNamespace
@@ -34,6 +34,7 @@ from rich.text import Text
 
 from tests.support import chat_tui_pty
 from toolang.base.types.message import (
+    Message,
     Part,
     TextDelta,
     TextPart,
@@ -78,6 +79,8 @@ from toolang.cli.toolang.commands.chat.base import (
     RunBlocked,
     RunDisconnected,
     RunRecovered,
+    SteerReceipt,
+    SteerError,
 )
 from toolang.cli.toolang.commands.chat.events import ChatUIEvent
 from toolang.cli.toolang.commands.chat.input import QuickCommand
@@ -94,7 +97,9 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
+from toolang.execution.records import SteerControlPayload
 from toolang.execution.schemas import (
+    ControlInfo,
     RunControlRefData,
     RunDetail,
     RunnableRequest,
@@ -244,10 +249,14 @@ def test_chat_step_begin_finalizes_matching_steer_block() -> None:
         message="adjust",
         run_id="run_1",
     )
-    app.live_blocks.append(steer)
-
     events.handle_run_event(_run_begin(), app)
-    events.handle_run_event(_model_step_begin(), app)
+    app.presenter.add_steer("submission", steer, app)
+    app.presenter.handle_steer_receipt(
+        SteerReceipt("submission", "run_1", _steer_control(1)), app
+    )
+    events.handle_run_event(
+        replace(_model_step_begin(), preceded_by=(ControlRef.for_run("run_1", 1),)), app
+    )
 
     assert steer in app.finalized
     assert steer not in app.live_blocks
@@ -1393,7 +1402,7 @@ def test_chat_quick_command_control_bars_match_output_width(
         ),
     ],
 )
-def test_chat_two_line_control_bars_add_only_top_padding(
+def test_chat_two_line_control_bars_keep_both_padding_rows(
     block: blocks.MutableBlock | blocks.SlashBlock,
     accent: str,
 ) -> None:
@@ -1408,7 +1417,7 @@ def test_chat_two_line_control_bars_add_only_top_padding(
         == Color.parse(accent).get_truecolor().hex
     ]
 
-    assert len(accent_cells) == 3
+    assert len(accent_cells) == 4
     assert [
         line.rstrip()
         for line in _render_text(block.render(), width=20).splitlines()
@@ -1416,7 +1425,7 @@ def test_chat_two_line_control_bars_add_only_top_padding(
     ] == ["  first", "  second"]
 
 
-def test_chat_control_bar_uses_three_row_minimum() -> None:
+def test_chat_control_bar_keeps_padding_for_multiline_body() -> None:
     two_lines = _render_text(
         blocks.RunControlBlock.create("first\nsecond").render(),
         width=20,
@@ -1430,11 +1439,14 @@ def test_chat_control_bar_uses_three_row_minimum() -> None:
         " " * 20,
         "  first" + " " * 13,
         "  second" + " " * 12,
+        " " * 20,
     ]
     assert three_lines == [
+        " " * 20,
         "  first" + " " * 13,
         "  second" + " " * 12,
         "  third" + " " * 13,
+        " " * 20,
     ]
 
 
@@ -1499,7 +1511,7 @@ def test_chat_prompt_keeps_its_run_control_accent() -> None:
     assert isinstance(container, VSplit)
     accent, content = container.children
     assert isinstance(accent, Window)
-    assert accent.width == 1
+    assert callable(accent.width) and cast(Callable[[], int], accent.width)() == 1
     assert accent.style == "class:control.run"
     assert accent.char == rendering.ACCENT_CELL
     assert widgets._chat_ui_palette()["control.run"] == "bg:ansibrightcyan"
@@ -1511,13 +1523,19 @@ def test_chat_prompt_keeps_its_run_control_accent() -> None:
     assert isinstance(input_row, VSplit)
     left_padding = input_row.children[0]
     assert isinstance(left_padding, Window)
-    assert left_padding.width == 1
+    assert (
+        callable(left_padding.width)
+        and cast(Callable[[], int], left_padding.width)() == 1
+    )
     input_window = input_row.children[1]
     assert isinstance(input_window, Window)
     assert isinstance(input_window.content, BufferControl)
     right_padding = input_row.children[2]
     assert isinstance(right_padding, Window)
-    assert right_padding.width == 1
+    assert (
+        callable(right_padding.width)
+        and cast(Callable[[], int], right_padding.width)() == 2
+    )
     assert right_padding.style == "class:input"
     assert right_padding.char == " "
     assert input_window.content.input_processors is not None
@@ -2092,10 +2110,10 @@ def test_chat_prompt_grows_for_wrapped_input(
     monkeypatch.setattr(widgets, "get_app", lambda: SimpleNamespace(output=output))
     prompt = widgets.PromptBox(lambda _event: None, lambda: None)
 
-    prompt.buffer.text = "123456"
+    prompt.buffer.text = "12345"
     assert prompt.rows() == 3
 
-    prompt.buffer.text = "1234567"
+    prompt.buffer.text = "123456"
     assert prompt.rows() == 4
 
     prompt.buffer.text = "中文中文"
@@ -2452,7 +2470,7 @@ def test_chat_queue_eight_entry_limit_adapts_to_available_height(
             assert f"[{11 - entry_count}]" in lines[top + 1]
             assert "[10]" in lines[top + entry_count]
             assert lines[bottom].endswith("tab input")
-            assert "Ask or describe a task" in lines[bottom + 2]
+            assert "Ask or describe a task"[: columns - 5] in lines[bottom + 2]
             assert "agic:chat" in lines[bottom + 4]
 
     asyncio.run(exercise())
@@ -2543,7 +2561,7 @@ def test_chat_widgets_share_output_width_after_resize(
                 output.columns = columns
                 screen = _render_chat_layout(app)
                 lines = _screen_lines(screen, columns)
-                input_width = columns - 3
+                input_width = columns - 4
                 assert app.prompt.rows() == (79 + input_width) // input_width + 2
                 assert app.queue_panel.width() == columns
                 assert lines[-1].endswith("openai/gpt-5")
@@ -3928,6 +3946,7 @@ def test_chat_tui_meta_enter_steers_literal_input_and_accepts_the_draft() -> Non
             run_id: str,
             message: str,
             on_error: Callable[[str], None],
+            on_control: Callable[[ControlInfo], None] | None = None,
         ) -> None:
             del on_error
             calls.append((run_id, message))
@@ -4014,6 +4033,7 @@ def test_chat_tui_queue_panel_steers_and_removes_only_after_local_acceptance() -
             run_id: str,
             message: str,
             on_error: Callable[[str], None],
+            on_control: Callable[[ControlInfo], None] | None = None,
         ) -> None:
             del run_id, message, on_error
             steered.set()
@@ -5446,8 +5466,7 @@ class FakeApp:
         return "thread_1"
 
     def finalize_block(self, block: blocks.MutableBlock) -> None:
-        if block in self.live_blocks:
-            self.live_blocks.remove(block)
+        self.live_blocks[:] = [item for item in self.live_blocks if item is not block]
         self.finalized.append(block)
 
     def finish_run(self) -> None:
@@ -5587,5 +5606,441 @@ class FakeClient(ChatClient):
         run_id: str,
         message: str,
         on_error: Callable[[str], None],
+        on_control: Callable[[ControlInfo], None] | None = None,
     ) -> None:
         del run_id, message, on_error
+
+
+def _steer_control(index: int, *, run_id: str = "run_1") -> ControlInfo:
+    return ControlInfo(
+        run_id=run_id,
+        index=index,
+        kind="steer",
+        timing="next_step",
+        request_id=f"request_{index}",
+        status="pending",
+        payload=SteerControlPayload((_parts(*Message.user("adjust").parts),)),
+        error=None,
+        created_at="2026-01-01T00:00:01Z",
+        finished_at=None,
+    )
+
+
+def _submit_test_steer(
+    app: FakeApp, key: str, message: str = "adjust"
+) -> blocks.RunSteerBlock:
+    block = blocks.RunSteerBlock.create(message=message, run_id="run_1", max_width=60)
+    app.presenter.add_steer(key, block, app)
+    return block
+
+
+def _steer_feedback(app: FakeApp) -> str:
+    return "".join(
+        _render_text(block.render())
+        for block in app.live_blocks
+        if isinstance(block, blocks.SteerFeedbackBlock)
+    )
+
+
+def test_chat_steers_match_receipts_and_consumption_without_changing_accents() -> None:
+    app = FakeApp()
+    events.handle_run_event(_run_begin(), app)
+    events.handle_run_event(_model_step_begin(), app)
+    steers = [_submit_test_steer(app, str(i), "identical") for i in range(3)]
+    before = [_render_text(s.render()) for s in steers]
+    assert _steer_feedback(app).strip() == "• Sending 3 steers"
+    for i in (2, 0):
+        app.presenter.handle_steer_receipt(
+            SteerReceipt(str(i), "run_1", _steer_control(i + 1)), app
+        )
+    assert (
+        _steer_feedback(app).strip()
+        == "• 2 steers will apply after the current step · sending 1 more"
+    )
+    assert [b for b in app.live_blocks if isinstance(b, blocks.RunSteerBlock)] == steers
+    app.presenter.handle_steer_receipt(
+        SteerReceipt("1", "run_1", _steer_control(2)), app
+    )
+    events.handle_run_event(_model_step_begin(run_id="run_child"), app)
+    events.handle_run_event(_tool_step_begin(step_index=2), app)
+    assert all(s in app.live_blocks for s in steers)
+    assert (
+        _steer_feedback(app).strip() == "• 3 steers will apply after the current step"
+    )
+    events.handle_run_event(
+        replace(
+            _model_step_begin(step_index=3),
+            preceded_by=(
+                ControlRef.for_run("run_1", 1),
+                ControlRef.for_run("run_1", 3),
+            ),
+        ),
+        app,
+    )
+    assert any(b is steers[0] for b in app.finalized)
+    assert any(b is steers[2] for b in app.finalized)
+    assert any(b is steers[1] for b in app.live_blocks)
+    assert _steer_feedback(app).strip() == "• 1 steer will apply after the current step"
+    events.handle_run_event(
+        replace(
+            _model_step_begin(step_index=4),
+            preceded_by=(ControlRef.for_run("run_1", 2),),
+        ),
+        app,
+    )
+    assert not _steer_feedback(app)
+    assert [_render_text(s.render()) for s in steers] == before
+    assert [s for s in app.finalized if isinstance(s, blocks.RunSteerBlock)] == [
+        steers[0],
+        steers[2],
+        steers[1],
+    ]
+
+
+def test_chat_steer_consumption_before_receipt_and_replay_are_idempotent() -> None:
+    app = FakeApp()
+    events.handle_run_event(_run_begin(), app)
+    steer = _submit_test_steer(app, "early")
+    consumed = replace(
+        _model_step_begin(), preceded_by=(ControlRef.for_run("run_1", 8),)
+    )
+    events.handle_run_event(consumed, app)
+    assert steer in app.live_blocks
+    receipt = SteerReceipt("early", "run_1", _steer_control(8))
+    app.presenter.handle_steer_receipt(receipt, app)
+    events.handle_run_event(consumed, app)
+    app.presenter.handle_steer_receipt(receipt, app)
+    assert sum(b is steer for b in app.finalized) == 1
+    assert not _steer_feedback(app)
+
+
+@pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
+@pytest.mark.parametrize("disconnected", [False, True])
+def test_chat_terminal_steer_labels_require_known_non_adoption(
+    status: Any, disconnected: bool
+) -> None:
+    app = FakeApp()
+    events.handle_run_event(_run_begin(), app)
+    accepted = _submit_test_steer(app, "accepted")
+    sending = _submit_test_steer(app, "sending")
+    app.presenter.handle_steer_receipt(
+        SteerReceipt("accepted", "run_1", _steer_control(1)), app
+    )
+    assert (
+        _steer_feedback(app).strip()
+        == "• 1 steer waiting for the next model call · sending 1 more"
+    )
+    if disconnected:
+        app.presenter.mark_disconnected()
+    events.handle_run_event(_run_end(status=status), app)
+    assert accepted.not_applied is not disconnected
+    assert not sending.not_applied
+    assert not _steer_feedback(app)
+    assert "Steer not applied" not in "".join(
+        _render_text(b.render()) for b in app.finalized
+    )
+    events.handle_run_event(_run_begin(run_id="run_next"), app)
+    app.presenter.handle_steer_receipt(
+        SteerReceipt("sending", "run_1", _steer_control(2)), app
+    )
+    assert not app.presenter.handle_steer_error(
+        SteerError("sending", "run_1", "late"), app
+    )
+    assert not _steer_feedback(app)
+
+
+def test_chat_failed_steer_keeps_message_with_error_and_updates_count() -> None:
+    app = FakeApp()
+    events.handle_run_event(_run_begin(), app)
+    failed = _submit_test_steer(app, "failed", "original message")
+    _submit_test_steer(app, "pending", "different message")
+    error = SteerError("failed", "run_1", "connection lost")
+    assert app.presenter.handle_steer_error(error, app)
+    assert not app.presenter.handle_steer_error(error, app)
+    assert app.finalized[-2] is failed
+    assert isinstance(app.finalized[-1], blocks.SubmissionErrorBlock)
+    assert "connection lost" in _render_text(app.finalized[-1].render())
+    assert not failed.not_applied
+    assert _steer_feedback(app).strip() == "• Sending 1 steer"
+
+
+@pytest.mark.parametrize(
+    "control_status", ["applied", "wontapply", "revoked", "pending"]
+)
+def test_chat_recovered_controls_determine_terminal_corner(control_status: Any) -> None:
+    app = FakeApp()
+    events.handle_run_event(_run_begin(), app)
+    steer = _submit_test_steer(app, "recover")
+    receipt = _steer_control(1)
+    app.presenter.handle_steer_receipt(SteerReceipt("recover", "run_1", receipt), app)
+    detail = RunDetail(
+        id="run_1",
+        parent=None,
+        thread_id="term_1",
+        root_run_id="run_1",
+        runnable_kind="agic",
+        runnable_name="chat",
+        call_kind="top",
+        state=RunControlRefData(run="run_1", index=0),
+        occurrence=None,
+        input_text="hello",
+        summary="done",
+        status="canceled",
+        error=None,
+        created_at="2026-01-01T00:00:00Z",
+        started_at="2026-01-01T00:00:00Z",
+        finished_at="2026-01-01T00:00:03Z",
+        updated_at="2026-01-01T00:00:03Z",
+        control=RunControlRefData(run="run_1", index=0),
+        output=None,
+        controls=[replace(receipt, status=control_status)],
+        steps=[],
+    )
+    assert app.presenter.handle_recovered(app, detail)
+    assert steer.not_applied is (control_status != "applied")
+    assert not _steer_feedback(app)
+    assert sum(b is steer for b in app.finalized) == 1
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        None,
+        ModelRequest("openai/gpt-5"),
+        ModelRequest(
+            "openai/gpt-5",
+            ModelParameters(reasoning=ReasoningParameters(effort="high")),
+        ),
+        ModelRequest(
+            "test/model",
+            ModelParameters(reasoning=ReasoningParameters(budget_tokens=4096)),
+        ),
+    ],
+)
+def test_chat_root_context_uses_request_and_authoritative_runnable(
+    model: ModelRequest | None,
+) -> None:
+    request = RunRequest(
+        thread_id="term_1",
+        request_id="one",
+        runnable=RunnableRequest("agic:provisional", RunnableInputRaw(_="hello")),
+        model=model,
+        policy=RunPolicy(),
+    )
+    block = blocks.RunControlBlock.create("hello", request=request)
+    block.update(_run_begin(runnable_name="research"))
+    expected = "agic:research · " + (
+        slashes.model_status_label(model) if model else "model unspecified"
+    )
+    lines = _render_text(block.render(), width=80).splitlines()
+    assert len(lines) == 3
+    assert lines[-1].strip() == expected
+    assert lines[-1].endswith(expected + "  ")
+    assert lines[1].strip() == "hello"
+    segments = rendering.render_segments(block.render(), width=80)
+    annotation = next(s for s in segments if expected in s.text)
+    assert annotation.style is not None and annotation.style.dim
+
+
+@pytest.mark.parametrize("width", [8, 20, 40, 80])
+def test_chat_context_and_steer_corners_fit_without_losing_padding(width: int) -> None:
+    request = RunRequest(
+        thread_id="term_1",
+        request_id="one",
+        runnable=RunnableRequest(
+            "agic:研究研究研究研究研究", RunnableInputRaw(_="hello")
+        ),
+        model=ModelRequest(
+            "provider/a-very-long-model",
+            ModelParameters(reasoning=ReasoningParameters(effort="high")),
+        ),
+        policy=RunPolicy(),
+    )
+    block = blocks.RunControlBlock.create("ab\ncd\nef", request=request)
+    lines = _render_text(block.render(), width=width).splitlines()
+    assert len(lines) == 5
+    assert all(get_cwidth(line) == width for line in lines)
+    assert not lines[0].strip()
+    assert all(line.endswith("  ") for line in lines)
+    if width >= 20:
+        assert lines[-1].endswith(" · high  ")
+    steer = blocks.RunSteerBlock.create(message="hello", run_id="run_1", max_width=40)
+    before = rendering.render_segments(steer.render(), width=width)
+    steer.not_applied = True
+    after = rendering.render_segments(steer.render(), width=width)
+
+    def accents(segments: list[Segment]) -> list[object]:
+        return [
+            s.style
+            for s in segments
+            if s.text == rendering.ACCENT_CELL
+            and s.style
+            and s.style.bgcolor
+            and s.style.bgcolor.get_truecolor().hex == rendering.STEER_CONTROL_ACCENT
+        ]
+
+    assert accents(before) == accents(after)
+    assert _render_text(steer.render(), width=width).splitlines()[-1].endswith("  ")
+    if width >= 20:
+        assert (
+            _render_text(steer.render(), width=width)
+            .splitlines()[-1]
+            .endswith("not applied  ")
+        )
+
+
+def test_chat_steer_feedback_wraps_after_the_marker() -> None:
+    feedback = blocks.SteerFeedbackBlock(accepted=3, active_step=True, max_width=30)
+    lines = _render_text(feedback.render(), width=30).splitlines()
+    assert lines[0].startswith("• ")
+    assert all(line.startswith("  ") for line in lines[1:])
+    assert all(get_cwidth(line) <= 28 for line in lines)
+    assert (
+        " ".join(line[2:] for line in lines)
+        == "3 steers will apply after the current step"
+    )
+
+
+@pytest.mark.parametrize("focused", [False, True])
+def test_chat_short_live_view_keeps_steer_feedback_and_queue_focus(
+    focused: bool,
+) -> None:
+    async def exercise() -> None:
+        async with _queue_test_app() as (app, output):
+            output.rows = 12
+            output.columns = 80
+            if focused:
+                app.app.layout.focus(app.queue_panel.view)
+            original_focus = app.app.layout.current_control
+            presenter = app.app_context.get_presenter()
+            for i in range(3):
+                presenter.add_steer(
+                    str(i),
+                    blocks.RunSteerBlock.create(
+                        message="long\n" * 8, run_id="run_busy"
+                    ),
+                    app.app_context,
+                )
+                presenter.handle_steer_receipt(
+                    SteerReceipt(
+                        str(i), "run_busy", _steer_control(i + 1, run_id="run_busy")
+                    ),
+                    app.app_context,
+                )
+            app.prompt.buffer.text = "draft\n" * 8
+            lines = _screen_lines(_render_chat_layout(app), output.columns)
+            assert any(
+                "• 3 steers waiting for the next model call" in line for line in lines
+            )
+            assert any("items queued" in line for line in lines)
+            assert any("draft" in line for line in lines)
+            assert app.app.layout.current_control is original_focus
+
+    asyncio.run(exercise())
+
+
+def test_chat_queued_root_context_survives_new_defaults_and_run_transition() -> None:
+    app = tui.ChatTuiApp(
+        thread_id="term_1",
+        setting=FakeClient().initial_setting(),
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+
+    def call(name: str, effort: Literal["low", "high"]) -> QueuedCall:
+        return QueuedCall(
+            f":agic {name} :model openai/gpt-5 effort={effort} hello",
+            RunRequest(
+                thread_id="term_1",
+                request_id=name,
+                runnable=RunnableRequest(f"agic:{name}", RunnableInputRaw(_="hello")),
+                model=ModelRequest(
+                    "openai/gpt-5",
+                    ModelParameters(reasoning=ReasoningParameters(effort=effort)),
+                ),
+                policy=RunPolicy(),
+            ),
+        )
+
+    app.submit_run(call("first", "low"))
+    first = next(
+        b for b in app.unfinalized_blocks if isinstance(b, blocks.RunControlBlock)
+    )
+    app.handle_run_event(_run_begin(runnable_name="resolved-first"))
+    app.queue.append(call("queued", "high"))
+    app.setting = SessionSetting(model=ModelRequest("new/default"), runnable="agic:new")
+    app.handle_run_event(_run_end(status="succeeded"))
+    second = next(
+        b for b in app.unfinalized_blocks if isinstance(b, blocks.RunControlBlock)
+    )
+    assert "agic:resolved-first · openai/gpt-5 · low" in _render_text(first.render())
+    assert "agic:queued · openai/gpt-5 · high" in _render_text(second.render())
+    app.handle_run_event(_run_begin(run_id="run_next", runnable_name="resolved-queued"))
+    assert "agic:resolved-queued · openai/gpt-5 · high" in _render_text(second.render())
+    assert "new/default" not in _render_text(first.render()) + _render_text(
+        second.render()
+    )
+
+
+@pytest.mark.parametrize("width", [20, 40])
+def test_chat_live_clipping_preserves_the_entire_wrapped_steer_feedback(
+    width: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        async with _queue_test_app() as (app, output):
+            output.rows = 12
+            output.columns = width
+            monkeypatch.setattr(rendering, "terminal_width", lambda: width)
+            presenter = app.app_context.get_presenter()
+            presenter.add_steer(
+                "key",
+                blocks.RunSteerBlock.create(message="long\n" * 8, run_id="run_busy"),
+                app.app_context,
+            )
+            presenter.handle_steer_receipt(
+                SteerReceipt("key", "run_busy", _steer_control(1, run_id="run_busy")),
+                app.app_context,
+            )
+            app.prompt.buffer.text = "draft\n" * 8
+            fragments = "".join(part[1] for part in app._live_fragments())
+            feedback = next(
+                b
+                for b in app.unfinalized_blocks
+                if isinstance(b, blocks.SteerFeedbackBlock)
+            )
+            expected = _render_text(feedback.render(), width=width).strip()
+            assert expected in fragments
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("width", [1, 2, 3, 4, 5])
+def test_chat_extremely_narrow_controls_retain_a_body_cell(
+    width: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = _TerminalOutput()
+    output.columns = width
+    monkeypatch.setattr(widgets, "get_app", lambda: SimpleNamespace(output=output))
+    prompt = widgets.PromptBox(lambda _event: None, lambda: None)
+    accent, content = prompt.container().children
+    assert isinstance(accent, Window) and callable(accent.width)
+    assert isinstance(content, HSplit)
+    row = content.children[1]
+    assert isinstance(row, VSplit)
+    left, _, right = row.children
+    assert isinstance(left, Window) and callable(left.width)
+    assert isinstance(right, Window) and callable(right.width)
+    assert (
+        width
+        - cast(Callable[[], int], accent.width)()
+        - cast(Callable[[], int], left.width)()
+        - cast(Callable[[], int], right.width)()
+        >= 1
+    )
+    lines = _render_text(
+        blocks.RunControlBlock.create("abc").render(), width=width
+    ).splitlines()
+    assert not lines[0].strip() and not lines[-1].strip()
+    assert all(get_cwidth(line) == width for line in lines)
+    assert "".join(line.strip() for line in lines) == "abc"

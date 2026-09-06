@@ -906,3 +906,69 @@ def test_remote_chat_blocks_ambiguous_pre_acceptance_failure() -> None:
     assert all(isinstance(item, RunBlocked) for item in states)
     assert errors == []
     assert "private transport detail" not in states[0].message
+
+
+@pytest.mark.parametrize("failure", [None, "rejected", "transport"])
+def test_remote_chat_steer_delivers_receipt_or_error_once(failure: str | None) -> None:
+    from toolang.execution.records import SteerControlPayload
+    from toolang.execution.schemas import ControlInfo
+
+    control = ControlInfo(
+        run_id="run_remote",
+        index=7,
+        kind="steer",
+        timing="next_step",
+        request_id="request_steer",
+        status="pending",
+        payload=SteerControlPayload(()),
+        error=None,
+        created_at="2026-01-01T00:00:01Z",
+        finished_at=None,
+    )
+    requests: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/healthz":
+            return httpx.Response(200, json={"ok": True})
+        if path == "/api/v1/profile":
+            return httpx.Response(200, json=_profile())
+        if path == "/api/v1/runs/defaults":
+            return httpx.Response(200, json=_run_defaults())
+        if path == "/api/v1/models":
+            return httpx.Response(200, json=_models())
+        if path == "/api/v1/runs/run_remote/steer":
+            requests.append(json.loads(request.content))
+            if failure == "transport":
+                raise httpx.ReadError("receipt lost")
+            if failure == "rejected":
+                return httpx.Response(409, json={"detail": "run ended"})
+            return httpx.Response(
+                200,
+                json={
+                    "command": TypeAdapter(ControlInfo).dump_python(
+                        control, mode="json"
+                    )
+                },
+            )
+        raise AssertionError(path)
+
+    session = remote.RemoteChatSession(
+        "http://runtime.test:7001",
+        expected_sandbox="host",
+        transport=httpx.MockTransport(handler),
+    )
+    receipts: list[ControlInfo] = []
+    errors: list[str] = []
+    try:
+        session.steer("run_remote", "literal /help", errors.append, receipts.append)
+        assert len(requests) == 1
+        assert requests[0]["mode"] == "next_step"
+        if failure:
+            assert not receipts
+            assert len(errors) == 1
+        else:
+            assert receipts == [control]
+            assert not errors
+    finally:
+        session.close()

@@ -28,7 +28,7 @@ from toolang.cli.toolang.commands.chat.base import (
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEnd, RunEvent, StepEnd
 from toolang.execution.policy import apply_session_setting
-from toolang.execution.schemas import RunRequest, RunnableRequest
+from toolang.execution.schemas import ControlInfo, RunRequest, RunnableRequest
 from toolang.execution.types import (
     ErrorMessage,
     Local,
@@ -162,8 +162,9 @@ class _Client:
         run_id: str,
         message: str,
         on_error: Callable[[str], None],
+        on_control: Callable[[ControlInfo], None] | None = None,
     ) -> None:
-        del run_id, message, on_error
+        del run_id, message, on_error, on_control
 
 
 class _FailedRunClient(_Client):

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 from toolang.base.types.message import Part
 from toolang.execution.events import RunEvent
 from toolang.execution.records import execution_error_message
-from toolang.execution.schemas import RunDetail, RunRequest
+from toolang.execution.schemas import ControlInfo, RunDetail, RunRequest
 from toolang.execution.types import (
     ErrorMessage,
     ErrorRef,
@@ -72,6 +72,24 @@ class RunBlocked:
 
 
 ChatRunState: TypeAlias = RunAccepted | RunDisconnected | RunRecovered | RunBlocked
+
+
+@dataclass(frozen=True, slots=True)
+class SteerReceipt:
+    """A durable control receipt correlated with one local submission."""
+
+    submission_id: str
+    run_id: str
+    control: ControlInfo
+
+
+@dataclass(frozen=True, slots=True)
+class SteerError:
+    """A control failure correlated with its original message."""
+
+    submission_id: str
+    run_id: str
+    message: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +186,7 @@ class ChatClient(Protocol):
         run_id: str,
         message: str,
         on_error: Callable[[str], None],
+        on_control: Callable[[ControlInfo], None] | None = None,
     ) -> None: ...
 
 

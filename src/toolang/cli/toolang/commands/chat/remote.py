@@ -30,7 +30,7 @@ from toolang.cli.common.remote_runtime import (
 from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.runnables import parse_runnable_ref
-from toolang.execution.schemas import RunDetail, RunRequest, ThreadInfo
+from toolang.execution.schemas import ControlInfo, RunDetail, RunRequest, ThreadInfo
 from toolang.execution.types import RunOverride, SessionSetting
 from toolang.lang.input import RunnableInputRaw
 from toolang.execution.values import parts_from_local
@@ -264,6 +264,7 @@ class RemoteChatSession:
         run_id: str,
         message: str,
         on_error: Callable[[str], None],
+        on_control: Callable[[ControlInfo], None] | None = None,
     ) -> None:
         run_client = self._run_client()
         self._submit_control(
@@ -274,6 +275,7 @@ class RemoteChatSession:
                 request_id=f"term_{uuid4().hex}",
             ),
             on_error,
+            on_control,
         )
 
     def close(self) -> None:
@@ -806,6 +808,7 @@ class RemoteChatSession:
         self,
         coroutine: Coroutine[Any, Any, Any],
         on_error: Callable[[str], None],
+        on_control: Callable[[ControlInfo], None] | None = None,
     ) -> None:
         try:
             future = self._submit(coroutine)
@@ -814,10 +817,10 @@ class RemoteChatSession:
             return
         if threading.current_thread() is self._thread:
             future.add_done_callback(
-                lambda completed: _finish_control(completed, on_error)
+                lambda completed: _finish_control(completed, on_error, on_control)
             )
             return
-        _finish_control(future, on_error)
+        _finish_control(future, on_error, on_control)
 
     def _submit(
         self,
@@ -1050,11 +1053,15 @@ def _error_message(exc: Exception) -> str:
 def _finish_control(
     future: Future[Any],
     on_error: Callable[[str], None],
+    on_control: Callable[[ControlInfo], None] | None = None,
 ) -> None:
     try:
-        future.result()
+        control = future.result()
     except Exception as exc:
         on_error(_error_message(exc))
+        return
+    if on_control is not None:
+        on_control(control)
 
 
 def _close_event_loop(loop: asyncio.AbstractEventLoop) -> None:

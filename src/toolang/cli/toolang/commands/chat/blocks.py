@@ -19,6 +19,7 @@ from toolang.base.types.message import Part
 from toolang.cli.common.output import toolang_logo, toolang_logo_text
 from toolang.cli.common.terminal_surfaces import DARK_TERMINAL_SURFACES
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
+from toolang.execution.schemas import RunRequest
 from toolang.execution.types import ErrorMessage, ErrorRef
 
 from toolang.cli.common.execution_progress import ProgressBlock
@@ -55,6 +56,7 @@ from .slashes import (
     SlashHelpRow,
     SlashTable,
     help_column_widths,
+    model_reasoning_value,
 )
 from .tables import table_lines
 
@@ -101,18 +103,29 @@ def _control_bar_line(
     accent: str,
     input_background: str,
     width: int | None = None,
+    corner: str = "",
 ) -> Text:
-    return bar(
+    output_width = width or terminal_width()
+    left = min(2, max(0, output_width - 1))
+    right = min(2, max(0, output_width - left - 1))
+    line = bar(
         [
-            (ACCENT_CELL, f"not dim on {accent}"),
+            (ACCENT_CELL if left else "", f"not dim on {accent}"),
             (
-                f" {content}" if content else "",
+                " " * max(0, left - 1) + content if content else "",
                 f"not dim on {input_background}",
             ),
         ],
         style=f"not dim on {input_background}",
-        width=width,
+        width=output_width,
     )
+    if corner:
+        corner = truncate(corner, max(0, output_width - left - right))
+        start = output_width - right - display_width(corner)
+        line = line[:start]
+        line.append(corner, f"dim on {input_background}")
+        line.append(" " * right, f"not dim on {input_background}")
+    return line
 
 
 def _control_bar_lines(
@@ -121,9 +134,10 @@ def _control_bar_lines(
     accent: str,
     input_background: str,
     width: int | None = None,
+    corner: str = "",
 ) -> list[RenderableType]:
     output_width = width or terminal_width()
-    content_width = max(1, output_width - 2)
+    content_width = max(1, output_width - 4)
     wrapped_lines = [
         wrapped_line
         for line in message.splitlines() or [""]
@@ -138,28 +152,33 @@ def _control_bar_lines(
         )
         for line in wrapped_lines
     ]
-    padding_count = max(0, 3 - len(lines))
-    top_padding_count = (padding_count + 1) // 2
-    bottom_padding_count = padding_count - top_padding_count
     return [
-        *(
-            _control_bar_line(
-                accent=accent,
-                input_background=input_background,
-                width=output_width,
-            )
-            for _ in range(top_padding_count)
+        _control_bar_line(
+            accent=accent,
+            input_background=input_background,
+            width=output_width,
         ),
         *lines,
-        *(
-            _control_bar_line(
-                accent=accent,
-                input_background=input_background,
-                width=output_width,
-            )
-            for _ in range(bottom_padding_count)
+        _control_bar_line(
+            accent=accent,
+            input_background=input_background,
+            width=output_width,
+            corner=corner,
         ),
     ]
+
+
+def _run_context(runnable: str, model: str, reasoning: str, width: int) -> str:
+    """Fit snapshot fields, shortening the runnable before the model."""
+
+    fields = [runnable, model, *([reasoning] if reasoning else [])]
+    widths = [display_width(value) for value in fields]
+    overflow = max(0, sum(widths) + 3 * (len(fields) - 1) - width)
+    for index, size in enumerate(widths):
+        reduction = min(max(0, size - 1), overflow)
+        widths[index] -= reduction
+        overflow -= reduction
+    return truncate(" · ".join(truncate(v, w) for v, w in zip(fields, widths)), width)
 
 
 def _slash_control_lines(
@@ -228,6 +247,9 @@ class RunControlBlock(MutableBlock):
 
     message: str
     input_background: str = DARK_TERMINAL_SURFACES.input_background
+    runnable: str = ""
+    model: str = ""
+    reasoning: str = ""
 
     @classmethod
     def create(
@@ -235,20 +257,47 @@ class RunControlBlock(MutableBlock):
         message: str,
         *,
         input_background: str = DARK_TERMINAL_SURFACES.input_background,
+        request: RunRequest | None = None,
     ) -> RunControlBlock:
-        return cls(message=message, input_background=input_background)
+        return cls(
+            message=message,
+            input_background=input_background,
+            runnable=request.runnable.ref if request else "",
+            model=(request.model.ref if request.model else "model unspecified")
+            if request
+            else "",
+            reasoning=(model_reasoning_value(request.model) or "")
+            if request and request.model
+            else "",
+        )
 
     def update(self, event: RunEvent) -> None:
-        del event
+        if isinstance(event, RunBegin) and event.parent is None and event.runnable:
+            self.runnable = event.runnable
 
     def render(self) -> RenderableType:
-        return Group(
-            *_control_bar_lines(
-                self.message,
-                accent=RUN_CONTROL_ACCENT,
-                input_background=self.input_background,
+        return self
+
+    def __rich_console__(
+        self, console: Console, options: ConsoleOptions
+    ) -> RenderResult:
+        width = max(1, options.max_width)
+        yield from console.render(
+            Group(
+                *_control_bar_lines(
+                    self.message,
+                    accent=RUN_CONTROL_ACCENT,
+                    input_background=self.input_background,
+                    width=width,
+                    corner=_run_context(
+                        self.runnable, self.model, self.reasoning, max(1, width - 4)
+                    )
+                    if self.model
+                    else "",
+                ),
+                Text(),
             ),
-            Text(),
+            options,
         )
 
 
@@ -274,13 +323,52 @@ class SubmissionErrorBlock(MutableBlock):
 
 
 @dataclass(slots=True)
+class SteerFeedbackBlock(MutableBlock):
+    """One replaceable aggregate explanation below pending steer bars."""
+
+    accepted: int = 0
+    sending: int = 0
+    active_step: bool = False
+    max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
+
+    @property
+    def message(self) -> str:
+        if not self.accepted:
+            return f"Sending {self.sending} steer{'s' if self.sending != 1 else ''}"
+        count = f"{self.accepted} steer{'s' if self.accepted != 1 else ''}"
+        timing = (
+            "will apply after the current step"
+            if self.active_step
+            else "waiting for the next model call"
+        )
+        suffix = f" · sending {self.sending} more" if self.sending else ""
+        return f"{count} {timing}{suffix}"
+
+    def render(self) -> RenderableType:
+        return self
+
+    def __rich_console__(
+        self, console: Console, options: ConsoleOptions
+    ) -> RenderResult:
+        width = max(1, min(options.max_width, self.max_width))
+        lines = wrap_display(self.message, max(1, width - 4))
+        yield Text(
+            "\n".join(
+                ("• " if index == 0 else "  ") + line
+                for index, line in enumerate(lines)
+            )
+        )
+
+
+@dataclass(slots=True)
 class RunSteerBlock(MutableBlock):
-    """Created by a local steer and moved by the next Step or Run end."""
+    """An independent steer bar, committed on matched adoption or Run end."""
 
     message: str
     run_id: str = ""
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
     input_background: str = DARK_TERMINAL_SURFACES.input_background
+    not_applied: bool = False
 
     @classmethod
     def create(
@@ -318,6 +406,7 @@ class RunSteerBlock(MutableBlock):
                     accent=STEER_CONTROL_ACCENT,
                     input_background=self.input_background,
                     width=width,
+                    corner="not applied" if self.not_applied else "",
                 ),
                 Text(),
             ),

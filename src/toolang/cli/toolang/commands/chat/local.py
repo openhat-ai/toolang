@@ -38,7 +38,7 @@ from toolang.plugin.models.resolution import (
 from toolang.plugin.toolsets.collections import tool_dataset
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.schemas import RunRequest
+from toolang.execution.schemas import ControlInfo, RunRequest
 from toolang.execution.types import RunOverride, SessionSetting, ThreadPrefix
 from toolang.lang.input import RunnableInputRaw
 from toolang.plugin.sandboxes.host import host_sandbox_description
@@ -413,6 +413,7 @@ class LocalChatSession:
         run_id: str,
         message: str,
         on_error: Callable[[str], None],
+        on_control: Callable[[ControlInfo], None] | None = None,
     ) -> None:
         self._submit_control(
             self.run_client.steer(
@@ -422,6 +423,7 @@ class LocalChatSession:
                 request_id=f"term_{uuid4().hex}",
             ),
             on_error,
+            on_control,
         )
 
     def close(self) -> None:
@@ -522,6 +524,7 @@ class LocalChatSession:
         self,
         coroutine: Coroutine[Any, Any, Any],
         on_error: Callable[[str], None],
+        on_control: Callable[[ControlInfo], None] | None = None,
     ) -> None:
         try:
             future = self._submit(coroutine)
@@ -530,10 +533,10 @@ class LocalChatSession:
             return
         if threading.current_thread() is self._thread:
             future.add_done_callback(
-                lambda completed: _finish_control(completed, on_error)
+                lambda completed: _finish_control(completed, on_error, on_control)
             )
             return
-        _finish_control(future, on_error)
+        _finish_control(future, on_error, on_control)
 
     def _submit(
         self,
@@ -594,8 +597,12 @@ def _error_message(exc: Exception) -> str:
 def _finish_control(
     future: Future[Any],
     on_error: Callable[[str], None],
+    on_control: Callable[[ControlInfo], None] | None = None,
 ) -> None:
     try:
-        future.result()
+        control = future.result()
     except Exception as exc:
         on_error(_error_message(exc))
+        return
+    if on_control is not None:
+        on_control(control)
