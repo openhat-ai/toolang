@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import json
 import logging
 from collections.abc import Callable, Mapping
@@ -12,7 +12,7 @@ import time
 from typing import TYPE_CHECKING
 
 from toolang.base.protocols.tool import AgentTool
-from toolang.base.types.message import Message, ToolResultPart
+from toolang.base.types.message import ToolResultPart
 from toolang.base.types.run import ToolCall, ToolCallResult
 from toolang.base.types.tool import ToolContext, ToolService
 from toolang.base.errors import ToolFailure
@@ -32,6 +32,7 @@ from ...types import (
     StepRef,
     ToolStepGiven,
     ToolStepNoted,
+    StepStatus,
 )
 from ..common import _StepFailed
 from ..diagnostics import log_tool_call_input, log_tool_call_output
@@ -187,8 +188,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         raise
     except Exception as exc:
         error = str(exc) or type(exc).__name__
-        await _end(
-            state,
+        await state.end_step(
             StepEnd(
                 step=StepRef.from_local(run.run_id, (step_index,)),
                 kind="tool",
@@ -197,6 +197,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
                 error=ErrorMessage(error),
                 finished_at=utc_now(),
             ),
+            canceled_noted=ToolStepNoted(summary="canceled"),
         )
         _LOGGER.error(
             "Step failed thread=%s run=%s step=%s kind=tool tool=%s error=%r duration_ms=%s",
@@ -256,45 +257,39 @@ async def finish(
 
     output = Local.typed("ToolResultPart", part, None, 0)
     # The result already exists, even if an interrupt prevents its delivery.
-    state.messages.append(Message(role="tool", parts=(part,)))
+    state.messages.append_ref(
+        "tool", FieldRef.from_path(step, "output", "value"), output
+    )
     state.last_step = step.index
     end = PartEnd(step=step, part=0, data=part)
     ended = False
+    status: StepStatus = "failed" if part.error is not None else "succeeded"
+    noted = ToolStepNoted(summary=summary if summary is not None else part.tool_name)
+    error = error or (ErrorMessage(part.error) if part.error is not None else None)
     try:
         await state.emit(PartBegin(step=step, part=0, part_type=part.type))
         ended = True
         await state.emit(end)
     except asyncio.CancelledError:
+        status = "canceled"
+        noted = ToolStepNoted(summary=canceled_summary)
+        error = None
         if not ended:
             await state.emit(end)
-        await _end(
-            state,
+        raise
+    finally:
+        await state.end_step(
             StepEnd(
                 step=step,
                 kind="tool",
-                status="canceled",
+                status=status,
                 output=output,
-                noted=ToolStepNoted(summary=canceled_summary),
+                noted=noted,
+                error=error,
                 finished_at=utc_now(),
             ),
+            canceled_noted=ToolStepNoted(summary=canceled_summary),
         )
-        raise
-    await _end(
-        state,
-        StepEnd(
-            step=step,
-            kind="tool",
-            status="failed" if part.error is not None else "succeeded",
-            output=output,
-            noted=ToolStepNoted(
-                summary=summary if summary is not None else part.tool_name
-            ),
-            error=error
-            or (ErrorMessage(part.error) if part.error is not None else None),
-            finished_at=utc_now(),
-        ),
-        canceled_summary=canceled_summary,
-    )
 
 
 async def cancel(
@@ -311,10 +306,13 @@ async def cancel(
     if part is None and state.immediate_steer():
         part = canceled_result(call)
     if part is not None:
-        state.messages.append(Message(role="tool", parts=(part,)))
+        state.messages.append_ref(
+            "tool",
+            FieldRef.from_path(step, "output", "value"),
+            Local.typed("ToolResultPart", part, None, 0),
+        )
         state.last_step = step.index
-    await _end(
-        state,
+    await state.end_step(
         StepEnd(
             step=step,
             kind="tool",
@@ -327,40 +325,6 @@ async def cancel(
             finished_at=utc_now(),
         ),
     )
-
-
-async def _end(
-    state: _AgicState,
-    event: StepEnd,
-    *,
-    canceled_summary: str = "canceled",
-) -> None:
-    """Commit the terminal fact before propagating a delivery interruption."""
-
-    interruption: asyncio.CancelledError | None = None
-    while True:
-        try:
-            await state.emit(event)
-        except asyncio.CancelledError as exc:
-            interruption = exc
-            if state.execution is None:
-                raise
-            record = state.execution.store.get_step(ref=event.step)
-            # Delivery can be interrupted after persistence. Never end it twice.
-            if record is None or record.status != "running":
-                raise
-            if event.status != "canceled":
-                event = replace(
-                    event,
-                    status="canceled",
-                    noted=ToolStepNoted(summary=canceled_summary),
-                    error=None,
-                    finished_at=utc_now(),
-                )
-        else:
-            if interruption is not None:
-                raise interruption
-            return
 
 
 def canceled_result(call: ToolCall) -> ToolResultPart:
@@ -378,7 +342,7 @@ def canceled_result(call: ToolCall) -> ToolResultPart:
 async def skip(state: _AgicState, calls: tuple[ToolCall, ...]) -> None:
     """Record steer-skipped calls without invoking handlers or reserving budget."""
 
-    message_start = len(state.messages)
+    message_start = len(state.messages.pending)
     inputs: list[FieldRef] = []
     control = (
         next(
@@ -439,16 +403,7 @@ async def skip(state: _AgicState, calls: tuple[ToolCall, ...]) -> None:
     if inputs:
         state.next_model_inputs = tuple(inputs)
         # Include begin-interruption results, preserving the batch's message shape.
-        state.messages[message_start:] = [
-            Message(
-                role="tool",
-                parts=tuple(
-                    part
-                    for message in state.messages[message_start:]
-                    for part in message.parts
-                ),
-            )
-        ]
+        state.messages.group_tools(message_start)
 
 
 def _plugin_name(tool: AgentTool | None) -> str:

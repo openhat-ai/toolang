@@ -348,9 +348,17 @@ agic calculate(_: Text) -> Boolean:
             assert connection.execute(
                 "SELECT COUNT(*) FROM model_texts"
             ).fetchone() == (1,)
-            assert connection.execute(
-                "SELECT COUNT(*) FROM model_messages"
-            ).fetchone() == (3,)
+            assert (
+                connection.execute(
+                    "SELECT name FROM sqlite_master WHERE name = 'model_messages'"
+                ).fetchone()
+                is None
+            )
+            assert [
+                len(step.given.call.delta.messages)
+                for step in model_steps
+                if isinstance(step.given, StoredModelStepGiven)
+            ] == [1, 2]
             assert connection.execute(
                 "SELECT COUNT(*) FROM model_toolsets"
             ).fetchone() == (1,)
@@ -360,54 +368,37 @@ agic calculate(_: Text) -> Boolean:
         reopened.close()
 
 
-def test_legacy_stored_model_call_schema_fields_remain_readable() -> None:
-    legacy = stored_step_given_from_data(
+def test_stored_model_call_delta_round_trip() -> None:
+    stored = stored_step_given_from_data(
         "model",
         {
             "model": "test/model",
             "call": {
                 "instructions": "instruction-ref",
-                "messages": [],
+                "delta": {"version": 1, "messages": []},
                 "tools": None,
-                "cont": {"cursor": "legacy"},
+                "output_schema": None,
+                "cont": {"cursor": "saved"},
             },
         },
     )
 
-    assert isinstance(legacy, StoredModelStepGiven)
-    assert legacy.call.output_schema is None
-    assert legacy.call.continuation == {"cursor": "legacy"}
-    assert stored_step_given_to_data("model", legacy)["call"] == {
+    assert isinstance(stored, StoredModelStepGiven)
+    assert stored.call.output_schema is None
+    assert stored.call.continuation == {"cursor": "saved"}
+    assert stored_step_given_to_data("model", stored)["call"] == {
         "instructions": "instruction-ref",
-        "messages": [],
+        "delta": {"version": 1, "messages": []},
         "tools": None,
         "output_schema": None,
-        "cont": {"cursor": "legacy"},
+        "cont": {"cursor": "saved"},
     }
-
-    structured_output_legacy = stored_step_given_from_data(
-        "model",
-        {
-            "model": "test/model",
-            "call": {
-                "instructions": "instruction-ref",
-                "messages": [],
-                "tools": None,
-                "structured_output": {"type": "boolean"},
-                "cont": None,
-            },
-        },
-    )
-
-    assert isinstance(structured_output_legacy, StoredModelStepGiven)
-    assert structured_output_legacy.call.output_schema == {"type": "boolean"}
 
 
 @pytest.mark.parametrize(
     ("table", "column", "error"),
     [
         ("model_texts", "body", "model text is corrupted"),
-        ("model_messages", "data", "model message is corrupted"),
         ("model_toolsets", "data", "model toolset is corrupted"),
     ],
 )
@@ -440,7 +431,6 @@ def test_rebuild_model_call_rejects_corrupted_content_addressed_data(
     ("table", "error"),
     [
         ("model_texts", "model instructions are missing"),
-        ("model_messages", "model message is missing"),
         ("model_toolsets", "model toolset is missing"),
     ],
 )

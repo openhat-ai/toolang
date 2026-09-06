@@ -39,6 +39,7 @@ from toolang.execution.events import RunEvent, StepEnd
 from toolang.execution.executor.common import BoundRun
 from toolang.execution.executor.prepare import _AgicFrame
 from toolang.execution.executor.runs.agic import _AgicState, _execute
+from toolang.execution.executor._messages import _MessageBuffer
 from toolang.execution.tools.runtime import runtime_tools
 from toolang.execution.records import ControlRecord, SteerControlPayload
 from toolang.execution.types import ControlRef, Local
@@ -2837,7 +2838,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
                 steer_before_next_step=lambda: False,
                 immediate_steer=lambda: False,
                 before_call=lambda: None,
-                messages=list(prepared.messages),
+                messages=_MessageBuffer(prepared.messages),
             )
         )
     )
@@ -2881,7 +2882,7 @@ def test_agic_commits_steer_messages_after_step_begin() -> None:
     original_messages = list(prepared.messages)
 
     async def emit(_event: RunEvent) -> None:
-        assert state.messages == original_messages
+        assert state.messages.messages == original_messages
         raise RuntimeError("step begin persistence failed")
 
     state = _AgicState(
@@ -2892,13 +2893,13 @@ def test_agic_commits_steer_messages_after_step_begin() -> None:
         steer_before_next_step=lambda: False,
         immediate_steer=lambda: False,
         before_call=lambda: None,
-        messages=list(original_messages),
+        messages=_MessageBuffer(original_messages),
     )
 
     with pytest.raises(RuntimeError, match="step begin persistence failed"):
         asyncio.run(_execute(state))
 
-    assert state.messages == original_messages
+    assert state.messages.messages == original_messages
     assert provider.requests == []
 
 
@@ -3247,7 +3248,7 @@ def _run_agic(prepared: _AgicFrame) -> Message | None:
                 steer_before_next_step=lambda: False,
                 immediate_steer=lambda: False,
                 before_call=lambda: None,
-                messages=list(prepared.messages),
+                messages=_MessageBuffer(prepared.messages),
             )
         )
     )

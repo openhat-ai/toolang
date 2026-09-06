@@ -10,10 +10,9 @@ from decimal import Decimal
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from toolang.base.types.message import (
-    Message,
     Part,
     PartType,
     TextDelta,
@@ -55,6 +54,7 @@ from ...types import (
 from ..common import _StepFailed, control_local_pointer
 from ..diagnostics import log_model_request, log_model_result, log_model_target
 from ..limits import _ModelAccounting
+from .._messages import _MessageBuffer
 
 if TYPE_CHECKING:
     from ..prepare import _AgicFrame
@@ -100,21 +100,19 @@ async def execute(state: _AgicState) -> ModelCallResult:
     )
     prepared = state.prepared
     request: ModelCall | None = None
-    next_messages: list[Message] | None = None
+    next_messages = state.messages.copy()
 
     def begin_step(
         agent_state: AgentState | StatePublication,
         state_ref: ControlRef,
     ) -> StepBegin:
-        nonlocal prepared, request, next_messages
+        nonlocal prepared, request
         prepared = state.frame_for_step(agent_state, state_ref)
-        next_messages = _messages_with_inputs(
-            prepared.messages if state.last_step is None else state.messages,
-            consumed_inputs,
-        )
+        next_messages.initialize(prepared.messages)
+        _append_inputs(next_messages, consumed_inputs)
         request = ModelCall(
             instructions=_model_instructions(state, prepared),
-            messages=list(next_messages),
+            messages=list(next_messages.messages),
             tools=(
                 _model_tools(prepared)
                 if prepared.model.tools and not state.repairing_output
@@ -130,13 +128,38 @@ async def execute(state: _AgicState) -> ModelCallResult:
             input=step_input,
             preceded_by=tuple(item.ref for item in consumed_inputs),
             started_at=started_at,
-            given=ModelStepGiven(model=prepared.model.ref, call=request),
+            given=ModelStepGiven(
+                model=prepared.model.ref, call=request, delta=next_messages.take_delta()
+            ),
         )
 
-    await state.start_step(begin_step)
-    if (
-        request is None or next_messages is None
-    ):  # pragma: no cover - boundary builder invariant
+    try:
+        await state.start_step(begin_step)
+    except asyncio.CancelledError:
+        # Cancellation may interrupt delivery after the Step was committed.
+        # Its delta already belongs to the next call's prefix in that case.
+        record = (
+            state.execution.store.get_step(
+                ref=StepRef.from_local(run.run_id, (step_index,))
+            )
+            if state.execution is not None
+            else None
+        )
+        if record is not None:
+            state.messages = next_messages
+            state.prepared = prepared
+            state.claimed_inputs = ()
+            if record.status == "running":
+                await state.end_step(
+                    StepEnd(
+                        step=record.ref,
+                        kind="model",
+                        status="canceled",
+                        finished_at=utc_now(),
+                    )
+                )
+        raise
+    if request is None:  # pragma: no cover - boundary builder invariant
         raise RuntimeError("model step boundary did not build its request")
     state.prepared = prepared
     state.claimed_inputs = ()
@@ -166,30 +189,11 @@ async def execute(state: _AgicState) -> ModelCallResult:
         _validate_stream_result(stream, current)
         output = await _emit_response_parts(state, stream, current)
     except asyncio.CancelledError:
-        output = await _close_open_parts(state, stream)
-        await state.emit(
-            StepEnd(
-                step=StepRef.from_local(run.run_id, (step_index,)),
-                kind="model",
-                status="canceled",
-                output=Local.typed("Part[]", output, "_", 0) if output else None,
-                finished_at=utc_now(),
-            )
-        )
+        await _end_incomplete(state, stream)
         raise
     except Exception as exc:
         message = str(exc) or type(exc).__name__
-        output = await _close_open_parts(state, stream)
-        await state.emit(
-            StepEnd(
-                step=StepRef.from_local(run.run_id, (step_index,)),
-                kind="model",
-                status="failed",
-                output=Local.typed("Part[]", output, "_", 0) if output else None,
-                error=ErrorMessage(message),
-                finished_at=utc_now(),
-            )
-        )
+        await _end_incomplete(state, stream, error=ErrorMessage(message))
         _LOGGER.error(
             "Step failed thread=%s run=%s step=%s kind=model error=%r duration_ms=%s",
             run.thread,
@@ -274,28 +278,41 @@ async def _apply_response(
     duration_ms: int,
 ) -> ModelCallResult:
     run = state.prepared.run
+    local = Local.typed("Part[]", output, "_", 0)
     if output:
-        state.messages.append(Message(role="assistant", parts=output))
+        state.messages.append_ref(
+            "assistant",
+            FieldRef.from_path(
+                StepRef.from_local(run.run_id, (step_index,)), "output", "value"
+            ),
+            local,
+        )
     state.continuation = current.continuation
     accounting = state.account_usage(current.usage)
     state.last_step = step_index
-    await state.emit(
-        StepEnd(
-            step=StepRef.from_local(run.run_id, (step_index,)),
-            kind="model",
-            status="succeeded",
-            output=Local.typed("Part[]", output, "_", 0),
-            noted=_model_step_noted(
-                accounting,
-                continuation=current.continuation,
-            ),
-            finished_at=utc_now(),
+    try:
+        await state.end_step(
+            StepEnd(
+                step=StepRef.from_local(run.run_id, (step_index,)),
+                kind="model",
+                status="succeeded",
+                output=local,
+                noted=_model_step_noted(
+                    accounting,
+                    continuation=current.continuation,
+                ),
+                finished_at=utc_now(),
+            )
         )
-    )
+    except asyncio.CancelledError:
+        if not state.immediate_steer():
+            raise
+        # The complete response is durable and already in the message prefix.
+        # Return its calls so steer recovery records their skipped results.
     state.record_accounting(accounting)
     usage = current.usage
     _LOGGER.info(
-        "Step finished thread=%s run=%s step=%s kind=model status=succeeded input=%s output=%s tool_calls=%s duration_ms=%s",
+        "Step finished thread=%s run=%s step=%s kind=model input=%s output=%s tool_calls=%s duration_ms=%s",
         run.thread,
         run.run_id,
         step_index,
@@ -490,11 +507,10 @@ def _step_input(state: _AgicState) -> tuple[FieldRef, ...]:
     )
 
 
-def _messages_with_inputs(
-    current: Sequence[Message],
+def _append_inputs(
+    messages: _MessageBuffer,
     inputs: Sequence[ControlRecord],
-) -> list[Message]:
-    messages = list(current)
+) -> None:
     for input in inputs:
         if isinstance(input.payload, SteerControlPayload):
             primary = next(
@@ -505,13 +521,7 @@ def _messages_with_inputs(
                 and isinstance(primary.value, Array)
                 and all(isinstance(item, Part) for item in primary.value)
             ):
-                messages.append(
-                    Message(
-                        role="user",
-                        parts=cast(tuple[Part, ...], tuple(primary.value)),
-                    )
-                )
-    return messages
+                messages.append_ref("user", control_local_pointer(input, "_"), primary)
 
 
 def _ensure_text_part_index(stream: _ModelStream) -> int:
@@ -571,22 +581,40 @@ async def _emit_part_end(
     )
 
 
-async def _close_open_parts(
-    state: _AgicState, stream: _ModelStream
-) -> tuple[Part, ...]:
-    """Close display events and retain only complete Parts or partial text."""
+async def _end_incomplete(
+    state: _AgicState, stream: _ModelStream, *, error: ErrorMessage | None = None
+) -> None:
+    """Retain execution facts even when interrupted while closing display events."""
 
-    output: list[Part] = []
-    for part_index in sorted(stream.started_parts | stream.completed_parts.keys()):
-        completed = stream.completed_parts.get(part_index)
-        part = completed or _partial_part(stream, part_index)
-        if part_index not in stream.ended_parts:
-            await _emit_part_begin(state, stream, part_index=part_index, kind=part.type)
-            await _emit_part_end(state, stream, part_index, part)
-        # An unfinished ToolCall placeholder closes the display event only.
-        if completed is not None or isinstance(part, TextPart):
-            output.append(part)
-    return tuple(output)
+    parts = {
+        index: stream.completed_parts.get(index) or _partial_part(stream, index)
+        for index in sorted(stream.started_parts | stream.completed_parts.keys())
+    }
+    # Unfinished ToolCall placeholders close display events only.
+    output = tuple(
+        part
+        for index, part in parts.items()
+        if index in stream.completed_parts or isinstance(part, TextPart)
+    )
+    try:
+        for index, part in parts.items():
+            if index not in stream.ended_parts:
+                await _emit_part_begin(state, stream, part_index=index, kind=part.type)
+                await _emit_part_end(state, stream, index, part)
+    except asyncio.CancelledError:
+        error = None
+        raise
+    finally:
+        await state.end_step(
+            StepEnd(
+                step=StepRef.from_local(state.prepared.run.run_id, (stream.step,)),
+                kind="model",
+                status="failed" if error is not None else "canceled",
+                output=Local.typed("Part[]", output, "_", 0) if output else None,
+                error=error,
+                finished_at=utc_now(),
+            )
+        )
 
 
 def _partial_part(stream: _ModelStream, part_index: int) -> Part:

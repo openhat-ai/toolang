@@ -26,7 +26,9 @@ from toolang.base.types.run import ModelCall, ModelContinuation, ToolCall
 from toolang.lang.ast import FlowStmt, flow_stmt_from_data, to_data as ast_to_data
 from toolang.lang.input import PromptInvocation, RunnableInputRaw, parse_input
 from toolang.lang.types import Array, Struct, Value, validate_type, value_type
+from .message_delta import delta_from_data, delta_to_data
 from .types import (
+    MessageDelta,
     CollectionStepNoted,
     ControlRef,
     RecallTarget,
@@ -398,10 +400,10 @@ class ThreadRecord:
 
 @dataclass(frozen=True, slots=True)
 class ModelCallRefs:
-    """Content-addressed durable references for one normalized model call."""
+    """Durable call settings and incremental message templates."""
 
     instructions: str
-    messages: tuple[str, ...]
+    delta: MessageDelta
     tools: str | None
     output_schema: dict[str, object] | None
     continuation: ModelContinuation | None
@@ -409,8 +411,6 @@ class ModelCallRefs:
     def __post_init__(self) -> None:
         if not isinstance(self.instructions, str) or not self.instructions:
             raise ValueError("stored model instructions require a reference")
-        if not all(isinstance(item, str) and item for item in self.messages):
-            raise ValueError("stored model messages require references")
         if self.tools is not None and (
             not isinstance(self.tools, str) or not self.tools
         ):
@@ -1109,30 +1109,24 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
     if not isinstance(model, str) or not model:
         raise ValueError("stored model identity must be text")
     raw_call = payload["call"]
-    allowed_call_fields = {
-        frozenset({"cont", "instructions", "messages", "tools"}),
-        frozenset({"cont", "instructions", "messages", "structured_output", "tools"}),
-        frozenset({"cont", "instructions", "messages", "output_schema", "tools"}),
-    }
-    if not isinstance(raw_call, Mapping) or set(raw_call) not in allowed_call_fields:
+    if not isinstance(raw_call, Mapping) or set(raw_call) != {
+        "cont",
+        "instructions",
+        "delta",
+        "output_schema",
+        "tools",
+    }:
         raise ValueError(
-            "stored model call requires: cont, instructions, messages, tools, "
-            "and optional output_schema"
+            "stored model call requires: cont, instructions, delta, tools, output_schema"
         )
     call = cast(Mapping[str, object], raw_call)
     instructions = call["instructions"]
-    raw_messages = call["messages"]
+    raw_delta = call["delta"]
     raw_tools = call["tools"]
-    raw_output_schema = call.get("output_schema", call.get("structured_output"))
+    raw_output_schema = call["output_schema"]
     raw_cont = call["cont"]
     if not isinstance(instructions, str) or not instructions:
         raise ValueError("stored model instructions require a reference")
-    if (
-        not isinstance(raw_messages, Sequence)
-        or isinstance(raw_messages, (str, bytes, bytearray))
-        or not all(isinstance(item, str) and item for item in raw_messages)
-    ):
-        raise ValueError("stored model messages require references")
     if raw_tools is not None and not isinstance(raw_tools, str):
         raise ValueError("stored model tools must be a reference or null")
     if raw_output_schema is not None and not isinstance(raw_output_schema, Mapping):
@@ -1143,7 +1137,7 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
         model=model,
         call=ModelCallRefs(
             instructions=instructions,
-            messages=tuple(cast(Sequence[str], raw_messages)),
+            delta=delta_from_data(cast(Mapping[str, object], raw_delta)),
             tools=raw_tools,
             output_schema=(
                 dict(cast(Mapping[str, object], raw_output_schema))
@@ -1172,7 +1166,7 @@ def stored_step_given_to_data(
             "model": given.model,
             "call": {
                 "instructions": given.call.instructions,
-                "messages": list(given.call.messages),
+                "delta": delta_to_data(given.call.delta),
                 "tools": given.call.tools,
                 "output_schema": (
                     dict(given.call.output_schema)

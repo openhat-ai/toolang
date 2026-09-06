@@ -707,6 +707,11 @@ def test_immediate_steer_during_skipped_batch_preserves_all_results(
                 == parts
             )
             assert steps[-1].preceded_by == (first.ref, second.ref)
+            assert [
+                harness.store.rebuild_model_call(step)
+                for step in steps
+                if step.kind == "model"
+            ] == [item.call for item in harness.adapter.invocations]
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())

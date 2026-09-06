@@ -27,6 +27,7 @@ from toolang.base.types.tool import ToolDefinition
 from toolang.base.types.policy import RunLimits
 from toolang.common.time import utc_now
 from .errors import HistoryChangedError, RunStoreSchemaError
+from .message_delta import literal_delta, render_delta
 from .inspection import (
     ChildOccurrenceTotals,
     ExecutionSnapshot,
@@ -91,6 +92,7 @@ from .types import (
     ThreadRef,
     Local,
     ModelStepGiven,
+    MessageDelta,
     Occurrence,
     Pointer,
     TypedRef,
@@ -103,7 +105,7 @@ from .schemas import Record, RecordSelection, select_record
 from .thread_view import ThreadView, _ThreadProjection
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 37
+_SCHEMA_VERSION = 38
 _SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -2577,7 +2579,9 @@ class RunStore:
                     raise ValueError(f"run not found: {ref.run}")
                 state = ControlRef.parse(str(run_row["state"]))
             stored_given: StoredStepGiven = (
-                self.capture_model_call(model=given.model, call=given.call)
+                self.capture_model_call(
+                    model=given.model, call=given.call, delta=given.delta
+                )
                 if isinstance(given, ModelStepGiven)
                 else cast(StoredStepGiven, given)
             )
@@ -2741,14 +2745,12 @@ class RunStore:
         *,
         model: str,
         call: ModelCall,
+        delta: MessageDelta | None = None,
     ) -> StoredModelStepGiven:
-        """Persist deduplicated normalized model-call inputs."""
+        """Persist call settings and the new message templates for this boundary."""
 
         with self.write_transaction():
             instruction_ref = self._put_model_text(call.instructions)
-            message_refs = [
-                self._put_model_message(message) for message in call.messages
-            ]
             toolset_ref = self._put_toolset(call.tools) if call.tools else None
         from .records import ModelCallRefs
 
@@ -2756,7 +2758,7 @@ class RunStore:
             model=model,
             call=ModelCallRefs(
                 instructions=instruction_ref,
-                messages=tuple(message_refs),
+                delta=delta if delta is not None else literal_delta(call.messages),
                 tools=toolset_ref,
                 output_schema=(
                     dict(call.output_schema) if call.output_schema is not None else None
@@ -2775,76 +2777,98 @@ class RunStore:
     def rebuild_model_calls(
         self, steps: Sequence[StepRecord]
     ) -> dict[StepRef, ModelCall]:
-        """Rebuild normalized model calls for several model steps in batches."""
+        """Expand each execution's deltas once, sharing values across requested calls."""
 
-        references: dict[
-            StepRef,
-            tuple[
-                str,
-                tuple[str, ...],
-                str | None,
-                dict[str, object] | None,
-                dict[str, Any] | None,
-            ],
-        ] = {}
-        instruction_hashes: set[str] = set()
-        message_hashes: set[str] = set()
-        toolset_hashes: set[str] = set()
+        requested = {step.ref for step in steps}
         for step in steps:
-            if step.kind != "model":
-                raise ValueError(f"step is not a model call: {step.ref}")
             if not isinstance(step.given, StoredModelStepGiven):
-                raise ValueError(f"model call metadata is missing: {step.ref}")
-            call = step.given.call
-            instruction_ref = call.instructions
-            message_refs = call.messages
-            toolset_ref = call.tools
-            output_schema = (
-                dict(call.output_schema) if call.output_schema is not None else None
-            )
-            continuation = (
-                dict(call.continuation) if call.continuation is not None else None
-            )
-            references[step.ref] = (
-                instruction_ref,
-                message_refs,
-                toolset_ref,
-                output_schema,
-                continuation,
-            )
-            instruction_hashes.add(instruction_ref)
-            message_hashes.update(message_refs)
-            if toolset_ref is not None:
-                toolset_hashes.add(toolset_ref)
+                raise ValueError(f"step is not a model call: {step.ref}")
+        run_ids = tuple(dict.fromkeys(step.run_id for step in steps))
+        if not run_ids:
+            return {}
+        grouped = self.list_steps_for_runs(run_ids=run_ids)
+        controls = {
+            control.ref: control
+            for items in self.list_run_controls_for_runs(run_ids=run_ids).values()
+            for control in items
+        }
+        settings = [
+            step.given.call
+            for step in steps
+            if isinstance(step.given, StoredModelStepGiven)
+        ]
+        texts = self._get_model_texts({call.instructions for call in settings})
+        toolsets = self._get_toolsets(
+            {call.tools for call in settings if call.tools is not None}
+        )
+        values: dict[TypedRef, object] = {}
+        records: dict[StepRef | ControlRef, Record] = {
+            step.ref: step for items in grouped.values() for step in items
+        }
+        records.update(controls.items())
 
-        texts = self._get_model_texts(instruction_hashes)
-        messages = self._get_model_messages(message_hashes)
-        toolsets = self._get_toolsets(toolset_hashes)
+        def resolve(ref: TypedRef) -> object:
+            if ref not in values:
+                record = (
+                    records.get(ref.ref.record)
+                    if isinstance(ref.ref.record, StepRef | ControlRef)
+                    else None
+                )
+                selected = (
+                    select_record(record, Pointer(ref.ref))
+                    if record is not None
+                    else self.select_pointer(Pointer(ref.ref))
+                )
+                values[ref] = self.resolve_value(selected.runtime)
+            return values[ref]
+
         calls: dict[StepRef, ModelCall] = {}
-        for ref, (
-            instruction_ref,
-            message_refs,
-            toolset_ref,
-            output_schema,
-            continuation,
-        ) in references.items():
-            instructions = texts.get(instruction_ref)
-            if instructions is None:
-                raise ValueError(f"model instructions are missing: {instruction_ref}")
-            missing_message = next(
-                (item for item in message_refs if item not in messages), None
-            )
-            if missing_message is not None:
-                raise ValueError(f"model message is missing: {missing_message}")
-            if toolset_ref is not None and toolset_ref not in toolsets:
-                raise ValueError(f"model toolset is missing: {toolset_ref}")
-            calls[ref] = ModelCall(
-                instructions=instructions,
-                messages=[messages[item] for item in message_refs],
-                tools=toolsets[toolset_ref] if toolset_ref is not None else (),
-                output_schema=output_schema,
-                continuation=continuation,
-            )
+        for run_steps in grouped.values():
+            sequences: list[list[StepRecord]] = [[]]
+            for step in run_steps:
+                if any(
+                    ref in controls
+                    and controls[ref].kind in {"run", "execute", "retry"}
+                    and ref.target == step.ref.run
+                    for ref in step.preceded_by
+                ):
+                    sequences.append([])
+                if isinstance(step.given, StoredModelStepGiven):
+                    sequences[-1].append(step)
+            for sequence in sequences:
+                last = max(
+                    (
+                        index
+                        for index, step in enumerate(sequence)
+                        if step.ref in requested
+                    ),
+                    default=-1,
+                )
+                messages: list[Message] = []
+                for step in sequence[: last + 1]:
+                    given = cast(StoredModelStepGiven, step.given)
+                    messages.extend(render_delta(given.call.delta, resolve))
+                    if step.ref not in requested:
+                        continue
+                    call = given.call
+                    instructions = texts.get(call.instructions)
+                    if instructions is None:
+                        raise ValueError(
+                            f"model instructions are missing: {call.instructions}"
+                        )
+                    if call.tools is not None and call.tools not in toolsets:
+                        raise ValueError(f"model toolset is missing: {call.tools}")
+                    calls[step.ref] = ModelCall(
+                        instructions=instructions,
+                        messages=list(messages),
+                        tools=toolsets[call.tools] if call.tools is not None else (),
+                        output_schema=dict(call.output_schema)
+                        if call.output_schema is not None
+                        else None,
+                        continuation=dict(call.continuation)
+                        if call.continuation is not None
+                        else None,
+                    )
         return calls
 
     def _get_model_texts(self, text_hashes: set[str]) -> dict[str, str]:
@@ -2859,17 +2883,6 @@ class RunStore:
             _verify_content_hash(body, expected=text_hash, label="model text")
             texts[text_hash] = body
         return texts
-
-    def _get_model_messages(self, message_hashes: set[str]) -> dict[str, Message]:
-        rows = self._content_rows(
-            table="model_messages",
-            value_column="data",
-            hashes=message_hashes,
-        )
-        return {
-            message_hash: _model_message_from_stored(message_hash, str(raw))
-            for message_hash, raw in rows.items()
-        }
 
     def _get_toolsets(
         self, toolset_hashes: set[str]
@@ -2915,15 +2928,6 @@ class RunStore:
             (text_hash, body),
         )
         return text_hash
-
-    def _put_model_message(self, message: Message) -> str:
-        data = _dump_json(message.to_data())
-        message_hash = _content_hash(data)
-        self._conn.execute(
-            "INSERT OR IGNORE INTO model_messages(hash, data) VALUES (?, ?)",
-            (message_hash, data),
-        )
-        return message_hash
 
     def _put_toolset(self, tools: Sequence[ToolDefinition]) -> str:
         data = _dump_json([tool.to_data() for tool in tools])
@@ -3310,14 +3314,6 @@ class RunStore:
             )
             self._conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS model_messages (
-                    hash TEXT PRIMARY KEY,
-                    data TEXT NOT NULL
-                )
-                """
-            )
-            self._conn.execute(
-                """
                 CREATE TABLE IF NOT EXISTS model_toolsets (
                     hash TEXT PRIMARY KEY,
                     data TEXT NOT NULL
@@ -3465,24 +3461,6 @@ def _required_text(value: object, name: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{name} must be a non-empty string")
     return value
-
-
-def _model_message_from_stored(message_hash: str, stored: str) -> Message:
-    _verify_content_hash(
-        stored,
-        expected=message_hash,
-        label="model message",
-    )
-    try:
-        data = _load_json(stored)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"model message is invalid: {message_hash}") from exc
-    if not isinstance(data, Mapping):
-        raise ValueError(f"model message is invalid: {message_hash}")
-    try:
-        return Message.from_data(data)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"model message is invalid: {message_hash}") from exc
 
 
 def _toolset_from_stored(toolset_hash: str, stored: str) -> tuple[ToolDefinition, ...]:

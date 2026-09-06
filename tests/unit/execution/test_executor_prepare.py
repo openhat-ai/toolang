@@ -619,9 +619,12 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
             assert connection.execute(
                 "SELECT COUNT(*) FROM model_texts"
             ).fetchone() == (1,)
-            assert connection.execute(
-                "SELECT COUNT(*) FROM model_messages"
-            ).fetchone() == (1,)
+            assert (
+                connection.execute(
+                    "SELECT name FROM sqlite_master WHERE name = 'model_messages'"
+                ).fetchone()
+                is None
+            )
             assert connection.execute(
                 "SELECT COUNT(*) FROM model_toolsets"
             ).fetchone() == (1,)
