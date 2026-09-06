@@ -432,6 +432,7 @@ class RunExecutor:
             model_override=model_override,
             limits=limits if limits is not None else setup.limits,
         )
+        spec = replace(spec, horizon=self.store.run_horizon(source))
         runnable, input, agent_resources, resources = _prepare_run_spec(spec)
         bound = _bind_run(
             spec,
@@ -637,7 +638,6 @@ class RunExecutor:
             setup=setup,
             state=state,
             thread=str(run.thread),
-            horizon=self.store.run_horizon(run_id),
             bindings=RunBindings(
                 runnable=f"{declaration.kind}:{runnable}",
                 model=(

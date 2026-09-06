@@ -127,7 +127,7 @@ def test_cross_run_deltas_record_only_new_messages(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("action", ["execute", "retry"])
 def test_execution_reset_uses_the_surviving_horizon(
-    tmp_path: Path, action: str
+    tmp_path: Path, action: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     tool = RecordingTool("lookup__item", output={})
     next_result = (
@@ -191,9 +191,19 @@ agic next() -> Part[]:
             run = await _run(harness, thread, "current", hooked, runnable="chat")
             if action == "retry":
                 assert run.status == "failed"
-                run = await harness.executor.retry(
-                    run.id, setup=harness.setup, state=harness.state, tracer=tracer
-                )
+                reads = []
+                original = harness.store.run_horizon
+
+                def read(run_id):
+                    reads.append(len(harness.store.list_steps(run_id=run_id)))
+                    return original(run_id)
+
+                with monkeypatch.context() as patch:
+                    patch.setattr(harness.store, "run_horizon", read)
+                    run = await harness.executor.retry(
+                        run.id, setup=harness.setup, state=harness.state, tracer=tracer
+                    )
+                assert reads == [0]
                 # The compact-adopting Step was physically removed by retry.
                 assert harness.store.run_horizon(run.id) is None
                 assert not harness.store.runtime_controls(run_id=run.id)[1]
@@ -774,6 +784,7 @@ def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> 
             ModelCallResult(message=Message.assistant("second reply")),
             ModelCallResult(tool_calls=(ToolCall("lookup", "lookup", tool.name, {}),)),
             ModelCallResult(message=Message.assistant("done")),
+            ModelCallResult(message=Message.assistant("rerun done")),
         ],
     )
     horizon: FieldRef | None = None
@@ -822,6 +833,16 @@ def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> 
                 if isinstance(s.given, StoredModelStepGiven)
             ] == [2, 2]
             assert harness.store.run_horizon(run.id) == horizon
+            rerun = await harness.executor.rerun(
+                run.id, setup=harness.setup, state=harness.state, tracer=tracer
+            )
+            assert rerun.status == "succeeded", rerun.error
+            entry = harness.store.get_run_control(run_id=rerun.id, index=0)
+            assert entry is not None and isinstance(entry.payload, RunControlPayload)
+            assert entry.payload.horizon == horizon
+            assert harness.adapter.invocations[-1].call.messages[0] == Message.user(
+                "Earlier facts."
+            )
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)
