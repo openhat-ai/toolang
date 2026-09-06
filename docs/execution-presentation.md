@@ -553,9 +553,11 @@ between one top and one bottom padding row. Body text starts two cells from
 the left and leaves two cells at the right. Input uses the same insets. Padding
 never collapses into body rows as messages wrap. The bottom padding can hold a
 dim, single-line annotation ending two cells before the bar edge. Root inputs
-show `runnable · model · reasoning` from the submitted request; unspecified
-reasoning is omitted and an absent model reads `model unspecified`. The root
-RunBegin updates its runnable before the bar is committed. Long annotations
+show `runnable · model · reasoning` from the submitted request: explicit effort
+or token budget, otherwise `auto` for no reasoning override. An absent model
+reads `model unspecified`. This snapshot needs no catalog or persistence lookup,
+and later session defaults do not change it. The root RunBegin updates its
+runnable before the bar is committed. Long annotations
 shorten the runnable first, then the model, preserving explicit reasoning
 where space permits. Their left background-filled accent cells distinguish
 start from steer without displaying Run IDs. The start accent uses the same ANSI
@@ -573,11 +575,6 @@ lesser of the available width and `TOOLANG_PROGRESS_MAX_WIDTH`. On wider
 terminals, the terminal background visible to their right distinguishes these
 interactions from a new root Run. Quick-command result, help, table, and
 reopened-output content align to the same output boundary.
-
-Root context uses the same reasoning label as the status bar: explicit effort
-or token budget, otherwise `auto` when the submitted model is known to support
-effort. Unknown or unsupported effort adds no suffix. This remains a submission
-snapshot even when session defaults change.
 
 Steer bars keep their original purple accent regardless of adoption. Pending
 bars have one aggregate `•` explanation below them, such as `3 steers will apply

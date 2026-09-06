@@ -1061,18 +1061,11 @@ class ChatTuiApp:
             events.handle_run_state(state, self.app_context)
 
     def submit_run(self, call: QueuedCall) -> None:
-        model = call.request.model
-        applicable = (
-            self._selected_model_effort_applicable(model.ref)
-            if model is not None and slashes.model_reasoning_value(model) is None
-            else None
-        )
         self.status_bar.set_active_runnable(call.request.runnable.ref)
         self.unfinalized_blocks.append(
             blocks.RunControlBlock.create(
                 call.source,
                 request=call.request,
-                effort_applicable=applicable,
                 input_background=self.surfaces.input_background,
             )
         )

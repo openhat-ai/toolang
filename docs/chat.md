@@ -76,9 +76,10 @@ with two-cell text insets. Root input bars fill the terminal width and show the
 submitted runnable, model, and reasoning value in their bottom-right
 padding, for example `agic:research · openai/gpt-5 · high`. This is the request
 snapshot, including queued overrides; later default changes do not alter it.
-Without a request model, the label reads `model unspecified`. Models known to
-support reasoning effort show `auto` when no effort or token budget was specified,
-matching the status bar. Unknown or unsupported effort adds no suffix.
+Without a request model, the label reads `model unspecified`. Otherwise, the
+corner shows the requested effort or token budget, or `auto` when the request
+has no reasoning override. It reads the submission snapshot without querying
+model metadata or persisted records.
 
 Steers retain independent purple bars. A single live `•` line below them shows
 how many are sending or waiting to apply after the current step (or waiting for

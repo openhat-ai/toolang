@@ -1166,10 +1166,10 @@ def model_status_label(
 
     if model is None:
         return "[no models available]"
-    value = model_reasoning_value(model, effort_applicable=effort_applicable)
+    value = model_reasoning_value(model)
     if value is not None:
         return f"{model.ref} · {value}"
-    return model.ref
+    return f"{model.ref} · auto" if effort_applicable is True else model.ref
 
 
 def model_effort_applicability(
@@ -1185,18 +1185,15 @@ def model_effort_applicability(
     return model_effort_applicable(item) if item is not None else None
 
 
-def model_reasoning_value(
-    model: ModelRequest, *, effort_applicable: bool | None = None
-) -> str | None:
-    """Return explicit reasoning, or auto when effort is known to apply."""
+def model_reasoning_value(model: ModelRequest) -> str | None:
+    """Return one explicit effort level or token budget for display."""
 
     reasoning = model.parameters.reasoning
-    if reasoning is not None:
-        if reasoning.effort is not None:
-            return reasoning.effort
-        if reasoning.budget_tokens is not None:
-            return str(reasoning.budget_tokens)
-    return "auto" if effort_applicable is True else None
+    if reasoning is None:
+        return None
+    if reasoning.effort is not None:
+        return reasoning.effort
+    return str(reasoning.budget_tokens) if reasoning.budget_tokens is not None else None
 
 
 def model_effort_applicable(item: Mapping[str, Any]) -> bool | None:

@@ -5809,22 +5809,29 @@ def test_chat_recovered_controls_determine_terminal_corner(control_status: Any) 
 
 
 @pytest.mark.parametrize(
-    "model",
+    ("model", "model_label"),
     [
-        None,
-        ModelRequest("openai/gpt-5"),
-        ModelRequest(
-            "openai/gpt-5",
-            ModelParameters(reasoning=ReasoningParameters(effort="high")),
+        (None, "model unspecified"),
+        (ModelRequest("openai/gpt-5"), "openai/gpt-5 · auto"),
+        (
+            ModelRequest(
+                "openai/gpt-5",
+                ModelParameters(reasoning=ReasoningParameters(effort="high")),
+            ),
+            "openai/gpt-5 · high",
         ),
-        ModelRequest(
-            "test/model",
-            ModelParameters(reasoning=ReasoningParameters(budget_tokens=4096)),
+        (
+            ModelRequest(
+                "test/model",
+                ModelParameters(reasoning=ReasoningParameters(budget_tokens=4096)),
+            ),
+            "test/model · 4096",
         ),
     ],
 )
 def test_chat_root_context_uses_request_and_authoritative_runnable(
     model: ModelRequest | None,
+    model_label: str,
 ) -> None:
     request = RunRequest(
         thread_id="term_1",
@@ -5835,9 +5842,7 @@ def test_chat_root_context_uses_request_and_authoritative_runnable(
     )
     block = blocks.RunControlBlock.create("hello", request=request)
     block.update(_run_begin(runnable_name="research"))
-    expected = "agic:research · " + (
-        slashes.model_status_label(model) if model else "model unspecified"
-    )
+    expected = "agic:research · " + model_label
     lines = _render_text(block.render(), width=80).splitlines()
     assert len(lines) == 3
     assert lines[-1].strip() == expected
@@ -5848,34 +5853,36 @@ def test_chat_root_context_uses_request_and_authoritative_runnable(
     assert annotation.style is not None and annotation.style.dim
 
 
-@pytest.mark.parametrize("applicable", [True, False, None])
-def test_chat_root_context_keeps_submitted_model_auto_effort_snapshot(
-    applicable: bool | None,
+@pytest.mark.parametrize("queued", [False, True])
+@pytest.mark.parametrize(
+    ("reasoning", "label"),
+    [
+        (None, "auto"),
+        (ReasoningParameters(), "auto"),
+        (ReasoningParameters(effort="high"), "high"),
+        (ReasoningParameters(effort="none"), "none"),
+        (ReasoningParameters(budget_tokens=0), "0"),
+        (ReasoningParameters(budget_tokens=4096), "4096"),
+    ],
+)
+def test_chat_root_context_uses_submission_snapshot_without_catalog_queries(
+    queued: bool, reasoning: ReasoningParameters | None, label: str
 ) -> None:
-    class CatalogClient(FakeClient):
+    started = threading.Event()
+
+    class SnapshotClient(FakeClient):
+        forbid_catalog = False
+
         def list_models(
             self, queries: Sequence[str] | None = None
         ) -> dict[str, object]:
-            assert queries is not None and len(queries) == 1
-            ref = queries[0]
-            if ref == "deepseek/deepseek-v4-flash" and applicable is None:
-                raise ToolangError("catalog unavailable")
-            return {
-                "items": [
-                    {
-                        "ref": ref,
-                        "parameters": {
-                            "reasoning": {
-                                "applicable": applicable
-                                if ref == "deepseek/deepseek-v4-flash"
-                                else False
-                            }
-                        },
-                    }
-                ]
-            }
+            assert not self.forbid_catalog, "submission must not query model metadata"
+            return super().list_models(queries)
 
-    client = CatalogClient()
+        def run(self, *args: object, **kwargs: object) -> None:
+            started.set()
+
+    client = SnapshotClient()
     app = tui.ChatTuiApp(
         thread_id="term_1",
         setting=client.initial_setting(),
@@ -5883,27 +5890,37 @@ def test_chat_root_context_keeps_submitted_model_auto_effort_snapshot(
         input_history=None,
         client=client,
     )
+    client.forbid_catalog = True
     request = RunRequest(
         thread_id="term_1",
         request_id="one",
         runnable=RunnableRequest("agic:research", RunnableInputRaw(_="hello")),
-        model=ModelRequest("deepseek/deepseek-v4-flash"),
+        model=ModelRequest("test/override", ModelParameters(reasoning)),
         policy=RunPolicy(),
     )
-    app.submit_run(QueuedCall("hello", request))
-    block = next(
-        b for b in app.unfinalized_blocks if isinstance(b, blocks.RunControlBlock)
-    )
-    expected = "agic:research · deepseek/deepseek-v4-flash"
-    if applicable:
-        expected += " · auto"
-    assert _render_text(block.render()).splitlines()[-1].strip() == expected
-
+    call = QueuedCall("hello", request)
     app.setting = SessionSetting(
         runnable="agic:other",
         model=ModelRequest(
-            "openai/gpt-5", ModelParameters(ReasoningParameters(effort="high"))
+            "openai/gpt-5", ModelParameters(ReasoningParameters(effort="low"))
         ),
+    )
+    if queued:
+        app.active_run_id = "previous_run"
+        app.queue.append(call)
+        app._finish_active_run()
+        assert not app.queue
+    else:
+        app.submit_run(call)
+    assert started.wait(1)
+    block = next(
+        b for b in app.unfinalized_blocks if isinstance(b, blocks.RunControlBlock)
+    )
+    expected = f"agic:research · test/override · {label}"
+    assert _render_text(block.render()).splitlines()[-1].strip() == expected
+
+    app.setting = SessionSetting(
+        model=ModelRequest("another/model"), runnable="agic:other"
     )
     app.handle_run_event(_run_begin(runnable_name="research"))
     assert _render_text(block.render()).splitlines()[-1].strip() == expected
