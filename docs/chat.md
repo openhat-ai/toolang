@@ -73,15 +73,19 @@ newline, as does Shift+Enter when the terminal exposes it distinctly.
 
 Each submitted control keeps one blank row above and below its complete message,
 with two-cell text insets. Root input bars fill the terminal width and show the
-submitted runnable, model, and explicit reasoning value in their bottom-right
+submitted runnable, model, and reasoning value in their bottom-right
 padding, for example `agic:research · openai/gpt-5 · high`. This is the request
 snapshot, including queued overrides; later default changes do not alter it.
-Without a request model, the label reads `model unspecified`.
+Without a request model, the label reads `model unspecified`. Models known to
+support reasoning effort show `auto` when no effort or token budget was specified,
+matching the status bar. Unknown or unsupported effort adds no suffix.
 
 Steers retain independent purple bars. A single live `•` line below them shows
 how many are sending or waiting to apply after the current step (or waiting for
-the next model call when no step is active). Control receipts and the consuming
-step's control references determine adoption. Adopted bars move into history
+the next model call when no step is active). A blank row above and below separates
+this explanation from the bars and Queue; very short viewports prioritize the
+text over this spacing. Control receipts and the consuming step's control
+references determine adoption. Adopted bars move into history
 without extra labels or success messages. If a run ends with a steer confirmed
 unapplied, only that bar's bottom-right padding says `not applied`. Uncertain
 delivery uses existing error feedback without asserting non-adoption. Steer
@@ -104,8 +108,8 @@ and remain dim; body text stays normal. While focused, selection is shown only b
 background, inset one cell on each side with another cell of padding inside
 each end. There is no selection marker. The selected entry reserves its right
 side for slightly brighter dim action hints, separated from the body by at least
-two cells. Entry hints end two cells from Queue's right edge. Panel hints align
-flush right with the status bar, both when expanded and when collapsed.
+two cells. Entry and panel hints end two cells from Queue's right edge, both
+when expanded and when collapsed. The status bar remains edge-aligned.
 Losing focus hides its highlight and action hints while preserving the selected index.
 
 Tab and Shift+Tab only switch focus, yielding to active input completion.

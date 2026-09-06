@@ -35,6 +35,7 @@ MAX_QUEUE_ENTRIES = 8
 _QUEUE_ENTRY_INSET = 1
 _QUEUE_ENTRY_PADDING = 1
 _QUEUE_HINT_GAP = 2
+_QUEUE_HINT_INSET = 2
 _QUEUE_MIN_PREVIEW_WIDTH = 3
 _INPUT_PLACEHOLDER = "Ask or describe a task"
 
@@ -200,8 +201,16 @@ class QueuePanel:
                 for index in range(start, start + entry_count)
             ),
         ]
+        right_padding = " " * min(_QUEUE_HINT_INSET, width)
         rows.extend(
-            [("class:queue.hint", " " * (width - get_cwidth(hint)) + hint)]
+            [
+                (
+                    "class:queue.hint",
+                    " " * (width - get_cwidth(hint) - len(right_padding))
+                    + hint
+                    + right_padding,
+                )
+            ]
             for hint in self._hint_lines(width)
         )
         return rows
@@ -264,7 +273,7 @@ class QueuePanel:
 
     def _hint_lines(self, width: int) -> list[str]:
         """Fit panel actions into right-aligned rows below the entries."""
-        available = max(0, width - 2)
+        available = max(0, width - _QUEUE_HINT_INSET)
         if not available:
             return [""]
         lines: list[str] = []
@@ -289,9 +298,11 @@ class QueuePanel:
         if not self.expanded:
             for action in self._hints():
                 combined = f"{hint} · {action}" if hint else action
-                if get_cwidth(combined) > right - 2:
+                if get_cwidth(combined) > right - _QUEUE_HINT_GAP - _QUEUE_HINT_INSET:
                     break
                 hint = combined
+        if hint:
+            hint += " " * _QUEUE_HINT_INSET
         return [
             (
                 "class:queue" if self._has_focus() else "class:queue.info",

@@ -1693,7 +1693,7 @@ def test_chat_queue_panel_splits_selected_entry_actions_from_panel_hints(
     assert not any(action in unselected for action in ("edit", "steer", "delete"))
     assert any("queue.selected" in style for style, _text in fragments) is focused
     assert "›" not in "".join(lines)
-    assert footer == footer.rstrip()
+    assert footer == footer.rstrip() + "  "
     assert all(get_cwidth(line) == terminal_width for line in lines)
 
 
@@ -1722,7 +1722,7 @@ def test_chat_queue_panel_collapses_to_one_centered_row_with_contextual_hints(
         hint = "sp expand"
         if terminal_width >= 80:
             hint += " · tab input"
-    assert lines[0].endswith(hint)
+    assert lines[0].endswith(hint + "  ")
     assert lines[0].split("2 items queued", 1)[1].strip() == hint
     assert all(get_cwidth(line) == terminal_width for line in lines)
     assert not any(
@@ -1734,7 +1734,7 @@ def test_chat_queue_panel_collapses_to_one_centered_row_with_contextual_hints(
 @pytest.mark.parametrize("terminal_width", [40, 100, 101])
 @pytest.mark.parametrize("expanded", [False, True])
 @pytest.mark.parametrize("focused", [False, True])
-def test_chat_queue_panel_hints_align_with_status_right_edge(
+def test_chat_queue_panel_hints_are_inset_while_status_remains_edge_aligned(
     monkeypatch: pytest.MonkeyPatch,
     terminal_width: int,
     expanded: bool,
@@ -1752,11 +1752,12 @@ def test_chat_queue_panel_hints_align_with_status_right_edge(
         status.set_running(running)
         status_line = "".join(text for _style, text in status._render())
         assert get_cwidth(queue_line) == get_cwidth(status_line) == terminal_width
-        assert get_cwidth(queue_line.rstrip()) == get_cwidth(status_line.rstrip())
-        assert not queue_line[-1].isspace()
+        assert get_cwidth(queue_line.rstrip()) == terminal_width - 2
+        assert get_cwidth(status_line.rstrip()) == terminal_width
+        assert queue_line.endswith("  ")
 
 
-@pytest.mark.parametrize("terminal_width", [25, 40, 80, 100])
+@pytest.mark.parametrize("terminal_width", [25, 36, 40, 80, 100])
 def test_chat_queue_panel_wraps_footer_hints_in_narrow_terminals(
     monkeypatch: pytest.MonkeyPatch,
     terminal_width: int,
@@ -1767,12 +1768,12 @@ def test_chat_queue_panel_wraps_footer_hints_in_narrow_terminals(
 
     lines = "".join(text for _style, text in panel._render()).splitlines()
 
-    assert len(lines) == panel.rows() == (4 if terminal_width == 25 else 3)
+    assert len(lines) == panel.rows() == (4 if terminal_width < 40 else 3)
     assert " · ".join(line.strip() for line in lines[2:]) == (
         "↑↓ select · sp collapse · tab input"
     )
     assert all(get_cwidth(line) == terminal_width for line in lines)
-    assert all(line == line.rstrip() for line in lines[2:])
+    assert all(line == line.rstrip() + "  " for line in lines[2:])
     assert lines[1].startswith("  [1] ")
     assert lines[0].index("1 item queued") == (terminal_width - 13) // 2
     if terminal_width >= 40:
@@ -2372,7 +2373,7 @@ def test_chat_queue_layout_centers_summary_and_joins_input(
             assert not lines[input_row - 1].strip()
             assert app._input_spacer_rows() > 0
             assert app._available_live_rows() == 30 - panel_rows - app.prompt.rows() - 1
-            assert get_cwidth(lines[panel_bottom].rstrip()) == columns
+            assert get_cwidth(lines[panel_bottom].rstrip()) == columns - 2
             assert get_cwidth(lines[input_row + 2].rstrip()) == columns
             if expanded:
                 assert lines[summary_row].strip() == "3 items queued"
@@ -2385,7 +2386,7 @@ def test_chat_queue_layout_centers_summary_and_joins_input(
                     if not focused
                     else ("sp expand" if columns == 40 else "sp expand · tab input")
                 )
-                assert lines[summary_row].endswith(hint)
+                assert lines[summary_row].endswith(hint + "  ")
 
     asyncio.run(exercise())
 
@@ -2469,7 +2470,7 @@ def test_chat_queue_eight_entry_limit_adapts_to_available_height(
             bottom = top + entry_count + footer_rows
             assert f"[{11 - entry_count}]" in lines[top + 1]
             assert "[10]" in lines[top + entry_count]
-            assert lines[bottom].endswith("tab input")
+            assert lines[bottom].endswith("tab input  ")
             assert "Ask or describe a task"[: columns - 5] in lines[bottom + 2]
             assert "agic:chat" in lines[bottom + 4]
 
@@ -5847,6 +5848,67 @@ def test_chat_root_context_uses_request_and_authoritative_runnable(
     assert annotation.style is not None and annotation.style.dim
 
 
+@pytest.mark.parametrize("applicable", [True, False, None])
+def test_chat_root_context_keeps_submitted_model_auto_effort_snapshot(
+    applicable: bool | None,
+) -> None:
+    class CatalogClient(FakeClient):
+        def list_models(
+            self, queries: Sequence[str] | None = None
+        ) -> dict[str, object]:
+            assert queries is not None and len(queries) == 1
+            ref = queries[0]
+            if ref == "deepseek/deepseek-v4-flash" and applicable is None:
+                raise ToolangError("catalog unavailable")
+            return {
+                "items": [
+                    {
+                        "ref": ref,
+                        "parameters": {
+                            "reasoning": {
+                                "applicable": applicable
+                                if ref == "deepseek/deepseek-v4-flash"
+                                else False
+                            }
+                        },
+                    }
+                ]
+            }
+
+    client = CatalogClient()
+    app = tui.ChatTuiApp(
+        thread_id="term_1",
+        setting=client.initial_setting(),
+        home="/tmp/agent",
+        input_history=None,
+        client=client,
+    )
+    request = RunRequest(
+        thread_id="term_1",
+        request_id="one",
+        runnable=RunnableRequest("agic:research", RunnableInputRaw(_="hello")),
+        model=ModelRequest("deepseek/deepseek-v4-flash"),
+        policy=RunPolicy(),
+    )
+    app.submit_run(QueuedCall("hello", request))
+    block = next(
+        b for b in app.unfinalized_blocks if isinstance(b, blocks.RunControlBlock)
+    )
+    expected = "agic:research · deepseek/deepseek-v4-flash"
+    if applicable:
+        expected += " · auto"
+    assert _render_text(block.render()).splitlines()[-1].strip() == expected
+
+    app.setting = SessionSetting(
+        runnable="agic:other",
+        model=ModelRequest(
+            "openai/gpt-5", ModelParameters(ReasoningParameters(effort="high"))
+        ),
+    )
+    app.handle_run_event(_run_begin(runnable_name="research"))
+    assert _render_text(block.render()).splitlines()[-1].strip() == expected
+
+
 @pytest.mark.parametrize("width", [8, 20, 40, 80])
 def test_chat_context_and_steer_corners_fit_without_losing_padding(width: int) -> None:
     request = RunRequest(
@@ -5894,9 +5956,12 @@ def test_chat_context_and_steer_corners_fit_without_losing_padding(width: int) -
         )
 
 
-def test_chat_steer_feedback_wraps_after_the_marker() -> None:
+def test_chat_steer_feedback_has_blank_rows_and_wraps_after_the_marker() -> None:
     feedback = blocks.SteerFeedbackBlock(accepted=3, active_step=True, max_width=30)
     lines = _render_text(feedback.render(), width=30).splitlines()
+    assert lines[0] == lines[-1] == ""
+    assert rendering.renderables_height([feedback]) == len(lines)
+    lines = lines[1:-1]
     assert lines[0].startswith("• ")
     assert all(line.startswith("  ") for line in lines[1:])
     assert all(get_cwidth(line) <= 28 for line in lines)
@@ -5904,6 +5969,29 @@ def test_chat_steer_feedback_wraps_after_the_marker() -> None:
         " ".join(line[2:] for line in lines)
         == "3 steers will apply after the current step"
     )
+
+
+@pytest.mark.parametrize("accepted", [1, 3])
+def test_chat_live_steer_feedback_has_blank_rows_before_queue(accepted: int) -> None:
+    async def exercise() -> None:
+        async with _queue_test_app() as (app, output):
+            app.unfinalized_blocks.extend(
+                [
+                    blocks.RunSteerBlock.create(message="adjust", run_id="run_busy"),
+                    blocks.SteerFeedbackBlock(accepted=accepted, active_step=True),
+                ]
+            )
+            screen = _render_chat_layout(app)
+            lines = _screen_lines(screen, output.columns)
+            status_row = next(i for i, line in enumerate(lines) if "• " in line)
+            assert "will apply after the current step" in lines[status_row]
+            assert not lines[status_row - 1].strip()
+            assert not lines[status_row + 1].strip()
+            assert "items queued" in lines[status_row + 2]
+            # The upper gap is outside the padded control bar.
+            assert _cell_attrs(app, screen, status_row - 1, 0).bgcolor == ""
+
+    asyncio.run(exercise())
 
 
 @pytest.mark.parametrize("focused", [False, True])
@@ -5989,14 +6077,17 @@ def test_chat_queued_root_context_survives_new_defaults_and_run_transition() -> 
 
 
 @pytest.mark.parametrize("width", [20, 40])
+@pytest.mark.parametrize("focused", [False, True])
 def test_chat_live_clipping_preserves_the_entire_wrapped_steer_feedback(
-    width: int, monkeypatch: pytest.MonkeyPatch
+    width: int, focused: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def exercise() -> None:
         async with _queue_test_app() as (app, output):
             output.rows = 12
             output.columns = width
             monkeypatch.setattr(rendering, "terminal_width", lambda: width)
+            if focused:
+                app.app.layout.focus(app.queue_panel.view)
             presenter = app.app_context.get_presenter()
             presenter.add_steer(
                 "key",
@@ -6016,6 +6107,9 @@ def test_chat_live_clipping_preserves_the_entire_wrapped_steer_feedback(
             )
             expected = _render_text(feedback.render(), width=width).strip()
             assert expected in fragments
+            lines = _screen_lines(_render_chat_layout(app), width)
+            assert not any("Window too small" in line for line in lines)
+            assert any("• 1 steer waiting" in line for line in lines)
 
     asyncio.run(exercise())
 

@@ -260,6 +260,7 @@ class RunControlBlock(MutableBlock):
         *,
         input_background: str = DARK_TERMINAL_SURFACES.input_background,
         request: RunRequest | None = None,
+        effort_applicable: bool | None = None,
     ) -> RunControlBlock:
         return cls(
             message=message,
@@ -268,7 +269,12 @@ class RunControlBlock(MutableBlock):
             model=(request.model.ref if request.model else "model unspecified")
             if request
             else "",
-            reasoning=(model_reasoning_value(request.model) or "")
+            reasoning=(
+                model_reasoning_value(
+                    request.model, effort_applicable=effort_applicable
+                )
+                or ""
+            )
             if request and request.model
             else "",
         )
@@ -332,6 +338,7 @@ class SteerFeedbackBlock(MutableBlock):
     sending: int = 0
     active_step: bool = False
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
+    vertical_padding: bool = True
 
     @property
     def message(self) -> str:
@@ -354,12 +361,10 @@ class SteerFeedbackBlock(MutableBlock):
     ) -> RenderResult:
         width = max(1, min(options.max_width, self.max_width))
         lines = wrap_display(self.message, max(1, width - 4))
-        yield Text(
-            "\n".join(
-                ("• " if index == 0 else "  ") + line
-                for index, line in enumerate(lines)
-            )
+        body = "\n".join(
+            ("• " if index == 0 else "  ") + line for index, line in enumerate(lines)
         )
+        yield Text(f"\n{body}\n\n" if self.vertical_padding else body)
 
 
 @dataclass(slots=True)

@@ -108,7 +108,7 @@ cell of padding inside each end. It has no selection marker or bold text; only
 the background indicates selection. Slightly brighter dim action hints occupy
 the right side on that same background, separated from the body by at least two
 cells. Entry hints end two cells from Queue's edge; truncation preserves their
-padding. Panel hints align flush right with the status bar in both modes,
+padding. Panel hints also end two cells from Queue's right edge in both modes,
 without changing status-bar layout. Losing focus hides the highlight and entry
 hints while preserving selection. The summary counts all items.
 
@@ -574,12 +574,19 @@ terminals, the terminal background visible to their right distinguishes these
 interactions from a new root Run. Quick-command result, help, table, and
 reopened-output content align to the same output boundary.
 
+Root context uses the same reasoning label as the status bar: explicit effort
+or token budget, otherwise `auto` when the submitted model is known to support
+effort. Unknown or unsupported effort adds no suffix. This remains a submission
+snapshot even when session defaults change.
+
 Steer bars keep their original purple accent regardless of adoption. Pending
 bars have one aggregate `•` explanation below them, such as `3 steers will apply
 after the current step`; between steps it says `waiting for the next model
 call`. Until receipts arrive it says `Sending N steers`, or appends `· sending
 M more` to an accepted count. Continuations align after the marker, and live
-clipping reserves this feedback while preserving Input and Queue focus.
+clipping reserves this feedback while preserving Input and Queue focus. A blank
+row above and below separates the explanation from surrounding areas. Very short
+viewports omit this spacing before clipping the explanation.
 Only matching `StepBegin.preceded_by` control references or durable applied
 status commit an adopted bar. Receipt/event reordering does not imply adoption.
 The aggregate disappears when no steers remain, with no applied message.
