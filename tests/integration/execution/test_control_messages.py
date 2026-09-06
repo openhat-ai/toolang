@@ -16,7 +16,7 @@ from tests.support.execution_harness import (
     RecordingTool,
     ScriptedModelTurn,
 )
-from tests.support.execution_assertions import assert_replayed
+from tests.support.execution_assertions import assert_replayed, steer_message
 from toolang.base.types.message import Message, TextPart, ToolResultPart, message_text
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.types import ThreadPrefix
@@ -274,6 +274,76 @@ agic chat(_: Part[]) -> Part[]:
             )
             assert str(run.thread) not in calls[0].instructions
             assert run.id not in calls[0].instructions
+        assert_replayed(harness.store.db_path, tracer.events)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("timing", ["immediate", "next_call"])
+def test_recall_and_steer_preserve_adoption_order(tmp_path: Path, timing) -> None:
+    gate = AsyncGate()
+    tool = RecordingTool("lookup__item", output={}, gate=gate)
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic chat(_: Part[]) -> Part[]:
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        tools={tool.name: tool},
+        responses=[
+            ModelCallResult(tool_calls=(ToolCall("one", "one", tool.name, {}),)),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=thread, runnable="chat", primary=(TextPart("start"),)
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), 1)
+            step = harness.store.list_steps(run_id=handle.run_id)[-1]
+
+            def recall(revision: str):
+                return harness.store.accept_recall_control(
+                    run_id=handle.run_id,
+                    triggered_by=step.ref,
+                    payload=RecallControlPayload(
+                        SkillRecallTarget("testing"), revision, revision
+                    ),
+                    created_at=step.started_at,
+                )
+
+            first = recall("old")
+            steer = handle.steer(Message.user("new direction"), timing=timing)
+            last = recall("new")
+            if timing == "next_call":
+                gate.release()
+            run = await asyncio.wait_for(handle, 2)
+            assert run.status == "succeeded", run.error
+            call = harness.adapter.invocations[-1].call
+            adopted = call.messages[3:]
+            assert [message.parts[0] for message in adopted] == [
+                TextPart('<skill ref="testing" revision="old">'),
+                steer_message("new direction").parts[0],
+                TextPart('<skill ref="testing" revision="new">'),
+            ]
+            assert harness.store.list_steps(run_id=run.id)[-1].preceded_by == (
+                first.ref,
+                steer.ref,
+                last.ref,
+            )
+            assert harness.store.recent_conversation_messages(thread_id=thread) == [
+                *call.messages,
+                Message.assistant("done"),
+            ]
         assert_replayed(harness.store.db_path, tracer.events)
 
     asyncio.run(scenario())

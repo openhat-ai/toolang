@@ -94,7 +94,9 @@ async def execute(state: _AgicState) -> ModelCallResult:
         if state.execution is not None
         else ()
     )
-    preceding = (*consumed_inputs, *recalled)
+    preceding = tuple(
+        sorted((*consumed_inputs, *recalled), key=lambda control: control.index)
+    )
     step_input = (
         *_step_input(state),
         *(control_local_pointer(item, "_") for item in consumed_inputs),

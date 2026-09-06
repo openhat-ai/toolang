@@ -3011,6 +3011,10 @@ class RunStore:
                     control = controls.get(ref)
                     if control is None or control.status != "applied":
                         continue
+                    # A steer interrupts an earlier Step but supplies its input
+                    # only at the adopting Model Step, alongside other controls.
+                    if boundary.phase == "end" and control.kind != "cancel":
+                        continue
                     emitted.add(ref)
                     template = control_message(control)
                     if template is not None:

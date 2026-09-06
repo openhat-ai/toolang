@@ -82,7 +82,7 @@ async def begin(
                 # yet. Establish it before recording the skipped response.
                 continue
             # A boundary cancel may already have ended it in the executor.
-            if record is None or record.status != "running":
+            if record.status != "running":
                 raise
         else:
             if interruption is None:
