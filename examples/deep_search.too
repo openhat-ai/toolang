@@ -1,4 +1,4 @@
-agic expand_queries(_: Part[]) -> Text[]:
+agic expand_queries -> Text[]:
   recall = none
   tools = none
 
@@ -9,7 +9,7 @@ agic expand_queries(_: Part[]) -> Text[]:
   Return a JSON array containing exactly 6 query strings.
 
 ## Search the web for one query and return a compact evidence bundle.
-agic search_web(_: Part[]):
+agic search_web:
   recall = none
   tools = web/*
 
@@ -23,7 +23,7 @@ agic search_web(_: Part[]):
   - title, url, date if available
   - one sentence on why it matters
 
-agic extract_findings(_: Part[]):
+agic extract_findings:
   recall = none
   tools = none
 
@@ -34,7 +34,7 @@ agic extract_findings(_: Part[]):
   Prefer source-backed claims.
   Return concise bullets with URLs preserved.
 
-agic synthesize_report(_: Part[], topic: Part[]):
+agic synthesize_report(_, topic: Part[]):
   recall = none
   tools = none
 
@@ -58,19 +58,20 @@ flow research(_: Text):
     {{_}}
 
   ## Expand the research question into diverse search queries
-  scatter 6 expand_queries
+  scatter 6 using expand_queries
   ## Search the web for each query
-  map search_web par 4
+  map using search_web in 4 lanes
   ## Keep evidence bundles that answer the research task
-  keep is_relevant
-  ## Rank the remaining evidence by relevance
-  rank relevance top 8
+  keep if is_relevant
+  ## Prioritize the strongest evidence
+  sort descending by relevance
+  keep first 8
   ## Extract source-backed findings from each evidence bundle
-  map extract_findings par 4
+  map using extract_findings in 4 lanes
   ## Synthesize the final research brief
-  gather synthesize_report
+  gather using synthesize_report
 
-agic is_relevant(_: Part[], topic: Part[]) -> Boolean:
+agic is_relevant(_, topic: Part[]) -> Boolean:
   recall = none
   tools = none
 
@@ -83,7 +84,7 @@ agic is_relevant(_: Part[], topic: Part[]) -> Boolean:
   Decide whether this evidence bundle contains concrete, source-backed information that helps answer the research question.
   Return only true or false.
 
-agic relevance(_: Part[], topic: Part[]) -> Number:
+agic relevance(_, topic: Part[]) -> Number:
   recall = none
   tools = none
 

@@ -342,21 +342,22 @@ flow pipeline:
   run action
   seek reviewer action
   ask: Continue?
-  scatter 2 action
-  storm 3 action par 2
-  gather action
-  settle action
-  map action par 4
+  scatter 2 using action
+  storm 3 using action in 2 lanes
+  gather using action
+  settle using action
+  map using action in 4 lanes
   keep first 2
-  keep predicate par 2
+  keep if predicate in 2 lanes
   drop last 1
-  drop predicate
-  rank score top 3 par 2
+  drop if predicate
+  sort descending by score  in 2 lanes
+  keep first 3
   let saved = run action
   let note =
     Store this note.
 
-  repeat 2:
+  repeat 2 times:
     run action
     until: Complete?
 """
@@ -376,13 +377,14 @@ flow pipeline:
         "keep",
         "drop",
         "drop",
-        "rank",
+        "sort",
+        "keep",
         "run",
         "let",
         "repeat",
     ]
-    assert statements[13].binding == "saved"
-    let_statement = statements[14]
+    assert statements[14].binding == "saved"
+    let_statement = statements[15]
     assert isinstance(let_statement, LetStmt)
     assert let_statement.binding == "note"
     assert let_statement.value == "Store this note."
@@ -402,7 +404,7 @@ def test_flow_content_locals_accept_inline_and_block_equals_only() -> None:
     assert isinstance(inline, LetStmt) and inline.value == "Keep this."
     assert isinstance(block, LetStmt) and block.value == "Keep this too."
 
-    with pytest.raises(ToolangError, match="line 2"):
+    with pytest.raises(ToolangError, match=r"line \d+"):
         Program.from_source("flow legacy:\n  let content:\n    Removed syntax.\n")
 
 
@@ -410,7 +412,7 @@ def test_inline_settle_exposes_the_current_item() -> None:
     program = Program.from_source(
         """
 flow summarize(_: Text[]) -> Text:
-  settle -> Text:
+  settle using -> Text:
     {{_}}{{item}}
 """
     )
@@ -436,7 +438,7 @@ flow expand(_: Text, topic: Text) -> Text[]:
     {{_}}
   let prepared = run prepare
 
-  scatter 3 -> Text:
+  scatter 3 using -> Text:
     Return distinct pieces of {{source}} about {{topic}} and {{prepared}}.
     {{#source}}{{detail}}{{/source}}
 """
@@ -454,7 +456,7 @@ flow expand(_: Text, topic: Text) -> Text[]:
 
 def test_inline_scatter_applies_array_shape_to_the_default_item_output() -> None:
     program = Program.from_source(
-        "flow expand:\n  scatter 2:\n    Return distinct pieces.\n"
+        "flow expand:\n  scatter 2 using:\n    Return distinct pieces.\n"
     )
 
     statement = program.flows[0].stmts[0]
@@ -470,9 +472,9 @@ agic action:
   pass
 
 flow evaluate:
-  keep: Return true when the item is useful.
-  rank: Return a relevance score.
-  repeat 2:
+  keep if: Return true when the item is useful.
+  sort descending by: Return a relevance score.
+  repeat 2 times:
     run action
     until: Return true when complete.
 """
@@ -559,7 +561,9 @@ def test_recall_directive_lowers_canonical_values(
 
 def test_flow_rejects_recall_directive() -> None:
     with pytest.raises(ToolangValidationError, match="must not declare the recall"):
-        Program.from_source("flow configured:\n  recall = near\n\n  pass\n")
+        Program.from_source(
+            "flow configured:\n  recall = near\n\n  Explain the result.\n"
+        )
 
 
 def test_agic_routing_directives_preserve_collection_queries() -> None:
@@ -622,7 +626,9 @@ def test_agic_routing_directives_accept_collection_queries(query: str) -> None:
 @pytest.mark.parametrize("name", ["hands", "handoffs"])
 def test_flow_rejects_agic_routing_directives(name: str) -> None:
     with pytest.raises(ToolangValidationError, match="must not declare"):
-        Program.from_source(f"flow coordinate:\n  {name} = research\n\n  pass\n")
+        Program.from_source(
+            f"flow coordinate:\n  {name} = research\n\n  Coordinate the work.\n"
+        )
 
 
 @pytest.mark.parametrize("selector", ["_too", "_too/*", "_too/run", "_too__run"])
@@ -650,7 +656,7 @@ def test_program_data_round_trips_without_parsing_source() -> None:
     from toolang.lang.ast import program_from_data
 
     program = Program.from_source(
-        "agic hello:\n  Hello.\n\nflow work:\n  repeat 2:\n    run hello\n"
+        "agic hello:\n  Hello.\n\nflow work:\n  repeat 2 times:\n    run hello\n"
     )
 
     assert program_from_data(to_data(program)) == program
@@ -668,13 +674,13 @@ agic predicate -> Boolean:
   pass
 
 flow work:
-  gather action
-  settle action
-  keep predicate
-  drop predicate
-  repeat 2:
-    settle action
-    drop predicate
+  gather using action
+  settle using action
+  keep if predicate
+  drop if predicate
+  repeat 2 times:
+    settle using action
+    drop if predicate
 """
     )
 

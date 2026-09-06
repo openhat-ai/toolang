@@ -11,6 +11,7 @@ from tree_sitter import Node as CstNode
 from toolang.common.template import template_root_names
 
 from . import ast
+from .errors import ToolangValidationError
 from .validate import _validate_cap_source
 
 _DECL_REF_RE = re.compile(r"^[A-Za-z_][\w-]*$")
@@ -469,6 +470,10 @@ class _Lowerer:
                     doc=doc,
                 )
             nested = self._required(node, "statement")
+            if nested.type == "repeat_statement":
+                raise ToolangValidationError(
+                    f"Repeat at line {self._line(node)} cannot have a let binding."
+                )
             stmt = self._lower_stmt(nested, doc=doc)
             binding = self._optional_text(node.child_by_field_name("name"))
             if binding is not None and self._flow_local_types is not None:
@@ -507,7 +512,7 @@ class _Lowerer:
             return ast.StormStmt(
                 count=self._required_int(node, "count"),
                 runnable=self._runnable(node),
-                lanes=self._par(node),
+                lanes=self._optional_int(node.child_by_field_name("lanes")),
                 span=span,
                 doc=doc,
             )
@@ -531,18 +536,16 @@ class _Lowerer:
         if node.type == "map_statement":
             return ast.MapStmt(
                 runnable=self._runnable(node),
-                lanes=self._par(node),
+                lanes=self._optional_int(node.child_by_field_name("lanes")),
                 span=span,
                 doc=doc,
             )
         if node.type in {"keep_statement", "drop_statement"}:
-            position = self._child_of_type(node, "position_clause")
+            position = node.child_by_field_name("selection")
             statement = ast.KeepStmt if node.type == "keep_statement" else ast.DropStmt
             return statement(
                 position=(
-                    cast(
-                        ast.Position, self._required_text(position, "position").strip()
-                    )
+                    cast(ast.Position, self._required_text(position, "side").strip())
                     if position
                     else None
                 ),
@@ -552,38 +555,26 @@ class _Lowerer:
                     if position
                     else self._runnable(node, output="Boolean", evaluator=True)
                 ),
-                lanes=self._par(node),
+                lanes=self._optional_int(node.child_by_field_name("lanes")),
                 span=span,
                 doc=doc,
             )
-        if node.type == "rank_statement":
-            selection = self._child_of_type(node, "rank_selection_clause")
-            return ast.RankStmt(
+        if node.type == "sort_statement":
+            return ast.SortStmt(
                 runnable=self._runnable(node, output="Number", evaluator=True),
-                selection=cast(
-                    ast.Limit, self._required_text(selection, "selection").strip()
-                )
-                if selection
-                else None,
-                limit=self._required_int(selection, "count") if selection else None,
-                lanes=self._par(node),
+                order=cast(ast.Order, self._required_text(node, "order").strip()),
+                lanes=self._optional_int(node.child_by_field_name("lanes")),
                 span=span,
                 doc=doc,
             )
         if node.type == "repeat_statement":
-            body = self._required(node, "body")
-            statements = self._child_of_type(body, "statements")
-            if statements is None:
-                raise RuntimeError(
-                    f"Missing repeat statements at line {self._line(node)}."
-                )
-            until_node = self._child_of_type(body, "until_statement")
+            statements = self._required(node, "body")
+            until_node = node.child_by_field_name("until")
             runnable = None
             if until_node is not None:
-                agic = self._required(until_node, "agic")
                 runnable = self._generated_agic(
-                    agic,
-                    body=self._block_text(self._required(agic, "body")),
+                    until_node,
+                    body=self._block_text(self._required(until_node, "body")),
                     output="Boolean",
                     evaluator=True,
                 )
@@ -607,14 +598,19 @@ class _Lowerer:
         evaluator: bool = False,
         array_output: bool = False,
     ) -> str:
-        if runnable := node.child_by_field_name("runnable"):
+        runnable = node.child_by_field_name("runnable")
+        if runnable is not None and runnable.type == "runnable":
             return self._text(runnable).strip()
-        agic = node.child_by_field_name("agic")
+        agic = runnable or node.child_by_field_name("agic")
         if agic is None:
             raise RuntimeError(f"Missing runnable at line {self._line(node)}.")
-        declared_output = (
-            self._optional_text(agic.child_by_field_name("return")) or "Part[]"
-        )
+        declared_output = self._optional_text(agic.child_by_field_name("return"))
+        if output is not None and declared_output not in {None, output}:
+            raise ToolangValidationError(
+                f"{node.type.removesuffix('_statement').capitalize()} at line "
+                f"{self._line(node)} requires {output} output, got {declared_output}."
+            )
+        declared_output = declared_output or output or "Part[]"
         if array_output:
             declared_output = f"{declared_output}[]"
         return self._generated_agic(
@@ -819,10 +815,6 @@ class _Lowerer:
         return "\n".join(
             line[indent:].rstrip() if line.strip() else "" for line in lines
         ).strip()
-
-    def _par(self, node: CstNode) -> int | None:
-        clause = self._child_of_type(node, "par_clause")
-        return self._required_int(clause, "limit") if clause is not None else None
 
     def _required_int(self, node: CstNode, field: str) -> int:
         return int(self._required_text(node, field).strip())

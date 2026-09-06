@@ -560,7 +560,7 @@ def test_compact_flow_tools_validate_before_atomic_mutation(tmp_path: Path) -> N
         {
             "kind": "flow",
             "key": "research",
-            "content": {"source": "flow research:\n  settle missing\n"},
+            "content": {"source": "flow research:\n  settle using missing\n"},
         },
         context,
     )

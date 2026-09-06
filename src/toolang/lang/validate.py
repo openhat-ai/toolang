@@ -466,18 +466,16 @@ def _validate_stmts(
                     )
                 _non_negative(stmt.count, field="count", line=stmt.span.line)
             else:
-                _require_runnable(stmt.runnable or "", runnables, stmt=stmt)
-                _positive_optional(stmt.lanes, field="par", line=stmt.span.line)
+                _require_evaluator(stmt.runnable or "", runnables, stmt, "Boolean")
+                _positive_optional(stmt.lanes, field="lanes", line=stmt.span.line)
             continue
-        if isinstance(stmt, ast.RankStmt):
-            _require_runnable(stmt.runnable, runnables, stmt=stmt)
-            if (stmt.selection is None) != (stmt.limit is None):
+        if isinstance(stmt, ast.SortStmt):
+            _require_evaluator(stmt.runnable, runnables, stmt, "Number")
+            if stmt.order not in {"ascending", "descending"}:
                 raise ToolangValidationError(
-                    f"Rank at line {stmt.span.line} has an incomplete limit."
+                    f"Sort at line {stmt.span.line} requires ascending or descending order."
                 )
-            if stmt.limit is not None:
-                _non_negative(stmt.limit, field="count", line=stmt.span.line)
-            _positive_optional(stmt.lanes, field="par", line=stmt.span.line)
+            _positive_optional(stmt.lanes, field="lanes", line=stmt.span.line)
             continue
         if isinstance(stmt, ast.RepeatStmt):
             if stmt.count is None and stmt.runnable is None:
@@ -496,7 +494,7 @@ def _validate_stmts(
         if isinstance(stmt, ast.ScatterStmt | ast.StormStmt):
             _non_negative(stmt.count, field="count", line=stmt.span.line)
         if isinstance(stmt, ast.StormStmt | ast.MapStmt):
-            _positive_optional(stmt.lanes, field="par", line=stmt.span.line)
+            _positive_optional(stmt.lanes, field="lanes", line=stmt.span.line)
 
 
 def _validate_binding(stmt: ast.FlowStmt) -> None:
@@ -539,6 +537,21 @@ def _require_runnable(
     if name not in runnables:
         raise ToolangValidationError(
             f"{stmt.kind.capitalize()} at line {stmt.span.line} references unknown runnable {name!r}."
+        )
+
+
+def _require_evaluator(
+    name: str,
+    runnables: dict[str, ast.AgicDecl | ast.FlowDecl],
+    stmt: ast.FlowStmt,
+    output: str,
+) -> None:
+    _require_runnable(name, runnables, stmt=stmt)
+    actual = runnables[name].output
+    if actual != output:
+        raise ToolangValidationError(
+            f"{stmt.kind.capitalize()} at line {stmt.span.line} requires "
+            f"{output} output from {name!r}, got {actual}."
         )
 
 

@@ -187,7 +187,7 @@ agic worker(_: Text) -> Text:
 
 flow parallel(_: Text) -> Text[]:
   ## Run workers in parallel.
-  storm 3 worker par 3
+  storm 3 using worker in 3 lanes
 """,
         responses=[
             ModelCallResult(message=Message.assistant(f"item {index}"))

@@ -802,7 +802,7 @@ agic worker(_: Part[]) -> Part[]:
   user: {{_}}
 
 flow parallel(_: Part[]):
-  storm 3 worker par 3
+  storm 3 using worker in 3 lanes
 """,
         responses=[
             ScriptedModelTurn(
@@ -1045,8 +1045,8 @@ agic upper(_: Text) -> Text:
   user: {{_}}
 
 flow mapped(_: Text) -> Text[]:
-  scatter 2 split
-  map upper par 2
+  scatter 2 using split
+  map using upper in 2 lanes
 """,
         responses=[
             ModelCallResult(message=Message.assistant('["one","two"]')),
@@ -1148,6 +1148,7 @@ def test_deep_search_example_uses_explicit_flow_reshaping(
                 "par",
                 "par",
                 "par",
+                "value",
                 "par",
                 "run",
             ]
@@ -1182,7 +1183,7 @@ def test_deep_search_example_uses_explicit_flow_reshaping(
     asyncio.run(scenario())
 
 
-def test_inline_rank_scorer_has_no_recalled_history_or_tools(
+def test_inline_sort_scorer_has_no_recalled_history_or_tools(
     tmp_path: Path,
 ) -> None:
     tool = RecordingTool("test__side_effect", output={"ok": True})
@@ -1200,8 +1201,9 @@ agic split(_: Text) -> Text[]:
   user: {{_}}
 
 flow select(_: Text) -> Text[]:
-  scatter 1 split
-  rank top 1: Return a numeric relevance score from 0 to 10.
+  scatter 1 using split
+  sort descending by: Return a numeric relevance score from 0 to 10.
+  keep last 1
 """,
         tools={tool.name: tool},
         responses=[
@@ -1257,7 +1259,7 @@ agic worker(_: Text) -> Text:
   user: {{_}}
 
 flow fanout(_: Text) -> Text[]:
-  storm 3 worker par 2
+  storm 3 using worker in 2 lanes
 """,
         responses=[
             ScriptedModelTurn(
@@ -1323,8 +1325,8 @@ agic merge(_: Text[]) -> Text:
   user: {{_}}
 
 flow summary(_: Text) -> Text:
-  scatter 3 split
-  gather merge
+  scatter 3 using split
+  gather using merge
 """,
         responses=[
             ModelCallResult(message=Message.assistant('["a","b","c"]')),
@@ -1372,8 +1374,8 @@ agic fold(_: Part[], item: Text) -> Text:
   user: {{_}}{{item}}
 
 flow folded(_: Text) -> Text:
-  scatter 3 split
-  settle fold
+  scatter 3 using split
+  settle using fold
 """,
         responses=[
             ModelCallResult(message=Message.assistant('["a","b","c"]')),
@@ -1421,8 +1423,8 @@ agic split(_: Text) -> Text[]:
   user: {{_}}
 
 flow folded(_: Text) -> Text:
-  scatter 3 split
-  settle -> Text:
+  scatter 3 using split
+  settle using -> Text:
     {{_}}{{item}}
 """,
         responses=[
@@ -1515,7 +1517,7 @@ agic split(_: Text) -> Text[]:
   user: {{{{_}}}}
 
 flow selected(_: Text) -> Text[]:
-  scatter 4 split
+  scatter 4 using split
   {statement}
 """,
         responses=[
@@ -1550,8 +1552,8 @@ flow selected(_: Text) -> Text[]:
 @pytest.mark.parametrize(
     ("statement", "expected"),
     [
-        ("keep relevant par 2", ["a", "c"]),
-        ("drop relevant par 2", ["b"]),
+        ("keep in 2 lanes if relevant", ["a", "c"]),
+        ("drop in 2 lanes if relevant", ["b"]),
     ],
 )
 def test_predicate_keep_and_drop(
@@ -1575,7 +1577,7 @@ agic relevant(_: Text) -> Boolean:
   user: {{{{_}}}}
 
 flow selected(_: Text) -> Text[]:
-  scatter 3 split
+  scatter 3 using split
   {statement}
 """,
         responses=[
@@ -1613,11 +1615,11 @@ flow selected(_: Text) -> Text[]:
 @pytest.mark.parametrize(
     ("selection", "expected"),
     [
-        ("top 3", ["a", "b", "d"]),
-        ("bottom 2", ["d", "c"]),
+        ("first 3", ["a", "b", "d"]),
+        ("last 2", ["d", "c"]),
     ],
 )
-def test_rank_is_stable_and_applies_top_or_bottom_selection(
+def test_sort_is_stable_and_composes_with_positional_selection(
     tmp_path: Path,
     selection: str,
     expected: list[str],
@@ -1638,8 +1640,9 @@ agic score(_: Text) -> Number:
   user: {{{{_}}}}
 
 flow ranked(_: Text) -> Text[]:
-  scatter 4 split
-  rank score {selection} par 2
+  scatter 4 using split
+  sort descending in 2 lanes by score
+  keep {selection}
 """,
         responses=[
             ModelCallResult(message=Message.assistant('["a","b","c","d"]')),
@@ -1663,13 +1666,13 @@ flow ranked(_: Text) -> Text[]:
 
             assert root.status == "succeeded"
             assert _output_value(harness, root.id) == expected
-            assert _root_step_kinds(harness, root.id) == ["run", "par"]
+            assert _root_step_kinds(harness, root.id) == ["run", "par", "value"]
             ranked = [
                 step
                 for step in harness.store.list_steps(run_id=root.id)
                 if step.parent is None
-            ][-1]
-            assert ranked.noted == CollectionStepNoted(4, len(expected))
+            ][1]
+            assert ranked.noted == CollectionStepNoted(4, 4)
 
     asyncio.run(scenario())
 
@@ -1685,7 +1688,7 @@ agic echo(_: Text) -> Text:
   user: {{_}}
 
 flow repeated(_: Text) -> Text:
-  repeat 3:
+  repeat 3 times:
     run echo
 """,
         responses=[
@@ -1740,7 +1743,7 @@ agic echo(_: Text) -> Text:
   user: {{_}}
 
 flow repeated(_: Text) -> Text:
-  repeat 2:
+  repeat 2 times:
     run echo
     until: Return false.
   run echo
@@ -1802,7 +1805,7 @@ agic echo(_: Text) -> Text:
   user: {{_}}
 
 flow repeated(_: Text) -> Text:
-  repeat 2:
+  repeat 2 times:
     run echo
 """,
         responses=[
@@ -1863,7 +1866,7 @@ agic echo(_: Text) -> Text:
   user: {{_}}
 
 flow repeated(_: Text) -> Text:
-  repeat 5:
+  repeat 5 times:
     run echo
     until:
       Return true when complete.
@@ -1940,9 +1943,9 @@ flow repeated(_: Text) -> Text:
 @pytest.mark.parametrize(
     ("statement", "step_kind", "operation"),
     [
-        ("map echo", "par", "map"),
-        ("gather echo", "run", "gather"),
-        ("settle echo", "loop", "settle"),
+        ("map using echo", "par", "map"),
+        ("gather using echo", "run", "gather"),
+        ("settle using echo", "loop", "settle"),
     ],
 )
 def test_list_statements_fail_inside_their_own_step_boundary(
@@ -2017,7 +2020,7 @@ agic split(_: Text) -> Text[]:
   user: {{_}}
 
 flow scattered(_: Text) -> Text[]:
-  scatter 3 split
+  scatter 3 using split
 """,
         responses=[
             ModelCallResult(message=Message.assistant('["a","b"]')),
@@ -2067,7 +2070,7 @@ flow scattered(_: Text) -> Text[]:
   let source =
     {{_}}
 
-  scatter 3 -> Text:
+  scatter 3 using -> Text:
     Return distinct pieces of this source:
     {{source}}
 """,

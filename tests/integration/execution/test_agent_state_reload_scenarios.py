@@ -74,7 +74,7 @@ agic child(_: Part[]) -> Part[]:
   user: hello
 
 flow parent(_: Part[]) -> Part[][]:
-  storm 2 child par 2
+  storm 2 using child in 2 lanes
 """.lstrip()
 
 _RELOADED_PARALLEL_SOURCE = _PARALLEL_SOURCE.replace("old state", "new state")

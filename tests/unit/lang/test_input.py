@@ -37,6 +37,18 @@ from toolang.lang.input import (
 from toolang.lang.types import Array, Struct
 
 
+@pytest.mark.parametrize("value", [[], (), Array("Text[]", ())])
+def test_empty_collection_output_is_not_missing_text(value: object) -> None:
+    assert coerce_output(value, "Text[]") == Array("Text[]", ())
+
+
+def test_empty_percept_still_requires_json_for_a_collection_output() -> None:
+    with pytest.raises(ToolangOutputError):
+        coerce_output(Message.assistant(""), "Text[]")
+    with pytest.raises(ToolangOutputError):
+        coerce_output(Array("Part[]", ()), "Text[]")
+
+
 @pytest.mark.parametrize(
     "part",
     (

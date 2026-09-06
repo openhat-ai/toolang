@@ -2,11 +2,13 @@
 
 ## Status and Goal
 
-Feature definition proposed on 2026-09-06; pending human approval. This change
-delivers a plan only. Implementation requires approval of this scope, including
-the source and persisted-data compatibility decisions below.
+Scope approved on 2026-09-06, including source and persisted-data compatibility
+breaks. Implementation uses the released 0.3.1 patch, which supplies the approved
+[shared block model](https://github.com/openhat-ai/tree-sitter-toolang/pull/34)
+and strict keyword recognition on every implicit prose line. That follow-up
+supersedes the original permissive-continuation behavior in this definition.
 
-Adopt the released `tree-sitter-toolang` 0.3.0 grammar throughout parsing,
+Adopt the released `tree-sitter-toolang` 0.3.1 grammar throughout parsing,
 semantic validation, formatting, execution, and inspection. Toolang's own
 package version is already `0.3.0`; this is a grammar integration, not a package
 release or a new language design.
@@ -57,7 +59,7 @@ defaults and reserved `far`, `near`, and `line` names remain unchanged.
 
 ### Dependency and Source Compatibility
 
-- Require `tree-sitter-toolang>=0.3.0,<0.4` and lock exactly 0.3.0 for this
+- Require `tree-sitter-toolang>=0.3.1,<0.4` and lock exactly 0.3.1 for this
   integration. Keep the existing Tree-sitter range and locked 0.25.2 runtime.
   No parser artifacts are vendored. The upper bound prevents an unreviewed
   future minor grammar from entering a fresh installation.
@@ -130,8 +132,9 @@ iteration, uses the latest locals, and propagates evaluator failures.
 Recognize Tree-sitter errors, missing nodes, and `invalid_*` nodes before
 lowering. Report malformed or legacy Flow headers with their line and useful
 syntax context instead of reporting every indented error as bad indentation.
-Keep ordinary prompt prose intact: an adjacent continuation line can begin
-with a verb, while a reserved word at a statement boundary is an error.
+Keep ordinary prompt prose intact. Every implicit continuation line checks its
+first complete token for lowercase keywords; malformed keyword-led text is an
+error. Capitalization or explicit text blocks permit keyword-led prose.
 
 ### Execution and Observability
 
@@ -234,7 +237,7 @@ Parsing remains in `toolang.lang`; execution consumes the semantic AST.
    boundaries, missing direction, duplicate/conflicting clauses, invalid
    singular/plural agreement, zero lanes, punctuation, wrong evaluator return
    types, and repeat bindings. Test valid `01 lane`/`01 time`, zero counts,
-   and verb-leading prompt continuations separately.
+   and capitalized or explicit keyword-led prose separately.
 3. Using deterministic fake runnables, verify storm/map/filter/sort concurrency
    limits and stable input order despite out-of-order completion. Preserve
    scatter's one-child/advisory-count and settle's sequential accumulator
@@ -272,7 +275,7 @@ Parsing remains in `toolang.lang`; execution consumes the semantic AST.
 
 ## Action Items
 
-- [ ] Approve the released-grammar scope and explicit compatibility breaks.
+- [x] Approve the released-grammar scope and explicit compatibility breaks.
 - [ ] Update the dependency, AST, lowering, and validation as one integration.
 - [ ] Implement directional stable sorting and adapt persistence consumers.
 - [ ] Update formatting, progress, inspection, and schema boundaries.
@@ -289,5 +292,5 @@ rank migration changing the caller's `_` or retry boundaries. The tests above
 target each risk directly. Persisted-store incompatibility is intentional and
 requires explicit approval with the rest of this definition.
 
-No unresolved technical choices remain in this proposal. Human approval is
-pending; broader syntax proposals require separate definitions.
+No unresolved technical choices remain in this approved scope. Broader syntax
+proposals require separate definitions.

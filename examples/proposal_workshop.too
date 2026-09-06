@@ -1,12 +1,6 @@
 ##! Turn a rough idea into a decision-ready proposal through bounded review.
-##!
-##! Example:
-##! too examples/proposal_workshop.too workshop --models '[deepseek]' \
-##!   audience='Engineering leadership' \
-##!   criteria='Clear ownership, measurable outcomes, and bounded risk' \
-##!   'Adopt an internal platform for reusable AI agent capabilities'
 
-agic draft_proposal(_: Part[], audience?: Text, criteria?: Text):
+agic draft_proposal(_, audience?, criteria?):
   recall = none
   tools = none
 
@@ -25,7 +19,7 @@ agic draft_proposal(_: Part[], audience?: Text, criteria?: Text):
   measures.
   Keep the complete draft under 500 words.
 
-agic review_draft(_: Part[], request: Part[], audience?: Text, criteria?: Text):
+agic review_draft(_, request: Part[], audience?, criteria?):
   recall = none
   tools = none
 
@@ -48,7 +42,7 @@ agic review_draft(_: Part[], request: Part[], audience?: Text, criteria?: Text):
   Return exactly 3 concise, actionable bullets and stay under 180 words.
   Do not rewrite the proposal.
 
-agic revise_draft(_: Part[], feedback: Part[], request: Part[], audience?: Text, criteria?: Text):
+agic revise_draft(_, feedback: Part[], request: Part[], audience?, criteria?):
   recall = none
   tools = none
 
@@ -75,7 +69,7 @@ agic revise_draft(_: Part[], feedback: Part[], request: Part[], audience?: Text,
   Return only the complete revised proposal.
 
 ## Draft and improve a proposal through three review-revision cycles.
-flow workshop(_: Text, audience?: Text, criteria?: Text):
+flow workshop(_: Text, audience?, criteria?):
   let request =
     {{_}}
 
@@ -83,8 +77,8 @@ flow workshop(_: Text, audience?: Text, criteria?: Text):
   run draft_proposal
 
   ## Carry each revised draft into the next review cycle
-  repeat 3:
-    ## Review the current value of _
+  repeat 3 times:
+    ## Identify the most consequential weaknesses
     let feedback = run review_draft
-    ## Revise _ using the feedback local from this iteration
+    ## Incorporate the review into the proposal
     run revise_draft

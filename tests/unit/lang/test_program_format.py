@@ -31,16 +31,17 @@ flow work:
   let run action
   seek reviewer action
   ask: Continue?
-  scatter 2 action
-  storm 3 action par 2
-  gather action
-  settle action
-  map action par 4
+  scatter 2 using action
+  storm 3 using action in 2 lanes
+  gather using action
+  settle using action
+  map using action in 4 lanes
   keep first 2
-  keep predicate par 2
+  keep if predicate in 2 lanes
   drop last 1
-  rank score top 3 par 2
-  repeat 2:
+  sort descending by score  in 2 lanes
+  keep first 3
+  repeat 2 times:
     run action
 """
     )
@@ -54,16 +55,17 @@ flow work:
         "let run action",
         "seek reviewer action",
         "ask",
-        "scatter 2 action",
-        "storm 3 action par 2",
-        "gather action",
-        "settle action",
-        "map action par 4",
+        "scatter 2 using action",
+        "storm 3 in 2 lanes using action",
+        "gather using action",
+        "settle using action",
+        "map in 4 lanes using action",
         "keep first 2",
-        "keep predicate par 2",
+        "keep in 2 lanes if predicate",
         "drop last 1",
-        "rank score top 3 par 2",
-        "repeat 2",
+        "sort descending in 2 lanes by score",
+        "keep first 3",
+        "repeat 2 times",
     ]
 
 
@@ -72,8 +74,9 @@ def test_format_statement_head_hides_generated_inline_agic_names() -> None:
         """
 flow work:
   run: Draft a report.
-  map par 3: Rewrite this item.
-  rank top 2 par 3: Score this item.
+  map in 3 lanes using: Rewrite this item.
+  sort descending in 3 lanes by: Score this item.
+  keep first 2
 """
     )
 
@@ -81,8 +84,9 @@ flow work:
         format_statement_head(statement) for statement in program.flows[0].stmts
     ] == [
         "run",
-        "map par 3",
-        "rank top 2 par 3",
+        "map in 3 lanes using",
+        "sort descending in 3 lanes by",
+        "keep first 2",
     ]
 
 
@@ -187,7 +191,7 @@ agic review(_:Part[]):
 
 
 def test_format_source_expands_tabs_using_configured_tab_size() -> None:
-    source = "agic followup:\n\tcontext:\n\t   repo context\n\tuser:\n\t   hello\n"
+    source = "agic followup:\n\tcontext:\n\t\trepo context\n\tuser:\n\t\thello\n"
 
     assert format_source(source, tab_size=8) == (
         "agic followup:\n"
@@ -672,8 +676,8 @@ agic review( _,focus ? : Text)->Result:
 
 flow pipeline( _:Part[])->Result:
     tools+= shell,fs
-    let drafts= scatter   2 review
-    repeat 2:
+    let drafts= scatter   2 using review
+    repeat 2 times:
         run review
         until:
             Done.
@@ -715,8 +719,8 @@ agic review(_: Part[], focus?: Text) -> Result:
 
 flow pipeline(_: Part[]) -> Result:
   tools += shell, fs
-  let drafts = scatter 2 review
-  repeat 2:
+  let drafts = scatter 2 using review
+  repeat 2 times:
     run review
     until:
       Done.
@@ -741,11 +745,7 @@ flow pipeline(_: Part[]) -> Result:
 def test_repo_programs_format_idempotently_without_semantic_changes() -> None:
     source_paths = [
         *sorted(FIXTURES_ROOT.glob("*.too")),
-        *(
-            path
-            for path in sorted((PROJECT_ROOT / "examples").glob("*.too"))
-            if path.name != "script-playground.too"
-        ),
+        *sorted((PROJECT_ROOT / "examples").glob("*.too")),
     ]
 
     for source_path in source_paths:
@@ -766,6 +766,70 @@ def test_format_source_preserves_relative_content_indentation() -> None:
 """
 
     assert format_source(source) == ("context example:\n  first\n    nested\n  last\n")
+
+
+@pytest.mark.parametrize(
+    "header, indent",
+    [
+        ("flow work:\n  run:", "    "),
+        ("agic work:\n  user:", "    "),
+        ("agic work:\n  context:", "    "),
+        ("agic work:\n  instruct:", "    "),
+        ("context notes:", "  "),
+        ("instruct rules:", "  "),
+        ("prompt review:", "  "),
+        ("task review:", "  "),
+    ],
+)
+def test_format_source_preserves_literal_headers_and_markdown(
+    header: str, indent: str
+) -> None:
+    body = (
+        f"{indent}First paragraph.\n"
+        f"{indent}##! Literal heading.\n"
+        f"{indent}tools = prose, not a directive.\n"
+        f"{indent}context: prose, not a setting.\n\n"
+        f"{indent}  - Nested Markdown.\n"
+        f"{indent}Last line.\n"
+    )
+    source = f"{header}\n{body}"
+    formatted = format_source(source)
+    assert body in formatted
+    assert format_source(formatted) == formatted
+    assert _without_spans(to_data(Program.from_source(formatted))) == _without_spans(
+        to_data(Program.from_source(source))
+    )
+
+
+@pytest.mark.parametrize(
+    "kind, properties",
+    [
+        ("psyche", ""),
+        ("skill", "  description = Review the evidence.\n"),
+        (
+            "service",
+            "  description = Review the evidence.\n"
+            "  transport = http\n  target = https://example.com/mcp\n",
+        ),
+        ("prompt", ""),
+    ],
+)
+def test_format_source_keeps_cap_comments_out_of_program_documentation(
+    kind: str,
+    properties: str,
+) -> None:
+    source = (
+        f"{kind} review:\n"
+        "  ##! Keep this comment inside the declaration.\n"
+        f"{properties}"
+        "  Review the evidence.\n"
+    )
+    formatted = format_source(source)
+    assert Program.from_source(formatted).doc is None
+    assert format_source(formatted) == formatted
+    assert _without_spans(to_data(Program.from_source(formatted))) == _without_spans(
+        to_data(Program.from_source(source))
+    )
 
 
 def test_format_source_preserves_header_comments() -> None:

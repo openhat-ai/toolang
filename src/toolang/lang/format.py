@@ -56,12 +56,12 @@ _FLOW_STATEMENT_TYPES = {
     "map_statement",
     "keep_statement",
     "drop_statement",
-    "rank_statement",
+    "sort_statement",
     "repeat_statement",
-    "until_statement",
+    "inline_agic_body",
 }
 _FLOW_STATEMENT_RE = re.compile(
-    r"^(let|run|seek|ask|scatter|storm|gather|settle|map|keep|drop|rank|repeat|until|pass)\b"
+    r"^(let|run|seek|ask|scatter|storm|gather|settle|map|keep|drop|sort|repeat|until|pass)\b"
 )
 
 
@@ -103,45 +103,46 @@ def format_statement_head(statement: ast.FlowStmt) -> str:
         head = _statement_words(
             "scatter",
             str(statement.count),
-            _authored_runnable(statement.runnable),
+            _runnable_clause("using", statement.runnable),
         )
     elif isinstance(statement, ast.StormStmt):
         head = _statement_words(
             "storm",
             str(statement.count),
-            _authored_runnable(statement.runnable),
             _parallel_clause(statement.lanes),
+            _runnable_clause("using", statement.runnable),
         )
     elif isinstance(statement, ast.GatherStmt):
-        head = _statement_words("gather", _authored_runnable(statement.runnable))
+        head = _statement_words("gather", _runnable_clause("using", statement.runnable))
     elif isinstance(statement, ast.SettleStmt):
-        head = _statement_words("settle", _authored_runnable(statement.runnable))
+        head = _statement_words("settle", _runnable_clause("using", statement.runnable))
     elif isinstance(statement, ast.MapStmt):
         head = _statement_words(
             "map",
-            _authored_runnable(statement.runnable),
             _parallel_clause(statement.lanes),
+            _runnable_clause("using", statement.runnable),
         )
     elif isinstance(statement, ast.KeepStmt | ast.DropStmt):
         head = _statement_words(
             statement.kind,
             statement.position,
             str(statement.count) if statement.count is not None else "",
-            _authored_runnable(statement.runnable or ""),
             _parallel_clause(statement.lanes),
+            _runnable_clause("if", statement.runnable) if statement.runnable else "",
         )
-    elif isinstance(statement, ast.RankStmt):
+    elif isinstance(statement, ast.SortStmt):
         head = _statement_words(
-            "rank",
-            _authored_runnable(statement.runnable),
-            statement.selection,
-            str(statement.limit) if statement.limit is not None else "",
+            "sort",
+            statement.order,
             _parallel_clause(statement.lanes),
+            _runnable_clause("by", statement.runnable),
         )
     elif isinstance(statement, ast.RepeatStmt):
         return _statement_words(
             "repeat",
-            str(statement.count) if statement.count is not None else "",
+            _count_phrase(statement.count, "time")
+            if statement.count is not None
+            else "",
         )
     else:
         raise TypeError(f"unsupported flow statement: {type(statement).__name__}")
@@ -161,16 +162,22 @@ def _authored_runnable(value: str) -> str:
 
 
 def _parallel_clause(value: int | None) -> str:
-    return f"par {value}" if value is not None else ""
+    return f"in {_count_phrase(value, 'lane')}" if value is not None else ""
+
+
+def _count_phrase(value: int, noun: str) -> str:
+    return f"{value} {noun}{'' if value == 1 else 's'}"
+
+
+def _runnable_clause(connector: str, runnable: str) -> str:
+    return _statement_words(connector, _authored_runnable(runnable))
 
 
 def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list[str]:
     formatted: list[str] = []
     indent = " " * tab_size
     current_top: str | None = None
-    agic_block_indent: int | None = None
     flow_repeat_indents: list[int] = []
-    flow_content_block: tuple[int, int] | None = None
 
     for index, raw_line in enumerate(lines):
         line = raw_line.rstrip()
@@ -185,68 +192,46 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
         if node is None:
             formatted.append(line)
             continue
-        if column == 0:
+        if column == 0 and not stripped.startswith("#"):
             current_top = _top_level_kind(stripped)
-            agic_block_indent = None
             flow_repeat_indents.clear()
-            flow_content_block = None
         if line.startswith("#!"):
             formatted.append(line)
+            continue
+
+        if node.type == "indented_raw_text":
+            depth = _indent_depth(node)
+            extra = _relative_content_indent(lines, node, tab_size=tab_size)
+            content = line.lstrip(" \t")
+            formatted.append(f"{indent * depth}{' ' * extra}{content}")
             continue
 
         if current_top == "agic" and column > 0:
             if _DIRECTIVE_RE.match(line):
                 formatted.append(f"{indent}{_format_directive_line(stripped)}")
-                agic_block_indent = None
                 continue
             if match := _MESSAGE_HEADER_RE.match(stripped):
                 formatted.append(f"{indent}{_format_message_header_line(match)}")
-                agic_block_indent = column if not match.group("body").strip() else None
                 continue
             if stripped.startswith("#"):
                 formatted.append(f"{indent}{_format_comment_line(stripped)}")
                 continue
-            if agic_block_indent is not None and column > agic_block_indent:
-                formatted.append(f"{indent}{indent}{stripped}")
-                continue
-            agic_block_indent = None
             formatted.append(f"{indent}{stripped}")
             continue
 
         if current_top == "flow" and column > 0:
-            if flow_content_block is not None:
-                block_indent, block_depth = flow_content_block
-                if column > block_indent:
-                    formatted.append(f"{indent * (block_depth + 1)}{stripped}")
-                    continue
-                flow_content_block = None
-
             if _DIRECTIVE_RE.match(line):
                 formatted.append(f"{indent}{_format_directive_line(stripped)}")
-                flow_content_block = None
                 continue
 
-            if _FLOW_STATEMENT_RE.match(stripped):
+            if _FLOW_STATEMENT_RE.match(
+                stripped
+            ) and "implicit_run_statement" not in _ancestor_types(node):
                 while flow_repeat_indents and column <= flow_repeat_indents[-1]:
                     flow_repeat_indents.pop()
                 depth = 1 + len(flow_repeat_indents)
                 formatted.append(
                     f"{indent * depth}{_format_flow_statement_line(stripped)}"
-                )
-                empty_content_assignment = (
-                    stripped.startswith("let ")
-                    and "=" in stripped
-                    and not stripped.partition("=")[2].strip()
-                )
-                flow_content_block = (
-                    (column, depth)
-                    if empty_content_assignment
-                    or (
-                        ":" in stripped
-                        and not stripped.partition(":")[2].strip()
-                        and not stripped.startswith("repeat")
-                    )
-                    else None
                 )
                 if stripped.startswith("repeat"):
                     flow_repeat_indents.append(column)
@@ -267,12 +252,6 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
 
         depth = 0 if column == 0 else _indent_depth(node)
         rendered_indent = indent * depth
-        if node.type == "indented_raw_text":
-            extra = _relative_content_indent(lines, node, tab_size=tab_size)
-            content = line.lstrip(" \t")
-            formatted.append(f"{rendered_indent}{' ' * extra}{content}")
-            continue
-
         formatted.append(f"{rendered_indent}{_format_syntax_line(stripped, node=node)}")
 
     return _collapse_blank_edges(
@@ -341,7 +320,7 @@ def _ancestor_types(node: Node) -> set[str]:
 
 def _indent_depth(node: Node) -> int:
     ancestors = _ancestor_types(node)
-    if "property" in ancestors and ancestors & {
+    if ancestors & {
         "psyche",
         "skill",
         "service",
@@ -356,7 +335,7 @@ def _indent_depth(node: Node) -> int:
         return 1 + sum(
             1
             for current in _ancestors(node)
-            if current.type in {"repeat_body", "repeat_until_body", "text_body"}
+            if current.type in {"repeat_statement", "text_body"}
         )
     if ancestors & {"context", "instruct"} and "text_body" in ancestors:
         return 1
@@ -584,7 +563,7 @@ def _order_program_comments(lines: list[str]) -> list[str]:
                 in_fence = False
             index += 1
             continue
-        if stripped.startswith("##!"):
+        if line.startswith("##!"):
             program_comments.append(line)
             index += 1
             continue
@@ -664,9 +643,7 @@ def _collect_control_segments(
         if is_block:
             while index < len(lines):
                 line = lines[index]
-                if not line.strip():
-                    break
-                if _is_block_continuation(line, tab_size=tab_size):
+                if not line.strip() or _is_block_continuation(line, tab_size=tab_size):
                     segment.append(line)
                     index += 1
                     continue
@@ -761,6 +738,8 @@ def _formatted_line_kind(line: str, *, in_agic: bool, tab_size: int) -> str:
         return "other_top_level"
     if not in_agic:
         return "indented"
+    if len(_leading_whitespace(line).expandtabs(tab_size)) > tab_size:
+        return "block_body"
     if _DIRECTIVE_RE.match(line):
         return "directive"
     message_match = _formatted_message_header_match(line, tab_size=tab_size)
@@ -772,8 +751,6 @@ def _formatted_line_kind(line: str, *, in_agic: bool, tab_size: int) -> str:
         if message_match.group("kind") in {"context", "instruct"}:
             return "control"
         return "message_header"
-    if len(_leading_whitespace(line).expandtabs(tab_size)) > tab_size:
-        return "block_body"
     if stripped.startswith("#"):
         return "comment"
     return "message_body"
@@ -910,9 +887,7 @@ def _raise_syntax_error(lines: list[str], node: Node) -> None:
     row = node.start_point.row
     line_number = row + 1
     raw_line = lines[row] if 0 <= row < len(lines) else ""
-    if raw_line.startswith((" ", "\t")) and raw_line.strip():
-        raise ToolangFormatError(f"Unexpected indentation at line {line_number}.")
-    raise ToolangFormatError(f"Syntax error at line {line_number}.")
+    raise ToolangFormatError(ast._syntax_error_message(line_number, raw_line))
 
 
 def _split_inline_comment(line: str) -> tuple[str, str]:

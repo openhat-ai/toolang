@@ -1,3 +1,40 @@
+# Unreleased Grammar Integration
+
+The current runtime requires tree-sitter-toolang 0.3.1. This grammar upgrade
+does not change the Toolang package version.
+
+Use explicit `using`, `if`, and `by` clauses, `in N lanes` (`in 1 lane`), and
+`repeat N times` (`repeat 1 time`). Replace an unbound `rank score top 3` with:
+
+```too
+sort descending by score
+keep first 3
+```
+
+Sort and keep commit separately. Sort scores every item once; keep performs
+local selection without a model call. Retry reuses committed sorting work.
+For bottom-N, use descending sort followed by `keep last N` to preserve order.
+Named or discarded rank-with-selection needs explicit re-authoring because
+the new statements have different binding boundaries. See
+[Flow syntax](./docs/flow-syntax.md) for the full migration rules.
+
+Block ownership follows indentation. Required bodies must contain substantive
+content; comments cannot make an empty loop valid or pull an outer statement
+into it. A final `until` belongs to the repeat at its sibling indentation.
+Every implicit prose line checks its first token for lowercase keywords.
+Capitalize keyword-led prose or put it inside an explicit `run:` text block,
+where keywords and Markdown remain literal content.
+
+State layer schema advances from 4 to 5 and rebuilds from migrated source.
+Execution store schema advances from 37 to 38. The runtime rejects old stores
+without modifying or deleting them, including stores without rank history.
+Preserve the previous runtime and source to inspect or retry old executions;
+use a separate compatible store for new executions. No history migration or
+downgrade conversion is included.
+
+The historical release notes below describe the previously released syntax.
+
+
 # Toolang 0.3.0 Release Notes
 
 Release date: August 3, 2026.

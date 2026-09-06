@@ -1216,9 +1216,14 @@ def _structured_value(
     type_name: str,
     boundary: str,
 ) -> object:
-    if isinstance(value, (str, Message)) or (
-        isinstance(value, Array | tuple | list)
-        and all(_is_part(part) for part in value)
+    if (
+        isinstance(value, (str, Message))
+        or (isinstance(value, Array) and value.type == "Part[]")
+        or (
+            isinstance(value, tuple | list)
+            and bool(value)
+            and all(_is_part(part) for part in value)
+        )
     ):
         return _parse_text_json(
             value,

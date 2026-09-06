@@ -36,7 +36,7 @@ from toolang.lang.ast import (
     LetStmt,
     MapStmt,
     Node,
-    RankStmt,
+    SortStmt,
     RepeatStmt,
     RunStmt,
     ScatterStmt,
@@ -1823,7 +1823,7 @@ def _flow_statement_matches_kind(value: object, kind: StepKind) -> bool:
     if kind == "human":
         return isinstance(value, AskStmt)
     if kind == "par":
-        return isinstance(value, StormStmt | MapStmt | RankStmt) or (
+        return isinstance(value, StormStmt | MapStmt | SortStmt) or (
             isinstance(value, KeepStmt | DropStmt) and value.runnable is not None
         )
     if kind == "loop":

@@ -2,7 +2,9 @@
 
 This document defines the source-level program model for `.too` files. Flow
 statements are specified in [flow-syntax.md](./flow-syntax.md), and content
-parsing is specified in [input-syntax.md](./input-syntax.md).
+parsing is specified in [input-syntax.md](./input-syntax.md). Follow the
+[authoring conventions](./toolang-authoring-conventions.md) for source style,
+type annotations, and documentation comments.
 
 
 ## Program Constructs
@@ -81,7 +83,7 @@ agic search:
 
 flow research:
   ## Run two searches.
-  repeat 2:
+  repeat 2 times:
     ## Run one search.
     run search
 ```
@@ -509,10 +511,11 @@ A flow is an ordered list of static statements:
 
 ```too
 flow research(_: Text) -> Report:
-  scatter 8 expand
-  keep relevant par 4
-  rank score top 3 par 3
-  gather synthesize
+  scatter 8 using expand
+  keep if relevant in 4 lanes
+  sort descending by score in 3 lanes
+  keep first 3
+  gather using synthesize
 ```
 
 Flows use the same parameters, output declaration, resource directives, and
