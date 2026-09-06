@@ -645,10 +645,10 @@ def boolean(value: Any, *, operation: str) -> bool:
     raise ToolangError(f"{operation} requires a Boolean result")
 
 
-def number(value: Any, *, operation: str) -> float:
+def number(value: Any, *, operation: str) -> int | float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise ToolangError(f"{operation} requires a Number result")
-    return float(value)
+    return value
 
 
 def program_structs(binding: BoundRun) -> dict[str, StructDecl]:

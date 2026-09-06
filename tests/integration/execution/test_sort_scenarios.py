@@ -179,6 +179,35 @@ def test_empty_sort_does_not_invoke_a_scorer(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("order", ["ascending", "descending"])
+def test_sort_preserves_integer_score_precision(tmp_path: Path, order: str) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=DECLARATIONS + f"  sort {order} in 1 lane by score\n",
+        responses=[
+            _response('["a","b","c"]'),
+            *map(
+                _response, ("9007199254740993", "9007199254740992", "9007199254740994")
+            ),
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread, runnable="work", primary=resolve_input_parts("items")
+                )
+            )
+            assert root.status == "succeeded", root.error
+            assert json.loads(harness.store.run_output_text(run_id=root.id)) == (
+                ["b", "a", "c"] if order == "ascending" else ["c", "a", "b"]
+            )
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("canceled", [False, True])
 def test_retry_after_sort_preserves_committed_scores(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, canceled: bool

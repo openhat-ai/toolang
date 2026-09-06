@@ -768,6 +768,103 @@ def test_format_source_preserves_relative_content_indentation() -> None:
     assert format_source(source) == ("context example:\n  first\n    nested\n  last\n")
 
 
+@pytest.mark.parametrize("tab_size", [1, 2, 4, 8])
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ("\t\tFirst.\n\t\t\tNested.\n\t\tLast.\n", "First.\n        Nested.\nLast."),
+        ("    First.\n\tNested.\n    Last.\n", "First.\n    Nested.\nLast."),
+        ("    First.\n  \tNested.\n    Last.\n", "First.\n    Nested.\nLast."),
+    ],
+)
+def test_text_indentation_uses_grammar_tab_stops_independent_of_format_width(
+    tab_size: int, body: str, expected: str
+) -> None:
+    source = f"flow work:\n  run:\n{body}"
+    before = Program.from_source(source)
+    assert before.agics[0].messages[0].content == expected
+    formatted = format_source(source, tab_size=tab_size)
+    assert Program.from_source(formatted).agics[0].messages[0].content == expected
+    assert format_source(formatted, tab_size=tab_size) == formatted
+
+
+@pytest.mark.parametrize(
+    "content",
+    ["Keep  these   spaces.", "See  https://example.com/a=b.", "Align\tthese values."],
+)
+def test_format_source_preserves_inline_content_binding_text(content: str) -> None:
+    source = f"flow work:\n    let   note  =  {content}\n"
+    formatted = format_source(source)
+    assert formatted == f"flow work:\n  let note = {content}\n"
+    assert _without_spans(to_data(Program.from_source(formatted))) == _without_spans(
+        to_data(Program.from_source(source))
+    )
+
+
+@pytest.mark.parametrize("blank_lines", [1, 2, 3, 5])
+@pytest.mark.parametrize("header", ["flow work:\n  run:", "agic work:\n  context:"])
+def test_format_source_preserves_all_blank_lines_inside_explicit_text(
+    header: str, blank_lines: int
+) -> None:
+    source = f"{header}\n    First.\n" + "\n" * blank_lines + "    Last.\n"
+    formatted = format_source(source)
+    before, after = (Program.from_source(item) for item in (source, formatted))
+    if before.contexts:
+        assert before.contexts[0].body == after.contexts[0].body
+    else:
+        assert before.agics[0].messages[0].content == after.agics[0].messages[0].content
+    assert format_source(formatted) == formatted
+
+
+@pytest.mark.parametrize("role", ["user", "context", "instruct"])
+def test_format_source_does_not_interpret_markdown_fences(role: str) -> None:
+    source = (
+        f"agic work:\n  {role}:\n"
+        "    Here is an example: ```\n"
+        "      content\n    ```\n    Last.\n"
+    )
+    formatted = format_source(source)
+    assert formatted == source
+    assert _without_spans(to_data(Program.from_source(formatted))) == _without_spans(
+        to_data(Program.from_source(source))
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "flow work:\n    repeat 2 times:\n\trun: Work.\n    run: Publish.\n",
+        "flow work:\n\trepeat 2 times:\n         repeat 2 times:\n\t\trun: Work.\n",
+    ],
+)
+def test_format_source_uses_cst_depth_when_levels_use_different_indent_styles(
+    source: str,
+) -> None:
+    before = Program.from_source(source)
+    formatted = format_source(source)
+    assert _without_spans(to_data(Program.from_source(formatted))) == _without_spans(
+        to_data(before)
+    )
+    assert format_source(formatted) == formatted
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("separator", ["", "\n"])
+def test_format_source_does_not_attach_detached_documentation(
+    kind: str, separator: str
+) -> None:
+    source = f"{kind} work:\n    ## Detached documentation.\n{separator}  Work.\n"
+    before = Program.from_source(source)
+    formatted = format_source(source)
+    after = Program.from_source(formatted)
+    assert before.agics[0].doc == after.agics[0].doc is None
+    if before.flows:
+        assert before.flows[0].stmts[0].doc == after.flows[0].stmts[0].doc is None
+    else:
+        assert before.agics[0].messages[0].doc == after.agics[0].messages[0].doc is None
+    assert format_source(formatted) == formatted
+
+
 @pytest.mark.parametrize(
     "header, indent",
     [

@@ -170,6 +170,9 @@ bind their complete result once.
   syntax; `Sort these items.` is prose. `sorter` is not the keyword `sort`.
 - Explicit bodies such as `run:`, `map using:`, and `until:` preserve literal
   keywords, Markdown, and relative text indentation until the body dedents.
+  Text margins use the same eight-column tab stops as parsing. Lowering removes
+  the shared margin and represents relative indentation with spaces; formatting
+  width changes only structural indentation. Interior blank lines are retained.
   Completed bodies do not require a final newline.
 - `until` is optional when a repeat has a count. It must follow at least one
   executable statement, use the repeat body's sibling indentation, and be its

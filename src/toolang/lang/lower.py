@@ -12,6 +12,7 @@ from toolang.common.template import template_root_names
 
 from . import ast
 from .errors import ToolangValidationError
+from .text import dedent_text_lines
 from .validate import _validate_cap_source
 
 _DECL_REF_RE = re.compile(r"^[A-Za-z_][\w-]*$")
@@ -569,6 +570,7 @@ class _Lowerer:
             )
         if node.type == "repeat_statement":
             statements = self._required(node, "body")
+            body = tuple(self._lower_statements(statements))
             until_node = node.child_by_field_name("until")
             runnable = None
             if until_node is not None:
@@ -580,7 +582,7 @@ class _Lowerer:
                 )
             return ast.RepeatStmt(
                 count=self._optional_int(node.child_by_field_name("count")),
-                stmts=tuple(self._lower_statements(statements)),
+                stmts=body,
                 runnable=runnable,
                 span=span,
                 doc=doc,
@@ -798,23 +800,13 @@ class _Lowerer:
                     lines.append(self._text(content).rstrip())
                 elif child.type == "blank_line":
                     lines.append("")
-            return self._dedent(lines)
+            return "\n".join(dedent_text_lines(lines)).strip()
         if node.type == "text_body_line":
             content = node.child_by_field_name("content") or self._child_of_type(
                 node, "indented_raw_text"
             )
             return self._text(content).strip()
         return self._text(node).strip()
-
-    @staticmethod
-    def _dedent(lines: list[str]) -> str:
-        non_blank = [line for line in lines if line.strip()]
-        if not non_blank:
-            return ""
-        indent = min(len(line) - len(line.lstrip(" \t")) for line in non_blank)
-        return "\n".join(
-            line[indent:].rstrip() if line.strip() else "" for line in lines
-        ).strip()
 
     def _required_int(self, node: CstNode, field: str) -> int:
         return int(self._required_text(node, field).strip())

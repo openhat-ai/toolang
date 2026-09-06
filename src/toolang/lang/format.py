@@ -10,6 +10,7 @@ from toolang.common.query import format_query_text
 from . import ast
 from .ast import _first_syntax_error, _parse_tree
 from .errors import ToolangFormatError
+from .text import text_indent_width
 
 
 _RUNNABLE_HEADER_RE = re.compile(
@@ -177,7 +178,7 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
     formatted: list[str] = []
     indent = " " * tab_size
     current_top: str | None = None
-    flow_repeat_indents: list[int] = []
+    previous_doc_indent: str | None = None
 
     for index, raw_line in enumerate(lines):
         line = raw_line.rstrip()
@@ -185,23 +186,32 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
 
         if not stripped:
             formatted.append("")
+            previous_doc_indent = None
             continue
 
         column = len(_leading_whitespace(line))
         node = root.named_descendant_for_point_range((index, column), (index, column))
         if node is None:
             formatted.append(line)
+            previous_doc_indent = None
             continue
+        if (
+            previous_doc_indent is not None
+            and previous_doc_indent != _leading_whitespace(line)
+        ):
+            formatted.append("")
+        previous_doc_indent = (
+            _leading_whitespace(line) if node.type == "doc_line" else None
+        )
         if column == 0 and not stripped.startswith("#"):
             current_top = _top_level_kind(stripped)
-            flow_repeat_indents.clear()
         if line.startswith("#!"):
             formatted.append(line)
             continue
 
         if node.type == "indented_raw_text":
             depth = _indent_depth(node)
-            extra = _relative_content_indent(lines, node, tab_size=tab_size)
+            extra = _relative_content_indent(lines, node)
             content = line.lstrip(" \t")
             formatted.append(f"{indent * depth}{' ' * extra}{content}")
             continue
@@ -227,26 +237,24 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
             if _FLOW_STATEMENT_RE.match(
                 stripped
             ) and "implicit_run_statement" not in _ancestor_types(node):
-                while flow_repeat_indents and column <= flow_repeat_indents[-1]:
-                    flow_repeat_indents.pop()
-                depth = 1 + len(flow_repeat_indents)
+                depth = _indent_depth(node)
                 formatted.append(
-                    f"{indent * depth}{_format_flow_statement_line(stripped)}"
+                    f"{indent * depth}{_format_flow_statement_line(stripped, node=node)}"
                 )
-                if stripped.startswith("repeat"):
-                    flow_repeat_indents.append(column)
                 continue
 
             if stripped.startswith("#"):
                 depth = 1 + sum(
-                    1 for repeat_indent in flow_repeat_indents if repeat_indent < column
+                    1
+                    for parent in _ancestors(node)
+                    if parent.type == "repeat_statement"
+                    and text_indent_width(lines[parent.start_point.row])
+                    < text_indent_width(line)
                 )
                 formatted.append(f"{indent * depth}{_format_comment_line(stripped)}")
                 continue
 
-            depth = 1 + sum(
-                1 for repeat_indent in flow_repeat_indents if repeat_indent < column
-            )
+            depth = _indent_depth(node)
             formatted.append(f"{indent * depth}{stripped}")
             continue
 
@@ -305,7 +313,7 @@ def _format_syntax_line(stripped_line: str, *, node: Node) -> str:
             return _format_message_header_line(match)
         return _collapse_syntax_space(stripped_line)
     if ancestors & _FLOW_STATEMENT_TYPES:
-        return _format_flow_statement_line(stripped_line)
+        return _format_flow_statement_line(stripped_line, node=node)
     return stripped_line
 
 
@@ -335,7 +343,11 @@ def _indent_depth(node: Node) -> int:
         return 1 + sum(
             1
             for current in _ancestors(node)
-            if current.type in {"repeat_statement", "text_body"}
+            if current.type == "text_body"
+            or (
+                current.type == "repeat_statement"
+                and current.start_point.row < node.start_point.row
+            )
         )
     if ancestors & {"context", "instruct"} and "text_body" in ancestors:
         return 1
@@ -349,7 +361,7 @@ def _ancestors(node: Node):
         current = current.parent
 
 
-def _relative_content_indent(lines: list[str], node: Node, *, tab_size: int) -> int:
+def _relative_content_indent(lines: list[str], node: Node) -> int:
     container = next(
         (
             current
@@ -367,12 +379,12 @@ def _relative_content_indent(lines: list[str], node: Node, *, tab_size: int) -> 
     if not content_rows:
         content_rows = [node.start_point.row]
     widths = [
-        len(_leading_whitespace(lines[row]).expandtabs(tab_size))
+        text_indent_width(lines[row])
         for row in content_rows
         if row < len(lines) and lines[row].strip()
     ]
     base = min(widths, default=0)
-    current = len(_leading_whitespace(lines[node.start_point.row]).expandtabs(tab_size))
+    current = text_indent_width(lines[node.start_point.row])
     return max(0, current - base)
 
 
@@ -523,7 +535,14 @@ def _format_message_header_line(match: re.Match[str]) -> str:
     return f"{match.group('kind')}: {body}"
 
 
-def _format_flow_statement_line(stripped_line: str) -> str:
+def _format_flow_statement_line(stripped_line: str, *, node: Node) -> str:
+    binding = next(
+        (parent for parent in _ancestors(node) if parent.type == "let_statement"),
+        None,
+    )
+    if binding is not None and binding.child_by_field_name("value") is not None:
+        before, _, content = stripped_line.partition("=")
+        return f"{_collapse_syntax_space(before)} = {content.strip()}".rstrip()
     before, separator, after = stripped_line.partition(":")
     rendered = _collapse_syntax_space(before)
     if not separator:
@@ -547,7 +566,6 @@ def _order_program_comments(lines: list[str]) -> list[str]:
     shebang: str | None = None
     program_comments: list[str] = []
     body: list[str] = []
-    in_fence = False
     index = 0
 
     if lines and lines[0].startswith("#!"):
@@ -556,20 +574,11 @@ def _order_program_comments(lines: list[str]) -> list[str]:
 
     while index < len(lines):
         line = lines[index]
-        stripped = line.strip()
-        if in_fence:
-            body.append(line)
-            if stripped.startswith("```"):
-                in_fence = False
-            index += 1
-            continue
         if line.startswith("##!"):
             program_comments.append(line)
             index += 1
             continue
         body.append(line)
-        if _opens_fence(line):
-            in_fence = True
         index += 1
 
     ordered: list[str] = []
@@ -582,20 +591,12 @@ def _order_program_comments(lines: list[str]) -> list[str]:
 
 def _order_control_segments(lines: list[str], *, tab_size: int) -> list[str]:
     ordered: list[str] = []
-    in_fence = False
     in_agic = False
     index = 0
 
     while index < len(lines):
         line = lines[index]
         stripped = line.strip()
-        if in_fence:
-            ordered.append(line)
-            if stripped.startswith("```"):
-                in_fence = False
-            index += 1
-            continue
-
         top_level = (
             _top_level_kind(stripped)
             if stripped and not _leading_whitespace(line)
@@ -611,8 +612,6 @@ def _order_control_segments(lines: list[str], *, tab_size: int) -> list[str]:
             continue
 
         ordered.append(line)
-        if _opens_fence(line):
-            in_fence = True
         index += 1
 
     return ordered
@@ -673,7 +672,6 @@ def _is_block_continuation(line: str, *, tab_size: int) -> bool:
 
 def _normalize_blank_lines(lines: list[str], *, tab_size: int) -> list[str]:
     normalized: list[str] = []
-    in_fence = False
     in_agic = False
     previous_kind: str | None = None
     previous_significant_kind: str | None = None
@@ -681,12 +679,6 @@ def _normalize_blank_lines(lines: list[str], *, tab_size: int) -> list[str]:
 
     for line in lines:
         stripped = line.strip()
-        if in_fence:
-            normalized.append(line)
-            if stripped.startswith("```"):
-                in_fence = False
-            previous_kind = "fence"
-            continue
         if not stripped:
             pending_blank += 1
             continue
@@ -701,10 +693,9 @@ def _normalize_blank_lines(lines: list[str], *, tab_size: int) -> list[str]:
         elif pending_blank and _preserves_blank_line(previous_kind, kind):
             _append_blank_lines(
                 normalized,
-                min(
-                    pending_blank,
-                    2 if kind in {"message_body", "block_body", "indented"} else 1,
-                ),
+                pending_blank
+                if kind in {"message_body", "block_body", "indented"}
+                else 1,
             )
         normalized.append(line)
         pending_blank = 0
@@ -712,8 +703,6 @@ def _normalize_blank_lines(lines: list[str], *, tab_size: int) -> list[str]:
         top_level = _top_level_kind(stripped) if not _leading_whitespace(line) else None
         if top_level is not None:
             in_agic = top_level == "agic"
-        if _opens_fence(line):
-            in_fence = True
         previous_kind = kind
         if kind != "comment":
             previous_significant_kind = kind
@@ -848,6 +837,8 @@ def _preserves_blank_line(previous_kind: str | None, current_kind: str) -> bool:
         return True
     if previous_kind == current_kind == "top_comment":
         return True
+    if previous_kind == "comment":
+        return True
     return previous_kind == current_kind and current_kind in {
         "message_body",
         "block_body",
@@ -913,11 +904,6 @@ def _split_inline_comment(line: str) -> tuple[str, str]:
     body = line[:comment_start].rstrip()
     comment = line[comment_start:].strip()
     return body, f"  {comment}" if body else comment
-
-
-def _opens_fence(line: str) -> bool:
-    stripped = line.strip()
-    return "```" in stripped and not stripped.startswith("```")
 
 
 def _collapse_blank_edges(lines: list[str]) -> list[str]:

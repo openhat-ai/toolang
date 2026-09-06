@@ -88,3 +88,44 @@ def test_block_ownership_preserves_iteration_counts_and_prompt_boundaries(
             assert harness.adapter.pending_responses == 0
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_until_receives_locals_defined_in_its_body(
+    tmp_path: Path, nested: bool
+) -> None:
+    body = (
+        "    repeat 1 time:\n      let evidence = Reviewed evidence.\n"
+        if nested
+        else "    let evidence = Reviewed evidence.\n"
+    )
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="flow research:\n  repeat 2 times:\n"
+        + body
+        + "    until: Is {{evidence}} sufficient?\n",
+        responses=[ModelCallResult(message=Message.assistant("true"))],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="research",
+                    primary=resolve_input_parts("question"),
+                )
+            )
+            assert root.status == "succeeded", root.error
+            assert len(harness.adapter.invocations) == 1
+            prompt = message_text(
+                harness.adapter.invocations[0].call.messages[-1].parts
+            )
+            assert "Reviewed evidence." in prompt
+            loop = harness.store.list_steps(run_id=root.id)[0]
+            assert loop.noted == LoopStepNoted(
+                iterations=1, termination="satisfied", total=2
+            )
+
+    asyncio.run(scenario())
