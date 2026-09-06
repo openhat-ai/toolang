@@ -91,7 +91,7 @@ capture/reconstruction, and executor message production and persistence.
   missing references, and reference-looking text/tool data remaining literal.
 - Verify numeric ordering, linear delta metadata growth, long iterative reads,
   batched reconstruction, and no store reads to render an online saved prefix.
-- Verify Step-begin atomicity and interruptions before/after terminal persistence;
+- Verify Step-begin atomicity and repeated interruptions during terminal cleanup;
   pending messages must neither disappear nor be duplicated in the next call,
   and completed ToolCalls must receive results before steer continues.
 - Verify incompatible databases remain unchanged and run the default offline

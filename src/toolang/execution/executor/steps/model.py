@@ -189,30 +189,11 @@ async def execute(state: _AgicState) -> ModelCallResult:
         _validate_stream_result(stream, current)
         output = await _emit_response_parts(state, stream, current)
     except asyncio.CancelledError:
-        output = await _close_open_parts(state, stream)
-        await state.end_step(
-            StepEnd(
-                step=StepRef.from_local(run.run_id, (step_index,)),
-                kind="model",
-                status="canceled",
-                output=Local.typed("Part[]", output, "_", 0) if output else None,
-                finished_at=utc_now(),
-            )
-        )
+        await _end_incomplete(state, stream)
         raise
     except Exception as exc:
         message = str(exc) or type(exc).__name__
-        output = await _close_open_parts(state, stream)
-        await state.end_step(
-            StepEnd(
-                step=StepRef.from_local(run.run_id, (step_index,)),
-                kind="model",
-                status="failed",
-                output=Local.typed("Part[]", output, "_", 0) if output else None,
-                error=ErrorMessage(message),
-                finished_at=utc_now(),
-            )
-        )
+        await _end_incomplete(state, stream, error=ErrorMessage(message))
         _LOGGER.error(
             "Step failed thread=%s run=%s step=%s kind=model error=%r duration_ms=%s",
             run.thread,
@@ -600,22 +581,40 @@ async def _emit_part_end(
     )
 
 
-async def _close_open_parts(
-    state: _AgicState, stream: _ModelStream
-) -> tuple[Part, ...]:
-    """Close display events and retain only complete Parts or partial text."""
+async def _end_incomplete(
+    state: _AgicState, stream: _ModelStream, *, error: ErrorMessage | None = None
+) -> None:
+    """Retain execution facts even when interrupted while closing display events."""
 
-    output: list[Part] = []
-    for part_index in sorted(stream.started_parts | stream.completed_parts.keys()):
-        completed = stream.completed_parts.get(part_index)
-        part = completed or _partial_part(stream, part_index)
-        if part_index not in stream.ended_parts:
-            await _emit_part_begin(state, stream, part_index=part_index, kind=part.type)
-            await _emit_part_end(state, stream, part_index, part)
-        # An unfinished ToolCall placeholder closes the display event only.
-        if completed is not None or isinstance(part, TextPart):
-            output.append(part)
-    return tuple(output)
+    parts = {
+        index: stream.completed_parts.get(index) or _partial_part(stream, index)
+        for index in sorted(stream.started_parts | stream.completed_parts.keys())
+    }
+    # Unfinished ToolCall placeholders close display events only.
+    output = tuple(
+        part
+        for index, part in parts.items()
+        if index in stream.completed_parts or isinstance(part, TextPart)
+    )
+    try:
+        for index, part in parts.items():
+            if index not in stream.ended_parts:
+                await _emit_part_begin(state, stream, part_index=index, kind=part.type)
+                await _emit_part_end(state, stream, index, part)
+    except asyncio.CancelledError:
+        error = None
+        raise
+    finally:
+        await state.end_step(
+            StepEnd(
+                step=StepRef.from_local(state.prepared.run.run_id, (stream.step,)),
+                kind="model",
+                status="failed" if error is not None else "canceled",
+                output=Local.typed("Part[]", output, "_", 0) if output else None,
+                error=error,
+                finished_at=utc_now(),
+            )
+        )
 
 
 def _partial_part(stream: _ModelStream, part_index: int) -> Part:

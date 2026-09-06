@@ -25,7 +25,7 @@ from toolang.base.types.message import (
     ToolResultPart,
 )
 from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall
-from toolang.execution.events import PartEnd, RunEvent, StepBegin, StepEnd
+from toolang.execution.events import PartBegin, PartEnd, RunEvent, StepBegin, StepEnd
 from toolang.execution.executor._messages import _MessageBuffer
 from toolang.execution.message_delta import delta_to_data
 from toolang.execution.values import parts_from_local
@@ -141,6 +141,87 @@ def test_online_tool_loops_only_record_and_render_additions(
             assert [
                 len(item.call.messages) for item in harness.adapter.invocations
             ] == list(range(1, 27, 2))
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer)
+
+
+@pytest.mark.parametrize("kind", ["model", "plugin", "runtime"])
+@pytest.mark.parametrize("interruption", ["steer", "cancel"])
+def test_interruption_during_cleanup_still_persists_adopted_output(
+    tmp_path: Path, kind: str, interruption: str
+) -> None:
+    begin_gate, end_gate = AsyncGate(), AsyncGate()
+    index = 0 if kind == "model" else 1
+
+    class Tracer(RecordingRunTracer):
+        async def on_event(self, event: RunEvent) -> None:
+            await super().on_event(event)
+            if isinstance(event, PartBegin) and event.step.index == index:
+                if not begin_gate.entered:
+                    await begin_gate.wait()
+            if isinstance(event, PartEnd) and event.step.index == index:
+                if not end_gate.entered:
+                    await end_gate.wait()
+
+    tool = RecordingTool("lookup__item", output={"value": 1})
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        tools={tool.name: tool},
+        responses=[
+            ModelCallResult(message=Message.assistant("draft"))
+            if kind == "model"
+            else ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "call",
+                        "call",
+                        tool.name if kind == "plugin" else "_too__unknown",
+                        {},
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("revised")),
+        ],
+    )
+    tracer = Tracer()
+
+    async def scenario() -> None:
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                    primary=(TextPart("start"),),
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(begin_gate.wait_until_entered(), timeout=2)
+            first = handle.steer(Message.user("first change"), timing="immediate")
+            await asyncio.wait_for(end_gate.wait_until_entered(), timeout=2)
+            second = (
+                handle.steer(Message.user("second change"), timing="immediate")
+                if interruption == "steer"
+                else handle.cancel()
+            )
+            root = await asyncio.wait_for(handle, timeout=2)
+            assert root.status == (
+                "succeeded" if interruption == "steer" else "canceled"
+            ), root.error
+            steps = harness.store.list_steps(run_id=root.id)
+            step = steps[index]
+            assert step.status == "canceled"
+            assert step.aborted_by == second.ref
+            assert step.output is not None
+            assert parts_from_local(step.output) == tuple(
+                event.data
+                for event in tracer.events
+                if isinstance(event, PartEnd) and event.step == step.ref
+            )
+            if interruption == "steer":
+                assert steps[-1].preceded_by == (first.ref, second.ref)
+            assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer)

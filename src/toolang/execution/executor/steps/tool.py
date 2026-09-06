@@ -32,6 +32,7 @@ from ...types import (
     StepRef,
     ToolStepGiven,
     ToolStepNoted,
+    StepStatus,
 )
 from ..common import _StepFailed
 from ..diagnostics import log_tool_call_input, log_tool_call_output
@@ -262,39 +263,33 @@ async def finish(
     state.last_step = step.index
     end = PartEnd(step=step, part=0, data=part)
     ended = False
+    status: StepStatus = "failed" if part.error is not None else "succeeded"
+    noted = ToolStepNoted(summary=summary if summary is not None else part.tool_name)
+    error = error or (ErrorMessage(part.error) if part.error is not None else None)
     try:
         await state.emit(PartBegin(step=step, part=0, part_type=part.type))
         ended = True
         await state.emit(end)
     except asyncio.CancelledError:
+        status = "canceled"
+        noted = ToolStepNoted(summary=canceled_summary)
+        error = None
         if not ended:
             await state.emit(end)
+        raise
+    finally:
         await state.end_step(
             StepEnd(
                 step=step,
                 kind="tool",
-                status="canceled",
+                status=status,
                 output=output,
-                noted=ToolStepNoted(summary=canceled_summary),
+                noted=noted,
+                error=error,
                 finished_at=utc_now(),
             ),
+            canceled_noted=ToolStepNoted(summary=canceled_summary),
         )
-        raise
-    await state.end_step(
-        StepEnd(
-            step=step,
-            kind="tool",
-            status="failed" if part.error is not None else "succeeded",
-            output=output,
-            noted=ToolStepNoted(
-                summary=summary if summary is not None else part.tool_name
-            ),
-            error=error
-            or (ErrorMessage(part.error) if part.error is not None else None),
-            finished_at=utc_now(),
-        ),
-        canceled_noted=ToolStepNoted(summary=canceled_summary),
-    )
 
 
 async def cancel(
