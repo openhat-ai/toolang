@@ -82,6 +82,30 @@ _RECORD_ADAPTERS = {
 _ARRAY_ANNOTATION_RE = re.compile(r"^(?:tuple|list)\[(.+?)(?:, \.\.\.)?\]$")
 
 
+@dataclass(frozen=True)
+class HistoryCursor:
+    """Restartable read scope; holds identities and revisions, never message bodies."""
+
+    target: ThreadRef | RunRef
+    entries: tuple[str, ...]
+    versions: dict[str, str]
+    limit: int
+    offset: int = 0
+    reverse: bool = False
+    thread: ThreadRecord | None = None
+    head: ControlRef | None = None
+    members: dict[str, str] = field(default_factory=dict)
+    version: Literal[1] = 1
+
+
+@dataclass(frozen=True)
+class CompactionOutput:
+    """The selected compact Run's typed output and its stable field reference."""
+
+    ref: FieldRef
+    output: Local
+
+
 @dataclass(frozen=True, slots=True)
 class RecordSelection:
     """One canonical record or field selection with code-owned type metadata."""

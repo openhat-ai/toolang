@@ -19,6 +19,7 @@ from toolang.api.schemas import (
 from toolang.execution.records import ThreadPeer
 from toolang.execution.schemas import RunDetail, ThreadDetail, ThreadInfo
 from toolang.execution.types import ThreadPrefix
+from toolang.execution.values import parts_from_local
 from toolang.up import AgentCore
 
 router = APIRouter(prefix="/threads", tags=["threads"])
@@ -78,7 +79,9 @@ def thread_detail(
         raise HTTPException(status_code=404, detail=f"thread not found: {thread_id}")
     return replace(
         detail,
-        runs=[core.history.get_run_result(run.id) or run for run in detail.runs],
+        runs=[
+            replace(run, output=core.history.get_output(run.id)) for run in detail.runs
+        ],
     )
 
 
@@ -89,18 +92,24 @@ def thread_detail(
 )
 def latest_thread_result(core: AgentCoreDep, thread_id: str) -> RunDetail:
     try:
-        detail = core.history.latest_thread_result(thread_id)
+        view = core.history.thread_view(thread_id)
     except KeyError:
         raise HTTPException(
             status_code=404,
             detail=f"thread not found: {thread_id}",
         ) from None
-    if detail is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"thread has no result: {thread_id}",
-        )
-    return detail
+    for run in view.runs(reverse=True):
+        if run.status != "succeeded" or run.output is None:
+            continue
+        output = core.history.get_output(run.id)
+        if output is not None and parts_from_local(output):
+            detail = core.history.get_run(run.id)
+            if detail is not None:
+                return replace(detail, output=output)
+    raise HTTPException(
+        status_code=404,
+        detail=f"thread has no result: {thread_id}",
+    )
 
 
 @router.post(

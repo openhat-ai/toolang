@@ -274,7 +274,7 @@ def test_run_history_keeps_rewound_records_outside_the_thread_view(
             thread_id="term_thread",
             anchor=first.id,
             request_id=None,
-            expected_head=store.thread_views().head(thread.id),
+            expected_head=store.thread_view(thread.id).head,
             created_at="2026-01-01T00:00:05Z",
         )
 

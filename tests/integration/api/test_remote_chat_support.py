@@ -245,6 +245,7 @@ agic chat(_: Part[]) -> Part[]:
             thread_id = created.json()["thread"]["id"]
             empty = client.get(f"/api/v1/threads/{thread_id}/result")
             unknown = client.get("/api/v1/threads/term_missing/result")
+            wrong_namespace = client.get("/api/v1/threads/run_missing/result")
             executed = client.post(
                 "/api/v1/runs/authored/stream",
                 json={
@@ -287,6 +288,8 @@ agic chat(_: Part[]) -> Part[]:
         assert empty.json()["detail"] == f"thread has no result: {thread_id}"
         assert unknown.status_code == 404
         assert unknown.json()["detail"] == "thread not found: term_missing"
+        assert wrong_namespace.status_code == 404
+        assert wrong_namespace.json()["detail"] == "thread not found: run_missing"
         assert explicit.id == latest.id == run_id
         assert explicit.output is not None
         assert latest.output is not None

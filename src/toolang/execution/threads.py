@@ -155,7 +155,7 @@ class ThreadManager:
             thread_id=thread.id,
             anchor=run_id,
             request_id=request_id,
-            expected_head=self.store.thread_views().head(thread.id),
+            expected_head=self.store.thread_view(thread.id).head,
             created_at=created_at,
         )
         if not isinstance(control.payload, RewindControlPayload):

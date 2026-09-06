@@ -5,6 +5,10 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 
+class HistoryChangedError(RuntimeError):
+    """A captured history read can no longer be reconstructed from current facts."""
+
+
 class RunStoreSchemaError(RuntimeError):
     """Raised when one run store cannot be opened by this runtime."""
 

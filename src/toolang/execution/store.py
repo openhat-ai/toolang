@@ -26,7 +26,7 @@ from toolang.lang.types import Array, Struct, Value
 from toolang.base.types.tool import ToolDefinition
 from toolang.base.types.policy import RunLimits
 from toolang.common.time import utc_now
-from .errors import RunStoreSchemaError
+from .errors import HistoryChangedError, RunStoreSchemaError
 from .inspection import (
     ChildOccurrenceTotals,
     ExecutionSnapshot,
@@ -85,6 +85,7 @@ from .types import (
     StepNoted,
     StepStatus,
     RunRef,
+    RunLink,
     StepPath,
     StepRef,
     ThreadRef,
@@ -99,7 +100,7 @@ from .types import (
     valid_thread_id,
 )
 from .schemas import Record, RecordSelection, select_record
-from .thread_views import ThreadViews
+from .thread_view import ThreadView, _ThreadProjection
 from .values import parts_from_local
 
 _SCHEMA_VERSION = 37
@@ -158,7 +159,7 @@ class RunStore:
                     self._conn.commit()
 
     @contextmanager
-    def _read_transaction(self) -> Iterator[None]:
+    def read_transaction(self) -> Iterator[None]:
         """Read one consistent store snapshot, joining an existing transaction."""
 
         with self._lock:
@@ -775,7 +776,7 @@ class RunStore:
                 run = _run_from_row(run_row)
                 if run.status not in {"succeeded", "failed", "canceled"}:
                     raise ValueError(f"run is not terminal: {run_id}")
-                if self.thread_views().is_forked(run_id):
+                if self._thread_projection().is_forked(run_id):
                     raise ValueError(
                         f"run belongs to a durable fork prefix: {run_id}; use rerun"
                     )
@@ -1274,7 +1275,7 @@ class RunStore:
                 if source_row is None:
                     raise ValueError(f"thread not found: {source}")
                 source_record = _thread_from_row(source_row)
-                views = self.thread_views()
+                views = self._thread_projection()
                 anchor_record = self._resolve_thread_anchor(
                     views=views,
                     thread_id=source_record.id,
@@ -1383,7 +1384,7 @@ class RunStore:
                 ).fetchone()
                 if thread_row is None:
                     raise ValueError(f"thread not found: {thread_id}")
-                views = self.thread_views()
+                views = self._thread_projection()
                 if views.head(thread_id) != expected_head:
                     raise ValueError(f"thread head changed: {thread_id}")
                 anchor_record = self._resolve_thread_anchor(
@@ -1797,7 +1798,7 @@ class RunStore:
         """List physical Runs, or logical membership when a Thread is selected."""
 
         if thread_id is not None:
-            views = self.thread_views()
+            views = self._thread_projection()
             runs = [
                 run
                 for run in reversed(
@@ -1826,12 +1827,12 @@ class RunStore:
         """Return one focused, consistent Run collection for inspection."""
 
         if thread_id is not None:
-            with self._read_transaction():
-                views = self.thread_views()
+            with self.read_transaction():
+                views = self._thread_projection()
                 return self._inspect_runs_locked(
                     tuple(reversed(views.tree(views.history(thread_id))))
                 )
-        with self._read_transaction():
+        with self.read_transaction():
             rows = self._conn.execute(
                 "SELECT * FROM runs ORDER BY created_at DESC, id ASC"
             ).fetchall()
@@ -1841,7 +1842,7 @@ class RunStore:
     def inspect_steps(self, *, run_id: str) -> tuple[InspectedStep, ...]:
         """Return all Steps physically owned by one Run."""
 
-        with self._read_transaction():
+        with self.read_transaction():
             rows = self._conn.execute(
                 "SELECT * FROM steps WHERE run = ?",
                 (run_id,),
@@ -1857,7 +1858,7 @@ class RunStore:
     def inspect_child_runs(self, *, parent: StepRecord) -> tuple[InspectedRun, ...]:
         """Return Runs directly accepted by one Step."""
 
-        with self._read_transaction():
+        with self.read_transaction():
             rows = self._conn.execute(
                 "SELECT * FROM runs WHERE parent = ? ORDER BY created_at ASC, id ASC",
                 (str(parent.ref),),
@@ -1875,7 +1876,7 @@ class RunStore:
         """Return direct same-Run Steps owned by one loop Step."""
 
         prefix = f"{parent.ref.local}."
-        with self._read_transaction():
+        with self.read_transaction():
             rows = self._conn.execute(
                 "SELECT * FROM steps WHERE run = ? AND substr(path, 1, ?) = ?",
                 (parent.run_id, len(prefix), prefix),
@@ -1899,7 +1900,7 @@ class RunStore:
     ) -> ExecutionSnapshot:
         """Read one complete physical execution subtree in a single transaction."""
 
-        with self._read_transaction():
+        with self.read_transaction():
             runs: dict[str, RunRecord] = {}
             steps: dict[StepRef, StepRecord] = {}
             pending_runs: list[str] = []
@@ -2104,7 +2105,7 @@ class RunStore:
     ) -> dict[str, tuple[RunRecord, ...]]:
         """Return logical histories and their child Runs from one store snapshot."""
 
-        views = self.thread_views()
+        views = self._thread_projection()
         return {
             thread_id: _history_tail(
                 views.tree(views.history(thread_id, include_rewound=include_rewound)),
@@ -2113,10 +2114,10 @@ class RunStore:
             for thread_id in dict.fromkeys(thread_ids)
         }
 
-    def thread_views(self) -> ThreadViews:
+    def _thread_projection(self) -> _ThreadProjection[RunRecord]:
         """Read ordered Runs and Thread controls in one transaction."""
 
-        with self._read_transaction():
+        with self.read_transaction():
             runs = self._conn.execute(
                 "SELECT * FROM runs ORDER BY rowid ASC"
             ).fetchall()
@@ -2124,15 +2125,147 @@ class RunStore:
                 "SELECT * FROM controls WHERE scope = 'thread' "
                 'ORDER BY target ASC, "index" ASC'
             ).fetchall()
-            return ThreadViews(
+            return _ThreadProjection(
                 tuple(_run_from_row(row) for row in runs),
                 tuple(_control_from_row(row) for row in controls),
             )
 
+    def thread_view(self, thread_id: str) -> ThreadView:
+        """Read one logical Thread, retaining physical ownership of its members."""
+
+        return self.thread_views((thread_id,))[thread_id]
+
+    def thread_views(self, thread_ids: Sequence[str]) -> dict[str, ThreadView]:
+        """Build singular Views using one shared projection and read transaction."""
+
+        with self.read_transaction():
+            projection = self._thread_projection()
+            result: dict[str, ThreadView] = {}
+            for thread_id in dict.fromkeys(thread_ids):
+                record = self.get_thread(thread_id=thread_id)
+                if record is None:
+                    raise KeyError(thread_id)
+                roots = projection.history(thread_id)
+                result[thread_id] = ThreadView(
+                    record,
+                    projection.head(thread_id),
+                    roots,
+                    projection.tree(roots),
+                )
+            return result
+
+    def history_entries(
+        self, run_id: str
+    ) -> tuple[tuple[str, ...], dict[str, tuple[str, ...]]]:
+        """Read Step identities and control associations without decoding bodies."""
+
+        with self.read_transaction():
+            rows = self._conn.execute(
+                "SELECT id, state, preceded_by, aborted_by FROM steps WHERE run = ?",
+                (run_id,),
+            ).fetchall()
+            ordered = sorted(rows, key=lambda row: StepRef.parse(row["id"]).indices)
+            related = {
+                str(row["id"]): tuple(
+                    dict.fromkeys(
+                        (
+                            str(row["state"]),
+                            *_load_json(row["preceded_by"]),
+                            *((str(row["aborted_by"]),) if row["aborted_by"] else ()),
+                        )
+                    )
+                )
+                for row in ordered
+            }
+            controls = self._conn.execute(
+                'SELECT id FROM controls WHERE target = ? ORDER BY "index"',
+                (run_id,),
+            ).fetchall()
+            return (
+                (*related, *(str(row["id"]) for row in controls)),
+                related,
+            )
+
+    def history_thread_members(
+        self,
+        thread_id: str,
+    ) -> tuple[ThreadRecord, ControlRef, dict[str, str]]:
+        """Read the logical membership index, without Run outputs or Step bodies."""
+
+        with self.read_transaction():
+            thread = self.get_thread(thread_id=thread_id)
+            if thread is None:
+                raise KeyError(thread_id)
+            links = tuple(
+                RunLink(
+                    row["id"],
+                    StepRef.parse(row["parent"]) if row["parent"] else None,
+                    ThreadRef(row["thread"]),
+                )
+                for row in self._conn.execute(
+                    "SELECT id, parent, thread FROM runs ORDER BY rowid"
+                )
+            )
+            controls = tuple(
+                _control_from_row(row)
+                for row in self._conn.execute(
+                    "SELECT * FROM controls WHERE scope = 'thread' ORDER BY target, \"index\""
+                )
+            )
+            projection = _ThreadProjection(links, controls)
+            roots = projection.history(thread_id)
+            root_of = {run.id: run.id for run in roots}
+            members: dict[str, str] = {}
+            for run in projection.tree(roots):
+                root = run.id if run.parent is None else root_of[run.parent.run_id]
+                root_of[run.id] = root
+                members[run.id] = root
+            return thread, projection.head(thread_id), members
+
+    def history_versions(self, refs: Sequence[str]) -> dict[str, str]:
+        """Read only lifecycle markers that change with the exposed record facts.
+
+        Steps have immutable begin/end records; retries change the owning Run's
+        control even when Step IDs are reused. Controls already have revisions.
+        No output, given, noted, or payload bodies are loaded for this manifest.
+        """
+
+        grouped: dict[str, list[str]] = {"runs": [], "steps": [], "controls": []}
+        for ref in dict.fromkeys(refs):
+            table = "controls" if "@" in ref else "steps" if "." in ref else "runs"
+            grouped[table].append(ref)
+        markers = {
+            "runs": "json_array(control, state, status, created_at, started_at, finished_at)",
+            "steps": "json_array(status, created_at, started_at, finished_at)",
+            "controls": "json_array(_revision)",
+        }
+        versions: dict[str, str] = {}
+        with self.read_transaction():
+            for table, ids in grouped.items():
+                for offset in range(0, len(ids), 500):
+                    chunk = ids[offset : offset + 500]
+                    placeholders = ",".join("?" for _ in chunk)
+                    rows = self._conn.execute(
+                        f"SELECT id, {markers[table]} AS marker FROM {table} "
+                        f"WHERE id IN ({placeholders})",
+                        tuple(chunk),
+                    ).fetchall()
+                    versions.update((row["id"], row["marker"]) for row in rows)
+        if len(versions) != sum(map(len, grouped.values())):
+            missing = next(ref for ref in refs if ref not in versions)
+            raise HistoryChangedError(f"history record is missing: {missing}")
+        return versions
+
+    def validate_history(self, versions: Mapping[str, str]) -> None:
+        current = self.history_versions(tuple(versions))
+        for ref, marker in versions.items():
+            if current[ref] != marker:
+                raise HistoryChangedError(f"history record changed: {ref}")
+
     def _resolve_thread_anchor(
         self,
         *,
-        views: ThreadViews,
+        views: _ThreadProjection[RunRecord],
         thread_id: str,
         run_id: str | None,
         require_idle: bool,

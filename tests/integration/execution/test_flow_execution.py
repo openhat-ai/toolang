@@ -1071,7 +1071,7 @@ def test_thread_manager_emits_only_successful_events(tmp_path: Path) -> None:
     created = executor.store.get_thread(thread_id=thread_id)
 
     assert created is not None
-    assert executor.store.thread_views().head(thread_id).index == 0
+    assert executor.store.thread_view(thread_id).head.index == 0
     assert [event.type for event in listener.events] == ["thread_created"]
     with pytest.raises(ValueError, match="thread has no runs"):
         manager.fork(thread_id=thread_id, run_id="run_missing")

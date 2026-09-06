@@ -127,7 +127,7 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
         source_thread = reopened.get_thread(thread_id=source)
         assert source_thread is not None
         assert source_thread.peer == peer
-        assert reopened.thread_views().head(source) == ControlRef.for_thread(source, 0)
+        assert reopened.thread_view(source).head == ControlRef.for_thread(source, 0)
         create_control = reopened.list_thread_controls(thread_id=source)
         assert len(create_control) == 1
         assert create_control[0].kind == "create"
@@ -139,7 +139,7 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
         forked_thread = reopened.get_thread(thread_id=forked)
         assert forked_thread is not None
         assert forked_thread.peer == peer
-        assert reopened.thread_views().head(forked) == ControlRef.for_thread(forked, 0)
+        assert reopened.thread_view(forked).head == ControlRef.for_thread(forked, 0)
         fork_control = reopened.list_thread_controls(thread_id=forked)
         assert len(fork_control) == 1
         assert fork_control[0].kind == "fork"
@@ -248,7 +248,7 @@ def test_rewind_controls_form_a_monotonic_head_chain(
 
             record = harness.store.get_thread(thread_id=thread)
             assert record is not None
-            assert harness.store.thread_views().head(thread) == ControlRef.for_thread(
+            assert harness.store.thread_view(thread).head == ControlRef.for_thread(
                 thread, 2
             )
             first, second, third = (
@@ -546,7 +546,7 @@ def test_listener_failure_does_not_roll_back_a_thread_control(
             assert record is not None
             assert control is not None
             assert control.status == "applied"
-            assert harness.store.thread_views().head(thread) == ControlRef.for_thread(
+            assert harness.store.thread_view(thread).head == ControlRef.for_thread(
                 thread, 0
             )
 

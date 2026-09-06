@@ -36,6 +36,20 @@ Keep Run selection separate from output reading.
 The initial read sets bounds and page limits; continuation retains that scope.
 Pointer inspection and physical execution-tree queries retain existing Store APIs.
 
+Both View reads accept `begin`, `end`, `limit`, and `reverse`. Defaults read the
+whole scope; a positive limit pages it. `reverse` selects from the tail, but each
+page retains natural order. A View's optional `cursor` continues through
+`next_page(cursor)`. Cursors contain membership and lifecycle markers, not bodies,
+and work with a reopened read-only Store.
+
+Thread pages count root Runs and include their child membership. Run pages count
+Steps in numeric order followed by raw owned controls. Required controls also
+appear in `RunView.dependencies`, separately from paginated `entries`; these are
+references' supporting facts, not extra messages. `timeline()` describes Step
+boundaries in the selected page, not a global ordering of raw record pages.
+Limits count primary records, not bytes; callers account for dependencies and
+oversized individual records in their own budgets.
+
 Replace `get_run_result` with composition of `get_run` and `get_output` where
 resolved output is needed in a detail response. Reuse an already-read detail;
 do not rebuild it. `get_run` retains its existing stored-output representation.

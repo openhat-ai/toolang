@@ -3,22 +3,50 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Generic, TypeVar
 
-from .records import ControlRecord, ForkControlPayload, RewindControlPayload, RunRecord
-from .types import ControlRef
+from .records import (
+    ControlRecord,
+    ForkControlPayload,
+    RewindControlPayload,
+    RunRecord,
+    ThreadRecord,
+)
+from .types import ControlRef, RunLink, RunRef
+
+_Run = TypeVar("_Run", RunRecord, RunLink)
 
 
-class ThreadViews:
+@dataclass(frozen=True)
+class ThreadView:
+    """One logical Thread selection, independent of physical Run ownership."""
+
+    record: ThreadRecord
+    head: ControlRef
+    roots: tuple[RunRecord, ...]
+    members: tuple[RunRecord, ...]
+    cursor: str | None = None
+
+    def runs(self, *, reverse: bool = False) -> tuple[RunRecord, ...]:
+        return self.roots[::-1] if reverse else self.roots
+
+    def contains(self, run: RunRef | str) -> bool:
+        return any(item.id == str(run) for item in self.members)
+
+    def tree(self) -> tuple[RunRecord, ...]:
+        return self.members
+
+
+class _ThreadProjection(Generic[_Run]):
     """Resolve Thread views within one immutable store snapshot."""
 
-    def __init__(
-        self, runs: Sequence[RunRecord], controls: Sequence[ControlRecord]
-    ) -> None:
+    def __init__(self, runs: Sequence[_Run], controls: Sequence[ControlRecord]) -> None:
         self.runs = tuple(runs)
         self._controls: dict[str, list[ControlRecord]] = {}
-        self._roots: dict[str, list[RunRecord]] = {}
+        self._roots: dict[str, list[_Run]] = {}
         self._root_of: dict[str, str] = {}
-        self._cache: dict[tuple[str, int, bool], tuple[RunRecord, ...]] = {}
+        self._cache: dict[tuple[str, int, bool], tuple[_Run, ...]] = {}
         for control in controls:
             if control.status == "applied":
                 self._controls.setdefault(str(control.target), []).append(control)
@@ -34,7 +62,7 @@ class ThreadViews:
 
         return self._controls[thread_id][-1].ref
 
-    def prefix(self, payload: ForkControlPayload) -> tuple[RunRecord, ...]:
+    def prefix(self, payload: ForkControlPayload) -> tuple[_Run, ...]:
         """Resolve a fork's captured source prefix, ignoring later controls."""
 
         source = self.history(str(payload.fork_from), head=payload.fork_head)
@@ -47,7 +75,7 @@ class ThreadViews:
         *,
         head: ControlRef | None = None,
         include_rewound: bool = False,
-    ) -> tuple[RunRecord, ...]:
+    ) -> tuple[_Run, ...]:
         """Project roots; head limits controls, while prefix() also bounds appends."""
 
         controls = self._controls.get(thread_id, ())
@@ -76,7 +104,7 @@ class ThreadViews:
             self._cache[key] = tuple(runs)
         return self._cache[key]
 
-    def tree(self, roots: Sequence[RunRecord]) -> tuple[RunRecord, ...]:
+    def tree(self, roots: Sequence[_Run]) -> tuple[_Run, ...]:
         """Return physical Runs belonging to the selected root trees."""
 
         selected = {run.id for run in roots}
