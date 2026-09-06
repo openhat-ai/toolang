@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.execution_assertions import assert_run_event_integrity
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -20,11 +21,14 @@ from toolang.base.types.message import (
     ImagePart,
     Message,
     TextPart,
+    ToolCallPart,
+    ToolResultPart,
 )
 from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall
-from toolang.execution.events import RunEvent, StepBegin
+from toolang.execution.events import PartEnd, RunEvent, StepBegin, StepEnd
 from toolang.execution.executor._messages import _MessageBuffer
 from toolang.execution.message_delta import delta_to_data
+from toolang.execution.values import parts_from_local
 from toolang.execution.records import StoredModelStepGiven
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
@@ -142,10 +146,115 @@ def test_online_tool_loops_only_record_and_render_additions(
     assert_replayed(harness.store.db_path, tracer)
 
 
-@pytest.mark.parametrize("timing", ["next_call", "immediate"])
+@pytest.mark.parametrize("interruption", ["steer", "cancel"])
+@pytest.mark.parametrize("at_commit", [False, True])
+@pytest.mark.parametrize("with_tool_calls", [False, True])
+def test_interrupted_model_end_preserves_referenced_output(
+    tmp_path: Path, interruption: str, at_commit: bool, with_tool_calls: bool
+) -> None:
+    gate = AsyncGate()
+    blockers: list[asyncio.Task[None]] = []
+
+    async def hold_event_lock(run_id: str) -> None:
+        async with harness.executor._active[run_id].event_lock:
+            await gate.wait()
+
+    class Tracer(RecordingRunTracer):
+        async def on_event(self, event: RunEvent) -> None:
+            await super().on_event(event)
+            if at_commit:
+                if (
+                    isinstance(event, PartEnd)
+                    and event.step.index == 0
+                    and event.part == len(requests)
+                    and not blockers
+                ):
+                    blockers.append(
+                        asyncio.create_task(hold_event_lock(event.step.run_id))
+                    )
+                    await asyncio.sleep(0)
+            elif isinstance(event, StepEnd) and event.step.index == 0:
+                await gate.wait()
+
+    tool = RecordingTool("lookup__item", output={})
+    requests = (
+        tuple(ToolCall(str(i), str(i), tool.name, {}) for i in range(2))
+        if with_tool_calls
+        else ()
+    )
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        tools={tool.name: tool},
+        responses=[
+            ModelCallResult(message=Message.assistant("draft"), tool_calls=requests),
+            ModelCallResult(message=Message.assistant("revised")),
+        ],
+    )
+    tracer = Tracer()
+
+    async def scenario() -> None:
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                    primary=(TextPart("start"),),
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), timeout=2)
+            control = (
+                handle.steer(Message.user("change direction"), timing="immediate")
+                if interruption == "steer"
+                else handle.cancel()
+            )
+            await asyncio.sleep(0)
+            gate.release()
+            root = await asyncio.wait_for(handle, timeout=2)
+            await asyncio.gather(*blockers)
+            assert root.status == (
+                "succeeded" if interruption == "steer" else "canceled"
+            ), root.error
+            step = harness.store.list_steps(run_id=root.id)[0]
+            assert step.status == ("canceled" if at_commit else "succeeded")
+            assert step.aborted_by == (control.ref if at_commit else None)
+            assert step.output is not None
+            parts = parts_from_local(step.output)
+            assert parts[0] == TextPart("draft")
+            assert len(parts) == 1 + len(requests)
+            assert all(isinstance(part, ToolCallPart) for part in parts[1:])
+            assert not tool.calls
+            if interruption == "steer":
+                results = tuple(
+                    ToolResultPart(
+                        tool_call_id=call.tool_call_id,
+                        call_id=call.call_id,
+                        tool_name=call.name,
+                        tool_family=call.name,
+                        error="canceled by steer",
+                    )
+                    for call in requests
+                )
+                assert harness.adapter.invocations[-1].call.messages == [
+                    Message.user("start"),
+                    Message("assistant", parts),
+                    *([Message("tool", results)] if results else []),
+                    Message.user("change direction"),
+                ]
+            assert_run_event_integrity(tracer.events)
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer)
+
+
+@pytest.mark.parametrize(
+    ("timing", "interruption"),
+    [("next_call", "steer"), ("immediate", "steer"), ("immediate", "cancel")],
+)
 @pytest.mark.parametrize("at_begin", [False, True])
 def test_steer_and_interrupted_model_begin_replay_once(
-    tmp_path: Path, timing: ControlTiming, at_begin: bool
+    tmp_path: Path, timing: ControlTiming, interruption: str, at_begin: bool
 ) -> None:
     gate = AsyncGate()
 
@@ -187,13 +296,20 @@ def test_steer_and_interrupted_model_begin_replay_once(
                 tracer=tracer,
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=2)
-            handle.steer(steer, timing=timing)
+            if interruption == "steer":
+                handle.steer(steer, timing=timing)
+            else:
+                handle.cancel(timing=timing)
             gate.release()
             root = await asyncio.wait_for(handle, timeout=2)
-            assert root.status == "succeeded", root.error
-            final = harness.adapter.invocations[-1].call.messages
-            assert final.count(Message.user("start")) == 1
-            assert final.count(steer) == 1
+            assert root.status == (
+                "succeeded" if interruption == "steer" else "canceled"
+            ), root.error
+            if interruption == "steer":
+                final = harness.adapter.invocations[-1].call.messages
+                assert final.count(Message.user("start")) == 1
+                assert final.count(steer) == 1
+            assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer)

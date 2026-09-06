@@ -138,16 +138,26 @@ async def execute(state: _AgicState) -> ModelCallResult:
     except asyncio.CancelledError:
         # Cancellation may interrupt delivery after the Step was committed.
         # Its delta already belongs to the next call's prefix in that case.
-        if (
-            state.execution is not None
-            and state.execution.store.get_step(
+        record = (
+            state.execution.store.get_step(
                 ref=StepRef.from_local(run.run_id, (step_index,))
             )
-            is not None
-        ):
+            if state.execution is not None
+            else None
+        )
+        if record is not None:
             state.messages = next_messages
             state.prepared = prepared
             state.claimed_inputs = ()
+            if record.status == "running":
+                await state.end_step(
+                    StepEnd(
+                        step=record.ref,
+                        kind="model",
+                        status="canceled",
+                        finished_at=utc_now(),
+                    )
+                )
         raise
     if request is None:  # pragma: no cover - boundary builder invariant
         raise RuntimeError("model step boundary did not build its request")
@@ -180,7 +190,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
         output = await _emit_response_parts(state, stream, current)
     except asyncio.CancelledError:
         output = await _close_open_parts(state, stream)
-        await state.emit(
+        await state.end_step(
             StepEnd(
                 step=StepRef.from_local(run.run_id, (step_index,)),
                 kind="model",
@@ -193,7 +203,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
     except Exception as exc:
         message = str(exc) or type(exc).__name__
         output = await _close_open_parts(state, stream)
-        await state.emit(
+        await state.end_step(
             StepEnd(
                 step=StepRef.from_local(run.run_id, (step_index,)),
                 kind="model",
@@ -299,23 +309,29 @@ async def _apply_response(
     state.continuation = current.continuation
     accounting = state.account_usage(current.usage)
     state.last_step = step_index
-    await state.emit(
-        StepEnd(
-            step=StepRef.from_local(run.run_id, (step_index,)),
-            kind="model",
-            status="succeeded",
-            output=local,
-            noted=_model_step_noted(
-                accounting,
-                continuation=current.continuation,
-            ),
-            finished_at=utc_now(),
+    try:
+        await state.end_step(
+            StepEnd(
+                step=StepRef.from_local(run.run_id, (step_index,)),
+                kind="model",
+                status="succeeded",
+                output=local,
+                noted=_model_step_noted(
+                    accounting,
+                    continuation=current.continuation,
+                ),
+                finished_at=utc_now(),
+            )
         )
-    )
+    except asyncio.CancelledError:
+        if not state.immediate_steer():
+            raise
+        # The complete response is durable and already in the message prefix.
+        # Return its calls so steer recovery records their skipped results.
     state.record_accounting(accounting)
     usage = current.usage
     _LOGGER.info(
-        "Step finished thread=%s run=%s step=%s kind=model status=succeeded input=%s output=%s tool_calls=%s duration_ms=%s",
+        "Step finished thread=%s run=%s step=%s kind=model input=%s output=%s tool_calls=%s duration_ms=%s",
         run.thread,
         run.run_id,
         step_index,

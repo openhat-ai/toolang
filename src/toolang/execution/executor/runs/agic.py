@@ -28,6 +28,7 @@ from ...types import (
     FieldRef,
     Local as RecordLocal,
     RunRef,
+    StepNoted,
     StepRef,
     TypedRef,
     ToolStepGiven,
@@ -140,6 +141,36 @@ class _AgicState:
         event = build(run.state, run.state_ref)
         await self.emit(event)
         return run.state, run.state_ref
+
+    async def end_step(
+        self, event: StepEnd, *, canceled_noted: StepNoted | None = None
+    ) -> None:
+        """Commit the terminal fact before propagating a delivery interruption."""
+
+        interruption: asyncio.CancelledError | None = None
+        while True:
+            try:
+                await self.emit(event)
+            except asyncio.CancelledError as exc:
+                interruption = exc
+                if self.execution is None:
+                    raise
+                record = self.execution.store.get_step(ref=event.step)
+                # Delivery can be interrupted after persistence. Never end it twice.
+                if record is None or record.status != "running":
+                    raise
+                if event.status != "canceled":
+                    event = replace(
+                        event,
+                        status="canceled",
+                        noted=canceled_noted or event.noted,
+                        error=None,
+                        finished_at=utc_now(),
+                    )
+            else:
+                if interruption is not None:
+                    raise interruption
+                return
 
     def frame_for_step(self, state: ExecutionState, ref: ControlRef) -> _AgicFrame:
         """Prepare one step from the State captured at its boundary."""

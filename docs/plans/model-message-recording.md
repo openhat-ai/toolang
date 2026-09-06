@@ -54,6 +54,8 @@ durable fields during reconstruction. Online execution renders only additions;
 it neither rereads nor reconstructs the saved prefix. Keep adopted values stable.
 Persist the pending delta with Model Step begin before invoking the adapter.
 An established but interrupted begin still contributes its delta exactly once.
+Complete interrupted Step boundaries before continuing. Persist adopted outputs
+before later deltas can reference them, including steer-skipped tool results.
 
 Reconstruct deltas in numeric Step order within the owning Run, stopping at the
 requested Model Step. Run/execute/retry boundaries start a fresh message sequence;
@@ -89,8 +91,9 @@ capture/reconstruction, and executor message production and persistence.
   missing references, and reference-looking text/tool data remaining literal.
 - Verify numeric ordering, linear delta metadata growth, long iterative reads,
   batched reconstruction, and no store reads to render an online saved prefix.
-- Verify Step-begin atomicity and interrupted delivery; pending messages must
-  neither disappear nor be duplicated in the next call.
+- Verify Step-begin atomicity and interruptions before/after terminal persistence;
+  pending messages must neither disappear nor be duplicated in the next call,
+  and completed ToolCalls must receive results before steer continues.
 - Verify incompatible databases remain unchanged and run the default offline
   suite: Ruff, Ruff format, ty, and pytest.
 

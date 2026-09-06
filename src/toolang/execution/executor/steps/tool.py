@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import json
 import logging
 from collections.abc import Callable, Mapping
@@ -187,8 +187,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         raise
     except Exception as exc:
         error = str(exc) or type(exc).__name__
-        await _end(
-            state,
+        await state.end_step(
             StepEnd(
                 step=StepRef.from_local(run.run_id, (step_index,)),
                 kind="tool",
@@ -197,6 +196,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
                 error=ErrorMessage(error),
                 finished_at=utc_now(),
             ),
+            canceled_noted=ToolStepNoted(summary="canceled"),
         )
         _LOGGER.error(
             "Step failed thread=%s run=%s step=%s kind=tool tool=%s error=%r duration_ms=%s",
@@ -269,8 +269,7 @@ async def finish(
     except asyncio.CancelledError:
         if not ended:
             await state.emit(end)
-        await _end(
-            state,
+        await state.end_step(
             StepEnd(
                 step=step,
                 kind="tool",
@@ -281,8 +280,7 @@ async def finish(
             ),
         )
         raise
-    await _end(
-        state,
+    await state.end_step(
         StepEnd(
             step=step,
             kind="tool",
@@ -295,7 +293,7 @@ async def finish(
             or (ErrorMessage(part.error) if part.error is not None else None),
             finished_at=utc_now(),
         ),
-        canceled_summary=canceled_summary,
+        canceled_noted=ToolStepNoted(summary=canceled_summary),
     )
 
 
@@ -319,8 +317,7 @@ async def cancel(
             Local.typed("ToolResultPart", part, None, 0),
         )
         state.last_step = step.index
-    await _end(
-        state,
+    await state.end_step(
         StepEnd(
             step=step,
             kind="tool",
@@ -333,40 +330,6 @@ async def cancel(
             finished_at=utc_now(),
         ),
     )
-
-
-async def _end(
-    state: _AgicState,
-    event: StepEnd,
-    *,
-    canceled_summary: str = "canceled",
-) -> None:
-    """Commit the terminal fact before propagating a delivery interruption."""
-
-    interruption: asyncio.CancelledError | None = None
-    while True:
-        try:
-            await state.emit(event)
-        except asyncio.CancelledError as exc:
-            interruption = exc
-            if state.execution is None:
-                raise
-            record = state.execution.store.get_step(ref=event.step)
-            # Delivery can be interrupted after persistence. Never end it twice.
-            if record is None or record.status != "running":
-                raise
-            if event.status != "canceled":
-                event = replace(
-                    event,
-                    status="canceled",
-                    noted=ToolStepNoted(summary=canceled_summary),
-                    error=None,
-                    finished_at=utc_now(),
-                )
-        else:
-            if interruption is not None:
-                raise interruption
-            return
 
 
 def canceled_result(call: ToolCall) -> ToolResultPart:
