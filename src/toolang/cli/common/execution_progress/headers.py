@@ -10,7 +10,7 @@ from toolang.lang.ast import (
     KeepStmt,
     LetStmt,
     MapStmt,
-    RankStmt,
+    SortStmt,
     RepeatStmt,
     RunStmt,
     ScatterStmt,
@@ -89,16 +89,12 @@ def statement_header(statement: FlowStmt) -> str:
                 named=f"{verb} items selected by {{name}}",
                 inline=f"{verb} selected items",
             )
-    elif isinstance(statement, RankStmt):
+    elif isinstance(statement, SortStmt):
         action = _named_or_inline(
             statement.runnable,
-            named="Rank items with {name}",
-            inline="Rank the items",
+            named=f"Sort items {statement.order} by {{name}}",
+            inline=f"Sort the items {statement.order}",
         )
-        if statement.selection is not None and statement.limit is not None:
-            action += (
-                f" and keep the {statement.selection} {count(statement.limit, 'item')}"
-            )
     elif isinstance(statement, RepeatStmt):
         if statement.count is not None and statement.runnable is not None:
             return f"Repeat up to {count(statement.count, 'time')}"

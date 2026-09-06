@@ -14,7 +14,7 @@ from toolang.lang.ast import (
     KeepStmt,
     LetStmt,
     MapStmt,
-    RankStmt,
+    SortStmt,
     RepeatStmt,
     RunStmt,
     ScatterStmt,
@@ -33,7 +33,7 @@ from . import (
     gather,
     let,
     map,
-    rank,
+    sort,
     repeat,
     run,
     scatter,
@@ -94,8 +94,8 @@ async def execute(
         return await filter.execute(
             execution, binding, locals, path, statement, controls, occurrence
         )
-    if isinstance(statement, RankStmt):
-        return await rank.execute(
+    if isinstance(statement, SortStmt):
+        return await sort.execute(
             execution, binding, locals, path, statement, controls, occurrence
         )
     if isinstance(statement, RepeatStmt):

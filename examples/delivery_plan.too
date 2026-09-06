@@ -1,11 +1,6 @@
 ##! Turn a rough project idea into an execution-ready delivery plan.
-##!
-##! Example:
-##! too examples/delivery_plan.too plan --models '[deepseek]' \
-##!   constraints='Six weeks; team of four' \
-##!   'Launch self-serve enterprise SSO'
 
-agic decompose(_: Part[], constraints?: Text) -> Text[]:
+agic decompose(_, constraints?) -> Text[]:
   recall = none
   tools = none
 
@@ -20,7 +15,7 @@ agic decompose(_: Part[], constraints?: Text) -> Text[]:
   as parallelizable as the project allows.
   Return only a JSON array of 5 concise workstream descriptions.
 
-agic plan_workstream(_: Part[], project: Part[], constraints?: Text):
+agic plan_workstream(_, project: Part[], constraints?):
   recall = none
   tools = none
 
@@ -43,7 +38,7 @@ agic plan_workstream(_: Part[], project: Part[], constraints?: Text):
 
   Be specific enough that a team could estimate and assign the work.
 
-agic assemble_plan(_: Part[], project: Part[], constraints?: Text):
+agic assemble_plan(_, project: Part[], constraints?):
   recall = none
   tools = none
 
@@ -70,7 +65,7 @@ agic assemble_plan(_: Part[], project: Part[], constraints?: Text):
   - decisions still required
   - actions for the first seven days
 
-agic review_lenses(_: Part[], project: Part[], constraints?: Text) -> Text[]:
+agic review_lenses(_, project: Part[], constraints?) -> Text[]:
   recall = none
   tools = none
 
@@ -90,7 +85,7 @@ agic review_lenses(_: Part[], project: Part[], constraints?: Text) -> Text[]:
 
   Return only a JSON array of 3 concise review instructions.
 
-agic review_plan(_: Part[], draft: Part[], project: Part[], constraints?: Text):
+agic review_plan(_, draft: Part[], project: Part[], constraints?):
   recall = none
   tools = none
 
@@ -111,7 +106,7 @@ agic review_plan(_: Part[], draft: Part[], project: Part[], constraints?: Text):
   exit criteria. Recommend a small number of high-value corrections.
   Do not rewrite the complete plan.
 
-agic apply_review(_: Part[], item: Part[], draft: Part[], project: Part[], constraints?: Text):
+agic apply_review(_, item: Part[], draft: Part[], project: Part[], constraints?):
   recall = none
   tools = none
 
@@ -136,7 +131,7 @@ agic apply_review(_: Part[], item: Part[], draft: Part[], project: Part[], const
   unsupported constraints.
   Return only the complete revised plan.
 
-agic improve_plan(_: Part[], project: Part[], constraints?: Text):
+agic improve_plan(_, project: Part[], constraints?):
   recall = none
   tools = none
 
@@ -155,27 +150,27 @@ agic improve_plan(_: Part[], project: Part[], constraints?: Text):
   Return only the complete improved plan.
 
 ## Build, challenge, and improve an execution-ready delivery plan.
-flow plan(_: Text, constraints?: Text):
+flow plan(_: Text, constraints?):
   let project =
     {{_}}
 
   ## Decompose the project into independently actionable workstreams
-  scatter 5 decompose
+  scatter 5 using decompose
   ## Plan independent workstreams concurrently
-  map plan_workstream par 4
+  map using plan_workstream in 4 lanes
   ## Reconcile the workstreams into one dependency-aware draft
-  gather assemble_plan
+  gather using assemble_plan
 
   let draft =
     {{_}}
 
   ## Select review perspectives suited to this particular plan
-  scatter 3 review_lenses
+  scatter 3 using review_lenses
   ## Challenge the draft from each perspective concurrently
-  map review_plan par 3
+  map using review_plan in 3 lanes
   ## Apply the independent reviews sequentially to one evolving plan
-  settle apply_review
+  settle using apply_review
 
   ## Make two bounded improvements to the reviewed plan
-  repeat 2:
+  repeat 2 times:
     run improve_plan

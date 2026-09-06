@@ -13,12 +13,13 @@ from tree_sitter import Language, Node as TreeSitterNode, Parser, Tree
 import tree_sitter_toolang
 
 from toolang.common.immutable import freeze_mapping
+from .text import source_lines
 
 CapKind = Literal["psyche", "skill", "service", "prompt"]
 JobKind = Literal["task", "chore"]
 Role = Literal["user", "assistant", "tool"]
 Position = Literal["first", "last"]
-Limit = Literal["top", "bottom"]
+Order = Literal["ascending", "descending"]
 _QUERY_DIRECTIVE_RE = re.compile(
     rb"^[ \t]*(?:models|tools|skills|services|psyches|prompts|hands|handoffs)"
     rb"[ \t]*(?:\+=|-=|=)"
@@ -246,13 +247,12 @@ class DropStmt(Node):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class RankStmt(Node):
-    kind: ClassVar[str] = "rank"
+class SortStmt(Node):
+    kind: ClassVar[str] = "sort"
 
     binding: str | None = "_"
     runnable: str
-    selection: Limit | None = None
-    limit: int | None = None
+    order: Order
     lanes: int | None = None
 
 
@@ -294,7 +294,7 @@ FlowStmt = Annotated[
     | Annotated[MapStmt, Tag("map")]
     | Annotated[KeepStmt, Tag("keep")]
     | Annotated[DropStmt, Tag("drop")]
-    | Annotated[RankStmt, Tag("rank")]
+    | Annotated[SortStmt, Tag("sort")]
     | Annotated[RepeatStmt, Tag("repeat")]
     | Annotated[LetStmt, Tag("let")],
     Discriminator(_flow_statement_kind),
@@ -355,7 +355,7 @@ def _parse_source(source: str) -> _ParsedSource:
     syntax = source if not source or source.endswith("\n") else f"{source}\n"
     encoded = syntax.encode("utf-8")
     tree = _parse_tree(encoded)
-    lines = source.splitlines()
+    lines = source_lines(source)
     if error := _first_syntax_error(tree.root_node):
         line = error.start_point.row + 1
         raw = lines[line - 1] if line <= len(lines) else ""
@@ -364,10 +364,17 @@ def _parse_source(source: str) -> _ParsedSource:
 
             kind, name, property_name = details
             _raise_empty_cap_property(kind, name, property_name, line=line)
-        if raw.startswith((" ", "\t")) and raw.strip():
-            raise ToolangSyntaxError(f"Unexpected indentation at line {line}.")
-        raise ToolangSyntaxError(f"Syntax error at line {line}.")
+        raise ToolangSyntaxError(_syntax_error_message(line, raw))
     return _ParsedSource(tree=tree, source=encoded)
+
+
+def _syntax_error_message(line: int, raw: str) -> str:
+    if raw.strip():
+        return (
+            f"Syntax error at line {line}: {raw.strip()!r}. "
+            "Expected Toolang 0.3 syntax."
+        )
+    return f"Syntax error at line {line}."
 
 
 def _empty_cap_property_details(

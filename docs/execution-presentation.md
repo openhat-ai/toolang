@@ -234,7 +234,7 @@ Examples include:
 | `map` | `Run RUNNABLE for each item` |
 | positional `keep` or `drop` | `Keep/Drop the first/last N items` |
 | predicate `keep` or `drop` | `Keep/Drop items selected by RUNNABLE` |
-| `rank` | `Rank items with RUNNABLE` |
+| `sort` | `Sort items ascending/descending by RUNNABLE` |
 | fixed `repeat` | `Repeat N times` |
 | conditional `repeat` | `Repeat up to N times` or `Repeat until complete` |
 
@@ -379,7 +379,7 @@ On success, the live lanes are cleared and one natural-language result remains:
 • Brainstormed 7 items in parallel
 • Evaluated 7 items in parallel, kept 5
 • Evaluated 7 items in parallel, dropped 2, leaving 5
-• Scored 10 items in parallel, kept the top 8
+• Scored 10 items in parallel, sorted 10 items descending
 ```
 
 On failure, successful, active, and canceled lanes are cleared. Each failed

@@ -29,7 +29,7 @@ from toolang.lang.ast import (
     KeepStmt,
     LetStmt,
     MapStmt,
-    RankStmt,
+    SortStmt,
     RepeatStmt,
     RunStmt,
     ScatterStmt,
@@ -302,7 +302,7 @@ def _flow_step_noted(
 ) -> StepNoted:
     if note is not None:
         return note(status)
-    if not isinstance(statement, StormStmt | MapStmt | KeepStmt | DropStmt | RankStmt):
+    if not isinstance(statement, StormStmt | MapStmt | KeepStmt | DropStmt | SortStmt):
         return None
     if isinstance(statement, StormStmt):
         total_items = statement.count
@@ -401,19 +401,14 @@ def transform_flow_result(
             index for index, matched in enumerate(matches) if matched is keep_matches
         ]
     else:
-        scores = [number(value, operation="rank") for value in values]
-        entries = sorted(
-            zip(scores, range(len(items)), strict=True),
-            key=lambda entry: (-entry[0], entry[1]),
+        if not isinstance(statement, SortStmt):
+            raise TypeError("sort transform requires SortStmt")
+        scores = [number(value, operation="sort") for value in values]
+        indexes = sorted(
+            range(len(items)),
+            key=lambda index: scores[index],
+            reverse=statement.order == "descending",
         )
-        if not isinstance(statement, RankStmt):
-            raise TypeError("sort transform requires RankStmt")
-        if statement.selection == "top":
-            entries = entries[: statement.limit or 0]
-        elif statement.selection == "bottom":
-            limit = statement.limit or 0
-            entries = entries[-limit:] if limit else []
-        indexes = [index for _, index in entries]
     return Local(
         [items[index] for index in indexes],
         "list",
@@ -439,7 +434,7 @@ def flow_transform(statement: FlowStmt) -> FlowTransform:
         return "list"
     if isinstance(statement, KeepStmt | DropStmt):
         return "filter"
-    if isinstance(statement, RankStmt):
+    if isinstance(statement, SortStmt):
         return "sort"
     return "item"
 
@@ -479,7 +474,7 @@ def statement_input_refs(
             | GatherStmt
             | SettleStmt
             | MapStmt
-            | RankStmt
+            | SortStmt
             | StormStmt,
         ):
             names.add("_")
@@ -496,7 +491,7 @@ def _statement_child_runnable(statement: FlowStmt) -> str | None:
         RunStmt | ScatterStmt | GatherStmt | SettleStmt | MapStmt | StormStmt,
     ):
         return statement.runnable
-    if isinstance(statement, RankStmt):
+    if isinstance(statement, SortStmt):
         return statement.runnable
     if isinstance(statement, KeepStmt | DropStmt):
         return statement.runnable
@@ -606,7 +601,7 @@ def statement_has_call(statement: FlowStmt) -> bool:
         | GatherStmt
         | SettleStmt
         | MapStmt
-        | RankStmt,
+        | SortStmt,
     ):
         return True
     if isinstance(statement, KeepStmt | DropStmt):
@@ -650,10 +645,10 @@ def boolean(value: Any, *, operation: str) -> bool:
     raise ToolangError(f"{operation} requires a Boolean result")
 
 
-def number(value: Any, *, operation: str) -> float:
+def number(value: Any, *, operation: str) -> int | float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise ToolangError(f"{operation} requires a Number result")
-    return float(value)
+    return value
 
 
 def program_structs(binding: BoundRun) -> dict[str, StructDecl]:

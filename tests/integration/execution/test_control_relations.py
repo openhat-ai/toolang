@@ -146,7 +146,7 @@ def test_parallel_children_keep_separate_consumption_relations_after_restart(
         tmp_path,
         source="""
 flow outer(_: Part[]):
-  storm 2 inner par 2
+  storm 2 using inner in 2 lanes
 
 agic inner(_: Part[]) -> Text:
   recall = none

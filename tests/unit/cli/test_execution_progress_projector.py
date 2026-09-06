@@ -53,7 +53,7 @@ from toolang.lang.ast import (
     KeepStmt,
     LetStmt,
     MapStmt,
-    RankStmt,
+    SortStmt,
     RepeatStmt,
     RunStmt,
     ScatterStmt,
@@ -122,16 +122,15 @@ def test_progress_statement_header_prefers_doc_and_preserves_runnable_name() -> 
     )
     assert (
         statement_header(
-            RankStmt(
+            SortStmt(
                 span=SPAN,
                 runnable="relevance_score",
-                selection="top",
-                limit=8,
+                order="descending",
                 lanes=2,
                 binding="findings",
             )
         )
-        == "Rank items with relevance_score and keep the top 8 items, "
+        == "Sort items descending by relevance_score, "
         "up to 2 at once and save as findings"
     )
 
@@ -223,8 +222,8 @@ def test_progress_statement_header_covers_inline_binding_and_repeat_forms() -> N
             "Drop selected items",
         ),
         (
-            RankStmt(span=SPAN, runnable="<agic:9>"),
-            "Rank the items",
+            SortStmt(span=SPAN, runnable="<agic:9>", order="ascending"),
+            "Sort the items ascending",
         ),
         (
             RepeatStmt(span=SPAN, count=2),
@@ -326,24 +325,23 @@ def test_positional_collection_steps_describe_the_transform(
             "• Evaluated 6 items in parallel, dropped 2, leaving 4",
         ),
         (
-            RankStmt(span=SPAN, runnable="score"),
+            SortStmt(span=SPAN, runnable="score", order="ascending"),
             CollectionStepNoted(6, 6),
-            "• Scored 6 items in parallel, ranked all 6",
+            "• Scored 6 items in parallel, sorted 6 items ascending",
         ),
         (
-            RankStmt(
+            SortStmt(
                 span=SPAN,
                 runnable="score",
-                selection="top",
-                limit=8,
+                order="descending",
             ),
-            CollectionStepNoted(10, 8),
-            "• Scored 10 items in parallel, kept the top 8",
+            CollectionStepNoted(10, 10),
+            "• Scored 10 items in parallel, sorted 10 items descending",
         ),
     ],
 )
 def test_parallel_collection_steps_describe_execution_and_transform(
-    statement: MapStmt | StormStmt | KeepStmt | DropStmt | RankStmt,
+    statement: MapStmt | StormStmt | KeepStmt | DropStmt | SortStmt,
     noted: CollectionStepNoted,
     expected: str,
 ) -> None:

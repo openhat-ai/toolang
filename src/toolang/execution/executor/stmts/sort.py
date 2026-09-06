@@ -1,11 +1,11 @@
-"""Rank-statement semantics."""
+"""Sort-statement semantics."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
-from toolang.lang.ast import RankStmt
+from toolang.lang.ast import SortStmt
 
 from ...records import ControlRecord, StepRef
 from ...types import Occurrence
@@ -22,12 +22,12 @@ async def execute(
     binding: BoundRun,
     locals: Mapping[str, Local],
     path: StepRef,
-    statement: RankStmt,
+    statement: SortStmt,
     controls: Sequence[ControlRecord],
     occurrence: Occurrence | None,
 ) -> Local:
     async def evaluate() -> Local:
-        items = require_list(locals, operation="rank")
+        items = require_list(locals, operation="sort")
         return await execution.parallel_children(
             binding,
             locals,

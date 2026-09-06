@@ -40,7 +40,7 @@ agic expand(_: Part[]) -> Text[]:
 
 flow research(_: Part[]) -> Text[]:
   ## Expand the topic.
-  scatter 2 expand
+  scatter 2 using expand
 """
 
 

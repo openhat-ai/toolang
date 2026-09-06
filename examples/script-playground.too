@@ -1,7 +1,6 @@
 #!/usr/bin/env toolang
 
-# This file is designed for local script-run experiments.
-# It keeps the capabilities minimal and focuses on different agic shapes.
+##! Try prose runs and simple collection transformations locally.
 
 struct Summary:
   title: Text
@@ -10,36 +9,24 @@ struct Summary:
 struct BulletList:
   items: Text[]
 
-# agic summarize(_: Part[]) -> Summary:
-#   Produce a compact summary with a short title and a short summary paragraph.
-
-# agic bullets(_: Part[]) -> BulletList:
-#   Extract the main points into short bullet items.
-
-# agic rewrite(_: Part[], tone?, audience?):
-#   Rewrite the input in the requested tone.
-#   Adjust depth and wording for the requested audience when it is provided.
-
-
 agic slug(title) -> Text:
   Convert the provided title into a concise lowercase slug.
   Use hyphens between words and return only the slug text.
 
 flow a:
-    run: hello world
+  run: Say hello to the reader.
 
-    hello world
+  Explain the purpose of a simple greeting.
 
-    ## sdfsdf
-    women
-
-    scatter 8: sdfsdf
-    gather:
-        sdfsdf sdfsdf
+  scatter 8 using:
+    Suggest eight different greetings for this situation.
+  gather using:
+    Combine the greetings into a concise welcome message.
 
 skill abc:
-    hello
+  description = Write a friendly greeting.
 
+  Welcome the reader in one short sentence.
 
 task heloo:
-    hello world
+  Write a greeting for the reader.

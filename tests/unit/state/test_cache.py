@@ -8,7 +8,7 @@ import shutil
 import pytest
 
 from toolang.common.layout import AgentLayout
-from toolang.lang.ast import Program, SettleStmt
+from toolang.lang.ast import Program, RepeatStmt, SettleStmt, SortStmt
 from toolang.state.cache import (
     _persist_agent_revision,
     _agent_check_lock,
@@ -153,7 +153,7 @@ def test_home_layer_loads_program_without_reparsing_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     layout = _layout(tmp_path)
-    source_text = "agic hello:\n  Hello.\n\nflow work:\n  settle hello\n"
+    source_text = "agic hello:\n  Hello.\n\nflow work:\n  settle using hello\n"
     revision = _write_home(layout, source_text)
     publish_layer_current(layout, "home", revision)
 
@@ -167,6 +167,38 @@ def test_home_layer_loads_program_without_reparsing_source(
     flow = program.find_flow("work")
     assert flow is not None
     assert isinstance(flow.stmts[0], SettleStmt)
+
+
+@pytest.mark.parametrize("order", ["ascending", "descending"])
+def test_home_layer_preserves_nested_sort_without_reparsing_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    order: str,
+) -> None:
+    layout = _layout(tmp_path)
+    revision = _write_home(
+        layout,
+        "agic score -> Number:\n  Score.\n"
+        "flow work:\n  repeat 2 times:\n"
+        f"    let ordered = sort {order} in 2 lanes by score\n",
+    )
+
+    def fail_parse(_cls: type[Program], _source: str) -> Program:
+        raise AssertionError("persisted sort must not be reparsed")
+
+    monkeypatch.setattr(Program, "from_source", classmethod(fail_parse))
+
+    flow = load_home_layer(layout, revision).modules["agent"].find_flow("work")
+    assert flow is not None
+    repeat = flow.stmts[0]
+    assert isinstance(repeat, RepeatStmt)
+    assert repeat.count == 2
+    statement = repeat.stmts[0]
+    assert isinstance(statement, SortStmt)
+    assert statement.order == order
+    assert statement.binding == "ordered"
+    assert statement.lanes == 2
+    assert statement.runnable == "score"
 
 
 @pytest.mark.parametrize("damage", ["missing", "extra", "modified"])

@@ -1028,7 +1028,7 @@ def test_prepare_discovers_independent_flow_module_exports(tmp_path: Path) -> No
     flows.mkdir(parents=True)
     (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
     (flows / "research.too").write_text(
-        "agic helper:\n  Research.\n\nflow:\n  settle helper\n",
+        "agic helper:\n  Research.\n\nflow:\n  settle using helper\n",
         encoding="utf-8",
     )
 
@@ -1122,7 +1122,7 @@ def test_flow_module_names_reject_casefold_collisions() -> None:
 @pytest.mark.parametrize(
     ("source", "layer"),
     [
-        ("flow research:\n  settle missing\n", "program"),
+        ("flow research:\n  settle using missing\n", "program"),
         ("flow other:\n  pass\n", "flow-extension"),
         ("flow:\n  pass\n\nflow research:\n  pass\n", "flow-extension"),
     ],

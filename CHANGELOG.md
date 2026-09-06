@@ -10,6 +10,15 @@ and this project uses semantic versioning.
 
 ### Changed
 
+- Upgrade Flow syntax to tree-sitter-toolang 0.3.1: explicit `using`, `if`, and
+  `by` clauses, `in N lanes`, `repeat N times`, and directional stable `sort`.
+  Replace rank selection with separate sort and positional keep statements.
+- Enforce indentation-based block ownership and keyword recognition on every
+  implicit prose line; explicit text blocks retain literal keywords and Markdown.
+- Persist sort statements with State layer schema 5 and execution store schema
+  39. Derived State rebuilds from migrated source; old execution stores are
+  rejected without modification and require the previous runtime for history.
+
 - Script runnable commands no longer copy their persisted Run result to stdout
   by default. Use `--save -` for stdout or `--save PATH` for atomic file output.
 - Terminal Chat interactions now use slash commands, reusable prompt calls use

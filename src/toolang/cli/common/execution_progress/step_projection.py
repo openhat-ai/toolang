@@ -22,7 +22,7 @@ from toolang.lang.ast import (
     FlowStmt,
     KeepStmt,
     MapStmt,
-    RankStmt,
+    SortStmt,
     RepeatStmt,
     SettleStmt,
     StormStmt,
@@ -283,7 +283,7 @@ def flow_lane_terminal_lines(
             observed_iterations=observed_iterations,
             error=error,
         )
-    elif isinstance(statement, MapStmt | StormStmt | KeepStmt | DropStmt | RankStmt):
+    elif isinstance(statement, MapStmt | StormStmt | KeepStmt | DropStmt | SortStmt):
         rows = collection_terminal_rows(statement, event, error=error)
     else:
         rows = flow_terminal_rows(event, error=error)
@@ -449,12 +449,10 @@ def _collection_success_text(
             f"dropped {_selected_items(dropped, total)}, "
             f"leaving {_remaining_items(remaining, total)}"
         )
-    if isinstance(statement, RankStmt):
+    if isinstance(statement, SortStmt):
         selected = output if output is not None else total
         lead = f"Scored {_count(total, 'item')} in parallel"
-        if selected < total and statement.selection is not None:
-            return f"{lead}, kept the {statement.selection} {selected}"
-        return f"{lead}, ranked {_selected_items(selected, total)}"
+        return f"{lead}, sorted {_count(selected, 'item')} {statement.order}"
     return ""
 
 

@@ -35,7 +35,7 @@ from toolang.lang.ast import (
     DropStmt,
     KeepStmt,
     MapStmt,
-    RankStmt,
+    SortStmt,
     RepeatStmt,
     SettleStmt,
     StormStmt,
@@ -731,7 +731,7 @@ class ProgressProjector:
             rows = []
         elif isinstance(
             statement,
-            MapStmt | StormStmt | KeepStmt | DropStmt | RankStmt,
+            MapStmt | StormStmt | KeepStmt | DropStmt | SortStmt,
         ):
             rows = list(
                 collection_terminal_rows(

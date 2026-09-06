@@ -69,7 +69,7 @@ agic worker:
 
 flow research:
   ## Repeat searches.
-  repeat 2:
+  repeat 2 times:
     ## Run one search.
     run worker
 """
