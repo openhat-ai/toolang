@@ -42,23 +42,24 @@ def statement_header(statement: FlowStmt) -> str:
         )
     elif isinstance(statement, ScatterStmt):
         action = (
-            f"Expand into {count(statement.count, 'item')} with {statement.runnable}"
+            f"Expand with {statement.runnable} "
+            f"(target: {count(statement.count, 'item')})"
         )
     elif isinstance(statement, StormStmt):
         action = f"Run {statement.runnable} {count(statement.count, 'time')}"
     elif isinstance(statement, GatherStmt):
-        action = f"Combine the items with {statement.runnable}"
+        action = f"Combine items with {statement.runnable}"
     elif isinstance(statement, SettleStmt):
-        action = f"Reduce the items with {statement.runnable}"
+        action = f"Reduce items sequentially with {statement.runnable}"
     elif isinstance(statement, MapStmt):
-        action = f"Run {statement.runnable} for each item"
+        action = f"Map items with {statement.runnable}"
     elif isinstance(statement, KeepStmt | DropStmt):
         verb = "Keep" if isinstance(statement, KeepStmt) else "Drop"
         if statement.position is not None and statement.count is not None:
             quantity = "item" if statement.count == 1 else f"{statement.count} items"
             action = f"{verb} the {statement.position} {quantity}"
         else:
-            action = f"{verb} items selected by {statement.runnable}"
+            action = f"{verb} items matching {statement.runnable}"
     elif isinstance(statement, SortStmt):
         action = f"Sort items {statement.order} by {statement.runnable}"
     elif isinstance(statement, RepeatStmt):
@@ -66,18 +67,20 @@ def statement_header(statement: FlowStmt) -> str:
             return f"Repeat up to {count(statement.count, 'time')}"
         if statement.count is not None:
             return f"Repeat {count(statement.count, 'time')}"
-        return "Repeat until complete"
+        return "Repeat until the condition is met"
     else:
         raise TypeError(f"unsupported flow statement: {type(statement).__name__}")
 
     lanes = getattr(statement, "lanes", None)
-    if isinstance(lanes, int):
+    if lanes == 1:
+        action += ", one at a time"
+    elif isinstance(lanes, int):
         action += f", up to {lanes} at once"
     if statement.binding == "_":
         return action
     if statement.binding is None:
-        return f"{action} without saving the result"
-    return f"{action} and save as {statement.binding}"
+        return f"{action} and discard the result"
+    return f"{action} and assign the result to {statement.binding}"
 
 
 def until_header(statement: RepeatStmt) -> str:

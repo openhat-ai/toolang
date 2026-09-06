@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from toolang.base.types.message import (
@@ -122,7 +124,7 @@ def test_progress_statement_header_prefers_doc_and_preserves_runnable_name(
     )
     assert (
         statement_header(MapStmt(span=SPAN, runnable="search_web", lanes=4))
-        == "Run search_web for each item, up to 4 at once"
+        == "Map items with search_web, up to 4 at once"
     )
     assert (
         statement_header(
@@ -135,7 +137,7 @@ def test_progress_statement_header_prefers_doc_and_preserves_runnable_name(
             )
         )
         == "Sort items descending by relevance_score, "
-        "up to 2 at once and save as findings"
+        "up to 2 at once and assign the result to findings"
     )
 
 
@@ -145,7 +147,7 @@ def test_progress_statement_header_covers_inline_binding_and_repeat_forms() -> N
     )
     assert (
         statement_header(RunStmt(span=SPAN, runnable="<agic:12>", binding=None))
-        == "Run <agic:12> without saving the result"
+        == "Run <agic:12> and discard the result"
     )
     assert (
         statement_header(KeepStmt(span=SPAN, position="first", count=1))
@@ -167,11 +169,11 @@ def test_progress_statement_header_covers_inline_binding_and_repeat_forms() -> N
         (RunStmt(span=SPAN, runnable="review_item"), "Run review_item"),
         (
             RunStmt(span=SPAN, runnable="review_item", binding="report"),
-            "Run review_item and save as report",
+            "Run review_item and assign the result to report",
         ),
         (
             RunStmt(span=SPAN, runnable="review_item", binding=None),
-            "Run review_item without saving the result",
+            "Run review_item and discard the result",
         ),
         (
             SeekStmt(span=SPAN, name="researcher", runnable="search_web"),
@@ -191,31 +193,35 @@ def test_progress_statement_header_covers_inline_binding_and_repeat_forms() -> N
         ),
         (
             ScatterStmt(span=SPAN, count=3, runnable="expand_queries"),
-            "Expand into 3 items with expand_queries",
+            "Expand with expand_queries (target: 3 items)",
         ),
         (
             ScatterStmt(span=SPAN, count=1, runnable="<agic:5>"),
-            "Expand into 1 item with <agic:5>",
+            "Expand with <agic:5> (target: 1 item)",
         ),
         (
             GatherStmt(span=SPAN, runnable="synthesize"),
-            "Combine the items with synthesize",
+            "Combine items with synthesize",
         ),
         (
             GatherStmt(span=SPAN, runnable="<agic:6>"),
-            "Combine the items with <agic:6>",
+            "Combine items with <agic:6>",
         ),
         (
             SettleStmt(span=SPAN, runnable="merge_pair"),
-            "Reduce the items with merge_pair",
+            "Reduce items sequentially with merge_pair",
         ),
         (
             MapStmt(span=SPAN, runnable="<agic:7>"),
-            "Run <agic:7> for each item",
+            "Map items with <agic:7>",
+        ),
+        (
+            MapStmt(span=SPAN, runnable="search_web", lanes=1),
+            "Map items with search_web, one at a time",
         ),
         (
             KeepStmt(span=SPAN, runnable="is_relevant", lanes=3),
-            "Keep items selected by is_relevant, up to 3 at once",
+            "Keep items matching is_relevant, up to 3 at once",
         ),
         (
             DropStmt(span=SPAN, position="last", count=2),
@@ -223,7 +229,7 @@ def test_progress_statement_header_covers_inline_binding_and_repeat_forms() -> N
         ),
         (
             DropStmt(span=SPAN, runnable="<agic:8>"),
-            "Drop items selected by <agic:8>",
+            "Drop items matching <agic:8>",
         ),
         (
             SortStmt(span=SPAN, runnable="<agic:9>", order="ascending"),
@@ -235,7 +241,7 @@ def test_progress_statement_header_covers_inline_binding_and_repeat_forms() -> N
         ),
         (
             RepeatStmt(span=SPAN, runnable="completion_check"),
-            "Repeat until complete",
+            "Repeat until the condition is met",
         ),
     ],
 )
@@ -252,21 +258,27 @@ def test_progress_statement_header_covers_every_ast_fallback(
         ("Review the findings.", "Run <agic:2>"),
         ("run: Review the findings.", "Run <agic:2>"),
         ("seek researcher: Find evidence.", "Ask researcher to run <agic:2>"),
-        ("scatter 3 using: Expand the query.", "Expand into 3 items with <agic:2>"),
+        (
+            "scatter 3 using: Expand the query.",
+            "Expand with <agic:2> (target: 3 items)",
+        ),
         (
             "storm 3 in 2 lanes using: Review the findings.",
             "Run <agic:2> 3 times, up to 2 at once",
         ),
-        ("gather using: Combine the findings.", "Combine the items with <agic:2>"),
-        ("settle using: Merge the next finding.", "Reduce the items with <agic:2>"),
+        ("gather using: Combine the findings.", "Combine items with <agic:2>"),
+        (
+            "settle using: Merge the next finding.",
+            "Reduce items sequentially with <agic:2>",
+        ),
         (
             "let results = map in 2 lanes using:\n    Search for evidence.",
-            "Run <agic:2> for each item, up to 2 at once and save as results",
+            "Map items with <agic:2>, up to 2 at once and assign the result to results",
         ),
-        ("keep if: Check relevance.", "Keep items selected by <agic:2>"),
+        ("keep if: Check relevance.", "Keep items matching <agic:2>"),
         (
             "let drop if: Check relevance.",
-            "Drop items selected by <agic:2> without saving the result",
+            "Drop items matching <agic:2> and discard the result",
         ),
         (
             "sort descending by: Score relevance.",
@@ -346,28 +358,38 @@ def test_positional_collection_steps_describe_the_transform(
     [
         (
             MapStmt(span=SPAN, runnable="map_item"),
+            CollectionStepNoted(0, 0),
+            "• Mapped no items",
+        ),
+        (
+            StormStmt(span=SPAN, count=1, runnable="review"),
+            CollectionStepNoted(1, 1),
+            "• Generated 1 item",
+        ),
+        (
+            MapStmt(span=SPAN, runnable="map_item"),
             CollectionStepNoted(6, 6),
-            "• Mapped all 6 items in parallel",
+            "• Mapped all 6 items",
         ),
         (
             StormStmt(span=SPAN, count=6, runnable="brainstorm"),
             CollectionStepNoted(6, 6),
-            "• Brainstormed 6 items in parallel",
+            "• Generated 6 items",
         ),
         (
             KeepStmt(span=SPAN, runnable="accept"),
             CollectionStepNoted(6, 6),
-            "• Evaluated 6 items in parallel, kept all 6",
+            "• Evaluated 6 items, kept all 6",
         ),
         (
             DropStmt(span=SPAN, runnable="reject"),
             CollectionStepNoted(6, 4),
-            "• Evaluated 6 items in parallel, dropped 2, leaving 4",
+            "• Evaluated 6 items, dropped 2, leaving 4",
         ),
         (
             SortStmt(span=SPAN, runnable="score", order="ascending"),
             CollectionStepNoted(6, 6),
-            "• Scored 6 items in parallel, sorted 6 items ascending",
+            "• Scored 6 items, sorted 6 items ascending",
         ),
         (
             SortStmt(
@@ -376,15 +398,18 @@ def test_positional_collection_steps_describe_the_transform(
                 order="descending",
             ),
             CollectionStepNoted(10, 10),
-            "• Scored 10 items in parallel, sorted 10 items descending",
+            "• Scored 10 items, sorted 10 items descending",
         ),
     ],
 )
-def test_parallel_collection_steps_describe_execution_and_transform(
+@pytest.mark.parametrize("lanes", [None, 1, 4])
+def test_collection_summaries_describe_results_independently_of_lane_limits(
     statement: MapStmt | StormStmt | KeepStmt | DropStmt | SortStmt,
     noted: CollectionStepNoted,
     expected: str,
+    lanes: int | None,
 ) -> None:
+    statement = replace(statement, lanes=lanes)
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
@@ -1885,7 +1910,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
 
     assert _rows(terminal.committed) == [
         [
-            "• Mapped all 2 items in parallel",
+            "• Mapped all 2 items",
             "  3 runs 1 tool",
             "",
         ]
@@ -2076,7 +2101,9 @@ def test_settle_uses_the_shared_loop_iteration_boundary() -> None:
             given=SettleStmt(span=SPAN, runnable="merge_pair"),
         )
     )
-    assert _rows(header.committed) == [["[0] Reduce the items with merge_pair", ""]]
+    assert _rows(header.committed) == [
+        ["[0] Reduce items sequentially with merge_pair", ""]
+    ]
     projector.handle(
         RunBegin(
             run="run_merge",

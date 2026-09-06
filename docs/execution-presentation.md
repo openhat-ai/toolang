@@ -220,9 +220,13 @@ A Flow Step uses its non-empty authored doc comment as the header. Without a
 doc comment, the presenter generates a short sentence from the typed AST. Named
 and inline runnables use the same sentence and preserve their names exactly,
 including generated names such as `<agic:32>` (the inline declaration's source
-line). For example, an inline map displays `Run <agic:32> for each item`.
+line). For example, an inline map displays `Map items with <agic:32>`.
 Authored concurrency and binding behavior are appended to generated headers;
 doc comments take precedence over the complete generated header.
+One lane reads `one at a time`; larger lane limits read `up to N at once`.
+Bindings append `and assign the result to NAME` or `and discard the result`,
+describing Flow locals rather than persistence. Scatter's count is an authored
+target, not a guaranteed output count.
 
 Examples include:
 
@@ -230,16 +234,16 @@ Examples include:
 | --- | --- |
 | `let` | `Set NAME` |
 | `run` | `Run RUNNABLE` |
-| `scatter` | `Expand into N items with RUNNABLE` |
+| `scatter` | `Expand with RUNNABLE (target: N items)` |
 | `storm` | `Run RUNNABLE N times` |
-| `gather` | `Combine the items with RUNNABLE` |
-| `settle` | `Reduce the items with RUNNABLE` |
-| `map` | `Run RUNNABLE for each item` |
+| `gather` | `Combine items with RUNNABLE` |
+| `settle` | `Reduce items sequentially with RUNNABLE` |
+| `map` | `Map items with RUNNABLE` |
 | positional `keep` or `drop` | `Keep/Drop the first/last N items` |
-| predicate `keep` or `drop` | `Keep/Drop items selected by RUNNABLE` |
+| predicate `keep` or `drop` | `Keep/Drop items matching RUNNABLE` |
 | `sort` | `Sort items ascending/descending by RUNNABLE` |
 | fixed `repeat` | `Repeat N times` |
-| conditional `repeat` | `Repeat up to N times` or `Repeat until complete` |
+| conditional `repeat` | `Repeat up to N times` or `Repeat until the condition is met` |
 
 A direct single-Run Flow Step preserves that Run's leaf trace and emits no
 synthetic success row. Absence of an error means success. Direct values are
@@ -334,7 +338,7 @@ A Flow Step that owns child execution may append one dim footer:
 ```text
 [2] Search the web for each query
 
-• Mapped all 6 items in parallel
+• Mapped all 6 items
   31s · 6 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) · ≈$0.01        run_root.2
 ```
 
@@ -378,12 +382,15 @@ lane. Lane rows are truncated rather than wrapped:
 On success, the live lanes are cleared and one natural-language result remains:
 
 ```text
-• Mapped all 7 items in parallel
-• Brainstormed 7 items in parallel
-• Evaluated 7 items in parallel, kept 5
-• Evaluated 7 items in parallel, dropped 2, leaving 5
-• Scored 10 items in parallel, sorted 10 items descending
+• Mapped all 7 items
+• Generated 7 items
+• Evaluated 7 items, kept 5
+• Evaluated 7 items, dropped 2, leaving 5
+• Scored 10 items, sorted 10 items descending
 ```
+
+Result summaries describe completed work without asserting that child runs
+overlapped. The same wording applies to one lane, a single item, or empty input.
 
 On failure, successful, active, and canceled lanes are cleared. Each failed
 lane retains its causal error, followed by the parallel Step's distinct
