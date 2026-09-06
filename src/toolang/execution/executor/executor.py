@@ -2557,6 +2557,12 @@ class _Execution:
     def immediate_steer(self, run_id: str) -> bool:
         """Return whether an immediate steer interrupted the active step."""
 
+        if (
+            self._active is not None
+            and self._active.interruption is not None
+            and self._active.interruption.kind != "steer"
+        ):
+            return False
         return any(
             control.timing == "immediate"
             for control in self.pending_controls(run_id, "steer")

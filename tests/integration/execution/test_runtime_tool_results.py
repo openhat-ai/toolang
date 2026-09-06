@@ -461,16 +461,32 @@ def test_steer_during_execute_delivery_keeps_committed_transfer(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("tool_name", ["math__double", "_too__run", "_too__unknown"])
+@pytest.mark.parametrize(
+    "boundary", ["step_begin", "queued_begin", "cancel_queued_begin"]
+)
 def test_steer_at_tool_begin_closes_the_started_step(
-    tmp_path: Path, tool_name: str
+    tmp_path: Path, tool_name: str, boundary: str
 ) -> None:
     gate = AsyncGate()
+    blockers: list[asyncio.Task[None]] = []
+
+    async def hold_event_lock(run_id: str) -> None:
+        async with harness.executor._active[run_id].event_lock:
+            await gate.wait()
 
     class BeginTracer(RecordingRunTracer):
         async def on_event(self, event: RunEvent) -> None:
             await super().on_event(event)
             if (
-                isinstance(event, StepBegin)
+                boundary.endswith("queued_begin")
+                and isinstance(event, StepEnd)
+                and event.step.index == 0
+            ):
+                blockers.append(asyncio.create_task(hold_event_lock(event.step.run_id)))
+                await asyncio.sleep(0)
+            if (
+                boundary == "step_begin"
+                and isinstance(event, StepBegin)
                 and event.kind == "tool"
                 and not gate.entered
             ):
@@ -499,7 +515,20 @@ def test_steer_at_tool_begin_closes_the_started_step(
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
             steer = handle.steer(Message.user("skip"), timing="immediate")
+            if boundary.endswith("queued_begin"):
+                await asyncio.sleep(0)
+                if boundary == "cancel_queued_begin":
+                    handle.cancel(reason="stop instead")
+                    await asyncio.sleep(0)
+                gate.release()
             root = await asyncio.wait_for(handle, timeout=2)
+            await asyncio.gather(*blockers)
+            if boundary == "cancel_queued_begin":
+                assert root.status == "canceled", root.error
+                assert len(harness.adapter.invocations) == 1
+                assert tool.calls == []
+                assert_run_event_integrity(tracer.events)
+                return
             assert root.status == "succeeded", root.error
             step = harness.store.list_steps(run_id=root.id)[1]
             assert step.status == "canceled" and step.aborted_by == steer.ref
@@ -510,6 +539,89 @@ def test_steer_at_tool_begin_closes_the_started_step(
             )
             assert tool.calls == []
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
+            assert_run_event_integrity(tracer.events)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("boundary", ["step_begin", "step_end"])
+def test_immediate_steer_during_skipped_batch_preserves_all_results(
+    tmp_path: Path, boundary: str
+) -> None:
+    model_gate, skip_gate = AsyncGate(), AsyncGate()
+
+    class SkipTracer(RecordingRunTracer):
+        async def on_event(self, event: RunEvent) -> None:
+            await super().on_event(event)
+            if (
+                isinstance(event, (StepBegin, StepEnd))
+                and event.type == boundary
+                and event.step.index == 2
+                and not skip_gate.entered
+            ):
+                await skip_gate.wait()
+
+    requests = tuple(call("math__double", id=str(index)) for index in range(3))
+    tool = RecordingTool("math__double", output={"value": 6})
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        tools={tool.name: tool},
+        responses=[
+            ScriptedModelTurn(
+                result=ModelCallResult(tool_calls=requests), gate=model_gate
+            ),
+            ModelCallResult(message=Message.assistant("revised")),
+        ],
+    )
+    tracer = SkipTracer()
+
+    async def scenario() -> None:
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="parent",
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(model_gate.wait_until_entered(), timeout=1)
+            first = handle.steer(Message.user("skip tools"), timing="next_step")
+            model_gate.release()
+            await asyncio.wait_for(skip_gate.wait_until_entered(), timeout=1)
+            second = handle.steer(
+                Message.user("another requirement"), timing="immediate"
+            )
+            root = await asyncio.wait_for(handle, timeout=2)
+            assert root.status == "succeeded", root.error
+            assert tool.calls == []
+            steps = harness.store.list_steps(run_id=root.id)
+            assert [step.status for step in steps] == [
+                "succeeded",
+                "canceled",
+                "canceled",
+                "canceled",
+                "succeeded",
+            ]
+            parts = tuple(
+                part
+                for message in harness.adapter.invocations[-1].call.messages
+                for part in message.parts
+                if isinstance(part, ToolResultPart)
+            )
+            assert [part.tool_call_id for part in parts] == [
+                call.tool_call_id for call in requests
+            ]
+            assert (
+                tuple(
+                    part
+                    for step in steps[1:4]
+                    if step.output is not None
+                    for part in parts_from_local(step.output)
+                )
+                == parts
+            )
+            assert steps[-1].preceded_by == (first.ref, second.ref)
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
