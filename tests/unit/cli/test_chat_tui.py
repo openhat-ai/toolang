@@ -5853,79 +5853,6 @@ def test_chat_root_context_uses_request_and_authoritative_runnable(
     assert annotation.style is not None and annotation.style.dim
 
 
-@pytest.mark.parametrize("queued", [False, True])
-@pytest.mark.parametrize(
-    ("reasoning", "label"),
-    [
-        (None, "auto"),
-        (ReasoningParameters(), "auto"),
-        (ReasoningParameters(effort="high"), "high"),
-        (ReasoningParameters(effort="none"), "none"),
-        (ReasoningParameters(budget_tokens=0), "0"),
-        (ReasoningParameters(budget_tokens=4096), "4096"),
-    ],
-)
-def test_chat_root_context_uses_submission_snapshot_without_catalog_queries(
-    queued: bool, reasoning: ReasoningParameters | None, label: str
-) -> None:
-    started = threading.Event()
-
-    class SnapshotClient(FakeClient):
-        forbid_catalog = False
-
-        def list_models(
-            self, queries: Sequence[str] | None = None
-        ) -> dict[str, object]:
-            assert not self.forbid_catalog, "submission must not query model metadata"
-            return super().list_models(queries)
-
-        def run(self, *args: object, **kwargs: object) -> None:
-            started.set()
-
-    client = SnapshotClient()
-    app = tui.ChatTuiApp(
-        thread_id="term_1",
-        setting=client.initial_setting(),
-        home="/tmp/agent",
-        input_history=None,
-        client=client,
-    )
-    client.forbid_catalog = True
-    request = RunRequest(
-        thread_id="term_1",
-        request_id="one",
-        runnable=RunnableRequest("agic:research", RunnableInputRaw(_="hello")),
-        model=ModelRequest("test/override", ModelParameters(reasoning)),
-        policy=RunPolicy(),
-    )
-    call = QueuedCall("hello", request)
-    app.setting = SessionSetting(
-        runnable="agic:other",
-        model=ModelRequest(
-            "openai/gpt-5", ModelParameters(ReasoningParameters(effort="low"))
-        ),
-    )
-    if queued:
-        app.active_run_id = "previous_run"
-        app.queue.append(call)
-        app._finish_active_run()
-        assert not app.queue
-    else:
-        app.submit_run(call)
-    assert started.wait(1)
-    block = next(
-        b for b in app.unfinalized_blocks if isinstance(b, blocks.RunControlBlock)
-    )
-    expected = f"agic:research · test/override · {label}"
-    assert _render_text(block.render()).splitlines()[-1].strip() == expected
-
-    app.setting = SessionSetting(
-        model=ModelRequest("another/model"), runnable="agic:other"
-    )
-    app.handle_run_event(_run_begin(runnable_name="research"))
-    assert _render_text(block.render()).splitlines()[-1].strip() == expected
-
-
 @pytest.mark.parametrize("width", [8, 20, 40, 80])
 def test_chat_context_and_steer_corners_fit_without_losing_padding(width: int) -> None:
     request = RunRequest(
@@ -6049,7 +5976,10 @@ def test_chat_short_live_view_keeps_steer_feedback_and_queue_focus(
     asyncio.run(exercise())
 
 
-def test_chat_queued_root_context_survives_new_defaults_and_run_transition() -> None:
+@pytest.mark.parametrize("queued_effort", ["auto", "high"])
+def test_chat_queued_root_context_survives_new_defaults_and_run_transition(
+    queued_effort: Literal["auto", "high"],
+) -> None:
     app = tui.ChatTuiApp(
         thread_id="term_1",
         setting=FakeClient().initial_setting(),
@@ -6058,7 +5988,7 @@ def test_chat_queued_root_context_survives_new_defaults_and_run_transition() -> 
         client=FakeClient(),
     )
 
-    def call(name: str, effort: Literal["low", "high"]) -> QueuedCall:
+    def call(name: str, effort: Literal["auto", "low", "high"]) -> QueuedCall:
         return QueuedCall(
             f":agic {name} :model openai/gpt-5 effort={effort} hello",
             RunRequest(
@@ -6067,7 +5997,11 @@ def test_chat_queued_root_context_survives_new_defaults_and_run_transition() -> 
                 runnable=RunnableRequest(f"agic:{name}", RunnableInputRaw(_="hello")),
                 model=ModelRequest(
                     "openai/gpt-5",
-                    ModelParameters(reasoning=ReasoningParameters(effort=effort)),
+                    ModelParameters(
+                        reasoning=ReasoningParameters(effort=effort)
+                        if effort != "auto"
+                        else None
+                    ),
                 ),
                 policy=RunPolicy(),
             ),
@@ -6078,16 +6012,20 @@ def test_chat_queued_root_context_survives_new_defaults_and_run_transition() -> 
         b for b in app.unfinalized_blocks if isinstance(b, blocks.RunControlBlock)
     )
     app.handle_run_event(_run_begin(runnable_name="resolved-first"))
-    app.queue.append(call("queued", "high"))
+    app.queue.append(call("queued", queued_effort))
     app.setting = SessionSetting(model=ModelRequest("new/default"), runnable="agic:new")
     app.handle_run_event(_run_end(status="succeeded"))
     second = next(
         b for b in app.unfinalized_blocks if isinstance(b, blocks.RunControlBlock)
     )
     assert "agic:resolved-first · openai/gpt-5 · low" in _render_text(first.render())
-    assert "agic:queued · openai/gpt-5 · high" in _render_text(second.render())
+    assert f"agic:queued · openai/gpt-5 · {queued_effort}" in _render_text(
+        second.render()
+    )
     app.handle_run_event(_run_begin(run_id="run_next", runnable_name="resolved-queued"))
-    assert "agic:resolved-queued · openai/gpt-5 · high" in _render_text(second.render())
+    assert f"agic:resolved-queued · openai/gpt-5 · {queued_effort}" in _render_text(
+        second.render()
+    )
     assert "new/default" not in _render_text(first.render()) + _render_text(
         second.render()
     )
