@@ -17,6 +17,7 @@ from tests.support.execution_harness import (
     RecordingTool,
     TEST_MODEL_REF,
 )
+from tests.support.execution_fixtures import project_run_end, project_run_start
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunPolicy
@@ -25,16 +26,67 @@ from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.base import ChatExecutorMetadata
 from toolang.common.errors import ToolangError
 from toolang.execution.events import RunEvent
+from toolang.execution.history import RunHistory
+from toolang.execution.records import RunControlPayload
 from toolang.execution.schemas import RunRequest, RunnableRequest
+from toolang.execution.store import RunStore
 from toolang.execution.types import (
     AllowOverride,
     ModelOverride,
     RunOverride,
     SessionSetting,
+    Local,
+    RunRef,
 )
 from toolang.lang.input import RunnableInputRaw
 from toolang.state.state import publish_state_resources
 from toolang.state.watcher import StateRefresh
+
+
+def test_latest_chat_output_keeps_one_snapshot_during_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    writer = RunStore(store.db_path)
+    # This read path needs only the session's durable history services.
+    session = object.__new__(local.LocalChatSession)
+    session.store = store
+    session.history = RunHistory(store)
+    try:
+        project_run_start(
+            writer,
+            run_id="run_a",
+            thread_id="term_a",
+            origin="chat",
+            input=Message.user("input"),
+        )
+        project_run_end(writer, run_id="run_a", output=Local("original answer"))
+        control = writer.get_run_control(run_id="run_a", index=0)
+        assert control is not None and isinstance(control.payload, RunControlPayload)
+        payload = control.payload
+        get_output = session.history.get_output
+
+        def retry_before_output(run: RunRef | str) -> Local | None:
+            writer.accept_retry(
+                run_id="run_a",
+                anchor=None,
+                resources=payload.resources,
+                limits=payload.limits,
+                state=payload.state,
+                sandbox="host",
+                request_id=None,
+                created_at="2026-09-01T00:00:00Z",
+            )
+            return get_output(run)
+
+        monkeypatch.setattr(session.history, "get_output", retry_before_output)
+        result = session.get_result(None, thread_id="term_a")
+        assert result.run_id == "run_a"
+        assert result.output == (TextPart("original answer"),)
+        assert get_output("run_a") is None
+    finally:
+        writer.close()
+        store.close()
 
 
 def test_local_chat_owned_loop_drains_detached_tasks_before_close() -> None:

@@ -307,10 +307,10 @@ class RunHistory:
         limit: int | None = None,
         reverse: bool = False,
     ) -> RunView:
-        """Read bounded Steps, then raw owned controls, without child Run internals.
+        """Read Steps and their dependencies, without child Run internals.
 
         Step bounds select exact existing Step IDs and are exclusive at end.
-        Raw controls remain available independently of their consumption status.
+        Unbounded reads also include all raw owned controls for inspection.
         """
 
         _validate_page_limit(limit)
@@ -324,7 +324,7 @@ class RunHistory:
                 raise KeyError(str(target))
             entries, related = self._store.history_entries(str(target))
             step_ids = _bounded_ids(tuple(related), begin, end)
-            selected = (*step_ids, *(ref for ref in entries if ref not in related))
+            selected = step_ids if begin is not None or end is not None else entries
             refs = {str(target), str(record.control), str(record.state), *selected}
             for ref in step_ids:
                 refs.update(related[ref])

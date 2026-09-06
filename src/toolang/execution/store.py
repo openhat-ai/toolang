@@ -2214,13 +2214,7 @@ class RunStore:
             )
             projection = _ThreadProjection(links, controls)
             roots = projection.history(thread_id)
-            root_of = {run.id: run.id for run in roots}
-            members: dict[str, str] = {}
-            for run in projection.tree(roots):
-                root = run.id if run.parent is None else root_of[run.parent.run_id]
-                root_of[run.id] = root
-                members[run.id] = root
-            return thread, projection.head(thread_id), members
+            return thread, projection.head(thread_id), projection.membership(roots)
 
     def history_versions(self, refs: Sequence[str]) -> dict[str, str]:
         """Read only lifecycle markers that change with the exposed record facts.

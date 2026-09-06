@@ -43,16 +43,19 @@ page retains natural order. A View's optional `cursor` continues through
 and work with a reopened read-only Store.
 
 Thread pages count root Runs and include their child membership. Run pages count
-Steps in numeric order followed by raw owned controls. Required controls also
-appear in `RunView.dependencies`, separately from paginated `entries`; these are
-references' supporting facts, not extra messages. `timeline()` describes Step
-boundaries in the selected page, not a global ordering of raw record pages.
+Steps in numeric order; unbounded Run reads also page through all raw owned
+controls after the Steps. Step-bounded reads include only the selected Steps.
+Required controls appear in `RunView.dependencies` when absent from the page's
+`entries`; these are references' supporting facts, not extra messages.
+`timeline()` describes Step boundaries in the selected page, not a global ordering
+of raw record pages.
 Limits count primary records, not bytes; callers account for dependencies and
 oversized individual records in their own budgets.
 
 Replace `get_run_result` with composition of `get_run` and `get_output` where
 resolved output is needed in a detail response. Reuse an already-read detail;
-do not rebuild it. `get_run` retains its existing stored-output representation.
+do not rebuild it. Compose selection, detail, and output in one Store read
+transaction. `get_run` retains its existing stored-output representation.
 `get_output` returns None for an existing Run without output and raises KeyError
 for a missing Run; it does not flatten typed output into message Parts.
 

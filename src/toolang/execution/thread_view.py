@@ -110,6 +110,11 @@ class _ThreadProjection(Generic[_Run]):
         selected = {run.id for run in roots}
         return tuple(run for run in self.runs if self._root_of[run.id] in selected)
 
+    def membership(self, roots: Sequence[_Run]) -> dict[str, str]:
+        """Map each selected physical Run to its root, preserving record order."""
+
+        return {run.id: self._root_of[run.id] for run in self.tree(roots)}
+
     def is_forked(self, root_run_id: str) -> bool:
         """Keep every durable fork prefix frozen, including rewound prefixes."""
 

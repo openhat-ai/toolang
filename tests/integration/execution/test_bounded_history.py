@@ -239,6 +239,53 @@ def test_run_pages_capture_numeric_order_without_decoding_all_steps(
     ] == ["run_a.2", "run_a.10"]
 
 
+def test_step_range_excludes_unrelated_controls(store: RunStore) -> None:
+    start(store)
+    step(store)
+    step(store, index=1)
+    late = project_run_control(
+        store, run_id="run_a", kind="steer", input=Message.user("later input")
+    )
+    store.begin_step(
+        ref=StepRef.parse("run_a.2"),
+        kind="model",
+        input=(),
+        given=ModelStepGiven("test", ModelCall("", [])),
+        preceded_by=(late.ref,),
+        started_at="2026-01-01T00:00:03Z",
+    )
+    history = RunHistory(store)
+    first = history.run_view("run_a", end=StepRef.parse("run_a.2"), limit=1)
+    assert first.cursor is not None
+    store.finish_run_controls(run_id="run_a", indexes=(late.index,), finished_at="4")
+    captured = pages(history, first)
+    assert [
+        record.id
+        for page in captured
+        if isinstance(page, RunView)
+        for record in page.entries
+    ] == [
+        "run_a.0",
+        "run_a.1",
+    ]
+    assert all(
+        late.id not in {control.id for control in page.dependencies}
+        for page in captured
+        if isinstance(page, RunView)
+    )
+    selected = history.run_view("run_a", begin=StepRef.parse("run_a.2"))
+    assert selected.controls() == ()
+    assert late.id in {control.id for control in selected.dependencies}
+
+
+def test_empty_step_range_has_no_controls(store: RunStore) -> None:
+    start(store)
+    boundary = step(store).ref
+    view = RunHistory(store).run_view("run_a", begin=boundary, end=boundary)
+    assert view.entries == view.dependencies == ()
+    assert view.cursor is None
+
+
 @pytest.mark.parametrize("thread_page", [False, True])
 def test_retry_invalidates_pages_even_when_step_ids_are_reused(
     store: RunStore, thread_page: bool
