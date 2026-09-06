@@ -127,6 +127,7 @@ class BoundRun:
     call: Literal["top", "run"] = "top"
     parent: StepRef | None = None
     occurrence: Occurrence | None = None
+    horizon: FieldRef | None = None
 
 
 @dataclass(frozen=True, slots=True)

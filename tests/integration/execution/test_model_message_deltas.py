@@ -27,13 +27,16 @@ from toolang.base.types.message import (
     TextPart,
     ToolCallPart,
     ToolResultPart,
+    message_text,
 )
 from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall
+from toolang.common.layout import AgentLayout
 from toolang.execution.events import PartBegin, PartEnd, RunEvent, StepBegin, StepEnd
 from toolang.execution.executor._messages import _MessageBuffer
+from toolang.execution.history import RunHistory
 from toolang.execution.message_delta import delta_to_data
 from toolang.execution.values import parts_from_local
-from toolang.execution.records import StoredModelStepGiven
+from toolang.execution.records import RecallControlPayload, StoredModelStepGiven
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     ControlTiming,
@@ -42,10 +45,15 @@ from toolang.execution.types import (
     MessageTemplate,
     ControlRef,
     ModelStepGiven,
+    RecallTarget,
+    RulesRecallTarget,
+    ServiceRecallTarget,
+    SkillRecallTarget,
     StepRef,
     ThreadPrefix,
     TypedRef,
 )
+from toolang.state.prepare import prepare_agent_state
 
 
 SOURCE = """
@@ -55,6 +63,105 @@ agic chat(_: Part[]) -> Part[]:
   instruct: none
   user: {{_}}
 """
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        RulesRecallTarget("project", "/src"),
+        SkillRecallTarget("testing"),
+        ServiceRecallTarget("github"),
+    ],
+)
+def test_replay_after_reload_needs_only_execution_records(
+    tmp_path: Path, target: RecallTarget
+) -> None:
+    source = """
+agic chat(_: Part[]) -> Part[]:
+  recall = none
+  instruct: original instructions
+  context: original context
+  user: {{_}}
+"""
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    layout.program.write_text(source, encoding="utf-8")
+    state = prepare_agent_state(layout)
+    gate = AsyncGate()
+    tool = RecordingTool("lookup__item", output={"value": 1}, gate=gate)
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        state=state,
+        tools={tool.name: tool},
+        responses=[
+            ModelCallResult(tool_calls=(ToolCall("lookup", "lookup", tool.name, {}),)),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario() -> None:
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                    primary=(TextPart("start"), ImagePart(file_id="image")),
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), timeout=2)
+            layout.program.write_text(
+                source.replace("original", "updated"), encoding="utf-8"
+            )
+            reload = handle.reload(prepare_agent_state(layout))
+            applied = await asyncio.wait_for(
+                harness.executor._wait_for_control(
+                    harness.executor._active[handle.run_id], reload
+                ),
+                timeout=2,
+            )
+            assert applied.status == "applied"
+            harness.store.accept_recall_control(
+                run_id=handle.run_id,
+                payload=RecallControlPayload(target, "v1", "Use tests."),
+                triggered_by=None,
+                created_at="2026-09-06T00:00:00Z",
+            )
+            gate.release()
+            run = await asyncio.wait_for(handle, timeout=2)
+            assert run.status == "succeeded", run.error
+            first, second = harness.adapter.invocations
+            assert "original instructions" in first.call.instructions
+            assert "updated instructions" in second.call.instructions
+            texts = [message_text(message.parts) for message in second.call.messages]
+            assert any("updated context" in text for text in texts)
+            assert any("Use tests." in text for text in texts)
+            assert first.call.tools and second.call.tools
+
+    asyncio.run(scenario())
+    # Remove all State layers and authored source from their runtime locations.
+    # Keep them under the test directory solely for failure diagnostics.
+    unavailable = tmp_path / "unavailable"
+    unavailable.mkdir()
+    for name, path in (
+        ("root", layout.root_state),
+        ("home", layout.home_state),
+        ("agent", layout.agent_state),
+        ("agent.too", layout.program),
+    ):
+        path.rename(unavailable / name)
+        assert not path.exists()
+    assert_replayed(harness.store.db_path, tracer.events)
+    store = RunStore(harness.store.db_path, read_only=True)
+    try:
+        history = RunHistory(store)
+        for event in tracer.events:
+            if isinstance(event, StepBegin) and isinstance(event.given, ModelStepGiven):
+                assert history.get_model_call(event.step) == event.given.call
+    finally:
+        store.close()
 
 
 def test_online_tool_loops_only_record_and_render_additions(

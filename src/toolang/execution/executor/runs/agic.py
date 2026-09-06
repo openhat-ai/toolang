@@ -113,13 +113,12 @@ class _AgicState:
     ) = None
     refresh_frame: Callable[[ExecutionState, ControlRef], _AgicFrame] | None = None
 
-    def before_model_call(self) -> None:
-        """Apply one model-call checkpoint and reserve its agic-local count."""
+    def check_model_call_limit(self) -> None:
+        """Check the next call without counting an uncommitted preparation."""
 
         limit = self.limits.agic_model_calls
         if limit is not None and self.model_calls >= limit:
             raise ToolangError(f"Agic model call limit exceeded: {limit}")
-        self.model_calls += 1
 
     def before_tool_call(self) -> None:
         """Apply one tool-call checkpoint and reserve its agic-local count."""
@@ -191,10 +190,13 @@ async def execute(
     variables = {
         name: local.value for name, local in locals.items() if local.shape != "none"
     }
-    frames: dict[str, _AgicFrame] = {}
+    frames: dict[tuple[str, FieldRef | None], _AgicFrame] = {}
 
     def refresh_frame(state: ExecutionState, ref: ControlRef) -> _AgicFrame:
-        cached = frames.get(state.revision)
+        horizon = execution.horizon_for(binding.run_id, pending=True)
+        far, near = execution.message_history().select(horizon)
+        key = (state.revision, horizon)
+        cached = frames.get(key)
         if cached is not None:
             return replace(
                 cached,
@@ -220,12 +222,14 @@ async def execute(
         )
         prepared = prepare_agic(
             execution,
-            current_binding,
+            replace(current_binding, horizon=horizon),
             candidate,
             variables=variables,
+            far=far,
+            near=near,
         )
         execution.require_model_pricing(prepared.model)
-        frames[state.revision] = prepared
+        frames[key] = prepared
         return prepared
 
     prepared = refresh_frame(binding.state, binding.state_ref)

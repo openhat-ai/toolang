@@ -11,6 +11,7 @@ from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelCall
 from toolang.execution.records import (
     CancelControlPayload,
+    CompactControlPayload,
     ControlRecord,
     CreateControlPayload,
     ExecuteControlPayload,
@@ -549,6 +550,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 "model",
                 "model_request",
                 "input",
+                "horizon",
                 "sandbox",
                 "authored_input",
                 "authored_commands",
@@ -566,6 +568,11 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
             {"resources", "limits", "model_request", "retry_from"},
         ),
         ("reload", ReloadControlPayload(revision), {"state"}),
+        (
+            "compact",
+            CompactControlPayload(FieldRef.parse("run_compact/output")),
+            {"horizon"},
+        ),
         (
             "execute",
             ExecuteControlPayload(

@@ -172,6 +172,7 @@ class RunControlPayload:
     authored_commands: tuple[RunCommand, ...] = ()
     authored_session_commands: tuple[RunCommand, ...] = ()
     prompt_invocations: tuple[PromptInvocation, ...] = ()
+    horizon: FieldRef | None = None
 
     def __post_init__(self) -> None:
         _validate_run_payload(
@@ -212,6 +213,13 @@ class ReloadControlPayload:
 
     def __post_init__(self) -> None:
         _validate_state_revision(self.state, label="reload payload State")
+
+
+@dataclass(frozen=True, slots=True)
+class CompactControlPayload:
+    """One compact Run output made available for adoption."""
+
+    horizon: FieldRef
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,6 +322,7 @@ PreparationControlPayload = RunControlPayload | RetryControlPayload
 RunScopedControlPayload = (
     PreparationControlPayload
     | ReloadControlPayload
+    | CompactControlPayload
     | ExecuteControlPayload
     | SteerControlPayload
     | CancelControlPayload
@@ -325,6 +334,7 @@ _CONTROL_PAYLOAD_TYPES = {
     "run": RunControlPayload,
     "retry": RetryControlPayload,
     "reload": ReloadControlPayload,
+    "compact": CompactControlPayload,
     "execute": ExecuteControlPayload,
     "steer": SteerControlPayload,
     "cancel": CancelControlPayload,
@@ -407,6 +417,7 @@ class ModelCallRefs:
     tools: str | None
     output_schema: dict[str, object] | None
     continuation: ModelContinuation | None
+    recall: tuple[str, ...] = ("none",)
 
     def __post_init__(self) -> None:
         if not isinstance(self.instructions, str) or not self.instructions:
@@ -827,6 +838,9 @@ def _control_payload_from_data(
             runnable=runnable,
             model=model,
             input=input_value,
+            horizon=FieldRef.parse(cast(str, payload["horizon"]))
+            if payload.get("horizon") is not None
+            else None,
             model_request=model_request,
             sandbox=sandbox,
             authored_input=authored_input,
@@ -837,6 +851,10 @@ def _control_payload_from_data(
     if kind == "reload":
         return ReloadControlPayload(
             state=_required_payload_text(payload, "state"),
+        )
+    if kind == "compact":
+        return CompactControlPayload(
+            horizon=FieldRef.parse(_required_payload_text(payload, "horizon")),
         )
     if kind == "execute":
         raw_input = payload.get("input")
@@ -916,6 +934,8 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
         }
     if isinstance(payload, ReloadControlPayload):
         return {"state": payload.state}
+    if isinstance(payload, CompactControlPayload):
+        return {"horizon": str(payload.horizon)}
     if isinstance(payload, ExecuteControlPayload):
         return {
             "state": payload.state,
@@ -1113,11 +1133,12 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
         "cont",
         "instructions",
         "delta",
+        "recall",
         "output_schema",
         "tools",
     }:
         raise ValueError(
-            "stored model call requires: cont, instructions, delta, tools, output_schema"
+            "stored model call requires: cont, instructions, delta, recall, tools, output_schema"
         )
     call = cast(Mapping[str, object], raw_call)
     instructions = call["instructions"]
@@ -1138,6 +1159,7 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
         call=ModelCallRefs(
             instructions=instructions,
             delta=delta_from_data(cast(Mapping[str, object], raw_delta)),
+            recall=tuple(cast(Sequence[str], call["recall"])),
             tools=raw_tools,
             output_schema=(
                 dict(cast(Mapping[str, object], raw_output_schema))
@@ -1167,6 +1189,7 @@ def stored_step_given_to_data(
             "call": {
                 "instructions": given.call.instructions,
                 "delta": delta_to_data(given.call.delta),
+                "recall": list(given.call.recall),
                 "tools": given.call.tools,
                 "output_schema": (
                     dict(given.call.output_schema)
@@ -1698,6 +1721,8 @@ def _run_payload_data(
     }
     if payload.state is not None:
         data["state"] = payload.state
+    if payload.horizon is not None:
+        data["horizon"] = str(payload.horizon)
     if payload.sandbox is not None:
         data["sandbox"] = payload.sandbox
     if payload.authored_input is not None:

@@ -49,6 +49,7 @@ from toolang.state.prepare import load_agent_state
 from toolang.setup import AgentSetup
 
 from ..accounting import selected_usd_cost
+from ..assembly import MessageHistory, adopted_horizon
 from ..calls import (
     IncludeResolver,
     materialize_model_request,
@@ -57,6 +58,7 @@ from ..calls import (
 )
 from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin, StepEnd
 from ..records import (
+    CompactControlPayload,
     RunControlPayload,
     run_preparation,
     ControlRecord,
@@ -193,6 +195,7 @@ class RunSpec:
     authored_commands: tuple[RunCommand, ...] = ()
     authored_session_commands: tuple[RunCommand, ...] = ()
     prompt_invocations: tuple[PromptInvocation, ...] = ()
+    horizon: FieldRef | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -365,6 +368,7 @@ class RunExecutor:
             authored_commands=spec.authored_commands,
             authored_session_commands=spec.authored_session_commands,
             prompt_invocations=spec.prompt_invocations,
+            horizon=bound.horizon,
         )
         return self._launch(bound, runnable, loop=loop, tracer=tracer)
 
@@ -428,6 +432,7 @@ class RunExecutor:
             model_override=model_override,
             limits=limits if limits is not None else setup.limits,
         )
+        spec = replace(spec, horizon=self.store.run_horizon(source))
         runnable, input, agent_resources, resources = _prepare_run_spec(spec)
         bound = _bind_run(
             spec,
@@ -456,6 +461,7 @@ class RunExecutor:
             authored_commands=spec.authored_commands,
             authored_session_commands=spec.authored_session_commands,
             prompt_invocations=spec.prompt_invocations,
+            horizon=bound.horizon,
         )
         return self._launch(bound, runnable, loop=loop, tracer=tracer)
 
@@ -526,7 +532,9 @@ class RunExecutor:
             request_id=request_id,
             created_at=bound.created_at,
         )
-        bound = replace(bound, control_index=control.index)
+        bound = replace(
+            bound, control_index=control.index, horizon=self.store.run_horizon(run_id)
+        )
         return self._launch(
             bound,
             runnable,
@@ -1064,6 +1072,8 @@ class RunExecutor:
         with self.store.write_transaction():
             self._persist.on_event(event)
             self._update_control_state(event)
+        if isinstance(event, StepBegin) and active.execution is not None:
+            active.execution._adopt_step_relations(event)
         self._update_cached_control_state(event)
         self._track_active_run(event, active)
         if isinstance(event, RunEnd):
@@ -1521,6 +1531,35 @@ class _Execution:
         self._run_lineages: dict[str, tuple[str, ...]] = {
             root.run_id: (_bound_runnable(root),)
         }
+        self._history: MessageHistory | None = None
+        self._runtime_controls: dict[str, dict[int, ControlRecord]] = {}
+        self._runtime_cursors: dict[str, int] = {}
+
+    def message_history(self) -> MessageHistory:
+        if self._history is None:
+            root = next(iter(self._active_bindings.values()))
+            self._history = self.store.message_history(root.root_run_id)
+        return self._history
+
+    def runtime_controls(
+        self, run_id: str, *, refresh: bool = True
+    ) -> tuple[ControlRecord, ...]:
+        available = self._runtime_controls.setdefault(run_id, {})
+        if refresh:
+            cursor, additions = self.store.runtime_controls(
+                run_id=run_id, after=self._runtime_cursors.get(run_id)
+            )
+            self._runtime_cursors[run_id] = cursor
+            available.update((control.index, control) for control in additions)
+        return tuple(available.values())
+
+    def horizon_for(self, run_id: str, *, pending: bool = False) -> FieldRef | None:
+        binding = self._active_bindings[run_id]
+        return adopted_horizon(
+            binding.horizon,
+            self.runtime_controls(run_id) if pending else (),
+            RunRef(run_id),
+        )
 
     def next_step(self, run_id: str) -> int:
         """Return the next unused top-level physical step index."""
@@ -1799,6 +1838,7 @@ class _Execution:
         control_locals = _execute_control_locals(input, source=source)
         binding = replace(
             parent,
+            horizon=self.horizon_for(parent.run_id),
             bindings=RunBindings(
                 model=parent.bindings.model,
                 runnable=target.ref,
@@ -2323,6 +2363,10 @@ class _Execution:
         ]:
             try:
                 binding, runnable = prepare(state, state_ref)
+                assert binding.parent is not None
+                binding = replace(
+                    binding, horizon=self.horizon_for(binding.parent.run_id)
+                )
             except (ToolangError, TypeError, ValueError) as exc:
                 raise _RunRejected(str(exc) or type(exc).__name__) from exc
             resources = binding.resources
@@ -2347,6 +2391,7 @@ class _Execution:
                     request_id=None,
                     created_at=binding.created_at,
                     state_ref=binding.state_ref,
+                    horizon=binding.horizon,
                 )
                 self.executor._register_child_run(
                     run_id=binding.run_id,
@@ -2641,6 +2686,7 @@ class _Execution:
             event = build(state, state_ref)
             event = self._step_relations(event)
             await emit(event)
+            self._adopt_step_relations(event)
             await self._check_step_cancel(event, emit)
             self._step_states[event.step] = (state, state_ref)
             return state, state_ref
@@ -2688,21 +2734,60 @@ class _Execution:
             raise
 
     def _step_relations(self, event: StepBegin) -> StepBegin:
+        """Prepare associations without consuming their live state."""
+
         targets = {RunRef(event.step.run_id)}
         if self._active is not None:
             targets.add(RunRef(self._active.root_run_id))
         preceding = [ref for ref in self._preceding_controls if ref.target in targets]
+        compacts = tuple(
+            control
+            for control in self.runtime_controls(
+                event.step.run_id, refresh=event.kind != "model"
+            )
+            if isinstance(control.payload, CompactControlPayload)
+            and (event.kind != "model" or control.ref in event.preceded_by)
+        )
+        if compacts:
+            horizon = adopted_horizon(
+                self.horizon_for(event.step.run_id), compacts, event.step.run
+            )
+            self.message_history().select(horizon)
+            preceding.extend(control.ref for control in compacts)
+        # Root controls precede child-local controls; indexes order each scope.
+        refs = tuple(
+            sorted(
+                set((*preceding, *event.preceded_by)),
+                key=lambda ref: (ref.target == event.step.run, ref.index),
+            )
+        )
+        return replace(event, preceded_by=refs)
+
+    def _adopt_step_relations(self, event: StepBegin) -> None:
+        """Advance control associations after begin commits, before delivery."""
+
+        refs = set(event.preceded_by)
+        available = self._runtime_controls.get(event.step.run_id, {})
+        adopted = tuple(
+            control for control in available.values() if control.ref in refs
+        )
+        if adopted:
+            binding = self._active_bindings[event.step.run_id]
+            self._active_bindings[event.step.run_id] = replace(
+                binding,
+                horizon=adopted_horizon(binding.horizon, adopted, event.step.run),
+            )
+            for control in adopted:
+                available.pop(control.index)
         self._preceding_controls = [
-            ref for ref in self._preceding_controls if ref.target not in targets
+            ref for ref in self._preceding_controls if ref not in refs
         ]
-        refs = tuple(dict.fromkeys((*preceding, *event.preceded_by)))
         if (
             self._active is not None
             and self._active.interruption is not None
             and self._active.interruption.ref in refs
         ):
             self._active.interruption = None
-        return replace(event, preceded_by=refs)
 
     def state_for_step(self, step: StepRef) -> tuple[ExecutionState, ControlRef]:
         """Return the immutable State snapshot captured by one started step."""
@@ -2862,6 +2947,7 @@ def _bind_run(
         resources=resources,
         flow_resources=resources if isinstance(runnable, FlowDecl) else None,
         created_at=utc_now(),
+        horizon=spec.horizon,
     )
 
 

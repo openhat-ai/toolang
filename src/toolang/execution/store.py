@@ -30,6 +30,14 @@ from .errors import HistoryChangedError, RunStoreSchemaError
 from .message_delta import literal_delta, render_delta
 from .control_messages import control_message
 from .run_view import RunView
+from .assembly import (
+    MessageHistory,
+    active_steps,
+    adopted_horizon,
+    assemble_messages,
+    starts_sequence,
+    tail_delta,
+)
 from .inspection import (
     ChildOccurrenceTotals,
     ExecutionSnapshot,
@@ -38,6 +46,7 @@ from .inspection import (
     child_run_relation_order,
 )
 from .records import (
+    CompactControlPayload,
     CreateControlPayload,
     ControlPayload,
     ExecuteControlPayload,
@@ -107,7 +116,7 @@ from .schemas import Record, RecordSelection, select_record
 from .thread_view import ThreadView, _ThreadProjection
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 39
+_SCHEMA_VERSION = 40
 _SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -282,6 +291,7 @@ class RunStore:
         request_id: str | None,
         created_at: str,
         state_ref: ControlRef | None = None,
+        horizon: FieldRef | None = None,
         authored_input: RunnableInputRaw | None = None,
         authored_commands: tuple[RunCommand, ...] = (),
         authored_session_commands: tuple[RunCommand, ...] = (),
@@ -335,6 +345,8 @@ class RunStore:
                     is None
                 ):
                     raise ValueError(f"thread not found: {thread}")
+                if horizon is not None:
+                    self._validate_horizon(horizon, thread=thread)
                 if parent is not None:
                     parent_row = self._conn.execute(
                         """
@@ -385,6 +397,7 @@ class RunStore:
                     model=model,
                     model_request=model_request,
                     input=locals,
+                    horizon=horizon,
                     sandbox=sandbox,
                     authored_input=authored_input,
                     authored_commands=authored_commands,
@@ -564,19 +577,34 @@ class RunStore:
             raise RuntimeError(f"execute control acceptance failed: {run_id}")
         return _control_from_row(inserted)
 
-    def unconsumed_recall_controls(self, *, run_id: str) -> tuple[ControlRecord, ...]:
-        """Return applied resource revisions not yet adopted at a Step boundary."""
-        with self._lock:
+    def runtime_controls(
+        self, *, run_id: str, after: int | None = None
+    ) -> tuple[int, tuple[ControlRecord, ...]]:
+        """Read newly available runtime facts; inspect adoption only on recovery."""
+
+        with self.read_transaction():
+            cursor = self._conn.execute(
+                'SELECT COALESCE(MAX("index"), -1) FROM controls WHERE target = ?',
+                (run_id,),
+            ).fetchone()[0]
+            adoption = (
+                ""
+                if after is not None
+                else """AND NOT EXISTS (
+                SELECT 1 FROM steps, json_each(steps.preceded_by) AS consumed
+                WHERE steps.run = controls.target AND consumed.value = controls.id
+            )"""
+            )
             rows = self._conn.execute(
-                '''SELECT controls.* FROM controls
-                   WHERE target = ? AND kind = 'recall' AND status = 'applied'
-                   AND NOT EXISTS (
-                       SELECT 1 FROM steps, json_each(steps.preceded_by) AS consumed
-                       WHERE steps.run = ? AND consumed.value = controls.id
-                   ) ORDER BY "index"''',
-                (run_id, run_id),
+                f'''SELECT controls.* FROM controls
+                   WHERE target = ? AND kind IN ('recall', 'compact') AND status = 'applied'
+                   AND "index" > ? AND "index" > (
+                       SELECT COALESCE(MAX("index"), -1) FROM controls AS attempts
+                       WHERE attempts.target = controls.target AND attempts.kind = 'retry'
+                   ) {adoption} ORDER BY "index"''',
+                (run_id, after if after is not None else -1),
             ).fetchall()
-        return tuple(_control_from_row(row) for row in rows)
+        return cursor, tuple(_control_from_row(row) for row in rows)
 
     def accept_recall_control(
         self,
@@ -588,12 +616,49 @@ class RunStore:
     ) -> ControlRecord:
         """Record one successfully recalled resource without scheduling work."""
 
+        return self._accept_runtime_control(
+            run_id=run_id,
+            kind="recall",
+            payload=payload,
+            triggered_by=triggered_by,
+            created_at=created_at,
+        )
+
+    def accept_compact_control(
+        self,
+        *,
+        run_id: str,
+        horizon: FieldRef,
+        triggered_by: StepRef | None,
+        created_at: str,
+    ) -> ControlRecord:
+        """Record an available compact output for adoption by the target Run."""
+
+        return self._accept_runtime_control(
+            run_id=run_id,
+            kind="compact",
+            payload=CompactControlPayload(horizon),
+            triggered_by=triggered_by,
+            created_at=created_at,
+        )
+
+    def _accept_runtime_control(
+        self,
+        *,
+        run_id: str,
+        kind: Literal["recall", "compact"],
+        payload: RecallControlPayload | CompactControlPayload,
+        triggered_by: StepRef | None,
+        created_at: str,
+    ) -> ControlRecord:
         with self.write_transaction():
             run = self._conn.execute(
-                "SELECT status FROM runs WHERE id = ?", (run_id,)
+                "SELECT status, thread FROM runs WHERE id = ?", (run_id,)
             ).fetchone()
             if run is None or run["status"] not in {"pending", "running"}:
                 raise ValueError(f"run is not active: {run_id}")
+            if isinstance(payload, CompactControlPayload):
+                self._validate_horizon(payload.horizon, thread=str(run["thread"]))
             if triggered_by is not None:
                 step = self._conn.execute(
                     "SELECT kind FROM steps WHERE id = ?", (str(triggered_by),)
@@ -603,7 +668,7 @@ class RunStore:
                     or step is None
                     or step["kind"] != "tool"
                 ):
-                    raise ValueError("recall trigger must be a Tool Step in its run")
+                    raise ValueError(f"{kind} trigger must be a Tool Step in its run")
             row = self._conn.execute(
                 'SELECT COALESCE(MAX("index"), -1) + 1 FROM controls WHERE target = ?',
                 (run_id,),
@@ -611,7 +676,7 @@ class RunStore:
             ref = ControlRef.for_run(run_id, int(row[0]))
             self._insert_control(
                 ref=ref,
-                kind="recall",
+                kind=kind,
                 timing="immediate",
                 payload=payload,
                 triggered_by=triggered_by,
@@ -626,6 +691,21 @@ class RunStore:
                 "SELECT * FROM controls WHERE id = ?", (str(ref),)
             ).fetchone()
         return _control_from_row(row)
+
+    def _validate_horizon(self, horizon: FieldRef, *, thread: str) -> None:
+        """Check a new reference inside its write transaction, never on record reads."""
+
+        if not isinstance(horizon.record, RunRef) or horizon.tokens != ("output",):
+            raise ValueError("horizon must reference a Run output")
+        source = self.get_run(run_id=str(horizon.record))
+        if source is None or source.output is None:
+            raise ValueError(f"horizon output is not available: {horizon}")
+        output = self.resolve_local(source.output).value
+        if (
+            not isinstance(output, Mapping)
+            or cast(Mapping[str, object], output).get("thread") != thread
+        ):
+            raise ValueError(f"horizon output must target Thread {thread}: {horizon}")
 
     def accept_run_control(
         self,
@@ -2596,7 +2676,10 @@ class RunStore:
                 state = ControlRef.parse(str(run_row["state"]))
             stored_given: StoredStepGiven = (
                 self.capture_model_call(
-                    model=given.model, call=given.call, delta=given.delta
+                    model=given.model,
+                    call=given.call,
+                    delta=given.delta,
+                    recall=given.recall,
                 )
                 if isinstance(given, ModelStepGiven)
                 else cast(StoredStepGiven, given)
@@ -2762,12 +2845,23 @@ class RunStore:
         model: str,
         call: ModelCall,
         delta: MessageDelta | None = None,
+        recall: tuple[str, ...] = ("none",),
     ) -> StoredModelStepGiven:
         """Persist call settings and the new message templates for this boundary."""
 
         with self.write_transaction():
-            instruction_ref = self._put_model_text(call.instructions)
-            toolset_ref = self._put_toolset(call.tools) if call.tools else None
+            instruction_ref = str(self.put_content(call.instructions.encode("utf-8")))
+            toolset_ref = (
+                str(
+                    self.put_content(
+                        _dump_json([tool.to_data() for tool in call.tools]).encode(
+                            "utf-8"
+                        )
+                    )
+                )
+                if call.tools
+                else None
+            )
         from .records import ModelCallRefs
 
         return StoredModelStepGiven(
@@ -2775,6 +2869,7 @@ class RunStore:
             call=ModelCallRefs(
                 instructions=instruction_ref,
                 delta=delta if delta is not None else literal_delta(call.messages),
+                recall=recall,
                 tools=toolset_ref,
                 output_schema=(
                     dict(call.output_schema) if call.output_schema is not None else None
@@ -2789,6 +2884,73 @@ class RunStore:
         """Rebuild the normalized model call captured by one model step."""
 
         return self.rebuild_model_calls((step,))[step.ref]
+
+    def message_history(self, run_id: str) -> MessageHistory:
+        """Load the root's fixed logical prefix once, using recorded templates."""
+
+        with self.read_transaction():
+            root_id = self.root_run_id(run_id=run_id)
+            root = self.get_run(run_id=root_id)
+            if root is None:
+                raise ValueError(f"run not found: {run_id}")
+            roots = self._thread_projection().before(root)
+        facts: dict[
+            RunRef, tuple[tuple[StepRecord, ...], dict[ControlRef, ControlRecord]]
+        ] = {}
+
+        def load(
+            selected_roots: Sequence[RunRef],
+        ) -> dict[RunRef, tuple[MessageDelta, ...]]:
+            with self.read_transaction():
+                ids = tuple(str(ref) for ref in selected_roots)
+                steps = self.list_steps_for_runs(run_ids=ids)
+                controls = self.list_run_controls_for_runs(run_ids=ids)
+                deltas = {}
+                for ref in selected_roots:
+                    related = {control.ref: control for control in controls[str(ref)]}
+                    selected = active_steps(steps[str(ref)], related)
+                    deltas[ref] = tuple(
+                        step.given.call.delta
+                        for step in selected
+                        if isinstance(step.given, StoredModelStepGiven)
+                    )
+                    facts[ref] = selected, related
+                return deltas
+
+        by_ref = {RunRef(run.id): run for run in roots}
+
+        def tail(pending: Sequence[RunRef]) -> MessageDelta:
+            return MessageDelta(
+                messages=tuple(
+                    message
+                    for ref in pending
+                    for message in tail_delta(
+                        by_ref[ref], *facts[ref], self.resolve_value
+                    ).messages
+                )
+            )
+
+        return MessageHistory(
+            str(root.thread),
+            tuple(RunRef(run.id) for run in roots),
+            load,
+            tail,
+            self.resolve_value,
+        )
+
+    def run_horizon(self, run_id: str) -> FieldRef | None:
+        """Recover only the horizon actually adopted by this Run's Steps."""
+
+        controls = {c.ref: c for c in self.list_run_controls(run_id=run_id)}
+        run = RunRef(run_id)
+        horizon = adopted_horizon(None, (controls[ControlRef(run, 0)],), run)
+        for step in self.list_steps(run_id=run_id):
+            horizon = adopted_horizon(
+                horizon,
+                tuple(controls[ref] for ref in step.preceded_by if ref in controls),
+                run,
+            )
+        return horizon
 
     def rebuild_model_calls(
         self, steps: Sequence[StepRecord]
@@ -2839,90 +3001,74 @@ class RunStore:
             return values[ref]
 
         calls: dict[StepRef, ModelCall] = {}
-        for run_steps in grouped.values():
-            sequences: list[list[StepRecord]] = [[]]
-            for step in run_steps:
-                if any(
-                    ref in controls
-                    and controls[ref].kind in {"run", "execute", "retry"}
-                    and ref.target == step.ref.run
-                    for ref in step.preceded_by
-                ):
-                    sequences.append([])
-                if isinstance(step.given, StoredModelStepGiven):
-                    sequences[-1].append(step)
-            for sequence in sequences:
-                last = max(
-                    (
-                        index
-                        for index, step in enumerate(sequence)
-                        if step.ref in requested
-                    ),
-                    default=-1,
+        histories: dict[str, MessageHistory] = {}
+        for run_id, run_steps in grouped.items():
+            run = RunRef(run_id)
+            entry = controls.get(ControlRef(run, 0))
+            horizon = adopted_horizon(None, (entry,) if entry else (), run)
+            last = max(
+                (i for i, step in enumerate(run_steps) if step.ref in requested),
+                default=-1,
+            )
+            messages: list[Message] = []
+            for step in run_steps[: last + 1]:
+                horizon = adopted_horizon(
+                    horizon,
+                    tuple(controls[ref] for ref in step.preceded_by if ref in controls),
+                    run,
                 )
-                messages: list[Message] = []
-                for step in sequence[: last + 1]:
-                    given = cast(StoredModelStepGiven, step.given)
-                    messages.extend(render_delta(given.call.delta, resolve))
-                    if step.ref not in requested:
-                        continue
-                    call = given.call
-                    instructions = texts.get(call.instructions)
-                    if instructions is None:
-                        raise ValueError(
-                            f"model instructions are missing: {call.instructions}"
-                        )
-                    if call.tools is not None and call.tools not in toolsets:
-                        raise ValueError(f"model toolset is missing: {call.tools}")
-                    calls[step.ref] = ModelCall(
-                        instructions=instructions,
-                        messages=list(messages),
-                        tools=toolsets[call.tools] if call.tools is not None else (),
-                        output_schema=dict(call.output_schema)
-                        if call.output_schema is not None
-                        else None,
-                        continuation=dict(call.continuation)
-                        if call.continuation is not None
-                        else None,
+                if starts_sequence(step, controls):
+                    messages.clear()
+                if not isinstance(step.given, StoredModelStepGiven):
+                    continue
+                call = step.given.call
+                messages.extend(render_delta(call.delta, resolve))
+                if step.ref not in requested:
+                    continue
+                far, near = "", ()
+                if "far" in call.recall or "near" in call.recall:
+                    root_id = self.root_run_id(run_id=run_id)
+                    if root_id not in histories:
+                        histories[root_id] = self.message_history(root_id)
+                    far, near = histories[root_id].select(horizon)
+                instructions = texts.get(call.instructions)
+                if instructions is None:
+                    raise ValueError(
+                        f"model instructions are missing: {call.instructions}"
                     )
+                if call.tools is not None and call.tools not in toolsets:
+                    raise ValueError(f"model toolset is missing: {call.tools}")
+                calls[step.ref] = ModelCall(
+                    instructions=instructions,
+                    messages=assemble_messages(far, near, messages, call.recall),
+                    tools=toolsets[call.tools] if call.tools is not None else (),
+                    output_schema=dict(call.output_schema)
+                    if call.output_schema is not None
+                    else None,
+                    continuation=dict(call.continuation)
+                    if call.continuation is not None
+                    else None,
+                )
         return calls
 
     def _get_model_texts(self, text_hashes: set[str]) -> dict[str, str]:
-        rows = self._content_rows(
-            table="model_texts",
-            value_column="body",
-            hashes=text_hashes,
-        )
-        texts: dict[str, str] = {}
-        for text_hash, raw in rows.items():
-            body = str(raw)
-            _verify_content_hash(body, expected=text_hash, label="model text")
-            texts[text_hash] = body
-        return texts
+        return {
+            ref: value.decode("utf-8")
+            for ref, value in self._content_rows(text_hashes).items()
+        }
 
     def _get_toolsets(
         self, toolset_hashes: set[str]
     ) -> dict[str, tuple[ToolDefinition, ...]]:
-        rows = self._content_rows(
-            table="model_toolsets",
-            value_column="data",
-            hashes=toolset_hashes,
-        )
         return {
-            toolset_hash: _toolset_from_stored(toolset_hash, str(raw))
-            for toolset_hash, raw in rows.items()
+            ref: _toolset_from_stored(ref, value.decode("utf-8"))
+            for ref, value in self._content_rows(toolset_hashes).items()
         }
 
-    def _content_rows(
-        self,
-        *,
-        table: str,
-        value_column: str,
-        hashes: set[str],
-    ) -> dict[str, object]:
-        if not hashes:
+    def _content_rows(self, refs: set[str]) -> dict[str, bytes]:
+        if not refs:
             return {}
-        values = tuple(sorted(hashes))
+        values = tuple(sorted(refs))
         rows: list[sqlite3.Row] = []
         with self._lock:
             for offset in range(0, len(values), 500):
@@ -2930,29 +3076,14 @@ class RunStore:
                 placeholders = ", ".join("?" for _ in chunk)
                 rows.extend(
                     self._conn.execute(
-                        f"SELECT hash, {value_column} FROM {table} "
-                        f"WHERE hash IN ({placeholders})",
+                        f"SELECT id, value FROM contents WHERE id IN ({placeholders})",
                         chunk,
                     ).fetchall()
                 )
-        return {str(row["hash"]): row[value_column] for row in rows}
-
-    def _put_model_text(self, body: str) -> str:
-        text_hash = _content_hash(body)
-        self._conn.execute(
-            "INSERT OR IGNORE INTO model_texts(hash, body) VALUES (?, ?)",
-            (text_hash, body),
-        )
-        return text_hash
-
-    def _put_toolset(self, tools: Sequence[ToolDefinition]) -> str:
-        data = _dump_json([tool.to_data() for tool in tools])
-        toolset_hash = _content_hash(data)
-        self._conn.execute(
-            "INSERT OR IGNORE INTO model_toolsets(hash, data) VALUES (?, ?)",
-            (toolset_hash, data),
-        )
-        return toolset_hash
+        contents = {str(row["id"]): bytes(row["value"]) for row in rows}
+        for ref, value in contents.items():
+            _verify_content(ContentRef(ref), value)
+        return contents
 
     def recent_conversation_messages(
         self,
@@ -3388,22 +3519,6 @@ class RunStore:
                 """
             )
             self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS model_texts (
-                    hash TEXT PRIMARY KEY,
-                    body TEXT NOT NULL
-                )
-                """
-            )
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS model_toolsets (
-                    hash TEXT PRIMARY KEY,
-                    data TEXT NOT NULL
-                )
-                """
-            )
-            self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runs_thread_created ON runs(thread, created_at)"
             )
             self._conn.execute(
@@ -3483,15 +3598,6 @@ def _record_control_refs(value: object) -> set[ControlRef]:
     return set().union(*(_record_control_refs(child) for child in children))
 
 
-def _content_hash(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def _verify_content_hash(value: str, *, expected: str, label: str) -> None:
-    if _content_hash(value) != expected:
-        raise ValueError(f"{label} is corrupted: {expected}")
-
-
 def _verify_content(ref: ContentRef, value: bytes) -> None:
     actual = f"sha256_{hashlib.sha256(value).hexdigest()}"
     if actual != str(ref):
@@ -3547,11 +3653,6 @@ def _required_text(value: object, name: str) -> str:
 
 
 def _toolset_from_stored(toolset_hash: str, stored: str) -> tuple[ToolDefinition, ...]:
-    _verify_content_hash(
-        stored,
-        expected=toolset_hash,
-        label="model toolset",
-    )
     try:
         data = _load_json(stored)
     except (TypeError, ValueError) as exc:

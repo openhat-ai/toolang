@@ -17,7 +17,6 @@ class _MessageBuffer:
         self.messages: list[Message] = []
         self.pending: list[MessageTemplate] = []
         self.started = False
-        self.context = ""
         self.initialize(messages)
 
     def copy(self) -> _MessageBuffer:
@@ -27,23 +26,25 @@ class _MessageBuffer:
         other.messages = list(self.messages)
         other.pending = list(self.pending)
         other.started = self.started
-        other.context = self.context
         return other
 
-    def initialize(self, messages: Sequence[Message], *, context: str = "") -> None:
+    def initialize(self, messages: Sequence[Message]) -> None:
         if not self.started:
             self.messages.clear()
             self.pending.clear()
             for template in literal_delta(messages).messages:
                 self._append(template)
-        elif context and context != self.context:
-            self.append(Message.user(context))
-        self.context = context
 
     def append(self, message: Message) -> None:
         """Append authored or runtime-rendered literal content."""
 
         self._append(literal_delta((message,)).messages[0])
+
+    def prepend(self, delta: MessageDelta, messages: Sequence[Message]) -> None:
+        """Record a newly consumed historical tail before this sequence's input."""
+
+        self.pending[:0] = delta.messages
+        self.messages[:0] = messages
 
     def append_ref(self, role: MessageRole, ref: FieldRef, value: Local) -> None:
         """Use the same field value online that the owning record will persist."""

@@ -93,7 +93,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             assert connection.execute(
                 "SELECT parent FROM runs WHERE id = 'run_dot_child'"
             ).fetchone() == ("run_dot_path.2.3",)
-            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 39
+            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 40
         finally:
             connection.close()
     finally:
@@ -1340,8 +1340,7 @@ def test_model_blobs_roll_back_when_the_model_step_cannot_be_inserted(
                 started_at="2026-01-01T00:00:00Z",
             )
 
-        assert _table_count(store.db_path, "model_texts") == 0
-        assert _table_count(store.db_path, "model_toolsets") == 0
+        assert _table_count(store.db_path, "contents") == 0
         assert _table_count(store.db_path, "steps") == 0
     finally:
         store.close()
