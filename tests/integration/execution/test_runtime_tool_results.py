@@ -217,6 +217,91 @@ def test_steer_during_result_delivery_preserves_result_once(
 
 
 @pytest.mark.parametrize("interruption", ["steer", "cancel"])
+@pytest.mark.parametrize("tool_name", ["math__double", "_too__run", "_too__unknown"])
+def test_interruption_before_result_commit_preserves_completed_result(
+    tmp_path: Path, interruption: str, tool_name: str
+) -> None:
+    gate = AsyncGate()
+    blockers: list[asyncio.Task[None]] = []
+
+    async def hold_event_lock(run_id: str) -> None:
+        async with harness.executor._active[run_id].event_lock:
+            await gate.wait()
+
+    class CommitTracer(RecordingRunTracer):
+        async def on_event(self, event: RunEvent) -> None:
+            await super().on_event(event)
+            if (
+                isinstance(event, PartEnd)
+                and isinstance(event.data, ToolResultPart)
+                and event.step.index == 1
+                and not blockers
+            ):
+                blockers.append(asyncio.create_task(hold_event_lock(event.step.run_id)))
+                await asyncio.sleep(0)
+
+    tool = RecordingTool("math__double", output={"value": 6})
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        tools={tool.name: tool},
+        responses=[
+            ModelCallResult(tool_calls=(call(tool_name),)),
+            *(
+                [ModelCallResult(message=Message.assistant("child output"))]
+                if tool_name == "_too__run"
+                else []
+            ),
+            ModelCallResult(message=Message.assistant("revised")),
+        ],
+    )
+    tracer = CommitTracer()
+
+    async def scenario() -> None:
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="parent",
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
+            control = (
+                handle.steer(Message.user("change direction"), timing="immediate")
+                if interruption == "steer"
+                else handle.cancel()
+            )
+            await asyncio.sleep(0)
+            gate.release()
+            root = await asyncio.wait_for(handle, timeout=2)
+            await asyncio.gather(*blockers)
+            assert root.status == (
+                "succeeded" if interruption == "steer" else "canceled"
+            )
+            step = harness.store.list_steps(run_id=root.id)[1]
+            assert step.status == "canceled"
+            assert step.aborted_by == control.ref
+            assert step.output is not None
+            completed = next(
+                event.data
+                for event in tracer.events
+                if isinstance(event, PartEnd) and event.step == step.ref
+            )
+            assert parts_from_local(step.output) == (completed,)
+            if interruption == "steer":
+                assert [
+                    part
+                    for message in harness.adapter.invocations[-1].call.messages
+                    for part in message.parts
+                    if isinstance(part, ToolResultPart)
+                ] == [completed]
+            assert_run_event_integrity(tracer.events)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("interruption", ["steer", "cancel"])
 def test_interrupting_runtime_child_terminates_owning_tool_step(
     tmp_path: Path, interruption: str
 ) -> None:

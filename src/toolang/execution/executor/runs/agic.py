@@ -581,7 +581,8 @@ def _run_success_part(
     record = result.record
     target = record.value if record is not None else None
     if (
-        not isinstance(target, TypedRef)
+        record is None
+        or not isinstance(target, TypedRef)
         or not isinstance(target.ref.record, RunRef)
         or target.ref.tokens != ("output", "value")
     ):
@@ -595,13 +596,7 @@ def _run_success_part(
     )
     if control is None or not isinstance(control.payload, RunControlPayload):
         raise RuntimeError(f"child run control not found: {child.id}")
-    output_type = (
-        record.type
-        if record is not None
-        else f"{result.type_name or 'Json'}[]"
-        if result.shape == "list"
-        else result.type_name or "Json"
-    )
+    output_type = record.type
     encoded = local_to_protocol_data(
         RecordLocal.typed(
             output_type,
