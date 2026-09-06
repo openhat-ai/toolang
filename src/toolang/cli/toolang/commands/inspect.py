@@ -679,16 +679,17 @@ def inspect_command(
         if resources is None:  # pragma: no cover - required=True guarantees this
             raise RuntimeError("execution resources were not opened")
         try:
-            subject = _resolve_inspect_subject(resources.store, query)
-            projection = _resolve_inspect_projection(
-                resources.store,
-                subject,
-                query.projector,
-            )
-            if json_view:
-                _render_projection_json(projection)
-            else:
-                _render_projection_human(resources.store, projection)
+            with resources.store.read_transaction():
+                subject = _resolve_inspect_subject(resources.store, query)
+                projection = _resolve_inspect_projection(
+                    resources.store,
+                    subject,
+                    query.projector,
+                )
+                if json_view:
+                    _render_projection_json(projection)
+                else:
+                    _render_projection_human(resources.store, projection)
         except click.UsageError:
             raise
         except (TypeError, ValueError) as exc:

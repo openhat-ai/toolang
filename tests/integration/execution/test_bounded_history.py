@@ -1,6 +1,6 @@
 """Bounded reads preserve captured facts without duplicating execution records."""
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from pathlib import Path
 import sqlite3
@@ -106,6 +106,70 @@ def pages(
     while result[-1].cursor is not None:
         result.append(history.next_page(result[-1].cursor))
     return result
+
+
+@pytest.mark.parametrize("query", ["run", "child", "runs", "thread"])
+def test_inspection_read_keeps_one_snapshot_during_retry(
+    store: RunStore, monkeypatch: pytest.MonkeyPatch, query: str
+) -> None:
+    start(store)
+    parent = step(store)
+    start(store, "run_child", parent=parent.ref)
+    step(store, "run_child")
+    project_run_end(store, run_id="run_child")
+    project_run_end(store, run_id="run_a")
+    history = RunHistory(store)
+    read = {
+        "run": lambda: history.get_run("run_a"),
+        "child": lambda: history.get_run("run_child"),
+        "runs": lambda: history.list_runs(thread_id="term_a"),
+        "thread": lambda: history.get_thread("term_a"),
+    }[query]
+    expected = read()
+    method = "list_steps" if query in {"run", "child"} else "list_steps_for_runs"
+    original = getattr(store, method)
+    writer = RunStore(store.db_path)
+    try:
+
+        def interleave(**kwargs: object) -> object:
+            retry(writer, "run_a")
+            return original(**kwargs)
+
+        monkeypatch.setattr(store, method, interleave)
+        assert read() == expected
+        assert writer.get_run(run_id="run_child") is None
+    finally:
+        writer.close()
+
+
+def test_thread_list_keeps_one_snapshot_during_rewind(
+    store: RunStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("run_a", "run_b"):
+        start(store, name)
+        project_run_end(store, run_id=name)
+    history = RunHistory(store)
+    expected = history.list_threads()
+    head = store.thread_view("term_a").head
+    original = store.thread_views
+    writer = RunStore(store.db_path)
+    try:
+
+        def interleave(thread_ids: Sequence[str]) -> dict[str, ThreadView]:
+            writer.rewind_thread(
+                thread_id="term_a",
+                anchor="run_b",
+                expected_head=head,
+                request_id=None,
+                created_at="2026-01-02T00:00:00Z",
+            )
+            return original(thread_ids)
+
+        monkeypatch.setattr(store, "thread_views", interleave)
+        assert history.list_threads() == expected
+        assert len(writer.thread_view("term_a").runs()) == 1
+    finally:
+        writer.close()
 
 
 def test_thread_page_keeps_membership_across_append_rewind_and_restart(
@@ -456,6 +520,32 @@ def test_child_view_excludes_parent_and_sibling_steps_but_loads_state_control(
         for control in (*child.controls(), *child.dependencies)
     )
     assert [s.id for s in history.run_view("run_a").steps()] == [parent.id]
+
+
+def test_child_pages_do_not_decode_ancestor_outputs(
+    store: RunStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    start(store)
+    parent = step(store)
+    start(store, "run_child", parent=parent.ref)
+    child_step = step(store, "run_child")
+    start(store, "run_leaf", parent=child_step.ref)
+    step(store, "run_leaf")
+    project_run_end(store, run_id="run_leaf")
+    for name in ("run_child", "run_a"):
+        project_run_end(store, run_id=name, output=Local("large output " * 1000))
+    original = store_module._run_from_row
+
+    def decode(row: sqlite3.Row) -> RunRecord:
+        assert row["id"] == "run_leaf", "ancestor checks must not load outputs"
+        return original(row)
+
+    monkeypatch.setattr(store_module, "_run_from_row", decode)
+    history = RunHistory(store)
+    captured = pages(history, history.run_view("run_leaf", limit=1))
+    assert [
+        s.id for page in captured if isinstance(page, RunView) for s in page.steps()
+    ] == ["run_leaf.0"]
 
 
 def test_output_and_model_call_reads_are_independent(

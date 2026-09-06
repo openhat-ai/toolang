@@ -1599,17 +1599,27 @@ class RunStore:
     def root_run_id(self, *, run_id: str) -> str:
         """Derive one run tree's root by following durable parent ownership."""
 
-        seen: set[str] = set()
-        current = run_id
-        while current not in seen:
-            seen.add(current)
-            run = self.get_run(run_id=current)
-            if run is None:
-                raise ValueError(f"run ancestry is missing: {current}")
-            if run.parent is None:
-                return run.id
-            current = run.parent.run_id
-        raise ValueError(f"run ancestry contains a cycle: {run_id}")
+        return self.run_ancestry(run_id=run_id)[-1]
+
+    def run_ancestry(self, *, run_id: str) -> tuple[str, ...]:
+        """Read identities from the requested Run to its root, without Run bodies."""
+
+        with self.read_transaction():
+            seen: set[str] = set()
+            ancestry: list[str] = []
+            current = run_id
+            while current not in seen:
+                seen.add(current)
+                row = self._conn.execute(
+                    "SELECT parent FROM runs WHERE id = ?", (current,)
+                ).fetchone()
+                if row is None:
+                    raise ValueError(f"run ancestry is missing: {current}")
+                ancestry.append(current)
+                if row["parent"] is None:
+                    return tuple(ancestry)
+                current = StepRef.parse(row["parent"]).run_id
+            raise ValueError(f"run ancestry contains a cycle: {run_id}")
 
     def list_run_tree(self, *, root_run_id: str) -> list[RunRecord]:
         """Return all runs structurally owned by one root run."""

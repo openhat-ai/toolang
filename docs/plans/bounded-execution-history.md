@@ -17,6 +17,8 @@ Later contracts below describe integration requirements, not PR4 runtime work.
 `RunHistory` coordinates reads and constructs fixed-scope Views. Views interpret
 supplied records without database access, model budgets, or message generation.
 RunExecutor remains responsible for execution; ThreadManager for create/fork/rewind.
+Each history get/list read uses one Store snapshot. Callers supplying records to
+`describe_*` keep their selection and description in the same read transaction.
 
 Use output for the execution artifact and Run detail for inspection data.
 Keep Run selection separate from output reading.

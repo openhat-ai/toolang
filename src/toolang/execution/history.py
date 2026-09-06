@@ -61,7 +61,8 @@ class RunHistory:
         """Return filtered thread summaries in most-recently-updated order."""
 
         _validate_limit(limit)
-        items = self.describe_threads(self._store.list_threads())
+        with self._store.read_transaction():
+            items = self.describe_threads(self._store.list_threads())
         filtered = [
             item
             for item in items
@@ -112,49 +113,50 @@ class RunHistory:
         """Return one thread and its most recent run details."""
 
         _validate_limit(run_limit)
-        thread = self._store.get_thread(thread_id=thread_id)
-        if thread is None:
-            return None
-        view = self._store.thread_view(thread_id)
-        runs = list(view.tree())
-        controls_by_run = self._store.list_run_controls_for_runs(
-            run_ids=tuple(run.id for run in runs)
-        )
-        info = ThreadInfo.from_records(
-            thread,
-            runs,
-            head=view.head,
-            input_parts=(
-                self._input_parts(runs[0], controls_by_run.get(runs[0].id, ()))
-                if runs
-                else ()
-            ),
-        )
-        visible_runs = (
-            runs if run_limit is None else [] if run_limit == 0 else runs[-run_limit:]
-        )
-        steps_by_run = self._store.list_steps_for_runs(
-            run_ids=tuple(run.id for run in visible_runs)
-        )
-        model_calls = self._model_calls(steps_by_run)
-        return ThreadDetail.from_info(
-            info,
-            runs=[
-                RunDetail.from_record(
-                    run,
-                    controls=controls_by_run.get(run.id, ()),
-                    steps=steps_by_run.get(run.id, ()),
-                    model_calls=model_calls,
-                    root_run_id=self._store.root_run_id(run_id=run.id),
-                    error_message=self._error_message(run.error),
-                    input_parts=self._input_parts(
+        with self._store.read_transaction():
+            thread = self._store.get_thread(thread_id=thread_id)
+            if thread is None:
+                return None
+            view = self._store.thread_view(thread_id)
+            runs = list(view.tree())
+            controls_by_run = self._store.list_run_controls_for_runs(
+                run_ids=tuple(run.id for run in runs)
+            )
+            info = ThreadInfo.from_records(
+                thread,
+                runs,
+                head=view.head,
+                input_parts=(
+                    self._input_parts(runs[0], controls_by_run.get(runs[0].id, ()))
+                    if runs
+                    else ()
+                ),
+            )
+            visible_runs = runs
+            if run_limit is not None:
+                visible_runs = runs[-run_limit:] if run_limit else []
+            steps_by_run = self._store.list_steps_for_runs(
+                run_ids=tuple(run.id for run in visible_runs)
+            )
+            model_calls = self._model_calls(steps_by_run)
+            return ThreadDetail.from_info(
+                info,
+                runs=[
+                    RunDetail.from_record(
                         run,
-                        controls_by_run.get(run.id, ()),
-                    ),
-                )
-                for run in visible_runs
-            ],
-        )
+                        controls=controls_by_run.get(run.id, ()),
+                        steps=steps_by_run.get(run.id, ()),
+                        model_calls=model_calls,
+                        root_run_id=self._store.root_run_id(run_id=run.id),
+                        error_message=self._error_message(run.error),
+                        input_parts=self._input_parts(
+                            run,
+                            controls_by_run.get(run.id, ()),
+                        ),
+                    )
+                    for run in visible_runs
+                ],
+            )
 
     def list_runs(
         self,
@@ -166,8 +168,11 @@ class RunHistory:
         """Return run information from durable truth."""
 
         _validate_limit(limit)
-        runs = self._store.list_runs(limit=limit, thread_id=thread_id, status=status)
-        return self.describe_runs(runs)
+        with self._store.read_transaction():
+            runs = self._store.list_runs(
+                limit=limit, thread_id=thread_id, status=status
+            )
+            return self.describe_runs(runs)
 
     def describe_runs(
         self,
@@ -202,20 +207,21 @@ class RunHistory:
     def get_run(self, run_id: str) -> RunDetail | None:
         """Return one complete run detail when it exists."""
 
-        run = self._store.get_run(run_id=run_id)
-        if run is None:
-            return None
-        steps = self._store.list_steps(run_id=run.id)
-        controls = self._store.list_run_controls(run_id=run.id)
-        return RunDetail.from_record(
-            run,
-            controls=controls,
-            steps=steps,
-            model_calls=self._store.rebuild_model_calls(_model_steps(steps)),
-            root_run_id=self._store.root_run_id(run_id=run.id),
-            error_message=self._error_message(run.error),
-            input_parts=self._input_parts(run, controls),
-        )
+        with self._store.read_transaction():
+            run = self._store.get_run(run_id=run_id)
+            if run is None:
+                return None
+            steps = self._store.list_steps(run_id=run.id)
+            controls = self._store.list_run_controls(run_id=run.id)
+            return RunDetail.from_record(
+                run,
+                controls=controls,
+                steps=steps,
+                model_calls=self._store.rebuild_model_calls(_model_steps(steps)),
+                root_run_id=self._store.root_run_id(run_id=run.id),
+                error_message=self._error_message(run.error),
+                input_parts=self._input_parts(run, controls),
+            )
 
     def get_output(self, run: RunRef | str) -> Local | None:
         """Resolve typed output without loading execution details or model calls."""
@@ -330,13 +336,8 @@ class RunHistory:
                 refs.update(related[ref])
             # A root retry can delete/recreate child facts. Freeze the ancestry,
             # not just the reused child Step ID or its lifecycle timestamps.
-            ancestor = record
-            while ancestor.parent is not None:
-                parent = self._store.get_run(run_id=ancestor.parent.run_id)
-                if parent is None:
-                    raise KeyError(ancestor.parent.run_id)
-                refs.add(parent.id)
-                ancestor = parent
+            if record.parent is not None:
+                refs.update(self._store.run_ancestry(run_id=record.parent.run_id))
             scope = HistoryCursor(
                 target,
                 selected,
