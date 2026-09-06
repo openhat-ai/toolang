@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
+from dataclasses import replace
 import threading
 from typing import TypeGuard, cast
 from uuid import uuid4
@@ -338,6 +339,10 @@ class ChatTuiApp:
         ]
         available = self._available_live_rows()
         feedback_rows = rendering.renderables_height(feedback)
+        if feedback_rows > available:
+            # Give the explanation priority over spacing in very short viewports.
+            feedback = [replace(item, vertical_padding=False) for item in feedback]
+            feedback_rows = rendering.renderables_height(feedback)
         fragments = rendering.renderables_to_prompt_toolkit(
             other, max_rows=max(0, available - feedback_rows)
         )

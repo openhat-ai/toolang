@@ -108,7 +108,7 @@ cell of padding inside each end. It has no selection marker or bold text; only
 the background indicates selection. Slightly brighter dim action hints occupy
 the right side on that same background, separated from the body by at least two
 cells. Entry hints end two cells from Queue's edge; truncation preserves their
-padding. Panel hints align flush right with the status bar in both modes,
+padding. Panel hints also end two cells from Queue's right edge in both modes,
 without changing status-bar layout. Losing focus hides the highlight and entry
 hints while preserving selection. The summary counts all items.
 
@@ -553,9 +553,11 @@ between one top and one bottom padding row. Body text starts two cells from
 the left and leaves two cells at the right. Input uses the same insets. Padding
 never collapses into body rows as messages wrap. The bottom padding can hold a
 dim, single-line annotation ending two cells before the bar edge. Root inputs
-show `runnable · model · reasoning` from the submitted request; unspecified
-reasoning is omitted and an absent model reads `model unspecified`. The root
-RunBegin updates its runnable before the bar is committed. Long annotations
+show `runnable · model · reasoning` from the submitted request: explicit effort
+or token budget, otherwise `auto` for no reasoning override. An absent model
+reads `model unspecified`. This snapshot needs no catalog or persistence lookup,
+and later session defaults do not change it. The root RunBegin updates its
+runnable before the bar is committed. Long annotations
 shorten the runnable first, then the model, preserving explicit reasoning
 where space permits. Their left background-filled accent cells distinguish
 start from steer without displaying Run IDs. The start accent uses the same ANSI
@@ -579,7 +581,9 @@ bars have one aggregate `•` explanation below them, such as `3 steers will app
 after the current step`; between steps it says `waiting for the next model
 call`. Until receipts arrive it says `Sending N steers`, or appends `· sending
 M more` to an accepted count. Continuations align after the marker, and live
-clipping reserves this feedback while preserving Input and Queue focus.
+clipping reserves this feedback while preserving Input and Queue focus. A blank
+row above and below separates the explanation from surrounding areas. Very short
+viewports omit this spacing before clipping the explanation.
 Only matching `StepBegin.preceded_by` control references or durable applied
 status commit an adopted bar. Receipt/event reordering does not imply adoption.
 The aggregate disappears when no steers remain, with no applied message.
