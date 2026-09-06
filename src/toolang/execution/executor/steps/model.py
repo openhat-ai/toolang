@@ -36,6 +36,7 @@ from toolang.state.state import AgentState, StatePublication
 
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
 from ...control_messages import control_message
+from ...assembly import assemble_messages
 from ...records import (
     ControlRecord,
     RecallControlPayload,
@@ -99,7 +100,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
         # Claims survive discarded preparation; adoption clears them after commit.
         state.claimed_inputs = (*state.claimed_inputs, *state.pending_inputs())
         recalled = (
-            state.execution.store.unconsumed_recall_controls(run_id=run.run_id)
+            state.execution.runtime_controls(run.run_id, refresh=False)
             if state.execution is not None
             else ()
         )
@@ -109,11 +110,24 @@ async def execute(state: _AgicState) -> ModelCallResult:
             )
         )
         next_messages = state.messages.copy()
-        next_messages.initialize(prepared.messages, context=prepared.prompt_context)
+        next_messages.initialize(
+            prepared.messages,
+            context=prepared.prompt_context,
+            visible=prepared.near if "near" in prepared.recall else (),
+        )
+        if (
+            not next_messages.started
+            and state.execution is not None
+            and "near" in prepared.recall
+        ):
+            history = state.execution.message_history()
+            next_messages.prepend(history.tail, history.tail_messages())
         _append_inputs(next_messages, preceding)
         request = ModelCall(
             instructions=_model_instructions(state, prepared),
-            messages=list(next_messages.messages),
+            messages=assemble_messages(
+                prepared.far, prepared.near, next_messages.messages, prepared.recall
+            ),
             tools=(
                 _model_tools(prepared)
                 if prepared.model.tools and not state.repairing_output
@@ -133,7 +147,10 @@ async def execute(state: _AgicState) -> ModelCallResult:
             preceded_by=tuple(item.ref for item in preceding),
             started_at=utc_now(),
             given=ModelStepGiven(
-                model=prepared.model.ref, call=request, delta=next_messages.take_delta()
+                model=prepared.model.ref,
+                call=request,
+                delta=next_messages.take_delta(),
+                recall=prepared.recall,
             ),
         )
 

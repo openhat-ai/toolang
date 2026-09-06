@@ -32,7 +32,8 @@ from toolang.execution.events import RunEvent, RunTracer, StepBegin
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.executor.common import BoundRun, Local, output_parts
-from toolang.execution.executor.prepare import _recalls_history, prepare_agic
+from toolang.execution.executor.prepare import prepare_agic
+from toolang.execution.assembly import recall_sources
 from toolang.execution.history import RunHistory
 from toolang.execution.records import (
     RunControlPayload,
@@ -52,7 +53,6 @@ from toolang.execution.types import (
 )
 from toolang.lang.ast import (
     AgicDecl,
-    Directive,
     Parameter,
     Program,
     Span,
@@ -147,11 +147,6 @@ class _Tool(AgentTool):
         return {}
 
 
-class _History:
-    def recent_conversation_messages(self, **kwargs) -> list[Message]:
-        return [Message.user("previous")]
-
-
 class _Tracer(RunTracer):
     def __init__(self) -> None:
         self.events: list[RunEvent] = []
@@ -210,14 +205,7 @@ def test_recall_values_map_to_current_history_only_when_near_is_selected() -> No
         (("near",), True),
         (("far", "near"), True),
     ]:
-        directives = (
-            (Directive(name="recall", operator="=", values=values, span=Span(1)),)
-            if values
-            else ()
-        )
-        agic = AgicDecl(name="test", directives=directives, span=Span(1))
-
-        assert _recalls_history(agic) is expected
+        assert ("near" in recall_sources(values)) is expected
 
 
 def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
@@ -290,7 +278,6 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
         SimpleNamespace(
             setup=setup,
             home=home,
-            store=_History(),
             providers=setup.providers,
             models=setup.models,
             envs=setup.envs,
@@ -321,7 +308,6 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     assert "timezone: UTC" in prepared.prompt_context
     assert "agent_name: alice" in prepared.prompt_context
     assert [message_text(message.parts) for message in prepared.messages] == [
-        "previous",
         prepared.prompt_context + "\n\nAnswer: hello; focus=events",
     ]
 
@@ -384,7 +370,6 @@ def test_prepare_agic_keeps_declared_output_contract_out_of_instructions(
         Any,
         SimpleNamespace(
             setup=setup,
-            store=_History(),
             providers=setup.providers,
             models=setup.models,
             envs=setup.envs,
@@ -465,7 +450,6 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
         Any,
         SimpleNamespace(
             setup=setup,
-            store=_History(),
             providers=setup.providers,
             models=setup.models,
             envs=setup.envs,
@@ -616,18 +600,15 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         _PersistSink(store).on_event(begin)
         connection = sqlite3.connect(store.db_path)
         try:
-            assert connection.execute(
-                "SELECT COUNT(*) FROM model_texts"
-            ).fetchone() == (1,)
+            assert connection.execute("SELECT COUNT(*) FROM contents").fetchone() == (
+                2,
+            )
             assert (
                 connection.execute(
                     "SELECT name FROM sqlite_master WHERE name = 'model_messages'"
                 ).fetchone()
                 is None
             )
-            assert connection.execute(
-                "SELECT COUNT(*) FROM model_toolsets"
-            ).fetchone() == (1,)
         finally:
             connection.close()
     finally:

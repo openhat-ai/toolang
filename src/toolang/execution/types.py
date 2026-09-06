@@ -1363,6 +1363,9 @@ class ModelStepGiven:
     delta: MessageDelta | None = field(
         default=None, compare=False, repr=False, metadata={"exclude": True}
     )
+    recall: tuple[str, ...] = field(
+        default=("none",), compare=False, repr=False, metadata={"exclude": True}
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.model, str) or not self.model:

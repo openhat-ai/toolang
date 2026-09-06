@@ -1340,8 +1340,7 @@ def test_model_blobs_roll_back_when_the_model_step_cannot_be_inserted(
                 started_at="2026-01-01T00:00:00Z",
             )
 
-        assert _table_count(store.db_path, "model_texts") == 0
-        assert _table_count(store.db_path, "model_toolsets") == 0
+        assert _table_count(store.db_path, "contents") == 0
         assert _table_count(store.db_path, "steps") == 0
     finally:
         store.close()

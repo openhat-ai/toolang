@@ -38,6 +38,7 @@ def test_run_spec_has_minimal_execution_contract() -> None:
         "authored_commands",
         "authored_session_commands",
         "prompt_invocations",
+        "horizon",
     )
 
 

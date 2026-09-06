@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 import json
 import logging
@@ -24,7 +24,6 @@ from toolang.common.immutable import mutable_data
 from toolang.common.template import render_text_template
 from toolang.lang.ast import (
     AgicDecl,
-    Directive,
     Message as AstMessage,
     Program,
 )
@@ -45,6 +44,7 @@ from toolang.state.state import (
 )
 
 from . import prompts
+from ..assembly import recall_sources
 from ..calls import prompt_definitions
 from .common import BoundRun, value_parts, value_text
 from .resources import resource_caps, resource_tools
@@ -56,7 +56,6 @@ if TYPE_CHECKING:
     from .executor import _Execution
 
 _LOGGER = logging.getLogger(__name__)
-_TEXT_HISTORY_MESSAGE_LIMIT = 32
 _DEFAULT_INSTRUCT_TEMPLATE = prompts.load("instruct.default.md")
 _DEFAULT_CONTEXT_TEMPLATE = prompts.load("context.default.md")
 _PRIMARY_REFERENCE_RE = re.compile(r"{{\s*(?:[#^/]\s*)?_(?:\.[A-Za-z_][\w-]*)*\s*}}")
@@ -78,6 +77,9 @@ class _AgicFrame:
     routes: AgicRoutes
     services: tuple[ToolService, ...]
     runtime_instructions: str = ""
+    recall: tuple[str, ...] = ("far", "near")
+    far: str = ""
+    near: tuple[Message, ...] = ()
 
 
 def prepare_agic(
@@ -86,6 +88,8 @@ def prepare_agic(
     agic: AgicDecl,
     *,
     variables: Mapping[str, object],
+    far: str = "",
+    near: Sequence[Message] = (),
 ) -> _AgicFrame:
     """Resolve runtime resources and render the complete model input."""
 
@@ -128,7 +132,11 @@ def prepare_agic(
 
     body_variables = _body_variables(agic, variables)
     body_types = _body_types(agic)
+    history_values = {"far": far, "near": [message.to_data() for message in near]}
+    body_variables.update(history_values)
+    body_types.update({"far": "Text", "near": "Json"})
     system_runtime = _runtime_context(context, run=run, agic=agic)
+    system_runtime.update(history_values)
     system_runtime.update(
         {
             "model": _model_context(model),
@@ -161,24 +169,10 @@ def prepare_agic(
         prompt_context=prompt_context,
         primary=_primary_parts(agic, variables),
     )
-    history = (
-        tuple(
-            context.store.recent_conversation_messages(
-                thread_id=run.thread,
-                limit=_TEXT_HISTORY_MESSAGE_LIMIT,
-                exclude_run_id=run.run_id,
-            )
-        )
-        if _recalls_history(agic)
-        else ()
-    )
-    messages = (
-        *history,
-        *_authored_messages(
-            rendered=rendered,
-            prompt_context=prompt_context,
-            fallback=fallback,
-        ),
+    messages = _authored_messages(
+        rendered=rendered,
+        prompt_context=prompt_context,
+        fallback=fallback,
     )
     instructions = _render_instructions(program, agic, system_runtime)
     runtime_instructions = (
@@ -200,13 +194,14 @@ def prepare_agic(
         runtime_tools=inner_tools,
         routes=routes,
         services=_tool_services(services, context.setup.envs),
+        recall=recall_sources(
+            next((item.values for item in agic.directives if item.name == "recall"), ())
+        ),
+        far=far,
+        near=tuple(near),
     )
     _log_prepared(prepared)
     return prepared
-
-
-def _directives(agic: AgicDecl, name: str) -> tuple[Directive, ...]:
-    return tuple(item for item in agic.directives if item.name == name)
 
 
 def _render_messages(
@@ -353,14 +348,6 @@ def _authored_messages(
     if last_user is None and prompt_context.strip():
         messages.insert(0, Message.user(prompt_context.strip()))
     return tuple(messages) if messages else (fallback,)
-
-
-def _recalls_history(agic: AgicDecl) -> bool:
-    directives = _directives(agic, "recall")
-    values = (
-        tuple(value for value in directives[0].values if value) if directives else ()
-    )
-    return not values or "auto" in values or "near" in values
 
 
 def _body_variables(

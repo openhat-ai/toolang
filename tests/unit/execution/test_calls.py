@@ -259,7 +259,6 @@ flow hello_flow(_: Text) -> Text:
             assert first.status == second.status == "succeeded"
             assert harness.adapter.invocations[1].call.messages == [
                 Message.user("hello world"),
-                Message.user("hello world"),
                 Message.assistant("first done"),
                 Message.user("next"),
             ]

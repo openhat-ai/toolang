@@ -345,9 +345,9 @@ agic calculate(_: Text) -> Boolean:
 
         connection = sqlite3.connect(reopened.db_path)
         try:
-            assert connection.execute(
-                "SELECT COUNT(*) FROM model_texts"
-            ).fetchone() == (1,)
+            assert connection.execute("SELECT COUNT(*) FROM contents").fetchone() == (
+                2,
+            )
             assert (
                 connection.execute(
                     "SELECT name FROM sqlite_master WHERE name = 'model_messages'"
@@ -359,9 +359,6 @@ agic calculate(_: Text) -> Boolean:
                 for step in model_steps
                 if isinstance(step.given, StoredModelStepGiven)
             ] == [1, 2]
-            assert connection.execute(
-                "SELECT COUNT(*) FROM model_toolsets"
-            ).fetchone() == (1,)
         finally:
             connection.close()
     finally:
@@ -376,6 +373,7 @@ def test_stored_model_call_delta_round_trip() -> None:
             "call": {
                 "instructions": "instruction-ref",
                 "delta": {"version": 1, "messages": []},
+                "recall": ["far", "near"],
                 "tools": None,
                 "output_schema": None,
                 "cont": {"cursor": "saved"},
@@ -389,62 +387,60 @@ def test_stored_model_call_delta_round_trip() -> None:
     assert stored_step_given_to_data("model", stored)["call"] == {
         "instructions": "instruction-ref",
         "delta": {"version": 1, "messages": []},
+        "recall": ["far", "near"],
         "tools": None,
         "output_schema": None,
         "cont": {"cursor": "saved"},
     }
 
 
-@pytest.mark.parametrize(
-    ("table", "column", "error"),
-    [
-        ("model_texts", "body", "model text is corrupted"),
-        ("model_toolsets", "data", "model toolset is corrupted"),
-    ],
-)
+@pytest.mark.parametrize("field", ["instructions", "tools"])
 def test_rebuild_model_call_rejects_corrupted_content_addressed_data(
     tmp_path: Path,
-    table: str,
-    column: str,
-    error: str,
+    field: str,
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
         step = _capture_replayable_model_step(store)
+        assert isinstance(step.given, StoredModelStepGiven)
         connection = sqlite3.connect(store.db_path)
         try:
             connection.execute(
-                f"UPDATE {table} SET {column} = ?",
-                ("corrupted",),
+                "UPDATE contents SET value = ? WHERE id = ?",
+                (b"corrupted", getattr(step.given.call, field)),
             )
             connection.commit()
         finally:
             connection.close()
 
-        with pytest.raises(ValueError, match=error):
+        with pytest.raises(ValueError, match="content is corrupted"):
             store.rebuild_model_call(step)
     finally:
         store.close()
 
 
 @pytest.mark.parametrize(
-    ("table", "error"),
+    ("field", "error"),
     [
-        ("model_texts", "model instructions are missing"),
-        ("model_toolsets", "model toolset is missing"),
+        ("instructions", "model instructions are missing"),
+        ("tools", "model toolset is missing"),
     ],
 )
 def test_rebuild_model_call_rejects_missing_content_addressed_data(
     tmp_path: Path,
-    table: str,
+    field: str,
     error: str,
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
         step = _capture_replayable_model_step(store)
+        assert isinstance(step.given, StoredModelStepGiven)
         connection = sqlite3.connect(store.db_path)
         try:
-            connection.execute(f"DELETE FROM {table}")
+            connection.execute(
+                "DELETE FROM contents WHERE id = ?",
+                (getattr(step.given.call, field),),
+            )
             connection.commit()
         finally:
             connection.close()

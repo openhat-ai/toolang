@@ -417,6 +417,7 @@ class ModelCallRefs:
     tools: str | None
     output_schema: dict[str, object] | None
     continuation: ModelContinuation | None
+    recall: tuple[str, ...] = ("none",)
 
     def __post_init__(self) -> None:
         if not isinstance(self.instructions, str) or not self.instructions:
@@ -1132,11 +1133,12 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
         "cont",
         "instructions",
         "delta",
+        "recall",
         "output_schema",
         "tools",
     }:
         raise ValueError(
-            "stored model call requires: cont, instructions, delta, tools, output_schema"
+            "stored model call requires: cont, instructions, delta, recall, tools, output_schema"
         )
     call = cast(Mapping[str, object], raw_call)
     instructions = call["instructions"]
@@ -1157,6 +1159,7 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
         call=ModelCallRefs(
             instructions=instructions,
             delta=delta_from_data(cast(Mapping[str, object], raw_delta)),
+            recall=tuple(cast(Sequence[str], call["recall"])),
             tools=raw_tools,
             output_schema=(
                 dict(cast(Mapping[str, object], raw_output_schema))
@@ -1186,6 +1189,7 @@ def stored_step_given_to_data(
             "call": {
                 "instructions": given.call.instructions,
                 "delta": delta_to_data(given.call.delta),
+                "recall": list(given.call.recall),
                 "tools": given.call.tools,
                 "output_schema": (
                     dict(given.call.output_schema)

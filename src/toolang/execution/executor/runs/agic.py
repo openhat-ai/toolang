@@ -190,10 +190,13 @@ async def execute(
     variables = {
         name: local.value for name, local in locals.items() if local.shape != "none"
     }
-    frames: dict[str, _AgicFrame] = {}
+    frames: dict[tuple[str, FieldRef | None], _AgicFrame] = {}
 
     def refresh_frame(state: ExecutionState, ref: ControlRef) -> _AgicFrame:
-        cached = frames.get(state.revision)
+        horizon = execution.horizon_for(binding.run_id, pending=True)
+        far, near = execution.message_history().select(horizon)
+        key = (state.revision, horizon)
+        cached = frames.get(key)
         if cached is not None:
             return replace(
                 cached,
@@ -222,9 +225,11 @@ async def execute(
             current_binding,
             candidate,
             variables=variables,
+            far=far,
+            near=near,
         )
         execution.require_model_pricing(prepared.model)
-        frames[state.revision] = prepared
+        frames[key] = prepared
         return prepared
 
     prepared = refresh_frame(binding.state, binding.state_ref)

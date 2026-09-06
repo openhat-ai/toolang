@@ -110,6 +110,16 @@ class _ThreadProjection(Generic[_Run]):
         selected = {run.id for run in roots}
         return tuple(run for run in self.runs if self._root_of[run.id] in selected)
 
+    def before(self, run: _Run) -> tuple[_Run, ...]:
+        """Restore a root's prefix even after a later rewind removed that root."""
+
+        for control in reversed(self._controls.get(str(run.thread), ())):
+            roots = self.history(str(run.thread), head=control.ref)
+            for index, root in enumerate(roots):
+                if root.id == run.id:
+                    return roots[:index]
+        raise ValueError(f"root is missing from its Thread: {run.id}")
+
     def membership(self, roots: Sequence[_Run]) -> dict[str, str]:
         """Map each selected physical Run to its root, preserving record order."""
 
