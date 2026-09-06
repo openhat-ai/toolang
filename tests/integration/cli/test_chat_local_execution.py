@@ -27,8 +27,8 @@ from toolang.cli.toolang.commands.chat.base import ChatExecutorMetadata
 from toolang.common.errors import ToolangError
 from toolang.execution.events import RunEvent
 from toolang.execution.history import RunHistory
-from toolang.execution.records import RunControlPayload
-from toolang.execution.schemas import RunRequest, RunnableRequest
+from toolang.execution.records import RunControlPayload, SteerControlPayload
+from toolang.execution.schemas import ControlInfo, RunRequest, RunnableRequest
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     AllowOverride,
@@ -336,18 +336,38 @@ def test_local_chat_queries_resources_and_reconciles_model_ceiling(
         harness.store.close()
 
 
-def test_local_chat_owner_loop_control_does_not_wait_on_itself() -> None:
+@pytest.mark.parametrize("steer", [False, True])
+def test_local_chat_owner_loop_control_does_not_wait_on_itself(steer: bool) -> None:
+    receipt = ControlInfo(
+        run_id="run_test",
+        index=1,
+        kind="steer",
+        timing="next_step",
+        request_id="request_steer",
+        status="pending",
+        payload=SteerControlPayload(()),
+        error=None,
+        created_at="2026-01-01T00:00:01Z",
+        finished_at=None,
+    )
+
     class RunClient:
         async def cancel(self, _run_id: str, **_kwargs: object) -> None:
             pass
+
+        async def steer(
+            self, _run_id: str, _message: Message, **_kwargs: object
+        ) -> ControlInfo:
+            return receipt
 
     class Submitted:
         def __init__(self) -> None:
             self.result_calls = 0
             self.callbacks: list[Any] = []
 
-        def result(self) -> None:
+        def result(self) -> ControlInfo:
             self.result_calls += 1
+            return receipt
 
         def add_done_callback(self, callback: Any) -> None:
             self.callbacks.append(callback)
@@ -365,13 +385,18 @@ def test_local_chat_owner_loop_control_does_not_wait_on_itself() -> None:
     session._submit = submit
     errors: list[str] = []
 
-    session.cancel("run_test", errors.append)
+    receipts: list[ControlInfo] = []
+    if steer:
+        session.steer("run_test", "adjust", errors.append, receipts.append)
+    else:
+        session.cancel("run_test", errors.append)
 
     assert submitted.result_calls == 0
     assert len(submitted.callbacks) == 1
     submitted.callbacks[0](submitted)
     assert submitted.result_calls == 1
     assert errors == []
+    assert receipts == ([receipt] if steer else [])
 
 
 def test_local_chat_uses_run_client_and_canonical_tracer(

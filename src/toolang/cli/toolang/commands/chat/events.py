@@ -7,7 +7,7 @@ from typing import Literal
 
 from toolang.execution.events import RunEvent
 
-from .base import AppContext, ChatRunState, RunRecovered
+from .base import AppContext, ChatRunState, RunRecovered, SteerError, SteerReceipt
 
 ChatUIEventType = Literal[
     "submit",
@@ -17,6 +17,7 @@ ChatUIEventType = Literal[
     "run_state",
     "cancel_error",
     "steer_error",
+    "steer_receipt",
     "interrupt",
     "eof",
     "cancel",
@@ -30,7 +31,7 @@ class ChatUIEvent:
     """One input or execution event consumed by the chat UI."""
 
     type: ChatUIEventType
-    value: str | RunEvent | ChatRunState | None = None
+    value: str | RunEvent | ChatRunState | SteerReceipt | SteerError | None = None
 
 
 def handle_run_event(event: RunEvent, app: AppContext) -> None:

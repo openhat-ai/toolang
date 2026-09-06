@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import signal
 from pathlib import Path
 import time
 
@@ -228,3 +229,92 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
         assert session.wait_for_exit() == 0, session.output
     finally:
         session.close()
+
+
+def test_chat_tui_keeps_multiple_steers_visible_until_their_step_finishes(
+    tmp_path: Path,
+) -> None:
+    session = ChatTuiPtySession.start(
+        "tests.system.cli.test_chat_tui_e2e", tmp_path, rows=12, columns=80
+    )
+    try:
+        session.wait_for("Toolang", "Ask or describe a task")
+        session.send(b"start run\r")
+        session.wait_for("Thinking...")
+        session.send(b"queued steer\r")
+        session.wait_for("1 item queued")
+        session.send(b"\t")
+        session.wait_for("meta+enter steer")
+        session.send(b"\x1b\r")
+        session.wait_for("will apply after the current step")
+        session.send(b"second steer\x1b\rthird steer\x1b\r")
+        steers = _wait_redrawn(session, "• 3 steers will apply after the current step")
+        assert "second steerthird steer" not in steers
+        assert "  third steer" in steers
+        session.send(b"queued follow-up\r")
+        _wait_redrawn(session, "[1] queued follow-up")
+        session.send(b"\t")
+        output = _wait_redrawn(session, "tab input")
+        assert "queued follow-up" in output
+        assert "sp collapse" in output
+        assert "Window too small" not in output
+        (tmp_path / "release-model").touch()
+        output = session.wait_for("succeeded")
+        assert "Traceback" not in output
+        assert "steers applied" not in output
+        session.send(b"\x11")
+        assert session.wait_for_exit() == 0, session.output
+    finally:
+        session.close()
+
+
+def _wait_redrawn(session: ChatTuiPtySession, value: str) -> str:
+    # Prompt Toolkit ordinarily writes only changed cells. Request a full redraw
+    # so assertions can read a complete row from the PTY byte stream.
+    deadline = time.monotonic() + 10
+    while value not in session.output and time.monotonic() < deadline:
+        session.process.send_signal(signal.SIGWINCH)
+        session._read(timeout=0.1)
+        time.sleep(0.02)
+    return session.wait_for(value, timeout=0.1)
+
+
+def _run_steer_fixture() -> None:
+    """Hold the first model call until the parent PTY test releases it."""
+    import asyncio
+    import sys
+
+    from tests.support.chat_tui_runner import run_chat_tui
+    from tests.support.execution_harness import (
+        AsyncGate,
+        ExecutionHarness,
+        ScriptedModelTurn,
+    )
+    from toolang.base.types.message import Message
+    from toolang.base.types.run import ModelCallResult
+
+    root = Path(sys.argv[1])
+
+    class FileGate(AsyncGate):
+        async def wait(self) -> None:
+            while not (root / "release-model").exists():
+                await asyncio.sleep(0.01)
+
+    result = ModelCallResult(message=Message.assistant("steered response"))
+    harness = ExecutionHarness.create(
+        root,
+        source="""
+agic chat(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[ScriptedModelTurn(result=result, gate=FileGate()), result, result],
+    )
+    harness.store.close()
+    run_chat_tui(harness.setup, harness.state, selects={})
+
+
+if __name__ == "__main__":
+    _run_steer_fixture()

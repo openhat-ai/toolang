@@ -366,7 +366,9 @@ class PromptBox:
                 VSplit(
                     [
                         Window(
-                            width=1,
+                            width=lambda: min(
+                                1, max(0, get_app().output.get_size().columns - 2)
+                            ),
                             style="class:input",
                             always_hide_cursor=True,
                             char=" ",
@@ -390,7 +392,9 @@ class PromptBox:
                             char=" ",
                         ),
                         Window(
-                            width=1,
+                            width=lambda: min(
+                                2, max(0, get_app().output.get_size().columns - 3)
+                            ),
                             style="class:input",
                             always_hide_cursor=True,
                             char=" ",
@@ -408,7 +412,9 @@ class PromptBox:
         return VSplit(
             [
                 Window(
-                    width=1,
+                    width=lambda: min(
+                        1, max(0, get_app().output.get_size().columns - 1)
+                    ),
                     style="class:control.run",
                     always_hide_cursor=True,
                     char=ACCENT_CELL,
@@ -592,7 +598,7 @@ class PromptBox:
 
     def _input_rows(self) -> int:
         terminal_width = get_app().output.get_size().columns
-        input_width = max(1, terminal_width - 3)
+        input_width = max(1, terminal_width - 4)
         # BufferControl reserves one trailing cursor cell per logical line.
         rows = sum(
             max(1, (get_cwidth(line) + input_width) // input_width)

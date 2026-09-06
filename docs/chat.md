@@ -71,6 +71,22 @@ syntax. A rejected steer retains the draft, while a locally accepted steer
 records it in input history and clears the unchanged draft. Ctrl+J inserts a
 newline, as does Shift+Enter when the terminal exposes it distinctly.
 
+Each submitted control keeps one blank row above and below its complete message,
+with two-cell text insets. Root input bars fill the terminal width and show the
+submitted runnable, model, and explicit reasoning value in their bottom-right
+padding, for example `agic:research · openai/gpt-5 · high`. This is the request
+snapshot, including queued overrides; later default changes do not alter it.
+Without a request model, the label reads `model unspecified`.
+
+Steers retain independent purple bars. A single live `•` line below them shows
+how many are sending or waiting to apply after the current step (or waiting for
+the next model call when no step is active). Control receipts and the consuming
+step's control references determine adoption. Adopted bars move into history
+without extra labels or success messages. If a run ends with a steer confirmed
+unapplied, only that bar's bottom-right padding says `not applied`. Uncertain
+delivery uses existing error feedback without asserting non-adoption. Steer
+accents remain unchanged across states. The status bar remains edge-aligned.
+
 Keyboard controls replace `/queue`, `/q`, `/steer`, and `/s`; those names are
 unregistered. Esc Esc, Ctrl+C, and Ctrl+D apply only while Input is focused.
 They never cancel the run, clear the draft, or exit Chat from Queue. Esc only
