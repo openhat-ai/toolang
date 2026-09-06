@@ -141,17 +141,39 @@ order in both directions; reversing the entire ascending result is therefore
 incorrect. Empty input returns an empty list without scorer calls. Scoring
 failure fails the statement before its result binding commits.
 
-Sorting and selection are separate statements with separate bindings and Step
-records. `keep last N` after descending sort preserves the previous bottom-N
-output order. A named or discarded rank-with-selection cannot be split
-mechanically: an explicit helper Flow can sort its own `_` and then select,
-letting the caller bind or discard the helper result without changing its `_`.
-Such a helper adds an observable Run and follows existing publication rules
-(public in `agent.too`, private unless exported in a Flow module). No automatic
-helper generation or new visibility rule is introduced. The tracked migration
-sites currently use plain rank-with-selection and become two statements.
-There is no promise of identical Step paths, retry prefixes, or atomicity
-across these source rewrites.
+Sorting and selection are two independent statements, not one fused operation:
+
+```too
+sort descending by score
+keep first 3
+```
+
+The old `rank score top 3` committed the selected result once, in one `par`
+Step. The new sort commits the complete sorted collection to `_` in a `par`
+Step; keep then commits the selected collection to `_` in a `value` Step.
+Keep performs local positional selection with no model call or child Run.
+Scoring-call counts are unchanged. Inspection exposes both Steps, and retry
+after a committed sort must reuse its result instead of scoring again.
+Cancellation between them can leave the sorted collection committed. This is
+an intentional change to the statement boundary, not an atomic migration.
+
+For unbound statements, the final value and order match the previous result.
+Use `keep last N` after descending sort for bottom-N; ascending plus first-N
+would change the output order. The tracked migration sites currently use
+unbound rank-with-selection and become two statements. Step paths and retry
+prefixes are not preserved across source rewrites.
+
+Named/discarded legacy forms have no general semantics-preserving rewrite in
+this integration. For example, `sort ...` followed by `let best = keep first 3`
+leaves `_` holding the complete sorted collection, whereas the old
+`let best = rank score top 3` left `_` unchanged. Discarding keep likewise
+does not undo the sort binding. Do not recommend a generic helper Flow as an
+equivalent substitute: current runnable inputs begin as items and `run` binds
+an item result, so a typed array does not preserve the collection shape of
+rank. Users of these old forms must explicitly re-author their workflow and
+accept its new binding boundaries. Collection-preserving composition, block
+bindings, new input-selection syntax, and automatic operation fusion require
+separate definitions and are outside this upgrade.
 
 Update dispatch, sort result transformation, and progress summaries together.
 Keep the execution Step kind `par`: it describes parallel execution and is
@@ -220,8 +242,10 @@ Parsing remains in `toolang.lang`; execution consumes the semantic AST.
 4. Sort ascending/descending over mixed positive, negative, and equal numeric
    scores; cover empty input, scorer failure, nonnumeric result, named/discard
    bindings, item types, and provenance. Verify sort followed by first/last
-   selection, including N=0 and N larger than the input, and helper migration
-   preserving the caller's primary local.
+   selection, including N=0 and N larger than the input. Assert two committed
+   Steps (`par`, then `value`), no extra model calls for positional selection,
+   and the distinct `_`/named-local outcomes when selection is bound or
+   discarded. Do not claim equivalence with old bound rank-with-selection.
 5. Verify zero-repeat leaves locals unchanged, final until sees updated locals,
    early stopping works, and evaluator failure fails the loop. New-version
    retry restores committed loop/selection locals without rescoring committed
