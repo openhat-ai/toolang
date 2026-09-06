@@ -138,9 +138,11 @@ def _control_bar_lines(
 ) -> list[RenderableType]:
     output_width = width or terminal_width()
     content_width = max(1, output_width - 4)
+    body = Text(message)
+    body.expand_tabs()
     wrapped_lines = [
         wrapped_line
-        for line in message.splitlines() or [""]
+        for line in body.plain.splitlines() or [""]
         for wrapped_line in wrap_display(line, content_width)
     ]
     lines: list[RenderableType] = [

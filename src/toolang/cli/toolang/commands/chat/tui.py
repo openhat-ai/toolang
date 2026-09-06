@@ -263,7 +263,7 @@ class ChatTuiApp:
         )
         self.status_bar = widgets.StatusBar(*self._status_labels())
         self.prompt = widgets.PromptBox(
-            self._enqueue_ui_event,
+            self._handle_prompt_event,
             self._invalidate_ui,
             on_input=self._clear_status_error,
             history_store=self.input_history,
@@ -411,7 +411,13 @@ class ChatTuiApp:
         reserved_rows = self.queue_panel.rows() + self.prompt.rows() + 1
         return max(0, terminal_rows - reserved_rows)
 
-    def _enqueue_ui_event(self, event: ChatUIEvent) -> None:
+    def _handle_prompt_event(self, event: ChatUIEvent) -> None:
+        if event.type == "steer":
+            # Key handlers already run on the UI loop. Accept and clear this
+            # draft before the key processor reads the next buffered input.
+            self.handle_ui_event(event)
+            self._commit_ui_update()
+            return
         self.ui_events.put_nowait(event)
 
     def _refresh_prompt_completions(self) -> None:

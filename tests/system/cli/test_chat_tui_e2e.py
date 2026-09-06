@@ -247,10 +247,10 @@ def test_chat_tui_keeps_multiple_steers_visible_until_their_step_finishes(
         session.wait_for("meta+enter steer")
         session.send(b"\x1b\r")
         session.wait_for("will apply after the current step")
-        session.send(b"second steer\x1b\r")
-        _wait_redrawn(session, "• 2 steers will apply after the current step")
-        session.send(b"third steer\x1b\r")
-        _wait_redrawn(session, "• 3 steers will apply after the current step")
+        session.send(b"second steer\x1b\rthird steer\x1b\r")
+        steers = _wait_redrawn(session, "• 3 steers will apply after the current step")
+        assert "second steerthird steer" not in steers
+        assert "  third steer" in steers
         session.send(b"queued follow-up\r")
         _wait_redrawn(session, "[1] queued follow-up")
         session.send(b"\t")

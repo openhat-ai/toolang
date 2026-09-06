@@ -96,19 +96,26 @@ class ChatRunPresenter:
                 f"Could not steer the run: {friendly_error(error.message)}"
             )
         )
-        self._refresh_steer_feedback(app)
+        self._adopt_steers(app)
         return True
 
     def mark_disconnected(self) -> None:
         self._stream_complete = False
 
+    def _is_adopted(self, control: ControlInfo) -> bool:
+        return (
+            control.status == "applied"
+            or (control.run_id, control.index) in self._consumed
+        )
+
     def _adopt_steers(self, app: AppContext) -> None:
         for key, submission in list(self._steers.items()):
             control = submission.control
-            if control is not None and (
-                control.status == "applied"
-                or (control.run_id, control.index) in self._consumed
-            ):
+            if control is None:
+                # An earlier outstanding receipt may belong to the same
+                # consuming step. Keep that batch in authored order.
+                break
+            if self._is_adopted(control):
                 app.finalize_block(submission.block)
                 del self._steers[key]
         self._refresh_steer_feedback(app)
@@ -117,7 +124,9 @@ class ChatRunPresenter:
         self._discard(self._feedback, app)
         self._feedback.sending = sum(s.control is None for s in self._steers.values())
         self._feedback.accepted = sum(
-            s.control is not None and s.control.status == "pending"
+            s.control is not None
+            and s.control.status == "pending"
+            and not self._is_adopted(s.control)
             for s in self._steers.values()
         )
         self._feedback.active_step = bool(self._active_steps)

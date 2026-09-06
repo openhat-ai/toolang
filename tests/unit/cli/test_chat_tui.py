@@ -4210,7 +4210,12 @@ def test_chat_tui_space_toggles_queue_and_tab_only_switches_focus() -> None:
             assert app.prompt.buffer.text == " ed"
             press(Keys.Escape)
             press(Keys.Enter)
-            assert app.ui_events.get_nowait() == ChatUIEvent("steer", " ed")
+            assert app.ui_events.empty()
+            assert app.prompt.buffer.text == ""
+            assert any(
+                isinstance(block, blocks.RunSteerBlock) and block.message == " ed"
+                for block in app.unfinalized_blocks
+            )
             assert [item.source for item in app.queue] == ["first", "second"]
             app.prompt.buffer.reset()
 
@@ -6044,3 +6049,99 @@ def test_chat_extremely_narrow_controls_retain_a_body_cell(
     assert not lines[0].strip() and not lines[-1].strip()
     assert all(get_cwidth(line) == width for line in lines)
     assert "".join(line.strip() for line in lines) == "abc"
+
+
+def test_chat_burst_steers_keep_each_draft_independent() -> None:
+    async def exercise() -> None:
+        with create_app_session(input=DummyInput(), output=DummyOutput()):
+            app = tui.ChatTuiApp(
+                thread_id="term_busy",
+                setting=FakeClient().initial_setting(),
+                home="/tmp/agent",
+                input_history=None,
+                client=FakeClient(),
+            )
+            app.active_run_id = "run_busy"
+            app.app.timeoutlen = None
+            try:
+                with set_app(app.app):
+                    for message in ("first steer", "second steer"):
+                        app.prompt.buffer.insert_text(message)
+                        for key in (Keys.Escape, Keys.ControlM):
+                            app.app.key_processor.feed(KeyPress(key))
+                            app.app.key_processor.process_keys()
+                    while not app.ui_events.empty():
+                        app.handle_ui_event(app.ui_events.get_nowait())
+                assert [
+                    block.message
+                    for block in app.unfinalized_blocks
+                    if isinstance(block, blocks.RunSteerBlock)
+                ] == ["first steer", "second steer"]
+                assert app.prompt.buffer.text == ""
+                assert app.prompt.history.get_strings() == [
+                    "first steer",
+                    "second steer",
+                ]
+            finally:
+                await app.app.cancel_and_wait_for_background_tasks()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("first_result", ["receipt", "error", "run_end"])
+def test_chat_reordered_receipts_preserve_a_consumed_batch_in_history(
+    first_result: str,
+) -> None:
+    app = FakeApp()
+    events.handle_run_event(_run_begin(), app)
+    first = _submit_test_steer(app, "first", "first steer")
+    second = _submit_test_steer(app, "second", "second steer")
+    events.handle_run_event(
+        replace(
+            _model_step_begin(),
+            preceded_by=(
+                ControlRef.for_run("run_1", 1),
+                ControlRef.for_run("run_1", 2),
+            ),
+        ),
+        app,
+    )
+    app.presenter.handle_steer_receipt(
+        SteerReceipt("second", "run_1", _steer_control(2)), app
+    )
+    assert _steer_feedback(app).strip() == "• Sending 1 steer"
+    assert not any(b is second for b in app.finalized)
+    if first_result == "receipt":
+        app.presenter.handle_steer_receipt(
+            SteerReceipt("first", "run_1", _steer_control(1)), app
+        )
+    elif first_result == "error":
+        app.presenter.handle_steer_error(
+            SteerError("first", "run_1", "receipt lost"), app
+        )
+    else:
+        events.handle_run_event(_run_end(status="canceled"), app)
+    assert [id(b) for b in app.finalized if isinstance(b, blocks.RunSteerBlock)] == [
+        id(first),
+        id(second),
+    ]
+    assert not first.not_applied and not second.not_applied
+    assert not _steer_feedback(app)
+
+
+@pytest.mark.parametrize("kind", ["run", "steer", "slash"])
+def test_chat_tabbed_control_body_keeps_padding_on_every_row(kind: str) -> None:
+    message = "abcdef\tghi\tjkl"
+    if kind == "run":
+        block = blocks.RunControlBlock.create(message)
+    elif kind == "steer":
+        block = blocks.RunSteerBlock.create(
+            message=message, run_id="run_1", max_width=20
+        )
+    else:
+        block = blocks.SlashBlock(message, (), max_width=20)
+    lines = _render_text(block.render(), width=20).splitlines()
+    body = [line for line in lines if line.strip()]
+    assert len(body) == 2
+    assert all(line.startswith("  ") and line.endswith("  ") for line in body)
+    assert all(get_cwidth(line) == 20 for line in body)
