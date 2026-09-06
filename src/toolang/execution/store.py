@@ -38,6 +38,7 @@ from .inspection import (
     child_run_relation_order,
 )
 from .records import (
+    CompactControlPayload,
     CreateControlPayload,
     ControlPayload,
     ExecuteControlPayload,
@@ -107,7 +108,7 @@ from .schemas import Record, RecordSelection, select_record
 from .thread_view import ThreadView, _ThreadProjection
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 39
+_SCHEMA_VERSION = 40
 _SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -282,6 +283,7 @@ class RunStore:
         request_id: str | None,
         created_at: str,
         state_ref: ControlRef | None = None,
+        horizon: FieldRef | None = None,
         authored_input: RunnableInputRaw | None = None,
         authored_commands: tuple[RunCommand, ...] = (),
         authored_session_commands: tuple[RunCommand, ...] = (),
@@ -335,6 +337,8 @@ class RunStore:
                     is None
                 ):
                     raise ValueError(f"thread not found: {thread}")
+                if horizon is not None:
+                    self._validate_horizon(horizon, thread=thread)
                 if parent is not None:
                     parent_row = self._conn.execute(
                         """
@@ -385,6 +389,7 @@ class RunStore:
                     model=model,
                     model_request=model_request,
                     input=locals,
+                    horizon=horizon,
                     sandbox=sandbox,
                     authored_input=authored_input,
                     authored_commands=authored_commands,
@@ -588,12 +593,49 @@ class RunStore:
     ) -> ControlRecord:
         """Record one successfully recalled resource without scheduling work."""
 
+        return self._accept_runtime_control(
+            run_id=run_id,
+            kind="recall",
+            payload=payload,
+            triggered_by=triggered_by,
+            created_at=created_at,
+        )
+
+    def accept_compact_control(
+        self,
+        *,
+        run_id: str,
+        horizon: FieldRef,
+        triggered_by: StepRef | None,
+        created_at: str,
+    ) -> ControlRecord:
+        """Record an available compact output for adoption by the target Run."""
+
+        return self._accept_runtime_control(
+            run_id=run_id,
+            kind="compact",
+            payload=CompactControlPayload(horizon),
+            triggered_by=triggered_by,
+            created_at=created_at,
+        )
+
+    def _accept_runtime_control(
+        self,
+        *,
+        run_id: str,
+        kind: Literal["recall", "compact"],
+        payload: RecallControlPayload | CompactControlPayload,
+        triggered_by: StepRef | None,
+        created_at: str,
+    ) -> ControlRecord:
         with self.write_transaction():
             run = self._conn.execute(
-                "SELECT status FROM runs WHERE id = ?", (run_id,)
+                "SELECT status, thread FROM runs WHERE id = ?", (run_id,)
             ).fetchone()
             if run is None or run["status"] not in {"pending", "running"}:
                 raise ValueError(f"run is not active: {run_id}")
+            if isinstance(payload, CompactControlPayload):
+                self._validate_horizon(payload.horizon, thread=str(run["thread"]))
             if triggered_by is not None:
                 step = self._conn.execute(
                     "SELECT kind FROM steps WHERE id = ?", (str(triggered_by),)
@@ -603,7 +645,7 @@ class RunStore:
                     or step is None
                     or step["kind"] != "tool"
                 ):
-                    raise ValueError("recall trigger must be a Tool Step in its run")
+                    raise ValueError(f"{kind} trigger must be a Tool Step in its run")
             row = self._conn.execute(
                 'SELECT COALESCE(MAX("index"), -1) + 1 FROM controls WHERE target = ?',
                 (run_id,),
@@ -611,7 +653,7 @@ class RunStore:
             ref = ControlRef.for_run(run_id, int(row[0]))
             self._insert_control(
                 ref=ref,
-                kind="recall",
+                kind=kind,
                 timing="immediate",
                 payload=payload,
                 triggered_by=triggered_by,
@@ -626,6 +668,21 @@ class RunStore:
                 "SELECT * FROM controls WHERE id = ?", (str(ref),)
             ).fetchone()
         return _control_from_row(row)
+
+    def _validate_horizon(self, horizon: FieldRef, *, thread: str) -> None:
+        """Check a new reference inside its write transaction, never on record reads."""
+
+        if not isinstance(horizon.record, RunRef) or horizon.tokens != ("output",):
+            raise ValueError("horizon must reference a Run output")
+        source = self.get_run(run_id=str(horizon.record))
+        if source is None or source.output is None:
+            raise ValueError(f"horizon output is not available: {horizon}")
+        output = self.resolve_local(source.output).value
+        if (
+            not isinstance(output, Mapping)
+            or cast(Mapping[str, object], output).get("thread") != thread
+        ):
+            raise ValueError(f"horizon output must target Thread {thread}: {horizon}")
 
     def accept_run_control(
         self,

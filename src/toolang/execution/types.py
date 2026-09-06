@@ -1873,6 +1873,7 @@ ControlKind = Literal[
     "recall",
     "retry",
     "reload",
+    "compact",
     "execute",
     "steer",
     "cancel",
