@@ -2586,19 +2586,17 @@ class _Execution:
             raise _RunCanceled(claimed[0])
 
     def record_output(self, run_id: str, ref: FieldRef) -> None:
-        step = next(
-            (
-                item
-                for item in reversed(self.store.list_steps(run_id=run_id))
-                if FieldRef.from_path(item.ref, "output", "value") == ref
-                and item.output is not None
-            ),
-            None,
+        record = (
+            self.store.get_run(run_id=str(ref.record))
+            if isinstance(ref.record, RunRef)
+            else self.store.get_step(ref=ref.record)
+            if isinstance(ref.record, StepRef)
+            else None
         )
-        if step is not None and step.output is not None:
+        if record is not None and record.output is not None:
             self._run_outputs[run_id] = replace(
-                step.output,
-                value=TypedRef(ref, step.output.type),
+                record.output,
+                value=TypedRef(ref, record.output.type),
                 name="_",
             )
 

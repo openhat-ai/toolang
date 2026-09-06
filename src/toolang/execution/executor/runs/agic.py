@@ -14,7 +14,7 @@ from toolang.base.types.run import ModelContinuation, ModelUsage, ToolCall
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.common.time import utc_now
-from toolang.lang.ast import AgicDecl, RunStmt, Span, StructDecl
+from toolang.lang.ast import AgicDecl, StructDecl
 from toolang.lang.errors import ToolangOutputError
 from toolang.lang.input import coerce_output, output_json_schema
 from toolang.state.state import AgentState, StatePublication
@@ -24,13 +24,13 @@ from ...events import StepBegin, StepEnd
 from ...records import RunControlPayload, ControlRecord
 from ...types import (
     ControlRef,
+    ErrorMessage,
     FieldRef,
     Local as RecordLocal,
     RunRef,
     StepRef,
     TypedRef,
     ToolStepGiven,
-    ToolStepNoted,
     local_to_protocol_data,
 )
 from ..common import (
@@ -47,7 +47,6 @@ from ..common import (
 from ..limits import _ModelAccounting
 from ..prepare import _AgicFrame, prepare_agic
 from ..steps import model as model_step
-from ..steps import run as run_step
 from ..steps import tool as tool_step
 from ...runnables import (
     ResolvedRunnable,
@@ -303,7 +302,7 @@ async def _execute(state: _AgicState) -> Message | None:
         state.record_output(ref)
         if result.tool_calls:
             if state.steer_before_next_step():
-                _append_canceled_tool_results(state, result.tool_calls)
+                await tool_step.skip(state, result.tool_calls)
                 continue
             for index, call in enumerate(result.tool_calls):
                 try:
@@ -326,13 +325,13 @@ async def _execute(state: _AgicState) -> Message | None:
                             tool_call_count=len(result.tool_calls),
                         )
                     elif call.name.startswith("_too__"):
-                        _reject_runtime_tool(state, call)
+                        await _reject_runtime_tool(state, call)
                     else:
                         await tool_step.execute(state, call)
                 except asyncio.CancelledError:
                     if not state.immediate_steer():
                         raise
-                    _append_canceled_tool_results(state, result.tool_calls[index:])
+                    await tool_step.skip(state, result.tool_calls[index + 1 :])
                     break
             continue
         if inputs := state.pending_inputs():
@@ -364,7 +363,7 @@ async def _reload(
             output=output,
         )
     except asyncio.CancelledError:
-        await _cancel_runtime_tool(state, step)
+        await tool_step.cancel(state, step, call)
         raise
     except Exception as exc:
         part = ToolResultPart(
@@ -382,66 +381,63 @@ async def _run(
     state: _AgicState,
     call: ToolCall,
 ) -> None:
-    """Adapt one model runtime call to the ordinary Run Step executor."""
+    """Execute a child owned by this Tool Step and persist its tool response."""
 
-    state.before_tool_call()
-    step_index = state.next_step
-    state.next_step += 1
+    step = await _begin_runtime_tool(state, call)
     run = state.prepared.run
-    path = StepRef.from_local(run.run_id, (step_index,))
     requested = call.input.get("runnable")
-    statement = RunStmt(
-        binding="_",
-        runnable=requested if isinstance(requested, str) else "",
-        span=Span(line=1),
-    )
-
-    def validate() -> None:
+    error = None
+    try:
         unknown = sorted(set(call.input) - {"runnable", "input"})
         if unknown:
-            raise ValueError(f"unknown _too/run input fields: {', '.join(unknown)}")
+            raise _RunRejected(f"unknown _too/run input fields: {', '.join(unknown)}")
         if not isinstance(requested, str) or not requested.strip():
-            raise ValueError("_too/run requires a non-empty runnable ref")
-
-    try:
-        result = await run_step.execute(
-            execution,
-            binding=run,
-            path=path,
-            statement=statement,
-            locals={},
-            controls=(),
-            occurrence=None,
-            runnable=statement.runnable,
-            validate=validate,
+            raise _RunRejected("_too/run requires a non-empty runnable ref")
+        result = await execution.execute_child(
+            run,
+            {},
+            step,
+            requested,
+            None,
             resolution="state",
             raw_input=call.input.get("input", {}),
-            inputs=_run_call_inputs(state, call),
-            begin_step=state.start_step,
             authorize=lambda target: _authorize_run(state, target),
+            state_snapshot=execution.state_for_step(step),
         )
         part = _run_success_part(execution, call, result)
-        state.output = FieldRef.from_path(path, "output", "value")
+        state.output = FieldRef.from_path(
+            RunRef(part.output["run_id"]), "output", "value"
+        )
         state.record_output(state.output)
     except asyncio.CancelledError:
+        await tool_step.cancel(state, step, call)
         raise
-    except _StepFailed as exc:
-        if not isinstance(exc.__cause__, _RunRejected | _ExecutionFailed):
-            raise
-        details = (
-            exc.__cause__.details if isinstance(exc.__cause__, _RunRejected) else {}
+    except (_RunRejected, _ExecutionFailed) as exc:
+        details = exc.details if isinstance(exc, _RunRejected) else {}
+        message = str(exc) or type(exc).__name__
+        error = (
+            exc.error if isinstance(exc, _ExecutionFailed) else ErrorMessage(message)
         )
-        error = str(exc) or type(exc).__name__
         part = ToolResultPart(
             tool_call_id=call.tool_call_id,
             call_id=call.call_id,
             tool_name=call.name,
             tool_family=call.name,
-            output={"error": error, **details},
-            error=error,
+            output={"error": message, **details},
+            error=message,
         )
-    state.messages.append(Message(role="tool", parts=(part,)))
-    state.last_step = step_index
+    except Exception as exc:
+        await state.emit(
+            StepEnd(
+                step=step,
+                kind="tool",
+                status="failed",
+                error=ErrorMessage(str(exc) or type(exc).__name__),
+                finished_at=utc_now(),
+            )
+        )
+        raise _StepFailed(step, exc) from exc
+    await tool_step.finish(state, step, part, error=error)
 
 
 def _authorize_run(state: _AgicState, target: ResolvedRunnable) -> None:
@@ -501,7 +497,7 @@ async def _execute_transfer(
         )
         committed = execution.commit_execute(binding, triggered_by=step)
     except asyncio.CancelledError:
-        await _cancel_runtime_tool(state, step)
+        await tool_step.cancel(state, step, call)
         raise
     except Exception as exc:
         message = (str(exc) or type(exc).__name__)[:2048]
@@ -521,6 +517,49 @@ async def _execute_transfer(
         if not isinstance(exc, (_RunRejected, ToolangError, TypeError, ValueError)):
             raise _StepFailed(step, exc) from exc
         return
+    try:
+        await tool_step.finish(
+            state,
+            step,
+            ToolResultPart(
+                tool_call_id=call.tool_call_id,
+                call_id=call.call_id,
+                tool_name=call.name,
+                tool_family=call.name,
+                output={"executed": target.qualified},
+            ),
+        )
+    except asyncio.CancelledError:
+        if not state.immediate_steer():
+            raise
+        # Steer can interrupt delivery, but cannot undo a committed execute.
+    raise _ExecuteCommitted(committed, target.executable, locals)
+
+
+async def _begin_runtime_tool(state: _AgicState, call: ToolCall) -> StepRef:
+    state.before_tool_call()
+    step = StepRef.from_local(state.prepared.run.run_id, (state.next_step,))
+    state.next_step += 1
+    await tool_step.begin(
+        state,
+        step,
+        call,
+        lambda _state, ref: StepBegin(
+            step=step,
+            kind="tool",
+            state=ref,
+            input=(_runtime_call_source(state, call),),
+            given=ToolStepGiven(plugin="_too", call=call),
+            started_at=utc_now(),
+        ),
+    )
+    return step
+
+
+async def _reject_runtime_tool(state: _AgicState, call: ToolCall) -> None:
+    """Record the failure of one unknown reserved runtime call."""
+
+    step = await _begin_runtime_tool(state, call)
     await tool_step.finish(
         state,
         step,
@@ -529,58 +568,8 @@ async def _execute_transfer(
             call_id=call.call_id,
             tool_name=call.name,
             tool_family=call.name,
-            output={"executed": target.qualified},
+            error=f"unknown inner runtime tool: {call.name}",
         ),
-    )
-    raise _ExecuteCommitted(committed, target.executable, locals)
-
-
-async def _begin_runtime_tool(state: _AgicState, call: ToolCall) -> StepRef:
-    state.before_tool_call()
-    step = StepRef.from_local(state.prepared.run.run_id, (state.next_step,))
-    state.next_step += 1
-    await state.start_step(
-        lambda _state, ref: StepBegin(
-            step=step,
-            kind="tool",
-            state=ref,
-            input=(_runtime_call_source(state, call),),
-            given=ToolStepGiven(plugin="_too", call=call),
-            started_at=utc_now(),
-        )
-    )
-    return step
-
-
-async def _cancel_runtime_tool(state: _AgicState, step: StepRef) -> None:
-    await state.emit(
-        StepEnd(
-            step=step,
-            kind="tool",
-            status="canceled",
-            noted=ToolStepNoted(summary="canceled"),
-            finished_at=utc_now(),
-        )
-    )
-
-
-def _reject_runtime_tool(state: _AgicState, call: ToolCall) -> None:
-    """Reject an unknown reserved runtime tool without creating a Tool Step."""
-
-    state.before_tool_call()
-    state.messages.append(
-        Message(
-            role="tool",
-            parts=(
-                ToolResultPart(
-                    tool_call_id=call.tool_call_id,
-                    call_id=call.call_id,
-                    tool_name=call.name,
-                    tool_family=call.name,
-                    error=f"unknown inner runtime tool: {call.name}",
-                ),
-            ),
-        )
     )
 
 
@@ -596,7 +585,7 @@ def _run_success_part(
         or not isinstance(target.ref.record, RunRef)
         or target.ref.tokens != ("output", "value")
     ):
-        raise RuntimeError("Run Step result is missing its child run reference")
+        raise RuntimeError("runtime run result is missing its child run reference")
     child = execution.store.get_run(run_id=str(target.ref.record))
     if child is None:
         raise RuntimeError(f"child run not found: {target.ref.record}")
@@ -634,28 +623,6 @@ def _run_success_part(
     )
 
 
-def _run_call_inputs(state: _AgicState, call: ToolCall) -> tuple[FieldRef, ...]:
-    source = state.tool_call_sources.get(call.tool_call_id)
-    if source is not None:
-        return (
-            FieldRef.from_path(
-                StepRef.from_local(state.prepared.run.run_id, (source[0],)),
-                "output",
-                "value",
-                source[1],
-            ),
-        )
-    if state.last_step is not None:
-        return (
-            FieldRef.from_path(
-                StepRef.from_local(state.prepared.run.run_id, (state.last_step,)),
-                "output",
-                "value",
-            ),
-        )
-    return state.initial_inputs
-
-
 def _runtime_call_source(state: _AgicState, call: ToolCall) -> FieldRef:
     """Return the authoritative Model ToolCall part for one runtime request."""
 
@@ -667,37 +634,4 @@ def _runtime_call_source(state: _AgicState, call: ToolCall) -> FieldRef:
         "output",
         "value",
         source[1],
-    )
-
-
-def _append_canceled_tool_results(
-    state: _AgicState,
-    calls: tuple[ToolCall, ...],
-) -> None:
-    """Complete skipped tool calls in model history without executing them."""
-
-    state.next_model_inputs = tuple(
-        FieldRef.from_path(
-            StepRef.from_local(state.prepared.run.run_id, (source[0],)),
-            "output",
-            "value",
-            source[1],
-        )
-        for call in calls
-        if (source := state.tool_call_sources.get(call.tool_call_id)) is not None
-    )
-    state.messages.append(
-        Message(
-            role="tool",
-            parts=tuple(
-                ToolResultPart(
-                    tool_call_id=call.tool_call_id,
-                    call_id=call.call_id,
-                    tool_name=call.name,
-                    tool_family=call.name,
-                    error="canceled by steer",
-                )
-                for call in calls
-            ),
-        )
     )

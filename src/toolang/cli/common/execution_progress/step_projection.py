@@ -28,7 +28,7 @@ from toolang.lang.ast import (
     StormStmt,
 )
 
-from .formatting import one_line, output_parts, tool_label
+from .formatting import one_line, output_parts, run_label, tool_label
 from .types import ProgressRow, ProgressTone
 
 
@@ -43,6 +43,8 @@ def live_row(
     if begin.kind == "model":
         detail = one_line(preview)
         text = f"• {detail}" if detail else "• Thinking..."
+    elif dynamic_run:
+        text = f"• Running {run_label(begin.given)}..."
     elif begin.kind == "tool":
         summary = (
             begin.given.summary
@@ -51,9 +53,6 @@ def live_row(
         )
         text = f"• {summary}"
         return ProgressRow(text, "active", surface="tool_summary")
-    elif begin.kind == "run" and dynamic_run:
-        runnable = one_line(getattr(begin.given, "runnable", "")) or "runnable"
-        text = f"• Running {runnable}..."
     else:
         text = f"• running {begin.kind}"
     return ProgressRow(text, "active")
@@ -109,8 +108,8 @@ def trace_terminal_rows(
             return _error_rows("failed", error, tone)
         return _error_rows("canceled", error, tone)
 
-    if begin.kind == "run" and dynamic_run:
-        runnable = one_line(getattr(begin.given, "runnable", "")) or "runnable"
+    if dynamic_run:
+        runnable = run_label(begin.given)
         if event.status == "succeeded":
             return (ProgressRow(f"• Ran {runnable}", tone),)
         status = "Failed to run" if event.status == "failed" else "Canceled"
