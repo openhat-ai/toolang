@@ -1,17 +1,18 @@
-# Runtime tool calls
+# History and runtime tool calls
 
 ## Goal and scope
 
-Provide observable runtime operations for history inspection, resource recall,
-and compaction. Reuse Tool Steps, controls, and the
+Provide bounded history reads and observable runtime operations for resource
+recall and compaction. Reuse Tool Steps, controls, and the
 [ModelCall assembly contract](control-driven-model-assembly.md); assembly remains
 a separate implementation. This PR defines the work and ships no product code.
 
 In scope: tool classification, shared plugin registration, `_too` to `_toolang`,
-`_me` to `me`, the four new calls below, both preflights, and their
-persistence/progress integration.
+`_me` to `me`, the history toolset, three new runtime calls, both preflights,
+and persistence/progress integration.
 Out of scope: runspace selection, filesystem permission expansion, memory plugins,
-new Step kinds, new retry restrictions, and redesigning MCP transport or assembly.
+new Step kinds, new retry restrictions, message grouping in history readers, and
+redesigning MCP transport or assembly.
 
 ## Terms and catalog
 
@@ -21,23 +22,24 @@ new Step kinds, new retry restrictions, and redesigning MCP transport or assembl
 - **Model-triggered / runtime-triggered** describes who initiates a call,
   independently of the tool's responsibility.
 
-Neither plugin provenance nor user configuration determines this classification.
-Do not use internal, normal, or plugin tools as additional tool categories.
-
 ```text
 Tool calls
 ├── Runtime tool calls: _toolang/*
-│   ├── Model-triggered: run, execute, reload, inspect, pick
+│   ├── Model-triggered: run, execute, reload, pick
 │   └── Runtime-triggered: honor, compact
-└── User tool calls: me/*, fs/*, shell/*, service/*, ...
+└── User tool calls: history/*, me/*, fs/*, shell/*, service/*, ...
 ```
 
-Preserve existing run/execute/reload behavior. All four additions use ordinary
-Tool Steps; add no generic recall or assembly tool.
+Preserve existing run/execute/reload behavior. All additions use ordinary Tool
+Steps. History serves both user investigations and compact Runs; being called by
+a compact Run does not make it runtime-facing.
 
 | New call | Trigger | Input and responsibility | Durable result |
 | --- | --- | --- | --- |
-| `_toolang/inspect` | Model | Read bounded Thread/Run history or a Run's output. | Tool result; no control. |
+| `history/read_threads` | Model | List the current agent's Threads. | Records and cursor; no control. |
+| `history/read_runs` | Model | List a Thread's logical root Runs. | Records and cursor; no control. |
+| `history/read_steps` | Model | Read a Run's Steps and Controls. | Records and cursor; no control. |
+| `history/read_output` | Model | Read a Run's stored output and status. | Typed output; no control. |
 | `_toolang/pick` | Model | Read skill/service guidance selected by catalog `ref`. | Tool result and recall control. |
 | `_toolang/honor` | Tool call preflight | Read applicable workspace rules for resolved access paths. | Tool result and recall control(s). |
 | `_toolang/compact` | Model call preflight | Obtain a complete-prefix summary using the assembly budget and boundaries. | Tool result and compact control. |
@@ -73,43 +75,129 @@ references follow the existing unavailable-resource behavior. These names and
 terms replace those in the [earlier naming plan](internal-toolsets.md); preserve
 its namespace reservation and registration authority rules.
 
-## Inspect
+## Call contracts
 
-Use RunHistory, RunView, and ThreadView. Accept a Thread/Run `target` and `view`
-(`history` or Run-only `output`). History accepts half-open begin/end and a page
-limit; continuation uses only the cursor. Both views have a runtime-owned budget.
+Arguments and results are JSON objects; references use existing fully qualified
+pointer strings. In the signatures below, `?` means optional. Results describe
+ToolResultPart.output; failures use its existing error field, not another envelope.
+Reject unknown arguments and invalid reference types at the tool boundary.
 
-Return natural order and fully qualified references: Thread pages identify
-logical roots; Run pages contain Steps and required controls, not child internals.
-Preserve fixed-range pagination and mutation behavior. Never silently split tool
-exchanges or label incomplete output as complete. Output-only reads do not rebuild
-calls. Reads stay within the current agent's execution store and inject no
-instructions. Compact Runs use the same tool for target history and earlier
-compact outputs; add no special recall directive or "latest compact" tool.
+The per-call context supplies the current agent, Thread, Run, Tool Step, effective
+binding, and visible recall revisions. Callers cannot supply authority, recalled
+content, revisions, or the control's triggered_by. History gets a read-only
+interface; runtime tools get only the operations they require.
+
+## History
+
+Register `history` as a user-facing toolset. Reuse RunHistory, ThreadView, and
+RunView; do not assemble messages, compute far/near, or calculate message groups.
+Pages may separate a ToolCall from its ToolResult: preserve both records and their
+references, without making the exchange an indivisible pagination unit.
+
+### Parameters
+
+```python
+# First page
+history/read_threads(limit=20)
+history/read_runs(thread?, begin?, end?, limit=20, from_end=false)
+history/read_steps(run, begin?, end?, limit=20, from_end=false)
+history/read_output(run)
+
+# Subsequent pages: cursor is the only argument
+history/read_threads(cursor)
+history/read_runs(cursor)
+history/read_steps(cursor)
+```
+
+- `thread`: ThreadRef, defaulting to the current Thread. `run`: required RunRef.
+- `begin/end`: RunRefs belonging to the selected logical Thread for read_runs;
+  StepRefs belonging to the selected Run for read_steps. The range is `[begin,
+  end)`; omitted bounds are open. Reversed or foreign bounds fail; equal bounds
+  return an empty page.
+- `limit`: positive integer, counting primary records, not dependency controls.
+  It is the read budget; history adds no message/token sizing or content truncation.
+- `from_end`: boolean; take pages from the range's tail, but keep each page in
+  natural order. Runs use logical Thread order; Steps use numeric Step order.
+  read_threads uses the existing newest-updated-first order, with id as a tie-break.
+- `cursor`: opaque, scoped to this agent and the same tool. Freeze the target,
+  range, ordering, and limit on the first call; reject mixed cursor/query arguments.
+  An omitted or null cursor starts a new read; a returned null cursor means done.
+
+### Results
+
+```python
+read_threads -> {threads: ThreadRecord[], cursor: str | null}
+read_runs    -> {thread: ThreadRef, head: ControlRef,
+                 runs: RunRecord[], cursor: str | null}
+read_steps   -> {run: RunRecord, entries: (StepRecord | ControlRecord)[],
+                 dependencies: ControlRecord[], cursor: str | null}
+read_output  -> {run: RunRef, status: RunStatus, output: Local | null}
+```
+
+Use canonical record serialization. Run records retain physical ownership;
+read_runs identifies the selected logical Thread. read_steps preserves RunView's
+entries and dependency distinction: unbounded reads include owned raw controls, even unused
+ones; bounded reads include the selected Steps and required controls. Dependencies
+may recur between pages and are not additional timeline entries. Child Runs are
+not expanded; their references allow explicit reads.
+
+Resolve Local values in selected Step outputs and Control payload.input for the
+response, so compact Runs can read content rather than only pointers. Keep structural
+references and stored ModelCall references; do not rebuild ModelCalls. read_output
+uses get_output and returns its resolved Local as `{type, value, name, dim}`;
+null means the Run exists but has no stored output, not that it succeeded. Preserve
+the recorded status and partial data. Unknown targets and unresolved values fail.
+
+Keep RunHistory's fixed-range cursor behavior: later appends are excluded, Thread
+rewinds do not change captured membership, and replacement of captured Run/Step
+facts invalidates continuation. Add paged Thread-record listing: capture its ID
+order, exclude new Threads, and read metadata as of each page, not a historical
+snapshot. Cursors survive restart; an invalidated cursor requires a fresh read.
+No MVCC or new mutation restrictions are needed.
+
+All reads stay within the current agent's store, create no controls, and inject
+no messages. Compact Runs use these same calls for target records and earlier
+compact outputs; add no special recall directive or latest-compact tool.
 
 ## Honor and pick
 
-Both produce the existing applied recall control:
+### Parameters and results
 
-```yaml
-target: rules(workspace, path) | skill(ref) | service(ref)
-revision: ...
-content: ...
+```python
+_toolang/pick({kind: "skill" | "service", ref: str})
+  -> {target: {kind, ref}, revision: str, control: ControlRef | null}
+
+_toolang/honor({paths: str[]})
+  -> {recalls: [{target: {kind: "rules", workspace: str, path: str},
+                 revision: str, control: ControlRef}]}
 ```
 
-Control.triggered_by points to the honor/pick Step; the consuming Model Step
-records preceded_by. Persist the actual content before adoption. Tool results
-report status; independent user messages use existing rules/skill/service wrappers
-and delta references to that content, without repeating its body in tool results.
+Pick takes one exact ref from the corresponding catalog. Honor takes a nonempty
+list of normalized absolute access paths from tool call preflight; these are not
+rule-file paths. Runtime maps them to authorized workspaces and applicable rules.
+Each rules target identifies a workspace name and its scope directory relative
+to the workspace root: `/` or, for example, `/src`.
+
+Revision fingerprints the exact recalled text. A non-null control identifies a
+new or reused, unadopted recall; pick returns null when that revision is already
+visible. Honor returns only the missing/outdated revisions, deduplicated by
+target; an empty result means none remain after rechecking. Loading failure is
+a tool error and never permits the original operation. Neither result repeats
+content or claims the consuming Model Step has adopted it.
+
+Persist recalled content in the existing applied recall control payload
+`{target, revision, content}`. Control.triggered_by identifies the creating Tool
+Step and is unchanged on reuse; the consuming Model Step records preceded_by.
+Independent user messages use existing rules/skill/service wrappers and delta
+references to that content.
 
 Pick resolves only resources allowed by the effective binding. It grants no new
 capabilities; MCP connection/auth/discovery/operations remain in service/*.
 Reading authored data through me/get does not constitute recall.
 
-Honor runs when applicable rules are absent/outdated. Both recall paths match
-target/revision in actual visible near/now; far and invisible old controls do not
-count. Honor collects ancestor/nested rules for resolved paths, not all configured
-workspaces, and never grants access or changes roots.
+Both recall paths match target/revision in actual visible near/now; far and
+invisible old controls do not count. Honor collects ancestor/nested rules for
+resolved paths, not all configured workspaces, and never changes access or roots.
 
 ```text
 Model path request → tool call preflight → honor Tool Step → recall control(s)
@@ -117,17 +205,47 @@ Model path request → tool call preflight → honor Tool Step → recall contro
 Next ModelCall → rules user message(s) → Model retries the path operation
 ```
 
-No-op tool call preflight creates no honor Step; already-visible picks add no
-recall control.
-Blocked calls may share an unadopted recall, but none proceeds before the model
-receives the rules. Recheck on retry, including after compact/reload. The model
-picks missing guidance; assembly does not restore it.
+No-op tool call preflight creates no honor Step. Blocked calls may share an
+unadopted recall, but none proceeds before the model receives the rules. Recheck
+on retry, including after compact/reload. The model picks missing guidance;
+assembly does not restore it.
+
+After successful honor, the blocked original call returns
+`error: "operation not executed; retry required"` with `output: {}`. This is the
+original call's result, not honor's result; recall content arrives separately.
 
 Tools declare the normalized paths used for execution; runtime owns rule discovery
 and recall. Start with explicit fs targets and shell cwd, without claiming coverage
 of arbitrary shell commands/indirect paths or a sandbox guarantee.
 
 ## Compact
+
+### Parameters and results
+
+```python
+_toolang/compact({thread: ThreadRef, begin: RunRef | null = null, end: RunRef})
+  -> {horizon: FieldRef | null, control: ControlRef | null}
+
+# Input and output of the invoked compact.too Run
+input  = {thread, begin, end}
+output = {thread, begin, end, summary: str}
+```
+
+Model call preflight chooses the range. Thread must be the calling Run's Thread;
+begin is null or its first logical root. End is exclusive and must leave at least
+one historical root before the active root. This version accepts root boundaries
+only. Pass the range unchanged into compact.too; never accept summary as an argument.
+
+On success, horizon references the validated compact Run output, not a copied
+summary; control identifies the new or reused, unadopted compact control for the
+calling Run. Reuse requires the same Thread and range. If the permit recheck finds
+no work or adoption needed, return the effective horizon (possibly null) and a
+null control. If the requested range became invalid, return an error and let
+preflight reprepare instead of silently changing the recorded arguments.
+
+Output must echo the input range with a complete-prefix summary. History tools
+must be available to compact.too through its explicit authorized tool selection,
+not a hidden history-reading bypass.
 
 ```text
 Model call preflight → prepare request → budget check → compact Tool Step
@@ -139,8 +257,7 @@ Model call preflight → prepare request → budget check → compact Tool Step
 
 The compact Run is a root in its own Thread, not a cross-Thread child. The outer
 Tool Step links its result and shows activity; its internal Steps stay outside
-the target conversation/progress. Preserve complete-prefix coverage and at least
-one historical root in near. Compaction Runs never recursively trigger compact;
+the target conversation/progress. Compaction Runs never recursively trigger compact;
 compact.too reads bounded pages and splits/reduces oversized input itself.
 
 Use one cross-process permit per target Thread. After acquiring it, recheck the
@@ -168,10 +285,15 @@ retry-required is not a completed read/write. Progress never changes execution.
   executor preparation/dispatch, pyproject.toml, defaults/docs/tests. Cover
   collisions, unchanged user permissions and runtime availability, rejected model
   calls to honor/compact, per-call context isolation, and execute control transfer.
-- [ ] Add inspect through execution/tools/runtime.py and RunHistory. Cover fixed
-  ranges, output-only reads, page budgets, fork/rewind, child isolation, and restart.
+- [ ] Add the history toolset through execution/tools/history.py and RunHistory;
+  add cursor paging for Thread listing without changing existing CLI readers.
+  Cover all four input/result schemas, cursor-only continuation, wrong-tool cursors,
+  fixed ranges, raw pages crossing tool exchanges, unused/dependency controls,
+  resolved output, missing targets, record limits, fork/rewind, child isolation,
+  and restart. No message-group computation or ModelCall rebuilding.
 - [ ] Add pick and common recall handling in the executor and control messages.
-  Cover allowed refs, exact revisions/content, deduplication, and live/replay equality.
+  Cover allowed refs, exact revisions/content, visible/null and pending/reused
+  receipts, deduplication, and live/replay equality.
 - [ ] Add tool call preflight and honor through tool preparation and fs/shell adapters.
   Cover nested rules, batches, failed loads, zero side effects before retry, changed
   files, and rules falling out of view; avoid rereading stable message prefixes.
