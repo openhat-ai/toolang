@@ -217,9 +217,12 @@ footer, and follows the footer; adjacent child-owned gaps coalesce.
 ## Flow Headers
 
 A Flow Step uses its non-empty authored doc comment as the header. Without a
-doc comment, the presenter generates a short sentence from the typed AST. It
-preserves runnable names exactly, hides generated inline runnable names, and
-includes authored concurrency or binding behavior only when useful.
+doc comment, the presenter generates a short sentence from the typed AST. Named
+and inline runnables use the same sentence and preserve their names exactly,
+including generated names such as `<agic:32>` (the inline declaration's source
+line). For example, an inline map displays `Run <agic:32> for each item`.
+Authored concurrency and binding behavior are appended to generated headers;
+doc comments take precedence over the complete generated header.
 
 Examples include:
 
@@ -408,6 +411,9 @@ normal trace-or-lane rule for its child statement:
 • Thinking...
 • true
 ```
+
+The condition boundary preserves its runnable name too: an inline `until`
+declared on line 32 displays `<?> <agic:32>`.
 
 The condition is a child Run, not a synthetic `executed completion_check`
 Step. Terminal loop output identifies the actual cause:

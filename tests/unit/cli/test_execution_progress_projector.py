@@ -53,6 +53,7 @@ from toolang.lang.ast import (
     KeepStmt,
     LetStmt,
     MapStmt,
+    Program,
     SortStmt,
     RepeatStmt,
     RunStmt,
@@ -104,12 +105,15 @@ def _rows(blocks: tuple[ProgressBlock, ...]) -> list[list[str]]:
     return [[row.text for row in block.rows] for block in blocks]
 
 
-def test_progress_statement_header_prefers_doc_and_preserves_runnable_name() -> None:
+@pytest.mark.parametrize("runnable", ["search_web", "<agic:12>"])
+def test_progress_statement_header_prefers_doc_and_preserves_runnable_name(
+    runnable: str,
+) -> None:
     assert (
         statement_header(
             MapStmt(
                 span=SPAN,
-                runnable="search_web",
+                runnable=runnable,
                 lanes=4,
                 doc="Search the web\nfor each query",
             )
@@ -141,7 +145,7 @@ def test_progress_statement_header_covers_inline_binding_and_repeat_forms() -> N
     )
     assert (
         statement_header(RunStmt(span=SPAN, runnable="<agic:12>", binding=None))
-        == "Run the inline task without saving the result"
+        == "Run <agic:12> without saving the result"
     )
     assert (
         statement_header(KeepStmt(span=SPAN, position="first", count=1))
@@ -175,7 +179,7 @@ def test_progress_statement_header_covers_inline_binding_and_repeat_forms() -> N
         ),
         (
             SeekStmt(span=SPAN, name="researcher", runnable="<agic:4>"),
-            "Ask researcher for help",
+            "Ask researcher to run <agic:4>",
         ),
         (
             AskStmt(span=SPAN, name=None, request="question"),
@@ -191,7 +195,7 @@ def test_progress_statement_header_covers_inline_binding_and_repeat_forms() -> N
         ),
         (
             ScatterStmt(span=SPAN, count=1, runnable="<agic:5>"),
-            "Expand into 1 item",
+            "Expand into 1 item with <agic:5>",
         ),
         (
             GatherStmt(span=SPAN, runnable="synthesize"),
@@ -199,7 +203,7 @@ def test_progress_statement_header_covers_inline_binding_and_repeat_forms() -> N
         ),
         (
             GatherStmt(span=SPAN, runnable="<agic:6>"),
-            "Combine the items",
+            "Combine the items with <agic:6>",
         ),
         (
             SettleStmt(span=SPAN, runnable="merge_pair"),
@@ -207,7 +211,7 @@ def test_progress_statement_header_covers_inline_binding_and_repeat_forms() -> N
         ),
         (
             MapStmt(span=SPAN, runnable="<agic:7>"),
-            "Process each item",
+            "Run <agic:7> for each item",
         ),
         (
             KeepStmt(span=SPAN, runnable="is_relevant", lanes=3),
@@ -219,11 +223,11 @@ def test_progress_statement_header_covers_inline_binding_and_repeat_forms() -> N
         ),
         (
             DropStmt(span=SPAN, runnable="<agic:8>"),
-            "Drop selected items",
+            "Drop items selected by <agic:8>",
         ),
         (
             SortStmt(span=SPAN, runnable="<agic:9>", order="ascending"),
-            "Sort the items ascending",
+            "Sort items ascending by <agic:9>",
         ),
         (
             RepeatStmt(span=SPAN, count=2),
@@ -240,6 +244,42 @@ def test_progress_statement_header_covers_every_ast_fallback(
     expected: str,
 ) -> None:
     assert statement_header(statement) == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("Review the findings.", "Run <agic:2>"),
+        ("run: Review the findings.", "Run <agic:2>"),
+        ("seek researcher: Find evidence.", "Ask researcher to run <agic:2>"),
+        ("scatter 3 using: Expand the query.", "Expand into 3 items with <agic:2>"),
+        (
+            "storm 3 in 2 lanes using: Review the findings.",
+            "Run <agic:2> 3 times, up to 2 at once",
+        ),
+        ("gather using: Combine the findings.", "Combine the items with <agic:2>"),
+        ("settle using: Merge the next finding.", "Reduce the items with <agic:2>"),
+        (
+            "let results = map in 2 lanes using:\n    Search for evidence.",
+            "Run <agic:2> for each item, up to 2 at once and save as results",
+        ),
+        ("keep if: Check relevance.", "Keep items selected by <agic:2>"),
+        (
+            "let drop if: Check relevance.",
+            "Drop items selected by <agic:2> without saving the result",
+        ),
+        (
+            "sort descending by: Score relevance.",
+            "Sort items descending by <agic:2>",
+        ),
+    ],
+)
+def test_progress_headers_preserve_lowered_inline_runnable_names(
+    source: str, expected: str
+) -> None:
+    program = Program.from_source(f"flow work:\n  {source}\n")
+
+    assert statement_header(program.flows[0].stmts[0]) == expected
 
 
 @pytest.mark.parametrize(
@@ -1203,7 +1243,10 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries() -> None:
     ]
 
 
-def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
+@pytest.mark.parametrize("runnable", ["completion_check", "<agic:32>"])
+def test_until_run_shows_control_boundary_and_only_real_agic_steps(
+    runnable: str,
+) -> None:
     reducer = ProgressProjector()
     reducer.handle(
         RunBegin(
@@ -1216,7 +1259,7 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
         StepBegin(
             step=StepRef.parse("run_root.0"),
             kind="loop",
-            given=RepeatStmt(span=SPAN, count=3, runnable="completion_check"),
+            given=RepeatStmt(span=SPAN, count=3, runnable=runnable),
         )
     )
     assert _rows(repeat_header.committed) == [["[0] Repeat up to 3 times", ""]]
@@ -1225,7 +1268,7 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
             run="run_until",
             parent=StepRef.parse("run_root.0"),
             control=ControlRef.for_run("run_until", 0),
-            runnable="agic:completion_check",
+            runnable=f"agic:{runnable}",
             occurrence=Occurrence(
                 iteration=IterationOccurrence(index=0, count=3, phase="until")
             ),
@@ -1238,7 +1281,7 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
             given=_model(),
         )
     )
-    assert _rows(live.committed) == [["<?> completion_check", ""]]
+    assert _rows(live.committed) == [[f"<?> {runnable}", ""]]
     assert _rows(live.live) == [["• Thinking..."]]
     final = reducer.handle(
         StepEnd(
@@ -1250,7 +1293,7 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
     )
     text = "\n".join(_rows(final.committed)[0])
     assert "• true" in text
-    assert "executed completion_check" not in text
+    assert f"executed {runnable}" not in text
 
 
 def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> None:

@@ -31,17 +31,9 @@ def statement_header(statement: FlowStmt) -> str:
     if isinstance(statement, LetStmt):
         return _words("Set", statement.binding or "value")
     if isinstance(statement, RunStmt):
-        action = _named_or_inline(
-            statement.runnable,
-            named="Run {name}",
-            inline="Run the inline task",
-        )
+        action = f"Run {statement.runnable}"
     elif isinstance(statement, SeekStmt):
-        action = _named_or_inline(
-            statement.runnable,
-            named=f"Ask {statement.name} to run {{name}}",
-            inline=f"Ask {statement.name} for help",
-        )
+        action = f"Ask {statement.name} to run {statement.runnable}"
     elif isinstance(statement, AskStmt):
         action = (
             f"Ask {statement.name} for input"
@@ -49,52 +41,26 @@ def statement_header(statement: FlowStmt) -> str:
             else "Ask for human input"
         )
     elif isinstance(statement, ScatterStmt):
-        action = _named_or_inline(
-            statement.runnable,
-            named=f"Expand into {count(statement.count, 'item')} with {{name}}",
-            inline=f"Expand into {count(statement.count, 'item')}",
+        action = (
+            f"Expand into {count(statement.count, 'item')} with {statement.runnable}"
         )
     elif isinstance(statement, StormStmt):
-        action = _named_or_inline(
-            statement.runnable,
-            named=f"Run {{name}} {count(statement.count, 'time')}",
-            inline=f"Generate {count(statement.count, 'item')}",
-        )
+        action = f"Run {statement.runnable} {count(statement.count, 'time')}"
     elif isinstance(statement, GatherStmt):
-        action = _named_or_inline(
-            statement.runnable,
-            named="Combine the items with {name}",
-            inline="Combine the items",
-        )
+        action = f"Combine the items with {statement.runnable}"
     elif isinstance(statement, SettleStmt):
-        action = _named_or_inline(
-            statement.runnable,
-            named="Reduce the items with {name}",
-            inline="Reduce the items",
-        )
+        action = f"Reduce the items with {statement.runnable}"
     elif isinstance(statement, MapStmt):
-        action = _named_or_inline(
-            statement.runnable,
-            named="Run {name} for each item",
-            inline="Process each item",
-        )
+        action = f"Run {statement.runnable} for each item"
     elif isinstance(statement, KeepStmt | DropStmt):
         verb = "Keep" if isinstance(statement, KeepStmt) else "Drop"
         if statement.position is not None and statement.count is not None:
             quantity = "item" if statement.count == 1 else f"{statement.count} items"
             action = f"{verb} the {statement.position} {quantity}"
         else:
-            action = _named_or_inline(
-                statement.runnable or "",
-                named=f"{verb} items selected by {{name}}",
-                inline=f"{verb} selected items",
-            )
+            action = f"{verb} items selected by {statement.runnable}"
     elif isinstance(statement, SortStmt):
-        action = _named_or_inline(
-            statement.runnable,
-            named=f"Sort items {statement.order} by {{name}}",
-            inline=f"Sort the items {statement.order}",
-        )
+        action = f"Sort items {statement.order} by {statement.runnable}"
     elif isinstance(statement, RepeatStmt):
         if statement.count is not None and statement.runnable is not None:
             return f"Repeat up to {count(statement.count, 'time')}"
@@ -115,18 +81,9 @@ def statement_header(statement: FlowStmt) -> str:
 
 
 def until_header(statement: RepeatStmt) -> str:
-    """Return the Repeat until boundary label without exposing generated names."""
+    """Return the Repeat condition's runnable name as its boundary label."""
 
-    runnable = statement.runnable or ""
-    return "Check whether to stop" if _generated(runnable) else runnable
-
-
-def _named_or_inline(value: str, *, named: str, inline: str) -> str:
-    return inline if _generated(value) else named.format(name=value)
-
-
-def _generated(value: str) -> bool:
-    return not value or value.startswith("<agic:")
+    return statement.runnable or "Check whether to stop"
 
 
 def _words(*values: str | None) -> str:
