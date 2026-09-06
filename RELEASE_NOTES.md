@@ -26,7 +26,7 @@ Capitalize keyword-led prose or put it inside an explicit `run:` text block,
 where keywords and Markdown remain literal content.
 
 State layer schema advances from 4 to 5 and rebuilds from migrated source.
-Execution store schema advances from 37 to 38. The runtime rejects old stores
+Execution store schema advances from 38 to 39. The runtime rejects old stores
 without modifying or deleting them, including stores without rank history.
 Preserve the previous runtime and source to inspect or retry old executions;
 use a separate compatible store for new executions. No history migration or

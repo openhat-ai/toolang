@@ -204,12 +204,14 @@ splitting and text-margin handling; each text margin is computed once per block.
 Program caches and durable Step `given` payloads contain language AST data;
 renaming the statement discriminator is a storage compatibility change.
 Follow the repository's current-version-only store policy: increment the
-State layer schema and execution store schema (baseline 4 and 37), reject old
-stores with the existing schema error, and rebuild derived State from migrated
+State layer schema from 4 to 5 and execution store schema from 38 to 39; reject
+old stores with the existing schema error, and rebuild derived State from migrated
 source. Do not silently reinterpret old rank records, rewrite history, or
 delete databases. Old execution history and retries require the previous
 runtime; a new runtime uses a separate compatible store. This break applies
 to the old store schema even when a particular history contains no rank.
+Schema 38 belongs to model-message recording on main and still contains the
+previous language AST; this integration requires its own version boundary.
 
 Document that boundary in release notes before shipping. Upgrade source,
 dependency, consumers, and schema handling together in one implementation PR;

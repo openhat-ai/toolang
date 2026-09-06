@@ -105,7 +105,7 @@ from .schemas import Record, RecordSelection, select_record
 from .thread_view import ThreadView, _ThreadProjection
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 38
+_SCHEMA_VERSION = 39
 _SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 

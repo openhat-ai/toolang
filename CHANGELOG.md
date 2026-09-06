@@ -16,7 +16,7 @@ and this project uses semantic versioning.
 - Enforce indentation-based block ownership and keyword recognition on every
   implicit prose line; explicit text blocks retain literal keywords and Markdown.
 - Persist sort statements with State layer schema 5 and execution store schema
-  38. Derived State rebuilds from migrated source; old execution stores are
+  39. Derived State rebuilds from migrated source; old execution stores are
   rejected without modification and require the previous runtime for history.
 
 - Script runnable commands no longer copy their persisted Run result to stdout
