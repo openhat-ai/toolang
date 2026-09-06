@@ -598,7 +598,7 @@ INSPECT_SUBJECT_TRANSITIONS: tuple[_SubjectTransition, ...] = (
         "runs",
         "runs",
         _load_child_runs,
-        lambda subject: _selected_step(subject).kind in {"run", "par", "loop"},
+        lambda subject: _selected_step(subject).kind in {"run", "tool", "par", "loop"},
     ),
     _SubjectTransition(
         "step",

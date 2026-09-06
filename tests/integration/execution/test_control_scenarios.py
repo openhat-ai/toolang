@@ -382,7 +382,11 @@ agic calculate(_: Part[]) -> Part[]:
             assert [
                 (step.kind, step.status)
                 for step in harness.store.list_steps(run_id=record.id)
-            ] == [("model", "succeeded"), ("model", "succeeded")]
+            ] == [
+                ("model", "succeeded"),
+                ("tool", "canceled"),
+                ("model", "succeeded"),
+            ]
             messages = harness.adapter.invocations[1].call.messages
             assert [message.role for message in messages] == [
                 "user",
@@ -395,11 +399,13 @@ agic calculate(_: Part[]) -> Part[]:
             assert canceled.tool_call_id == tool_call.tool_call_id
             assert canceled.error == "canceled by steer"
             assert messages[3] == Message.user("skip tools")
-            second = harness.store.list_steps(run_id=record.id)[1]
+            skipped = harness.store.list_steps(run_id=record.id)[1]
+            assert skipped.aborted_by == control.ref
+            assert skipped.output is not None
+            assert skipped.output.value == canceled
+            second = harness.store.list_steps(run_id=record.id)[2]
             assert second.input == (
-                FieldRef.from_path(
-                    StepRef.parse(f"{record.id}.0"), "output", "value", 0
-                ),
+                FieldRef.from_path(skipped.ref, "output", "value"),
                 FieldRef.from_path(
                     ControlRef.for_run(record.id, control.index),
                     "payload",

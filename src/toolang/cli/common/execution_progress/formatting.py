@@ -99,6 +99,18 @@ def tool_label(given: StepGiven) -> str:
     return given.call.name if isinstance(given, ToolStepGiven) else "tool"
 
 
+def run_label(given: StepGiven, *, fallback: str = "runnable") -> str:
+    value = (
+        given.call.input.get("runnable")
+        if isinstance(given, ToolStepGiven)
+        else getattr(given, "runnable", "")
+    )
+    if not isinstance(value, str):
+        return fallback
+    safe = "".join(character if character.isprintable() else " " for character in value)
+    return one_line(safe)[:240] or fallback
+
+
 def output_parts(event: StepEnd) -> tuple[Part, ...]:
     """Return message parts carried by one typed step output."""
 

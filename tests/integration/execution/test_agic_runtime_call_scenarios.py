@@ -18,6 +18,7 @@ from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor.steps.tool import invoke_tool_call
+from toolang.execution.values import parts_from_local
 from toolang.execution.records import ExecuteControlPayload, RunControlPayload
 from toolang.execution.types import (
     ErrorMessage,
@@ -26,14 +27,14 @@ from toolang.execution.types import (
     RunRef,
     ThreadPrefix,
     TypedRef,
+    ToolStepGiven,
 )
-from toolang.lang.ast import RunStmt
 from toolang.lang.input import resolve_input_parts
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateWatcher
 
 
-def test_agic_dynamic_run_is_one_run_step_and_one_child(tmp_path: Path) -> None:
+def test_agic_dynamic_run_is_one_tool_step_and_one_child(tmp_path: Path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -84,17 +85,18 @@ agic child(_: Text) -> Text:
 
             assert root.status == "succeeded", root.error
             root_steps = harness.store.list_steps(run_id=root.id)
-            assert [step.kind for step in root_steps] == ["model", "run", "model"]
+            assert [step.kind for step in root_steps] == ["model", "tool", "model"]
             dynamic = root_steps[1]
-            assert isinstance(dynamic.given, RunStmt)
-            assert dynamic.given.runnable == "agic:child"
+            assert isinstance(dynamic.given, ToolStepGiven)
+            assert dynamic.given.call.input["runnable"] == "agic:child"
             assert dynamic.input == (
                 FieldRef.from_path(root_steps[0].ref, "output", "value", 0),
             )
             dynamic_output = dynamic.output
             assert dynamic_output is not None
-            assert isinstance(dynamic_output.value, TypedRef)
-            assert harness.store.resolve_value(dynamic_output.value) == "child output"
+            (persisted_result,) = parts_from_local(dynamic_output)
+            assert isinstance(persisted_result, ToolResultPart)
+            assert persisted_result.output["output"] == "child output"
             children = [
                 run
                 for run in harness.store.list_runs(thread_id=thread, limit=None)
@@ -109,12 +111,12 @@ agic child(_: Text) -> Text:
             assert child_control is not None
             assert isinstance(child_control.payload, RunControlPayload)
             assert child_control.payload.runnable == "agent$agic:child"
-            assert all(step.kind != "tool" for step in root_steps)
             followup = harness.adapter.invocations[2].call
             result = followup.messages[-1].parts[0]
             assert isinstance(result, ToolResultPart)
             assert result.tool_call_id == "call-run"
             assert result.output["run_id"] == children[0].id
+            assert persisted_result == result
             assert "<available-runnable-routes>" in (
                 harness.adapter.invocations[0].call.instructions
             )
@@ -347,9 +349,9 @@ flow check(_: Text, threshold: Number) -> Text:
                 for step in harness.store.list_steps(run_id=root.id)
             ] == [
                 ("model", "succeeded"),
-                ("run", "failed"),
+                ("tool", "failed"),
                 ("model", "succeeded"),
-                ("run", "succeeded"),
+                ("tool", "succeeded"),
                 ("model", "succeeded"),
             ]
 
@@ -403,7 +405,7 @@ agic parent(_: Text, threshold: Number) -> Text:
             steps = harness.store.list_steps(run_id=root.id)
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "succeeded"),
-                ("run", "failed"),
+                ("tool", "failed"),
                 ("model", "succeeded"),
             ]
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
@@ -469,7 +471,7 @@ flow outer(_: Text) -> Text:
             steps = harness.store.list_steps(run_id=caller.id)
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "succeeded"),
-                ("run", "failed"),
+                ("tool", "failed"),
                 ("model", "succeeded"),
             ]
             result = harness.adapter.invocations[1].call.messages[-1].parts[0]
@@ -562,7 +564,7 @@ flow -> Text:
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "succeeded"),
                 ("tool", "succeeded"),
-                ("run", "failed"),
+                ("tool", "failed"),
                 ("model", "succeeded"),
             ]
             result = harness.adapter.invocations[1].call.messages[-1].parts[0]
@@ -639,10 +641,10 @@ agic parent(_: Text) -> Text:
 
             assert root.status == "succeeded", root.error
             steps = harness.store.list_steps(run_id=root.id)
-            assert [step.kind for step in steps] == ["model", "run", "model"]
+            assert [step.kind for step in steps] == ["model", "tool", "model"]
             assert steps[1].status == "failed"
-            assert isinstance(steps[1].given, RunStmt)
-            assert steps[1].given.runnable == ""
+            assert isinstance(steps[1].given, ToolStepGiven)
+            assert steps[1].given.call.input == {"input": {}}
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
             result = harness.adapter.invocations[1].call.messages[-1].parts[0]
             assert isinstance(result, ToolResultPart)
@@ -703,7 +705,7 @@ agic child(_: Text) -> Text:
 
             assert root.status == "succeeded", root.error
             steps = harness.store.list_steps(run_id=root.id)
-            assert [step.kind for step in steps] == ["model", "run", "model"]
+            assert [step.kind for step in steps] == ["model", "tool", "model"]
             dynamic = steps[1]
             assert dynamic.status == "failed"
             child = next(
@@ -805,7 +807,7 @@ flow new_flow(_: Text, brief: Brief) -> Text:
                 "model",
                 "tool",
                 "model",
-                "run",
+                "tool",
                 "model",
             ]
             assert steps[0].state == steps[1].state
@@ -821,8 +823,8 @@ flow new_flow(_: Text, brief: Brief) -> Text:
             assert reload_result.output["applied"] is True
             assert "flow:new_flow" in second_call.instructions
             dynamic = steps[3]
-            assert isinstance(dynamic.given, RunStmt)
-            assert dynamic.given.runnable == "flow:new_flow"
+            assert isinstance(dynamic.given, ToolStepGiven)
+            assert dynamic.given.call.input["runnable"] == "flow:new_flow"
             assert reload_control.triggered_by == steps[1].ref
             assert steps[2].preceded_by == (reload_control.ref,)
             history = harness.store.recent_conversation_messages(
@@ -909,7 +911,7 @@ flow target(_: Text) -> Text:
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "succeeded"),
                 ("tool", "succeeded"),
-                ("run", "succeeded"),
+                ("tool", "succeeded"),
             ]
             assert steps[0].state != steps[2].state
             child = next(
@@ -1053,7 +1055,7 @@ flow child(_: Text) -> Text:
             steps = harness.store.list_steps(run_id=root.id)
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "succeeded"),
-                ("run", "failed"),
+                ("tool", "failed"),
             ]
             assert root.error == ErrorRef(FieldRef.from_path(steps[1].ref, "error"))
             assert steps[1].error == ErrorMessage("child persistence failed")
@@ -1363,9 +1365,9 @@ flow research(brief: Brief, prefix?: Text) -> Text:
 
             assert root.status == "succeeded", root.error
             steps = harness.store.list_steps(run_id=root.id)
-            assert [step.kind for step in steps] == ["model", "run", "model"]
-            assert isinstance(steps[1].given, RunStmt)
-            assert steps[1].given.runnable == "research"
+            assert [step.kind for step in steps] == ["model", "tool", "model"]
+            assert isinstance(steps[1].given, ToolStepGiven)
+            assert steps[1].given.call.input["runnable"] == "research"
             child = next(
                 run
                 for run in harness.store.list_run_tree(root_run_id=root.id)
@@ -1992,7 +1994,7 @@ agic inner() -> Text:
             steps = harness.store.list_steps(run_id=child.id)
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "succeeded"),
-                ("run", "failed"),
+                ("tool", "failed"),
                 ("model", "succeeded"),
             ]
             result = harness.adapter.invocations[1].call.messages[-1].parts[0]

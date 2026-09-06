@@ -7,6 +7,7 @@ from dataclasses import replace
 from toolang.base.types.message import (
     TextDelta,
     TextPart,
+    ToolResultPart,
 )
 from toolang.execution.events import (
     PartBegin,
@@ -41,7 +42,7 @@ from toolang.lang.ast import (
 )
 
 from .facts import elapsed_fact
-from .formatting import one_line, output_parts
+from .formatting import one_line, output_parts, run_label
 from .headers import statement_header, until_header
 from .state import (
     LaneOwner,
@@ -356,7 +357,11 @@ class ProgressProjector:
             ordinal,
             self._sequence,
             step_detail(event.kind),
-            dynamic_run=(event.kind == "run" and run.agic),
+            dynamic_run=(event.kind == "run" and run.agic)
+            or (
+                isinstance(event.given, ToolStepGiven)
+                and event.given.call.name == "_too__run"
+            ),
         )
         self._steps[event.step] = state
         self._begin_execute(run, state)
@@ -451,7 +456,7 @@ class ProgressProjector:
                 if execute is not None:
                     terminal = (
                         ()
-                        if event.status == "succeeded"
+                        if execute.ready
                         else tuple(
                             row.text
                             for row in self._execute_failure_rows(
@@ -490,7 +495,7 @@ class ProgressProjector:
                             status=event.status,
                         )
         elif execute is not None:
-            if event.status != "succeeded":
+            if not execute.ready:
                 block = self._commit_block(
                     state,
                     self._execute_failure_rows(
@@ -1007,9 +1012,7 @@ class ProgressProjector:
             run.pending_executes.append(
                 PendingExecute(
                     tool_call_id=given.call.tool_call_id,
-                    runnable=self._safe_runnable_label(
-                        given.call.input.get("runnable")
-                    ),
+                    runnable=run_label(given),
                     sequence=state.sequence,
                 )
             )
@@ -1038,8 +1041,15 @@ class ProgressProjector:
         pending = self._pending_execute(run, begin)
         if pending is not None:
             index = run.pending_executes.index(pending)
-            if end.status == "succeeded":
-                run.pending_executes[index] = replace(pending, ready=True)
+            committed = end.status == "succeeded" or any(
+                isinstance(part, ToolResultPart)
+                and part.error is None
+                and isinstance(part.output.get("executed"), str)
+                for part in output_parts(end)
+            )
+            if committed:
+                pending = replace(pending, ready=True)
+                run.pending_executes[index] = pending
             else:
                 run.pending_executes.pop(index)
         return pending
@@ -1174,23 +1184,7 @@ class ProgressProjector:
 
     @staticmethod
     def _dynamic_runnable_label(state: StepState) -> str:
-        return ProgressProjector._safe_runnable_label(
-            getattr(state.begin.given, "runnable", ""),
-            fallback="request",
-        )
-
-    @staticmethod
-    def _safe_runnable_label(
-        value: object,
-        *,
-        fallback: str = "runnable",
-    ) -> str:
-        if not isinstance(value, str):
-            return fallback
-        safe = "".join(
-            character if character.isprintable() else " " for character in value
-        )
-        return one_line(safe)[:240] or fallback
+        return run_label(state.begin.given, fallback="request")
 
     def _claim_boundaries(
         self,

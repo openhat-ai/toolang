@@ -285,13 +285,15 @@ def _ordered_step_children(
 ) -> tuple[RunRecord | StepRecord, ...]:
     nested = tuple(same_run)
     child_runs = tuple(runs)
-    if parent.kind not in {"run", "par", "loop"} and (nested or child_runs):
+    if parent.kind not in {"run", "tool", "par", "loop"} and (nested or child_runs):
         raise ValueError(f"{parent.kind} Step cannot own execution: {parent.ref}")
     if parent.kind != "loop" and nested:
         raise ValueError(f"{parent.kind} Step cannot own nested Steps: {parent.ref}")
-    if parent.kind == "run":
+    if parent.kind in {"run", "tool"}:
         if len(child_runs) > 1:
-            raise ValueError(f"run Step has multiple child Runs: {parent.ref}")
+            raise ValueError(
+                f"{parent.kind} Step has multiple child Runs: {parent.ref}"
+            )
         return child_runs
     if parent.kind == "par":
         for run in child_runs:

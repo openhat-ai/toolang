@@ -202,6 +202,8 @@ agic child() -> Text:
                 if outcome in {"failed", "canceled"}:
                     assert any("Failed to execute" in row.text for row in rows)
                 else:
-                    assert execute_step is None
+                    assert execute_step is not None
+                    skipped = harness.store.get_step(ref=execute_step)
+                    assert skipped is not None and skipped.status == "canceled"
 
     asyncio.run(scenario())

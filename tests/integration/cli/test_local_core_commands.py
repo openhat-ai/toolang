@@ -1323,6 +1323,54 @@ def test_inspect_projects_run_tree_and_container_step_call(tmp_path: Path) -> No
     assert not any("OCCUR" in line for line in child_run_lines)
 
 
+def test_inspect_lists_child_runs_owned_by_runtime_tool(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    store = RunStore(AgentLayout.resident(root, "alice").run_store)
+    try:
+        parent = project_run_start(
+            store,
+            run_id="run_parent",
+            thread_id="term_parent",
+            origin="test",
+            input=Message.user("Parent"),
+        )
+        step = project_step(
+            store,
+            run_id=parent.id,
+            step_index=0,
+            kind="tool",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+        child = project_run_start(
+            store,
+            run_id="run_child",
+            thread_id=parent.thread,
+            origin="test",
+            input=Message.user("Child"),
+            parent=step.ref,
+        )
+        project_run_end(store, run_id=child.id)
+        project_run_end(store, run_id=parent.id)
+    finally:
+        store.close()
+
+    children = _invoke(root, "alice", "inspect", str(step.ref), "runs", "--json")
+    assert children.exit_code == 0, children.stderr
+    assert [item["id"] for item in json.loads(children.stdout)] == [child.id]
+    tree = _invoke(root, "alice", "inspect", parent.id, "tree", "--json")
+    assert tree.exit_code == 0, tree.stderr
+    assert [item["pointer"] for item in json.loads(tree.stdout)] == [
+        parent.id,
+        str(step.ref),
+        child.id,
+    ]
+
+
 def test_inspect_projects_exact_tool_call_and_persisted_result(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
