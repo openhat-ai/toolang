@@ -45,6 +45,9 @@ from toolang.execution.types import (
     MessageTemplate,
     ControlRef,
     ModelStepGiven,
+    RecallTarget,
+    RulesRecallTarget,
+    ServiceRecallTarget,
     SkillRecallTarget,
     StepRef,
     ThreadPrefix,
@@ -62,7 +65,17 @@ agic chat(_: Part[]) -> Part[]:
 """
 
 
-def test_replay_after_reload_needs_only_execution_records(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "target",
+    [
+        RulesRecallTarget("project", "/src"),
+        SkillRecallTarget("testing"),
+        ServiceRecallTarget("github"),
+    ],
+)
+def test_replay_after_reload_needs_only_execution_records(
+    tmp_path: Path, target: RecallTarget
+) -> None:
     source = """
 agic chat(_: Part[]) -> Part[]:
   recall = none
@@ -112,9 +125,7 @@ agic chat(_: Part[]) -> Part[]:
             assert applied.status == "applied"
             harness.store.accept_recall_control(
                 run_id=handle.run_id,
-                payload=RecallControlPayload(
-                    SkillRecallTarget("testing"), "v1", "Use tests."
-                ),
+                payload=RecallControlPayload(target, "v1", "Use tests."),
                 triggered_by=None,
                 created_at="2026-09-06T00:00:00Z",
             )

@@ -4,7 +4,7 @@
 
 Make user intervention visible to subsequent model calls, preserve complete
 tool exchanges, and stop shell commands when immediate cancellation is applied.
-Keep runtime context independent of run/thread identity and reuse it while visible.
+Keep runtime context independent of run/thread identity.
 
 ## Scope
 
@@ -22,9 +22,8 @@ Keep runtime context independent of run/thread identity and reuse it while visib
 - Complete a canceled tool exchange with durable cancellation results before
   the cancel/steer message. Do not imply rollback of completed side effects.
 - Remove default run/thread identifiers from model-facing instructions/context.
-  Keep the live message prefix and append context only when changed; a fresh
-  sequence supplies context again when history does not carry it. Never
-  deduplicate user input or infer runtime metadata from user-authored text.
+  Keep the live message prefix and include current context at every model call.
+  Never deduplicate user input or infer runtime metadata from user-authored text.
 - Cancel the shell process group and reap it on cancellation or timeout.
   Preserve the explicit distinction between immediate and next-step controls.
 
@@ -43,10 +42,10 @@ and their execution/plugin tests:
 - Cancellation after a committed final Step remains a terminal Run fact; do
   not rewrite the completed Step or revive cancellations from earlier retries.
 - Recall target attributes and multimodal steer content survive exact replay.
-- Unchanged context is not repeated while visible; changed/omitted history
-  restores context. Identical successive user inputs remain separate.
+- Every model call records current context, even when unchanged. Identical
+  successive user inputs remain separate.
 - Stored deltas reconstruct the exact submitted calls after restart.
 
-Prior-call history assembly and cross-run context reuse remain separate work.
+Prior-call history assembly remains separate work. Context deduplication is deferred.
 The principal risks are splitting tool exchanges and losing process ownership
 during interruption cleanup.

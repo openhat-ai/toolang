@@ -363,13 +363,16 @@ def test_compact_preparation_survives_failed_begin(
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_context_is_reused_until_its_history_is_compacted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("context", [None, "Plain runtime context."])
+def test_each_call_records_context_without_rerendering_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, context: str | None
 ) -> None:
     tool = RecordingTool("lookup__item", output={})
     harness = ExecutionHarness.create(
         tmp_path,
-        source=SOURCE.replace("  context: none\n", ""),
+        source=SOURCE.replace(
+            "  context: none\n", f"  context: {context}\n" if context else ""
+        ),
         tools={tool.name: tool},
         responses=[
             ModelCallResult(message=Message.assistant("first reply")),
@@ -432,14 +435,25 @@ def test_context_is_reused_until_its_history_is_compacted(
                 before[: len(harness.adapter.invocations[1].call.messages)]
                 == harness.adapter.invocations[1].call.messages
             )
-            for messages in (before, after, final):
+            for messages, count in ((before, 3), (after, 3), (final, 4)):
                 assert (
                     sum(
-                        message_text(message.parts).count("<context>")
+                        message_text(message.parts).count(context or "<context>")
                         for message in messages
                     )
-                    == 1
+                    == count
                 )
+            for step in harness.store.list_steps(run_id=run.id):
+                if isinstance(step.given, StoredModelStepGiven):
+                    assert (
+                        sum(
+                            segment.count(context or "<context>")
+                            for message in step.given.call.delta.messages
+                            for segment in message.segments
+                            if isinstance(segment, str)
+                        )
+                        == 1
+                    )
             assert final[: len(after)] == after
 
     asyncio.run(scenario())

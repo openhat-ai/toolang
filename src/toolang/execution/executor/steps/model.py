@@ -13,6 +13,7 @@ import time
 from typing import TYPE_CHECKING
 
 from toolang.base.types.message import (
+    Message,
     Part,
     PartType,
     TextDelta,
@@ -110,11 +111,10 @@ async def execute(state: _AgicState) -> ModelCallResult:
             )
         )
         next_messages = state.messages.copy()
-        next_messages.initialize(
-            prepared.messages,
-            context=prepared.prompt_context,
-            visible=prepared.near if "near" in prepared.recall else (),
-        )
+        if not next_messages.started:
+            next_messages.initialize(prepared.messages)
+        elif prepared.prompt_context:
+            next_messages.append(Message.user(prepared.prompt_context))
         if (
             not next_messages.started
             and state.execution is not None

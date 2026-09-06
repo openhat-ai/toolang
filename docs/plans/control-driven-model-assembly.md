@@ -147,9 +147,11 @@ nonempty far is a user message; near is flattened in role order. The adapter
 receives ordinary messages; far/near/now separators are not serialized.
 Instructions, tools, output_schema, and continuation remain separate call fields.
 
-Reuse unchanged visible context, append necessary updates, and keep tool
-exchanges complete. Do not deduplicate inputs by text equality or proactively
-reload guidance. Preserve unchanged message prefixes as now becomes near.
+Include the current context at every ModelCall, recording each occurrence in its
+delta; context deduplication is deferred. Keep tool exchanges complete. Recalled
+rules and skill/service guidance enter through their adopted recall controls,
+not context updates or proactive assembly-time reloading. Preserve unchanged
+message prefixes as now becomes near; never deduplicate inputs by text equality.
 
 ## Preparation and Model Step begin
 

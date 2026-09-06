@@ -83,8 +83,12 @@ agic inner() -> Text:
             assert root.status == "succeeded", root.error
             assert len(harness.store.list_run_tree(root_run_id=root.id)) == 2
             assert len(harness.adapter.invocations) == 2
-            result = harness.adapter.invocations[1].call.messages[-1].parts[0]
-            assert isinstance(result, ToolResultPart)
+            (result,) = (
+                part
+                for message in harness.adapter.invocations[1].call.messages
+                for part in message.parts
+                if isinstance(part, ToolResultPart)
+            )
             assert result.error == (
                 f"_too/{action} cannot call the current or an ancestor runnable: agic:inner"
             )

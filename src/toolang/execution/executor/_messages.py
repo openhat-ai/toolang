@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from toolang.base.types.message import Message, MessageRole, TextPart, message_text
+from toolang.base.types.message import Message, MessageRole
 
 from ..message_delta import literal_delta, render_delta
 from ..types import FieldRef, Local, MessageDelta, MessageTemplate, TypedRef
@@ -17,7 +17,6 @@ class _MessageBuffer:
         self.messages: list[Message] = []
         self.pending: list[MessageTemplate] = []
         self.started = False
-        self.context = ""
         self.initialize(messages)
 
     def copy(self) -> _MessageBuffer:
@@ -27,30 +26,14 @@ class _MessageBuffer:
         other.messages = list(self.messages)
         other.pending = list(self.pending)
         other.started = self.started
-        other.context = self.context
         return other
 
-    def initialize(
-        self,
-        messages: Sequence[Message],
-        *,
-        context: str = "",
-        visible: Sequence[Message] = (),
-    ) -> None:
-        previous_context = _last_context(visible)
+    def initialize(self, messages: Sequence[Message]) -> None:
         if not self.started:
             self.messages.clear()
             self.pending.clear()
-            if context and context == previous_context:
-                messages = _without_context(messages, context)
-                context = ""
             for template in literal_delta(messages).messages:
                 self._append(template)
-            self.context = context
-        elif context and context != self.context:
-            if self.context or context != previous_context:
-                self.append(Message.user(context))
-                self.context = context
 
     def append(self, message: Message) -> None:
         """Append authored or runtime-rendered literal content."""
@@ -112,37 +95,3 @@ class _MessageBuffer:
                 tuple(part for item in self.messages[-count:] for part in item.parts),
             )
         ]
-
-
-def _last_context(messages: Sequence[Message]) -> str:
-    """Recognize only the runtime context envelope, not arbitrary user text."""
-
-    for message in reversed(messages):
-        if message.role != "user":
-            continue
-        text = message_text(message.parts)
-        if text.startswith("<context>") and "</context>" in text:
-            return text[: text.index("</context>") + len("</context>")]
-    return ""
-
-
-def _without_context(messages: Sequence[Message], context: str) -> tuple[Message, ...]:
-    # Preparation attaches runtime context to the last user message. Identical
-    # text in any other authored message is not a context insertion.
-    last_user = max(
-        (index for index, message in enumerate(messages) if message.role == "user"),
-        default=-1,
-    )
-    result = []
-    for index, message in enumerate(messages):
-        parts = message.parts
-        if index == last_user and parts and isinstance(parts[0], TextPart):
-            text = parts[0].text
-            if text == context or text.startswith(context + "\n\n"):
-                text = text[len(context) :].removeprefix("\n\n")
-                parts = (*((TextPart(text),) if text else ()), *parts[1:])
-                if parts:
-                    result.append(Message(message.role, parts))
-                continue
-        result.append(message)
-    return tuple(result)

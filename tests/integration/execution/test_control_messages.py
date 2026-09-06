@@ -25,6 +25,7 @@ from toolang.execution.types import (
     SkillRecallTarget,
     ServiceRecallTarget,
     ModelStepGiven,
+    TypedRef,
 )
 from toolang.execution.records import RecallControlPayload
 from toolang.execution.events import StepEnd, StepBegin
@@ -260,6 +261,17 @@ agic chat(_: Part[]) -> Part[]:
             ]
             assert model_events[1].preceded_by == tuple(item.ref for item in recalls)
             assert model_events[2].preceded_by == ()
+            recall_refs = [item.ref for item in recalls]
+            for event, expected in zip(model_events, ([], recall_refs, [])):
+                assert event.given.delta is not None
+                refs = [
+                    segment.ref.record
+                    for message in event.given.delta.messages
+                    for segment in message.segments
+                    if isinstance(segment, TypedRef)
+                    and segment.ref.record in recall_refs
+                ]
+                assert refs == expected
             assert all(
                 ref.record not in {item.ref for item in recalls}
                 for ref in model_events[1].input
@@ -270,7 +282,7 @@ agic chat(_: Part[]) -> Part[]:
                     message_text(message.parts).count("<context>")
                     for message in calls[2].messages
                 )
-                == 1
+                == 3
             )
             assert str(run.thread) not in calls[0].instructions
             assert run.id not in calls[0].instructions
