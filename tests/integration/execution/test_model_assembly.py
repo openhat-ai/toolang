@@ -125,6 +125,65 @@ def test_cross_run_deltas_record_only_new_messages(tmp_path: Path) -> None:
     assert_replayed(harness.store.db_path, tracer.events)
 
 
+@pytest.mark.parametrize("compact", [False, True])
+def test_history_keeps_consecutive_flow_outputs_without_child_internals(
+    tmp_path: Path, compact: bool
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE
+        + """
+agic worker(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: Private worker input: {{_}}
+
+flow job(_: Part[]) -> Part[]:
+  run worker
+""",
+        responses=[
+            ModelCallResult(message=Message.assistant(f"reply {i}")) for i in range(5)
+        ],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            await _run(harness, thread, "seed", tracer)
+            first = await _run(harness, thread, "first job", tracer, runnable="job")
+            await _run(harness, thread, "second job", tracer, runnable="job")
+            horizon = _summary(harness, thread, first.id) if compact else None
+            run = await _run(harness, thread, "chat", tracer, horizon=horizon)
+            assert run.status == "succeeded", run.error
+            expected = [
+                *(
+                    [Message.user("Earlier facts.")]
+                    if compact
+                    else [Message.user("seed"), Message.assistant("reply 0")]
+                ),
+                Message.user("first job"),
+                Message.assistant("reply 1"),
+                Message.user("second job"),
+                Message.assistant("reply 2"),
+                Message.user("chat"),
+            ]
+            assert harness.adapter.invocations[-1].call.messages == expected
+            # Recorded tails stay in this delta; the following Run adds only
+            # the latest reply and input, without duplicating the Flow outputs.
+            following = await _run(harness, thread, "continue", tracer, horizon=horizon)
+            assert following.status == "succeeded", following.error
+            assert harness.adapter.invocations[-1].call.messages == [
+                *expected,
+                Message.assistant("reply 3"),
+                Message.user("continue"),
+            ]
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
+
+
 @pytest.mark.parametrize("action", ["execute", "retry"])
 def test_execution_reset_uses_the_surviving_horizon(
     tmp_path: Path, action: str, monkeypatch: pytest.MonkeyPatch

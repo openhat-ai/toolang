@@ -227,18 +227,21 @@ class MessageHistory:
         thread: str,
         roots: Sequence[RunRef],
         load: Callable[[Sequence[RunRef]], Mapping[RunRef, Sequence[MessageDelta]]],
-        tail: Callable[[], MessageDelta],
+        tail: Callable[[Sequence[RunRef]], MessageDelta],
         resolve: Callable[[TypedRef], object],
     ) -> None:
         self.thread = thread
         self.roots = tuple(roots)
         self._load = load
         self._load_tail = tail
-        self._tail: MessageDelta | None = None
         self._resolve = resolve
         self._messages: dict[RunRef, tuple[Message, ...]] = {}
+        self._recorded: set[RunRef] = set()
         self._selections: dict[FieldRef | None, tuple[str, tuple[Message, ...]]] = {}
-        self._tail_messages: tuple[Message, ...] | None = None
+        self._ranges: dict[FieldRef | None, tuple[RunRef, ...]] = {}
+        self._tails: dict[
+            tuple[RunRef, ...], tuple[MessageDelta, tuple[Message, ...]]
+        ] = {}
 
     def select(self, horizon: FieldRef | None) -> tuple[str, tuple[Message, ...]]:
         if horizon not in self._selections:
@@ -271,6 +274,8 @@ class MessageHistory:
             missing = tuple(root for root in selected if root not in self._messages)
             if missing:
                 for root, deltas in self._load(missing).items():
+                    if deltas:
+                        self._recorded.add(root)
                     self._messages[root] = tuple(
                         message
                         for delta in deltas
@@ -279,15 +284,22 @@ class MessageHistory:
             for root in selected:
                 messages.extend(self._messages[root])
             self._selections[horizon] = summary, tuple(messages)
+            self._ranges[horizon] = selected
         return self._selections[horizon]
 
-    @property
-    def tail(self) -> MessageDelta:
-        if self._tail is None:
-            self._tail = self._load_tail()
-        return self._tail
+    def tail(
+        self, horizon: FieldRef | None
+    ) -> tuple[MessageDelta, tuple[Message, ...]]:
+        """Include every unrecorded trailing root, bounded by the selected near."""
 
-    def tail_messages(self) -> tuple[Message, ...]:
-        if self._tail_messages is None:
-            self._tail_messages = render_delta(self.tail, self._resolve)
-        return self._tail_messages
+        self.select(horizon)
+        roots = self._ranges[horizon]
+        start = max(
+            (index for index, root in enumerate(roots) if root in self._recorded),
+            default=0,
+        )
+        pending = roots[start:]
+        if pending not in self._tails:
+            delta = self._load_tail(pending)
+            self._tails[pending] = delta, render_delta(delta, self._resolve)
+        return self._tails[pending]

@@ -46,12 +46,11 @@ class _MessageBuffer:
                 context = ""
             for template in literal_delta(messages).messages:
                 self._append(template)
+            self.context = context
         elif context and context != self.context:
             if self.context or context != previous_context:
                 self.append(Message.user(context))
-            else:
-                context = ""
-        self.context = context
+                self.context = context
 
     def append(self, message: Message) -> None:
         """Append authored or runtime-rendered literal content."""
@@ -128,21 +127,22 @@ def _last_context(messages: Sequence[Message]) -> str:
 
 
 def _without_context(messages: Sequence[Message], context: str) -> tuple[Message, ...]:
+    # Preparation attaches runtime context to the last user message. Identical
+    # text in any other authored message is not a context insertion.
+    last_user = max(
+        (index for index, message in enumerate(messages) if message.role == "user"),
+        default=-1,
+    )
     result = []
-    removed = False
-    for message in messages:
+    for index, message in enumerate(messages):
         parts = message.parts
-        if (
-            not removed
-            and message.role == "user"
-            and parts
-            and isinstance(parts[0], TextPart)
-        ):
+        if index == last_user and parts and isinstance(parts[0], TextPart):
             text = parts[0].text
             if text == context or text.startswith(context + "\n\n"):
                 text = text[len(context) :].removeprefix("\n\n")
                 parts = (*((TextPart(text),) if text else ()), *parts[1:])
-                removed = True
-        if parts:
-            result.append(Message(message.role, parts))
+                if parts:
+                    result.append(Message(message.role, parts))
+                continue
+        result.append(message)
     return tuple(result)

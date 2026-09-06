@@ -180,6 +180,30 @@ def test_unknown_versions_and_non_part_references_fail_explicitly() -> None:
         )
 
 
+def test_context_reuse_preserves_identical_authored_content() -> None:
+    context = "<context>shared context</context>"
+    authored = Message.user(context)
+    buffer = _MessageBuffer()
+    buffer.initialize(
+        (authored, Message.user(context + "\n\nnew input")),
+        context=context,
+        visible=(Message.user(context + "\n\nold input"),),
+    )
+    assert buffer.messages == [authored, Message.user("new input")]
+
+
+def test_context_stays_visible_when_disabled_and_reenabled() -> None:
+    context = "<context>shared context</context>"
+    buffer = _MessageBuffer()
+    buffer.initialize((Message.user(context + "\n\ninput"),), context=context)
+    buffer.take_delta()
+    buffer.initialize((), context="")
+    buffer.initialize((), context=context)
+    assert buffer.take_delta() == MessageDelta()
+    buffer.initialize((), context="<context>new context</context>")
+    assert len(buffer.take_delta().messages) == 1
+
+
 def test_delta_metadata_does_not_change_public_model_events() -> None:
     call = ModelCall("instruct", [Message.user("hello")])
     given = ModelStepGiven("test/model", call, literal_delta(call.messages))

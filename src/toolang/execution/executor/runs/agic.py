@@ -222,7 +222,7 @@ async def execute(
         )
         prepared = prepare_agic(
             execution,
-            current_binding,
+            replace(current_binding, horizon=horizon),
             candidate,
             variables=variables,
             far=far,

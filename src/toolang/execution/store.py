@@ -2894,14 +2894,13 @@ class RunStore:
             if root is None:
                 raise ValueError(f"run not found: {run_id}")
             roots = self._thread_projection().before(root)
-        last_facts: (
-            tuple[tuple[StepRecord, ...], dict[ControlRef, ControlRecord]] | None
-        ) = None
+        facts: dict[
+            RunRef, tuple[tuple[StepRecord, ...], dict[ControlRef, ControlRecord]]
+        ] = {}
 
         def load(
             selected_roots: Sequence[RunRef],
         ) -> dict[RunRef, tuple[MessageDelta, ...]]:
-            nonlocal last_facts
             with self.read_transaction():
                 ids = tuple(str(ref) for ref in selected_roots)
                 steps = self.list_steps_for_runs(run_ids=ids)
@@ -2915,17 +2914,21 @@ class RunStore:
                         for step in selected
                         if isinstance(step.given, StoredModelStepGiven)
                     )
-                    if roots and str(ref) == roots[-1].id:
-                        last_facts = selected, related
+                    facts[ref] = selected, related
                 return deltas
 
-        def tail() -> MessageDelta:
-            if not roots:
-                return MessageDelta()
-            if last_facts is None:
-                load((RunRef(roots[-1].id),))
-            assert last_facts is not None
-            return tail_delta(roots[-1], *last_facts, self.resolve_value)
+        by_ref = {RunRef(run.id): run for run in roots}
+
+        def tail(pending: Sequence[RunRef]) -> MessageDelta:
+            return MessageDelta(
+                messages=tuple(
+                    message
+                    for ref in pending
+                    for message in tail_delta(
+                        by_ref[ref], *facts[ref], self.resolve_value
+                    ).messages
+                )
+            )
 
         return MessageHistory(
             str(root.thread),

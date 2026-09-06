@@ -121,7 +121,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             and "near" in prepared.recall
         ):
             history = state.execution.message_history()
-            next_messages.prepend(history.tail, history.tail_messages())
+            next_messages.prepend(*history.tail(prepared.run.horizon))
         _append_inputs(next_messages, preceding)
         request = ModelCall(
             instructions=_model_instructions(state, prepared),
