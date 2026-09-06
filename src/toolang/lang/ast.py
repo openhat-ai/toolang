@@ -13,6 +13,7 @@ from tree_sitter import Language, Node as TreeSitterNode, Parser, Tree
 import tree_sitter_toolang
 
 from toolang.common.immutable import freeze_mapping
+from .text import source_lines
 
 CapKind = Literal["psyche", "skill", "service", "prompt"]
 JobKind = Literal["task", "chore"]
@@ -354,7 +355,7 @@ def _parse_source(source: str) -> _ParsedSource:
     syntax = source if not source or source.endswith("\n") else f"{source}\n"
     encoded = syntax.encode("utf-8")
     tree = _parse_tree(encoded)
-    lines = source.splitlines()
+    lines = source_lines(source)
     if error := _first_syntax_error(tree.root_node):
         line = error.start_point.row + 1
         raw = lines[line - 1] if line <= len(lines) else ""

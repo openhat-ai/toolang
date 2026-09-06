@@ -12,7 +12,7 @@ from toolang.common.template import template_root_names
 
 from . import ast
 from .errors import ToolangValidationError
-from .text import dedent_text_lines
+from .text import dedent_text_lines, source_lines
 from .validate import _validate_cap_source
 
 _DECL_REF_RE = re.compile(r"^[A-Za-z_][\w-]*$")
@@ -30,7 +30,7 @@ class _DocComments:
     """Resolve source-level documentation comments by line and indentation."""
 
     def __init__(self, source: bytes) -> None:
-        lines = source.decode("utf-8").splitlines()
+        lines = source_lines(source.decode("utf-8"))
         self.program_doc = self._program_doc(lines)
         self._attached = self._attached_docs(lines)
         self._comment_lines = {

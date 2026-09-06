@@ -8,6 +8,8 @@ breaks. Implementation uses the released 0.3.1 patch, which supplies the approve
 and strict keyword recognition on every implicit prose line. That follow-up
 supersedes the original permissive-continuation behavior in this definition.
 
+Implementation: [Toolang #482](https://github.com/openhat-ai/toolang/pull/482).
+
 Adopt the released `tree-sitter-toolang` 0.3.1 grammar throughout parsing,
 semantic validation, formatting, execution, and inspection. Toolang's own
 package version is already `0.3.0`; this is a grammar integration, not a package
@@ -194,6 +196,11 @@ placement. Formatting twice produces the same output; reparsing preserves
 semantic AST content. Compact AST-derived heads use verb, count/direction,
 lanes, then runnable as their conventional order.
 
+The formatter derives line roles, text ownership, and control-block ranges from
+the CST before rendering. Ordering and spacing retain those annotations instead
+of parsing the rendered text again. Lowering and formatting share physical-line
+splitting and text-margin handling; each text margin is computed once per block.
+
 Program caches and durable Step `given` payloads contain language AST data;
 renaming the statement discriminator is a storage compatibility change.
 Follow the repository's current-version-only store policy: increment the
@@ -276,12 +283,12 @@ Parsing remains in `toolang.lang`; execution consumes the semantic AST.
 ## Action Items
 
 - [x] Approve the released-grammar scope and explicit compatibility breaks.
-- [ ] Update the dependency, AST, lowering, and validation as one integration.
-- [ ] Implement directional stable sorting and adapt persistence consumers.
-- [ ] Update formatting, progress, inspection, and schema boundaries.
-- [ ] Migrate tracked sources and current docs with binding-aware rank rewrites.
-- [ ] Add the acceptance cases above and pass the complete default suite.
-- [ ] Fetch/rebase onto current `origin/main`, rerun verification, and open a
+- [x] Update the dependency, AST, lowering, and validation as one integration.
+- [x] Implement directional stable sorting and adapt persistence consumers.
+- [x] Update formatting, progress, inspection, and schema boundaries.
+- [x] Migrate tracked sources and current docs with binding-aware rank rewrites.
+- [x] Add the acceptance cases above and pass the complete default suite.
+- [x] Fetch/rebase onto current `origin/main`, rerun verification, and open a
       ready implementation PR with migration and rollback notes.
 
 ## Risks and Open Questions

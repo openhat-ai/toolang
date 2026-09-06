@@ -3,6 +3,12 @@
 from collections.abc import Sequence
 
 
+def source_lines(source: str) -> list[str]:
+    """Split physical source lines without treating Unicode text as layout."""
+
+    return [line.removesuffix("\r") for line in source.split("\n")]
+
+
 def text_indent_width(line: str) -> int:
     """Measure a source prefix using the grammar's eight-column tab stops."""
 
