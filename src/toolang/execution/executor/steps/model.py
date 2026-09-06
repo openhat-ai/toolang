@@ -32,12 +32,13 @@ from toolang.base.types.run import (
 )
 from toolang.base.types.tool import ToolDefinition
 from toolang.common.time import elapsed_ms, utc_now
-from toolang.lang.types import Array
 from toolang.state.state import AgentState, StatePublication
 
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
+from ...control_messages import control_message
 from ...records import (
     ControlRecord,
+    RecallControlPayload,
     SteerControlPayload,
 )
 from ...types import (
@@ -55,6 +56,7 @@ from ..common import _StepFailed, control_local_pointer
 from ..diagnostics import log_model_request, log_model_result, log_model_target
 from ..limits import _ModelAccounting
 from .._messages import _MessageBuffer
+from . import tool as tool_step
 
 if TYPE_CHECKING:
     from ..prepare import _AgicFrame
@@ -87,6 +89,12 @@ async def execute(state: _AgicState) -> ModelCallResult:
     step_started = time.perf_counter()
     started_at = utc_now()
     consumed_inputs = state.claimed_inputs or state.pending_inputs()
+    recalled = (
+        state.execution.store.unconsumed_recall_controls(run_id=run.run_id)
+        if state.execution is not None
+        else ()
+    )
+    preceding = (*consumed_inputs, *recalled)
     step_input = (
         *_step_input(state),
         *(control_local_pointer(item, "_") for item in consumed_inputs),
@@ -108,8 +116,8 @@ async def execute(state: _AgicState) -> ModelCallResult:
     ) -> StepBegin:
         nonlocal prepared, request
         prepared = state.frame_for_step(agent_state, state_ref)
-        next_messages.initialize(prepared.messages)
-        _append_inputs(next_messages, consumed_inputs)
+        next_messages.initialize(prepared.messages, context=prepared.prompt_context)
+        _append_inputs(next_messages, preceding)
         request = ModelCall(
             instructions=_model_instructions(state, prepared),
             messages=list(next_messages.messages),
@@ -126,7 +134,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             kind="model",
             state=state_ref,
             input=step_input,
-            preceded_by=tuple(item.ref for item in consumed_inputs),
+            preceded_by=tuple(item.ref for item in preceding),
             started_at=started_at,
             given=ModelStepGiven(
                 model=prepared.model.ref, call=request, delta=next_messages.take_delta()
@@ -306,6 +314,7 @@ async def _apply_response(
         )
     except asyncio.CancelledError:
         if not state.immediate_steer():
+            await tool_step.skip(state, tuple(current.tool_calls), canceled=True)
             raise
         # The complete response is durable and already in the message prefix.
         # Return its calls so steer recovery records their skipped results.
@@ -511,17 +520,19 @@ def _append_inputs(
     messages: _MessageBuffer,
     inputs: Sequence[ControlRecord],
 ) -> None:
-    for input in inputs:
-        if isinstance(input.payload, SteerControlPayload):
-            primary = next(
-                (item for item in input.payload.input if item.name == "_"), None
-            )
-            if (
-                primary is not None
-                and isinstance(primary.value, Array)
-                and all(isinstance(item, Part) for item in primary.value)
-            ):
-                messages.append_ref("user", control_local_pointer(input, "_"), primary)
+    for control in inputs:
+        if template := control_message(control):
+            if isinstance(control.payload, RecallControlPayload):
+                content = control.payload.content
+                messages.append_template(template, lambda _ref: content)
+            elif isinstance(control.payload, SteerControlPayload):
+                primary = next(
+                    (item for item in control.payload.input if item.name == "_"), None
+                )
+                messages.append_template(
+                    template,
+                    lambda _ref: primary.value if primary is not None else None,
+                )
 
 
 def _ensure_text_part_index(stream: _ModelStream) -> int:
@@ -596,6 +607,26 @@ async def _end_incomplete(
         for index, part in parts.items()
         if index in stream.completed_parts or isinstance(part, TextPart)
     )
+    step = StepRef.from_local(state.prepared.run.run_id, (stream.step,))
+    local = Local.typed("Part[]", output, "_", 0) if output else None
+    calls = tuple(
+        ToolCall(
+            part.tool_call_id,
+            part.call_id or part.tool_call_id,
+            part.tool_name,
+            part.input,
+        )
+        for part in output
+        if isinstance(part, ToolCallPart)
+    )
+    if local is not None:
+        state.messages.append_ref(
+            "assistant", FieldRef.from_path(step, "output", "value"), local
+        )
+        state.last_step = stream.step
+        for index, part in enumerate(output):
+            if isinstance(part, ToolCallPart):
+                state.tool_call_sources[part.tool_call_id] = (stream.step, index)
     try:
         for index, part in parts.items():
             if index not in stream.ended_parts:
@@ -605,16 +636,20 @@ async def _end_incomplete(
         error = None
         raise
     finally:
-        await state.end_step(
-            StepEnd(
-                step=StepRef.from_local(state.prepared.run.run_id, (stream.step,)),
-                kind="model",
-                status="failed" if error is not None else "canceled",
-                output=Local.typed("Part[]", output, "_", 0) if output else None,
-                error=error,
-                finished_at=utc_now(),
+        try:
+            await state.end_step(
+                StepEnd(
+                    step=step,
+                    kind="model",
+                    status="failed" if error is not None else "canceled",
+                    output=local,
+                    error=error,
+                    finished_at=utc_now(),
+                )
             )
-        )
+        finally:
+            if error is None:
+                await tool_step.skip(state, calls, canceled=not state.immediate_steer())
 
 
 def _partial_part(stream: _ModelStream, part_index: int) -> Part:

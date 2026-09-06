@@ -18,7 +18,7 @@ from tests.support.execution_harness import (
     ExecutionHarness,
     ScriptedModelTurn,
 )
-from toolang.base.types.message import Message
+from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
 from toolang.common.ids import IdIssuer
 from toolang.execution.executor import RunExecutor
@@ -430,8 +430,15 @@ def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
             assert record.status == "succeeded"
             assert harness.store.run_output_text(run_id=record.id) == "final"
             assert len(harness.adapter.invocations) == 2
-            assert harness.adapter.invocations[1].call.messages[-1] == Message.user(
-                "Use the remote guidance."
+            assert harness.adapter.invocations[1].call.messages[-1] == Message(
+                "user",
+                (
+                    TextPart(
+                        '<steer description="The user supplied updated input for the current task.">'
+                    ),
+                    TextPart("Use the remote guidance."),
+                    TextPart("</steer>"),
+                ),
             )
             control = harness.store.get_run_control(run_id=record.id, index=1)
             assert control is not None

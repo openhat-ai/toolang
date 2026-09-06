@@ -66,7 +66,7 @@ async def begin(
     call: ToolCall,
     build: Callable[[AgentState | StatePublication, ControlRef], StepBegin],
 ) -> None:
-    """Establish the Tool Step boundary even when steer interrupts its lock wait."""
+    """Establish the Tool Step boundary even when interrupted during its lock wait."""
 
     interruption: asyncio.CancelledError | None = None
     while True:
@@ -77,7 +77,7 @@ async def begin(
             if state.execution is None:
                 raise
             record = state.execution.store.get_step(ref=step)
-            if record is None and state.immediate_steer():
+            if record is None:
                 # Cancellation while waiting for the boundary lock has no Step
                 # yet. Establish it before recording the skipped response.
                 continue
@@ -301,25 +301,24 @@ async def cancel(
     part: ToolResultPart | None = None,
     aborted_by: ControlRef | None = None,
 ) -> None:
-    """End a started call; only steer recovery needs a cancellation result."""
+    """End a started call with a durable result, including ordinary cancellation."""
 
-    if part is None and state.immediate_steer():
-        part = canceled_result(call)
-    if part is not None:
-        state.messages.append_ref(
-            "tool",
-            FieldRef.from_path(step, "output", "value"),
-            Local.typed("ToolResultPart", part, None, 0),
+    if part is None:
+        part = canceled_result(
+            call, reason="canceled by steer" if state.immediate_steer() else "canceled"
         )
-        state.last_step = step.index
+    state.messages.append_ref(
+        "tool",
+        FieldRef.from_path(step, "output", "value"),
+        Local.typed("ToolResultPart", part, None, 0),
+    )
+    state.last_step = step.index
     await state.end_step(
         StepEnd(
             step=step,
             kind="tool",
             status="canceled",
-            output=Local.typed("ToolResultPart", part, None, 0)
-            if part is not None
-            else None,
+            output=Local.typed("ToolResultPart", part, None, 0),
             noted=ToolStepNoted(summary=summary),
             aborted_by=aborted_by,
             finished_at=utc_now(),
@@ -327,23 +326,28 @@ async def cancel(
     )
 
 
-def canceled_result(call: ToolCall) -> ToolResultPart:
-    """Build the model-facing result for a call interrupted or skipped by steer."""
+def canceled_result(
+    call: ToolCall, *, reason: str = "canceled by steer"
+) -> ToolResultPart:
+    """Build the model-facing result for an interrupted or unexecuted call."""
 
     return ToolResultPart(
         tool_call_id=call.tool_call_id,
         call_id=call.call_id,
         tool_name=call.name,
         tool_family=call.name,
-        error="canceled by steer",
+        error=reason,
     )
 
 
-async def skip(state: _AgicState, calls: tuple[ToolCall, ...]) -> None:
-    """Record steer-skipped calls without invoking handlers or reserving budget."""
+async def skip(
+    state: _AgicState, calls: tuple[ToolCall, ...], *, canceled: bool = False
+) -> None:
+    """Close an interrupted batch without invoking handlers or reserving budget."""
 
     message_start = len(state.messages.pending)
     inputs: list[FieldRef] = []
+    interruption: asyncio.CancelledError | None = None
     control = (
         next(
             (
@@ -355,7 +359,7 @@ async def skip(state: _AgicState, calls: tuple[ToolCall, ...]) -> None:
             ),
             None,
         )
-        if state.execution is not None
+        if state.execution is not None and not canceled
         else None
     )
     for call in calls:
@@ -392,18 +396,28 @@ async def skip(state: _AgicState, calls: tuple[ToolCall, ...]) -> None:
                 state,
                 step,
                 call,
-                part=canceled_result(call),
-                aborted_by=control,
+                part=canceled_result(
+                    call,
+                    reason="canceled; operation not executed"
+                    if canceled
+                    else "canceled by steer",
+                ),
+                aborted_by=None if canceled else control,
             )
-        except asyncio.CancelledError:
-            if not state.immediate_steer():
-                raise
+        except asyncio.CancelledError as exc:
+            if not canceled and not state.immediate_steer():
+                # A cancel can replace a pending steer while its skipped batch
+                # is being recorded. Close the remaining calls before exiting.
+                interruption = exc
+                canceled = True
         inputs.append(FieldRef.from_path(step, "output", "value"))
         state.last_step = step.index
     if inputs:
         state.next_model_inputs = tuple(inputs)
         # Include begin-interruption results, preserving the batch's message shape.
         state.messages.group_tools(message_start)
+    if interruption is not None:
+        raise interruption
 
 
 def _plugin_name(tool: AgentTool | None) -> str:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 from pathlib import Path
 from typing import Any
 
@@ -140,6 +141,50 @@ def test_shell_tool_runs_one_command(tmp_path: Path) -> None:
     assert result["ok"] is True
     assert result["exit_code"] == 0
     assert result["stdout"] == "hi"
+
+
+@pytest.mark.parametrize("interruption", ["cancel", "timeout"])
+def test_shell_interruption_stops_the_command(
+    tmp_path: Path, interruption: str
+) -> None:
+    tool = create_shell_tool({}).tools()["execute"]
+    pid_file = tmp_path / "pid"
+
+    async def scenario() -> None:
+        task = asyncio.create_task(
+            tool.invoke(
+                {"command": "echo $$ > pid; sleep 10 & wait", "timeout_sec": 1},
+                _tool_context(tmp_path, "shell"),
+            )
+        )
+        pid = None
+        try:
+            async with asyncio.timeout(2):
+                while not pid_file.exists() or not pid_file.read_text().strip():
+                    await asyncio.sleep(0.01)
+            pid = int(pid_file.read_text())
+            if interruption == "cancel":
+                task.cancel()
+                await asyncio.sleep(0)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, timeout=1)
+            else:
+                with pytest.raises(ToolangError, match="timed out after 1s"):
+                    await asyncio.wait_for(task, timeout=2)
+            with pytest.raises(ProcessLookupError):
+                os.kill(pid, 0)
+        finally:
+            if pid is not None:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
 
 
 def test_web_search_tool_filters_domains(monkeypatch, tmp_path: Path) -> None:

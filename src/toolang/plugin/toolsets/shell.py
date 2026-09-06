@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-import subprocess
+import asyncio
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
+import locale
+import os
 from pathlib import Path
+import signal
 from typing import Any
 
 from toolang.base.errors import ToolangError
@@ -48,7 +52,7 @@ class ShellToolset:
             name="execute",
             description="Run one shell command and capture stdout and stderr.",
         )
-        def execute(
+        async def execute(
             command: str,
             cwd: str | None = None,
             timeout_sec: int = self._timeout_sec,
@@ -58,28 +62,63 @@ class ShellToolset:
             resolved_cwd = _resolve_cwd(cwd, context=context)
             timeout = _int_value(timeout_sec, default=self._timeout_sec)
             output_limit = _int_value(max_output_chars, default=self._max_output_chars)
-            try:
-                completed = subprocess.run(
-                    ["/bin/sh", "-lc", command],
+            launch = asyncio.create_task(
+                asyncio.create_subprocess_exec(
+                    "/bin/sh",
+                    "-lc",
+                    command,
                     cwd=str(resolved_cwd),
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                    check=False,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    start_new_session=True,
                 )
-            except subprocess.TimeoutExpired as exc:
-                raise ToolangError(f"shell command timed out after {timeout}s") from exc
+            )
+            try:
+                process = await asyncio.shield(launch)
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout)
+            except BaseException as exc:
+                # Retain ownership even when canceled during spawn or cleanup.
+                cleanup = asyncio.create_task(_stop_command(launch))
+                while not cleanup.done():
+                    try:
+                        await asyncio.shield(cleanup)
+                    except asyncio.CancelledError:
+                        continue
+                cleanup.result()
+                if isinstance(exc, TimeoutError):
+                    raise ToolangError(
+                        f"shell command timed out after {timeout}s"
+                    ) from exc
+                raise
+            out = _decode_output(stdout)
+            err = _decode_output(stderr)
             return {
                 "cwd": str(resolved_cwd),
-                "exit_code": completed.returncode,
-                "ok": completed.returncode == 0,
-                "stdout": completed.stdout[:output_limit],
-                "stderr": completed.stderr[:output_limit],
-                "stdout_truncated": len(completed.stdout) > output_limit,
-                "stderr_truncated": len(completed.stderr) > output_limit,
+                "exit_code": process.returncode,
+                "ok": process.returncode == 0,
+                "stdout": out[:output_limit],
+                "stderr": err[:output_limit],
+                "stdout_truncated": len(out) > output_limit,
+                "stderr_truncated": len(err) > output_limit,
             }
 
         return {"execute": create_function_tool(execute)}
+
+
+async def _stop_command(launch: asyncio.Task[asyncio.subprocess.Process]) -> None:
+    process = await launch
+    with suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGKILL)
+    await process.communicate()
+
+
+def _decode_output(value: bytes) -> str:
+    # Match subprocess text mode, including universal newline translation.
+    return (
+        value.decode(locale.getpreferredencoding(False))
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+    )
 
 
 def create_toolset(config: Mapping[str, Any]) -> Toolset:

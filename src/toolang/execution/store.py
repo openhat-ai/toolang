@@ -28,6 +28,8 @@ from toolang.base.types.policy import RunLimits
 from toolang.common.time import utc_now
 from .errors import HistoryChangedError, RunStoreSchemaError
 from .message_delta import literal_delta, render_delta
+from .control_messages import control_message
+from .run_view import RunView
 from .inspection import (
     ChildOccurrenceTotals,
     ExecutionSnapshot,
@@ -561,6 +563,20 @@ class RunStore:
         if inserted is None:  # pragma: no cover - transactional insert invariant
             raise RuntimeError(f"execute control acceptance failed: {run_id}")
         return _control_from_row(inserted)
+
+    def unconsumed_recall_controls(self, *, run_id: str) -> tuple[ControlRecord, ...]:
+        """Return applied resource revisions not yet adopted at a Step boundary."""
+        with self._lock:
+            rows = self._conn.execute(
+                '''SELECT controls.* FROM controls
+                   WHERE target = ? AND kind = 'recall' AND status = 'applied'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM steps, json_each(steps.preceded_by) AS consumed
+                       WHERE steps.run = ? AND consumed.value = controls.id
+                   ) ORDER BY "index"''',
+                (run_id, run_id),
+            ).fetchall()
+        return tuple(_control_from_row(row) for row in rows)
 
     def accept_recall_control(
         self,
@@ -2955,26 +2971,89 @@ class RunStore:
         steps_by_run = self.list_steps_for_runs(run_ids=tuple(run.id for run in runs))
         results: list[Message] = []
         for run in runs:
-            inputs = self.list_run_controls(run_id=run.id)
-            for item in inputs:
-                if item.kind not in {"run", "steer"} or not isinstance(
-                    item.payload,
-                    RunControlPayload | SteerControlPayload,
-                ):
-                    continue
-                locals_value = item.payload.input
-                if locals_value is None:
-                    continue
+            steps = {step.ref: step for step in steps_by_run.get(run.id, ())}
+            controls = {
+                item.ref: item for item in self.list_run_controls(run_id=run.id)
+            }
+            view = RunView(run, (*steps.values(), *controls.values()))
+            emitted: set[ControlRef] = set()
+            waiting: set[str] = set()
+            deferred: list[Message] = []
+            # The initial input belongs to Run creation, including retries whose
+            # retained Steps no longer refer to the initial run control.
+            initial = controls.get(ControlRef.for_run(run.id, 0))
+            if (
+                initial is not None
+                and initial.status == "applied"
+                and isinstance(initial.payload, RunControlPayload)
+            ):
                 primary = next(
-                    (local for local in locals_value if local.name == "_"), None
+                    (value for value in initial.payload.input if value.name == "_"),
+                    None,
                 )
-                if primary is None:
-                    continue
-                parts = parts_from_local(self.resolve_local(primary))
-                if parts:
-                    results.append(Message(role="user", parts=parts))
-            for step in steps_by_run.get(run.id, ()):
-                results.extend(_replay_messages_from_step(step))
+                if primary is not None:
+                    parts = parts_from_local(self.resolve_local(primary))
+                    if parts:
+                        results.append(Message("user", parts))
+                emitted.add(initial.ref)
+            for boundary in view.timeline():
+                if boundary.phase == "end":
+                    for message in _replay_messages_from_step(steps[boundary.step]):
+                        results.append(message)
+                        for part in message.parts:
+                            if isinstance(part, ToolCallPart):
+                                waiting.add(part.tool_call_id)
+                            elif isinstance(part, ToolResultPart):
+                                waiting.discard(part.tool_call_id)
+                for ref in boundary.controls:
+                    if ref in emitted:
+                        continue
+                    control = controls.get(ref)
+                    if control is None or control.status != "applied":
+                        continue
+                    emitted.add(ref)
+                    template = control_message(control)
+                    if template is not None:
+                        deferred.extend(
+                            render_delta(
+                                MessageDelta(messages=(template,)), self.resolve_value
+                            )
+                        )
+                if not waiting:
+                    results.extend(deferred)
+                    deferred.clear()
+            # A historical interrupted/incomplete exchange may be filtered out,
+            # but its applied cancellation must remain visible.
+            results.extend(deferred)
+            if run.status == "canceled":
+                # Cancellation can arrive after the final Step was committed.
+                # RunEnd applies it without rewriting that completed Step.
+                attempt = max(
+                    (
+                        item.index
+                        for item in controls.values()
+                        if item.kind in {"run", "retry"}
+                    ),
+                    default=0,
+                )
+                terminal = next(
+                    (
+                        item
+                        for item in reversed(tuple(controls.values()))
+                        if item.kind == "cancel"
+                        and item.status == "applied"
+                        and item.index > attempt
+                    ),
+                    None,
+                )
+                if terminal is not None and terminal.ref not in emitted:
+                    template = control_message(terminal)
+                    if template is not None:
+                        results.extend(
+                            render_delta(
+                                MessageDelta(messages=(template,)), self.resolve_value
+                            )
+                        )
         return _recent_valid_model_history(results, limit=limit)
 
     def _conversation_runs(self, *, thread_id: str, limit: int) -> list[RunRecord]:

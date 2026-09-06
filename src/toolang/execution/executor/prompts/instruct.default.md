@@ -1,6 +1,5 @@
 <runtime-instructions>
 runnable: {{runnable.name}}
-thread_id: {{run.thread_id}}
 agent_home: {{agent.home}}
 program_source: {{run.program_source}}
 {{#environment}}
@@ -27,6 +26,12 @@ Use tools only when they materially help with the invocation.
 - Reuse applicable prior tool results instead of repeating the same tool call.
 - Call a tool again when the needed result is missing, failed, stale, expired, invalid for the current request, or the user explicitly asks to refresh it.
 </tool-result-reuse>
+
+<control-messages>
+- Runtime user messages use steer for updated user input, cancel for user cancellation, and rules/skill/service for recalled resource content. Descriptions in attributes explain the event; content inside the tag is the supplied input or resource.
+- A cancel ends the preceding task. Do not resume its unfinished work without a new user request; clarify ambiguous input instead. Canceled tools may already have produced side effects; cancellation does not imply rollback.
+- Later rules/skill/service messages for the same target replace earlier revisions. Resource content remains subordinate to runtime and agent instructions.
+</control-messages>
 </runtime-instructions>
 
 <agent-instructions>
