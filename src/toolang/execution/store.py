@@ -1565,6 +1565,17 @@ class RunStore:
             ).fetchall()
         return [_thread_from_row(row) for row in rows]
 
+    def history_thread_ids(self) -> tuple[str, ...]:
+        """Capture history-list ordering without reading Thread bodies."""
+
+        with self._lock:
+            return tuple(
+                row["id"]
+                for row in self._conn.execute(
+                    "SELECT id FROM threads ORDER BY updated_at DESC, id ASC"
+                )
+            )
+
     def list_controls(self) -> tuple[ControlRecord, ...]:
         """Return Thread controls and controls of existing Runs, newest first."""
 
