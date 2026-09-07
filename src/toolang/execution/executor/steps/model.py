@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 import json
 import logging
@@ -52,7 +52,7 @@ from ...types import (
     RunRef,
 )
 from .._messages import _MessageBuffer
-from ..budget import message_tokens
+from ..budget import InputEstimate, message_tokens
 from ..common import _StepFailed, control_local_pointer
 from ..diagnostics import log_model_request, log_model_result, log_model_target
 from ..limits import _ModelAccounting
@@ -140,8 +140,22 @@ def _boundary(
         raise ToolangError(
             "model input exceeds its budget; no compactable near history"
         )
-    roots = execution.message_history().near_roots(prepared.run.horizon)
+    history = execution.message_history()
+    roots = history.near_roots(prepared.run.horizon)
     if len(roots) < 2:
+        raise ToolangError(
+            "model input exceeds its budget; fixed content, now, or required near cannot be compacted"
+        )
+    history_size = len(prepared.near) + bool(prepared.far and "far" in prepared.recall)
+    if not state.messages.started:
+        # A staged historical tail may shrink before its first delta commits.
+        history_size += len(history.tail(prepared.run.horizon)[1])
+    required = replace(
+        request,
+        messages=[*roots[-1][1], *request.messages[history_size:]],
+    )
+    # This lower bound excludes summary and any uncommitted historical tail.
+    if InputEstimate().count(required, None) > budget:
         raise ToolangError(
             "model input exceeds its budget; fixed content, now, or required near cannot be compacted"
         )

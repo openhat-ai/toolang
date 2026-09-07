@@ -368,7 +368,9 @@ accepts a request that could run out of context during generation.
 - Use the near retention budget only to choose a compaction boundary. Root-only
   boundaries and the mandatory retained historical root take precedence over that
   target; Step-level splitting is deferred. No fixed post-compaction percentage
-  is required.
+  is required. Reject already-oversized mandatory content before starting compact.
+  This lower-bound check excludes newly staged historical tails, which may shrink
+  when the horizon advances; committed now never shrinks.
 - Give compact's model calls their own output budgets. After adopting the result,
   reprepare and recheck the complete candidate, not just the summary. If it still
   exceeds budget and no valid boundary can advance, fail explicitly. This includes
