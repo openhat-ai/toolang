@@ -23,6 +23,9 @@ class ToolRuntime(Protocol):
         self, kind: Literal["skill", "service"], ref: str
     ) -> dict[str, Any]: ...
 
+    async def honor(self, paths: tuple[tuple[str, str], ...]) -> dict[str, Any]:
+        """Recall rules for normalized (workspace, relative path) pairs."""
+
 
 @runtime_checkable
 class AgentTool(Protocol):

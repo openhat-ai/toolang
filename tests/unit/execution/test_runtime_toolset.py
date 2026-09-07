@@ -24,6 +24,7 @@ def test_installed_runtime_toolset_has_no_old_aliases_or_future_tools() -> None:
         "_toolang__execute",
         "_toolang__reload",
         "_toolang__pick",
+        "_toolang__honor",
     }
     assert set(tools.user).isdisjoint(tools.runtime)
     assert "me__get" in tools.user
@@ -58,8 +59,13 @@ class _Runtime:
         await asyncio.sleep(0)
         return {"controls": [self.marker]}
 
+    async def honor(self, paths):
+        self.calls.append(paths)
+        await asyncio.sleep(0)
+        return {"controls": [self.marker]}
 
-@pytest.mark.parametrize("name", ["run", "execute", "reload", "pick"])
+
+@pytest.mark.parametrize("name", ["run", "execute", "reload", "pick", "honor"])
 def test_shared_plugin_keeps_per_call_authority_isolated(
     tmp_path: Path, name: str
 ) -> None:
@@ -69,6 +75,8 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
     arguments = (
         {}
         if name == "reload"
+        else {"paths": [{"workspace": "repo", "path": "/src"}]}
+        if name == "honor"
         else {"kind": "skill", "ref": "home://skills/testing"}
         if name == "pick"
         else {"runnable": "child", "input": {"_": "input"}}
@@ -105,6 +113,11 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
         ("pick", {"kind": "rules", "ref": "/tmp"}),
         ("pick", {"kind": [], "ref": "home://skills/testing"}),
         ("pick", {"kind": "skill", "ref": " testing "}),
+        ("honor", {"paths": []}),
+        ("honor", {"paths": [{"workspace": "repo", "path": "src"}]}),
+        ("honor", {"paths": [{"workspace": "repo", "path": "/../src"}]}),
+        ("honor", {"paths": [{"workspace": "repo", "path": "//src"}]}),
+        ("honor", {"paths": [{"workspace": "repo", "path": "/src", "content": "bad"}]}),
     ],
 )
 def test_runtime_arguments_cannot_supply_authority(

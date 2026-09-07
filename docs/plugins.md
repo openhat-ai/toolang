@@ -26,6 +26,15 @@ integration behavior and do not mutate durable runtime truth directly.
 Toolset plugins expose one `Toolset`, which may return one or more
 model-facing `AgentTool` values. `AgentTool.invoke()` is asynchronous.
 
+Path-aware tools may implement `prepare(arguments, context) -> ToolPreparation`.
+Preparation has no requested-operation side effects: it returns authorized
+`ToolPath` values and an async invocation bound to those exact paths. Each path
+keeps its optional workspace name and workspace-relative identity. Runtime owns
+rules discovery, recall visibility, and retry; plugins only depend on base
+contracts. Tools without preparation retain the ordinary invocation path.
+The `@tool(prepare=...)` helper passes defaulted, invocation-local arguments to
+the callback, which may replace path arguments before returning their ToolPaths.
+
 ### Channel
 
 Channel plugins ingest or deliver external messages.

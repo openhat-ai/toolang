@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import json
 import logging
 from collections.abc import Callable, Mapping
+from pathlib import Path
 import re
 import time
 from typing import TYPE_CHECKING, Literal
@@ -14,7 +15,8 @@ from typing import TYPE_CHECKING, Literal
 from toolang.base.protocols.tool import AgentTool, ToolRuntime
 from toolang.base.types.message import ToolResultPart
 from toolang.base.types.run import ToolCall, ToolCallResult
-from toolang.base.types.tool import ToolContext, ToolService
+from toolang.base.types.tool import ToolContext, ToolPreparation, ToolService
+from toolang.base.utils.function_tools import prepare_tool
 from toolang.base.errors import ToolFailure
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
@@ -23,6 +25,7 @@ from toolang.common.time import elapsed_ms, utc_now
 from toolang.state.state import AgentState, StatePublication
 
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
+from ...records import RecallControlPayload
 from ...runnables import AgicRoutes
 from ...types import (
     ControlRef,
@@ -38,6 +41,7 @@ from ...types import (
 from ..common import _StepFailed
 from ..tool_runtime import _ToolRuntime
 from ..diagnostics import log_tool_call_input, log_tool_call_output
+from ..rules import _HonorRequired, check_rules
 
 if TYPE_CHECKING:
     from ..runs.agic import _AgicState
@@ -112,8 +116,54 @@ async def execute(
 ) -> ToolCallResult:
     """Perform one tool call and emit its complete step event stream."""
 
+    if trigger == "model":
+        state.before_tool_call()
+    try:
+        return await _execute(
+            state, call, trigger=trigger, tool_call_count=tool_call_count, routes=routes
+        )
+    except _HonorRequired as required:
+        paths = dict.fromkeys(
+            (path.workspace, path.relative)
+            for path in required.paths
+            if path.workspace is not None
+        )
+        identity = f"honor_{state.prepared.run.run_id}_{state.next_step}"
+        honor = ToolCall(
+            tool_call_id=identity,
+            call_id=identity,
+            name="_toolang__honor",
+            input={
+                "paths": [{"workspace": name, "path": path} for name, path in paths]
+            },
+        )
+        try:
+            result = await _execute(state, honor, trigger="runtime")
+        except asyncio.CancelledError:
+            await skip(state, (call,), canceled=not state.immediate_steer())
+            raise
+        error = "operation not executed; retry required"
+        if result.error is not None:
+            error += f"; workspace rules recall failed: {result.error}"
+        return await _execute(
+            state,
+            call,
+            tool_call_count=tool_call_count,
+            routes=routes,
+            blocked_error=error,
+        )
+
+
+async def _execute(
+    state: _AgicState,
+    call: ToolCall,
+    *,
+    trigger: Literal["model", "runtime"] = "model",
+    tool_call_count: int = 1,
+    routes: AgicRoutes | None = None,
+    blocked_error: str | None = None,
+) -> ToolCallResult:
     run = state.prepared.run
-    state.before_tool_call()
     step_index = state.next_step
     state.next_step += 1
     step_started = time.perf_counter()
@@ -143,28 +193,76 @@ async def execute(
         )
     else:
         step_input = state.initial_inputs
-    _LOGGER.info(
-        "Step started thread=%s run=%s step=%s kind=tool tool=%s",
-        run.thread,
-        run.run_id,
-        step_index,
-        call.name,
-    )
     prepared = state.prepared
     plugin_name = "-"
     summary_context = _tool_summary_context(call, None)
+    preparation: ToolPreparation | None = None
+    preparation_error: str | None = blocked_error
+    step = StepRef.from_local(run.run_id, (step_index,))
+    runtime: _ToolRuntime | None = None
 
     def begin_step(
         agent_state: AgentState | StatePublication,
         state_ref: ControlRef,
     ) -> StepBegin:
         nonlocal prepared, plugin_name, summary_context
+        nonlocal preparation, preparation_error, runtime
+        runtime_tools = prepared.run.setup.tools.runtime if trigger == "runtime" else {}
         # Bind the operation to the Step's State even if reload removed its Agic.
-        if _plugin_name(prepared.tools.get(call.name)) != "_toolang":
+        if (
+            blocked_error is None
+            and _plugin_name(
+                runtime_tools.get(call.name) or prepared.tools.get(call.name)
+            )
+            != "_toolang"
+        ):
             prepared = state.frame_for_step(agent_state, state_ref)
-        tool = prepared.tools.get(call.name)
+        tools = {**prepared.tools, **runtime_tools} if runtime_tools else prepared.tools
+        tool = tools.get(call.name)
         plugin_name = _plugin_name(tool)
         summary_context = _tool_summary_context(call, tool)
+        runtime = (
+            _ToolRuntime(
+                state, step, source_ref, tool_call_count, routes or prepared.routes
+            )
+            if plugin_name == "_toolang"
+            else None
+        )
+        if preparation_error is None:
+            try:
+                if tool is None:
+                    raise ToolangError(f"unknown tool call: {call.name}")
+                context = _tool_context(
+                    run_id=run.run_id,
+                    layout=state.layout,
+                    tool_name=call.name,
+                    tools=tools,
+                    services=prepared.services,
+                    runtime=runtime,
+                    workspaces={
+                        name: Path(path)
+                        for name, path in agent_state.workspaces.items()
+                    }
+                    if isinstance(agent_state, StatePublication)
+                    else {},
+                )
+                preparation = prepare_tool(tool, call.input, context)
+            except Exception as exc:
+                preparation_error = str(exc) or type(exc).__name__
+            else:
+                if (
+                    trigger == "model"
+                    and state.execution is not None
+                    and any(path.workspace is not None for path in preparation.paths)
+                ):
+                    pending = {
+                        control.payload.target
+                        for control in state.execution.runtime_controls(run.run_id)
+                        if isinstance(control.payload, RecallControlPayload)
+                    }
+                    check_rules(
+                        context, preparation.paths, state.visible_recalls, pending
+                    )
         return StepBegin(
             step=StepRef.from_local(run.run_id, (step_index,)),
             kind="tool",
@@ -179,15 +277,19 @@ async def execute(
             started_at=started_at,
         )
 
-    step = StepRef.from_local(run.run_id, (step_index,))
-    await _begin(state, step, call, begin_step, trigger=trigger)
+    try:
+        await _begin(state, step, call, begin_step, trigger=trigger)
+    except _HonorRequired:
+        # Preflight runs before begin is persisted; honor takes this next slot.
+        state.next_step = step_index
+        raise
     state.prepared = prepared
-    runtime = (
-        _ToolRuntime(
-            state, step, source_ref, tool_call_count, routes or prepared.routes
-        )
-        if plugin_name == "_toolang"
-        else None
+    _LOGGER.info(
+        "Step started thread=%s run=%s step=%s kind=tool tool=%s",
+        run.thread,
+        run.run_id,
+        step_index,
+        call.name,
     )
     log_tool_call_input(
         call,
@@ -197,13 +299,25 @@ async def execute(
         plugin_name=plugin_name,
     )
     try:
-        record = await invoke_tool_call(
-            run_id=run.run_id,
-            tools=prepared.tools,
-            services=prepared.services,
-            layout=state.layout,
-            call=call,
-            runtime=runtime,
+        record = (
+            ToolCallResult(
+                tool_call_id=call.tool_call_id,
+                call_id=call.call_id,
+                name=call.name,
+                input=dict(call.input),
+                output={},
+                error=preparation_error,
+            )
+            if preparation_error is not None
+            else await invoke_tool_call(
+                run_id=run.run_id,
+                tools=prepared.tools,
+                services=prepared.services,
+                layout=state.layout,
+                call=call,
+                runtime=runtime,
+                preparation=preparation,
+            )
         )
     except asyncio.CancelledError:
         await _cancel(
@@ -583,26 +697,30 @@ async def invoke_tool_call(
     layout: AgentLayout,
     call: ToolCall,
     runtime: ToolRuntime | None = None,
+    preparation: ToolPreparation | None = None,
 ) -> ToolCallResult:
     """Invoke one selected tool and normalize its result or error."""
 
     name = call.name
     arguments = dict(call.input)
     try:
-        tool = tools.get(name)
-        if tool is None:
-            raise ToolangError(f"unknown tool call: {name or '<empty>'}")
-        output = await tool.invoke(
-            arguments,
-            _tool_context(
-                run_id=run_id,
-                layout=layout,
-                tool_name=name,
-                tools=tools,
-                services=services,
-                runtime=runtime,
-            ),
-        )
+        if preparation is None:
+            tool = tools.get(name)
+            if tool is None:
+                raise ToolangError(f"unknown tool call: {name or '<empty>'}")
+            preparation = prepare_tool(
+                tool,
+                arguments,
+                _tool_context(
+                    run_id=run_id,
+                    layout=layout,
+                    tool_name=name,
+                    tools=tools,
+                    services=services,
+                    runtime=runtime,
+                ),
+            )
+        output = await preparation.invoke()
         error = None
     except Exception as exc:
         output = dict(exc.output) if isinstance(exc, ToolFailure) else {}
@@ -625,6 +743,7 @@ def _tool_context(
     tools: Mapping[str, AgentTool],
     services: tuple[ToolService, ...],
     runtime: ToolRuntime | None = None,
+    workspaces: Mapping[str, Path] | None = None,
 ) -> ToolContext:
     tool = tools.get(tool_name)
     plugin_name = getattr(tool, "plugin_name", None)
@@ -638,4 +757,5 @@ def _tool_context(
         services=services,
         placement=layout.placement,
         runtime=runtime,
+        workspaces=workspaces or {},
     )

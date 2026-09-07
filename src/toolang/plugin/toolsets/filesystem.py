@@ -11,10 +11,12 @@ from typing import Any
 
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool, Toolset
-from toolang.base.types.tool import ToolContext
+from toolang.base.types.tool import ToolContext, ToolPath
 from toolang.base.utils.function_tools import create_function_tool, tool
+from toolang.base.utils.paths import resolve_tool_path
 
 DEFAULT_MAX_CHARS = 20_000
+_PATH_GUIDANCE = " Optional workspace anchors path at that workspace root, including paths starting with /."
 
 
 @dataclass(slots=True)
@@ -42,12 +44,17 @@ class FilesystemToolset:
 
     def _build_tools(self) -> dict[str, AgentTool]:
         @tool(
-            name="list", description="List one directory inside the current agent home."
+            name="list",
+            description="List one directory inside the current agent home."
+            + _PATH_GUIDANCE,
+            prepare=_prepare_path,
         )
         def list_dir(
-            path: str = ".", context: ToolContext | None = None
+            path: str = ".",
+            workspace: str | None = None,
+            context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            resolved = _resolve_path(path, context=context)
+            resolved = Path(path)
             if not resolved.exists():
                 raise ToolangError(f"directory does not exist: {resolved}")
             if not resolved.is_dir():
@@ -66,14 +73,17 @@ class FilesystemToolset:
 
         @tool(
             name="read",
-            description="Read one text file inside the current agent home.",
+            description="Read one text file inside the current agent home."
+            + _PATH_GUIDANCE,
+            prepare=_prepare_path,
         )
         def read_text(
             path: str,
             max_chars: int = self._max_chars,
+            workspace: str | None = None,
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            resolved = _resolve_path(path, context=context)
+            resolved = Path(path)
             text = resolved.read_text(encoding="utf-8")
             limit = _int_value(max_chars, default=self._max_chars)
             return {
@@ -84,12 +94,17 @@ class FilesystemToolset:
 
         @tool(
             name="write",
-            description="Write one text file inside the current agent home.",
+            description="Write one text file inside the current agent home."
+            + _PATH_GUIDANCE,
+            prepare=_prepare_path,
         )
         def write_text(
-            path: str, text: str, context: ToolContext | None = None
+            path: str,
+            text: str,
+            workspace: str | None = None,
+            context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            resolved = _resolve_path(path, context=context)
+            resolved = Path(path)
             with self._path_lock(resolved):
                 resolved.parent.mkdir(parents=True, exist_ok=True)
                 resolved.write_text(text, encoding="utf-8")
@@ -97,26 +112,36 @@ class FilesystemToolset:
 
         @tool(
             name="append",
-            description="Append text to one file inside the current agent home.",
+            description="Append text to one file inside the current agent home."
+            + _PATH_GUIDANCE,
+            prepare=_prepare_path,
         )
         def append_text(
-            path: str, text: str, context: ToolContext | None = None
+            path: str,
+            text: str,
+            workspace: str | None = None,
+            context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            resolved = _resolve_path(path, context=context)
+            resolved = Path(path)
             with self._path_lock(resolved):
                 resolved.parent.mkdir(parents=True, exist_ok=True)
                 with resolved.open("a", encoding="utf-8") as handle:
                     handle.write(text)
             return {"path": str(resolved), "bytes_appended": len(text.encode("utf-8"))}
 
-        @tool(name="glob", description="Match file paths under one directory.")
+        @tool(
+            name="glob",
+            description="Match file paths under one directory." + _PATH_GUIDANCE,
+            prepare=_prepare_path,
+        )
         def glob(
             path: str = ".",
             pattern: str = "*",
             recursive: bool = False,
+            workspace: str | None = None,
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            resolved = _resolve_path(path, context=context)
+            resolved = Path(path)
             matches = resolved.rglob(pattern) if recursive else resolved.glob(pattern)
             return {
                 "path": str(resolved),
@@ -124,9 +149,15 @@ class FilesystemToolset:
                 "matches": [str(item) for item in sorted(matches)],
             }
 
-        @tool(name="stat", description="Inspect one file or directory.")
-        def stat(path: str, context: ToolContext | None = None) -> dict[str, Any]:
-            resolved = _resolve_path(path, context=context)
+        @tool(
+            name="stat",
+            description="Inspect one file or directory." + _PATH_GUIDANCE,
+            prepare=_prepare_path,
+        )
+        def stat(
+            path: str, workspace: str | None = None, context: ToolContext | None = None
+        ) -> dict[str, Any]:
+            resolved = Path(path)
             exists = resolved.exists()
             return {
                 "path": str(resolved),
@@ -136,21 +167,33 @@ class FilesystemToolset:
                 "size": resolved.stat().st_size if exists else None,
             }
 
-        @tool(name="mkdir", description="Create one directory.")
+        @tool(
+            name="mkdir",
+            description="Create one directory." + _PATH_GUIDANCE,
+            prepare=_prepare_path,
+        )
         def mkdir(
-            path: str, parents: bool = True, context: ToolContext | None = None
+            path: str,
+            parents: bool = True,
+            workspace: str | None = None,
+            context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            resolved = _resolve_path(path, context=context)
+            resolved = Path(path)
             resolved.mkdir(parents=parents, exist_ok=True)
             return {"path": str(resolved), "created": True}
 
-        @tool(name="remove", description="Remove one file or directory.")
+        @tool(
+            name="remove",
+            description="Remove one file or directory." + _PATH_GUIDANCE,
+            prepare=_prepare_path,
+        )
         def remove(
             path: str,
             recursive: bool = False,
+            workspace: str | None = None,
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            resolved = _resolve_path(path, context=context)
+            resolved = Path(path)
             if not resolved.exists():
                 raise ToolangError(f"path does not exist: {resolved}")
             if resolved.is_dir():
@@ -188,22 +231,14 @@ def create_toolset(config: Mapping[str, Any]) -> Toolset:
     return FilesystemToolset(config=dict(config))
 
 
-def _resolve_path(path_value: str, *, context: ToolContext | None) -> Path:
-    if context is None:
-        raise ToolangError("filesystem tool context is required")
-    text = str(path_value).strip()
-    if not text:
-        raise ToolangError("filesystem tool requires a non-empty path")
-    candidate = Path(text).expanduser()
-    if not candidate.is_absolute():
-        candidate = context.wd / candidate
-    resolved = candidate.resolve()
-    root = context.home.resolve()
-    try:
-        resolved.relative_to(root)
-    except ValueError as exc:
-        raise ToolangError(f"filesystem path escapes agent home: {resolved}") from exc
-    return resolved
+def _prepare_path(
+    arguments: dict[str, Any], context: ToolContext
+) -> tuple[ToolPath, ...]:
+    path = resolve_tool_path(
+        arguments["path"], context, workspace=arguments["workspace"]
+    )
+    arguments["path"] = str(path.resolved)
+    return (path,)
 
 
 def _int_value(value: object, *, default: int) -> int:

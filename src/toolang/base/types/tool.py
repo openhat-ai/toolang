@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
@@ -59,6 +59,23 @@ class ToolService:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolPath:
+    """An authorized physical path with its optional logical workspace anchor."""
+
+    resolved: Path
+    workspace: str | None = None
+    relative: str = "/"
+
+
+@dataclass(frozen=True, slots=True)
+class ToolPreparation:
+    """Access paths and the operation bound to exactly those prepared paths."""
+
+    paths: tuple[ToolPath, ...]
+    invoke: Callable[[], Awaitable[dict[str, Any]]]
+
+
+@dataclass(frozen=True, slots=True)
 class ToolContext:
     """Resolved context passed into one tool call."""
 
@@ -69,3 +86,7 @@ class ToolContext:
     services: tuple[ToolService, ...] = ()
     placement: Literal["resident", "visiting", "roaming"] = "resident"
     runtime: ToolRuntime | None = None
+    workspaces: Mapping[str, Path] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspaces", MappingProxyType(dict(self.workspaces)))

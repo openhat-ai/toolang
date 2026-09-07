@@ -44,3 +44,14 @@ def test_function_tool_awaits_async_callable_on_owner_loop(tmp_path: Path) -> No
     )
 
     assert result["thread"] == owner_thread
+
+
+def test_unprepared_function_keeps_its_original_argument_binding(tmp_path: Path):
+    @tool()
+    def accepts_kwargs(**kwargs):
+        return kwargs
+
+    result = asyncio.run(
+        create_function_tool(accepts_kwargs).invoke({}, _context(tmp_path))
+    )
+    assert result == {}

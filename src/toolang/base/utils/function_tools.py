@@ -10,7 +10,7 @@ from typing import Any, get_args, get_origin
 
 from ..errors import ToolangError
 from ..protocols.tool import AgentTool
-from ..types.tool import ToolContext, ToolDefinition
+from ..types.tool import ToolContext, ToolDefinition, ToolPath, ToolPreparation
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +21,7 @@ class _FunctionToolSpec:
     func: Callable[..., Any]
     wants_context: bool
     signature: inspect.Signature
+    prepare: Callable[[dict[str, Any], ToolContext], tuple[ToolPath, ...]] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,11 @@ class _FunctionTool(AgentTool):
         arguments: Mapping[str, Any],
         context: ToolContext,
     ) -> dict[str, Any]:
+        return await self.prepare(arguments, context).invoke()
+
+    def prepare(
+        self, arguments: Mapping[str, Any], context: ToolContext
+    ) -> ToolPreparation:
         kwargs = {
             name: value
             for name, value in arguments.items()
@@ -52,6 +58,15 @@ class _FunctionTool(AgentTool):
         }
         if self.spec.wants_context:
             kwargs["context"] = context
+        paths = ()
+        if self.spec.prepare is not None:
+            bound = self.spec.signature.bind(**kwargs)
+            bound.apply_defaults()
+            kwargs = dict(bound.arguments)
+            paths = self.spec.prepare(kwargs, context)
+        return ToolPreparation(paths, lambda: self._invoke(kwargs))
+
+    async def _invoke(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         if inspect.iscoroutinefunction(self.spec.func):
             value = await self.spec.func(**kwargs)
         else:
@@ -66,8 +81,14 @@ def tool(
     name: str | None = None,
     description: str | None = None,
     parameters: dict[str, Any] | None = None,
+    prepare: Callable[[dict[str, Any], ToolContext], tuple[ToolPath, ...]]
+    | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Annotate one callable as a tool and derive a simple JSON schema."""
+    """Annotate a tool; optional preparation binds paths without executing it.
+
+    Preparation receives defaulted, invocation-local arguments. It may replace
+    path arguments with concrete authorized paths consumed by the callable.
+    """
 
     def decorate(func: Callable[..., Any]) -> Callable[..., Any]:
         signature = inspect.signature(func)
@@ -78,6 +99,7 @@ def tool(
             func=func,
             wants_context="context" in signature.parameters,
             signature=signature,
+            prepare=prepare,
         )
         setattr(func, "__tool_spec__", spec)
         return func
@@ -92,6 +114,17 @@ def create_function_tool(func: Callable[..., Any]) -> AgentTool:
     if spec is None:
         raise ToolangError(f"function is not marked as a tool: {func!r}")
     return _FunctionTool(spec=spec)
+
+
+def prepare_tool(
+    tool: AgentTool, arguments: Mapping[str, Any], context: ToolContext
+) -> ToolPreparation:
+    """Use an optional plugin preparation hook without requiring it of all tools."""
+
+    prepare = getattr(tool, "prepare", None)
+    if prepare is not None:
+        return prepare(arguments, context)
+    return ToolPreparation((), lambda: tool.invoke(arguments, context))
 
 
 def _schema_from_signature(signature: inspect.Signature) -> dict[str, Any]:
