@@ -22,7 +22,7 @@ from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.history import RunHistory
 from toolang.execution.executor.compact import permit
 from toolang.execution.records import CompactControlPayload, RunControlPayload
-from toolang.execution.types import ThreadPrefix, ToolStepGiven
+from toolang.execution.types import FieldRef, ThreadPrefix, ToolStepGiven
 from toolang.plugin.models.collections import ModelCollection
 
 
@@ -125,6 +125,10 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
             steps = harness.store.list_steps(run_id=current.id)
             assert [step.kind for step in steps] == ["tool", "model"]
             tool, model = steps
+            start = harness.store.list_run_controls(run_id=current.id)[0]
+            assert model.input == (
+                FieldRef.from_path(start.ref, "payload", "input", 0, "value"),
+            )
             assert (
                 isinstance(tool.given, ToolStepGiven)
                 and tool.given.trigger == "runtime"
@@ -245,6 +249,7 @@ def test_compact_between_model_calls_preserves_now_and_prior_call(tmp_path):
             steps = harness.store.list_steps(run_id=root.id)
             assert [step.kind for step in steps] == ["model", "tool", "tool", "model"]
             first, lookup, compact, last = steps
+            assert last.input == (FieldRef.from_path(lookup.ref, "output", "value"),)
             assert isinstance(lookup.given, ToolStepGiven)
             assert lookup.given.trigger == "model"
             assert isinstance(compact.given, ToolStepGiven)
@@ -733,23 +738,52 @@ def test_waiting_compact_reprepares_after_controls(tmp_path, action):
     asyncio.run(scenario())
 
 
-def test_canceling_compact_owner_cancels_its_independent_run(tmp_path):
+@pytest.mark.parametrize("action", ["cancel", "steer"])
+def test_interrupting_compact_owner_cancels_its_independent_run(tmp_path, action):
     harness = seeded_harness(tmp_path)
     gate = AsyncGate()
+    tracer = RecordingRunTracer()
 
     async def scenario():
         async with harness:
-            thread, _end = await seed(harness)
+            thread, end = await seed(harness)
             harness.adapter._responses.append(ScriptedModelTurn(reply({}), gate=gate))
-            handle = harness.executor.run(spec(harness, thread, "current"))
+            handle = harness.executor.run(
+                spec(harness, thread, "current"), tracer=tracer
+            )
             await asyncio.wait_for(gate.wait_until_entered(), 2)
-            handle.cancel()
+            if action == "cancel":
+                handle.cancel()
+            else:
+                harness.adapter._responses.extend(
+                    [*compact_responses(thread, end), reply("done")]
+                )
+                steer = handle.steer(
+                    Message.user("adjusted request"), timing="immediate"
+                )
             current = await asyncio.wait_for(handle, 2)
-            assert current.status == "canceled"
             compact = RunHistory(harness.store).thread_view(f"compact_{thread}")
-            assert len(compact.roots) == 1 and compact.roots[0].status == "canceled"
-            assert all(run.status == "canceled" for run in compact.members)
-            assert RunHistory(harness.store).get_compaction(thread) is None
+            assert compact.roots[0].status == "canceled"
+            if action == "cancel":
+                assert current.status == "canceled"
+                assert len(compact.roots) == 1
+                assert all(run.status == "canceled" for run in compact.members)
+                assert RunHistory(harness.store).get_compaction(thread) is None
+            else:
+                assert current.status == "succeeded", current.error
+                assert len(compact.roots) == 2
+                first, retried, model = harness.store.list_steps(run_id=current.id)
+                assert first.status == "canceled" and first.aborted_by == steer.ref
+                assert retried.status == "succeeded" and retried.kind == "tool"
+                start = harness.store.list_run_controls(run_id=current.id)[0]
+                assert model.input == (
+                    FieldRef.from_path(start.ref, "payload", "input", 0, "value"),
+                    FieldRef.from_path(steer.ref, "payload", "input", 0, "value"),
+                )
+                assert "adjusted request" in str(
+                    [m.to_data() for m in harness.adapter.invocations[-1].call.messages]
+                )
+        assert_replayed(harness.store.db_path, tracer.events)
 
     asyncio.run(scenario())
 
