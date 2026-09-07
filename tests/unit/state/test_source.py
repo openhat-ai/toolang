@@ -6,7 +6,6 @@ import shutil
 
 import pytest
 
-from toolang.state import source as state_source
 from toolang.state.source import (
     SOURCE_SCHEMA,
     SourceChangedError,
@@ -58,7 +57,7 @@ def test_source_manifest_keeps_empty_non_config_files(tmp_path: Path) -> None:
     source.mkdir()
     (source / "agent.too").touch()
 
-    manifest = scan_source(source, ("agent.too",), project_configs=True)
+    manifest = scan_source(source, ("agent.too",))
 
     assert [(item.path, item.size) for item in manifest.files] == [("agent.too", 0)]
 
@@ -214,7 +213,7 @@ def test_root_source_rejects_file_in_cap_directory_slot(tmp_path: Path) -> None:
         scan_root_source(root)
 
 
-def test_empty_projected_config_still_checks_for_concurrent_change(
+def test_config_snapshot_checks_for_concurrent_change(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -223,15 +222,15 @@ def test_empty_projected_config_still_checks_for_concurrent_change(
     config = root / "config.toml"
     config.write_text("[default]\nmodel = 'one'\n", encoding="utf-8")
 
-    def change_during_projection(_content: bytes) -> bytes:
-        config.write_text("[prompts]\nreview = 'acme/review'\n", encoding="utf-8")
-        return b""
+    read_bytes = Path.read_bytes
 
-    monkeypatch.setattr(
-        state_source,
-        "canonical_state_config",
-        change_during_projection,
-    )
+    def change_during_read(path: Path) -> bytes:
+        content = read_bytes(path)
+        if path == config:
+            config.write_text("[prompts]\nreview = 'acme/review'\n", encoding="utf-8")
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", change_during_read)
 
     with pytest.raises(SourceChangedError, match="changed while reading"):
         read_root_source(root)
@@ -248,7 +247,7 @@ def test_manifest_builder_reuses_only_unchanged_file_digests(
     one.write_text("one", encoding="utf-8")
     two.write_text("two", encoding="utf-8")
     before_observation = observe_source(source, ("one.txt", "two.txt"))
-    before = build_source_manifest(before_observation, project_configs=False)
+    before = build_source_manifest(before_observation)
     two.write_text("changed", encoding="utf-8")
     after_observation = observe_source(source, ("one.txt", "two.txt"))
     reads: list[Path] = []
@@ -262,7 +261,6 @@ def test_manifest_builder_reuses_only_unchanged_file_digests(
 
     after = build_source_manifest(
         after_observation,
-        project_configs=False,
         previous_observation=before_observation,
         previous_manifest=before,
     )

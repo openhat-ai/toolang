@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import fields, replace
-from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -33,10 +32,8 @@ from toolang.execution.schemas import (
 )
 from toolang.execution.types import ErrorMessage, RunCommand, StepRef, ThreadPrefix
 from toolang.execution.values import parts_from_local
-from toolang.lang import Program
 from toolang.lang.input import RunnableInputRaw
 from toolang.setup import AgentSetup
-from toolang.state.state import agent_state_revision
 
 
 _CHAT_SOURCE = """
@@ -353,6 +350,7 @@ prompt rewrite:
     )
     harness = ExecutionHarness.create(
         tmp_path,
+        prepare_state=True,
         source=source_with_prompt,
         responses=[
             RuntimeError("temporary failure"),
@@ -364,17 +362,10 @@ prompt rewrite:
             ModelCallResult(message=Message.assistant("resubmitted")),
         ],
     )
-    changed_home_revision = sha256(changed_source.encode("utf-8")).hexdigest()
-    changed_state = replace(
-        harness.state,
-        revision=agent_state_revision(
-            harness.state.root_revision,
-            changed_home_revision,
-        ),
-        home_revision=changed_home_revision,
-        modules={"agent": Program.from_source(changed_source)},
-        module_digests={"agent": changed_home_revision},
-    )
+    from toolang.state.prepare import prepare_agent_state
+
+    harness.setup.layout.program.write_text(changed_source, encoding="utf-8")
+    changed_state = prepare_agent_state(harness.setup.layout)
     setup_reads = 0
     current_state_reads = 0
     loaded_revisions: list[str] = []

@@ -18,9 +18,8 @@ from toolang.common.layout import AgentLayout
 from toolang.up import process as agents
 from toolang.catalog import templates
 from toolang.setup import AgentSetup, SetupWatcher
-from toolang.state.config import ConfiguredWorkspaces
 from toolang.state.prepare import prepare_agent_state
-from toolang.state.state import AgentState, StatePublication, publish_state_resources
+from toolang.state.state import AgentState
 from ...common.context import (
     ModelCatalogOption,
     cli_context,
@@ -215,7 +214,7 @@ def info_agent(
     echo_pairs_table(rows, avatar=agent_avatar(), title=agent_name.upper())
 
 
-def _caps_summary(state: StatePublication) -> str:
+def _caps_summary(state: AgentState) -> str:
     caps = state.caps_for("agent")
     counts = {
         "psyches": sum(item.kind == "psyche" for item in caps),
@@ -235,7 +234,7 @@ def _caps_summary(state: StatePublication) -> str:
     )
 
 
-def _prepare_state(layout: AgentLayout) -> StatePublication:
+def _prepare_state(layout: AgentLayout) -> AgentState:
     progress = make_cli_progress()
     try:
         with progress:
@@ -247,11 +246,7 @@ def _prepare_state(layout: AgentLayout) -> StatePublication:
                     progress=progress.sink,
                 ),
             )
-            return publish_state_resources(
-                state,
-                agent_name=layout.name,
-                workspaces=ConfiguredWorkspaces(layout.config).list(),
-            )
+            return state
     except Exception as exc:
         if progress.failure_stage is not None:
             raise click.ClickException(progress.failure_message(exc)) from exc

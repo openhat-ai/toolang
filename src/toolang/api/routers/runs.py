@@ -44,7 +44,7 @@ from toolang.execution.runnables import (
     runnable_binding_defaults,
     resolve_public_runnable_query,
 )
-from toolang.state.state import StatePublication
+from toolang.state.state import AgentState
 from toolang.up import AgentCore
 
 router = APIRouter(prefix="/runs", tags=["runs"])
@@ -500,7 +500,7 @@ def _run_or_404(core: AgentCore, run_id: str) -> RunRecord:
     return run
 
 
-def _recorded_state(core: AgentCore, run: RunRecord) -> StatePublication:
+def _recorded_state(core: AgentCore, run: RunRecord) -> AgentState:
     return core.state.load(core.store.resolve_state_revision(run.state))
 
 

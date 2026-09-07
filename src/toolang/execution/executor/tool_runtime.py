@@ -12,7 +12,7 @@ from toolang.base.errors import ToolFailure, ToolangError
 from toolang.base.protocols.tool import ToolRuntime
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.workspace_paths import resolve_workspace_path, workspace_root
-from toolang.state.state import StatePublication, entry_ref
+from toolang.state.state import entry_ref
 
 from ..records import RecallControlPayload
 
@@ -107,9 +107,7 @@ class _ToolRuntime(ToolRuntime):
             home=self.state.layout.home,
             room=self.state.layout.tool_room("_toolang"),
             wd=self.state.layout.home,
-            workspaces={name: Path(path) for name, path in captured.workspaces.items()}
-            if isinstance(captured, StatePublication)
-            else {},
+            workspaces={name: Path(path) for name, path in captured.workspaces.items()},
         )
         resolved = tuple(
             resolve_workspace_path(workspace, path, workspace_root(workspace, context))
@@ -191,7 +189,7 @@ class _ToolRuntime(ToolRuntime):
         captured, state_ref = execution.state_for_step(self.step)
         name, kind = parse_runnable_ref(runnable)
         target = resolve_public_runnable(
-            captured.state if isinstance(captured, StatePublication) else captured,
+            captured,
             name,
             kind=kind,
         )

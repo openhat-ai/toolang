@@ -22,8 +22,9 @@ latency.
   configuration; it exposes neither the raw catalog nor the applied allow.
 - The State owner publishes effective module cap indexes after State-owned
   allow configuration; execution does not apply the same config query again.
-- Setup-only config changes do not change the semantic State revision, and
-  State-only changes do not rebuild Setup resources.
+- Complete config contents contribute to State revision; unrelated edits may
+  change revision without changing State terms. State-only changes do not
+  rebuild Setup resources.
 - Model matching, set operations, exact resolution, and indexes are owned by
   one immutable `ModelCollection`; tools use the corresponding collection
   boundary.
@@ -92,6 +93,7 @@ Setup/State revision. Each owner parses an independent semantic projection.
 | Configured psyche, skill, service, and prompt tables | State | Materialized caps |
 | `[allow].psyches`, `.skills`, `.services`, `.prompts` | State | Filtered per-module cap indexes |
 | Agent/Flow source and cap files | State | Durable programs and cap materialization |
+| Agent-home `[workspaces]` | State | Captured workspace roots |
 | `[sandbox]`, sandbox plugin config, UI, CORS, and channels | Owning orchestration package | Narrow call-site values, not Setup or State config |
 
 An owner ignores known paths belonging to another owner without importing that
@@ -100,19 +102,15 @@ projection. Cross-package commands that need orchestration configuration use
 explicit narrow loaders rather than reading `AgentState.root_config` or
 `home_config`.
 
-Setup and State watchers may both notice one `config.toml` metadata change, but
-they compare their semantic projections before rebuilding. A Setup-only edit
-therefore causes at most a cheap State check and reuses the existing State
-revision. A State-only edit causes at most a cheap Setup check and reuses the
-same `AgentSetup` object when its projection is unchanged.
+Setup and State watchers may both notice one `config.toml` change. State hashes
+its complete bytes; Setup compares its semantic projection and reuses the same
+`AgentSetup` when that projection is unchanged.
 
 State layer persistence stores a canonical State-owned config projection, not
-the complete authored `config.toml`. Raw config path metadata is a watcher
-fingerprint and does not contribute to the layer revision. The State layer
-schema is bumped, old rebuildable State caches are rebuilt, and configured-cap
-definition references point to the canonical projected config artifact. This
-amends the config-file portion of the durable Agent State definition without
-changing Program or cap content addressing.
+the complete authored `config.toml`. The source manifest hashes the complete
+authored bytes, while path metadata remains a watcher observation only.
+Configured-cap definition references point to the projected config artifact.
+See [AgentState publication](agent-state-publication.md) for the identity contract.
 
 ### Allow Precedence
 
@@ -140,10 +138,9 @@ setup/state effective base
 ```
 
 Config allow values are consumed during publication and are not fields of
-`AgentSetup`, `StateResources`, or `AgentResources`. Startup cap overrides are
-also publication inputs rather than durable authored State; the run's concrete
-cap identities remain recorded in `AgentResources` alongside the durable State
-revision.
+`AgentSetup` or `AgentResources`. Frozen startup cap overrides are State
+construction inputs, recorded in its composition identity; the run's concrete
+cap identities remain recorded in `AgentResources` alongside the State revision.
 
 ## Runtime Values
 
@@ -258,32 +255,15 @@ This definition supersedes the `[models].default` fallback and runtime alias
 decisions in `collection-query-language.md` and `agic-runtime-calls.md`.
 Collection query grammar and set semantics remain unchanged.
 
-### State Publication And Effective Caps
+### AgentState And Effective Caps
 
-The durable `AgentState` continues identifying exact Programs, raw materialized
-caps, and the State-owned config projection. A process publication pairs it
-with one immutable derived value:
-
-```text
-StatePublication
-├── state                    # durable AgentState
-└── resources
-    └── caps_by_module       # after config/startup cap allow
-```
-
-`StateResources` is derived once per `(AgentState revision, frozen startup cap
-override)` and precomputes the effective ordered cap collection for every
-Program module. Config allow is the default input; a startup field replaces
-that field before derivation and may therefore expand back into the durable raw
-cap base. Execution looks up `caps_for(module)` on `StateResources` rather than
-rebuilding a `QueryDataset` at each run boundary.
-
-The companion value avoids making process-local startup overrides part of the
-durable State revision. A run records `StatePublication.state.revision` plus
-the concrete cap identities in `AgentResources`, so historical resolution
-remains exact. `StateWatcher.current()` supplies the complete publication;
-`load()` and State reload derive resources with the same watcher-owned frozen
-override.
+`StateWatcher` publishes `AgentState` directly: exact Programs, materialized caps,
+State-owned config, captured workspaces, and precomputed effective cap indexes.
+`caps_for(module)` performs no query construction. Config allow is the default;
+a startup replacement may expand into the raw cap base before session/runnable
+policy narrows it. Agent name and frozen startup overrides are composition
+inputs and participate in revision, so `load(revision)` restores the exact State
+without reapplying current process policy or rereading authored configuration.
 
 The four cap kinds remain independent query bases. There is no combined `caps`
 allow field, no cross-kind query, and no coupling to Setup model/tool matching.
@@ -355,7 +335,7 @@ then seeds the cache.
 ## Snapshot Capture And Reload
 
 At root acceptance, the executor obtains `setup.current()` and the current
-`StatePublication` once, validates cross-references such as the runnable
+`AgentState` once, validates cross-references such as the runnable
 default, and builds the tree-level effective resource base. Setup and State
 have no shared revision requirement and are not published in one transaction.
 
@@ -437,7 +417,7 @@ the generic candidate-dataset workaround is superseded by this design.
 - `src/toolang/plugin/toolsets/{collections,loading}.py`: effective tool
   entries and collection operations.
 - `src/toolang/state/{config,source,cache,prepare,state,watcher}.py`: State-owned
-  projection, layer schema, `StatePublication`/`StateResources`, prepared
+  projection, dependency digests, `AgentState`, prepared
   module cap collections, and independent invalidation.
 - `src/toolang/execution/{calls,policy}.py` and
   `execution/executor/{resources,prepare,executor,limits}.py`: root capture,
@@ -458,10 +438,10 @@ the generic candidate-dataset workaround is superseded by this design.
    to model/tool allow, defaults, and limits exactly once, then exposes no allow
    value.
 2. State config projection and frozen startup replacement produce one
-   `StateResources` per State revision/override pair, apply each cap-kind allow
+   `AgentState` per revision, apply each cap-kind allow
    exactly once, and make `caps_for(module)` perform no query-dataset
    construction.
-3. Editing only Setup-owned config keeps State layer and Agent State revisions;
+3. Editing only Setup-owned config changes State revisions but not its terms;
    editing only State-owned config returns the identical `AgentSetup` when all
    Setup inputs are otherwise unchanged.
 4. `AgentSetup` has the defined fields and no catalog, provider configs,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
 from hashlib import sha256
 import logging
@@ -14,6 +15,7 @@ from ..common.progress import ProgressSink, emit_progress
 from ..lang.ast import Program
 from .state import (
     AgentState,
+    agent_state_revision,
     KIND_BY_DIR_NAME,
     compose_agent_state,
     flow_export,
@@ -21,7 +23,7 @@ from .state import (
     public_runnable_index,
 )
 from .errors import StateDiagnostic, StatePreparationError, StateValidationLayer
-from .config import parse_config
+from .config import canonical_state_config, normalize_cap_overrides, parse_config
 from .state import (
     materialize_program_caps,
     materialize_scope,
@@ -75,27 +77,44 @@ def prepare_agent_state(
     *,
     force: bool = False,
     progress: ProgressSink | None = None,
+    allow_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
+    previous: AgentState | None = None,
 ) -> AgentState:
     """Prepare and compose the immutable runtime state for one agent."""
 
     _require_root(layout)
     _require_agent_home(layout)
+    overrides = normalize_cap_overrides(allow_overrides)
     with _agent_check_lock(layout):
         root, home = prepare_root_home(
             layout,
             force=force,
             progress=progress,
         )
-        revision = _persist_agent_revision(
+        revision = agent_state_revision(
+            root.revision, home.revision, name=layout.name, allow_overrides=overrides
+        )
+        revision_dir = agent_revision_dir(layout, revision)
+        state = (
+            previous
+            if previous is not None
+            and previous.revision == revision
+            and previous.revision_dir == revision_dir
+            else compose_layer_state(
+                root,
+                home,
+                name=layout.name,
+                allow_overrides=overrides,
+                revision_dir=revision_dir,
+            )
+        )
+        _persist_agent_revision(
             layout,
             root_revision=root.revision,
             home_revision=home.revision,
+            allow_overrides=overrides,
         )
-        return compose_layer_state(
-            root,
-            home,
-            revision_dir=agent_revision_dir(layout, revision),
-        )
+        return state
 
 
 def compose_layer_state(
@@ -103,10 +122,14 @@ def compose_layer_state(
     home: HomeLayer,
     *,
     revision_dir: Path | None = None,
+    name: str,
+    allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
 ) -> AgentState:
     """Compose runtime State from one exact root/home layer pair."""
 
     return compose_agent_state(
+        name=name,
+        allow_overrides=allow_overrides,
         root_revision=root.revision,
         home_revision=home.revision,
         root_config=root.config,
@@ -127,7 +150,9 @@ def load_agent_state(
 ) -> AgentState:
     """Load one durable Agent State without consulting authored source."""
 
-    effective, root_revision, home_revision = load_agent_revisions(layout, revision)
+    effective, root_revision, home_revision, name, overrides = load_agent_revisions(
+        layout, revision
+    )
     root = load_root_layer(layout, root_revision)
     home = load_home_layer(layout, home_revision)
     if revision is None and (
@@ -138,6 +163,8 @@ def load_agent_state(
         root,
         home,
         revision_dir=agent_revision_dir(layout, effective),
+        name=name,
+        allow_overrides=overrides,
     )
     if state.revision != effective:
         raise ValueError("Agent State composition revision mismatch")
@@ -707,7 +734,13 @@ def _snapshot_files(
             agent_name=authored.agent_name,
             cap_scope=cap_scope,
         )
-        files[target.as_posix()] = item.content
+        content = (
+            canonical_state_config(item.content)
+            if item.category == "config"
+            else item.content
+        )
+        if item.category != "config" or content:
+            files[target.as_posix()] = content
     for path, content in generated_files.items():
         target = _generated_snapshot_path(Path(path))
         files[target.as_posix()] = content

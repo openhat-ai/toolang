@@ -20,6 +20,8 @@ from ..common.immutable import freeze_mapping
 from ..lang.ast import Program, program_from_data
 from .source import SOURCE_SCHEMA, LegacySourceTree, SourceManifest, SourceRecord
 from .state import (
+    AGENT_STATE_SCHEMA,
+    agent_layers_document,
     CapResolution,
     StateCap,
     program_term_data,
@@ -28,8 +30,7 @@ from .state import (
 )
 
 LayerScope = Literal["root", "home"]
-LAYER_SCHEMA = 5
-AGENT_STATE_SCHEMA = 1
+LAYER_SCHEMA = 6
 _LAYER_FILE = "layer.json"
 _LAYERS_FILE = "layers.json"
 _FILES_DIR = "files"
@@ -262,12 +263,15 @@ def _persist_agent_revision(
     *,
     root_revision: str,
     home_revision: str,
+    allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
 ) -> str:
     """Persist and publish one composition while the agent check lock is held."""
 
     document = agent_layers_document(
         root_revision=root_revision,
         home_revision=home_revision,
+        name=layout.name,
+        allow_overrides=allow_overrides,
     )
     encoded = canonical_json(document)
     revision = sha256(encoded).hexdigest()
@@ -295,15 +299,24 @@ def _persist_agent_revision(
 def load_agent_revisions(
     layout: AgentLayout,
     revision: str | None = None,
-) -> tuple[str, str, str]:
+) -> tuple[str, str, str, str, dict[str, tuple[str, ...]]]:
     """Load one trusted Agent State composition without integrity validation."""
 
     effective = load_current_agent_revision(layout) if revision is None else revision
     revision_dir = agent_revision_dir(layout, effective)
     document = _load_object(revision_dir / _LAYERS_FILE, label="layers.json")
+    if document["schema"] != AGENT_STATE_SCHEMA:
+        raise ValueError(f"unsupported Agent State schema: {document['schema']!r}")
     root_revision = _revision_field(document, "root_revision")
     home_revision = _revision_field(document, "home_revision")
-    return effective, root_revision, home_revision
+    overrides = cast(dict[str, list[str]], document["allow_overrides"])
+    return (
+        effective,
+        root_revision,
+        home_revision,
+        str(document["name"]),
+        {key: tuple(value) for key, value in overrides.items()},
+    )
 
 
 def validate_layer_revision(
@@ -376,20 +389,6 @@ def canonical_json(value: object) -> bytes:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-
-
-def agent_layers_document(
-    *,
-    root_revision: str,
-    home_revision: str,
-) -> dict[str, object]:
-    _require_revision(root_revision)
-    _require_revision(home_revision)
-    return {
-        "home_revision": home_revision,
-        "root_revision": root_revision,
-        "schema": AGENT_STATE_SCHEMA,
-    }
 
 
 def _layer_document(
@@ -578,7 +577,13 @@ def _validate_agent_dir(
     document = _canonical_object(encoded, label="layers.json")
     if sha256(encoded).hexdigest() != revision:
         raise ValueError("Agent State revision does not match layers.json")
-    if set(document) != {"home_revision", "root_revision", "schema"}:
+    if set(document) != {
+        "home_revision",
+        "root_revision",
+        "name",
+        "allow_overrides",
+        "schema",
+    }:
         raise ValueError("layers.json fields do not match the Agent State schema")
     if document["schema"] != AGENT_STATE_SCHEMA:
         raise ValueError(f"unsupported Agent State schema: {document['schema']!r}")

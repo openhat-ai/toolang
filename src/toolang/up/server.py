@@ -35,7 +35,7 @@ from toolang.plugin.sandboxes.host import HOST_SANDBOX_DESCRIPTION_ENV
 from toolang.setup import AgentSetup
 from toolang.setup.config import load_setup_config
 from toolang.state import watcher as state_watcher
-from toolang.state.state import AgentState, StatePublication
+from toolang.state.state import AgentState
 from toolang.up import process as agents
 from toolang.up.config import resolve_cors_allowed_origins
 from toolang.up.core import AgentCore
@@ -207,7 +207,7 @@ def serve(
     asyncio.run(_refresh_core(core))
     state = core.state.current()
     ceiling = AgentCeiling()
-    _validate_file_agic(state.state, enabled=bool(spec.file_inboxes))
+    _validate_file_agic(state, enabled=bool(spec.file_inboxes))
     validate_agent_ceiling(core.setup.current(), state, ceiling)
     cors_allowed_origins = resolve_cors_allowed_origins(
         load_setup_config(spec.layout),
@@ -218,7 +218,7 @@ def serve(
     def current_setup() -> AgentSetup:
         return core.setup.current()
 
-    def current_state() -> StatePublication:
+    def current_state() -> AgentState:
         return core.state.current()
 
     _log_state_loaded(
@@ -382,7 +382,7 @@ def _runtime_log_spec_value(
 
 def _log_state_loaded(
     setup: AgentSetup,
-    state: AgentState | StatePublication,
+    state: AgentState,
     *,
     ceiling: AgentCeiling,
 ) -> None:
@@ -399,7 +399,7 @@ def _log_state_loaded(
 
 def _model_count(
     setup: AgentSetup,
-    state: AgentState | StatePublication,
+    state: AgentState,
     *,
     ceiling: AgentCeiling,
 ) -> int:
@@ -416,17 +416,8 @@ async def _refresh_core(core: AgentCore) -> None:
     await asyncio.gather(core.state.refresh(), core.setup.refresh())
 
 
-def _cap_count(state: AgentState | StatePublication, kind: str) -> int:
-    if isinstance(state, StatePublication):
-        return sum(item.kind == kind for item in state.resources.caps_for("agent"))
-    return len(
-        {
-            "psyche": state.psyches,
-            "skill": state.skills,
-            "service": state.services,
-            "prompt": state.prompts,
-        }.get(kind, {})
-    )
+def _cap_count(state: AgentState, kind: str) -> int:
+    return sum(item.kind == kind for item in state.caps_for("agent"))
 
 
 class _ToolangServer(uvicorn.Server):

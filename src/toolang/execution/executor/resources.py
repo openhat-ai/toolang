@@ -24,7 +24,6 @@ from toolang.plugin.toolsets.registry import (
 from toolang.setup import AgentSetup
 from toolang.state.state import (
     AgentState,
-    StatePublication,
     StateCap,
     state_module_caps,
 )
@@ -58,7 +57,7 @@ def agent_model_targets(
 
 def validate_agent_ceiling(
     setup: AgentSetup,
-    state: AgentState | StatePublication,
+    state: AgentState,
     ceiling: AgentCeiling,
 ) -> None:
     """Validate one agent ceiling against immutable setup and state."""
@@ -68,7 +67,7 @@ def validate_agent_ceiling(
 
 def resolve_agent_resources(
     setup: AgentSetup,
-    state: AgentState | StatePublication,
+    state: AgentState,
     ceiling: AgentCeiling,
     *,
     module: str | None = None,
@@ -95,7 +94,7 @@ def resolve_agent_resources(
 
 def apply_agent_ceiling(
     setup: AgentSetup,
-    state: AgentState | StatePublication,
+    state: AgentState,
     resources: AgentResources,
     ceiling: AgentCeiling,
     *,
@@ -167,7 +166,7 @@ def resolve_runnable_resources(
     runnable: _Runnable,
     base: AgentResources,
     setup: AgentSetup,
-    state: AgentState | StatePublication,
+    state: AgentState,
     module: str | None = None,
 ) -> AgentResources:
     """Apply one runnable's authored queries within a chosen resource base."""
@@ -263,7 +262,7 @@ def _resource_tool_collection(
 
 
 def resource_caps(
-    state: AgentState | StatePublication,
+    state: AgentState,
     resources: AgentResources,
     *,
     module: str | None = None,

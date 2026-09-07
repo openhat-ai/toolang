@@ -92,6 +92,7 @@ def test_authored_run_stream_resolves_fallback_policy_and_server_include(
 ) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
+        prepare_state=True,
         source="""
 prompt review:
   {{focus}} {{_}}

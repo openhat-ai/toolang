@@ -26,7 +26,7 @@ class RunExecutor:
         source: str,
         *,
         setup: AgentSetup,
-        state: StatePublication,
+        state: AgentState,
         ceiling: AgentCeiling = AgentCeiling(),
         model: str | None = None,
         limits: RunLimits | None = None,
@@ -40,10 +40,9 @@ class RunExecutor:
         run_id: str,
         *,
         setup: AgentSetup,
-        state: StatePublication,
+        state: AgentState,
         anchor: StepRef | str | None = None,
         ceiling: AgentCeiling = AgentCeiling(),
-        model: str | None = None,
         limits: RunLimits | None = None,
         request_id: str | None = None,
         tracer: RunTracer | None = None,
@@ -71,7 +70,7 @@ class RunExecutor:
         self,
         *,
         run_id: str,
-        state: StatePublication,
+        state: AgentState,
         request_id: str | None = None,
     ) -> ControlRecord: ...
 
@@ -91,6 +90,13 @@ owned by the executor and stops its control monitor. The process composition
 root owns and closes the shared `RunStore`; `RunExecutor` and `ThreadManager`
 receive the same store and `IdIssuer` instances.
 
+Process entry points also supply `setup`, `state`, and `load_state` snapshot
+callbacks to the constructor. Retry retains the recorded State but checks its
+workspace names and paths against the current State before changing records.
+Removed or remapped grants reject retry; callers may use rerun with current
+State instead. Retrying a Run with workspace grants requires the `state`
+callback even when setup and recorded State are passed explicitly.
+
 Control polling currently uses an internal default and can move into executor
 options when runtime tuning becomes public.
 
@@ -100,7 +106,7 @@ options when runtime tuning becomes public.
 @dataclass(frozen=True, slots=True)
 class RunSpec:
     setup: AgentSetup
-    state: StatePublication
+    state: AgentState
     thread: str
     bindings: RunBindings
     limits: RunLimits
@@ -205,7 +211,7 @@ control reference captured by its calling step.
 ## Execution Structure
 
 `RunExecutor` is the process-level singleton. Each owned root run creates one
-private `_Execution` that carries the current `(StatePublication, ControlRef)` pair
+private `_Execution` that carries the current `(AgentState, ControlRef)` pair
 for its recursive run tree.
 The implementation is divided by semantic level:
 
@@ -239,8 +245,8 @@ use that Model Call's captured routes, even if reload and ordinary tools adopt
 new State between calls. The next Model Call captures the new routes.
 
 `AgentSetup.models` and `AgentSetup.tools` are already filtered immutable
-collections. `StatePublication.resources` similarly contains the filtered caps
-for every module. At `run()`, the executor intersects every
+collections. `AgentState.caps_for(module)` returns precomputed filtered caps.
+At `run()`, the executor intersects every
 `RunSpec.ceilings` restriction and creates tree-level `AgentResources` using
 stable model entry keys. A ceiling cannot expand the published base. Invalid
 queries are rejected before the run is durably accepted.

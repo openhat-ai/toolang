@@ -45,10 +45,10 @@ tools = ["shell/*"]
     assert text.index("alpha") < text.index("zeta")
 
 
-def test_state_config_projection_excludes_workspaces() -> None:
+def test_state_config_projection_includes_workspaces() -> None:
     assert (
         canonical_state_config(b'[workspaces]\ntoolang = "/Users/alice/src/toolang"\n')
-        == b""
+        == b'[workspaces]\ntoolang = "/Users/alice/src/toolang"\n'
     )
 
 

@@ -31,7 +31,7 @@ from toolang.execution.records import RunControlPayload
 from toolang.execution.store import RunStore
 from toolang.execution.types import FieldRef, Local, RunRef
 from toolang.execution.values import parts_from_local
-from toolang.state.state import CapSource, StateCap, publish_state_resources
+from toolang.state.state import CapSource, StateCap
 from toolang.up import AgentCore, process as agents
 from tests.support.execution_harness import (
     ExecutionHarness,
@@ -201,12 +201,7 @@ agic chat:
     )
     core = AgentCore(harness.setup.layout)
     core.setup = _Snapshot(harness.setup)
-    core.state = _Snapshot(
-        publish_state_resources(
-            replace(harness.state, module_caps={"agent": (prompt,)}),
-            agent_name=harness.setup.layout.name,
-        )
-    )
+    core.state = _Snapshot(replace(harness.state, module_caps={"agent": (prompt,)}))
     app = create_app(
         core,
         CapsManager(core.layout),

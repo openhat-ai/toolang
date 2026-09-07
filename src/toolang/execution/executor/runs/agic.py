@@ -17,7 +17,7 @@ from toolang.common.time import utc_now
 from toolang.lang.ast import AgicDecl, StructDecl
 from toolang.lang.errors import ToolangOutputError
 from toolang.lang.input import coerce_output, output_json_schema
-from toolang.state.state import AgentState, StatePublication
+from toolang.state.state import AgentState
 from toolang.state.state import state_program
 
 from ...events import StepBegin, StepEnd
@@ -46,7 +46,6 @@ from ...runnables import (
     resolve_runnable,
 )
 
-ExecutionState = AgentState | StatePublication
 
 if TYPE_CHECKING:
     from ..executor import _Execution
@@ -96,12 +95,12 @@ class _AgicState:
     estimate: InputEstimate = field(default_factory=InputEstimate)
     begin_step: (
         Callable[
-            [Callable[[ExecutionState, ControlRef], StepBegin]],
-            Awaitable[tuple[ExecutionState, ControlRef]],
+            [Callable[[AgentState, ControlRef], StepBegin]],
+            Awaitable[tuple[AgentState, ControlRef]],
         ]
         | None
     ) = None
-    refresh_frame: Callable[[ExecutionState, ControlRef], _AgicFrame] | None = None
+    refresh_frame: Callable[[AgentState, ControlRef], _AgicFrame] | None = None
 
     def check_model_call_limit(self) -> None:
         """Check the next call without counting an uncommitted preparation."""
@@ -120,8 +119,8 @@ class _AgicState:
 
     async def start_step(
         self,
-        build: Callable[[ExecutionState, ControlRef], StepBegin],
-    ) -> tuple[ExecutionState, ControlRef]:
+        build: Callable[[AgentState, ControlRef], StepBegin],
+    ) -> tuple[AgentState, ControlRef]:
         """Commit one physical-step boundary and return its State snapshot."""
 
         if self.begin_step is not None:
@@ -161,7 +160,7 @@ class _AgicState:
                     raise interruption
                 return
 
-    def frame_for_step(self, state: ExecutionState, ref: ControlRef) -> _AgicFrame:
+    def frame_for_step(self, state: AgentState, ref: ControlRef) -> _AgicFrame:
         """Prepare one step from the State captured at its boundary."""
 
         if self.refresh_frame is None:
@@ -182,7 +181,7 @@ async def execute(
     }
     frames: dict[tuple[str, FieldRef | None], _AgicFrame] = {}
 
-    def refresh_frame(state: ExecutionState, ref: ControlRef) -> _AgicFrame:
+    def refresh_frame(state: AgentState, ref: ControlRef) -> _AgicFrame:
         horizon = execution.horizon_for(binding.run_id, pending=True)
         far, near = execution.message_history().select(horizon)
         key = (state.revision, horizon)

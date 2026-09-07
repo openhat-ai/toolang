@@ -48,9 +48,8 @@ from toolang.state.collections import cap_dataset, query_cap_views
 from toolang.state.schemas import CapInfo
 from toolang.state.types import EntryKind
 from toolang.state.state import (
-    AgentState,
     StateCap,
-    StatePublication,
+    AgentState,
     state_module_caps,
     state_program,
 )
@@ -486,7 +485,7 @@ class LocalChatSession:
 
     @staticmethod
     def _current_session_setting(
-        *, setup: AgentSetup, state: AgentState | StatePublication
+        *, setup: AgentSetup, state: AgentState
     ) -> SessionSetting:
         model = setup.defaults.model
         if model is None:

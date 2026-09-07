@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from toolang.lang.ast import LetStmt
 from toolang.lang.input import resolve_input_parts_with_provenance
-from toolang.state.state import StatePublication, state_program
+from toolang.state.state import state_program
 
 from ...calls import prompt_definitions
 from ...records import ControlRecord, StepRef
@@ -59,8 +59,6 @@ async def execute(
                         resources,
                         module=binding.module,
                     )
-                    if isinstance(state, StatePublication)
-                    else None
                 ),
             ),
         )

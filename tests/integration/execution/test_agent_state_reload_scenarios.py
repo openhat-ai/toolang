@@ -517,6 +517,8 @@ def test_reload_rejects_non_durable_and_cross_layout_state(tmp_path: Path) -> No
             foreign_dir = tmp_path / "foreign" / cross_layout.revision
             foreign_dir.mkdir(parents=True)
             foreign = AgentState(
+                name=cross_layout.name,
+                allow_overrides=cross_layout.allow_overrides,
                 revision=cross_layout.revision,
                 root_revision=cross_layout.root_revision,
                 home_revision=cross_layout.home_revision,

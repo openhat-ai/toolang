@@ -277,6 +277,7 @@ flow relay(_: Part[]) -> Part[]:
 def test_runtime_content_prompts_append_durable_provenance(tmp_path: Path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
+        prepare_state=True,
         source="""
 prompt bracket:
   [{{_}}]

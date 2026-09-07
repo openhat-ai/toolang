@@ -22,7 +22,7 @@ from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.common.template import render_text_template
 from toolang.common.time import elapsed_ms, utc_now
-from toolang.state.state import AgentState, StatePublication
+from toolang.state.state import AgentState
 
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
 from ...records import RecallControlPayload
@@ -71,7 +71,7 @@ async def _begin(
     state: _AgicState,
     step: StepRef,
     call: ToolCall,
-    build: Callable[[AgentState | StatePublication, ControlRef], StepBegin],
+    build: Callable[[AgentState, ControlRef], StepBegin],
     *,
     trigger: Literal["model", "runtime"] = "model",
 ) -> None:
@@ -202,7 +202,7 @@ async def _execute(
     runtime: _ToolRuntime | None = None
 
     def begin_step(
-        agent_state: AgentState | StatePublication,
+        agent_state: AgentState,
         state_ref: ControlRef,
     ) -> StepBegin:
         nonlocal prepared, plugin_name, summary_context
@@ -246,9 +246,7 @@ async def _execute(
                     workspaces={
                         name: Path(path)
                         for name, path in agent_state.workspaces.items()
-                    }
-                    if isinstance(agent_state, StatePublication)
-                    else {},
+                    },
                 )
                 preparation = prepare_tool(tool, call.input, context)
             except Exception as exc:

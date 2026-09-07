@@ -482,8 +482,9 @@ def state_module_caps(
 
 @dataclass(frozen=True, slots=True)
 class AgentState:
-    """Effective State terms and aggregate indexes fixed for one top-level run."""
+    """One immutable prepared State, including effective caps and workspaces."""
 
+    name: str
     revision: str
     root_revision: str
     home_revision: str
@@ -497,6 +498,9 @@ class AgentState:
     module_caps: Mapping[str, tuple[StateCap, ...]]
     base_caps: tuple[StateCap, ...] | None = None
     revision_dir: Path | None = None
+    allow_overrides: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    workspaces: Mapping[str, str] = field(init=False)
+    caps_by_module: Mapping[str, tuple[StateCap, ...]] = field(init=False, repr=False)
     skills: Mapping[str, StateCap] = field(init=False, repr=False)
     psyches: Mapping[str, StateCap] = field(init=False, repr=False)
     services: Mapping[str, StateCap] = field(init=False, repr=False)
@@ -512,6 +516,8 @@ class AgentState:
         if self.revision != agent_state_revision(
             self.root_revision,
             self.home_revision,
+            name=self.name,
+            allow_overrides=self.allow_overrides,
         ):
             raise ValueError("Agent State revision does not match its layer revisions")
         if self.revision_dir is not None and self.revision_dir.name != self.revision:
@@ -521,6 +527,16 @@ class AgentState:
         object.__setattr__(self, "root_config", freeze_mapping(self.root_config))
         object.__setattr__(self, "home_config", freeze_mapping(self.home_config))
         object.__setattr__(self, "config", freeze_mapping(self.config))
+        object.__setattr__(
+            self, "allow_overrides", freeze_mapping(self.allow_overrides)
+        )
+        object.__setattr__(
+            self,
+            "workspaces",
+            freeze_mapping(
+                cast(Mapping[str, str], self.home_config.get("workspaces", {}))
+            ),
+        )
         caps_index = dict(self.caps)
         if tuple(sorted(caps_index)) != tuple(caps_index):
             raise ValueError("Agent State caps must be sorted by identity")
@@ -585,6 +601,9 @@ class AgentState:
         object.__setattr__(
             self, "module_runnables", freeze_mapping(module_runnable_index(modules))
         )
+        object.__setattr__(
+            self, "caps_by_module", freeze_mapping(_effective_module_caps(self))
+        )
 
     def module_runnable(
         self,
@@ -609,13 +628,12 @@ class AgentState:
         return matches[0] if matches else None
 
     def caps_for(self, module: str) -> tuple[StateCap, ...]:
-        """Return effective root/home/here caps for one executing module."""
+        """Return the precomputed effective caps for one executing module."""
 
-        base = tuple(self.caps.values()) if self.base_caps is None else self.base_caps
-        here = self.module_caps.get(module)
-        if here is None:
-            raise ValueError(f"Program not found: {module}")
-        return effective_caps(base, here)
+        try:
+            return self.caps_by_module[module]
+        except KeyError as exc:
+            raise ValueError(f"Program not found: {module}") from exc
 
     def to_snapshot(self) -> dict[str, object]:
         return {
@@ -636,190 +654,40 @@ class AgentState:
         }
 
 
-@dataclass(frozen=True, slots=True)
-class StateResources:
-    """Process-local runtime resources for one durable Agent State."""
-
-    caps_by_module: Mapping[str, tuple[StateCap, ...]]
-    workspaces: Mapping[str, str]
-
-    def __post_init__(self) -> None:
-        values = {name: tuple(entries) for name, entries in self.caps_by_module.items()}
-        if tuple(sorted(values)) != tuple(values):
-            raise ValueError("State resource modules must be sorted by name")
-        workspaces = dict(self.workspaces)
-        if tuple(sorted(workspaces)) != tuple(workspaces):
-            raise ValueError("State resource workspaces must be sorted by name")
-        if any(not isinstance(path, str) for path in workspaces.values()):
-            raise TypeError("State resource workspace paths must be strings")
-        object.__setattr__(self, "caps_by_module", freeze_mapping(values))
-        object.__setattr__(self, "workspaces", freeze_mapping(workspaces))
-
-    def caps_for(self, module: str) -> tuple[StateCap, ...]:
-        """Return the precomputed effective caps for one Program module."""
-
-        try:
-            return self.caps_by_module[module]
-        except KeyError as exc:
-            raise ValueError(f"Program not found: {module}") from exc
-
-
-@dataclass(frozen=True, slots=True)
-class StatePublication:
-    """One durable Agent State paired with its effective runtime resources."""
-
-    state: AgentState
-    resources: StateResources
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.state, AgentState):
-            raise TypeError("State publication requires an AgentState")
-        if not isinstance(self.resources, StateResources):
-            raise TypeError("State publication requires StateResources")
-        if set(self.resources.caps_by_module) != set(self.state.modules):
-            raise ValueError("State publication resources must cover every module")
-
-    @property
-    def revision(self) -> str:
-        """Return the durable State revision represented by this publication."""
-
-        return self.state.revision
-
-    @property
-    def root_revision(self) -> str:
-        return self.state.root_revision
-
-    @property
-    def home_revision(self) -> str:
-        return self.state.home_revision
-
-    @property
-    def root_config(self) -> Mapping[str, object]:
-        return self.state.root_config
-
-    @property
-    def home_config(self) -> Mapping[str, object]:
-        return self.state.home_config
-
-    @property
-    def config(self) -> Mapping[str, object]:
-        return self.state.config
-
-    @property
-    def caps(self) -> Mapping[str, StateCap]:
-        return self.state.caps
-
-    @property
-    def modules(self) -> Mapping[str, Program]:
-        return self.state.modules
-
-    @property
-    def module_sources(self) -> Mapping[str, str]:
-        return self.state.module_sources
-
-    @property
-    def module_digests(self) -> Mapping[str, str]:
-        return self.state.module_digests
-
-    @property
-    def module_caps(self) -> Mapping[str, tuple[StateCap, ...]]:
-        return self.state.module_caps
-
-    @property
-    def psyches(self) -> Mapping[str, StateCap]:
-        return self.state.psyches
-
-    @property
-    def skills(self) -> Mapping[str, StateCap]:
-        return self.state.skills
-
-    @property
-    def services(self) -> Mapping[str, StateCap]:
-        return self.state.services
-
-    @property
-    def prompts(self) -> Mapping[str, StateCap]:
-        return self.state.prompts
-
-    @property
-    def agics(self) -> Mapping[str, AgicDecl]:
-        return self.state.agics
-
-    @property
-    def flows(self) -> Mapping[str, FlowDecl]:
-        return self.state.flows
-
-    @property
-    def runnables(self) -> Mapping[str, AgicDecl | FlowDecl]:
-        return self.state.runnables
-
-    @property
-    def runnable_modules(self) -> Mapping[str, str]:
-        return self.state.runnable_modules
-
-    @property
-    def module_runnables(self) -> Mapping[str, AgicDecl | FlowDecl]:
-        return self.state.module_runnables
-
-    @property
-    def workspaces(self) -> Mapping[str, str]:
-        """Return configured workspace roots captured by this publication."""
-
-        return self.resources.workspaces
-
-    def caps_for(self, module: str) -> tuple[StateCap, ...]:
-        """Return the already-filtered cap collection for one module."""
-
-        return self.resources.caps_for(module)
-
-
-def publish_state_resources(
-    state: AgentState,
-    *,
-    agent_name: str,
-    allow_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
-    workspaces: Mapping[str, str] | None = None,
-) -> StatePublication:
-    """Publish effective caps and supplied runtime workspace grants."""
+def _effective_module_caps(state: AgentState) -> dict[str, tuple[StateCap, ...]]:
+    """Apply configured allows and frozen startup replacements once per State."""
 
     from .collections import cap_dataset
     from .config import CAP_ALLOW_FIELDS, resolve_cap_allows
 
     allows = resolve_cap_allows(
-        (state.root_config, state.home_config),
-        overrides=allow_overrides,
+        (state.root_config, state.home_config), overrides=state.allow_overrides
     )
+    base = tuple(state.caps.values()) if state.base_caps is None else state.base_caps
     by_module: dict[str, tuple[StateCap, ...]] = {}
-    for module in state.modules:
-        base = state.caps_for(module)
+    for module, here in state.module_caps.items():
+        entries = effective_caps(base, here)
         selected_ids: set[tuple[str, str, str]] = set()
-        for allow_field in CAP_ALLOW_FIELDS:
-            kind = cast(EntryKind, allow_field.removesuffix("s"))
-            entries = tuple(item for item in base if item.kind == kind)
-            queries = allows.get(allow_field)
+        for field_name in CAP_ALLOW_FIELDS:
+            kind = cast(EntryKind, field_name.removesuffix("s"))
+            candidates = tuple(cap for cap in entries if cap.kind == kind)
+            queries = allows.get(field_name)
             if queries is None:
-                selected = entries
+                selected = candidates
             elif not queries:
                 selected = ()
             else:
                 selected = tuple(
                     cast(StateCap, item.record)
                     for item in cap_dataset(
-                        entries,
-                        agent_name=agent_name,
-                        kind=kind,
+                        candidates, agent_name=state.name, kind=kind
                     ).query(queries)
                 )
-            selected_ids.update((item.kind, item.name, item.ref) for item in selected)
+            selected_ids.update((cap.kind, cap.name, cap.ref) for cap in selected)
         by_module[module] = tuple(
-            item for item in base if (item.kind, item.name, item.ref) in selected_ids
+            cap for cap in entries if (cap.kind, cap.name, cap.ref) in selected_ids
         )
-    sorted_workspaces = dict(sorted((workspaces or {}).items()))
-    resources = StateResources(
-        {name: by_module[name] for name in sorted(by_module)},
-        sorted_workspaces,
-    )
-    return StatePublication(state=state, resources=resources)
+    return by_module
 
 
 def compose_agent_state(
@@ -835,13 +703,19 @@ def compose_agent_state(
     module_digests: Mapping[str, str],
     module_caps: Mapping[str, tuple[StateCap, ...]],
     revision_dir: Path | None = None,
+    name: str,
+    allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
 ) -> AgentState:
     """Compose runtime State from one exact root/home layer pair."""
 
     effective_base = effective_caps(root_caps, home_caps)
     agent_here = module_caps.get("agent", ())
     return AgentState(
-        revision=agent_state_revision(root_revision, home_revision),
+        revision=agent_state_revision(
+            root_revision, home_revision, name=name, allow_overrides=allow_overrides
+        ),
+        name=name,
+        allow_overrides=allow_overrides or {},
         root_revision=root_revision,
         home_revision=home_revision,
         root_config=root_config,
@@ -927,18 +801,43 @@ def _merge_config(
     return merged
 
 
-def agent_state_revision(root_revision: str, home_revision: str) -> str:
-    """Return the canonical revision of one exact root/home layer pair."""
+AGENT_STATE_SCHEMA = 2
+
+
+def agent_layers_document(
+    root_revision: str,
+    home_revision: str,
+    *,
+    name: str,
+    allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
+) -> dict[str, object]:
+    """Describe the exact inputs that identify one prepared Agent State."""
 
     _require_revision(root_revision, name="root revision")
     _require_revision(home_revision, name="home revision")
-    document = {
+    return {
         "home_revision": home_revision,
         "root_revision": root_revision,
-        "schema": 1,
+        "name": name,
+        "allow_overrides": dict(allow_overrides or {}),
+        "schema": AGENT_STATE_SCHEMA,
     }
+
+
+def agent_state_revision(
+    root_revision: str,
+    home_revision: str,
+    *,
+    name: str,
+    allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
+) -> str:
+    """Identify the layers and frozen policy used to construct a State."""
+
     encoded = json.dumps(
-        document,
+        agent_layers_document(
+            root_revision, home_revision, name=name, allow_overrides=allow_overrides
+        ),
+        allow_nan=False,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),

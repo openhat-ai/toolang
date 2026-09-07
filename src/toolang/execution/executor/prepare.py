@@ -39,7 +39,6 @@ from toolang.plugin.models.budget import input_budget, output_budget
 from toolang.state import state as cap_store
 from toolang.state.state import (
     StateCap,
-    StatePublication,
     state_program,
     state_program_source,
 )
@@ -101,9 +100,6 @@ def prepare_agic(
     if not model_keys:
         raise ToolangError(f"run resources include no models: {agic.name}")
     selection = snapshot_model_selection(run.setup)
-    durable_state = (
-        run.state.state if isinstance(run.state, StatePublication) else run.state
-    )
     ref = run.model_request.ref if run.model_request is not None else run.bindings.model
     if ref is None:
         raise ToolangError(f"run requires a model: {agic.name}")
@@ -118,7 +114,7 @@ def prepare_agic(
             run.model_request.parameters,
         )
     tools = dict(resource_tools(run.setup, resources))
-    routes = resolve_agic_routes(durable_state, agic)
+    routes = resolve_agic_routes(run.state, agic)
     runtime_tools = (
         {}
         if agic.name.startswith("<agic:")
@@ -162,7 +158,7 @@ def prepare_agic(
             run.state,
             module=run.module,
             program=program,
-            caps=caps if isinstance(run.state, StatePublication) else None,
+            caps=caps,
         ),
     )
     if prompt_invocations:
@@ -181,7 +177,7 @@ def prepare_agic(
     )
     instructions = _render_instructions(program, agic, system_runtime)
     runtime_instructions = (
-        render_runtime_instructions(durable_state, routes) if runtime_tools else ""
+        render_runtime_instructions(run.state, routes) if runtime_tools else ""
     )
     if any(getattr(tool, "plugin_name", None) == "fs" for tool in tools.values()):
         runtime_instructions = "\n\n".join(

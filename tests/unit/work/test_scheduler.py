@@ -210,6 +210,7 @@ def test_job_runnable_call_input_expands_a_prompt_call(
 ) -> None:
     harness = ExecutionHarness.create(
         tmp_path / "toolang",
+        prepare_state=True,
         source="""
 prompt wrap:
   <{{_}}>

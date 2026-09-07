@@ -88,7 +88,7 @@ implements the `Sandbox` lifecycle. Current implementations are:
 Selectors use `name[:spec]`. Generic orchestration selects the plugin by name
 and passes the remaining spec unchanged to that implementation. Future drivers
 may use a cloud host. `RunExecutor` receives an `AgentSetup` and an immutable
-`StatePublication` and does not know where its process is hosted.
+`AgentState` and does not know where its process is hosted.
 
 `SandboxState` persists only the control-side workload reference required by a
 later `stop` command. AgentServer status and execution data remain separate.
@@ -189,9 +189,9 @@ Toolang-owned run ids may also use one dedicated short generated id family. See
 Runtime resources such as models, tools, and caps are selected through ordered
 sets. `SetupWatcher` applies root and agent `allow.models` and `allow.tools`
 before publishing immutable `AgentSetup.models` and `AgentSetup.tools`.
-`StateWatcher` publishes a `StatePublication` whose resources contain the
-effective caps for every module after cap-kind allow policy. Each completed
-snapshot is stable; the next root run observes the latest valid pair.
+`StateWatcher` publishes an `AgentState` containing captured workspace grants
+and precomputed effective caps for every module after cap-kind allow policy.
+Each completed snapshot is stable; the next root run observes the latest valid pair.
 
 At root-run start, the executor captures those effective collections and then
 intersects every session or request ceiling in `RunSpec.ceilings`. The

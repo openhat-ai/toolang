@@ -304,12 +304,12 @@ check; it is not part of the public manager API.
 
 ## State Capture
 
-`RunSpec` carries one explicit immutable `StatePublication`,
+`RunSpec` carries one explicit immutable `AgentState`,
 `toolang.setup.AgentSetup`, effective `RunBindings` and `RunLimits`, and zero
 or more `AgentCeiling` restrictions. `AgentSetup` supplies the immutable
 `AgentLayout`, installed runtime implementations, effective model/tool
-collections, and captured policy defaults. `StatePublication` pairs the durable
-`AgentState` with effective per-module cap collections. Setup and State apply
+collections, and captured policy defaults. `AgentState` includes the captured
+workspace grants and effective per-module cap collections. Setup and State apply
 their owned `[allow]` fields before publication; session and run policy only
 narrow those bases.
 Execution uses that layout directly for the agent identity, home, and runtime

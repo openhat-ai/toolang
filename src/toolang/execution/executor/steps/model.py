@@ -34,7 +34,7 @@ from toolang.base.types.run import (
 from toolang.base.types.tool import ToolDefinition
 from toolang.base.errors import ToolangError
 from toolang.common.time import elapsed_ms, utc_now
-from toolang.state.state import AgentState, StatePublication
+from toolang.state.state import AgentState
 
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
 from ...assembly import assemble_messages
@@ -72,7 +72,7 @@ class _NeedsCompact(Exception):
 
 def _candidate(
     state: _AgicState,
-    agent_state: AgentState | StatePublication,
+    agent_state: AgentState,
     state_ref: ControlRef,
 ) -> tuple[_AgicFrame, _MessageBuffer, tuple[ControlRecord, ...], ModelCall]:
     prepared = state.frame_for_step(agent_state, state_ref)
@@ -209,7 +209,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
     next_messages = state.messages
 
     def begin_step(
-        agent_state: AgentState | StatePublication,
+        agent_state: AgentState,
         state_ref: ControlRef,
     ) -> StepBegin:
         nonlocal prepared, request, next_messages

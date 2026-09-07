@@ -35,7 +35,8 @@ async def create_live_agent(
     root_revision = sha256(b"live-provider-smoke-root").hexdigest()
     home_revision = sha256(LIVE_PROVIDER_SOURCE.encode("utf-8")).hexdigest()
     state = AgentState(
-        revision=agent_state_revision(root_revision, home_revision),
+        name="alice",
+        revision=agent_state_revision(root_revision, home_revision, name="alice"),
         root_revision=root_revision,
         home_revision=home_revision,
         root_config={},

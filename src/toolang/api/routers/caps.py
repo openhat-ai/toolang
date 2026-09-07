@@ -17,7 +17,7 @@ from toolang.common.errors import ToolangError
 from toolang.state import state as cap_state
 from toolang.state.collections import cap_dataset, query_cap_views
 from toolang.state.schemas import CapDetail, CapInfo
-from toolang.state.state import StateCap, StatePublication, CapScope
+from toolang.state.state import StateCap, AgentState, CapScope
 
 MutableCapScope = Literal["home", "root"]
 
@@ -350,14 +350,10 @@ def _collection_kind(collection: str) -> CapKind:
 
 
 def _state_cap_index(
-    state: StatePublication,
+    state: AgentState,
     kind: CapKind,
 ) -> Mapping[str, StateCap]:
-    return {
-        item.name: item
-        for item in state.resources.caps_for("agent")
-        if item.kind == kind
-    }
+    return {item.name: item for item in state.caps_for("agent") if item.kind == kind}
 
 
 def _authored_caps(
