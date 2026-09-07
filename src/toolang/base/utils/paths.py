@@ -32,11 +32,21 @@ def resolve_tool_path(
         if not isinstance(workspace, str) or workspace not in roots:
             raise ToolangError(f"workspace is not available: {workspace}")
         root = roots[workspace]
-        candidate = Path(os.path.abspath(root / value.strip().lstrip("/")))
-        if not candidate.is_relative_to(root):
+        candidate = root / value.strip().lstrip("/")
+        normalized = Path(os.path.abspath(candidate))
+        if not normalized.is_relative_to(root):
             raise ToolangError(f"path escapes workspace {workspace}: {value}")
         resolved = authorize_home_path(candidate, context.home)
-        relative = candidate.relative_to(root).as_posix()
+        relative = normalized.relative_to(root).as_posix()
+        if ".." in candidate.parts and normalized.resolve() != resolved:
+            # Resolve parent traversal before spelling the normalized honor path.
+            # Lexically dropping '..' can select a different file after a symlink.
+            try:
+                relative = resolved.relative_to(root.resolve()).as_posix()
+            except ValueError as exc:
+                raise ToolangError(
+                    f"parent traversal through a symlink leaves workspace {workspace}; use a direct path"
+                ) from exc
     else:
         candidate = Path(value.strip()).expanduser()
         if not candidate.is_absolute():

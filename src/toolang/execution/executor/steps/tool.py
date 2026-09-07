@@ -197,7 +197,9 @@ async def _execute(
     plugin_name = "-"
     summary_context = _tool_summary_context(call, None)
     preparation: ToolPreparation | None = None
-    preparation_error: str | None = blocked_error
+    preparation_error: Exception | None = (
+        ToolangError(blocked_error) if blocked_error is not None else None
+    )
     step = StepRef.from_local(run.run_id, (step_index,))
     runtime: _ToolRuntime | None = None
 
@@ -248,7 +250,7 @@ async def _execute(
                 )
                 preparation = prepare_tool(tool, call.input, context)
             except Exception as exc:
-                preparation_error = str(exc) or type(exc).__name__
+                preparation_error = exc
             else:
                 if (
                     trigger == "model"
@@ -299,25 +301,15 @@ async def _execute(
         plugin_name=plugin_name,
     )
     try:
-        record = (
-            ToolCallResult(
-                tool_call_id=call.tool_call_id,
-                call_id=call.call_id,
-                name=call.name,
-                input=dict(call.input),
-                output={},
-                error=preparation_error,
-            )
-            if preparation_error is not None
-            else await invoke_tool_call(
-                run_id=run.run_id,
-                tools=prepared.tools,
-                services=prepared.services,
-                layout=state.layout,
-                call=call,
-                runtime=runtime,
-                preparation=preparation,
-            )
+        record = await invoke_tool_call(
+            run_id=run.run_id,
+            tools=prepared.tools,
+            services=prepared.services,
+            layout=state.layout,
+            call=call,
+            runtime=runtime,
+            preparation=preparation,
+            failure=preparation_error,
         )
     except asyncio.CancelledError:
         await _cancel(
@@ -698,12 +690,15 @@ async def invoke_tool_call(
     call: ToolCall,
     runtime: ToolRuntime | None = None,
     preparation: ToolPreparation | None = None,
+    failure: Exception | None = None,
 ) -> ToolCallResult:
     """Invoke one selected tool and normalize its result or error."""
 
     name = call.name
     arguments = dict(call.input)
     try:
+        if failure is not None:
+            raise failure
         if preparation is None:
             tool = tools.get(name)
             if tool is None:

@@ -131,3 +131,34 @@ def test_explicit_anchor_keeps_a_logical_symlink_path(tmp_path):
     path = resolve_tool_path("/link/file", _context(tmp_path), workspace="repo")
     assert path.resolved == tmp_path / "shared/file"
     assert (path.workspace, path.relative) == ("repo", "/link/file")
+
+
+def test_parent_segments_follow_symlinks_with_or_without_a_workspace(tmp_path):
+    (tmp_path / "repo/actual/nested").mkdir(parents=True)
+    (tmp_path / "repo/link").symlink_to(
+        tmp_path / "repo/actual/nested", target_is_directory=True
+    )
+    context = _context(tmp_path)
+    bare = resolve_tool_path("repo/link/../file", context)
+    anchored = resolve_tool_path("/link/../file", context, workspace="repo")
+    assert bare.resolved == anchored.resolved == tmp_path / "repo/actual/file"
+    assert anchored.relative == "/actual/file"
+
+
+def test_parent_segments_cannot_silently_select_a_different_anchor_target(tmp_path):
+    (tmp_path / "repo").mkdir()
+    (tmp_path / "shared/sub").mkdir(parents=True)
+    (tmp_path / "repo/link").symlink_to(
+        tmp_path / "shared/sub", target_is_directory=True
+    )
+    with pytest.raises(ToolangError, match="parent traversal through a symlink"):
+        resolve_tool_path("/link/../file", _context(tmp_path), workspace="repo")
+
+
+def test_unambiguous_parent_segments_preserve_the_logical_anchor(tmp_path):
+    (tmp_path / "repo").mkdir()
+    (tmp_path / "shared/sub").mkdir(parents=True)
+    (tmp_path / "repo/link").symlink_to(tmp_path / "shared", target_is_directory=True)
+    path = resolve_tool_path("/link/sub/../file", _context(tmp_path), workspace="repo")
+    assert path.resolved == tmp_path / "shared/file"
+    assert (path.workspace, path.relative) == ("repo", "/link/file")

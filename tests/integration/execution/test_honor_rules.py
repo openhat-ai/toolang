@@ -512,3 +512,38 @@ def test_reload_changes_the_workspace_at_the_tool_boundary(tmp_path):
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)
+
+
+def test_honor_and_invocation_agree_after_symlink_parent_traversal(tmp_path):
+    def call(identity):
+        return _call(identity, workspace="repo", path="/link/../result", text="done")
+
+    harness, repo, publication = _harness(
+        tmp_path, [_calls(call("first")), _calls(call("retry")), _answer()]
+    )
+    (repo / "src/nested").mkdir()
+    (repo / "link").symlink_to(repo / "src/nested", target_is_directory=True)
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            run = await harness.executor.run(_spec(harness, publication), tracer=tracer)
+            assert run.status == "succeeded", run.error
+            assert [c.payload.target for c in _recalls(harness, run)] == [
+                RulesRecallTarget("repo", "/"),
+                RulesRecallTarget("repo", "/src"),
+            ]
+            assert (repo / "src/result").read_text() == "done"
+            assert not (repo / "result").exists()
+            honor, original, retried = _tool_steps(harness, run)
+            assert honor.given.call.input == {
+                "paths": [{"workspace": "repo", "path": "/src/result"}]
+            }
+            assert (
+                original.output.value.error == "operation not executed; retry required"
+            )
+            assert retried.output.value.error is None
+            assert_run_event_integrity(tracer.events)
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
