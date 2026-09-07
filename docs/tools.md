@@ -176,11 +176,13 @@ calls, and tool-disabled models receive no runtime tools.
 ceilings. Each invocation has an ordinary Tool Step. Trusted runtime tools receive
 per-call operations through `ToolContext.runtime`, not the Store or executor.
 Run creates a child owned by its Tool Step and returns `{run_id, output_type, output}`.
-Reload and execute return `{controls: [ControlRef]}`; the controls retain their
-payloads. Execute finishes its Tool Step before transferring execution.
+Execute returns `{controls: [ControlRef]}` and finishes its Tool Step before
+transferring execution. Reload returns `{controls: [{ref, state}]}` after adopting
+State. Pick, honor, and compact also return summaries of durably created or reused
+controls; recalled content remains in controls, not the result summaries.
 
 `ToolStepGiven.trigger` records `model` or `runtime`. Both have durable results and
-progress events; only model-triggered calls contribute ToolResult messages.
+progress events; only model-triggered calls contribute their own ToolResult messages.
 Failures use `ToolResultPart.error`, with additional diagnostics in the output.
 
 Toolang runtime owns:
@@ -202,6 +204,9 @@ execution events. The running summary is stored in `ToolStepGiven.summary`;
 the terminal summary uses the same key in `ToolStepNoted`.
 
 Plugin-defined summary templates are not part of the current tool contract.
+The runtime toolset supplies pick/reload/compact/honor wording. Progress marks
+these rows with `✧` and shows compact elapsed time, refreshed once per second in
+TTY/Chat. Non-TTY prints compact start/end only.
 
 ### Pick guidance
 
@@ -210,7 +215,8 @@ allowed resource's body. Use the exact ref from its separate skill or service
 catalog, not a name, path, or selector. Pick neither grants tools nor connects,
 authenticates, or discovers MCP services.
 
-The Tool Step returns `{controls: [ControlRef]}`. An applied recall control holds
+The Tool Step returns `{controls: [{ref, target, revision}]}`, where target is
+`{kind: "skill" | "service", ref}`. An applied recall control holds
 the target, SHA-256 revision, and original recalled text; the next Model Call
 adopts it as a separate `<skill>` or `<service>` user message. Failures create no
 recall. Revision zero (`"0"`) denotes removal; a present empty body retains its
@@ -229,14 +235,25 @@ unchanged.
 
 For model calls to path-aware tools, runtime checks applicable `AGENTS.md` files
 from the workspace root to the target's scope. Missing or changed rules cause a
-runtime-only `_toolang/honor` Step, followed by the original tool's result:
-`error="operation not executed; retry required"`, `output={}`. The next Model Call
+runtime-only `_toolang/honor` Step, followed by an error-only response to the
+original tool call: `Workspace rules were just loaded. This operation was not
+executed; please retry if it complies with them.` The operation has no Tool Step
+or execution events; it has not run. The next Model Call
 receives separate `<rules>` user messages after the complete tool exchange.
 Only a subsequent retry may execute the operation; current visible rules need
 no honor Step. Honor shares pick's revision, pending-reuse, and visibility rules.
 Confirmed deletion retracts earlier rules; failed reads block the operation.
 
 Honor is registered normally but is neither advertised to nor callable by the
-model. Its results are durable, not orphan ToolResult messages. Preparation and
+model. Its result contains `{controls: [{ref, target, revision}]}`; target is
+`{kind: "rules", workspace, path}` with the exact rules file, such as
+`/src/AGENTS.md`, not its directory scope. Progress lists these files. Honor's
+`Step.input` references the original ToolCall, allowing history to reconstruct
+its response if no later ModelCall delta saved it. Honor's own result is durable
+but not a model message. Preparation and
 execution use the same authorized paths. Initial coverage is explicit fs paths
 and shell cwd, including reads; paths hidden in shell commands are not inspected.
+
+Compact likewise stays out of model messages. Its result is
+`{controls: [{ref, horizon}]}`, referencing the compact Run output; the compact
+control changes the horizon used by subsequent ModelCalls.

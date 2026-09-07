@@ -701,8 +701,9 @@ def _encode_tool_result_part(part: ToolResultPart) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "ok": part.error is None,
         "name": part.tool_name,
-        "output": dict(part.output),
     }
+    if part.output or part.error is None:
+        payload["output"] = dict(part.output)
     if part.error is not None:
         payload["error"] = part.error
     call_id = part.call_id or part.tool_call_id

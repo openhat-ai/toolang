@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
+from dataclasses import asdict, replace
 from hashlib import sha256
 from pathlib import Path
 
@@ -163,7 +163,15 @@ def test_pick_reuses_pending_then_visible_guidance(
             assert (
                 results["first"].output
                 == results["duplicate"].output
-                == {"controls": [str(control.ref)]}
+                == {
+                    "controls": [
+                        {
+                            "ref": str(control.ref),
+                            "target": asdict(control.payload.target),
+                            "revision": control.payload.revision,
+                        }
+                    ]
+                }
             )
             assert results["visible"].output == {"controls": []}
             steps = harness.store.list_steps(run_id=run.id)
@@ -270,7 +278,15 @@ def test_pick_matches_the_effective_catalog(tmp_path: Path, ceiling, kind, name)
             (control,) = _recalls(harness, run)
             assert control.payload.content == GUIDANCE
             results = _results(harness, run)
-            assert results.pop("allowed").output == {"controls": [str(control.ref)]}
+            assert results.pop("allowed").output == {
+                "controls": [
+                    {
+                        "ref": str(control.ref),
+                        "target": asdict(control.payload.target),
+                        "revision": control.payload.revision,
+                    }
+                ]
+            }
             assert all(
                 result.error and "available catalog" in result.error
                 for result in results.values()

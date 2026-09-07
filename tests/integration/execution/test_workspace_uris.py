@@ -7,6 +7,7 @@ import pytest
 
 from tests.integration.execution.test_honor_rules import (
     SOURCE,
+    RETRY_MESSAGE,
     _answer,
     _call,
     _calls,
@@ -25,7 +26,7 @@ from tests.support.execution_harness import (
     RecordingRunTracer,
     ScriptedModelTurn,
 )
-from toolang.base.types.message import TextPart, message_text
+from toolang.base.types.message import TextPart, ToolResultPart, message_text
 from toolang.base.types.run import ToolCall
 from toolang.base.types.tool import ToolPreparation
 from toolang.execution.executor import RunExecutor
@@ -38,7 +39,16 @@ from toolang.state.watcher import StateRefresh, StateWatcher
 
 def _results(harness, run):
     return {
-        s.output.value.tool_call_id: s.output.value for s in _tool_steps(harness, run)
+        **{
+            part.tool_call_id: part
+            for message in harness.adapter.invocations[-1].call.messages
+            for part in message.parts
+            if isinstance(part, ToolResultPart)
+        },
+        **{
+            s.output.value.tool_call_id: s.output.value
+            for s in _tool_steps(harness, run)
+        },
     }
 
 
@@ -185,7 +195,7 @@ def test_external_workspace_rules_and_protocol_survive_instruct_none(tmp_path):
             run = await harness.executor.run(_spec(harness, publication), tracer=tracer)
             assert run.status == "succeeded", run.error
             results = _results(harness, run)
-            assert results["first"].error == "operation not executed; retry required"
+            assert results["first"].error == RETRY_MESSAGE
             assert results["retry"].error is None
             assert results["retry"].output["path"] == uri
             controls = _recalls(harness, run)
@@ -222,7 +232,7 @@ def test_rule_symlinks_cannot_escape_the_workspace(tmp_path, external):
             run = await harness.executor.run(
                 _spec(harness, _workspace_state(harness, {"repo": root}))
             )
-            assert "rules recall failed" in _results(harness, run)["write"].error
+            assert "rules could not be loaded" in _results(harness, run)["write"].error
             assert not _recalls(harness, run)
             assert not (root / "file").exists()
 
@@ -269,7 +279,7 @@ def test_remove_symlink_honors_rules_then_unlinks_without_removing_the_target(tm
             run = await harness.executor.run(_spec(harness, publication), tracer=tracer)
             assert run.status == "succeeded", run.error
             results = _results(harness, run)
-            assert results["first"].error == "operation not executed; retry required"
+            assert results["first"].error == RETRY_MESSAGE
             assert results["retry"].error is None
             assert results["retry"].output == {
                 "path": arguments["path"],
@@ -415,9 +425,7 @@ def test_honor_retry_resolves_the_new_workspace_state(tmp_path, change):
                 assert not (new / "file").exists()
                 assert len(controls) == 1
             else:
-                assert (
-                    results["changed"].error == "operation not executed; retry required"
-                )
+                assert results["changed"].error == RETRY_MESSAGE
                 assert results["retry"].error is None
                 assert len(controls) == 2
                 if change == "remap":

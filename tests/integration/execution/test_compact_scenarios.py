@@ -140,6 +140,15 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
             ]
             assert len(controls) == 1
             control = controls[0]
+            assert isinstance(control.payload, CompactControlPayload)
+            assert tool.output is not None and isinstance(
+                tool.output.value, ToolResultPart
+            )
+            assert tool.output.value.output == {
+                "controls": [
+                    {"ref": str(control.ref), "horizon": str(control.payload.horizon)}
+                ]
+            }
             assert control.triggered_by == tool.ref
             assert control.ref in model.preceded_by
             history = RunHistory(harness.store)

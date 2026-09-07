@@ -404,12 +404,15 @@ def _encode_message(
                 function_part["thoughtSignature"] = signature
             parts.append(function_part)
         elif isinstance(part, ToolResultPart):
+            output = dict(part.output)
+            if part.error is not None:
+                output = {"error": part.error, **({"output": output} if output else {})}
             parts.append(
                 {
                     "functionResponse": {
                         "id": part.call_id or part.tool_call_id,
                         "name": part.tool_name,
-                        "response": dict(part.output),
+                        "response": output,
                     }
                 }
             )

@@ -651,6 +651,8 @@ class ChatTuiApp:
             return
         elapsed = max(0.0, now - self._status_activity_started_at)
         changed = self.status_bar.set_elapsed_seconds(int(elapsed))
+        if changed:
+            self.presenter.refresh(self.app_context)
         if changed and not self.status_bar.error_message:
             self._invalidate_ui()
 

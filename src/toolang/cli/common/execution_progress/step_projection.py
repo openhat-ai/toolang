@@ -29,7 +29,17 @@ from toolang.lang.ast import (
 )
 
 from .formatting import one_line, output_parts, run_label, tool_label
+from .facts import elapsed_fact
 from .types import ProgressRow, ProgressTone
+
+
+def runtime_tool_name(begin: StepBegin) -> str | None:
+    given = begin.given
+    if isinstance(given, ToolStepGiven) and given.plugin == "_toolang":
+        name = given.call.name.removeprefix("_toolang__")
+        if name in {"pick", "reload", "compact", "honor"}:
+            return name
+    return None
 
 
 def live_row(
@@ -37,6 +47,7 @@ def live_row(
     preview: str,
     *,
     dynamic_run: bool = False,
+    now: str = "",
 ) -> ProgressRow:
     """Project one compact Step activity for a parallel lane."""
 
@@ -51,8 +62,13 @@ def live_row(
             if isinstance(begin.given, ToolStepGiven) and begin.given.summary
             else f"executing {tool_label(begin.given)}"
         )
-        text = f"• {summary}"
-        return ProgressRow(text, "active", surface="tool_summary")
+        name = runtime_tool_name(begin)
+        if name == "compact" and (
+            elapsed := elapsed_fact(begin.started_at, now or begin.started_at)
+        ):
+            summary += f" · {elapsed}"
+        text = f"{'✧' if name else '•'} {summary}"
+        return ProgressRow(text, "active", surface="tool_summary", wrap_live=bool(name))
     else:
         text = f"• running {begin.kind}"
     return ProgressRow(text, "active")
@@ -64,13 +80,14 @@ def trace_live_rows(
     *,
     marker_committed: bool = False,
     gap_before: bool = False,
+    now: str = "",
 ) -> tuple[ProgressRow, ...]:
     """Project replaceable Trace activity or one Markdown source tail."""
 
     if begin.kind != "model" or not preview:
         if begin.kind == "model" and marker_committed:
             return ()
-        return (live_row(begin, preview),)
+        return (live_row(begin, preview, now=now),)
     return (
         ProgressRow(
             preview,
@@ -120,10 +137,16 @@ def trace_terminal_rows(
 
     label = tool_label(begin.given)
     summary = event.noted.summary if isinstance(event.noted, ToolStepNoted) else ""
+    name = runtime_tool_name(begin)
+    marker = "✧" if name else "•"
+    if name == "compact" and (
+        elapsed := elapsed_fact(begin.started_at, event.finished_at)
+    ):
+        summary = f"{summary or label} in {elapsed}"
     if event.status == "succeeded":
         rows = [
             ProgressRow(
-                f"• {summary or f'executed {label}'}",
+                f"{marker} {summary or f'executed {label}'}",
                 tone,
                 surface="tool_summary",
             )
@@ -136,7 +159,7 @@ def trace_terminal_rows(
     status = "failed" if event.status == "failed" else "canceled"
     rows = [
         ProgressRow(
-            f"• {summary or f'{status} {label}'}",
+            f"{marker} {summary or f'{status} {label}'}",
             tone,
             surface="tool_summary",
         )
@@ -236,10 +259,11 @@ def lane_live_text(
     preview: str,
     *,
     dynamic_run: bool = False,
+    now: str = "",
 ) -> str:
     """Project one descendant Step into a compact parallel-lane activity."""
 
-    return live_row(begin, preview, dynamic_run=dynamic_run).text
+    return live_row(begin, preview, dynamic_run=dynamic_run, now=now).text
 
 
 def lane_terminal_lines(

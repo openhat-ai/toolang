@@ -37,6 +37,7 @@ from .types import (
     TypedRef,
 )
 from .values import parts_from_local
+from .tool_results import workspace_reply_from_step
 
 
 def active_steps(
@@ -91,7 +92,12 @@ def tail_delta(
                         )
                     )
     deferred: dict[ControlRef, ControlRecord] = {}
-    result_ids = {
+    replies = {
+        step.ref: reply
+        for step in tail
+        if (reply := workspace_reply_from_step(step, resolve)) is not None
+    }
+    result_ids = {reply.tool_call_id for reply in replies.values()} | {
         step.output.value.tool_call_id
         for step in tail
         if step.output is not None
@@ -116,6 +122,10 @@ def tail_delta(
                 )
             if segments:
                 messages.append(MessageTemplate("assistant", tuple(segments)))
+        elif step.ref in replies:
+            reply = replies[step.ref]
+            if reply.tool_call_id in calls:
+                messages.append(MessageTemplate("tool", (reply,)))
         elif (
             step.output is not None
             and isinstance(step.output.value, ToolResultPart)

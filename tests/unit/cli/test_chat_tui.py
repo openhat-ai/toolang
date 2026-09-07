@@ -3361,6 +3361,51 @@ def test_chat_tui_floors_status_elapsed_time() -> None:
     assert app.status_bar.elapsed_seconds == 71
 
 
+def test_chat_ticker_refreshes_compact_progress_without_replacing_the_block() -> None:
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        setting=FakeClient().initial_setting(),
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    now = ["2026-01-01T00:00:00Z"]
+    app.presenter._projector._clock = lambda: now[0]
+    app.status_bar.set_running(True)
+    app._status_activity_started_at = 100.0
+    app.presenter.handle(
+        RunBegin(
+            run="run_compact",
+            control=ControlRef.for_run("run_compact", 0),
+            runnable="agent$agic:chat",
+            started_at=now[0],
+        ),
+        app.app_context,
+    )
+    app.presenter.handle(
+        StepBegin(
+            step=StepRef.parse("run_compact.0"),
+            kind="tool",
+            started_at=now[0],
+            given=ToolStepGiven(
+                plugin="_toolang",
+                trigger="runtime",
+                call=ToolCall("compact", "compact", "_toolang__compact", {}),
+                summary="Compacting thread history...",
+            ),
+        ),
+        app.app_context,
+    )
+    (block,) = app.presenter._progress.values()
+    now[0] = "2026-01-01T00:01:20Z"
+    app._update_status_elapsed(180.0)
+    assert next(iter(app.presenter._progress.values())) is block
+    assert block.progress.rows[0].text.endswith("1m20s")
+    app.presenter.reset()
+    app._update_status_elapsed(181.0)
+    assert not app.presenter._progress
+
+
 def test_chat_tui_invalidates_only_when_the_visible_elapsed_second_changes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
