@@ -20,7 +20,12 @@ from toolang.up.logging import resolve_agent_logging
 from toolang.up.types import AgentServerRef
 
 from .context import load_runtime_environ
-from .policy import resolve_compact_override
+from .policy import (
+    resolve_ceiling_overrides,
+    resolve_compact_override,
+    resolve_default_overrides,
+    resolve_limit_overrides,
+)
 from .progress import (
     make_cli_progress,
     runtime_startup_failure_message,
@@ -264,6 +269,9 @@ def _resolve_inactive_launch(
                 log_spec=log_plan.spec,
                 temporary_port=True,
                 environ=log_plan.environ,
+                ceiling_overrides=resolve_ceiling_overrides(environ),
+                default_overrides=resolve_default_overrides(environ),
+                limit_overrides=resolve_limit_overrides(environ),
                 compact_override=compact_override or resolve_compact_override(environ),
             )
         )

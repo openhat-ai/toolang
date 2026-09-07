@@ -671,6 +671,9 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
         return {
             "PROCESS": "value",
             "DOTENV": "agent",
+            "TOOLANG_ALLOW_MODELS": "test/*",
+            "TOOLANG_DEFAULT_MODEL": "test/chat effort=high",
+            "TOOLANG_LIMIT_TOKENS": "12000",
             "TOOLANG_COMPACT_MODEL": "test/compact effort=low",
         }
 
@@ -705,6 +708,9 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
         "environ": {
             "PROCESS": "value",
             "DOTENV": "agent",
+            "TOOLANG_ALLOW_MODELS": "test/*",
+            "TOOLANG_DEFAULT_MODEL": "test/chat effort=high",
+            "TOOLANG_LIMIT_TOKENS": "12000",
             "TOOLANG_COMPACT_MODEL": "test/compact effort=low",
             "TOOLANG_ROOT": str(layout.root),
             "TOOLANG_MODEL_CATALOG": str(catalog),
@@ -720,6 +726,11 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
         "log_spec": "error",
         "temporary_port": True,
         "environ": {"LOGGED": "yes"},
+        "ceiling_overrides": {"models": ("test/*",)},
+        "default_overrides": {
+            "model": ModelOverride(identity="test/chat", effort="high")
+        },
+        "limit_overrides": {"tokens": 12000},
         "compact_override": ModelOverride(identity="test/compact", effort="low"),
     }
 
