@@ -79,9 +79,12 @@ answer the original workspace call with this model-facing error content:
 
 ```json
 {
-  "error": "Operation not executed: workspace rules must be applied first. Follow the supplied rules and retry."
+  "error": "Workspace rules were just loaded. This operation was not executed; please retry if it complies with them."
 }
 ```
+
+This reports newly available rules, not a detected violation or failure to follow
+them. The model decides whether the operation complies before issuing it again.
 
 Use the existing ToolResultPart error field and preserve the original call's
 name and IDs in the normal envelope. There is no output payload, special result
