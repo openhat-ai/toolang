@@ -28,6 +28,12 @@ def statement_header(statement: FlowStmt) -> str:
     if statement.doc and (doc := one_line(statement.doc.strip())):
         return doc
 
+    return statement_description(statement)
+
+
+def statement_description(statement: FlowStmt) -> str:
+    """Describe a statement's operation independently of its authored doc."""
+
     if isinstance(statement, LetStmt):
         return f"Set value to {statement.binding}"
     if isinstance(statement, RunStmt):

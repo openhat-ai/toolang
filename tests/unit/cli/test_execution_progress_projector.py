@@ -16,6 +16,7 @@ from toolang.cli.common.execution_progress import (
 )
 from toolang.cli.common.execution_progress.headers import (
     _scatter_header,
+    statement_description,
     statement_header,
 )
 from toolang.execution.events import (
@@ -139,6 +140,23 @@ def test_progress_statement_header_prefers_doc_and_preserves_runnable_name(
         )
         == "Sort items by relevance_score in descending order, "
         "up to 2 at once, save result to findings"
+    )
+
+
+@pytest.mark.parametrize("doc", [None, "", " \n ", "Search the evidence"])
+def test_automatic_statement_description_is_independent_of_docs(
+    doc: str | None,
+) -> None:
+    statement = MapStmt(
+        span=SPAN, runnable="<agic:32>", lanes=2, binding="findings", doc=doc
+    )
+    description = (
+        "Map each item with <agic:32>, up to 2 at once, save result to findings"
+    )
+
+    assert statement_description(statement) == description
+    assert statement_header(statement) == (
+        "Search the evidence" if doc and doc.strip() else description
     )
 
 

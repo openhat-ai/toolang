@@ -9,6 +9,8 @@ from typing import cast
 
 import pytest
 from click.utils import strip_ansi
+from rich.cells import cell_len
+from typer import rich_utils
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.model import ModelRequest
@@ -25,6 +27,7 @@ from toolang.execution.types import (
     ThreadRef,
 )
 from toolang.lang.input import NamedInputSource, RunnableInputRaw
+from toolang.lang.ast import FlowDecl, RunStmt, Span
 from toolang.up.types import AgentServerRef
 from tests.support.execution_harness import ExecutionHarness
 
@@ -546,6 +549,201 @@ def test_script_uses_typer_help_and_authored_docs(
     )
     assert positions == tuple(sorted(positions))
     assert "--default" not in stdout
+    assert "Flow outline" not in stdout
+
+
+def _flow_outline_lines(output: str) -> list[str]:
+    panel = strip_ansi(output).partition("Flow outline")[2]
+    return [line[2:-2].rstrip() for line in panel.splitlines() if line.startswith("│ ")]
+
+
+@pytest.mark.parametrize("explicit_help", [False, True])
+def test_script_flow_help_shows_docs_then_aligned_descriptions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, explicit_help: bool
+) -> None:
+    source = _write_source(
+        tmp_path,
+        """## Research a topic from several sources.
+flow research(_: Text):
+  let topic = {{_}}
+  ## Broaden [bold]the question[/bold].
+  ## Keep diverse perspectives.
+  let queries = scatter 3 using expand
+  map using search in 4 lanes
+  keep first 1
+
+agic expand:
+  Expand the question.
+
+agic search:
+  Search for evidence.
+""",
+    )
+    monkeypatch.setenv("COLUMNS", "160")
+    monkeypatch.setattr(
+        script, "_run", lambda *_args, **_kwargs: pytest.fail("help must not run")
+    )
+    if explicit_help:
+        monkeypatch.setattr(
+            script,
+            "_collect_call",
+            lambda *_args, **_kwargs: pytest.fail("explicit help must not read input"),
+        )
+
+    result = script.dispatch(
+        [],
+        [str(source), "research", *(["--help"] if explicit_help else [])],
+        prog_name="too",
+        stdin=StringIO(),
+    )
+    output = capsys.readouterr()
+    stdout = strip_ansi(output.out)
+
+    assert result == (0 if explicit_help else 2), output.err
+    assert output.err == ""
+    assert stdout.count("Research a topic from several sources.") == 1
+    assert stdout.index("Research a topic") < stdout.index("Arguments")
+    assert stdout.index("Options") < stdout.index("Flow outline")
+    assert stdout.count("Flow outline") == 1
+    assert _flow_outline_lines(stdout) == [
+        "[0] Set value to topic",
+        "[1] Broaden [bold]the question[/bold]. Keep diverse perspectives.",
+        "    Scatter into 3 items with expand, save result to queries",
+        "[2] Map each item with search, up to 4 at once",
+        "[3] Keep the first item",
+    ]
+
+
+def test_script_flow_outline_expands_repeat_bodies_but_not_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    source = _write_source(
+        tmp_path,
+        """flow pipeline(_: Text):
+  ## Refine the result.
+  repeat 3 times:
+    ## Revise the draft.
+    run review
+    repeat:
+      run: Evaluate the draft.
+      until: Check the draft.
+    until: Check completion.
+  run pipeline
+  repeat 2 times:
+    run review
+
+agic review:
+  Review the draft.
+""",
+    )
+    monkeypatch.setenv("COLUMNS", "160")
+
+    assert (
+        script.dispatch(
+            [], [str(source), "pipeline", "--help"], prog_name="too", stdin=StringIO()
+        )
+        == 0
+    )
+
+    assert _flow_outline_lines(capsys.readouterr().out) == [
+        "[0] Refine the result.",
+        "    Repeat up to 3 times, until <agic:9> is true",
+        "  [0] Revise the draft.",
+        "      Run review",
+        "  [1] Repeat until <agic:8> is true",
+        "    [0] Run <agic:7>",
+        "[1] Run pipeline",
+        "[2] Repeat 2 times",
+        "  [0] Run review",
+    ]
+
+
+@pytest.mark.parametrize("width", [44, 80])
+@pytest.mark.parametrize("tty", [False, True])
+def test_script_flow_outline_truncates_each_description_and_doc_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, width: int, tty: bool
+) -> None:
+    source = _write_source(
+        tmp_path,
+        f"""flow pipeline(_: Text):
+  ## {"Evidence 証拠 " * 30}DOC_END
+  sort descending by score_{"x" * 100}
+  keep first 1
+
+agic score_{"x" * 100} -> Number:
+  Return a numeric score.
+""",
+    )
+    monkeypatch.setenv("COLUMNS", str(width))
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setattr(rich_utils, "FORCE_TERMINAL", tty)
+
+    assert (
+        script.dispatch(
+            [], [str(source), "pipeline", "--help"], prog_name="too", stdin=StringIO()
+        )
+        == 0
+    )
+
+    rows = _flow_outline_lines(capsys.readouterr().out)
+    assert len(rows) == 3
+    assert rows[0].startswith("[0] Evidence 証拠 ")
+    assert rows[1].startswith("    Sort items by score_")
+    assert rows[0].endswith("…") and rows[1].endswith("…")
+    assert all(cell_len(row) <= width - 4 for row in rows), rows
+    assert rows[2] == "[1] Keep the first item"
+
+
+def test_script_empty_flow_outline_has_a_placeholder() -> None:
+    flow = FlowDecl(name="empty", span=Span(line=1))
+
+    assert script._flow_outline(flow).plain == "No statements."
+
+
+@pytest.mark.parametrize("doc", [None, "", "  \n\t ", "Run review"])
+def test_script_flow_outline_aligns_docs_at_multi_digit_ordinals(
+    doc: str | None,
+) -> None:
+    flow = FlowDecl(
+        name="work",
+        span=Span(line=1),
+        stmts=(RunStmt(span=Span(line=2), runnable="review"),) * 10
+        + (RunStmt(span=Span(line=3), runnable="review", doc=doc),),
+    )
+
+    lines = script._flow_outline(flow).plain.splitlines()
+
+    assert lines[10:] == (
+        ["[10] Run review", "     Run review"]
+        if doc and doc.strip()
+        else ["[10] Run review"]
+    )
+
+
+def test_script_flow_invocation_does_not_print_the_help_outline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    source = _write_source(tmp_path, "flow work(_: Text):\n  let topic = {{_}}\n")
+    calls: list[str] = []
+
+    def fake_run(_source_path: Path, **kwargs) -> int:
+        calls.append(kwargs["runnable_kind"])
+        return 0
+
+    monkeypatch.setattr(script, "_run", fake_run)
+
+    assert (
+        script.dispatch(
+            [],
+            [str(source), "work", "--", "question"],
+            prog_name="too",
+            stdin=StringIO(),
+        )
+        == 0
+    )
+
+    assert calls == ["flow"]
+    assert "Flow outline" not in capsys.readouterr().out
 
 
 def test_script_hides_default_and_generated_agics(
@@ -590,6 +788,7 @@ flow pipeline:
     assert "Run the pipeline." in stdout
     assert "default" not in stdout
     assert "<agic:" not in stdout
+    assert "Flow outline" not in stdout
 
 
 def test_script_formats_an_unknown_runnable_as_a_rich_error(
