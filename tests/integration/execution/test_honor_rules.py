@@ -332,7 +332,7 @@ def test_interrupted_honor_closes_every_announced_tool_call(
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_model_cannot_call_honor_and_unscoped_tools_need_no_honor(tmp_path):
+def test_model_cannot_call_honor_and_unscoped_fs_is_rejected(tmp_path):
     harness, repo, publication = _harness(
         tmp_path,
         [
@@ -355,7 +355,8 @@ def test_model_cannot_call_honor_and_unscoped_tools_need_no_honor(tmp_path):
             steps = _tool_steps(harness, run)
             assert len(steps) == 2 and all(s.given.trigger == "model" for s in steps)
             assert "unknown tool call" in steps[0].output.value.error
-            assert steps[1].output.value.error is None
+            assert "agent home is not accessible" in steps[1].output.value.error
+            assert not (repo.parent / "notes").exists()
             assert not _recalls(harness, run)
 
     asyncio.run(scenario())
@@ -386,8 +387,7 @@ def test_overlapping_anchors_remain_independent_in_honor(tmp_path):
             ]
             assert controls[1].payload.content == controls[2].payload.content
             assert (
-                "multiple workspaces"
-                in _tool_steps(harness, run)[-1].output.value.error
+                "specify workspace" in _tool_steps(harness, run)[-1].output.value.error
             )
             assert not (repo / "src/result").exists()
 
@@ -551,7 +551,7 @@ def test_honor_and_invocation_agree_after_symlink_parent_traversal(tmp_path):
 
 def test_honor_preserves_a_prepared_directory_name_with_trailing_space(tmp_path):
     def call(identity):
-        return _call(identity, "fs__list", path="repo/link")
+        return _call(identity, "fs__list", path="workspace://repo/link")
 
     harness, repo, publication = _harness(
         tmp_path, [_calls(call("first")), _calls(call("retry")), _answer()]
@@ -568,17 +568,17 @@ def test_honor_preserves_a_prepared_directory_name_with_trailing_space(tmp_path)
             assert run.status == "succeeded", run.error
             assert [c.payload.target for c in _recalls(harness, run)] == [
                 RulesRecallTarget("repo", "/"),
-                RulesRecallTarget("repo", "/trailing "),
+                RulesRecallTarget("repo", "/link"),
             ]
             honor, original, retried = _tool_steps(harness, run)
             assert honor.given.call.input == {
-                "paths": [{"workspace": "repo", "path": "/trailing "}]
+                "paths": [{"workspace": "repo", "path": "/link"}]
             }
             assert (
                 original.output.value.error == "operation not executed; retry required"
             )
             assert retried.output.value.error is None
-            assert retried.output.value.output["path"] == str(directory)
+            assert retried.output.value.output["path"] == "workspace://repo/link"
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())

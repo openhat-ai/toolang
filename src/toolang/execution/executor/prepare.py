@@ -183,6 +183,12 @@ def prepare_agic(
     runtime_instructions = (
         render_runtime_instructions(durable_state, routes) if runtime_tools else ""
     )
+    if any(getattr(tool, "plugin_name", None) == "fs" for tool in tools.values()):
+        runtime_instructions = "\n\n".join(
+            part
+            for part in (runtime_instructions, prompts.load("filesystem.md"))
+            if part
+        )
     adapter = run.setup.adapters.get(model.adapter)
     if adapter is None:
         raise ToolangError(f"unknown model adapter: {model.adapter}")
