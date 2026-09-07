@@ -207,6 +207,8 @@ Plugin-defined summary templates are not part of the current tool contract.
 The runtime toolset supplies pick/reload/compact/honor wording. Progress marks
 these rows with `✧` and shows compact elapsed time, refreshed once per second in
 TTY/Chat. Non-TTY prints compact start/end only.
+Successful calls show only their summary row, not the control-summary JSON result
+block. Failures retain error details; run/execute and ordinary tools are unchanged.
 
 ### Pick guidance
 

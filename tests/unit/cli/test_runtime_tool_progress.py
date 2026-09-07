@@ -104,7 +104,9 @@ def _end(begin, status="succeeded", output=None):
 def test_runtime_tools_use_owned_wording_and_progress_marker(name, arguments, text):
     begin = _begin(name, arguments)
     assert trace_live_rows(begin, "")[0].text.startswith("✧ ")
-    assert trace_terminal_rows(begin, _end(begin), error="")[0].text == f"✧ {text}"
+    rows = trace_terminal_rows(begin, _end(begin), error="")
+    assert [row.text for row in rows] == [f"✧ {text}"]
+    assert rows[0].surface == "tool_summary"
 
 
 def test_honor_lists_every_rules_file_in_script_and_chat_without_store_reads():
@@ -124,6 +126,7 @@ def test_honor_lists_every_rules_file_in_script_and_chat_without_store_reads():
     }
     end = _end(begin, output=output)
     for rows in (trace_live_rows(begin, ""), trace_terminal_rows(begin, end, error="")):
+        assert len(rows) == 1
         block = ProgressBlock("honor", rows)
         stream = StringIO()
         ProgressConsole(stream, width=48, max_width=48).apply(
@@ -141,6 +144,57 @@ def test_honor_lists_every_rules_file_in_script_and_chat_without_store_reads():
                 f"workspace://{workspace}{path}" in compact for workspace, path in files
             )
             assert "✧" in rendered
+
+
+@pytest.mark.parametrize("name", ["pick", "reload", "compact", "honor"])
+@pytest.mark.parametrize("status", ["failed", "canceled"])
+def test_runtime_tool_failure_details_and_cancellation_remain_visible(name, status):
+    begin = _begin(name)
+    error = "Resource could not be read" if status == "failed" else ""
+    rows = trace_terminal_rows(begin, _end(begin, status), error=error)
+    assert rows[0].text.startswith("✧ Failed" if error else "✧ Canceled")
+    assert [row.text.strip() for row in rows[1:]] == ([error] if error else [])
+    if error:
+        assert rows[1].surface == "tool_detail"
+
+
+@pytest.mark.parametrize(
+    "plugin,name", [("_toolang", "run"), ("_toolang", "execute"), ("fs", "read")]
+)
+def test_other_tool_results_remain_visible(plugin, name):
+    call = ToolCall("call-1", "call-1", f"{plugin}__{name}", {})
+    begin = StepBegin(
+        step=StepRef.parse("run_root.0"),
+        kind="tool",
+        started_at=START,
+        given=ToolStepGiven(
+            plugin=plugin,
+            call=call,
+            summary=f"Executing {name}...",
+        ),
+    )
+    end = StepEnd(
+        step=begin.step,
+        kind="tool",
+        status="succeeded",
+        finished_at=FINISH,
+        noted=ToolStepNoted(summary=f"Executed {name}"),
+        output=Local.typed(
+            "ToolResultPart",
+            ToolResultPart(
+                call.tool_call_id,
+                call.name,
+                call.name,
+                output={"value": "Result is still available"},
+            ),
+        ),
+    )
+    rows = trace_terminal_rows(begin, end, error="")
+    assert rows[0].text.startswith("• ")
+    assert any(
+        row.surface == "tool_detail" and "Result is still available" in row.text
+        for row in rows
+    )
 
 
 @pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
