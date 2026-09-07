@@ -151,10 +151,11 @@ def trace_terminal_rows(
                 surface="tool_summary",
             )
         ]
-        rows.extend(
-            ProgressRow(f"  {line}", tone, surface="tool_detail")
-            for line in _tool_output_lines(event)
-        )
+        if name is None:
+            rows.extend(
+                ProgressRow(f"  {line}", tone, surface="tool_detail")
+                for line in _tool_output_lines(event)
+            )
         return tuple(rows)
     status = "failed" if event.status == "failed" else "canceled"
     rows = [
