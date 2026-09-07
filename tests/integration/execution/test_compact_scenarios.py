@@ -16,6 +16,8 @@ from tests.support.execution_harness import (
     ScriptedModelTurn,
 )
 from toolang.base.types.message import Message, TextPart, ToolCallPart, ToolResultPart
+from toolang.base.model_settings import apply_model_override, parse_model_body
+from toolang.base.types.policy import AgentCeiling
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.history import RunHistory
 from toolang.execution.executor.compact import permit
@@ -53,6 +55,7 @@ def constrain(harness: ExecutionHarness, *, context: int = 14000) -> None:
                     info=replace(
                         entry.info, context_window=context, max_output_tokens=512
                     ),
+                    target=replace(entry.target, structured_output=True),
                 )
                 for entry in harness.setup.models.entries
             )
@@ -514,6 +517,118 @@ def test_irreducible_input_with_history_does_not_start_compact(tmp_path, oversiz
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("selection", ["auto", "explicit", "ceiling"])
+def test_compact_selects_its_own_model_and_parameters(tmp_path, selection):
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE.replace("  context:", "  models = test/scripted\n  context:"),
+        responses=[reply("old " * 18000), reply("middle"), reply("recent")],
+    )
+
+    async def scenario():
+        async with harness:
+            thread, end = await seed(harness)
+            original = harness.setup.models.entries[0]
+            metadata = {
+                "reasoning_options": [{"type": "effort", "values": ["low", "high"]}]
+            }
+            normal = replace(
+                original,
+                info=replace(original.info, tools=False, metadata=metadata),
+                target=replace(original.target, tools=False, structured_output=False),
+            )
+            candidates = tuple(
+                replace(
+                    original,
+                    key=f"test/{name}",
+                    ref=f"test/{name}",
+                    info=replace(
+                        original.info,
+                        ref=f"test/{name}",
+                        name=name,
+                        model=name,
+                        metadata=metadata,
+                    ),
+                    target=replace(
+                        original.target, ref=f"test/{name}", name=name, model=name
+                    ),
+                )
+                for name in ("first", "second")
+            )
+            configured = (
+                parse_model_body("test/second effort=low")
+                if selection == "explicit"
+                else None
+            )
+            harness.setup = replace(
+                harness.setup,
+                models=ModelCollection((normal, *candidates)),
+                compact_model=configured,
+            )
+            harness.adapter._responses.extend(
+                [*compact_responses(thread, end), reply("done")]
+            )
+            request = replace(
+                spec(harness, thread, "current"),
+                model_request=apply_model_override(
+                    None, None, parse_model_body("test/scripted effort=high")
+                ),
+                ceilings=(AgentCeiling(models=("test/second", "test/scripted")),)
+                if selection == "ceiling"
+                else (),
+            )
+            current = await harness.executor.run(request)
+            assert current.status == "succeeded", current.error
+            expected = "test/first" if selection == "auto" else "test/second"
+            compact_calls = harness.adapter.invocations[3:-1]
+            assert len(compact_calls) == 4
+            assert all(call.target.ref == expected for call in compact_calls)
+            assert all(
+                call.target.reasoning
+                == ({"effort": "low"} if selection == "explicit" else {})
+                for call in compact_calls
+            )
+            assert harness.adapter.invocations[-1].target.reasoning == {
+                "effort": "high"
+            }
+            history = RunHistory(harness.store)
+            for root in history.thread_view(f"compact_{thread}").members:
+                for step in harness.store.list_steps(run_id=root.id):
+                    if step.kind == "model":
+                        assert history.get_model_call(step.ref) in [
+                            call.call for call in compact_calls
+                        ]
+            root = history.thread_view(
+                f"compact_{thread}", include_children=False
+            ).roots[0]
+            payload = harness.store.list_run_controls(run_id=root.id)[0].payload
+            assert isinstance(payload, RunControlPayload)
+            assert (
+                payload.model_request is not None
+                and payload.model_request.ref == expected
+            )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("setting", ["unset", "test/outside"])
+def test_compact_disabled_or_unauthorized_does_not_start_a_run(tmp_path, setting):
+    harness = seeded_harness(tmp_path)
+
+    async def scenario():
+        async with harness:
+            thread, _end = await seed(harness)
+            harness.setup = replace(
+                harness.setup, compact_model=parse_model_body(setting)
+            )
+            current = await harness.executor.run(spec(harness, thread, "current"))
+            assert current.status == "failed"
+            assert harness.store.get_thread(thread_id=f"compact_{thread}") is None
+            assert len(harness.adapter.invocations) == 3
+
+    asyncio.run(scenario())
+
+
 def test_compact_requires_a_model_that_can_read_history(tmp_path):
     harness = seeded_harness(tmp_path)
 
@@ -539,7 +654,9 @@ def test_compact_requires_a_model_that_can_read_history(tmp_path):
             current = await harness.executor.run(spec(harness, thread, "current"))
             assert current.status == "failed"
             steps = harness.store.list_steps(run_id=current.id)
-            assert len(steps) == 1 and "tool support" in str(steps[0].error)
+            assert len(steps) == 1 and "tool calls and structured output" in str(
+                steps[0].error
+            )
             assert harness.store.get_thread(thread_id=f"compact_{thread}") is None
             assert len(harness.adapter.invocations) == 3
 

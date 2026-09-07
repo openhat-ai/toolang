@@ -74,6 +74,7 @@ class ServeSpec:
         default_factory=dict
     )
     limit_overrides: Mapping[str, int | Decimal | None] = field(default_factory=dict)
+    compact_override: ModelOverride | None = None
     file_inboxes: tuple[Path, ...] = ()
     log_spec: str | None = None
 
@@ -108,6 +109,7 @@ def resolve_serve(
     ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
     default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
     limit_overrides: Mapping[str, int | Decimal | None] | None = None,
+    compact_override: ModelOverride | None = None,
     file_inboxes: Sequence[Path] | None = None,
     log_spec: str | None = None,
     temporary_port: bool = False,
@@ -128,6 +130,7 @@ def resolve_serve(
         ceiling_overrides=dict(ceiling_overrides or {}),
         default_overrides=dict(default_overrides or {}),
         limit_overrides=dict(limit_overrides or {}),
+        compact_override=compact_override,
         file_inboxes=resolved_inboxes,
         log_spec=log_spec.strip()
         if isinstance(log_spec, str) and log_spec.strip()
@@ -166,6 +169,10 @@ def build_serve_argv(
             else _format_value(value)
         )
         command.extend(["--default", f"{name}={formatted}"])
+    if spec.compact_override is not None:
+        command.extend(
+            ["--compact", f"model={format_model_body(spec.compact_override)}"]
+        )
     for name, value in spec.limit_overrides.items():
         command.extend(["--limit", f"{name}={_format_value(value)}"])
     for inbox in spec.file_inboxes:
@@ -195,6 +202,7 @@ def serve(
         ceiling_overrides=spec.ceiling_overrides,
         default_overrides=spec.default_overrides,
         limit_overrides=spec.limit_overrides,
+        compact_override=spec.compact_override,
     )
     asyncio.run(_refresh_core(core))
     state = core.state.current()

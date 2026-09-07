@@ -50,6 +50,13 @@ def chat_command(
         list[str] | None,
         typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
     ] = None,
+    compacts: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--compact",
+            help="Set model=MODEL (optional effort=LEVEL) for a new runtime.",
+        ),
+    ] = None,
 ) -> None:
     from .main import chat_command as run
 
@@ -59,6 +66,7 @@ def chat_command(
         model_catalog=model_catalog,
         allows=allows,
         defaults=defaults,
+        compacts=compacts,
         sandbox=sandbox,
         dev=dev,
         limits=limits,

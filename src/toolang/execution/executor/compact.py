@@ -17,6 +17,7 @@ from toolang.common.time import utc_now
 from toolang.lang.input import RunnableInput
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.loading import load_tools
+from toolang.setup.models import select_compact_model
 from toolang.state.builtin import prepare_builtin_state
 from toolang.state.state import AgentState
 
@@ -137,8 +138,11 @@ async def execute(
             and valid_output(output, str(target), history.roots, expected)
         ):
             frame = state.frame_for_step(*execution.state_snapshot())
-            if not frame.model.tools:
-                raise ToolangError("compaction requires a model with tool support")
+            resources = frame.run.agent_resources
+            if resources is None:
+                raise RuntimeError(f"agent resources missing: {frame.run.run_id}")
+            models = frame.run.setup.models.subset(resources.models)
+            request = select_compact_model(models, frame.run.setup.compact_model)
             compact_thread = f"compact_{target}"
             if store.get_thread(thread_id=compact_thread) is None:
                 store.create_thread(
@@ -146,17 +150,15 @@ async def execute(
                 )
             # This isolated program has only read-only history tools. In particular
             # it cannot reload into the human's State or transfer out of compact.
-            setup = replace(frame.run.setup, tools=compact_tools())
+            setup = replace(frame.run.setup, models=models, tools=compact_tools())
             handle = execution.executor.run(
                 RunSpec(
                     setup=setup,
                     state=compact_state(),
                     thread=compact_thread,
-                    bindings=RunBindings(
-                        model=frame.model.ref, runnable="flow:compact"
-                    ),
+                    bindings=RunBindings(model=request.ref, runnable="flow:compact"),
                     limits=frame.run.limits,
-                    model_request=frame.run.model_request,
+                    model_request=request,
                     input=RunnableInput(named=expected),
                 )
             )

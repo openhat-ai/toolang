@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 
 from toolang.base.errors import ToolangError
+from toolang.base.types.model import ModelOverride
 from toolang.common.layout import AgentLayout
 from toolang.common.version import development_source
 from toolang.plugin.models.catalog import MODEL_CATALOG_ENV
@@ -19,6 +20,7 @@ from toolang.up.logging import resolve_agent_logging
 from toolang.up.types import AgentServerRef
 
 from .context import load_runtime_environ
+from .policy import resolve_compact_override
 from .progress import (
     make_cli_progress,
     runtime_startup_failure_message,
@@ -45,6 +47,7 @@ def acquire_agent_server(
     ui_base_url: str = "",
     base_environ: Mapping[str, str] | None = None,
     show_progress: bool = True,
+    compact_override: ModelOverride | None = None,
 ) -> Iterator[AgentServerRef | None]:
     """Acquire an existing or temporary AgentServer, or select host embedding."""
 
@@ -54,6 +57,10 @@ def acquire_agent_server(
             f"agent {layout.name} is {status.status}; wait for it to become ready"
         )
     if status is not None and status.status == "running":
+        if compact_override is not None:
+            raise AgentServerAcquisitionError(
+                "--compact only applies when starting a runtime; stop the agent first"
+            )
         if dev is not None:
             raise AgentServerAcquisitionError(
                 f"--dev only applies when starting a new guest; agent {layout.name} "
@@ -99,6 +106,7 @@ def acquire_agent_server(
         dev=dev,
         model_catalog=model_catalog,
         base_environ=base_environ,
+        compact_override=compact_override,
     )
     warn_development_package_source(launch)
 
@@ -231,6 +239,7 @@ def _resolve_inactive_launch(
     dev: Path | None,
     model_catalog: Path | None,
     base_environ: Mapping[str, str] | None,
+    compact_override: ModelOverride | None = None,
 ) -> sandbox_runtime.LaunchSpec:
     try:
         environ = load_runtime_environ(
@@ -255,6 +264,7 @@ def _resolve_inactive_launch(
                 log_spec=log_plan.spec,
                 temporary_port=True,
                 environ=log_plan.environ,
+                compact_override=compact_override or resolve_compact_override(environ),
             )
         )
     except (

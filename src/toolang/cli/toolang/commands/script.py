@@ -29,6 +29,7 @@ from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.cli.common.policy import (
     resolve_default_overrides,
+    resolve_compact_override,
     resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
@@ -1001,6 +1002,7 @@ async def _execute(
             **resolve_default_overrides(environ),
         },
         limit_overrides=resolve_limit_overrides(environ),
+        compact_override=resolve_compact_override(environ),
     )
     state_watcher = StateWatcher(
         layout,

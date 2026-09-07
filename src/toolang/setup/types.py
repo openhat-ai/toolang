@@ -9,7 +9,7 @@ import platform
 from types import MappingProxyType
 
 from toolang.base.protocols.model import ModelAdapter
-from toolang.base.types.model import Provider
+from toolang.base.types.model import ModelOverride, Provider
 from toolang.base.types.policy import RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.collections import ModelCollection
@@ -65,6 +65,7 @@ class AgentSetup:
     environment: AgentEnvironment | None = None
     defaults: RunDefaults = RunDefaults()
     limits: RunLimits = RunLimits()
+    compact_model: ModelOverride | None = None
 
     def __post_init__(self) -> None:
         providers = dict(self.providers)

@@ -32,7 +32,7 @@ from toolang.plugin.models.collections import (
     ModelRouteView,
 )
 
-CACHE_SCHEMA = 3
+CACHE_SCHEMA = 4
 CATALOG_PARSER_SCHEMA = 1
 _CATALOG_FILE = "catalog.json"
 _CONTEXT_FILE = "effective.json"

@@ -604,6 +604,7 @@ def test_chat_runtime_builds_process_local_execution_resources(
             "dev": None,
             "model_catalog": None,
             "ui_base_url": "https://ui.test",
+            "compact_override": ModelOverride(identity="test/compact", effort="low"),
         }
         yield None
 
@@ -615,6 +616,7 @@ def test_chat_runtime_builds_process_local_execution_resources(
             **base_environ,
             "TOOLANG_ALLOW_MODELS": "env/*",
             "TOOLANG_LIMIT_TIME": "30",
+            "TOOLANG_COMPACT_MODEL": "test/environment effort=high",
         },
     )
     monkeypatch.setattr(chat, "LocalChatSession", Session)
@@ -622,6 +624,7 @@ def test_chat_runtime_builds_process_local_execution_resources(
     with chat._chat_runtime(
         object(),  # type: ignore[arg-type]
         sandbox="host",
+        compact_options=["model=test/compact effort=low"],
     ) as client:
         assert isinstance(client, Session)
 
@@ -631,6 +634,7 @@ def test_chat_runtime_builds_process_local_execution_resources(
         "ceiling_overrides": {"models": ("env/*",)},
         "default_overrides": {},
         "limit_overrides": {"time": 30},
+        "compact_override": ModelOverride(identity="test/compact", effort="low"),
     }
     assert captured["closed"] is True
 
@@ -653,6 +657,7 @@ def test_chat_runtime_uses_remote_execution_without_local_environment(
             "dev": None,
             "model_catalog": None,
             "ui_base_url": "https://ui.test",
+            "compact_override": None,
         }
         yield AgentServerRef(
             sandbox="docker:python:3.13-slim",

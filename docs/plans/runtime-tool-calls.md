@@ -412,7 +412,7 @@ PR5 policy:
   are not implemented. Only read-only history tools are available to this program,
   loaded through the normal factory/registration path independently of the human
   Run's tool selectors. Loading compact does not initialize unrelated plugins.
-  Starting a compact Run requires a tool-capable model; otherwise fail explicitly.
+  Compact model selection is independent of the normal Run (see below).
 - Admission uses a cancellable OS file lock beside the Store, one per target
   Thread. No Store transaction or Step-begin lock spans the wait. Canceling an
   admitted caller cancels its own compact Run; canceling a waiter affects no owner.
@@ -440,6 +440,46 @@ Across all PRs verify durable Step/control order, no duplicate adoption or child
 results, commit-before-delivery failures, and equality of online requests and
 State-free replay. Run Ruff check/format, ty, and the default offline pytest suite
 before every commit. Validate links and keep changes within the PR's scope.
+
+## Independent compact model selection
+
+```toml
+[allow]
+models = ["provider-a/*", "provider-b/*", "*"]
+# Equivalent collection query: models = "provider-a/*, provider-b/*, *"
+[default]
+model = "provider-a/model effort=medium"
+[compact]
+model = "provider-b/model effort=low"
+```
+
+- `allow.models` defines authorization and ordering. Without a query (including
+  `all`), rank exact provider IDs: alibaba, anthropic, deepseek, google, meta,
+  minimax, mistral, moonshotai, openai, openrouter, xai, zai, zhipuai. Append other
+  providers in catalog order; retain catalog order within each provider. This
+  default excludes no models. Explicit `*` retains catalog order.
+- Omitted `compact.model` selects the first available, allowed model supporting
+  both tool calls and structured output. Apply session/request model ceilings too,
+  but not the normal runnable's model directive. Unknown capabilities do not
+  qualify. No eligible model produces a clear error when compaction is needed.
+- Explicit `compact.model` requires an exact model plus supported parameters,
+  using the existing model-body syntax. It must pass the same authorization and
+  capability checks. `unset` disables compaction. Never inherit the normal model
+  or parameters; never silently fall back to another model after failure.
+- Precedence: CLI `--compact 'model=MODEL effort=high'`, environment
+  `TOOLANG_COMPACT_MODEL`, agent config, root config, automatic selection. These
+  are runtime startup settings, not per-run model overrides. Existing runtimes
+  must be configured at their own startup. `allow` and `default` keep their
+  existing environment/CLI options. There is no `compact.models` setting.
+- Setup parses configuration once; the executor selects from the effective
+  authorized collection when compact starts. Persist the selected request using
+  existing Run records, without another schema or replay dependency on Setup.
+
+Touchpoints: setup configuration/publication and model-cache invalidation,
+CLI/runtime startup forwarding, executor compact selection, and offline tests.
+Acceptance: default/explicit ordering, string/list queries, unavailable or
+unauthorized models, unknown capabilities, independent effort, disabled compact,
+layer precedence, host/guest CLI propagation, and online/replay equivalence.
 
 ## Risks and exclusions
 

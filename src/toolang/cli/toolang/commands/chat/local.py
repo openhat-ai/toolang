@@ -86,6 +86,7 @@ class LocalChatSession:
         ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
         default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
         limit_overrides: Mapping[str, int | Decimal | None] | None = None,
+        compact_override: ModelOverride | None = None,
     ) -> None:
         self.layout = layout
         self.executor_metadata = ChatExecutorMetadata(
@@ -108,6 +109,7 @@ class LocalChatSession:
             },
             default_overrides=default_overrides,
             limit_overrides=limit_overrides,
+            compact_override=compact_override,
         )
         self.state_watcher = StateWatcher(
             layout,

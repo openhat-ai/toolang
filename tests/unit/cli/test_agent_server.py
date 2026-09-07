@@ -15,6 +15,7 @@ from toolang.up.process import AgentStatus
 from toolang.up.records import SandboxState
 from toolang.up.types import AgentServerRef
 from toolang.base.types.sandbox import SandboxRef
+from toolang.base.types.model import ModelOverride
 
 
 class _Progress:
@@ -94,6 +95,27 @@ def _set_status(
             return status
 
     monkeypatch.setattr(agent_server.agents, "AgentProcess", Process)
+
+
+def test_compact_override_cannot_silently_change_an_existing_runtime(
+    tmp_path, monkeypatch
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    _set_status(
+        monkeypatch,
+        layout,
+        _status(value="running", endpoint="http://localhost:7001", sandbox="host"),
+    )
+    with pytest.raises(
+        agent_server.AgentServerAcquisitionError, match="only applies when starting"
+    ):
+        with agent_server.acquire_agent_server(
+            layout,
+            sandbox=None,
+            ui_base_url="https://ui.test",
+            compact_override=ModelOverride(identity="unset"),
+        ):
+            pytest.fail("existing runtime must not ignore startup overrides")
 
 
 def test_agent_server_attaches_to_a_compatible_running_agent(
@@ -646,7 +668,11 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
     ) -> dict[str, str]:
         assert selected == layout
         assert base_environ == {"PROCESS": "value"}
-        return {"PROCESS": "value", "DOTENV": "agent"}
+        return {
+            "PROCESS": "value",
+            "DOTENV": "agent",
+            "TOOLANG_COMPACT_MODEL": "test/compact effort=low",
+        }
 
     def logging_plan(**kwargs: object) -> LoggingPlan:
         captured["logging"] = kwargs
@@ -679,6 +705,7 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
         "environ": {
             "PROCESS": "value",
             "DOTENV": "agent",
+            "TOOLANG_COMPACT_MODEL": "test/compact effort=low",
             "TOOLANG_ROOT": str(layout.root),
             "TOOLANG_MODEL_CATALOG": str(catalog),
         },
@@ -693,6 +720,7 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
         "log_spec": "error",
         "temporary_port": True,
         "environ": {"LOGGED": "yes"},
+        "compact_override": ModelOverride(identity="test/compact", effort="low"),
     }
 
 

@@ -53,11 +53,13 @@ from .config import (
     load_setup_envs,
     project_model_setup_config,
     project_setup_config,
+    resolve_compact_model,
     resolve_run_defaults,
     resolve_run_limits,
     resolve_setup_allow,
 )
 from .errors import SetupDiagnostic
+from .models import order_models, select_compact_model
 from .types import AgentEnvironment, AgentSetup
 
 DEFAULT_INTERVAL_MS = 5_000.0
@@ -124,6 +126,7 @@ class SetupWatcher:
         allow_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
         default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
         limit_overrides: Mapping[str, int | Decimal | None] | None = None,
+        compact_override: ModelOverride | None = None,
     ) -> None:
         self.layout = layout
         self._sandbox = sandbox
@@ -131,6 +134,7 @@ class SetupWatcher:
         self._allow_overrides = dict(allow_overrides or {})
         self._default_overrides = dict(default_overrides or {})
         self._limit_overrides = dict(limit_overrides or {})
+        self._compact_override = compact_override
         self._inputs: _LoadedInputs | None = None
         self._config: tuple[dict[str, object], dict[str, object]] | None = None
         self._adapter_configs: dict[str, dict[str, object]] | None = None
@@ -203,6 +207,7 @@ class SetupWatcher:
         )
         allow = resolve_setup_allow(configs, overrides=self._allow_overrides)
         defaults = resolve_run_defaults(configs, overrides=self._default_overrides)
+        compact_model = resolve_compact_model(configs, override=self._compact_override)
         limits = resolve_run_limits(configs, overrides=self._limit_overrides)
         provider_configs = parse_provider_configs(configs)
         adapter_configs = merge_plugin_configs(configs, family="model_adapter")
@@ -348,6 +353,7 @@ class SetupWatcher:
             provider_configs=provider_configs,
             allow=allow,
             defaults=defaults,
+            compact_model=compact_model,
             limits=limits,
             query_views=(cache_entry.query_views if cache_entry is not None else None),
             apply_model_allow=cache_entry is None,
@@ -601,6 +607,7 @@ def _build_setup(
     allow: AgentCeiling,
     defaults: RunDefaults,
     limits: RunLimits,
+    compact_model: ModelOverride | None = None,
     query_views: tuple[ModelQueryView, ...] | None = None,
     apply_model_allow: bool = True,
 ) -> AgentSetup:
@@ -611,8 +618,10 @@ def _build_setup(
         provider_configs=provider_configs,
         query_views=query_views,
     )
-    if apply_model_allow and allow.models is not None:
-        models = models.match(allow.models).compact()
+    if apply_model_allow:
+        models = order_models(models, allow.models)
+    if compact_model is not None and compact_model.identity != "unset":
+        select_compact_model(models, compact_model)
     tool_collection = ToolCollection.from_tools(tools)
     if allow.tools is not None:
         selected = (
@@ -649,6 +658,7 @@ def _build_setup(
         environment=AgentEnvironment.capture(layout, sandbox=sandbox),
         defaults=defaults,
         limits=limits,
+        compact_model=compact_model,
     )
 
 
@@ -726,6 +736,7 @@ def _setups_equal(left: AgentSetup, right: AgentSetup) -> bool:
         and left.envs == right.envs
         and left.environment == right.environment
         and left.defaults == right.defaults
+        and left.compact_model == right.compact_model
         and left.limits == right.limits
     )
 

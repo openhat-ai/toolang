@@ -48,11 +48,17 @@ def _startup_event(
 @pytest.mark.parametrize(
     ("args", "options"),
     [
-        (["run", "--help"], ("--sandbox", "--allow", "--limit", "--default")),
-        (["start", "--help"], ("--sandbox", "--allow", "--limit", "--default")),
+        (
+            ["run", "--help"],
+            ("--sandbox", "--allow", "--limit", "--default", "--compact"),
+        ),
+        (
+            ["start", "--help"],
+            ("--sandbox", "--allow", "--limit", "--default", "--compact"),
+        ),
         (
             ["chat", "alice", "--help"],
-            ("--sandbox", "--allow", "--limit", "--default"),
+            ("--sandbox", "--allow", "--limit", "--default", "--compact"),
         ),
         (["retry", "alice", "--help"], ("--allow", "--limit")),
         (["rerun", "alice", "--help"], ("--allow", "--limit", "--model")),
@@ -72,6 +78,8 @@ def test_policy_options_follow_cli_display_order(
     assert all(match is not None for match in matches)
     positions = tuple(match.start() for match in matches if match is not None)
     assert positions == tuple(sorted(positions))
+    if "--compact" in options:
+        assert "effort=LEVEL" in output
 
 
 def test_session_and_restart_commands_expose_only_valid_runtime_options() -> None:
@@ -325,6 +333,8 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
             "skills=reviewer",
             "--default",
             "model=openai/gpt-5",
+            "--compact",
+            "model=openai/gpt-5 effort=low",
             "--limit",
             "tokens=3000",
             "--limit",
@@ -353,6 +363,9 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
     assert resolved["default_overrides"] == {
         "model": ModelOverride(identity="openai/gpt-5")
     }
+    assert resolved["compact_override"] == ModelOverride(
+        identity="openai/gpt-5", effort="low"
+    )
     assert resolved["limit_overrides"] == {
         "agic_tool_calls": 40,
         "tokens": 3000,

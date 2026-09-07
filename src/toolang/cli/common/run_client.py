@@ -25,6 +25,7 @@ from .context import load_runtime_environ
 from .policy import (
     resolve_ceiling_overrides,
     resolve_default_overrides,
+    resolve_compact_override,
     resolve_limit_overrides,
 )
 
@@ -67,6 +68,7 @@ async def acquire_run_client(
         },
         default_overrides=resolve_default_overrides(environ),
         limit_overrides=resolve_limit_overrides(environ),
+        compact_override=resolve_compact_override(environ),
     )
     state = StateWatcher(
         layout,

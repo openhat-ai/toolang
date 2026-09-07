@@ -39,6 +39,7 @@ def test_acquire_run_client_uses_local_embedding_without_a_server(
         allow_overrides: object,
         default_overrides: object,
         limit_overrides: object,
+        compact_override: object,
     ) -> Mock:
         assert selected == layout
         assert sandbox == "host"
@@ -46,6 +47,7 @@ def test_acquire_run_client_uses_local_embedding_without_a_server(
         assert allow_overrides == {}
         assert default_overrides == {}
         assert limit_overrides == {}
+        assert compact_override is None
         return setup
 
     def open_state(selected: AgentLayout, *, allow_overrides: object) -> Mock:
