@@ -15,7 +15,10 @@ from uuid import uuid4
 import click
 import httpx
 from pydantic import TypeAdapter, ValidationError
+from rich.panel import Panel
+from rich.text import Text
 import typer
+from typer import rich_utils
 from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 
 from toolang.base.model_settings import parse_model_body
@@ -50,7 +53,15 @@ from toolang.execution.types import (
     SessionSetting,
     ThreadPrefix,
 )
-from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program
+from toolang.lang.ast import (
+    AgicDecl,
+    FlowDecl,
+    FlowStmt,
+    Parameter,
+    Program,
+    RepeatStmt,
+)
+from toolang.lang.description import statement_description
 from toolang.lang.includes import resolve_file_include
 from toolang.lang.input import (
     CallInput,
@@ -120,12 +131,53 @@ class _IncompleteRunnableInput(Exception):
 class _RunnableCommand(TyperCommand):
     """Show runnable help when its collected call is incomplete."""
 
+    def __init__(self, *, flow: FlowDecl | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._flow = flow
+
+    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        super().format_help(ctx, formatter)
+        if self._flow is not None:
+            console = rich_utils._get_rich_console()
+            console.print(
+                Panel(
+                    _flow_outline(self._flow),
+                    title="Flow outline",
+                    title_align="left",
+                    border_style=rich_utils.STYLE_OPTIONS_PANEL_BORDER,
+                ),
+                highlight=False,
+            )
+
     def invoke(self, ctx: click.Context) -> Any:
         try:
             return TyperCommand.invoke(self, ctx)
         except _IncompleteRunnableInput:
             click.echo(ctx.get_help())
             ctx.exit(2)
+
+
+def _flow_outline(flow: FlowDecl) -> Text:
+    """Describe authored stages once, without expanding runnable calls."""
+
+    outline = Text(no_wrap=True, overflow="ellipsis")
+
+    def append_statements(statements: tuple[FlowStmt, ...], depth: int) -> None:
+        for index, statement in enumerate(statements):
+            prefix = f"{'  ' * depth}[{index}] "
+            doc = " ".join(statement.doc.split()) if statement.doc else ""
+            if doc:
+                outline.append(f"{prefix}{doc}\n")
+                prefix = " " * len(prefix)
+            outline.append(f"{prefix}{statement_description(statement)}\n", style="dim")
+            if isinstance(statement, RepeatStmt):
+                append_statements(statement.stmts, depth + 1)
+
+    append_statements(flow.stmts, 0)
+    if not flow.stmts:
+        outline.append("No statements.", style="dim")
+    outline.rstrip()
+    return outline
 
 
 def dispatch(
@@ -302,6 +354,7 @@ def _runnable_command(
         )
     )
     return _RunnableCommand(
+        flow=runnable if isinstance(runnable, FlowDecl) else None,
         name=runnable.name,
         callback=callback,
         params=params,
