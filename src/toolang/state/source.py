@@ -195,9 +195,7 @@ def scan_source(
     """Read and hash one complete portable source manifest."""
 
     observation = observe_source(base, paths)
-    return build_source_manifest(
-        observation,
-    )
+    return build_source_manifest(observation)
 
 
 def scan_root_source(toolang_root: Path) -> SourceManifest:

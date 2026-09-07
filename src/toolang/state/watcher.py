@@ -387,15 +387,15 @@ class StateWatcher:
                         relative
                     )
                 previous = self.current()
-                publication = (
+                state = (
                     await self._request_check(
                         requested=False,
                         invalidated_root=frozenset(invalidated_root),
                         invalidated_home=frozenset(invalidated_home),
                     )
                 ).state
-                if publication is not previous:
-                    yield publication
+                if state is not previous:
+                    yield state
         finally:
             self._monitoring = False
 

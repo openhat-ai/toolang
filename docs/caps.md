@@ -214,10 +214,10 @@ preparation:
 3. materializes runtime-ready artifacts when needed
 4. selects the winning definition for each `(kind, name)`
 
-`StateWatcher` applies the configured and startup `psyches`, `skills`,
-`services`, and `prompts` allow fields once and publishes the resulting
-per-module collections in `StatePublication.resources`. Root-run preparation
-copies concrete cap identities into tree-level `AgentResources`.
+State preparation applies the configured and startup `psyches`, `skills`,
+`services`, and `prompts` allow fields once. `StateWatcher` publishes `AgentState`
+directly; `caps_for(module)` returns its precomputed effective caps. Root-run
+preparation copies concrete cap identities into tree-level `AgentResources`.
 Request-level ceilings preserve the same four boundaries. Flow and agic
 directives may narrow the result further, but cannot restore caps outside the
 published resources.

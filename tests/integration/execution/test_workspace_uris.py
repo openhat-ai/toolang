@@ -28,15 +28,139 @@ from tests.support.execution_harness import (
 from toolang.base.types.message import TextPart, message_text
 from toolang.base.types.run import ToolCall
 from toolang.base.types.tool import ToolPreparation
+from toolang.execution.executor import RunExecutor
+from toolang.execution.schemas import RetryRequest
 from toolang.execution.types import RulesRecallTarget, ThreadPrefix
 from toolang.plugin.toolsets.filesystem import _FilesystemTool
-from toolang.state.watcher import StateRefresh
+from toolang.state.config import ConfiguredWorkspaces
+from toolang.state.watcher import StateRefresh, StateWatcher
 
 
 def _results(harness, run):
     return {
         s.output.value.tool_call_id: s.output.value for s in _tool_steps(harness, run)
     }
+
+
+@pytest.mark.parametrize("change", ["remove", "remap"])
+@pytest.mark.parametrize("resolved", [False, True])
+def test_retry_rejects_revoked_workspace_grants_before_mutation(
+    tmp_path, change, resolved
+):
+    harness, repo, original = _harness(tmp_path, [RuntimeError("temporary failure")])
+    watcher = StateWatcher(harness.setup.layout, initial_state=original)
+    executor = RunExecutor(
+        harness.store,
+        harness.ids,
+        setup=lambda: harness.setup,
+        state=watcher.current,
+        load_state=watcher.load,
+    )
+
+    async def scenario():
+        async with harness:
+            try:
+                run = await executor.run(_spec(harness, original))
+                assert run.status == "failed"
+                before_controls = harness.store.list_run_controls(run_id=run.id)
+                before_steps = harness.store.list_steps(run_id=run.id)
+                grants = ConfiguredWorkspaces(harness.setup.layout.config)
+                grants.remove("repo")
+                if change == "remap":
+                    replacement = tmp_path / "replacement"
+                    replacement.mkdir()
+                    grants.add(replacement, name="repo")
+                await watcher.refresh()
+                assert watcher.load(original.revision).workspaces == {"repo": str(repo)}
+
+                with pytest.raises(ValueError, match="workspace.*repo.*use rerun"):
+                    if resolved:
+                        executor.retry(run.id, setup=harness.setup, state=original)
+                    else:
+                        executor.retry(
+                            RetryRequest(source=run.id, commands=(), request_id="retry")
+                        )
+
+                assert harness.store.get_run(run_id=run.id) == run
+                assert harness.store.list_run_controls(run_id=run.id) == before_controls
+                assert harness.store.list_steps(run_id=run.id) == before_steps
+                assert len(harness.adapter.invocations) == 1
+            finally:
+                await executor.stop()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("add_workspace", [False, True])
+def test_retry_keeps_still_authorized_recorded_workspace_grants(
+    tmp_path, add_workspace
+):
+    harness, repo, original = _harness(
+        tmp_path,
+        [
+            RuntimeError("temporary failure"),
+            _calls(_call("list", "fs__list", path="workspace://")),
+            _answer(),
+        ],
+    )
+    watcher = StateWatcher(harness.setup.layout, initial_state=original)
+    executor = RunExecutor(
+        harness.store,
+        harness.ids,
+        setup=lambda: harness.setup,
+        state=watcher.current,
+        load_state=watcher.load,
+    )
+
+    async def scenario():
+        async with harness:
+            try:
+                run = await executor.run(_spec(harness, original))
+                assert run.status == "failed"
+                if add_workspace:
+                    added = tmp_path / "added"
+                    added.mkdir()
+                    ConfiguredWorkspaces(harness.setup.layout.config).add(
+                        added, name="added"
+                    )
+                    current = await watcher.refresh()
+                    assert set(current.workspaces) == {"repo", "added"}
+                retried = await executor.retry(
+                    RetryRequest(source=run.id, commands=(), request_id="retry")
+                )
+                assert retried.status == "succeeded", retried.error
+                result = _results(harness, retried)["list"]
+                assert result.error is None
+                assert result.output == {
+                    "path": "workspace://",
+                    "entries": [
+                        {"name": "repo", "path": "workspace://repo/", "available": True}
+                    ],
+                }
+                assert watcher.load(original.revision).workspaces == {"repo": str(repo)}
+            finally:
+                await executor.stop()
+
+    asyncio.run(scenario())
+
+
+def test_workspace_retry_requires_a_current_authorization_source(tmp_path):
+    harness, _repo, original = _harness(tmp_path, [RuntimeError("temporary failure")])
+    executor = RunExecutor(harness.store, harness.ids)
+
+    async def scenario():
+        async with harness:
+            try:
+                run = await executor.run(_spec(harness, original))
+                assert run.status == "failed"
+                with pytest.raises(ValueError, match="current workspace authorization"):
+                    executor.retry(run.id, setup=harness.setup, state=original)
+                assert harness.store.get_run(run_id=run.id) == run
+                assert len(harness.store.list_run_controls(run_id=run.id)) == 1
+            finally:
+                await executor.stop()
+
+    asyncio.run(scenario())
 
 
 def test_external_workspace_rules_and_protocol_survive_instruct_none(tmp_path):

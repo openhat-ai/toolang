@@ -164,17 +164,15 @@ Agent source state is represented by three immutable values:
 ```text
 HomeLayer = home source + resolutions + config + modules + home caps
 RootLayer = root source + resolutions + config + root caps
-AgentState = one exact RootLayer + HomeLayer pair
+AgentState = exact RootLayer + HomeLayer pair + agent name + startup cap overrides
 ```
 
-`AgentState` contains the effective config, authored program source path, exact
-`Program`, and effective caps used by execution. It does not contain a separate
-jobs collection; program-declared jobs remain available as
-`AgentState.program.jobs`.
+`AgentState` contains State-owned config, captured workspace grants, exact
+Programs, and precomputed effective caps per module. Program-declared jobs
+remain available through those Programs, not a separate jobs collection.
 
 `StateWatcher` monitors the relevant files and publishes new immutable
-`StatePublication` values pairing durable `AgentState` revisions with effective
-per-module caps. It owns invalidation and reuse of unchanged parsed
+`AgentState` values. It owns invalidation and reuse of unchanged parsed
 sources. It does not know about `RunExecutor` or `JobScheduler`. Every API process
 that can accept runs starts its watcher as process infrastructure; watching is
 not an optional runtime component.

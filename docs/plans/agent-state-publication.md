@@ -17,6 +17,9 @@ branches. This implements the approved State identity and publication change.
   configured allows before filtering; session/runnable policy only narrows them.
 - Include frozen startup overrides in the composition identity and record them
   alongside its layer references. Loading that revision restores the same State.
+- Retry keeps that recorded State, but requires its workspace names and paths
+  to remain authorized by the current State. Reject removed/remapped grants
+  before changing records; added workspaces do not expand the retried Run.
 - Watcher publishes only validated States, reuses unchanged objects, and retains
   the last valid State on failure. Tool Steps keep their captured State.
 - Old rebuildable caches are regenerated; no execution-record schema change,
@@ -32,7 +35,8 @@ branches. This implements the approved State identity and publication change.
   change revision but not terms; historical load never rereads live config;
   startup override expansion and narrowing survive reload; caps are queried
   once per State; invalid candidates preserve the old State; fs/honor/pick and
-  recorded-call replay remain correct. Run the full offline verification suite.
+  recorded-call replay remain correct; retry rejects revoked workspace grants
+  without changing records. Run the full offline verification suite.
 
 ## Risks
 

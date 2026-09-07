@@ -705,6 +705,16 @@ class RunExecutor:
                 f"retry sandbox {sandbox} does not match original sandbox "
                 f"{control.payload.sandbox} for run {run_id}; use rerun"
             )
+        if state.workspaces:
+            if self._state is None:
+                raise ValueError("retry requires current workspace authorization")
+            workspaces = self._state().workspaces
+            for name, path in state.workspaces.items():
+                if workspaces.get(name) != path:
+                    raise ValueError(
+                        f"retry workspace {name!r} is no longer authorized "
+                        "at its recorded path; use rerun"
+                    )
 
     @property
     def has_state_refresh(self) -> bool:

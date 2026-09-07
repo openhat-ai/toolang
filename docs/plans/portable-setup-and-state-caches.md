@@ -195,9 +195,10 @@ SourceManifest      sorted relative file path, byte size, and SHA-256
 ```
 
 Directories contribute only their descendant path set; directory size and
-timestamps are excluded. State-owned config is canonicalized before hashing,
-so Setup-only changes preserve the manifest. Symlinked files use their logical
-relative path and target bytes; symlink directories remain rejected.
+timestamps are excluded. The complete bytes of `config.toml` are hashed, so
+Setup-only edits or comments also change the State manifest. Only State-owned
+fields are persisted in the projected config artifact. Symlinked files use their
+logical relative path and target bytes; symlink directories remain rejected.
 
 Within one watcher, observation-equal files reuse their prior digest. Changed
 or added files alone are rehashed; a filesystem event or explicit refresh
@@ -222,10 +223,12 @@ observe -> compute/reuse manifest -> compare with current layer
 Remote output changes remain represented by resolutions, caps, and files and
 therefore create a new layer revision.
 
-Source and layer schemas are bumped. A legacy current layer is not a match and
-is rebuilt. Exact historical layers remain loadable: execution does not need
-their metadata tree, so the compatibility decoder accepts it for loading but
-never treats it as a portable current manifest.
+Layer schema 6 records full dependency digests. Composition schema 2 records
+agent name and frozen startup cap overrides alongside the layer references.
+Incompatible compositions are rejected, and current State is rebuilt from
+source; historical loads never substitute current policy. Historical ModelCall
+replay uses execution records, not State caches. See
+[AgentState publication](agent-state-publication.md).
 
 `StateWatcher` owns one observation and manifest per root/home scope. Events
 and periodic safety checks compare observations first, hash changed files, and
@@ -320,8 +323,8 @@ writes. An unchanged established watcher reads zero source bytes.
 - External `--models` and escaping symlinks require correct nested read-only
   mounts and hosted-path rewriting.
 - Setup variants accumulate until a separate garbage-collection design exists.
-- State current revisions change once; compatibility loading must preserve
-  historical references.
+- Old compositions cannot be used to retry Runs after a schema change; rerun
+  uses current State, while recorded-call replay remains independent of State.
 - Plugin behavior can change without config changes, so provenance invalidation
   must remain conservative.
 
