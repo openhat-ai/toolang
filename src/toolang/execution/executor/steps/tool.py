@@ -240,7 +240,7 @@ async def _execute(
                     tool=tool,
                     services=prepared.services,
                     runtime=runtime,
-                    history=_ToolHistory(state.execution.store, run.thread)
+                    history=_ToolHistory(state.execution.store.db_path, run.thread)
                     if plugin_name == "history" and state.execution is not None
                     else None,
                     workspaces={

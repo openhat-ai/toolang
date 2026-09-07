@@ -76,7 +76,7 @@ def read(store, tool, *, caller="term_a", **query):
         store.db_path.parent,
         store.db_path.parent,
         store.db_path.parent,
-        history=_ToolHistory(store, caller),
+        history=_ToolHistory(store.db_path, caller),
     )
     return asyncio.run(load_tools()[f"history__{tool}"].invoke(query, context))
 
@@ -214,6 +214,37 @@ def test_missing_targets_fail(store, tool, query):
         read(store, tool, **query)
 
 
+@pytest.mark.parametrize(
+    "tool,query",
+    [
+        ("read_threads", {}),
+        ("read_runs", {}),
+        ("read_steps", {"run": "run_a"}),
+        ("read_output", {"run": "run_a"}),
+        ("read_output", {"run": "run_missing"}),
+    ],
+)
+def test_history_closes_its_own_read_only_connection(store, monkeypatch, tool, query):
+    start(store)
+    step(store)
+    closed = []
+    original = RunStore.close
+
+    def close(reader):
+        closed.append(reader)
+        original(reader)
+
+    monkeypatch.setattr(RunStore, "close", close)
+    if query.get("run") == "run_missing":
+        with pytest.raises(KeyError):
+            read(store, tool, **query)
+    else:
+        read(store, tool, **query)
+    assert len(closed) == 1
+    assert closed[0] is not store
+    assert closed[0].read_only
+
+
 def test_cursors_reject_other_tools_and_agents(store, tmp_path):
     for name in ("run_a", "run_b"):
         start(store, name)
@@ -264,7 +295,7 @@ def test_steps_resolve_locals_and_keep_dependencies_and_model_refs(store, monkey
     def forbidden(*args, **kwargs):
         raise AssertionError("history tools must not rebuild model calls")
 
-    monkeypatch.setattr(store, "rebuild_model_calls", forbidden)
+    monkeypatch.setattr(RunStore, "rebuild_model_calls", forbidden)
     page = read(store, "read_steps", run="run_a", begin="run_a.1")
     assert [r["id"] for r in page["entries"]] == [model.id]
     assert page["entries"][0]["given"] == record_to_data(model)["given"]
@@ -439,7 +470,7 @@ def test_output_preserves_status_and_partial_value_without_model_rebuild(
         raise AssertionError("output-only must not inspect details")
 
     monkeypatch.setattr(RunHistory, "get_run", forbidden)
-    monkeypatch.setattr(store, "rebuild_model_calls", forbidden)
+    monkeypatch.setattr(RunStore, "rebuild_model_calls", forbidden)
     assert read(store, "read_output", run="run_a") == {
         "run": "run_a",
         "status": status,
@@ -557,11 +588,11 @@ def test_value_resolution_uses_the_same_snapshot_as_page_selection(store, monkey
     project_run_end(store, run_id="run_a")
     expected = read(store, "read_steps", run="run_a")
     payload = store.get_run_control(run_id="run_a", index=0).payload
-    original = store.resolve_local
+    original = RunStore.resolve_local
     changed = []
     with closing(RunStore(store.db_path)) as writer:
 
-        def resolve(local):
+        def resolve(reader, local):
             if not changed:
                 writer.accept_retry(
                     run_id="run_a",
@@ -574,9 +605,9 @@ def test_value_resolution_uses_the_same_snapshot_as_page_selection(store, monkey
                     created_at="2026-02-01T00:00:00Z",
                 )
                 changed.append(True)
-            return original(local)
+            return original(reader, local)
 
-        monkeypatch.setattr(store, "resolve_local", resolve)
+        monkeypatch.setattr(RunStore, "resolve_local", resolve)
         assert read(store, "read_steps", run="run_a") == expected
         assert writer.list_steps(run_id="run_a") == []
 
@@ -587,7 +618,7 @@ def test_history_read_can_be_interrupted_without_late_result_delivery(
 ):
     release = threading.Event()
     finished = threading.Event()
-    original = RunHistory.thread_page
+    original = RunStore.history_thread_ids
     harness = ExecutionHarness.create(
         tmp_path,
         source="agic task() -> Text:\n  context: none\n  user: Read history.\n",
@@ -605,16 +636,18 @@ def test_history_read_can_be_interrupted_without_late_result_delivery(
         entered = asyncio.Event()
         loop = asyncio.get_running_loop()
 
-        def blocked(reader, **query):
+        def blocked(reader):
+            # thread_page already holds its Store transaction while selecting IDs.
+            ids = original(reader)
             loop.call_soon_threadsafe(entered.set)
             try:
                 if not release.wait(timeout=5):
                     raise TimeoutError("history test reader was not released")
-                return original(reader, **query)
+                return ids
             finally:
                 finished.set()
 
-        monkeypatch.setattr(RunHistory, "thread_page", blocked)
+        monkeypatch.setattr(RunStore, "history_thread_ids", blocked)
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
@@ -630,6 +663,7 @@ def test_history_read_can_be_interrupted_without_late_result_delivery(
                 else:
                     handle.steer(Message.user("Change course."), timing="immediate")
                 run = await asyncio.wait_for(handle, timeout=2)
+                assert not finished.is_set(), "interruption waited for the history read"
                 assert run.status == (
                     "canceled" if interrupt == "cancel" else "succeeded"
                 )
