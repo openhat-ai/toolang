@@ -21,9 +21,9 @@ def authorize_home_path(path: Path, home: Path) -> Path:
 def resolve_tool_path(
     value: str, context: ToolContext, *, workspace: str | None = None
 ) -> ToolPath:
-    """Preserve explicit anchors; reject ambiguous bare paths before any access."""
+    """Resolve a path while preserving significant whitespace and workspace identity."""
 
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str) or not value:
         raise ToolangError("tool requires a non-empty path")
     roots = {
         name: Path(os.path.abspath(root)) for name, root in context.workspaces.items()
@@ -32,7 +32,7 @@ def resolve_tool_path(
         if not isinstance(workspace, str) or workspace not in roots:
             raise ToolangError(f"workspace is not available: {workspace}")
         root = roots[workspace]
-        candidate = root / value.strip().lstrip("/")
+        candidate = root / value.lstrip("/")
         normalized = Path(os.path.abspath(candidate))
         if not normalized.is_relative_to(root):
             raise ToolangError(f"path escapes workspace {workspace}: {value}")
@@ -48,7 +48,7 @@ def resolve_tool_path(
                     f"parent traversal through a symlink leaves workspace {workspace}; use a direct path"
                 ) from exc
     else:
-        candidate = Path(value.strip()).expanduser()
+        candidate = Path(value).expanduser()
         if not candidate.is_absolute():
             candidate = context.wd / candidate
         resolved = authorize_home_path(candidate, context.home)

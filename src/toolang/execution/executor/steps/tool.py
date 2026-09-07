@@ -196,10 +196,7 @@ async def _execute(
     prepared = state.prepared
     plugin_name = "-"
     summary_context = _tool_summary_context(call, None)
-    preparation: ToolPreparation | None = None
-    preparation_error: Exception | None = (
-        ToolangError(blocked_error) if blocked_error is not None else None
-    )
+    preparation: ToolPreparation | Exception | None = None
     step = StepRef.from_local(run.run_id, (step_index,))
     runtime: _ToolRuntime | None = None
 
@@ -208,7 +205,7 @@ async def _execute(
         state_ref: ControlRef,
     ) -> StepBegin:
         nonlocal prepared, plugin_name, summary_context
-        nonlocal preparation, preparation_error, runtime
+        nonlocal preparation, runtime
         runtime_tools = prepared.run.setup.tools.runtime if trigger == "runtime" else {}
         # Bind the operation to the Step's State even if reload removed its Agic.
         if (
@@ -230,15 +227,16 @@ async def _execute(
             if plugin_name == "_toolang"
             else None
         )
-        if preparation_error is None:
+        if blocked_error is not None:
+            preparation = ToolangError(blocked_error)
+        else:
             try:
                 if tool is None:
                     raise ToolangError(f"unknown tool call: {call.name}")
                 context = _tool_context(
                     run_id=run.run_id,
                     layout=state.layout,
-                    tool_name=call.name,
-                    tools=tools,
+                    tool=tool,
                     services=prepared.services,
                     runtime=runtime,
                     workspaces={
@@ -250,7 +248,7 @@ async def _execute(
                 )
                 preparation = prepare_tool(tool, call.input, context)
             except Exception as exc:
-                preparation_error = exc
+                preparation = exc
             else:
                 if (
                     trigger == "model"
@@ -301,16 +299,8 @@ async def _execute(
         plugin_name=plugin_name,
     )
     try:
-        record = await invoke_tool_call(
-            run_id=run.run_id,
-            tools=prepared.tools,
-            services=prepared.services,
-            layout=state.layout,
-            call=call,
-            runtime=runtime,
-            preparation=preparation,
-            failure=preparation_error,
-        )
+        assert preparation is not None
+        record = await invoke_tool_call(call=call, preparation=preparation)
     except asyncio.CancelledError:
         await _cancel(
             state,
@@ -683,38 +673,14 @@ def _truncate_argument(value: str, limit: int) -> str:
 
 async def invoke_tool_call(
     *,
-    run_id: str,
-    tools: Mapping[str, AgentTool],
-    services: tuple[ToolService, ...],
-    layout: AgentLayout,
     call: ToolCall,
-    runtime: ToolRuntime | None = None,
-    preparation: ToolPreparation | None = None,
-    failure: Exception | None = None,
+    preparation: ToolPreparation | Exception,
 ) -> ToolCallResult:
-    """Invoke one selected tool and normalize its result or error."""
+    """Deliver a prepared operation or failure without resolving anything again."""
 
-    name = call.name
-    arguments = dict(call.input)
     try:
-        if failure is not None:
-            raise failure
-        if preparation is None:
-            tool = tools.get(name)
-            if tool is None:
-                raise ToolangError(f"unknown tool call: {name or '<empty>'}")
-            preparation = prepare_tool(
-                tool,
-                arguments,
-                _tool_context(
-                    run_id=run_id,
-                    layout=layout,
-                    tool_name=name,
-                    tools=tools,
-                    services=services,
-                    runtime=runtime,
-                ),
-            )
+        if isinstance(preparation, Exception):
+            raise preparation
         output = await preparation.invoke()
         error = None
     except Exception as exc:
@@ -723,8 +689,8 @@ async def invoke_tool_call(
     return ToolCallResult(
         tool_call_id=call.tool_call_id,
         call_id=call.call_id,
-        name=name,
-        input=arguments,
+        name=call.name,
+        input=dict(call.input),
         output=output,
         error=error,
     )
@@ -734,16 +700,14 @@ def _tool_context(
     *,
     run_id: str,
     layout: AgentLayout,
-    tool_name: str,
-    tools: Mapping[str, AgentTool],
+    tool: AgentTool,
     services: tuple[ToolService, ...],
     runtime: ToolRuntime | None = None,
     workspaces: Mapping[str, Path] | None = None,
 ) -> ToolContext:
-    tool = tools.get(tool_name)
     plugin_name = getattr(tool, "plugin_name", None)
     if not isinstance(plugin_name, str) or not plugin_name:
-        raise ToolangError(f"unknown toolset plugin for tool: {tool_name}")
+        raise ToolangError(f"unknown toolset plugin for tool: {tool.name}")
     return ToolContext(
         run_id=run_id,
         home=layout.home,

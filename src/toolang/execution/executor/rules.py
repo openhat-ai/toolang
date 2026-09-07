@@ -48,7 +48,7 @@ def load_rules(
 ) -> tuple[RecallControlPayload, ...]:
     """Read each applicable rule once, ancestor first within its logical anchor."""
 
-    recalled: dict[RulesRecallTarget, RecallControlPayload] = {}
+    recalled: list[RecallControlPayload] = []
     seen: set[RulesRecallTarget] = set()
     for path in paths:
         if path.workspace is None:
@@ -78,5 +78,5 @@ def load_rules(
                 content, revision = "", "0"
             else:
                 revision = sha256(content.encode("utf-8")).hexdigest()
-            recalled[target] = RecallControlPayload(target, revision, content)
-    return tuple(recalled.values())
+            recalled.append(RecallControlPayload(target, revision, content))
+    return tuple(recalled)

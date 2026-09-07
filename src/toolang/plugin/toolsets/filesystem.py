@@ -234,8 +234,11 @@ def create_toolset(config: Mapping[str, Any]) -> Toolset:
 def _prepare_path(
     arguments: dict[str, Any], context: ToolContext
 ) -> tuple[ToolPath, ...]:
+    value = arguments["path"]
     path = resolve_tool_path(
-        arguments["path"], context, workspace=arguments["workspace"]
+        value.strip() if isinstance(value, str) else value,
+        context,
+        workspace=arguments["workspace"],
     )
     arguments["path"] = str(path.resolved)
     return (path,)

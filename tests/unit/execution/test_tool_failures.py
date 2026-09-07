@@ -9,7 +9,7 @@ from typing import Any
 from toolang.base.errors import ToolFailure
 from toolang.base.types.run import ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition
-from toolang.common.layout import AgentLayout
+from toolang.base.utils.function_tools import prepare_tool
 from toolang.execution.executor.steps.tool import invoke_tool_call
 
 
@@ -41,13 +41,12 @@ def test_generic_tool_dispatch_preserves_structured_failure_output(
     tmp_path: Path,
 ) -> None:
     tool = _FailingTool()
+    call = ToolCall("tool-1", "call-1", tool.name, {})
+    context = ToolContext("run-test", tmp_path, tmp_path, tmp_path)
     result = asyncio.run(
         invoke_tool_call(
-            run_id="run-test",
-            tools={tool.name: tool},
-            services=(),
-            layout=AgentLayout.resident(tmp_path, "alice"),
-            call=ToolCall("tool-1", "call-1", tool.name, {}),
+            call=call,
+            preparation=prepare_tool(tool, call.input, context),
         )
     )
 
