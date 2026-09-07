@@ -35,7 +35,7 @@ def test_cwd_alias_uses_real_workspace_identity_for_every_operation(fs, suffix):
     location = prefix if suffix else prefix + "/"
     assert parse_workspace_uri("workspace://.") == (".", "/")
     assert invoke(fs, context, "list", path="workspace://.")["path"] == location
-    assert invoke(fs, context, "list", path="workspace://")["cwd"] == location
+    assert invoke(fs, context, "list", path="workspace://")["cwd"] == "workspace://./"
     invoke(fs, context, "mkdir", path="workspace://./dir")
     uri = "workspace://./dir/a%20b"
     assert (
@@ -98,3 +98,15 @@ def test_alias_traversal_uses_the_real_workspace_boundary(fs):
     )
     with pytest.raises(ToolangError, match="escapes workspace"):
         invoke(fs, context, "write", path="workspace://./../../file", text="bad")
+
+
+def test_namespace_cwd_does_not_redirect_after_workspace_remapping(fs, tmp_path):
+    _tools, context, repo = fs
+    context = replace(context, cwd=capture_cwd(repo, {"repo": str(repo)}))
+    replacement = tmp_path / "replacement"
+    replacement.mkdir()
+    context = replace(context, workspaces={"repo": replacement})
+    location = invoke(fs, context, "list", path="workspace://")["cwd"]
+    with pytest.raises(ToolangError, match="recorded location"):
+        invoke(fs, context, "write", path=location + "/wrong", text="bad")
+    assert not (replacement / "wrong").exists()

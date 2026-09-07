@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import AgentTool
@@ -407,7 +407,7 @@ def _runtime_context(
     }
     environment = run.setup.environment
     if run.cwd is not None:
-        runtime["cwd"] = workspace_uri(cast(str, run.cwd.workspace), run.cwd.relative)
+        runtime["cwd"] = workspace_uri(".")
     if environment is not None:
         runtime["environment"] = {
             "sandbox": environment.sandbox,

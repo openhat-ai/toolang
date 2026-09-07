@@ -420,7 +420,8 @@ async def _execute_retry_or_rerun(
             layout,
             server,
             model_catalog=model_catalog,
-        ) as client:
+            cwd=Path.cwd().resolve() if server is None else None,
+        ) as (client, cwd):
             request_id = f"term_{uuid4().hex}"
             handle = (
                 await client.retry(
@@ -429,6 +430,7 @@ async def _execute_retry_or_rerun(
                         commands=commands,
                         request_id=request_id,
                         anchor=anchor,
+                        cwd=cwd,
                     ),
                     tracer=tracer,
                 )
@@ -439,6 +441,7 @@ async def _execute_retry_or_rerun(
                         commands=commands,
                         request_id=request_id,
                         model_override=model_override,
+                        cwd=cwd,
                     ),
                     tracer=tracer,
                 )

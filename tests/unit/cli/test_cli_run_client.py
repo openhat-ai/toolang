@@ -4,26 +4,34 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
 
 from toolang.cli.common import run_client
+from toolang.base.utils.workspace_paths import capture_cwd
 from toolang.common.layout import AgentLayout
 from toolang.execution.remote import RemoteRunClient
 from toolang.up.types import AgentServerRef
 
 
+@pytest.mark.parametrize("cwd_mode", ["absent", "registered", "temporary"])
 def test_acquire_run_client_uses_local_embedding_without_a_server(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    cwd_mode: str,
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     catalog = tmp_path / "models.json"
     store = Mock()
     setup = Mock(refresh=AsyncMock())
     state = Mock(refresh=AsyncMock())
+    directory = tmp_path / "repo/sub"
+    directory.mkdir(parents=True)
+    workspaces = {"repo": str(directory.parent)} if cwd_mode == "registered" else {}
+    state.current.return_value = SimpleNamespace(workspaces=workspaces)
     executor = Mock(stop=AsyncMock())
     local_client = Mock(connect=AsyncMock(), disconnect=AsyncMock())
 
@@ -83,8 +91,12 @@ def test_acquire_run_client_uses_local_embedding_without_a_server(
             layout,
             None,
             model_catalog=catalog,
-        ) as selected:
+            cwd=directory if cwd_mode != "absent" else None,
+        ) as (selected, location):
             assert selected is local_client
+            assert location == (
+                capture_cwd(directory, workspaces) if cwd_mode != "absent" else None
+            )
             store.close.assert_not_called()
             executor.stop.assert_not_awaited()
 
@@ -142,11 +154,25 @@ def test_acquire_run_client_connects_to_an_agent_server(
     monkeypatch.setattr(run_client.httpx, "AsyncClient", client_factory)
 
     async def scenario() -> None:
-        async with run_client.acquire_run_client(layout, server) as client:
+        async with run_client.acquire_run_client(layout, server) as (client, cwd):
             assert isinstance(client, RemoteRunClient)
+            assert cwd is None
             assert client.connected
         assert not client.connected
 
     asyncio.run(scenario())
 
     assert requests == ["/healthz", "/api/v1/profile"]
+
+
+def test_acquire_remote_run_client_rejects_a_local_directory(tmp_path):
+    async def scenario():
+        with pytest.raises(ValueError, match="local cwd"):
+            async with run_client.acquire_run_client(
+                AgentLayout.resident(tmp_path, "alice"),
+                AgentServerRef(sandbox="host", endpoint="http://runtime.invalid"),
+                cwd=tmp_path,
+            ):
+                pytest.fail("a remote client must not acquire local authority")
+
+    asyncio.run(scenario())

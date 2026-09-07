@@ -6,7 +6,8 @@ When the caller supplies a cwd, workspace://. (also workspace://./) addresses
 that Run's fixed location; workspace://./file addresses a file there. This is an
 alias, not an additional grant. Named locations return the real workspace URI;
 an explicitly granted temporary cwd returns workspace://./ paths. The namespace
-listing reports the cwd URI when present. Child runs inherit it. Shell cd does
+listing and context identify cwd by workspace://./, so remapping a named
+workspace cannot redirect that fixed location. Child runs inherit it. Shell cd does
 not change it, and an unavailable named cwd never becomes a temporary grant.
 The list can change when a new State publication takes effect. An earlier list
 does not grant access to a workspace that is no longer available.

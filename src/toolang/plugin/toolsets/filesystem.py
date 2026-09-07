@@ -318,9 +318,7 @@ def _list_workspaces(context: ToolContext) -> dict[str, Any]:
         ],
     }
     if context.cwd is not None:
-        result["cwd"] = workspace_uri(
-            cast(str, context.cwd.workspace), context.cwd.relative
-        )
+        result["cwd"] = workspace_uri(".")
     return result
 
 

@@ -26,14 +26,18 @@ command, runspace, or new State publication mechanism is included.
   Later Runs in the same session retain that binding; removal cannot create a
   temporary grant on the next request either. An unavailable cwd blocks its fs
   operations, not unrelated work in the session.
-- Namespace listing reports the canonical cwd URI when present. Relative alias
-  paths obey the real workspace boundary; a temporary root cannot escape itself.
+- Context and namespace listing identify cwd by `workspace://./`, which cannot
+  redirect after a named workspace is remapped. File results remain canonical.
+  Relative alias paths obey the real workspace boundary; a temporary root cannot
+  escape itself.
   Rules retain existing path-aware preflight, recall, and retry behavior.
 - Retry restores the recorded location; temporary grants require the local
   caller to supply the same directory again. Named grants keep existing retry
   revalidation. Rerun uses the new caller's supplied location, never an implicit
   historical grant. Remote clients reject local cwd inputs; HTTP schemas do not
   accept them. Model-triggered children cannot introduce grants.
+  Local CLI retry/rerun capture their current directory against prepared State;
+  remote commands never forward a local directory.
 
 ## Implementation and acceptance
 

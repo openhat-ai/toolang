@@ -10,6 +10,8 @@ from pathlib import Path
 
 import httpx
 
+from toolang.base.types.tool import ToolPath
+from toolang.base.utils.workspace_paths import capture_cwd
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.client import LocalRunClient, RunClient
@@ -36,10 +38,13 @@ async def acquire_run_client(
     server: AgentServerRef | None,
     *,
     model_catalog: Path | None = None,
-) -> AsyncIterator[RunClient]:
-    """Acquire a run client for host embedding or one acquired AgentServer."""
+    cwd: Path | None = None,
+) -> AsyncIterator[tuple[RunClient, ToolPath | None]]:
+    """Acquire a client and bind an optional local cwd against its prepared State."""
 
     if server is not None:
+        if cwd is not None:
+            raise ValueError("local cwd is not supported by remote runs")
         async with httpx.AsyncClient(timeout=httpx.Timeout(3.0)) as http:
             client = RemoteRunClient(server.endpoint, client=http)
             await client.connect()
@@ -49,7 +54,7 @@ async def acquire_run_client(
                     client.endpoint,
                     expected_sandbox=server.sandbox,
                 )
-                yield client
+                yield client, None
             finally:
                 await client.disconnect()
         return
@@ -80,6 +85,9 @@ async def acquire_run_client(
     )
     try:
         await asyncio.gather(state.refresh(), setup.refresh())
+        location = (
+            capture_cwd(cwd, state.current().workspaces) if cwd is not None else None
+        )
         executor = RunExecutor(
             store,
             IdIssuer(layout.id_state),
@@ -92,7 +100,7 @@ async def acquire_run_client(
         executor.start()
         await client.connect()
         try:
-            yield client
+            yield client, location
         finally:
             await client.disconnect()
             await executor.stop()

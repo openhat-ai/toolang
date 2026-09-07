@@ -2081,6 +2081,9 @@ def test_retry_and_rerun_execute_locally_with_limit_overrides(
     monkeypatch: pytest.MonkeyPatch,
     tty: bool,
 ) -> None:
+    from toolang.base.utils.workspace_paths import capture_cwd
+
+    monkeypatch.chdir(tmp_path)
     harness = ExecutionHarness.create(
         tmp_path / "toolang",
         source="""
@@ -2100,6 +2103,8 @@ agic reply(_: Part[]) -> Part[]:
         ],
     )
     _create_agent(harness.setup.layout.root)
+
+    cwd = capture_cwd(tmp_path, harness.state.workspaces)
 
     state_reads: list[None] = []
     runtime_selections: list[str | None] = []
@@ -2140,7 +2145,9 @@ agic reply(_: Part[]) -> Part[]:
         client = LocalRunClient(executor)
         await client.connect()
         try:
-            yield client
+            directory = _kwargs["cwd"]
+            assert isinstance(directory, Path) and directory == tmp_path.resolve()
+            yield client, capture_cwd(directory, harness.state.workspaces)
         finally:
             await client.disconnect()
             await executor.stop()
@@ -2151,10 +2158,13 @@ agic reply(_: Part[]) -> Part[]:
     async def run_source():
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
         source = await harness.executor.run(
-            harness.run_spec(
-                thread=thread,
-                runnable="reply",
-                primary=resolve_input_parts("hello"),
+            replace(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    primary=resolve_input_parts("hello"),
+                ),
+                cwd=cwd,
             )
         )
         await harness.executor.stop()
@@ -2243,6 +2253,7 @@ agic reply(_: Part[]) -> Part[]:
         assert isinstance(rerun_control.payload, RunControlPayload)
         assert not hasattr(rerun_control.payload, "rerun_from")
         assert rerun_control.payload.limits.time == 30
+        assert rerun_control.payload.cwd == cwd
     finally:
         harness.store.close()
 
@@ -2326,7 +2337,8 @@ agic reply(_: Part[]) -> Part[]:
         _server: AgentServerRef | None,
         **_kwargs: object,
     ):
-        yield _Client()
+        assert _kwargs["cwd"] is None
+        yield _Client(), None
 
     monkeypatch.setattr(thread_commands, "acquire_agent_server", agent_server_context)
     monkeypatch.setattr(thread_commands, "acquire_run_client", run_client)

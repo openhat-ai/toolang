@@ -91,7 +91,7 @@ def test_cwd_rules_identity_persistence_and_replay(tmp_path, registered):
             )
             assert isinstance(legacy, RunControlPayload) and legacy.cwd is None
             assert any(
-                "cwd: " + uri in message_text(m.parts)
+                "cwd: workspace://./" in message_text(m.parts)
                 for m in harness.adapter.invocations[0].call.messages
             )
             assert "workspace://." in harness.adapter.invocations[0].call.instructions
@@ -126,6 +126,7 @@ def test_reload_cannot_convert_a_named_cwd_to_temporary(tmp_path, change):
             _answer(),
         ],
         refresh_state=refresh,
+        source=SOURCE.replace("  context: none\n", ""),
     )
     replacement = tmp_path / "replacement"
     replacement.mkdir()
@@ -143,6 +144,12 @@ def test_reload_cannot_convert_a_named_cwd_to_temporary(tmp_path, change):
             assert not (repo / "result").exists()
             assert not (replacement / "result").exists()
             assert not _recalls(harness, run)
+            for invocation in harness.adapter.invocations:
+                context = "\n".join(
+                    message_text(m.parts) for m in invocation.call.messages
+                )
+                assert "cwd: workspace://./" in context
+                assert "cwd: workspace://repo" not in context
 
     asyncio.run(scenario())
 
@@ -281,9 +288,10 @@ def test_temporary_cwd_retry_needs_renewed_authorization_after_restart(tmp_path)
         )
         try:
             before = store.list_steps(run_id=run.id)
-            with pytest.raises(ValueError, match="renewed authorization"):
-                executor.retry(RetryRequest(run.id, (), "denied"))
-            assert store.list_steps(run_id=run.id) == before
+            for unauthorized in (None, capture_cwd(tmp_path, state.workspaces)):
+                with pytest.raises(ValueError, match="renewed authorization"):
+                    executor.retry(RetryRequest(run.id, (), "denied", cwd=unauthorized))
+                assert store.list_steps(run_id=run.id) == before
             retried = await executor.retry(RetryRequest(run.id, (), "retry", cwd=cwd))
             assert retried.status == "succeeded", retried.error
             assert (directory / "result").read_text() == "retried"
