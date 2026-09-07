@@ -29,19 +29,11 @@ def statement_header(statement: FlowStmt) -> str:
         return doc
 
     if isinstance(statement, LetStmt):
-        return _words("Set", statement.binding or "value")
+        return f"Set value to {statement.binding}"
     if isinstance(statement, RunStmt):
-        action = _named_or_inline(
-            statement.runnable,
-            named="Run {name}",
-            inline="Run the inline task",
-        )
+        action = f"Run {statement.runnable}"
     elif isinstance(statement, SeekStmt):
-        action = _named_or_inline(
-            statement.runnable,
-            named=f"Ask {statement.name} to run {{name}}",
-            inline=f"Ask {statement.name} for help",
-        )
+        action = f"Ask agent {statement.name} to run {statement.runnable}"
     elif isinstance(statement, AskStmt):
         action = (
             f"Ask {statement.name} for input"
@@ -49,69 +41,49 @@ def statement_header(statement: FlowStmt) -> str:
             else "Ask for human input"
         )
     elif isinstance(statement, ScatterStmt):
-        action = _named_or_inline(
-            statement.runnable,
-            named=f"Expand into {count(statement.count, 'item')} with {{name}}",
-            inline=f"Expand into {count(statement.count, 'item')}",
-        )
+        action = _scatter_header(statement.runnable, statement.count)
     elif isinstance(statement, StormStmt):
-        action = _named_or_inline(
-            statement.runnable,
-            named=f"Run {{name}} {count(statement.count, 'time')}",
-            inline=f"Generate {count(statement.count, 'item')}",
+        action = (
+            f"Storm into {count(statement.count, 'item')} "
+            f"with {statement.runnable} independently"
         )
     elif isinstance(statement, GatherStmt):
-        action = _named_or_inline(
-            statement.runnable,
-            named="Combine the items with {name}",
-            inline="Combine the items",
-        )
+        action = f"Gather all items into one with {statement.runnable}"
     elif isinstance(statement, SettleStmt):
-        action = _named_or_inline(
-            statement.runnable,
-            named="Reduce the items with {name}",
-            inline="Reduce the items",
-        )
+        action = f"Settle all items into one with {statement.runnable} sequentially"
     elif isinstance(statement, MapStmt):
-        action = _named_or_inline(
-            statement.runnable,
-            named="Run {name} for each item",
-            inline="Process each item",
-        )
+        action = f"Map each item with {statement.runnable}"
     elif isinstance(statement, KeepStmt | DropStmt):
         verb = "Keep" if isinstance(statement, KeepStmt) else "Drop"
         if statement.position is not None and statement.count is not None:
             quantity = "item" if statement.count == 1 else f"{statement.count} items"
             action = f"{verb} the {statement.position} {quantity}"
         else:
-            action = _named_or_inline(
-                statement.runnable or "",
-                named=f"{verb} items selected by {{name}}",
-                inline=f"{verb} selected items",
-            )
+            action = f"{verb} items where {statement.runnable} is true"
     elif isinstance(statement, SortStmt):
-        action = _named_or_inline(
-            statement.runnable,
-            named=f"Sort items {statement.order} by {{name}}",
-            inline=f"Sort the items {statement.order}",
-        )
+        action = f"Sort items by {statement.runnable} in {statement.order} order"
     elif isinstance(statement, RepeatStmt):
         if statement.count is not None and statement.runnable is not None:
-            return f"Repeat up to {count(statement.count, 'time')}"
+            return (
+                f"Repeat up to {count(statement.count, 'time')}, "
+                f"until {statement.runnable} is true"
+            )
         if statement.count is not None:
             return f"Repeat {count(statement.count, 'time')}"
-        return "Repeat until complete"
+        return f"Repeat until {statement.runnable} is true"
     else:
         raise TypeError(f"unsupported flow statement: {type(statement).__name__}")
 
     lanes = getattr(statement, "lanes", None)
-    if isinstance(lanes, int):
+    if lanes == 1:
+        action += ", one at a time"
+    elif isinstance(lanes, int):
         action += f", up to {lanes} at once"
     if statement.binding == "_":
         return action
     if statement.binding is None:
-        return f"{action} without saving the result"
-    return f"{action} and save as {statement.binding}"
+        return f"{action}, discard result"
+    return f"{action}, save result to {statement.binding}"
 
 
 def until_header(statement: RepeatStmt) -> str:
@@ -121,13 +93,10 @@ def until_header(statement: RepeatStmt) -> str:
     return "Check whether to stop" if _generated(runnable) else runnable
 
 
-def _named_or_inline(value: str, *, named: str, inline: str) -> str:
-    return inline if _generated(value) else named.format(name=value)
-
-
 def _generated(value: str) -> bool:
     return not value or value.startswith("<agic:")
 
 
-def _words(*values: str | None) -> str:
-    return " ".join(value for value in values if value)
+def _scatter_header(runnable: str, item_count: int | None) -> str:
+    quantity = count(item_count, "item") if item_count is not None else "items"
+    return f"Scatter into {quantity} with {runnable}"

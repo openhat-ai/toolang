@@ -217,26 +217,40 @@ footer, and follows the footer; adjacent child-owned gaps coalesce.
 ## Flow Headers
 
 A Flow Step uses its non-empty authored doc comment as the header. Without a
-doc comment, the presenter generates a short sentence from the typed AST. It
-preserves runnable names exactly, hides generated inline runnable names, and
-includes authored concurrency or binding behavior only when useful.
+doc comment, the presenter generates a short sentence from the typed AST. Named
+and inline runnables use the same templates and preserve their names exactly,
+including generated names such as `<agic:32>` (the inline declaration's source
+line). For example, an inline map displays `Map each item with <agic:32>`.
 
-Examples include:
-
-| Statement | Generated header |
+| Statement | Automatic description |
 | --- | --- |
-| `let` | `Set NAME` |
-| `run` | `Run RUNNABLE` |
-| `scatter` | `Expand into N items with RUNNABLE` |
-| `storm` | `Run RUNNABLE N times` |
-| `gather` | `Combine the items with RUNNABLE` |
-| `settle` | `Reduce the items with RUNNABLE` |
-| `map` | `Run RUNNABLE for each item` |
+| content `let NAME = BODY` | `Set value to NAME` |
+| `run` | `Run R` |
+| `seek` | `Ask agent AGENT to run R` |
+| `ask` | `Ask for human input` |
+| `scatter` | `Scatter into N items with R` |
+| `storm` | `Storm into N items with R independently` |
+| `gather` | `Gather all items into one with R` |
+| `settle` | `Settle all items into one with R sequentially` |
+| `map` | `Map each item with R` |
 | positional `keep` or `drop` | `Keep/Drop the first/last N items` |
-| predicate `keep` or `drop` | `Keep/Drop items selected by RUNNABLE` |
-| `sort` | `Sort items ascending/descending by RUNNABLE` |
+| predicate `keep` or `drop` | `Keep/Drop items where P is true` |
+| `sort` | `Sort items by R in ascending/descending order` |
 | fixed `repeat` | `Repeat N times` |
-| conditional `repeat` | `Repeat up to N times` or `Repeat until complete` |
+| bounded conditional `repeat` | `Repeat up to N times, until P is true` |
+| condition-only `repeat` | `Repeat until P is true` |
+
+Explicit lane limits append `, one at a time` for one lane or `, up to N at once`
+for larger limits. A named statement binding (`let NAME = STMT`) then appends
+`, save result to NAME`; an unbound `let STMT` appends `, discard result`.
+These describe Flow locals, not persistence. Plain statements have no binding
+suffix, and content `let` does not repeat its assignment as a suffix.
+
+Counts of one use singular `item` or `time`; positional selection omits the
+number for one item. Scatter's count is an authored target, not a guaranteed
+output count. Its description supports `Scatter into items with R` when a count
+is unknown; the current grammar still requires a count. Completion summaries
+report actual results independently of these descriptions.
 
 A direct single-Run Flow Step preserves that Run's leaf trace and emits no
 synthetic success row. Absence of an error means success. Direct values are
