@@ -330,6 +330,8 @@ At new root creation, reuse an applicable validated result located by
 RunHistory.get_compaction and fix its output reference in the run payload's
 horizon; otherwise start with no horizon. Children retain existing parent-horizon
 inheritance. Later changes use compact controls, never a replay-time latest lookup.
+Rerun also prefers the latest applicable result, falling back to the source Run's
+explicit horizon when no newer result is available.
 
 Use one cross-process permit per target Thread, not a ban on requests while a
 root Run is active. Waiters recheck budget/range after admission and reuse valid
@@ -387,7 +389,9 @@ PR5 policy:
 - Responses continuation retains a fingerprint of the request prefix. A changed
   prefix starts a fresh provider context and resends the selected tool exchanges;
   unchanged prefixes continue using the previous response. Other adapters keep
-  their own continuation semantics.
+  their own continuation semantics. Preserve the Responses reasoning items that
+  precede retained tool calls, following its
+  [context-management guidance](https://developers.openai.com/api/docs/guides/reasoning#keeping-reasoning-items-in-context).
 - Safety margin: 5% of the limiting input capacity, at least 1024 tokens. Near
   target: half the input budget, rounded down; retain the last historical root
   regardless of its size. Each compact advances at least one root.
@@ -406,6 +410,7 @@ PR5 policy:
   are not implemented. Only read-only history tools are available to this program,
   loaded through the normal factory/registration path independently of the human
   Run's tool selectors. Loading compact does not initialize unrelated plugins.
+  Starting a compact Run requires a tool-capable model; otherwise fail explicitly.
 - Admission uses a cancellable OS file lock beside the Store, one per target
   Thread. No Store transaction or Step-begin lock spans the wait. Canceling an
   admitted caller cancels its own compact Run; canceling a waiter affects no owner.

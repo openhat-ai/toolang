@@ -31,6 +31,8 @@ from toolang.plugin.models.adapters.messages import (
 
 @pytest.mark.parametrize("change", ["none", "compaction", "instructions"])
 def test_responses_continuation_requires_unchanged_context(change: str) -> None:
+    from openai.types.responses import ResponseReasoningItem
+
     target = ModelTarget(
         ref="openai/model",
         provider="openai",
@@ -63,8 +65,12 @@ def test_responses_continuation_requires_unchanged_context(change: str) -> None:
         ),
     )
     previous = ModelCall("original instructions", [Message.user("old history")])
+    reasoning = ResponseReasoningItem(id="rs_1", summary=[], type="reasoning")
     continuation = responses.response_continuation(
-        SimpleNamespace(id="resp_1"),
+        SimpleNamespace(
+            id="resp_1",
+            output=[reasoning, SimpleNamespace(type="function_call", id="fc_1")],
+        ),
         request=previous,
         emitted_message=call,
         stateful=True,
@@ -89,15 +95,81 @@ def test_responses_continuation_requires_unchanged_context(change: str) -> None:
         assert [item["type"] for item in payload["input"]] == [
             "message",
             "message",
+            "reasoning",
             "function_call",
             "function_call_output",
         ]
+        assert payload["input"][2] == reasoning.model_dump(
+            mode="json", exclude_none=True
+        )
         assert payload["input"][0]["content"][0]["text"] == request.instructions
         assert isinstance(request.messages[0].parts[0], TextPart)
         assert (
             payload["input"][1]["content"][0]["text"]
             == request.messages[0].parts[0].text
         )
+
+
+def test_responses_reasoning_tracks_retained_tool_exchanges() -> None:
+    from openai.types.responses import ResponseReasoningItem
+
+    request = ModelCall("instructions", [Message.user("input")])
+    for index in range(3):
+        call = Message(
+            "assistant",
+            (ToolCallPart(f"fc_{index}", "tool", "tool", {}, call_id=f"call_{index}"),),
+        )
+        reasoning = ResponseReasoningItem(
+            id=f"rs_{index}",
+            type="reasoning",
+            summary=[],
+        )
+        continuation = responses.response_continuation(
+            SimpleNamespace(
+                id=f"resp_{index}",
+                output=[
+                    reasoning,
+                    SimpleNamespace(type="function_call", id=f"fc_{index}"),
+                ],
+            ),
+            request=request,
+            emitted_message=call,
+            stateful=True,
+        )
+        request = replace(
+            request, messages=[*request.messages, call], continuation=continuation
+        )
+    assert request.continuation is not None
+    assert set(request.continuation["reasoning"]) == {"fc_0", "fc_1", "fc_2"}
+    compacted = replace(
+        request, messages=[Message.user("summary"), *request.messages[2:]]
+    )
+    payload = responses.response_payload(
+        ModelTarget(
+            ref="openai/model",
+            provider="openai",
+            name="model",
+            model="model",
+            adapter="responses",
+        ),
+        compacted,
+        stateful=True,
+    )
+    assert [(item["type"], item.get("id")) for item in payload["input"][2:]] == [
+        ("reasoning", "rs_1"),
+        ("function_call", "fc_1"),
+        ("reasoning", "rs_2"),
+        ("function_call", "fc_2"),
+    ]
+    continuation = responses.response_continuation(
+        SimpleNamespace(id="resp_3"),
+        request=compacted,
+        emitted_message=Message.assistant("done"),
+        stateful=True,
+    )
+    assert continuation is not None
+    assert set(continuation["reasoning"]) == {"fc_1", "fc_2"}
+    json.dumps(continuation)
 
 
 @pytest.mark.parametrize(

@@ -113,6 +113,7 @@ from .common import (
     value_parts,
     value_text,
 )
+from .compact import available_horizon
 from .resources import (
     apply_agent_ceiling,
     resource_caps,
@@ -342,8 +343,6 @@ class RunExecutor:
             )
         loop = asyncio.get_running_loop()
         if spec.horizon is None:
-            from .compact import available_horizon
-
             spec = replace(spec, horizon=available_horizon(self.store, spec.thread))
         sandbox = _setup_sandbox(spec.setup)
         runnable, input, agent_resources, resources = _prepare_run_spec(spec)
@@ -440,7 +439,11 @@ class RunExecutor:
             model_override=model_override,
             limits=limits if limits is not None else setup.limits,
         )
-        spec = replace(spec, horizon=self.store.run_horizon(source))
+        spec = replace(
+            spec,
+            horizon=available_horizon(self.store, spec.thread)
+            or self.store.run_horizon(source),
+        )
         runnable, input, agent_resources, resources = _prepare_run_spec(spec)
         bound = _bind_run(
             spec,

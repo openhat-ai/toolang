@@ -333,6 +333,9 @@ def response_payload(
             messages=messages,
             include_instructions=not bool(previous_response_id),
             replay_tool_items=not stateful or had_previous_response,
+            reasoning=continuation.get("reasoning", {})
+            if stateful and not previous_response_id
+            else {},
         ),
     }
     if request.tools:
@@ -440,6 +443,7 @@ def response_input(
     messages: list[Message],
     include_instructions: bool,
     replay_tool_items: bool,
+    reasoning: Mapping[str, list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
     """Build one replayable typed Responses API input list."""
 
@@ -459,10 +463,10 @@ def response_input(
         )
         if encoded is None:
             continue
-        if isinstance(encoded, list):
-            results.extend(encoded)
-        else:
-            results.append(encoded)
+        for item in encoded if isinstance(encoded, list) else (encoded,):
+            if item["type"] == "function_call" and reasoning:
+                results.extend(reasoning.get(item["id"], ()))
+            results.append(item)
     return results
 
 
@@ -663,11 +667,34 @@ def response_continuation(
     messages = [*request.messages]
     if emitted_message is not None:
         messages.append(emitted_message)
-    return {
+    continuation: dict[str, Any] = {
         "previous_response_id": response_id,
         "baseline_count": len(messages),
         "prefix": _context_prefix(request, messages),
     }
+    # Keep opaque reasoning with the call it precedes. A compacted request can
+    # then replay retained tool exchanges without inheriting old server history.
+    retained_calls = {
+        part.tool_call_id
+        for message in request.messages
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    }
+    reasoning = {
+        key: value
+        for key, value in (request.continuation or {}).get("reasoning", {}).items()
+        if key in retained_calls
+    }
+    pending = []
+    for item in getattr(response, "output", ()):
+        if getattr(item, "type", None) == "reasoning":
+            pending.append(_response_data(item))
+        elif getattr(item, "type", None) == "function_call" and pending:
+            reasoning[item.id] = pending
+            pending = []
+    if reasoning:
+        continuation["reasoning"] = reasoning
+    return continuation
 
 
 def _context_prefix(request: ModelCall, messages: Sequence[Message]) -> str:

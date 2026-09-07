@@ -136,12 +136,14 @@ async def execute(
             output is not None
             and valid_output(output, str(target), history.roots, expected)
         ):
+            frame = state.frame_for_step(*execution.state_snapshot())
+            if not frame.model.tools:
+                raise ToolangError("compaction requires a model with tool support")
             compact_thread = f"compact_{target}"
             if store.get_thread(thread_id=compact_thread) is None:
                 store.create_thread(
                     thread_id=compact_thread, origin="script", created_at=utc_now()
                 )
-            frame = state.frame_for_step(*execution.state_snapshot())
             # This isolated program has only read-only history tools. In particular
             # it cannot reload into the human's State or transfer out of compact.
             setup = replace(frame.run.setup, tools=compact_tools())
