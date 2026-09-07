@@ -152,6 +152,24 @@ class ToolCollection(Mapping[str, AgentTool]):
             views=views,
         )
 
+    @property
+    def runtime(self) -> ToolCollection:
+        """Registered runtime tools, independent of user resource selectors."""
+
+        return self._derive(
+            tuple(entry for entry in self.entries if entry.ref.startswith("_toolang/"))
+        )
+
+    @property
+    def user(self) -> ToolCollection:
+        """Tools governed by user resource selectors."""
+
+        return self._derive(
+            tuple(
+                entry for entry in self.entries if not entry.ref.startswith("_toolang/")
+            )
+        )
+
     def match(
         self,
         queries: MatchUnion | str | Sequence[str] | None = None,

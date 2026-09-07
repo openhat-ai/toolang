@@ -15,7 +15,7 @@ ModelContinuation: TypeAlias = dict[str, Any]
 
 @dataclass(frozen=True, slots=True)
 class ToolCall:
-    """One model-emitted tool call."""
+    """One tool invocation initiated by a model or the runtime."""
 
     tool_call_id: str
     call_id: str

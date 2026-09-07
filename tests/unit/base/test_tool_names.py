@@ -11,7 +11,8 @@ from toolang.base.utils.tools import encode_tool_name
     [
         ("fs", "read", "fs__read"),
         ("public_tools", "run_task", "public_tools__run_task"),
-        ("_me", "create", "_me__create"),
+        ("me", "create", "me__create"),
+        ("_toolang", "run", "_toolang__run"),
     ],
 )
 def test_encode_tool_name_accepts_canonical_components(
@@ -28,7 +29,7 @@ def test_encode_tool_name_accepts_canonical_components(
         "",
         "_",
         "__me",
-        "_me__state",
+        "me__state",
         "fs1",
         "fs-name",
         "fs.name",

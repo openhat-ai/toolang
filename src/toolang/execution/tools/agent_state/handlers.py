@@ -314,7 +314,7 @@ def _scope(context: ToolContext, request: ResourceRequest) -> AgentStateScope:
     if unsafe_context or home.parent.name != "agents" or not home.is_dir():
         fail(
             "invalid_request",
-            "_me requires a current agent home",
+            "me requires a current agent home",
             operation=request.operation,
             kind=request.kind,
             key=request.key,

@@ -1075,10 +1075,12 @@ def step_given_from_data(kind: StepKind, data: object) -> StepGiven:
         return ModelStepGiven(model=model, call=model_call_from_data(payload["call"]))
     if kind == "tool":
         if not isinstance(data, Mapping) or set(data) not in {
-            frozenset({"plugin", "call"}),
-            frozenset({"plugin", "call", "summary"}),
+            frozenset({"plugin", "call", "trigger"}),
+            frozenset({"plugin", "call", "trigger", "summary"}),
         }:
-            raise ValueError("tool given requires: plugin, call, and optional summary")
+            raise ValueError(
+                "tool given requires: plugin, call, trigger, and optional summary"
+            )
         payload = cast(Mapping[str, object], data)
         plugin = payload["plugin"]
         if not isinstance(plugin, str):
@@ -1090,6 +1092,7 @@ def step_given_from_data(kind: StepKind, data: object) -> StepGiven:
             plugin=plugin,
             call=_TOOL_CALL_ADAPTER.validate_python(payload["call"]),
             summary=raw_summary,
+            trigger=cast(Literal["model", "runtime"], payload["trigger"]),
         )
     statement = flow_stmt_from_data(data)
     from .types import validate_step_given
@@ -1108,6 +1111,7 @@ def step_given_to_data(kind: StepKind, given: StepGiven) -> dict[str, object]:
     if isinstance(given, ToolStepGiven):
         data: dict[str, object] = {
             "plugin": given.plugin,
+            "trigger": given.trigger,
             "call": cast(
                 dict[str, object],
                 _TOOL_CALL_ADAPTER.dump_python(given.call, mode="json"),

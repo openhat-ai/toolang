@@ -2,7 +2,7 @@
 
 Toolang exposes tools through the toolset plugin family.
 
-Tools execute inside normal runs and are recorded as `tool_call` steps.
+Tools execute inside normal runs and are recorded as `tool` Steps.
 `AgentTool.invoke()` is asynchronous. Function-tool wrappers await native
 async callables and isolate synchronous Python callables in a worker thread,
 so blocking tool implementations do not stall the run event loop.
@@ -16,10 +16,11 @@ Current built-in tools are:
 - `shell`
 - `web`
 - `service`
-- `_me`
+- `me`
+- `_toolang`
 
-`_too` is deliberately absent from plugin loading. It is the executor-owned
-inner runtime toolset, not a selectable tool resource.
+All use the same plugin registration and invocation path. `_toolang` is a runtime
+toolset; user resource selectors apply only to user tools.
 
 
 ## Filesystem
@@ -73,30 +74,29 @@ Its leaf tools are `start_bridge`, `stop_bridge`, `init`, `start_auth`,
 
 ## Current Agent
 
-`_me` exposes structured operations for the current agent's authored data. The
-leading underscore marks it as a Toolang-owned internal action toolset; it
-still follows normal resource selection and can be denied by policy.
+`me` exposes structured operations for the current agent's authored data. It
+follows normal resource selection and can be denied by policy.
 
-The executor injects the current agent layout through `ToolContext`. `_me`
+The executor injects the current agent layout through `ToolContext`. `me`
 tools do not accept an agent name, home directory, root directory, or arbitrary
 path for choosing another target. They expose no layer selector and operate
-only on the current agent's home layer; `_me` does not read or modify root-layer
+only on the current agent's home layer; `me` does not read or modify root-layer
 caps.
 
 It exposes five leaves for all supported resource kinds:
 
 ```text
-_me__list(kind)
-_me__get(kind, key)
-_me__create(kind, key?, content)
-_me__update(kind, key, content, if_digest?)
-_me__delete(kind, key, if_digest?)
+me__list(kind)
+me__get(kind, key)
+me__create(kind, key?, content)
+me__update(kind, key, content, if_digest?)
+me__delete(kind, key, if_digest?)
 ```
 
 `kind` is one of `task`, `chore`, `psyche`, `skill`, `service`, `prompt`, or
 `flow`. `key` is a task/chore id or an authored cap/flow name. Task and chore
 create allocates the key and addresses ready documents only. Their lifecycle
-does not support `_me__delete`, and delete is never interpreted as archive.
+does not support `me__delete`, and delete is never interpreted as archive.
 
 `content` is selected and validated from the operation and kind. Job writes
 reuse the Markdown document models, id allocation, and RRULE validation used
@@ -110,7 +110,7 @@ Get and list return home-relative paths and SHA-256 digests. Update and delete
 accept an optional `if_digest` precondition. Expected failures remain failed
 tool calls and include a structured `output.error` with a stable code,
 operation, kind, optional key, and bounded field diagnostics. Source mutation
-does not publish State directly; normal watcher and `_too__reload` behavior
+does not publish State directly; normal watcher and `_toolang__reload` behavior
 remain authoritative.
 
 
@@ -118,17 +118,23 @@ remain authoritative.
 
 Tools do not own the model loop.
 
-For every ordinary tool-capable Agic Model Call, the executor separately
-injects `_too__run`, `_too__execute`, and `_too__reload`. `hands` and
+For every ordinary tool-capable Agic Model Call, the executor selects the registered
+`_toolang__run`, `_toolang__execute`, and `_toolang__reload` tools. `hands` and
 `handoffs` authorize runnable targets but do not select these definitions. An
 executor without State refresh still exposes reload and returns a correlated
 error if it is called. Statement-generated Flow evaluators, output-repair
 calls, and tool-disabled models receive no runtime tools.
 
-The definitions never appear in `AgentSetup.tools`, tool ceilings, public tool
-listings, or generic tool invocation. Run creates an ordinary Run Step, reload
-creates a reload control without a Step, and successful execute creates an
-applied execute control before replacing the active runnable without a Step.
+`AgentSetup.tools` retains registered runtime tools independently of user tool
+ceilings. Each invocation has an ordinary Tool Step. Trusted runtime tools receive
+per-call operations through `ToolContext.runtime`, not the Store or executor.
+Run creates a child owned by its Tool Step and returns `{run_id, output_type, output}`.
+Reload and execute return `{controls: [ControlRef]}`; the controls retain their
+payloads. Execute finishes its Tool Step before transferring execution.
+
+`ToolStepGiven.trigger` records `model` or `runtime`. Both have durable results and
+progress events; only model-triggered calls contribute ToolResult messages.
+Failures use `ToolResultPart.error`, with additional diagnostics in the output.
 
 Toolang runtime owns:
 

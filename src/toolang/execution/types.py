@@ -1376,17 +1376,20 @@ class ModelStepGiven:
 
 @dataclass(frozen=True, slots=True)
 class ToolStepGiven:
-    """Resolved plugin identity and model-emitted call known at Step begin."""
+    """Resolved plugin, invocation provenance, and call known at Step begin."""
 
     plugin: str
     call: ToolCall
     summary: str = ""
+    trigger: Literal["model", "runtime"] = "model"
 
     def __post_init__(self) -> None:
         if not isinstance(self.plugin, str) or not self.plugin:
             raise ValueError("tool Step given requires a plugin identity")
         if not isinstance(self.call, ToolCall):
             raise TypeError("tool Step given requires a ToolCall")
+        if self.trigger not in {"model", "runtime"}:
+            raise ValueError("tool Step trigger must be model or runtime")
         _validate_step_summary(self.summary, label="tool Step given", allow_empty=True)
 
 

@@ -63,7 +63,10 @@ agic inner() -> Text:
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "self", "self", f"_too__{action}", {"runnable": "agic:inner"}
+                        "self",
+                        "self",
+                        f"_toolang__{action}",
+                        {"runnable": "agic:inner"},
                     ),
                 )
             ),
@@ -90,7 +93,7 @@ agic inner() -> Text:
                 if isinstance(part, ToolResultPart)
             )
             assert result.error == (
-                f"_too/{action} cannot call the current or an ancestor runnable: agic:inner"
+                f"_toolang/{action} cannot call the current or an ancestor runnable: agic:inner"
             )
 
     asyncio.run(scenario())

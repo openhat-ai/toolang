@@ -70,7 +70,7 @@ class AgentStateToolset:
     """Tools for managing the current agent's authored resources."""
 
     config: dict[str, Any]
-    name: str = "_me"
+    name: str = "me"
     description: str | None = (
         "List, get, create, update, and delete this agent's tasks, chores, "
         "psyches, skills, services, prompts, and flows."
@@ -94,7 +94,7 @@ class AgentStateToolset:
 
 
 def create_toolset(config: Mapping[str, Any]) -> Toolset:
-    """Create the `_me` toolset plugin."""
+    """Create the `me` toolset plugin."""
 
     return AgentStateToolset(config=dict(config))
 

@@ -93,7 +93,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             assert connection.execute(
                 "SELECT parent FROM runs WHERE id = 'run_dot_child'"
             ).fetchone() == ("run_dot_path.2.3",)
-            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 40
+            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 41
         finally:
             connection.close()
     finally:
@@ -726,8 +726,8 @@ def test_retry_rejects_applied_execute_history_without_mutation(
             output=(
                 ToolCallPart(
                     tool_call_id="execute",
-                    tool_name="_too__execute",
-                    tool_family="_too__execute",
+                    tool_name="_toolang__execute",
+                    tool_family="_toolang__execute",
                     input={"runnable": "target", "input": {"_": "work"}},
                 ),
             ),

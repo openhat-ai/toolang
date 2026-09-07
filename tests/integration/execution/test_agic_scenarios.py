@@ -180,9 +180,9 @@ agic decide(_: Text) -> Boolean:
             assert {
                 tool.name for tool in harness.adapter.invocations[0].call.tools
             } == {
-                "_too__execute",
-                "_too__reload",
-                "_too__run",
+                "_toolang__execute",
+                "_toolang__reload",
+                "_toolang__run",
                 "lookup__value",
             }
             initial = harness.adapter.invocations[0].call
@@ -1067,7 +1067,9 @@ def test_streaming_completed_images_preserve_order_without_duplicates(
 
 
 @pytest.mark.parametrize("boundary", ["part_begin", "part_end"])
-@pytest.mark.parametrize("tool_name", ["math__double", "_too__reload", "_too__execute"])
+@pytest.mark.parametrize(
+    "tool_name", ["math__double", "_toolang__reload", "_toolang__execute"]
+)
 def test_cancel_during_tool_result_delivery_preserves_output(
     tmp_path: Path, boundary: str, tool_name: str
 ) -> None:
@@ -1100,7 +1102,7 @@ def test_cancel_during_tool_result_delivery_preserves_output(
                         call_id="provider-1",
                         name=tool_name,
                         input={"runnable": "agic:target"}
-                        if tool_name == "_too__execute"
+                        if tool_name == "_toolang__execute"
                         else {},
                     ),
                 )
@@ -1131,8 +1133,13 @@ def test_cancel_during_tool_result_delivery_preserves_output(
             assert part.tool_call_id == "call-1" and part.tool_name == tool_name
             if tool_name == "math__double":
                 assert part.output == {"value": 6}
-            elif tool_name == "_too__execute":
-                assert part.output == {"executed": "agent$agic:target"}
+            elif tool_name == "_toolang__execute":
+                control = next(
+                    c
+                    for c in harness.store.list_run_controls(run_id=run.id)
+                    if c.kind == "execute"
+                )
+                assert part.output == {"controls": [str(control.ref)]}
             else:
                 assert (
                     part.error == "Agent State refresh is unavailable in this executor"

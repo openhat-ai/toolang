@@ -22,7 +22,7 @@ def _context(toolang_root: Path, agent_name: str = "alice") -> ToolContext:
     return ToolContext(
         run_id="run-1",
         home=home,
-        room=home / ".runtime" / "tools" / "_me",
+        room=home / ".runtime" / "tools" / "me",
         wd=home,
     )
 
@@ -830,7 +830,7 @@ def test_compact_tool_rejects_symlinked_agent_home(tmp_path: Path) -> None:
     context = ToolContext(
         run_id="run-1",
         home=home,
-        room=home / ".runtime" / "tools" / "_me",
+        room=home / ".runtime" / "tools" / "me",
         wd=home,
     )
 
@@ -845,7 +845,7 @@ def test_compact_tool_rejects_non_agent_home_with_structured_error(
     context = ToolContext(
         run_id="run-1",
         home=tmp_path / "alice",
-        room=tmp_path / "alice" / ".runtime" / "tools" / "_me",
+        room=tmp_path / "alice" / ".runtime" / "tools" / "me",
         wd=tmp_path / "alice",
     )
 

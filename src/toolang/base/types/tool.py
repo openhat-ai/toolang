@@ -6,7 +6,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from ..protocols.tool import ToolRuntime
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,3 +68,4 @@ class ToolContext:
     wd: Path
     services: tuple[ToolService, ...] = ()
     placement: Literal["resident", "visiting", "roaming"] = "resident"
+    runtime: ToolRuntime | None = None

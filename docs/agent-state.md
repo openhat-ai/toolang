@@ -211,7 +211,7 @@ and may check concurrently. Root and home layer writer locks remain narrower:
 they are acquired only when that shared or agent-local layer actually needs to
 be rebuilt. The lock order is agent check, then root layer writer, then home
 layer writer. This process-owned boundary is also the State access boundary for
-future internal `_me` tools.
+current-agent `me` tools.
 
 ## Execution Records
 

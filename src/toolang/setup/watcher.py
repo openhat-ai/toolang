@@ -615,7 +615,12 @@ def _build_setup(
         models = models.match(allow.models).compact()
     tool_collection = ToolCollection.from_tools(tools)
     if allow.tools is not None:
-        tool_collection = tool_collection.match(allow.tools).compact()
+        selected = (
+            tool_collection.user.match(allow.tools) if allow.tools else ToolCollection()
+        )
+        tool_collection = tool_collection.subset(
+            (*tool_collection.runtime, *selected)
+        ).compact()
     if defaults.model is not None:
         entry = models.resolve(defaults.model.ref)
         apply_model_parameters(models, entry.target, defaults.model.parameters)

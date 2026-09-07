@@ -176,7 +176,7 @@ def test_runtime_instructions_omit_catalog_without_authored_routes() -> None:
     assert "<available-runnable-routes>" not in rendered
     assert '"runnables"' not in rendered
     assert "declares no hands or handoffs" in rendered
-    assert "Do not call _too__run or _too__execute" in rendered
+    assert "Do not call _toolang__run or _toolang__execute" in rendered
 
 
 def test_catalog_rejects_missing_authored_routes() -> None:

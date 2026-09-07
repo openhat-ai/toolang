@@ -270,7 +270,7 @@ def test_interruption_during_cleanup_still_persists_adopted_output(
                     ToolCall(
                         "call",
                         "call",
-                        tool.name if kind == "plugin" else "_too__unknown",
+                        tool.name if kind == "plugin" else "_toolang__unknown",
                         {},
                     ),
                 )
@@ -525,7 +525,10 @@ agic child() -> Text:
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "child", "child", f"_too__{action}", {"runnable": "agic:child"}
+                        "child",
+                        "child",
+                        f"_toolang__{action}",
+                        {"runnable": "agic:child"},
                     ),
                 )
             ),
