@@ -19,10 +19,13 @@ from tests.support.execution_harness import (
 )
 from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
+from toolang.common.layout import AgentLayout
 from toolang.execution.executor.steps import tool as tool_step
 from toolang.execution.history import RunHistory
 from toolang.execution.store import RunStore
 from toolang.execution.types import ThreadPrefix, ToolStepGiven
+from toolang.state.prepare import prepare_agent_state
+from toolang.state.watcher import StateWatcher
 
 
 @pytest.mark.parametrize("interrupt", [False, True])
@@ -123,3 +126,97 @@ agic task() -> Text:
         assert runtime.output.value.tool_call_id == "runtime"
     finally:
         reopened.close()
+
+
+def test_reload_keeps_runtime_routes_for_the_whole_model_batch(tmp_path: Path) -> None:
+    source = """
+agic parent() -> Text:
+  hands = flow:permitted
+  context: none
+  instruct: none
+  user: Parent.
+
+flow permitted(_: Text) -> Text:
+  pass
+
+flow blocked(_: Text) -> Text:
+  pass
+"""
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    layout.program.write_text(source, encoding="utf-8")
+    initial = prepare_agent_state(layout)
+    watcher = StateWatcher(layout)
+    tool = RecordingTool("test__work", output={"done": True})
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        state=initial,
+        refresh_state=watcher.refresh_result,
+        tools={tool.name: tool},
+        responses=[
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall("reload", "reload", "_toolang__reload", {}),
+                    ToolCall("ordinary", "ordinary", tool.name, {}),
+                    ToolCall(
+                        "blocked",
+                        "blocked",
+                        "_toolang__run",
+                        {"runnable": "flow:blocked", "input": {"_": "blocked"}},
+                    ),
+                    ToolCall(
+                        "permitted",
+                        "permitted",
+                        "_toolang__run",
+                        {"runnable": "flow:permitted", "input": {"_": "permitted"}},
+                    ),
+                )
+            ),
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "next",
+                        "next",
+                        "_toolang__run",
+                        {"runnable": "flow:blocked", "input": {"_": "blocked"}},
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        await watcher.refresh()
+        layout.program.write_text(
+            source.replace("hands = flow:permitted", "hands = flow:blocked"),
+            encoding="utf-8",
+        )
+        async with harness:
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="parent",
+                ),
+                tracer=tracer,
+            )
+            assert root.status == "succeeded", root.error
+            results = {
+                step.given.call.tool_call_id: step.output.value
+                for step in harness.store.list_steps(run_id=root.id)
+                if isinstance(step.given, ToolStepGiven)
+                and step.output is not None
+                and isinstance(step.output.value, ToolResultPart)
+            }
+            assert (
+                results["blocked"].error
+                == "runnable is not authorized by hands: flow:blocked"
+            )
+            assert results["permitted"].error is None
+            assert results["next"].error is None
+            assert_run_event_integrity(tracer.events)
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)

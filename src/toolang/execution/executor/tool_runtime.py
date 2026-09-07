@@ -10,7 +10,12 @@ from toolang.base.errors import ToolFailure, ToolangError
 from toolang.base.protocols.tool import ToolRuntime
 from toolang.state.state import StatePublication
 
-from ..runnables import ResolvedRunnable, parse_runnable_ref, resolve_public_runnable
+from ..runnables import (
+    AgicRoutes,
+    ResolvedRunnable,
+    parse_runnable_ref,
+    resolve_public_runnable,
+)
 from ..types import (
     ControlRef,
     ErrorMessage,
@@ -33,6 +38,7 @@ class _ToolRuntime(ToolRuntime):
     step: StepRef
     source: FieldRef | None
     tool_call_count: int
+    routes: AgicRoutes
     transfer: _ExecuteCommitted | None = None
     error: ErrorMessage | ErrorRef | None = None
     failure: Exception | None = None
@@ -141,7 +147,7 @@ class _ToolRuntime(ToolRuntime):
     def _authorize(
         self, operation: Literal["run", "execute"], target: ResolvedRunnable
     ) -> None:
-        if not self.state.prepared.routes.allows(operation, target):
+        if not self.routes.allows(operation, target):
             selector = "hands" if operation == "run" else "handoffs"
             raise ToolangError(
                 f"runnable is not authorized by {selector}: {target.ref}"

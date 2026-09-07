@@ -323,13 +323,18 @@ async def _execute(state: _AgicState) -> Message | None:
         state.output = ref
         state.record_output(ref)
         if result.tool_calls:
+            # A reload inside this batch changes State, not its routing authority.
+            routes = state.prepared.routes
             if state.steer_before_next_step():
                 await tool_step.skip(state, result.tool_calls)
                 continue
             for index, call in enumerate(result.tool_calls):
                 try:
                     await tool_step.execute(
-                        state, call, tool_call_count=len(result.tool_calls)
+                        state,
+                        call,
+                        tool_call_count=len(result.tool_calls),
+                        routes=routes,
                     )
                 except asyncio.CancelledError:
                     if not state.immediate_steer():

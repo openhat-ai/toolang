@@ -23,6 +23,7 @@ from toolang.common.time import elapsed_ms, utc_now
 from toolang.state.state import AgentState, StatePublication
 
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
+from ...runnables import AgicRoutes
 from ...types import (
     ControlRef,
     ErrorMessage,
@@ -108,6 +109,7 @@ async def execute(
     trigger: Literal["model", "runtime"] = "model",
     input: tuple[FieldRef, ...] | None = None,
     tool_call_count: int = 1,
+    routes: AgicRoutes | None = None,
 ) -> ToolCallResult:
     """Perform one tool call and emit its complete step event stream."""
 
@@ -160,7 +162,6 @@ async def execute(
         state_ref: ControlRef,
     ) -> StepBegin:
         nonlocal prepared, plugin_name, summary_context
-        # Runtime commands use the routes that authorized this model batch.
         # Bind the operation to the Step's State even if reload removed its Agic.
         if _plugin_name(prepared.tools.get(call.name)) != "_toolang":
             prepared = state.frame_for_step(agent_state, state_ref)
@@ -185,7 +186,9 @@ async def execute(
     await begin(state, step, call, begin_step, trigger=trigger)
     state.prepared = prepared
     runtime = (
-        _ToolRuntime(state, step, source_ref, tool_call_count)
+        _ToolRuntime(
+            state, step, source_ref, tool_call_count, routes or prepared.routes
+        )
         if plugin_name == "_toolang"
         else None
     )

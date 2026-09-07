@@ -234,8 +234,9 @@ execute targets; they do not select definitions. All tools use plugin registrati
 and the same Tool Step lifecycle. A bounded route catalog lists
 the authored routes and resolved union as model hints only when `hands` or
 `handoffs` is present; with neither directive, instructions state that no
-target is authorized and omit the catalog. Authorization always checks the
-captured authored route list.
+target is authorized and omit the catalog. Runtime calls in one model batch
+use that Model Call's captured routes, even if reload and ordinary tools adopt
+new State between calls. The next Model Call captures the new routes.
 
 `AgentSetup.models` and `AgentSetup.tools` are already filtered immutable
 collections. `StatePublication.resources` similarly contains the filtered caps
@@ -319,33 +320,32 @@ StepEnd(run)
 This distinction is made at the event source. The sink and tracer observe the
 same canonical event sequence and never filter a synthetic top-level step.
 
-A successful `_toolang__execute` records one applied execute control and replaces
-the active runnable binding without a transition Step, child Run, or another
-`RunBegin`:
+A successful `_toolang__execute` records one applied execute control during its
+Tool Step, then finishes that Step before transferring to the target. It creates
+no child Run, extra transition Step, or additional `RunBegin`:
 
 ```text
 RunBegin(entry)
   caller Model Step
+  execute Tool Step → applied execute control
   target Steps
 RunEnd(final target result)
 ```
 
-The execute control records the originating Model ToolCall, that Model Step's
-captured State, the resolved ref and module, and raw `Json` input pointers. The
-captured target signature and State define input coercion. Input, resources,
-authorization, and active runnable lineage are validated before the control is
-persisted. Failure creates no control and returns a correlated result to the
-calling Agic. Success discards that Agic's messages, continuation, and local
-call counters; the target begins with its natural next Step in the same Run.
+The control's `triggered_by` points to the Tool Step. Its payload records the
+Tool Step's captured State, the qualified runnable, and raw `Json` input pointers
+into the originating Model ToolCall. Input, resources, authorization, and active
+runnable lineage are validated before commit. Validation failure creates no
+control and returns a correlated tool error. Success returns a control receipt;
+the target starts with fresh continuation and local call counters, while prior
+Steps and message deltas remain in Run history.
 The entry runnable's output type remains the final Run contract. Repeated
 identities in the current or an active ancestor lineage are rejected.
 
-Progress does not require an execute Step or control event. It observes the
-`_toolang__execute` ToolCall in the caller Model Step, keeps an active execute
-marker until the next boundary, recognizes a correlated failure from the next
-`ModelStepGiven`, and otherwise attaches a handoff divider to the target's
-first natural Step. The divider is presentation only; execution records remain
-the Model Step, applied execute control, and target Steps.
+Progress starts the execute marker at Tool Step begin, confirms the transfer from
+its result, and attaches a handoff divider to the target's first Step. A receipt
+still confirms commit if result delivery was canceled; cancellation does not
+undo the control. No separate control event is needed for presentation.
 
 
 ## Control Observation
