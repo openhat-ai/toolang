@@ -11,6 +11,7 @@ import click
 import typer
 from typer.core import TyperGroup
 
+from toolang.base.utils import typer_compat
 from ...catalog import templates
 from ...catalog.errors import CatalogConflictError
 from ...common.layout import AgentLayout
@@ -286,7 +287,7 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             kind=kind,
             name=name,
         ):
-            raise click.ClickException(f"{title} {name} already exists")
+            raise typer_compat.ClickException(f"{title} {name} already exists")
         text = click.edit(
             templates.render_template(kind, template, name=name, agent_name=agent_name),
             extension=".md",
@@ -325,7 +326,7 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 raise FileNotFoundError(name)
             text = existing.content
         except FileNotFoundError as exc:
-            raise click.ClickException(f"{title} {name} not found") from exc
+            raise typer_compat.ClickException(f"{title} {name} not found") from exc
         updated_text = click.edit(
             text,
             extension=".md",
@@ -375,18 +376,22 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                         progress=progress,
                     )
         except CatalogConflictError as exc:
-            raise click.ClickException(
+            raise typer_compat.ClickException(
                 f"{title} {cap_state.remote_entry_name(kind, ref)} already exists"
             ) from exc
         except ValueError as exc:
             if progress.failure_stage is not None:
-                raise click.ClickException(progress.failure_message(exc)) from exc
+                raise typer_compat.ClickException(
+                    progress.failure_message(exc)
+                ) from exc
             message = str(exc)
             if "conflicting entries" in message:
-                raise click.ClickException(
+                raise typer_compat.ClickException(
                     f"{title} {cap_state.remote_entry_name(kind, ref)} already exists"
                 ) from exc
-            raise click.ClickException(f"Configured {kind} {ref} not found") from exc
+            raise typer_compat.ClickException(
+                f"Configured {kind} {ref} not found"
+            ) from exc
         entry = _named_entry(
             context_root(ctx),
             agent_name,
@@ -525,7 +530,9 @@ def _all_cap_entries(
                 return entries
         except Exception as exc:
             if progress.failure_stage is not None:
-                raise click.ClickException(progress.failure_message(exc)) from exc
+                raise typer_compat.ClickException(
+                    progress.failure_message(exc)
+                ) from exc
             raise
     return cap_state.list_entries(
         toolang_root,
@@ -572,7 +579,7 @@ def _named_entry(
         if source_form is not None and entry.source.form != source_form:
             continue
         return entry
-    raise click.ClickException(f"{kind.title()} {name} not found")
+    raise typer_compat.ClickException(f"{kind.title()} {name} not found")
 
 
 def _local_entry_exists(
@@ -644,5 +651,5 @@ def _prepare_agent_state_with_progress(
         )
     except Exception as exc:
         if progress.failure_stage is not None:
-            raise click.ClickException(progress.failure_message(exc)) from exc
+            raise typer_compat.ClickException(progress.failure_message(exc)) from exc
         raise

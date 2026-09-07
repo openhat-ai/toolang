@@ -7,7 +7,6 @@ from dataclasses import dataclass
 import json
 from typing import Annotated, Literal, cast
 
-import click
 import typer
 from rich import box
 from rich.cells import cell_len
@@ -15,6 +14,7 @@ from rich.console import Console, RenderableType
 from rich.table import Table
 from rich.text import Text
 
+from toolang.base.utils import typer_compat
 from toolang.cli.common.human_values import (
     human_scalar_text,
     human_value_renderable,
@@ -244,7 +244,7 @@ def _project_step_call(store: RunStore, source: _InspectSubject) -> object:
         return _project_tool_call(store, source)
     if step.kind in {"run", "par", "loop"}:
         return _project_structural_tree(store, source)
-    raise click.UsageError(f"{step.ref} does not support projector call")
+    raise typer_compat.UsageError(f"{step.ref} does not support projector call")
 
 
 def _render_model_call(
@@ -673,7 +673,7 @@ def inspect_command(
     """Inspect execution subjects."""
 
     if human and json_view:
-        raise click.UsageError("--human and --json are mutually exclusive")
+        raise typer_compat.UsageError("--human and --json are mutually exclusive")
     query = _parse_inspect_query(subjects)
     with open_execution(ctx, required=True) as resources:
         if resources is None:  # pragma: no cover - required=True guarantees this
@@ -690,16 +690,16 @@ def inspect_command(
                     _render_projection_json(projection)
                 else:
                     _render_projection_human(resources.store, projection)
-        except click.UsageError:
+        except typer_compat.UsageError:
             raise
         except (TypeError, ValueError) as exc:
-            raise click.ClickException(str(exc)) from exc
+            raise typer_compat.ClickException(str(exc)) from exc
 
 
 def _parse_inspect_query(values: Sequence[str]) -> _InspectQuery:
     tokens = tuple(values)
     if not tokens:
-        raise click.UsageError("inspect requires a subject")
+        raise typer_compat.UsageError("inspect requires a subject")
     projector = (
         tokens[-1] if len(tokens) > 1 and tokens[-1] in _PROJECTOR_NAMES else None
     )
@@ -711,7 +711,7 @@ def _parse_inspect_query(values: Sequence[str]) -> _InspectQuery:
         try:
             root_pointer = Pointer.parse(head)
         except (TypeError, ValueError) as exc:
-            raise click.UsageError(f"invalid pointer: {exc}") from exc
+            raise typer_compat.UsageError(f"invalid pointer: {exc}") from exc
     return _InspectQuery(
         subjects=subjects,
         root_pointer=root_pointer,
@@ -811,15 +811,17 @@ def _projector_transition(
     )
 
 
-def _invalid_child(subject: _InspectSubject, token: str) -> click.UsageError:
+def _invalid_child(subject: _InspectSubject, token: str) -> typer_compat.UsageError:
     allowed = _available_names(subject)
     label = _inspect_subject_label(subject)
     if allowed:
-        return click.UsageError(
+        return typer_compat.UsageError(
             f"invalid child subject {token!r} after {label}; "
             f"allowed: {', '.join(allowed)}"
         )
-    return click.UsageError(f"{label} does not accept a child subject: {token!r}")
+    return typer_compat.UsageError(
+        f"{label} does not accept a child subject: {token!r}"
+    )
 
 
 def _apply_projector(

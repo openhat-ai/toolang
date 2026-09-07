@@ -30,7 +30,7 @@ _CURRENT_TOOL_CONTEXT: ContextVar[ToolContext | None] = ContextVar(
     "toolang_experiments_current_tool_context",
     default=None,
 )
-_CLICK_MODULE: Any | None = None
+_TYPER_MODULE: Any | None = None
 _GET_COMMAND: Callable[[Any], Any] | None = None
 
 TyperToolPrepare = Callable[[tuple[str, ...], Mapping[str, Any], ToolContext], Any]
@@ -98,7 +98,7 @@ class _LeafCommandSpec:
             or _command_description(
                 self.command, self.path_tokens, prog_name=self.prog_name
             ),
-            parameters=_schema_from_click_params(
+            parameters=_schema_from_typer_params(
                 params,
                 hidden_params=self.config.hidden_params,
                 param_aliases=self.config.param_aliases,
@@ -111,7 +111,7 @@ class _LeafCommandSpec:
     def invoke(
         self, arguments: Mapping[str, Any], context: ToolContext
     ) -> dict[str, Any]:
-        click = _require_click()
+        typer_compat = _require_typer_compat()
         prepared = (
             self.config.prepare(self.path_tokens, arguments, context)
             if self.config.prepare is not None
@@ -160,11 +160,11 @@ class _LeafCommandSpec:
                     prog_name=self.prog_name,
                     standalone_mode=False,
                 )
-        except click.ClickException as exc:
+        except typer_compat.ClickException as exc:
             exit_code = exc.exit_code
             with redirect_stderr(stderr):
                 exc.show()
-        except click.exceptions.Exit as exc:
+        except typer_compat.Exit as exc:
             exit_code = int(exc.exit_code or 0)
         finally:
             _CURRENT_TOOL_CONTEXT.reset(reset_token)
@@ -266,8 +266,8 @@ def _collect_leaf_specs(
     include_paths: set[tuple[str, ...]],
     configs: Mapping[tuple[str, ...], TyperToolConfig],
 ) -> list[_LeafCommandSpec]:
-    click = _require_click()
-    if isinstance(command, click.Group) and command.commands:
+    typer_compat = _require_typer_compat()
+    if isinstance(command, typer_compat.Group) and command.commands:
         result: list[_LeafCommandSpec] = []
         parent_params = tuple(_visible_params(command.params))
         for token, child in command.commands.items():
@@ -345,7 +345,7 @@ def _command_description(
     return f"Run `{prog_name} {' '.join(path_tokens)}`."
 
 
-def _schema_from_click_params(
+def _schema_from_typer_params(
     params: Iterable[Any],
     *,
     hidden_params: frozenset[str],
@@ -366,7 +366,7 @@ def _schema_from_click_params(
             raise ToolangError(
                 f"duplicate parameter while building Typer tool: {param_name}"
             )
-        schema = dict(param_schemas.get(param_name) or _schema_for_click_param(param))
+        schema = dict(param_schemas.get(param_name) or _schema_for_typer_param(param))
         help_text = getattr(param, "help", None)
         if isinstance(help_text, str) and help_text.strip():
             schema["description"] = help_text.strip()
@@ -389,21 +389,21 @@ def _schema_from_click_params(
     }
 
 
-def _schema_for_click_param(param: Any) -> dict[str, Any]:
+def _schema_for_typer_param(param: Any) -> dict[str, Any]:
     if getattr(param, "multiple", False) or getattr(param, "nargs", 1) != 1:
         return {
             "type": "array",
-            "items": _schema_for_click_type(getattr(param, "type", None)),
+            "items": _schema_for_typer_type(getattr(param, "type", None)),
         }
-    schema = _schema_for_click_type(getattr(param, "type", None))
+    schema = _schema_for_typer_type(getattr(param, "type", None))
     default = getattr(param, "default", None)
     if default not in (None, (), []):
         schema["default"] = default
     return schema
 
 
-def _schema_for_click_type(param_type: Any) -> dict[str, Any]:
-    click = _require_click()
+def _schema_for_typer_type(param_type: Any) -> dict[str, Any]:
+    typer_compat = _require_typer_compat()
     custom_schema = getattr(param_type, "tool_schema", None)
     if callable(custom_schema):
         payload = custom_schema()
@@ -411,10 +411,10 @@ def _schema_for_click_type(param_type: Any) -> dict[str, Any]:
             return dict(payload)
     elif isinstance(custom_schema, dict):
         return dict(custom_schema)
-    if isinstance(param_type, click.Choice):
+    if isinstance(param_type, typer_compat.Choice):
         return {"type": "string", "enum": list(param_type.choices)}
     type_name = getattr(param_type, "name", "")
-    if type_name == "integer":
+    if type_name in {"int", "integer"}:
         return {"type": "integer"}
     if type_name == "float":
         return {"type": "number"}
@@ -438,17 +438,17 @@ def _build_argv(
 
 
 def _serialize_params(params: Iterable[Any], values: Mapping[str, Any]) -> list[str]:
-    click = _require_click()
+    typer_compat = _require_typer_compat()
     options: list[str] = []
     args: list[str] = []
     for param in params:
         if param.name is None or param.name not in values:
             continue
         raw_value = values[param.name]
-        if isinstance(param, click.Option):
+        if isinstance(param, typer_compat.Option):
             options.extend(_serialize_option(param, raw_value))
             continue
-        if isinstance(param, click.Argument):
+        if isinstance(param, typer_compat.Argument):
             args.extend(_serialize_argument(param, raw_value))
     return [*options, *args]
 
@@ -532,17 +532,17 @@ def _stringify(value: Any) -> str:
     return str(value)
 
 
-def _require_click() -> Any:
-    global _CLICK_MODULE
-    if _CLICK_MODULE is None:
+def _require_typer_compat() -> Any:
+    global _TYPER_MODULE
+    if _TYPER_MODULE is None:
         try:
-            import click
+            from . import typer_compat
         except ModuleNotFoundError as exc:  # pragma: no cover - environment dependent
             raise ToolangError(
-                "Typer tool helpers require the optional 'click' and 'typer' dependencies."
+                "Typer tool helpers require the 'typer' dependency."
             ) from exc
-        _CLICK_MODULE = click
-    return _CLICK_MODULE
+        _TYPER_MODULE = typer_compat
+    return _TYPER_MODULE
 
 
 def _require_get_command() -> Callable[[Any], Any]:
@@ -552,7 +552,7 @@ def _require_get_command() -> Callable[[Any], Any]:
             from typer.main import get_command
         except ModuleNotFoundError as exc:  # pragma: no cover - environment dependent
             raise ToolangError(
-                "Typer tool helpers require the optional 'click' and 'typer' dependencies."
+                "Typer tool helpers require the 'typer' dependency."
             ) from exc
         _GET_COMMAND = get_command
     return _GET_COMMAND

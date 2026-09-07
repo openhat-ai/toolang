@@ -13,6 +13,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
+from toolang.base.utils import typer_compat
 from toolang.cli.caps.main import app as caps_app
 from toolang.cli.common.lazy import LazyCommand
 from toolang.cli.toolang.main import app as toolang_app
@@ -22,10 +23,10 @@ from tests import PROJECT_ROOT
 def _command_paths(app: typer.Typer) -> tuple[tuple[str, ...], ...]:
     paths: list[tuple[str, ...]] = []
 
-    def collect(command: click.Command, prefix: tuple[str, ...]) -> None:
+    def collect(command: typer_compat.Command, prefix: tuple[str, ...]) -> None:
         if isinstance(command, LazyCommand):
             command = command.load()
-        if not isinstance(command, click.Group):
+        if not isinstance(command, typer_compat.Group):
             return
         for name, child in command.commands.items():
             path = (*prefix, name)

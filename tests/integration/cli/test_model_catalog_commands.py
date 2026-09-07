@@ -73,7 +73,7 @@ def test_models_is_a_leaf_command_without_file_output_options() -> None:
 
     assert models_result.exit_code == 0, models_result.stderr
     assert providers_result.exit_code == 0, providers_result.stderr
-    models_help = unstyle(models_result.stdout)
+    models_help = " ".join(unstyle(models_result.stdout).replace("│", "").split())
     assert "--query" in models_help
     assert "--query-help" not in models_help
     assert "--query-schema" not in models_help

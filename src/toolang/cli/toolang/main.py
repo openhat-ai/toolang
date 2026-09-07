@@ -9,11 +9,11 @@ import os
 import sys
 from typing import Annotated, Any
 
-import click
 import typer
 from typer import rich_utils
 from typer.core import TyperGroup
 
+from toolang.base.utils import typer_compat
 from ...catalog.agent import LocalAgents
 from ...common.layout import AgentLayout
 from ...common import version as _version
@@ -94,7 +94,7 @@ class _ToolangGroup(TyperGroup):
         )
         super().__init__(*args, commands=commands, **kwargs)
 
-    def list_commands(self, ctx: click.Context) -> list[str]:
+    def list_commands(self, ctx: typer_compat.Context) -> list[str]:
         names = TyperGroup.list_commands(self, ctx)
         visible = [name for name in _VISIBLE_COMMAND_ORDER if name in names]
         return [*visible, *(name for name in names if name not in visible)]
@@ -165,7 +165,7 @@ def callback(
 
         configure_logging(spec=None, environ=os.environ)
     except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
+        raise typer_compat.ClickException(str(exc)) from exc
     ctx.obj = CliContext(
         root=resolve_root(toolang_root),
         agent=_PREFIX_AGENT.get(),
@@ -180,7 +180,7 @@ def hidden_commands(ctx: typer.Context) -> None:
         style=rich_utils.STYLE_USAGE_COMMAND,
     )
     group = typer.main.get_command(app)
-    if not isinstance(group, click.Group):
+    if not isinstance(group, typer_compat.Group):
         typer.echo("No hidden commands.")
         return
     hidden_order = {name: index for index, name in enumerate(_HIDDEN_COMMAND_ORDER)}
@@ -211,7 +211,7 @@ def hidden_commands(ctx: typer.Context) -> None:
 
 
 def _print_hidden_command_panel(
-    console: Any, name: str, commands: list[click.Command]
+    console: Any, name: str, commands: list[typer_compat.Command]
 ) -> None:
     if not commands:
         return
@@ -540,7 +540,7 @@ def _run_target_help(
     prog_name: str,
 ) -> int:
     root_command = typer.main.get_command(app)
-    if not isinstance(root_command, click.Group):
+    if not isinstance(root_command, typer_compat.Group):
         raise TypeError("Toolang CLI root must be a command group")
     commands = {
         name: command
@@ -561,7 +561,7 @@ def _run_target_help(
             prog_name=f"{prog_name} {target.selector}",
             standalone_mode=False,
         )
-    except click.exceptions.Exit as exc:
+    except typer_compat.Exit as exc:
         return exc.exit_code
     return 0
 
@@ -581,9 +581,9 @@ def _run_app(
             prog_name=prog_name,
             standalone_mode=False,
         )
-    except click.exceptions.Exit as exc:
+    except typer_compat.Exit as exc:
         return exc.exit_code
-    except click.ClickException as exc:
+    except typer_compat.ClickException as exc:
         if exc.__class__.__name__ != "NoArgsIsHelpError":
             echo_error(exc)
         return exc.exit_code
