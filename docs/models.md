@@ -62,6 +62,38 @@ combined input is not retained in the runtime snapshot. `Provider.to_data()`
 and `Model.to_data()` emit only raw provider catalog data, so `too models
 --json` remains a round-trippable filtered catalog export.
 
+## Model Selection
+
+Configure authorization and preference together, at root or agent scope:
+
+```toml
+[allow]
+models = ["openai/*", "google/*", "*"]
+# A collection query string is also accepted: "openai/*, google/*, *"
+[default]
+model = "openai/gpt-5 effort=medium"
+[compact]
+model = "openai/gpt-5 effort=low"
+```
+
+Without `allow.models`, available providers are preferred in this order: alibaba,
+anthropic, deepseek, google, meta, minimax, mistral, moonshotai, openai, openrouter,
+xai, zai, zhipuai, then all remaining providers. Models within a provider retain
+catalog order. No models are excluded by this default. Explicit queries replace
+the ordering; `*` preserves catalog order, while `all` restores the default.
+
+Omit `compact.model` to select the first allowed, available model with both tool
+calls and structured output. Session/request model restrictions still apply.
+Compact never inherits the normal model or its effort. An explicit compact model
+must meet the same requirements; invalid choices or parameters fail without
+fallback. Set `model = "unset"` to disable automatic compaction.
+
+Override compact selection with `TOOLANG_COMPACT_MODEL='openai/gpt-5 effort=low'`
+or `too alice run --compact 'model=openai/gpt-5 effort=low'`. Precedence is CLI,
+environment, agent config, root config, then automatic selection. `--compact`
+also applies to `start` and `chat` when starting a runtime; it cannot reconfigure
+an already running agent. There is no `compact.models` setting.
+
 ## Catalog Plugins
 
 Catalog plugins use the `toolang.model_catalog` entry-point group and implement:

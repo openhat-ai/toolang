@@ -3141,6 +3141,45 @@ def test_responses_skip_historical_tool_items_without_previous_response_id() -> 
 
 
 def test_responses_previous_response_id_replays_tool_output_without_item_id() -> None:
+    request = ModelCall(
+        instructions="dev",
+        messages=[
+            Message.user("hello"),
+            Message(
+                role="assistant",
+                parts=(
+                    ToolCallPart(
+                        tool_call_id="fc_1",
+                        call_id="call_1",
+                        tool_name="shell__execute",
+                        tool_family="shell__execute",
+                        input={"command": "pwd"},
+                    ),
+                ),
+            ),
+            Message(
+                role="tool",
+                parts=(
+                    ToolResultPart(
+                        tool_call_id="fc_1",
+                        call_id="call_1",
+                        tool_name="shell__execute",
+                        tool_family="shell__execute",
+                        output={"ok": True, "stdout": "/tmp"},
+                    ),
+                ),
+            ),
+        ],
+    )
+    request = replace(
+        request,
+        continuation=responses_models.response_continuation(
+            SimpleNamespace(id="resp_1"),
+            request=replace(request, messages=request.messages[:1]),
+            emitted_message=request.messages[1],
+            stateful=True,
+        ),
+    )
     payload = response_payload(
         ModelTarget(
             ref="openai/gpt-5",
@@ -3149,37 +3188,7 @@ def test_responses_previous_response_id_replays_tool_output_without_item_id() ->
             model="gpt-5",
             adapter="responses",
         ),
-        ModelCall(
-            instructions="dev",
-            messages=[
-                Message.user("hello"),
-                Message(
-                    role="assistant",
-                    parts=(
-                        ToolCallPart(
-                            tool_call_id="fc_1",
-                            call_id="call_1",
-                            tool_name="shell__execute",
-                            tool_family="shell__execute",
-                            input={"command": "pwd"},
-                        ),
-                    ),
-                ),
-                Message(
-                    role="tool",
-                    parts=(
-                        ToolResultPart(
-                            tool_call_id="fc_1",
-                            call_id="call_1",
-                            tool_name="shell__execute",
-                            tool_family="shell__execute",
-                            output={"ok": True, "stdout": "/tmp"},
-                        ),
-                    ),
-                ),
-            ],
-            continuation={"previous_response_id": "resp_1", "baseline_count": 2},
-        ),
+        request,
         stateful=True,
     )
 

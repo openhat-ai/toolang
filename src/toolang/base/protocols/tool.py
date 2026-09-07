@@ -51,6 +51,10 @@ class ToolRuntime(Protocol):
 
     async def reload(self) -> dict[str, Any]: ...
 
+    async def compact(
+        self, thread: str, begin: str | None, end: str
+    ) -> dict[str, Any]: ...
+
     async def pick(
         self, kind: Literal["skill", "service"], ref: str
     ) -> dict[str, Any]: ...

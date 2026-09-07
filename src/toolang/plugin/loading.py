@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from importlib.metadata import entry_points
@@ -149,6 +149,7 @@ def load_plugins_with_sources(
     group: str,
     config: Mapping[str, Mapping[str, Any]] | None = None,
     built_ins_first: bool = False,
+    names: Sequence[str] | None = None,
 ) -> tuple[LoadedPlugin, ...]:
     """Load installed plugins while retaining entry-point authority sources."""
 
@@ -157,6 +158,7 @@ def load_plugins_with_sources(
     installed = [
         (entry_point, _entry_point_plugin_source(entry_point))
         for entry_point in entry_points(group=group)
+        if names is None or entry_point.name in names
     ]
     if built_ins_first:
         installed.sort(key=lambda item: item[1] != "built-in")

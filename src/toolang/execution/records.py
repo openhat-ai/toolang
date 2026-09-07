@@ -418,6 +418,7 @@ class ModelCallRefs:
     output_schema: dict[str, object] | None
     continuation: ModelContinuation | None
     recall: tuple[str, ...] = ("none",)
+    max_output_tokens: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.instructions, str) or not self.instructions:
@@ -1140,9 +1141,10 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
         "recall",
         "output_schema",
         "tools",
+        "max_output_tokens",
     }:
         raise ValueError(
-            "stored model call requires: cont, instructions, delta, recall, tools, output_schema"
+            "stored model call requires: cont, instructions, delta, recall, tools, output_schema, max_output_tokens"
         )
     call = cast(Mapping[str, object], raw_call)
     instructions = call["instructions"]
@@ -1165,6 +1167,7 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
             delta=delta_from_data(cast(Mapping[str, object], raw_delta)),
             recall=tuple(cast(Sequence[str], call["recall"])),
             tools=raw_tools,
+            max_output_tokens=cast(int | None, call["max_output_tokens"]),
             output_schema=(
                 dict(cast(Mapping[str, object], raw_output_schema))
                 if isinstance(raw_output_schema, Mapping)
@@ -1195,6 +1198,7 @@ def stored_step_given_to_data(
                 "delta": delta_to_data(given.call.delta),
                 "recall": list(given.call.recall),
                 "tools": given.call.tools,
+                "max_output_tokens": given.call.max_output_tokens,
                 "output_schema": (
                     dict(given.call.output_schema)
                     if given.call.output_schema is not None
@@ -1623,6 +1627,7 @@ def model_call_to_data(call: ModelCall) -> dict[str, Any]:
             dict(call.output_schema) if call.output_schema is not None else None
         ),
         "cont": (dict(call.continuation) if call.continuation is not None else None),
+        "max_output_tokens": call.max_output_tokens,
     }
 
 

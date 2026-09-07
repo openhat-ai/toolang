@@ -205,7 +205,7 @@ def test_setup_policy_rejects_unknown_and_invalid_fields() -> None:
     with pytest.raises(ValueError, match="unknown allow field: channels"):
         resolve_setup_allow(({"allow": {"channels": ["web"]}},))
     with pytest.raises(TypeError, match="allow models must be an array"):
-        resolve_setup_allow(({"allow": {"models": "gateway"}},))
+        resolve_setup_allow(({"allow": {"models": 42}},))
     with pytest.raises(ValueError, match="unknown default field: tool"):
         resolve_run_defaults(({"default": {"tool": "shell"}},))
     with pytest.raises(ValueError, match="model request ref must be exact"):

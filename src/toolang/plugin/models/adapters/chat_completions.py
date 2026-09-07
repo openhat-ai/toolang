@@ -284,6 +284,15 @@ def chat_completion_payload(
         native_schema=native_schema,
     )
     _apply_reasoning(payload, target)
+    if request.max_output_tokens is not None:
+        field = (
+            "max_completion_tokens"
+            if target.provider == "openai" or "max_completion_tokens" in target.options
+            else "max_tokens"
+        )
+        payload.pop("max_completion_tokens", None)
+        payload.pop("max_tokens", None)
+        payload[field] = request.max_output_tokens
     payload["stream"] = stream
     if stream and "stream_options" not in payload:
         payload["stream_options"] = {"include_usage": True}

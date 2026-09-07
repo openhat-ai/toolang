@@ -401,7 +401,7 @@ async def _finish(
         state.messages.append_ref(
             "tool", FieldRef.from_path(step, "output", "value"), output
         )
-    state.last_step = step.index
+        state.last_step = step.index
     end = PartEnd(step=step, part=0, data=part)
     ended = False
     status: StepStatus = "failed" if part.error is not None else "succeeded"
@@ -455,7 +455,7 @@ async def _cancel(
             FieldRef.from_path(step, "output", "value"),
             Local.typed("ToolResultPart", part, None, 0),
         )
-    state.last_step = step.index
+        state.last_step = step.index
     await state.end_step(
         StepEnd(
             step=step,
@@ -581,6 +581,13 @@ def _tool_summary_context(
 
 
 def _tool_summary(context: _ToolSummaryContext, status: str) -> str:
+    if context.family == "_toolang" and context.name == "compact":
+        return {
+            "running": "Compacting history",
+            "succeeded": "Compacted history",
+            "failed": "Failed to compact history",
+            "canceled": "Canceled history compaction",
+        }[status]
     template = _DEFAULT_TOOL_SUMMARY_TEMPLATES.get(status, "{{name}} {{args.0}}")
     rendered = render_text_template(
         template,

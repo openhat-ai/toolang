@@ -17,6 +17,7 @@ from toolang.base.types.model import ModelOverride
 from toolang.base.types.message import TextDelta, TextPart, message_text
 from toolang.cli.common.policy import (
     resolve_default_overrides,
+    resolve_compact_override,
     resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
@@ -92,6 +93,7 @@ def chat_command(
     sandbox: str | None = None,
     dev: Path | None = None,
     limits: list[str] | None = None,
+    compacts: list[str] | None = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
     _chat_interactive(
@@ -103,6 +105,7 @@ def chat_command(
         allow_options=allows,
         default_options=defaults,
         limit_options=limits,
+        compact_options=compacts,
     )
 
 
@@ -116,12 +119,14 @@ def _chat_interactive(
     allow_options: list[str] | None = None,
     default_options: list[str] | None = None,
     limit_options: list[str] | None = None,
+    compact_options: list[str] | None = None,
 ) -> None:
     with _chat_runtime(
         ctx,
         model_catalog=model_catalog,
         sandbox=sandbox,
         dev=dev,
+        compact_options=compact_options,
     ) as client:
         setting = client.initial_setting()
         initial_update, clear_runnable = _chat_session_override(
@@ -159,10 +164,12 @@ def _chat_runtime(
     model_catalog: Path | None = None,
     sandbox: str | None,
     dev: Path | None = None,
+    compact_options: list[str] | None = None,
 ) -> Iterator[ChatClient]:
     """Own one local, attached, or temporary-remote Chat session."""
 
     layout = context_layout(ctx)
+    compact_override = user_call(resolve_compact_override, {}, compact_options)
     try:
         server_context = acquire_agent_server(
             layout,
@@ -170,6 +177,7 @@ def _chat_runtime(
             dev=dev,
             model_catalog=resolve_model_catalog_option(model_catalog),
             ui_base_url=ui_base_url(),
+            compact_override=compact_override,
         )
         with server_context as server:
             if server is not None:
@@ -193,6 +201,8 @@ def _chat_runtime(
             local = LocalChatSession(
                 layout,
                 sandbox="host",
+                compact_override=compact_override
+                or user_call(resolve_compact_override, environ),
                 **(
                     {"model_catalog": model_catalog}
                     if model_catalog is not None

@@ -312,6 +312,14 @@ class MessageHistory:
         self.select(horizon)
         return self._selected_recalls[horizon]
 
+    def near_roots(
+        self, horizon: FieldRef | None
+    ) -> tuple[tuple[RunRef, tuple[Message, ...]], ...]:
+        """Return the cached root boundaries of the selected near."""
+
+        self.select(horizon)
+        return tuple((root, self._messages[root]) for root in self._ranges[horizon])
+
     def tail(
         self, horizon: FieldRef | None
     ) -> tuple[MessageDelta, tuple[Message, ...]]:

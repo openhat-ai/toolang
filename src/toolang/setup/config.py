@@ -87,7 +87,7 @@ def project_setup_config(config: Mapping[str, object]) -> dict[str, object]:
 
     projected = {
         name: _mutable_value(config[name])
-        for name in ("models", "default", "limit")
+        for name in ("models", "default", "compact", "limit")
         if name in config
     }
     raw_allow = config.get("allow")
@@ -187,6 +187,27 @@ def resolve_setup_allow(
     return ceiling
 
 
+def resolve_compact_model(
+    configs: Sequence[Mapping[str, object]],
+    *,
+    override: ModelOverride | None = None,
+) -> ModelOverride | None:
+    """Resolve an independent compact model, or None for automatic selection."""
+    selected = None
+    for config in configs:
+        table = _table(config, "compact")
+        if table is None:
+            continue
+        _reject_unknown(table, frozenset({"model"}), "compact field")
+        if "model" in table:
+            selected = parse_model_body(_default_text("model", table["model"]))
+    if override is not None:
+        selected = override
+    if selected is not None and selected.identity in (None, "default"):
+        raise ValueError("compact.model requires an exact model or unset")
+    return selected
+
+
 def resolve_run_defaults(
     configs: Sequence[Mapping[str, object]],
     *,
@@ -276,6 +297,8 @@ def _reject_unknown(
 
 
 def _query_values(name: str, value: object) -> tuple[str, ...] | None:
+    if name == "models" and isinstance(value, str):
+        value = (value,)
     if not isinstance(value, Sequence) or isinstance(value, str | bytes | bytearray):
         raise TypeError(f"allow {name} must be an array of queries")
     try:

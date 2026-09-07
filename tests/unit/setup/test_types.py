@@ -45,6 +45,7 @@ def test_agent_setup_has_only_effective_publication_fields() -> None:
         "environment",
         "defaults",
         "limits",
+        "compact_model",
     )
 
 

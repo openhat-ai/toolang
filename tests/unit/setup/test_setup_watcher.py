@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from toolang.base.protocols.model import ModelCatalog
+from toolang.base.model_settings import parse_model_body
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.common.errors import ToolangError
 from toolang.base.types.model import (
@@ -1214,6 +1215,76 @@ def test_setup_watcher_keeps_missing_default_absent(
     assert setup.defaults.model is None
 
 
+@pytest.mark.parametrize("query", [None, "aardvark/*, openai/*, *"])
+def test_setup_model_order_survives_cached_publication(tmp_path, monkeypatch, query):
+    path = tmp_path / "catalog.json"
+    _write_catalog(path, ("z", "a"))
+    provider = json.loads(path.read_text())["test"]
+    path.write_text(
+        json.dumps(
+            {
+                name: {**provider, "id": name, "api": "https://example.test/v1"}
+                for name in ("aardvark", "openai", "google")
+            }
+        )
+    )
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    config = {} if query is None else {"allow": {"models": query}}
+    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
+    first = asyncio.run(watcher.refresh())
+    providers = (
+        ("google", "openai", "aardvark")
+        if query is None
+        else ("aardvark", "openai", "google")
+    )
+    expected = tuple(
+        f"{provider}/{model}" for provider in providers for model in ("a", "z")
+    )
+    assert first.models.refs() == expected
+    warm = asyncio.run(SetupWatcher(watcher.layout).refresh())
+    assert warm.models.refs() == expected
+
+
+def test_compact_config_republishes_without_rebuilding_model_projection(
+    tmp_path, monkeypatch
+):
+    _write_catalog(tmp_path / "catalog.json", ("one", "two"), reasoning=True)
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    config = {"compact": {"model": "test/one effort=high"}}
+    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
+    first = asyncio.run(watcher.refresh())
+    assert first.compact_model == parse_model_body("test/one effort=high")
+
+    def reject_projection(_model):
+        pytest.fail("compact configuration must not rebuild the model projection")
+
+    monkeypatch.setattr(watcher_module, "model_info_from_catalog", reject_projection)
+    config["compact"] = {"model": "test/two effort=low"}
+    second = asyncio.run(watcher.refresh())
+    assert second is not first
+    assert second.models == first.models
+    assert second.compact_model == parse_model_body("test/two effort=low")
+    assert (
+        asyncio.run(SetupWatcher(watcher.layout).refresh()).compact_model
+        == second.compact_model
+    )
+
+    config["compact"] = {"model": "test/two effort=max"}
+    assert asyncio.run(watcher.refresh()) is second
+    assert "does not advertise reasoning effort" in watcher.diagnostics()[0].message
+
+
+def test_setup_watcher_rejects_compact_excluded_from_effective_models(
+    tmp_path, monkeypatch
+):
+    _write_catalog(tmp_path / "catalog.json", ("one", "two"))
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    config = {"allow": {"models": "test/one"}, "compact": {"model": "test/two"}}
+    monkeypatch.setattr(watcher_module, "load_setup_config", lambda _layout: config)
+    with pytest.raises(ToolangError, match="available, allowed"):
+        asyncio.run(watcher.refresh())
+
+
 def test_setup_watcher_rejects_default_excluded_from_effective_models(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1334,6 +1405,7 @@ def test_tool_allow_filters_user_tools_but_keeps_runtime_registration(
         "_toolang__pick",
         "_toolang__honor",
         "_toolang__reload",
+        "_toolang__compact",
     }
 
 

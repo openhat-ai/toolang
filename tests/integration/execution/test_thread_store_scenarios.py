@@ -377,6 +377,7 @@ def test_stored_model_call_delta_round_trip() -> None:
                 "tools": None,
                 "output_schema": None,
                 "cont": {"cursor": "saved"},
+                "max_output_tokens": 4096,
             },
         },
     )
@@ -391,6 +392,7 @@ def test_stored_model_call_delta_round_trip() -> None:
         "tools": None,
         "output_schema": None,
         "cont": {"cursor": "saved"},
+        "max_output_tokens": 4096,
     }
 
 

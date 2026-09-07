@@ -35,6 +35,7 @@ from toolang.lang.input import (
 from toolang.plugin.models.resolution import (
     apply_model_parameters,
 )
+from toolang.plugin.models.budget import input_budget, output_budget
 from toolang.state import state as cap_store
 from toolang.state.state import (
     StateCap,
@@ -78,6 +79,8 @@ class _AgicFrame:
     recall: tuple[str, ...] = ("far", "near")
     far: str = ""
     near: tuple[Message, ...] = ()
+    output_budget: int = 4096
+    input_budget: int | None = None
 
 
 def prepare_agic(
@@ -183,6 +186,7 @@ def prepare_agic(
     adapter = run.setup.adapters.get(model.adapter)
     if adapter is None:
         raise ToolangError(f"unknown model adapter: {model.adapter}")
+    output = output_budget(model, entry.info)
     prepared = _AgicFrame(
         run=run,
         agic=agic,
@@ -200,6 +204,8 @@ def prepare_agic(
         ),
         far=far,
         near=tuple(near),
+        output_budget=output,
+        input_budget=input_budget(entry.info, output),
     )
     _log_prepared(prepared)
     return prepared

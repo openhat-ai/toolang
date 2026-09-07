@@ -38,6 +38,7 @@ class AgentCore:
         ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
         default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
         limit_overrides: Mapping[str, int | Decimal | None] | None = None,
+        compact_override: ModelOverride | None = None,
     ) -> None:
         self.layout = layout
         self.store = RunStore(layout.run_store)
@@ -55,6 +56,7 @@ class AgentCore:
             },
             default_overrides=default_overrides,
             limit_overrides=limit_overrides,
+            compact_override=compact_override,
         )
         self.state = StateWatcher(
             layout,

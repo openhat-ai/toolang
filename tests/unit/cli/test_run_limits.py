@@ -3,6 +3,7 @@ import pytest
 from toolang.base.types.model import ModelOverride
 from toolang.cli.common.policy import (
     resolve_default_overrides,
+    resolve_compact_override,
     resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
@@ -43,6 +44,35 @@ def test_policy_overrides_preserve_absent_empty_and_unrestricted() -> None:
         "model": ModelOverride(identity="unset")
     }
     assert resolve_limit_overrides({}, ("time=none",)) == {"time": None}
+
+
+def test_compact_override_replaces_environment_without_inheriting_effort():
+    environ = {"TOOLANG_COMPACT_MODEL": "test/old effort=high"}
+    assert resolve_compact_override({}) is None
+    assert resolve_compact_override(environ) == ModelOverride(
+        identity="test/old", effort="high"
+    )
+    assert resolve_compact_override(environ, ["model=test/new"]) == ModelOverride(
+        identity="test/new"
+    )
+    assert resolve_compact_override(environ, ["model=unset"]) == ModelOverride(
+        identity="unset"
+    )
+
+
+@pytest.mark.parametrize(
+    "options, error",
+    [
+        (["models=test/*"], "unknown compact field"),
+        (["model=test/a", "model=test/b"], "duplicate compact field"),
+        (["model=effort=low"], "exact model or unset"),
+        (["model=default"], "exact model or unset"),
+        (["test/a"], "field=value"),
+    ],
+)
+def test_compact_override_rejects_ambiguous_options(options, error):
+    with pytest.raises(ValueError, match=error):
+        resolve_compact_override({}, options)
 
 
 @pytest.mark.parametrize("field", ["CAPS", "CHANNELS"])

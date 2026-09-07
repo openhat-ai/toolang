@@ -113,6 +113,7 @@ from .common import (
     value_parts,
     value_text,
 )
+from .compact import available_horizon
 from .resources import (
     apply_agent_ceiling,
     resource_caps,
@@ -341,6 +342,8 @@ class RunExecutor:
                 include=self._include_resolver(setup),
             )
         loop = asyncio.get_running_loop()
+        if spec.horizon is None:
+            spec = replace(spec, horizon=available_horizon(self.store, spec.thread))
         sandbox = _setup_sandbox(spec.setup)
         runnable, input, agent_resources, resources = _prepare_run_spec(spec)
         if not isinstance(spec.limits, RunLimits):
@@ -436,7 +439,11 @@ class RunExecutor:
             model_override=model_override,
             limits=limits if limits is not None else setup.limits,
         )
-        spec = replace(spec, horizon=self.store.run_horizon(source))
+        spec = replace(
+            spec,
+            horizon=available_horizon(self.store, spec.thread)
+            or self.store.run_horizon(source),
+        )
         runnable, input, agent_resources, resources = _prepare_run_spec(spec)
         bound = _bind_run(
             spec,
@@ -1529,6 +1536,29 @@ class _Execution:
             root = next(iter(self._active_bindings.values()))
             self._history = self.store.message_history(root.root_run_id)
         return self._history
+
+    def state_snapshot(self) -> tuple[ExecutionState, ControlRef]:
+        """Read the live binding before an uncommitted ModelCall preparation."""
+        return self._current_state
+
+    def compact(self, step: StepRef, horizon: FieldRef) -> tuple[ControlRef, ...]:
+        """Record the result for adoption, retaining its online receipt facts."""
+        pending = self.runtime_controls(step.run_id)
+        if self.horizon_for(step.run_id) == horizon:
+            return ()
+        for control in reversed(pending):
+            if isinstance(control.payload, CompactControlPayload):
+                if control.payload.horizon == horizon:
+                    return (control.ref,)
+                break
+        control = self.store.accept_compact_control(
+            run_id=step.run_id,
+            horizon=horizon,
+            triggered_by=step,
+            created_at=utc_now(),
+        )
+        self._runtime_controls[step.run_id][control.index] = control
+        return (control.ref,)
 
     def runtime_controls(
         self, run_id: str, *, refresh: bool = True

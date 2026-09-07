@@ -38,6 +38,7 @@ from ..common import (
 
 from ..limits import _ModelAccounting
 from .._messages import _MessageBuffer
+from ..budget import InputEstimate
 from ..prepare import _AgicFrame, prepare_agic
 from ..steps import model as model_step
 from ..steps import tool as tool_step
@@ -92,6 +93,7 @@ class _AgicState:
     initial_inputs: tuple[FieldRef, ...] = ()
     claimed_inputs: tuple[ControlRecord, ...] = ()
     repairing_output: bool = False
+    estimate: InputEstimate = field(default_factory=InputEstimate)
     begin_step: (
         Callable[
             [Callable[[ExecutionState, ControlRef], StepBegin]],

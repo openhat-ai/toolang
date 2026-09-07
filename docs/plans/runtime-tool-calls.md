@@ -330,6 +330,8 @@ At new root creation, reuse an applicable validated result located by
 RunHistory.get_compaction and fix its output reference in the run payload's
 horizon; otherwise start with no horizon. Children retain existing parent-horizon
 inheritance. Later changes use compact controls, never a replay-time latest lookup.
+Rerun also prefers the latest applicable result, falling back to the source Run's
+explicit horizon when no newer result is available.
 
 Use one cross-process permit per target Thread, not a ban on requests while a
 root Run is active. Waiters recheck budget/range after admission and reuse valid
@@ -366,7 +368,9 @@ accepts a request that could run out of context during generation.
 - Use the near retention budget only to choose a compaction boundary. Root-only
   boundaries and the mandatory retained historical root take precedence over that
   target; Step-level splitting is deferred. No fixed post-compaction percentage
-  is required.
+  is required. Reject already-oversized mandatory content before starting compact.
+  This lower-bound check excludes newly staged historical tails, which may shrink
+  when the horizon advances; committed now never shrinks.
 - Give compact's model calls their own output budgets. After adopting the result,
   reprepare and recheck the complete candidate, not just the summary. If it still
   exceeds budget and no valid boundary can advance, fail explicitly. This includes
@@ -377,10 +381,41 @@ accepts a request that could run out of context during generation.
   after compaction or relevant binding changes. Never use cumulative Run usage as
   context size or reread stable records on every call.
 
-Numeric safety-margin, near-retention, and default output budgets remain PR5
-tuning choices. Specify estimator calibration, multimodal accounting, and
-unavailable-metadata behavior in that implementation; do not treat unknown
-limits as known capacity.
+PR5 policy:
+
+- Default output: 4096 tokens, capped at the known model output limit. Honor
+  native adapter configuration; Messages thinking must fit inside this budget.
+  Persist `ModelCall.max_output_tokens` (Store schema 42) and replay it unchanged.
+  OpenAI's output limit includes reasoning tokens; see its
+  [token-counting guide](https://developers.openai.com/api/docs/guides/token-counting).
+- Responses continuation retains a fingerprint of the request prefix. A changed
+  prefix starts a fresh provider context and resends the selected tool exchanges;
+  unchanged prefixes continue using the previous response. Other adapters keep
+  their own continuation semantics. Preserve the Responses reasoning items that
+  precede retained tool calls, following its
+  [context-management guidance](https://developers.openai.com/api/docs/guides/reasoning#keeping-reasoning-items-in-context).
+- Safety margin: 5% of the limiting input capacity, at least 1024 tokens. Near
+  target: half the input budget, rounded down; retain the last historical root
+  regardless of its size. Each compact advances at least one root.
+- Initial estimate: UTF-8 bytes / 3, rounded up, with serialized roles, tools and
+  output schema, 8 tokens per message and 32 request overhead. Add 4096 per image,
+  audio or document part. This is conservative accounting, not a tokenizer or a
+  guarantee for arbitrary media. Positive inclusive provider input usage replaces
+  the estimate for an unchanged prefix; otherwise reuse the estimated prefix.
+  Horizon, State, model or recall changes invalidate calibration.
+- Unknown limits disable automatic capacity checks, not output limits. A known
+  independent input limit still applies. Never infer a missing context window.
+- `compact.too` first inspects earlier compact outputs, then uses fresh child
+  Runs for bounded history pages and rolling reduction. At most 1024 page
+  iterations; incomplete coverage produces no usable summary. An individually
+  oversized history record fails explicitly: field slicing and recursive compact
+  are not implemented. Only read-only history tools are available to this program,
+  loaded through the normal factory/registration path independently of the human
+  Run's tool selectors. Loading compact does not initialize unrelated plugins.
+  Compact model selection is independent of the normal Run (see below).
+- Admission uses a cancellable OS file lock beside the Store, one per target
+  Thread. No Store transaction or Step-begin lock spans the wait. Canceling an
+  admitted caller cancels its own compact Run; canceling a waiter affects no owner.
 
 ## Implementation PRs and acceptance
 
@@ -405,6 +440,46 @@ Across all PRs verify durable Step/control order, no duplicate adoption or child
 results, commit-before-delivery failures, and equality of online requests and
 State-free replay. Run Ruff check/format, ty, and the default offline pytest suite
 before every commit. Validate links and keep changes within the PR's scope.
+
+## Independent compact model selection
+
+```toml
+[allow]
+models = ["provider-a/*", "provider-b/*", "*"]
+# Equivalent collection query: models = "provider-a/*, provider-b/*, *"
+[default]
+model = "provider-a/model effort=medium"
+[compact]
+model = "provider-b/model effort=low"
+```
+
+- `allow.models` defines authorization and ordering. Without a query (including
+  `all`), rank exact provider IDs: alibaba, anthropic, deepseek, google, meta,
+  minimax, mistral, moonshotai, openai, openrouter, xai, zai, zhipuai. Append other
+  providers in catalog order; retain catalog order within each provider. This
+  default excludes no models. Explicit `*` retains catalog order.
+- Omitted `compact.model` selects the first available, allowed model supporting
+  both tool calls and structured output. Apply session/request model ceilings too,
+  but not the normal runnable's model directive. Unknown capabilities do not
+  qualify. No eligible model produces a clear error when compaction is needed.
+- Explicit `compact.model` requires an exact model plus supported parameters,
+  using the existing model-body syntax. It must pass the same authorization and
+  capability checks. `unset` disables compaction. Never inherit the normal model
+  or parameters; never silently fall back to another model after failure.
+- Precedence: CLI `--compact 'model=MODEL effort=high'`, environment
+  `TOOLANG_COMPACT_MODEL`, agent config, root config, automatic selection. These
+  are runtime startup settings, not per-run model overrides. Existing runtimes
+  must be configured at their own startup. `allow` and `default` keep their
+  existing environment/CLI options. There is no `compact.models` setting.
+- Setup parses configuration once; the executor selects from the effective
+  authorized collection when compact starts. Persist the selected request using
+  existing Run records, without another schema or replay dependency on Setup.
+
+Touchpoints: setup configuration/publication and model-cache invalidation,
+CLI/runtime startup forwarding, executor compact selection, and offline tests.
+Acceptance: default/explicit ordering, string/list queries, unavailable or
+unauthorized models, unknown capabilities, independent effort, disabled compact,
+layer precedence, host/guest CLI propagation, and online/replay equivalence.
 
 ## Risks and exclusions
 
