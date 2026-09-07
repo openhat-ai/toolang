@@ -61,6 +61,7 @@ from toolang.lang.ast import (
     Program,
     RepeatStmt,
 )
+from toolang.lang.description import statement_description
 from toolang.lang.includes import resolve_file_include
 from toolang.lang.input import (
     CallInput,
@@ -86,8 +87,6 @@ from ...common.remote_runtime import inspect_remote_runtime
 from ...common.result_saving import save_result
 from ...common.output import echo_error
 from ...common.execution_progress.config import resolve_progress_max_width
-from ...common.execution_progress.formatting import one_line
-from ...common.execution_progress.headers import statement_description
 from ...common.script_progress import ScriptRunPresenter
 
 Runnable = AgicDecl | FlowDecl
@@ -166,7 +165,7 @@ def _flow_outline(flow: FlowDecl) -> Text:
     def append_statements(statements: tuple[FlowStmt, ...], depth: int) -> None:
         for index, statement in enumerate(statements):
             prefix = f"{'  ' * depth}[{index}] "
-            doc = one_line(statement.doc.strip()) if statement.doc else ""
+            doc = " ".join(statement.doc.split()) if statement.doc else ""
             if doc:
                 outline.append(f"{prefix}{doc}\n")
                 prefix = " " * len(prefix)

@@ -23,8 +23,9 @@ without preparing an agent or starting execution.
   automatic description. Render generated descriptions dim and authored docs
   at normal intensity, so complete docs customize the outline's main narrative.
   Preserve generated runnable names. Extract the existing automatic wording
-  into `statement_description()` and retain `statement_header()` as the
-  unchanged doc-first wrapper used by progress.
+  into `toolang.lang.description.statement_description()`, depending only on
+  the AST. Progress keeps its doc-first `statement_header()` wrapper; help owns
+  the outline layout, styling, and truncation.
 - Expand `RepeatStmt.stmts` once beneath its header, indent two spaces per
   level, and restart ordinals within each block. Do not unroll iterations.
   The existing generated repeat description includes its count and condition;
@@ -69,10 +70,15 @@ Flow outline
   private helpers here. Do not reconstruct option help or alter dispatch.
 - `tests/unit/cli/test_script_command.py`: cover the new help section through
   `dispatch()` and retain the existing invocation and help contract tests.
-- `src/toolang/cli/common/execution_progress/headers.py`: extract the automatic
-  description function without changing existing progress headers or wording.
-- `tests/unit/cli/test_execution_progress_projector.py`: verify automatic
-  descriptions remain independent of docs and progress still prefers docs.
+- `src/toolang/lang/description.py`: own pure statement descriptions and their
+  wording helpers; import no CLI or execution modules.
+- `src/toolang/cli/common/execution_progress/headers.py`: select progress titles
+  using the language description function while retaining doc precedence and
+  the existing `until` boundary policy.
+- `tests/unit/lang/test_statement_description.py`: own automatic wording tests,
+  including independence from authored docs.
+- `tests/unit/cli/test_execution_progress_projector.py`: verify the unchanged
+  progress header selection and boundary behavior.
 
 ## Acceptance Tests
 
