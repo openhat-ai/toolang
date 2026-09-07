@@ -116,7 +116,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
             )
             for name in ("caps", *CAP_KINDS)
         ),
-        _command("models", "none"),
+        _command("models", "none", "before", placements=_RESIDENT, prepare="layout"),
         _command("providers", "none"),
         _command("tools", "none"),
         _command("catalogs", "none"),
