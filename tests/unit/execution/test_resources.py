@@ -167,9 +167,9 @@ def test_agent_resources_durable_data_round_trips_every_resource_kind() -> None:
         models=("test/model",),
         tools=(
             AgentToolResource(
-                model_name="_me__create",
-                plugin="_me",
-                toolset="_me",
+                model_name="me__create",
+                plugin="me",
+                toolset="me",
                 name="create",
             ),
         ),

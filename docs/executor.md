@@ -227,11 +227,11 @@ There is no loop plugin or public run-context protocol, and there are no
 separate effective-resource, invocation, model-call assembly, or tool-snapshot
 layers.
 
-The frame keeps public tools, inner runtime tools, and effective Agic routes in
-separate fields. Every ordinary tool-capable Agic call receives `_too__run`,
-`_too__execute`, and `_too__reload`. `hands` and `handoffs` authorize run and
-execute targets; they do not select definitions. Model Call assembly combines
-the definitions only at the adapter boundary. A bounded route catalog lists
+The frame holds one selected tool mapping and effective Agic routes. Every
+ordinary tool-capable Agic call receives `_toolang__run`,
+`_toolang__execute`, and `_toolang__reload`. `hands` and `handoffs` authorize run and
+execute targets; they do not select definitions. All tools use plugin registration
+and the same Tool Step lifecycle. A bounded route catalog lists
 the authored routes and resolved union as model hints only when `hands` or
 `handoffs` is present; with neither directive, instructions state that no
 target is authorized and omit the catalog. Authorization always checks the
@@ -319,7 +319,7 @@ StepEnd(run)
 This distinction is made at the event source. The sink and tracer observe the
 same canonical event sequence and never filter a synthetic top-level step.
 
-A successful `_too__execute` records one applied execute control and replaces
+A successful `_toolang__execute` records one applied execute control and replaces
 the active runnable binding without a transition Step, child Run, or another
 `RunBegin`:
 
@@ -341,7 +341,7 @@ The entry runnable's output type remains the final Run contract. Repeated
 identities in the current or an active ancestor lineage are rejected.
 
 Progress does not require an execute Step or control event. It observes the
-`_too__execute` ToolCall in the caller Model Step, keeps an active execute
+`_toolang__execute` ToolCall in the caller Model Step, keeps an active execute
 marker until the next boundary, recognizes a correlated failure from the next
 `ModelStepGiven`, and otherwise attaches a handoff divider to the target's
 first natural Step. The divider is presentation only; execution records remain

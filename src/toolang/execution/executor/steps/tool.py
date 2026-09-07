@@ -9,9 +9,9 @@ import logging
 from collections.abc import Callable, Mapping
 import re
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
-from toolang.base.protocols.tool import AgentTool
+from toolang.base.protocols.tool import AgentTool, ToolRuntime
 from toolang.base.types.message import ToolResultPart
 from toolang.base.types.run import ToolCall, ToolCallResult
 from toolang.base.types.tool import ToolContext, ToolService
@@ -35,6 +35,7 @@ from ...types import (
     StepStatus,
 )
 from ..common import _StepFailed
+from ..tool_runtime import _ToolRuntime
 from ..diagnostics import log_tool_call_input, log_tool_call_output
 
 if TYPE_CHECKING:
@@ -65,6 +66,8 @@ async def begin(
     step: StepRef,
     call: ToolCall,
     build: Callable[[AgentState | StatePublication, ControlRef], StepBegin],
+    *,
+    trigger: Literal["model", "runtime"] = "model",
 ) -> None:
     """Establish the Tool Step boundary even when interrupted during its lock wait."""
 
@@ -87,7 +90,7 @@ async def begin(
         else:
             if interruption is None:
                 return
-        await cancel(state, step, call)
+        await cancel(state, step, call, trigger=trigger)
         raise interruption
 
 
@@ -98,7 +101,14 @@ class _ToolSummaryContext:
     args: tuple[str, ...]
 
 
-async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
+async def execute(
+    state: _AgicState,
+    call: ToolCall,
+    *,
+    trigger: Literal["model", "runtime"] = "model",
+    input: tuple[FieldRef, ...] | None = None,
+    tool_call_count: int = 1,
+) -> ToolCallResult:
     """Perform one tool call and emit its complete step event stream."""
 
     run = state.prepared.run
@@ -107,17 +117,23 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     state.next_step += 1
     step_started = time.perf_counter()
     started_at = utc_now()
-    source = state.tool_call_sources.get(call.tool_call_id)
-    step_input: tuple[FieldRef, ...]
-    if source is not None:
-        step_input = (
-            FieldRef.from_path(
-                StepRef.from_local(run.run_id, (source[0],)),
-                "output",
-                "value",
-                source[1],
-            ),
+    source = (
+        state.tool_call_sources.get(call.tool_call_id) if trigger == "model" else None
+    )
+    source_ref = (
+        FieldRef.from_path(
+            StepRef.from_local(run.run_id, (source[0],)), "output", "value", source[1]
         )
+        if source is not None
+        else None
+    )
+    step_input: tuple[FieldRef, ...]
+    if input is not None:
+        step_input = input
+    elif trigger == "runtime":
+        step_input = ()
+    elif source_ref is not None:
+        step_input = (source_ref,)
     elif state.last_step is not None:
         step_input = (
             FieldRef.from_path(
@@ -144,7 +160,10 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         state_ref: ControlRef,
     ) -> StepBegin:
         nonlocal prepared, plugin_name, summary_context
-        prepared = state.frame_for_step(agent_state, state_ref)
+        # Runtime commands use the routes that authorized this model batch.
+        # Bind the operation to the Step's State even if reload removed its Agic.
+        if _plugin_name(prepared.tools.get(call.name)) != "_toolang":
+            prepared = state.frame_for_step(agent_state, state_ref)
         tool = prepared.tools.get(call.name)
         plugin_name = _plugin_name(tool)
         summary_context = _tool_summary_context(call, tool)
@@ -157,12 +176,19 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
                 plugin=plugin_name,
                 call=call,
                 summary=_tool_summary(summary_context, "running"),
+                trigger=trigger,
             ),
             started_at=started_at,
         )
 
-    await begin(state, StepRef.from_local(run.run_id, (step_index,)), call, begin_step)
+    step = StepRef.from_local(run.run_id, (step_index,))
+    await begin(state, step, call, begin_step, trigger=trigger)
     state.prepared = prepared
+    runtime = (
+        _ToolRuntime(state, step, source_ref, tool_call_count)
+        if plugin_name == "_toolang"
+        else None
+    )
     log_tool_call_input(
         call,
         thread_id=run.thread,
@@ -177,6 +203,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             services=prepared.services,
             layout=state.layout,
             call=call,
+            runtime=runtime,
         )
     except asyncio.CancelledError:
         await cancel(
@@ -184,6 +211,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             StepRef.from_local(run.run_id, (step_index,)),
             call,
             summary=_tool_summary(summary_context, "canceled"),
+            trigger=trigger,
         )
         raise
     except Exception as exc:
@@ -225,13 +253,20 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         step_index=step_index,
         plugin_name=plugin_name,
     )
-    await finish(
-        state,
-        StepRef.from_local(run.run_id, (step_index,)),
-        part,
-        summary=_tool_summary(summary_context, status),
-        canceled_summary=_tool_summary(summary_context, "canceled"),
-    )
+    try:
+        await finish(
+            state,
+            step,
+            part,
+            summary=_tool_summary(summary_context, status),
+            canceled_summary=_tool_summary(summary_context, "canceled"),
+            error=runtime.error if runtime is not None else None,
+            trigger=trigger,
+        )
+    except asyncio.CancelledError:
+        if runtime is None or runtime.transfer is None or not state.immediate_steer():
+            raise
+        # Delivery cannot undo an already committed execute.
     _LOGGER.info(
         "Step finished thread=%s run=%s step=%s kind=tool tool=%s status=%s duration_ms=%s",
         run.thread,
@@ -241,6 +276,10 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         status,
         elapsed_ms(step_started),
     )
+    if runtime is not None and runtime.transfer is not None:
+        raise runtime.transfer
+    if runtime is not None and runtime.failure is not None:
+        raise _StepFailed(step, runtime.failure) from runtime.failure
     return record
 
 
@@ -252,14 +291,16 @@ async def finish(
     summary: str | None = None,
     canceled_summary: str = "canceled",
     error: ErrorMessage | ErrorRef | None = None,
+    trigger: Literal["model", "runtime"] = "model",
 ) -> None:
     """Persist a tool result even if its delivery is interrupted."""
 
     output = Local.typed("ToolResultPart", part, None, 0)
     # The result already exists, even if an interrupt prevents its delivery.
-    state.messages.append_ref(
-        "tool", FieldRef.from_path(step, "output", "value"), output
-    )
+    if trigger == "model":
+        state.messages.append_ref(
+            "tool", FieldRef.from_path(step, "output", "value"), output
+        )
     state.last_step = step.index
     end = PartEnd(step=step, part=0, data=part)
     ended = False
@@ -300,6 +341,7 @@ async def cancel(
     summary: str = "canceled",
     part: ToolResultPart | None = None,
     aborted_by: ControlRef | None = None,
+    trigger: Literal["model", "runtime"] = "model",
 ) -> None:
     """End a started call with a durable result, including ordinary cancellation."""
 
@@ -307,11 +349,12 @@ async def cancel(
         part = canceled_result(
             call, reason="canceled by steer" if state.immediate_steer() else "canceled"
         )
-    state.messages.append_ref(
-        "tool",
-        FieldRef.from_path(step, "output", "value"),
-        Local.typed("ToolResultPart", part, None, 0),
-    )
+    if trigger == "model":
+        state.messages.append_ref(
+            "tool",
+            FieldRef.from_path(step, "output", "value"),
+            Local.typed("ToolResultPart", part, None, 0),
+        )
     state.last_step = step.index
     await state.end_step(
         StepEnd(
@@ -384,9 +427,7 @@ async def skip(
                         ),
                     ),
                     given=ToolStepGiven(
-                        plugin="_too"
-                        if call.name.startswith("_too__")
-                        else _plugin_name(state.prepared.tools.get(call.name)),
+                        plugin=_plugin_name(state.prepared.tools.get(call.name)),
                         call=call,
                     ),
                     started_at=utc_now(),
@@ -541,16 +582,13 @@ async def invoke_tool_call(
     services: tuple[ToolService, ...],
     layout: AgentLayout,
     call: ToolCall,
+    runtime: ToolRuntime | None = None,
 ) -> ToolCallResult:
     """Invoke one selected tool and normalize its result or error."""
 
     name = call.name
     arguments = dict(call.input)
     try:
-        if name.startswith("_too__"):
-            raise ToolangError(
-                f"inner runtime tool cannot use generic tool dispatch: {name}"
-            )
         tool = tools.get(name)
         if tool is None:
             raise ToolangError(f"unknown tool call: {name or '<empty>'}")
@@ -562,6 +600,7 @@ async def invoke_tool_call(
                 tool_name=name,
                 tools=tools,
                 services=services,
+                runtime=runtime,
             ),
         )
         error = None
@@ -585,6 +624,7 @@ def _tool_context(
     tool_name: str,
     tools: Mapping[str, AgentTool],
     services: tuple[ToolService, ...],
+    runtime: ToolRuntime | None = None,
 ) -> ToolContext:
     tool = tools.get(tool_name)
     plugin_name = getattr(tool, "plugin_name", None)
@@ -597,4 +637,5 @@ def _tool_context(
         wd=layout.home,
         services=services,
         placement=layout.placement,
+        runtime=runtime,
     )

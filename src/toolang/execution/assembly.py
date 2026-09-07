@@ -31,6 +31,7 @@ from .types import (
     MessageDelta,
     MessageTemplate,
     RunRef,
+    ToolStepGiven,
     TypedRef,
 )
 from .values import parts_from_local
@@ -91,7 +92,10 @@ def tail_delta(
     result_ids = {
         step.output.value.tool_call_id
         for step in tail
-        if step.output is not None and isinstance(step.output.value, ToolResultPart)
+        if step.output is not None
+        and isinstance(step.output.value, ToolResultPart)
+        and isinstance(step.given, ToolStepGiven)
+        and step.given.trigger == "model"
     }
     calls: set[str] = set()
     for step in tail:
@@ -110,7 +114,12 @@ def tail_delta(
                 )
             if segments:
                 messages.append(MessageTemplate("assistant", tuple(segments)))
-        elif step.output is not None and isinstance(step.output.value, ToolResultPart):
+        elif (
+            step.output is not None
+            and isinstance(step.output.value, ToolResultPart)
+            and isinstance(step.given, ToolStepGiven)
+            and step.given.trigger == "model"
+        ):
             if step.output.value.tool_call_id in calls:
                 messages.append(
                     MessageTemplate(

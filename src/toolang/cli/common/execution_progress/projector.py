@@ -360,7 +360,7 @@ class ProgressProjector:
             dynamic_run=(event.kind == "run" and run.agic)
             or (
                 isinstance(event.given, ToolStepGiven)
-                and event.given.call.name == "_too__run"
+                and event.given.call.name == "_toolang__run"
             ),
         )
         self._steps[event.step] = state
@@ -1008,7 +1008,7 @@ class ProgressProjector:
         """Start execute presentation from its Tool Step, not the model's intent."""
 
         given = state.begin.given
-        if isinstance(given, ToolStepGiven) and given.call.name == "_too__execute":
+        if isinstance(given, ToolStepGiven) and given.call.name == "_toolang__execute":
             run.pending_executes.append(
                 PendingExecute(
                     tool_call_id=given.call.tool_call_id,
@@ -1022,7 +1022,7 @@ class ProgressProjector:
         if not isinstance(event.given, ToolStepGiven):
             return None
         call = event.given.call
-        if call.name != "_too__execute":
+        if call.name != "_toolang__execute":
             return None
         return next(
             (
@@ -1044,7 +1044,7 @@ class ProgressProjector:
             committed = end.status == "succeeded" or any(
                 isinstance(part, ToolResultPart)
                 and part.error is None
-                and isinstance(part.output.get("executed"), str)
+                and bool(part.output.get("controls"))
                 for part in output_parts(end)
             )
             if committed:

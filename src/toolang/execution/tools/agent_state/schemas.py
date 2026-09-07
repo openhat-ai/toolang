@@ -102,7 +102,7 @@ _UPDATE_FIELDS: dict[ResourceKind, tuple[frozenset[str], frozenset[str]]] = {
 
 @dataclass(frozen=True, slots=True)
 class ResourceRequest:
-    """One validated compact `_me` request."""
+    """One validated compact `me` request."""
 
     operation: Operation
     kind: ResourceKind
@@ -112,7 +112,7 @@ class ResourceRequest:
 
 
 def tool_parameters(operation: Operation) -> dict[str, Any]:
-    """Return the stable JSON Schema for one compact `_me` action."""
+    """Return the stable JSON Schema for one compact `me` action."""
 
     kinds = NAMED_KINDS if operation == "delete" else RESOURCE_KINDS
     properties: dict[str, Any] = {
@@ -170,7 +170,7 @@ def decode_request(
                 issue(
                     "unsupported-field",
                     unknown[0],
-                    f"field is not accepted by _me {operation}",
+                    f"field is not accepted by me {operation}",
                 ),
             ),
         )

@@ -12,6 +12,7 @@ import time
 from typing import Any, Literal, cast
 
 from toolang.base.model_settings import apply_model_override
+from toolang.base.errors import ToolFailure
 from toolang.base.types.model import ModelOverride, ModelRequest, ModelTarget
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
@@ -935,17 +936,11 @@ class RunExecutor:
             execution = active.execution
             if execution is None:
                 raise RuntimeError(f"run execution is unavailable: {run_id}")
-            current, _current_ref = execution._current_state
             diagnostics = [asdict(item) for item in refreshed.diagnostics]
             if diagnostics:
-                return {
-                    "applied": False,
-                    "from_state": current.revision,
-                    "state": current.revision,
-                    "control": None,
-                    "diagnostics": diagnostics,
-                }
-            changed = refreshed.publication.revision != current.revision
+                raise ToolFailure(
+                    "Agent State refresh failed", output={"diagnostics": diagnostics}
+                )
             control = self._accept_reload(
                 run_id=run_id,
                 state=refreshed.publication,
@@ -959,16 +954,7 @@ class RunExecutor:
                     or f"State reload control {terminal.status}: "
                     f"{terminal.target}@{terminal.index}"
                 )
-            return {
-                "applied": changed,
-                "from_state": current.revision,
-                "state": refreshed.publication.revision,
-                "control": {
-                    "target": str(terminal.target),
-                    "index": terminal.index,
-                },
-                "diagnostics": [],
-            }
+            return {"controls": [str(terminal.ref)]}
 
     def cancel_control(self, *, run_id: str, index: int) -> ControlRecord:
         """Revoke one pending reload, steer, or cancel control."""
@@ -1734,20 +1720,15 @@ class _Execution:
         module: str,
         name: str,
         runnable: AgicDecl | FlowDecl,
-        raw_input: object,
+        raw_input: Mapping[str, object],
     ) -> RunnableInput:
         """Coerce one JSON object through the target module's input contracts."""
 
         program = state_program(state, module)
         structs = {item.name: item for item in program.structs}
         try:
-            if not isinstance(raw_input, Mapping):
-                raise ValueError("_too/run input must be an object")
-            if not all(isinstance(name, str) for name in raw_input):
-                raise ValueError("_too/run input field names must be text")
-            input_values = cast(Mapping[str, object], raw_input)
             parameters = {item.name: item for item in runnable.params}
-            primary = input_values.get("_") if "_" in input_values else None
+            primary = raw_input.get("_")
             if primary is not None and runnable.input is not None:
                 primary = decode_json_input(
                     primary,
@@ -1764,7 +1745,7 @@ class _Execution:
                     if name in parameters
                     else value
                 )
-                for name, value in input_values.items()
+                for name, value in raw_input.items()
                 if name != "_"
             }
             input = resolve_runnable_input(
@@ -1828,7 +1809,7 @@ class _Execution:
     ) -> tuple[BoundRun, dict[str, Local]]:
         """Prepare a same-Run replacement without committing the transition."""
 
-        self.require_inactive_runnable(parent, target, action="_too/execute")
+        self.require_inactive_runnable(parent, target, action="_toolang/execute")
         agent_resources, resources = self._public_runnable_resources(
             parent,
             target.module,
@@ -2160,7 +2141,7 @@ class _Execution:
         *,
         output_name: str | None = "_",
         resolution: Literal["module", "state"] = "module",
-        raw_input: object | None = None,
+        raw_input: Mapping[str, object] | None = None,
         authorize: Callable[[ResolvedRunnable], None] | None = None,
         state_snapshot: tuple[ExecutionState, ControlRef] | None = None,
     ) -> Local:
@@ -2179,7 +2160,7 @@ class _Execution:
                 )
                 if authorize is not None:
                     authorize(target)
-                self.require_inactive_runnable(parent, target, action="_too/run")
+                self.require_inactive_runnable(parent, target, action="_toolang/run")
                 input = self.resolve_public_input(
                     state,
                     target.module,

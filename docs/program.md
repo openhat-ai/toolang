@@ -408,7 +408,7 @@ A hand is a synchronous child Run: the Agic receives its result and continues.
 A handoff replaces the current runnable in the same Run: the target continues
 at the next Step and owns the Run's result. Missing but well-formed public refs
 remain authored routes and may become available after an explicit State reload.
-Flows cannot declare either route. `_too` inner runtime tools cannot be selected
+Flows cannot declare either route. `_toolang` inner runtime tools cannot be selected
 through `tools`; use `hands` or `handoffs` to authorize targets. The three
 inner runtime tool definitions remain available independently of these lists.
 

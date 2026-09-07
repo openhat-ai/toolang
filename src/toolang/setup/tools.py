@@ -19,7 +19,8 @@ def load_setup_tools(layout: AgentLayout) -> ToolCollection:
             toolset_config=merge_plugin_configs(configs, family="toolset"),
         )
     )
+    tools = tools.user
     allow = resolve_setup_allow(configs)
     if allow.tools is not None:
-        tools = tools.match(allow.tools).compact()
+        tools = tools.match(allow.tools).compact() if allow.tools else ToolCollection()
     return tools

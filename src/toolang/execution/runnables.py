@@ -31,7 +31,7 @@ _CATALOG_OPEN = "<available-runnable-routes>\n"
 _CATALOG_CLOSE = "\n</available-runnable-routes>"
 _NO_ROUTE_INSTRUCTIONS = (
     "The inner runtime tools are available, but this Agic declares no hands or "
-    "handoffs. Do not call _too__run or _too__execute. Call _too__reload only "
+    "handoffs. Do not call _toolang__run or _toolang__execute. Call _toolang__reload only "
     "when this Run must observe newly authored State now; a future root Run "
     "naturally uses the latest valid State."
 )

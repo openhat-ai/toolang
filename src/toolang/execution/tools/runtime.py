@@ -1,14 +1,16 @@
-"""Executor-owned inner runtime tool definitions."""
+"""Runtime toolset: argument validation and per-call runtime operations."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from collections.abc import Mapping
+from typing import Any, Literal
 
-from toolang.base.types.tool import ToolDefinition
-from toolang.base.utils.tools import encode_tool_name
+from toolang.base.errors import ToolangError
+from toolang.base.protocols.tool import AgentTool, Toolset
+from toolang.base.types.tool import ToolContext, ToolDefinition
 
-TOOLSET_NAME = "_too"
+TOOLSET_NAME = "_toolang"
 RELOAD_TOOL = "reload"
 RUN_TOOL = "run"
 EXECUTE_TOOL = "execute"
@@ -16,32 +18,57 @@ RuntimeToolName = Literal["reload", "run", "execute"]
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeTool:
-    """One trusted executor tool exposed only at a Model Call boundary."""
+class RuntimeTool(AgentTool):
+    """One stateless tool using authority supplied by its executor."""
 
     name: RuntimeToolName
-    definition: ToolDefinition
+    description: str
+    parameters: dict[str, object]
+
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(self.name, self.description, dict(self.parameters))
+
+    async def invoke(
+        self, arguments: Mapping[str, Any], context: ToolContext
+    ) -> dict[str, Any]:
+        runtime = context.runtime
+        if runtime is None:
+            raise ToolangError("runtime operations are unavailable for this tool call")
+        if self.name == RELOAD_TOOL:
+            if arguments:
+                raise ToolangError("_toolang/reload does not accept input")
+            return await runtime.reload()
+        unknown = sorted(set(arguments) - {"runnable", "input"})
+        if unknown:
+            raise ToolangError(
+                f"unknown _toolang/{self.name} input fields: {', '.join(unknown)}"
+            )
+        runnable = arguments.get("runnable")
+        if not isinstance(runnable, str) or not runnable.strip():
+            raise ToolangError(
+                f"_toolang/{self.name} requires a non-empty runnable ref"
+            )
+        input = arguments.get("input", {})
+        if not isinstance(input, Mapping) or any(not isinstance(k, str) for k in input):
+            raise ToolangError(f"_toolang/{self.name} input must be an object")
+        if self.name == RUN_TOOL:
+            return await runtime.run(runnable, input)
+        return await runtime.execute(runnable, input)
 
 
-def runtime_tools() -> dict[str, RuntimeTool]:
-    """Return the always-present inner runtime tools by model name."""
+@dataclass(frozen=True, slots=True)
+class RuntimeToolset(Toolset):
+    name: str = TOOLSET_NAME
+    description: str | None = "Run, transfer, and reload the current execution."
 
-    return {item.definition.name: item for item in _TOOLS.values()}
+    def tools(self) -> Mapping[str, AgentTool]:
+        return {name: tool for name, tool in _TOOLS.items()}
 
 
-def _tool(
-    name: RuntimeToolName,
-    description: str,
-    parameters: dict[str, object],
-) -> RuntimeTool:
-    return RuntimeTool(
-        name=name,
-        definition=ToolDefinition(
-            name=encode_tool_name(TOOLSET_NAME, name),
-            description=description,
-            parameters=parameters,
-        ),
-    )
+def create_toolset(config: Mapping[str, Any]) -> Toolset:
+    """Register runtime tools through the standard toolset factory."""
+
+    return RuntimeToolset()
 
 
 _RUN_PARAMETERS: dict[str, object] = {
@@ -65,21 +92,21 @@ _RUN_PARAMETERS: dict[str, object] = {
 }
 
 _TOOLS: dict[RuntimeToolName, RuntimeTool] = {
-    RUN_TOOL: _tool(
+    RUN_TOOL: RuntimeTool(
         RUN_TOOL,
         "Run an authorized hand as a child Run, wait for its result, then continue. "
         "Call it only when its result is required now. Read the target input "
         "signature and do not invent missing values.",
         _RUN_PARAMETERS,
     ),
-    EXECUTE_TOOL: _tool(
+    EXECUTE_TOOL: RuntimeTool(
         EXECUTE_TOOL,
         "Transfer the remainder of this Run to an authorized handoff target. "
         "The caller never resumes, and this must be the only tool call in the "
         "Model Call. Prefer run when either behavior would satisfy the intent.",
         _RUN_PARAMETERS,
     ),
-    RELOAD_TOOL: _tool(
+    RELOAD_TOOL: RuntimeTool(
         RELOAD_TOOL,
         "Apply the newest valid Agent State when this Run must observe authored "
         "changes now. A future root Run uses the latest valid State without reload.",
@@ -98,5 +125,5 @@ __all__ = [
     "RELOAD_TOOL",
     "RUN_TOOL",
     "RuntimeTool",
-    "runtime_tools",
+    "create_toolset",
 ]

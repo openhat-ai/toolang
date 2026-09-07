@@ -49,6 +49,7 @@ from toolang.state.state import AgentState, agent_state_revision
 from toolang.state.watcher import StateRefresh
 from toolang.plugin.models.resolution import build_model_collection
 from toolang.plugin.toolsets.collections import ToolCollection
+from toolang.plugin.toolsets.loading import load_tools
 from toolang.setup import AgentEnvironment, AgentSetup
 
 TEST_MODEL_REF = "test/scripted"
@@ -346,7 +347,9 @@ class ExecutionHarness:
                 models=provider.list_models(environ={}),
                 envs={},
             ),
-            tools=ToolCollection.from_tools(tools or {}),
+            tools=ToolCollection.from_tools(
+                {**load_tools(queries=("_toolang/*",)), **(tools or {})}
+            ),
             envs={},
             environment=AgentEnvironment(
                 sandbox="host",

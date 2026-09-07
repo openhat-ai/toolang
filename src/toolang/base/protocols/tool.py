@@ -8,9 +8,21 @@ from typing import Any, Protocol, runtime_checkable
 from ..types.tool import ToolContext, ToolDefinition
 
 
+class ToolRuntime(Protocol):
+    """Trusted operations bound by the executor to one runtime Tool Step."""
+
+    async def run(self, runnable: str, input: Mapping[str, Any]) -> dict[str, Any]: ...
+
+    async def execute(
+        self, runnable: str, input: Mapping[str, Any]
+    ) -> dict[str, Any]: ...
+
+    async def reload(self) -> dict[str, Any]: ...
+
+
 @runtime_checkable
 class AgentTool(Protocol):
-    """One model-facing tool exposed by one plugin."""
+    """One tool exposed by one plugin."""
 
     name: str
 

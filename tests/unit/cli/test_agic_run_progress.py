@@ -55,8 +55,8 @@ def _model_given() -> ModelStepGiven:
 def _execute_part(runnable: object = "agic:abc") -> ToolCallPart:
     return ToolCallPart(
         tool_call_id="execute-1",
-        tool_name="_too__execute",
-        tool_family="_too__execute",
+        tool_name="_toolang__execute",
+        tool_family="_toolang__execute",
         input={"runnable": runnable, "input": {}},
     )
 
@@ -73,9 +73,12 @@ def _execute_step(
             step=step,
             kind="tool",
             given=ToolStepGiven(
-                plugin="_too",
+                plugin="_toolang",
                 call=ToolCall(
-                    "execute-1", "execute-1", "_too__execute", {"runnable": runnable}
+                    "execute-1",
+                    "execute-1",
+                    "_toolang__execute",
+                    {"runnable": runnable},
                 ),
             ),
         )
@@ -87,10 +90,10 @@ def _execute_step(
     assert len(starting.live) == 1
     result = ToolResultPart(
         tool_call_id="execute-1",
-        tool_name="_too__execute",
-        tool_family="_too__execute",
+        tool_name="_toolang__execute",
+        tool_family="_toolang__execute",
         error=error,
-        output={} if error else {"executed": f"agent${runnable}"},
+        output={} if error else {"controls": [f"{step.run_id}@1"]},
     )
     return projector.handle(
         StepEnd(
@@ -99,7 +102,7 @@ def _execute_step(
             status="failed" if error else "succeeded",
             output=Local.typed("ToolResultPart", result, None, 0),
             error=ErrorMessage(error) if error else None,
-            noted=ToolStepNoted(summary="_too__execute"),
+            noted=ToolStepNoted(summary="_toolang__execute"),
         )
     )
 

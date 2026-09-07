@@ -79,7 +79,7 @@ def resolve_agent_resources(
     if ceiling.models is not None:
         models = models.match(ceiling.models) if ceiling.models else ModelCollection()
 
-    tools = setup.tools
+    tools = setup.tools.user
     if ceiling.tools is not None:
         tools = tools.match(ceiling.tools) if ceiling.tools else type(tools)()
 

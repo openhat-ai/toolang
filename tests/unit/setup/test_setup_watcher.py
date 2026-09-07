@@ -1314,6 +1314,27 @@ def test_setup_watcher_reuses_publication_for_state_only_config_changes(
     assert model_info_calls == 0
 
 
+def test_tool_allow_filters_user_tools_but_keeps_runtime_registration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from toolang.plugin.toolsets.loading import load_tools
+
+    registered = load_tools()
+    _write_catalog(tmp_path / "catalog.json", ("one",))
+    watcher = _watcher(monkeypatch, tmp_path, envs={})
+    monkeypatch.setattr(watcher_module, "load_tools", lambda **kwargs: registered)
+    monkeypatch.setattr(
+        watcher_module, "load_agent_config", lambda layout: {"allow": {"tools": []}}
+    )
+    setup = asyncio.run(watcher.refresh())
+    assert not setup.tools.user
+    assert set(setup.tools) == {
+        "_toolang__run",
+        "_toolang__execute",
+        "_toolang__reload",
+    }
+
+
 def _watcher(
     monkeypatch: pytest.MonkeyPatch,
     root: Path,

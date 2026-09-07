@@ -40,7 +40,7 @@ agic target() -> Text:
                     ToolCall(
                         "execute",
                         "execute",
-                        "_too__execute",
+                        "_toolang__execute",
                         {"runnable": "agic:target"},
                     ),
                 )
@@ -113,7 +113,7 @@ agic child() -> Text:
             result=ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "execute", "execute", "_too__execute", {"runnable": target}
+                        "execute", "execute", "_toolang__execute", {"runnable": target}
                     ),
                 )
             ),
@@ -126,7 +126,10 @@ agic child() -> Text:
                 result=ModelCallResult(
                     tool_calls=(
                         ToolCall(
-                            "child", "child", "_too__run", {"runnable": "agic:child"}
+                            "child",
+                            "child",
+                            "_toolang__run",
+                            {"runnable": "agic:child"},
                         ),
                     )
                 )
@@ -172,7 +175,7 @@ agic child() -> Text:
                 if (
                     isinstance(event, StepBegin)
                     and isinstance(event.given, ToolStepGiven)
-                    and event.given.call.name == "_too__execute"
+                    and event.given.call.name == "_toolang__execute"
                 ):
                     execute_step = event.step
                 if isinstance(event, StepEnd) and event.step == execute_step:
