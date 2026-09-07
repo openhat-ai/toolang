@@ -10,6 +10,7 @@ from click import unstyle
 import pytest
 from rich.console import Console
 from rich.text import Text
+from typer import rich_utils
 from typer.testing import CliRunner
 
 from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
@@ -614,8 +615,9 @@ def test_providers_lists_resolved_api_and_model_adapters(
 
 
 @pytest.mark.parametrize("target", [[], ["alice"]])
+@pytest.mark.parametrize("colored", [False, True])
 def test_models_help_describes_optional_agent_without_loading(
-    tmp_path: Path, monkeypatch, capsys, target: list[str]
+    tmp_path: Path, monkeypatch, capsys, target: list[str], colored: bool
 ) -> None:
     def unexpected_load(*args, **kwargs):
         pytest.fail("help must not load model catalogs")
@@ -626,16 +628,21 @@ def test_models_help_describes_optional_agent_without_loading(
     monkeypatch.setattr(
         model_catalog_commands, "load_matching_catalog_inspection", unexpected_load
     )
+    monkeypatch.setattr(rich_utils, "FORCE_TERMINAL", colored)
+    monkeypatch.setattr(rich_utils, "COLOR_SYSTEM", "standard" if colored else None)
+    monkeypatch.delenv("NO_COLOR", raising=False)
 
     result = cli.main(["--root", str(tmp_path), *target, "models", "--help"])
     output = capsys.readouterr()
+    stdout = unstyle(output.out)
 
     assert result == 0
-    assert "[AGENT] models [OPTIONS]" in unstyle(output.out)
-    assert "model catalog and configuration" in unstyle(output.out)
-    assert "--catalog" in output.out
-    assert "--query" in output.out
-    assert "--json" in output.out
+    assert ("\x1b[" in output.out) is colored
+    assert "[AGENT] models [OPTIONS]" in stdout
+    assert "model catalog and configuration" in stdout
+    assert "--catalog" in stdout
+    assert "--query" in stdout
+    assert "--json" in stdout
     assert not output.err
     assert not tuple(tmp_path.iterdir())
 
@@ -784,6 +791,33 @@ def test_models_missing_agent_does_not_fall_back_or_create_a_home(
     assert "Agent missing not found" in output.err
     assert "Traceback" not in output.err
     assert not tuple(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("invalid_input", ["config", "catalog"])
+@pytest.mark.parametrize(
+    "options", [[], ["-q", "test/*"], ["--json"], ["-q", "test/*", "--json"]]
+)
+def test_models_reports_agent_input_type_errors_without_a_traceback(
+    tmp_path: Path, monkeypatch, capsys, invalid_input: str, options: list[str]
+) -> None:
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.delenv("TOOLANG_MODEL_CATALOG", raising=False)
+    (tmp_path / "catalog.json").write_text(json.dumps(_catalog_data()))
+    home = _resident_home(tmp_path, "alice")
+    if invalid_input == "config":
+        (home / "config.toml").write_text("[models]\nproviders = []\n")
+        message = "models providers config must be a table"
+    else:
+        (home / "catalog.json").write_text('{"test": 42}')
+        message = "provider 'test' must be an object"
+
+    result = cli.main(["--root", str(tmp_path), "alice", "models", *options])
+    output = capsys.readouterr()
+
+    assert result == 1
+    assert message in output.err
+    assert "Traceback" not in output.err
+    assert not output.out
 
 
 def _resident_home(root: Path, name: str) -> Path:
