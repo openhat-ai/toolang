@@ -218,32 +218,39 @@ footer, and follows the footer; adjacent child-owned gaps coalesce.
 
 A Flow Step uses its non-empty authored doc comment as the header. Without a
 doc comment, the presenter generates a short sentence from the typed AST. Named
-and inline runnables use the same sentence and preserve their names exactly,
+and inline runnables use the same templates and preserve their names exactly,
 including generated names such as `<agic:32>` (the inline declaration's source
-line). For example, an inline map displays `Map items with <agic:32>`.
-Authored concurrency and binding behavior are appended to generated headers;
-doc comments take precedence over the complete generated header.
-One lane reads `one at a time`; larger lane limits read `up to N at once`.
-Bindings append `and assign the result to NAME` or `and discard the result`,
-describing Flow locals rather than persistence. Scatter's count is an authored
-target, not a guaranteed output count.
+line). For example, an inline map displays `Map each item with <agic:32>`.
 
-Examples include:
-
-| Statement | Generated header |
+| Statement | Automatic description |
 | --- | --- |
-| `let` | `Set NAME` |
-| `run` | `Run RUNNABLE` |
-| `scatter` | `Expand with RUNNABLE (target: N items)` |
-| `storm` | `Run RUNNABLE N times` |
-| `gather` | `Combine items with RUNNABLE` |
-| `settle` | `Reduce items sequentially with RUNNABLE` |
-| `map` | `Map items with RUNNABLE` |
+| content `let NAME = BODY` | `Set value to NAME` |
+| `run` | `Run R` |
+| `seek` | `Ask agent AGENT to run R` |
+| `ask` | `Ask for human input` |
+| `scatter` | `Scatter into N items with R` |
+| `storm` | `Storm into N items with R independently` |
+| `gather` | `Gather all items into one with R` |
+| `settle` | `Settle all items into one with R sequentially` |
+| `map` | `Map each item with R` |
 | positional `keep` or `drop` | `Keep/Drop the first/last N items` |
-| predicate `keep` or `drop` | `Keep/Drop items matching RUNNABLE` |
-| `sort` | `Sort items ascending/descending by RUNNABLE` |
+| predicate `keep` or `drop` | `Keep/Drop items where P is true` |
+| `sort` | `Sort items by R in ascending/descending order` |
 | fixed `repeat` | `Repeat N times` |
-| conditional `repeat` | `Repeat up to N times` or `Repeat until the condition is met` |
+| bounded conditional `repeat` | `Repeat up to N times, until P is true` |
+| condition-only `repeat` | `Repeat until P is true` |
+
+Explicit lane limits append `, one at a time` for one lane or `, up to N at once`
+for larger limits. A named statement binding (`let NAME = STMT`) then appends
+`, save result to NAME`; an unbound `let STMT` appends `, discard result`.
+These describe Flow locals, not persistence. Plain statements have no binding
+suffix, and content `let` does not repeat its assignment as a suffix.
+
+Counts of one use singular `item` or `time`; positional selection omits the
+number for one item. Scatter's count is an authored target, not a guaranteed
+output count. Its description supports `Scatter into items with R` when a count
+is unknown; the current grammar still requires a count. Completion summaries
+report actual results independently of these descriptions.
 
 A direct single-Run Flow Step preserves that Run's leaf trace and emits no
 synthetic success row. Absence of an error means success. Direct values are
@@ -338,7 +345,7 @@ A Flow Step that owns child execution may append one dim footer:
 ```text
 [2] Search the web for each query
 
-• Mapped all 6 items
+• Mapped all 6 items in parallel
   31s · 6 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) · ≈$0.01        run_root.2
 ```
 
@@ -382,15 +389,12 @@ lane. Lane rows are truncated rather than wrapped:
 On success, the live lanes are cleared and one natural-language result remains:
 
 ```text
-• Mapped all 7 items
-• Generated 7 items
-• Evaluated 7 items, kept 5
-• Evaluated 7 items, dropped 2, leaving 5
-• Scored 10 items, sorted 10 items descending
+• Mapped all 7 items in parallel
+• Brainstormed 7 items in parallel
+• Evaluated 7 items in parallel, kept 5
+• Evaluated 7 items in parallel, dropped 2, leaving 5
+• Scored 10 items in parallel, sorted 10 items descending
 ```
-
-Result summaries describe completed work without asserting that child runs
-overlapped. The same wording applies to one lane, a single item, or empty input.
 
 On failure, successful, active, and canceled lanes are cleared. Each failed
 lane retains its causal error, followed by the parallel Step's distinct
@@ -418,9 +422,6 @@ normal trace-or-lane rule for its child statement:
 • Thinking...
 • true
 ```
-
-The condition boundary preserves its runnable name too: an inline `until`
-declared on line 32 displays `<?> <agic:32>`.
 
 The condition is a child Run, not a synthetic `executed completion_check`
 Step. Terminal loop output identifies the actual cause:

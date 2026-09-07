@@ -29,11 +29,11 @@ def statement_header(statement: FlowStmt) -> str:
         return doc
 
     if isinstance(statement, LetStmt):
-        return _words("Set", statement.binding or "value")
+        return f"Set value to {statement.binding}"
     if isinstance(statement, RunStmt):
         action = f"Run {statement.runnable}"
     elif isinstance(statement, SeekStmt):
-        action = f"Ask {statement.name} to run {statement.runnable}"
+        action = f"Ask agent {statement.name} to run {statement.runnable}"
     elif isinstance(statement, AskStmt):
         action = (
             f"Ask {statement.name} for input"
@@ -41,33 +41,36 @@ def statement_header(statement: FlowStmt) -> str:
             else "Ask for human input"
         )
     elif isinstance(statement, ScatterStmt):
-        action = (
-            f"Expand with {statement.runnable} "
-            f"(target: {count(statement.count, 'item')})"
-        )
+        action = _scatter_header(statement.runnable, statement.count)
     elif isinstance(statement, StormStmt):
-        action = f"Run {statement.runnable} {count(statement.count, 'time')}"
+        action = (
+            f"Storm into {count(statement.count, 'item')} "
+            f"with {statement.runnable} independently"
+        )
     elif isinstance(statement, GatherStmt):
-        action = f"Combine items with {statement.runnable}"
+        action = f"Gather all items into one with {statement.runnable}"
     elif isinstance(statement, SettleStmt):
-        action = f"Reduce items sequentially with {statement.runnable}"
+        action = f"Settle all items into one with {statement.runnable} sequentially"
     elif isinstance(statement, MapStmt):
-        action = f"Map items with {statement.runnable}"
+        action = f"Map each item with {statement.runnable}"
     elif isinstance(statement, KeepStmt | DropStmt):
         verb = "Keep" if isinstance(statement, KeepStmt) else "Drop"
         if statement.position is not None and statement.count is not None:
             quantity = "item" if statement.count == 1 else f"{statement.count} items"
             action = f"{verb} the {statement.position} {quantity}"
         else:
-            action = f"{verb} items matching {statement.runnable}"
+            action = f"{verb} items where {statement.runnable} is true"
     elif isinstance(statement, SortStmt):
-        action = f"Sort items {statement.order} by {statement.runnable}"
+        action = f"Sort items by {statement.runnable} in {statement.order} order"
     elif isinstance(statement, RepeatStmt):
         if statement.count is not None and statement.runnable is not None:
-            return f"Repeat up to {count(statement.count, 'time')}"
+            return (
+                f"Repeat up to {count(statement.count, 'time')}, "
+                f"until {statement.runnable} is true"
+            )
         if statement.count is not None:
             return f"Repeat {count(statement.count, 'time')}"
-        return "Repeat until the condition is met"
+        return f"Repeat until {statement.runnable} is true"
     else:
         raise TypeError(f"unsupported flow statement: {type(statement).__name__}")
 
@@ -79,15 +82,21 @@ def statement_header(statement: FlowStmt) -> str:
     if statement.binding == "_":
         return action
     if statement.binding is None:
-        return f"{action} and discard the result"
-    return f"{action} and assign the result to {statement.binding}"
+        return f"{action}, discard result"
+    return f"{action}, save result to {statement.binding}"
 
 
 def until_header(statement: RepeatStmt) -> str:
-    """Return the Repeat condition's runnable name as its boundary label."""
+    """Return the Repeat until boundary label without exposing generated names."""
 
-    return statement.runnable or "Check whether to stop"
+    runnable = statement.runnable or ""
+    return "Check whether to stop" if _generated(runnable) else runnable
 
 
-def _words(*values: str | None) -> str:
-    return " ".join(value for value in values if value)
+def _generated(value: str) -> bool:
+    return not value or value.startswith("<agic:")
+
+
+def _scatter_header(runnable: str, item_count: int | None) -> str:
+    quantity = count(item_count, "item") if item_count is not None else "items"
+    return f"Scatter into {quantity} with {runnable}"

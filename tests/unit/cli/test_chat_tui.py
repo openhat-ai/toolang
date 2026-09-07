@@ -400,11 +400,13 @@ def test_chat_flow_keeps_one_blank_row_at_each_finalized_boundary() -> None:
 
     transcript = "".join(_render_text(block.render()) for block in app.finalized)
     control_bottom = " " * 80
-    assert f"{control_bottom}\n\n[1] Map items with summarize" in transcript
-    assert f"{control_bottom}\n\n\n[1] Map items with summarize" not in transcript
-    assert "[1] Map items with summarize, up to 2 at once\n\n• Mapped" in (transcript)
-    assert "items\n\n∎ run_1 succeeded" in transcript
-    assert "items\n\n\n∎ run_1 succeeded" not in transcript
+    assert f"{control_bottom}\n\n[1] Map each item with summarize" in transcript
+    assert f"{control_bottom}\n\n\n[1] Map each item with summarize" not in transcript
+    assert "[1] Map each item with summarize, up to 2 at once\n\n• Mapped" in (
+        transcript
+    )
+    assert "items in parallel\n\n∎ run_1 succeeded" in transcript
+    assert "items in parallel\n\n\n∎ run_1 succeeded" not in transcript
 
 
 def test_chat_moves_stable_markdown_to_scrollback_while_the_tail_stays_live() -> None:

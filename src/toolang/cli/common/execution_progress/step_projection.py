@@ -423,14 +423,17 @@ def _collection_success_text(
     output: int | None,
 ) -> str:
     if isinstance(statement, MapStmt):
-        return f"Mapped {_all_items(total)}"
+        return f"Mapped {_all_items(total)} in parallel"
     if isinstance(statement, StormStmt):
-        return f"Generated {_count(output if output is not None else total, 'item')}"
+        return f"Brainstormed {_count(output if output is not None else total, 'item')} in parallel"
     if isinstance(statement, KeepStmt):
         kept = output if output is not None else total
         if statement.position is not None:
             return _positional_keep_text(statement.position, total, kept)
-        return f"Evaluated {_count(total, 'item')}, kept {_selected_items(kept, total)}"
+        return (
+            f"Evaluated {_count(total, 'item')} in parallel, "
+            f"kept {_selected_items(kept, total)}"
+        )
     if isinstance(statement, DropStmt):
         remaining = output if output is not None else total
         dropped = total - remaining
@@ -442,13 +445,13 @@ def _collection_success_text(
                 remaining,
             )
         return (
-            f"Evaluated {_count(total, 'item')}, "
+            f"Evaluated {_count(total, 'item')} in parallel, "
             f"dropped {_selected_items(dropped, total)}, "
             f"leaving {_remaining_items(remaining, total)}"
         )
     if isinstance(statement, SortStmt):
         selected = output if output is not None else total
-        lead = f"Scored {_count(total, 'item')}"
+        lead = f"Scored {_count(total, 'item')} in parallel"
         return f"{lead}, sorted {_count(selected, 'item')} {statement.order}"
     return ""
 

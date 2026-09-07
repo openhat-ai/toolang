@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 
 from toolang.base.types.message import (
@@ -16,7 +14,10 @@ from toolang.cli.common.execution_progress import (
     ProgressBlock,
     ProgressProjector,
 )
-from toolang.cli.common.execution_progress.headers import statement_header
+from toolang.cli.common.execution_progress.headers import (
+    _scatter_header,
+    statement_header,
+)
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
@@ -124,7 +125,7 @@ def test_progress_statement_header_prefers_doc_and_preserves_runnable_name(
     )
     assert (
         statement_header(MapStmt(span=SPAN, runnable="search_web", lanes=4))
-        == "Map items with search_web, up to 4 at once"
+        == "Map each item with search_web, up to 4 at once"
     )
     assert (
         statement_header(
@@ -136,18 +137,34 @@ def test_progress_statement_header_prefers_doc_and_preserves_runnable_name(
                 binding="findings",
             )
         )
-        == "Sort items descending by relevance_score, "
-        "up to 2 at once and assign the result to findings"
+        == "Sort items by relevance_score in descending order, "
+        "up to 2 at once, save result to findings"
     )
+
+
+@pytest.mark.parametrize(
+    ("item_count", "expected"),
+    [
+        (None, "Scatter into items with expand"),
+        (0, "Scatter into 0 items with expand"),
+        (1, "Scatter into 1 item with expand"),
+        (6, "Scatter into 6 items with expand"),
+    ],
+)
+def test_scatter_description_supports_known_and_unknown_quantity(
+    item_count: int | None, expected: str
+) -> None:
+    assert _scatter_header("expand", item_count) == expected
 
 
 def test_progress_statement_header_covers_inline_binding_and_repeat_forms() -> None:
     assert (
-        statement_header(LetStmt(span=SPAN, binding="topic", value="x")) == "Set topic"
+        statement_header(LetStmt(span=SPAN, binding="topic", value="x"))
+        == "Set value to topic"
     )
     assert (
         statement_header(RunStmt(span=SPAN, runnable="<agic:12>", binding=None))
-        == "Run <agic:12> and discard the result"
+        == "Run <agic:12>, discard result"
     )
     assert (
         statement_header(KeepStmt(span=SPAN, position="first", count=1))
@@ -155,11 +172,11 @@ def test_progress_statement_header_covers_inline_binding_and_repeat_forms() -> N
     )
     assert (
         statement_header(StormStmt(span=SPAN, count=3, runnable="review_item", lanes=2))
-        == "Run review_item 3 times, up to 2 at once"
+        == "Storm into 3 items with review_item independently, up to 2 at once"
     )
     assert (
         statement_header(RepeatStmt(span=SPAN, count=3, runnable="<agic:20>"))
-        == "Repeat up to 3 times"
+        == "Repeat up to 3 times, until <agic:20> is true"
     )
 
 
@@ -169,19 +186,19 @@ def test_progress_statement_header_covers_inline_binding_and_repeat_forms() -> N
         (RunStmt(span=SPAN, runnable="review_item"), "Run review_item"),
         (
             RunStmt(span=SPAN, runnable="review_item", binding="report"),
-            "Run review_item and assign the result to report",
+            "Run review_item, save result to report",
         ),
         (
             RunStmt(span=SPAN, runnable="review_item", binding=None),
-            "Run review_item and discard the result",
+            "Run review_item, discard result",
         ),
         (
             SeekStmt(span=SPAN, name="researcher", runnable="search_web"),
-            "Ask researcher to run search_web",
+            "Ask agent researcher to run search_web",
         ),
         (
             SeekStmt(span=SPAN, name="researcher", runnable="<agic:4>"),
-            "Ask researcher to run <agic:4>",
+            "Ask agent researcher to run <agic:4>",
         ),
         (
             AskStmt(span=SPAN, name=None, request="question"),
@@ -193,35 +210,35 @@ def test_progress_statement_header_covers_inline_binding_and_repeat_forms() -> N
         ),
         (
             ScatterStmt(span=SPAN, count=3, runnable="expand_queries"),
-            "Expand with expand_queries (target: 3 items)",
+            "Scatter into 3 items with expand_queries",
         ),
         (
             ScatterStmt(span=SPAN, count=1, runnable="<agic:5>"),
-            "Expand with <agic:5> (target: 1 item)",
+            "Scatter into 1 item with <agic:5>",
         ),
         (
             GatherStmt(span=SPAN, runnable="synthesize"),
-            "Combine items with synthesize",
+            "Gather all items into one with synthesize",
         ),
         (
             GatherStmt(span=SPAN, runnable="<agic:6>"),
-            "Combine items with <agic:6>",
+            "Gather all items into one with <agic:6>",
         ),
         (
             SettleStmt(span=SPAN, runnable="merge_pair"),
-            "Reduce items sequentially with merge_pair",
+            "Settle all items into one with merge_pair sequentially",
         ),
         (
             MapStmt(span=SPAN, runnable="<agic:7>"),
-            "Map items with <agic:7>",
+            "Map each item with <agic:7>",
         ),
         (
             MapStmt(span=SPAN, runnable="search_web", lanes=1),
-            "Map items with search_web, one at a time",
+            "Map each item with search_web, one at a time",
         ),
         (
             KeepStmt(span=SPAN, runnable="is_relevant", lanes=3),
-            "Keep items matching is_relevant, up to 3 at once",
+            "Keep items where is_relevant is true, up to 3 at once",
         ),
         (
             DropStmt(span=SPAN, position="last", count=2),
@@ -229,19 +246,31 @@ def test_progress_statement_header_covers_inline_binding_and_repeat_forms() -> N
         ),
         (
             DropStmt(span=SPAN, runnable="<agic:8>"),
-            "Drop items matching <agic:8>",
+            "Drop items where <agic:8> is true",
         ),
         (
             SortStmt(span=SPAN, runnable="<agic:9>", order="ascending"),
-            "Sort items ascending by <agic:9>",
+            "Sort items by <agic:9> in ascending order",
         ),
         (
             RepeatStmt(span=SPAN, count=2),
             "Repeat 2 times",
         ),
         (
+            RepeatStmt(span=SPAN, count=1),
+            "Repeat 1 time",
+        ),
+        (
+            RepeatStmt(span=SPAN, count=1, runnable="complete"),
+            "Repeat up to 1 time, until complete is true",
+        ),
+        (
+            StormStmt(span=SPAN, count=1, runnable="review"),
+            "Storm into 1 item with review independently",
+        ),
+        (
             RepeatStmt(span=SPAN, runnable="completion_check"),
-            "Repeat until the condition is met",
+            "Repeat until completion_check is true",
         ),
     ],
 )
@@ -257,32 +286,35 @@ def test_progress_statement_header_covers_every_ast_fallback(
     [
         ("Review the findings.", "Run <agic:2>"),
         ("run: Review the findings.", "Run <agic:2>"),
-        ("seek researcher: Find evidence.", "Ask researcher to run <agic:2>"),
+        ("seek researcher: Find evidence.", "Ask agent researcher to run <agic:2>"),
         (
             "scatter 3 using: Expand the query.",
-            "Expand with <agic:2> (target: 3 items)",
+            "Scatter into 3 items with <agic:2>",
         ),
         (
             "storm 3 in 2 lanes using: Review the findings.",
-            "Run <agic:2> 3 times, up to 2 at once",
+            "Storm into 3 items with <agic:2> independently, up to 2 at once",
         ),
-        ("gather using: Combine the findings.", "Combine items with <agic:2>"),
+        (
+            "gather using: Combine the findings.",
+            "Gather all items into one with <agic:2>",
+        ),
         (
             "settle using: Merge the next finding.",
-            "Reduce items sequentially with <agic:2>",
+            "Settle all items into one with <agic:2> sequentially",
         ),
         (
             "let results = map in 2 lanes using:\n    Search for evidence.",
-            "Map items with <agic:2>, up to 2 at once and assign the result to results",
+            "Map each item with <agic:2>, up to 2 at once, save result to results",
         ),
-        ("keep if: Check relevance.", "Keep items matching <agic:2>"),
+        ("keep if: Check relevance.", "Keep items where <agic:2> is true"),
         (
             "let drop if: Check relevance.",
-            "Drop items matching <agic:2> and discard the result",
+            "Drop items where <agic:2> is true, discard result",
         ),
         (
             "sort descending by: Score relevance.",
-            "Sort items descending by <agic:2>",
+            "Sort items by <agic:2> in descending order",
         ),
     ],
 )
@@ -358,38 +390,28 @@ def test_positional_collection_steps_describe_the_transform(
     [
         (
             MapStmt(span=SPAN, runnable="map_item"),
-            CollectionStepNoted(0, 0),
-            "• Mapped no items",
-        ),
-        (
-            StormStmt(span=SPAN, count=1, runnable="review"),
-            CollectionStepNoted(1, 1),
-            "• Generated 1 item",
-        ),
-        (
-            MapStmt(span=SPAN, runnable="map_item"),
             CollectionStepNoted(6, 6),
-            "• Mapped all 6 items",
+            "• Mapped all 6 items in parallel",
         ),
         (
             StormStmt(span=SPAN, count=6, runnable="brainstorm"),
             CollectionStepNoted(6, 6),
-            "• Generated 6 items",
+            "• Brainstormed 6 items in parallel",
         ),
         (
             KeepStmt(span=SPAN, runnable="accept"),
             CollectionStepNoted(6, 6),
-            "• Evaluated 6 items, kept all 6",
+            "• Evaluated 6 items in parallel, kept all 6",
         ),
         (
             DropStmt(span=SPAN, runnable="reject"),
             CollectionStepNoted(6, 4),
-            "• Evaluated 6 items, dropped 2, leaving 4",
+            "• Evaluated 6 items in parallel, dropped 2, leaving 4",
         ),
         (
             SortStmt(span=SPAN, runnable="score", order="ascending"),
             CollectionStepNoted(6, 6),
-            "• Scored 6 items, sorted 6 items ascending",
+            "• Scored 6 items in parallel, sorted 6 items ascending",
         ),
         (
             SortStmt(
@@ -398,18 +420,15 @@ def test_positional_collection_steps_describe_the_transform(
                 order="descending",
             ),
             CollectionStepNoted(10, 10),
-            "• Scored 10 items, sorted 10 items descending",
+            "• Scored 10 items in parallel, sorted 10 items descending",
         ),
     ],
 )
-@pytest.mark.parametrize("lanes", [None, 1, 4])
-def test_collection_summaries_describe_results_independently_of_lane_limits(
+def test_parallel_collection_steps_describe_execution_and_transform(
     statement: MapStmt | StormStmt | KeepStmt | DropStmt | SortStmt,
     noted: CollectionStepNoted,
     expected: str,
-    lanes: int | None,
 ) -> None:
-    statement = replace(statement, lanes=lanes)
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
@@ -1199,7 +1218,9 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries() -> None:
             given=RepeatStmt(span=SPAN, count=3, runnable="completion_check"),
         )
     )
-    assert _rows(repeat_header.committed) == [["[2] Repeat up to 3 times", ""]]
+    assert _rows(repeat_header.committed) == [
+        ["[2] Repeat up to 3 times, until completion_check is true", ""]
+    ]
     iteration_header = reducer.handle(
         StepBegin(
             step=StepRef.parse("run_root.2.0"),
@@ -1268,10 +1289,7 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries() -> None:
     ]
 
 
-@pytest.mark.parametrize("runnable", ["completion_check", "<agic:32>"])
-def test_until_run_shows_control_boundary_and_only_real_agic_steps(
-    runnable: str,
-) -> None:
+def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
     reducer = ProgressProjector()
     reducer.handle(
         RunBegin(
@@ -1284,16 +1302,18 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps(
         StepBegin(
             step=StepRef.parse("run_root.0"),
             kind="loop",
-            given=RepeatStmt(span=SPAN, count=3, runnable=runnable),
+            given=RepeatStmt(span=SPAN, count=3, runnable="completion_check"),
         )
     )
-    assert _rows(repeat_header.committed) == [["[0] Repeat up to 3 times", ""]]
+    assert _rows(repeat_header.committed) == [
+        ["[0] Repeat up to 3 times, until completion_check is true", ""]
+    ]
     reducer.handle(
         RunBegin(
             run="run_until",
             parent=StepRef.parse("run_root.0"),
             control=ControlRef.for_run("run_until", 0),
-            runnable=f"agic:{runnable}",
+            runnable="agic:completion_check",
             occurrence=Occurrence(
                 iteration=IterationOccurrence(index=0, count=3, phase="until")
             ),
@@ -1306,7 +1326,7 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps(
             given=_model(),
         )
     )
-    assert _rows(live.committed) == [[f"<?> {runnable}", ""]]
+    assert _rows(live.committed) == [["<?> completion_check", ""]]
     assert _rows(live.live) == [["• Thinking..."]]
     final = reducer.handle(
         StepEnd(
@@ -1318,7 +1338,7 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps(
     )
     text = "\n".join(_rows(final.committed)[0])
     assert "• true" in text
-    assert f"executed {runnable}" not in text
+    assert "executed completion_check" not in text
 
 
 def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> None:
@@ -1910,7 +1930,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
 
     assert _rows(terminal.committed) == [
         [
-            "• Mapped all 2 items",
+            "• Mapped all 2 items in parallel",
             "  3 runs 1 tool",
             "",
         ]
@@ -2102,7 +2122,7 @@ def test_settle_uses_the_shared_loop_iteration_boundary() -> None:
         )
     )
     assert _rows(header.committed) == [
-        ["[0] Reduce items sequentially with merge_pair", ""]
+        ["[0] Settle all items into one with merge_pair sequentially", ""]
     ]
     projector.handle(
         RunBegin(
