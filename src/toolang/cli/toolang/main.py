@@ -22,6 +22,7 @@ from ..common.lazy import LazyCommand, lazy_typer_command, lazy_typer_group
 from ..common.output import echo_error
 from ..common.routing import (
     OptionalPrefixAgentListCommand,
+    OptionalPrefixAgentModelsCommand,
     RequiredPrefixAgentCommand,
     RunAgentCommand,
     RuntimeAgentCommand,
@@ -381,6 +382,7 @@ _registered_command(
     "models",
     "toolang.cli.toolang.commands.model_catalog:models_command",
     help="List models.",
+    cls=OptionalPrefixAgentModelsCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_command(

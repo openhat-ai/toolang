@@ -54,6 +54,24 @@ context; it does not read an implicit `agents/default`. In a Docker guest, an
 external `--catalog` source is mounted read-only and
 `TOOLANG_MODEL_CATALOG` is rewritten to its guest path.
 
+Use `too alice models` to inspect a resident agent's model context. It layers
+the agent's provider/plugin configuration and dotenv values over root inputs,
+and prefers its home catalog according to the precedence above. The agent
+does not need to be running. `--catalog`, `--query/-q`, and `--json` work in
+both root and resident forms:
+
+```bash
+too models
+too alice models --query '*[available=true]'
+too --root /path/to/root agent:alice models --catalog /path/to/catalog.json --json
+```
+
+The target goes before `models`; use `agent:<name>` when an agent name matches
+a command name. Both forms list catalog entries, including unavailable models,
+unless filtered by a query. They do not apply `allow.models` or display
+`default.model`/`compact.model`. Availability reflects the invoking process's
+configuration and environment, not a running agent's session or sandbox.
+
 The importer validates both members of a combined catalog before selecting its
 provider map. It keeps models.dev provider and provider-model fields at the top
 level, preserves unknown additive fields, parses prices as decimal values, and

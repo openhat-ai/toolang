@@ -93,6 +93,7 @@ toolang stop <agent>                 # Stop a running agent
 
 # Inspection
 toolang models                       # List model catalog entries and availability
+toolang <agent> models                # Inspect models using a resident agent's config
 toolang providers                    # List catalog providers
 toolang tools                        # List tools
 toolang catalogs                     # List installed model catalogs

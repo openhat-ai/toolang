@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import cast
 
 from click import unstyle
+import pytest
 from rich.console import Console
 from rich.text import Text
+from typer import rich_utils
 from typer.testing import CliRunner
 
 from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
@@ -612,6 +614,220 @@ def test_providers_lists_resolved_api_and_model_adapters(
     assert "resolved" not in provider
 
 
+@pytest.mark.parametrize("target", [[], ["alice"]])
+@pytest.mark.parametrize("colored", [False, True])
+def test_models_help_describes_optional_agent_without_loading(
+    tmp_path: Path, monkeypatch, capsys, target: list[str], colored: bool
+) -> None:
+    def unexpected_load(*args, **kwargs):
+        pytest.fail("help must not load model catalogs")
+
+    monkeypatch.setattr(
+        model_catalog_commands, "load_catalog_inspection", unexpected_load
+    )
+    monkeypatch.setattr(
+        model_catalog_commands, "load_matching_catalog_inspection", unexpected_load
+    )
+    monkeypatch.setattr(rich_utils, "FORCE_TERMINAL", colored)
+    monkeypatch.setattr(rich_utils, "COLOR_SYSTEM", "standard" if colored else None)
+    monkeypatch.delenv("NO_COLOR", raising=False)
+
+    result = cli.main(["--root", str(tmp_path), *target, "models", "--help"])
+    output = capsys.readouterr()
+    stdout = unstyle(output.out)
+
+    assert result == 0
+    assert ("\x1b[" in output.out) is colored
+    assert "[AGENT] models [OPTIONS]" in stdout
+    assert "model catalog and configuration" in stdout
+    assert "--catalog" in stdout
+    assert "--query" in stdout
+    assert "--json" in stdout
+    assert not output.err
+    assert not tuple(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+def test_models_uses_isolated_resident_catalogs(
+    tmp_path: Path, monkeypatch, capsys, json_output: bool
+) -> None:
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.delenv("TOOLANG_MODEL_CATALOG", raising=False)
+    (tmp_path / "catalog.json").write_text(json.dumps(_catalog_data(("one",))))
+    for name in ("alice", "models", "default"):
+        home = _resident_home(tmp_path, name)
+        (home / "catalog.json").write_text(json.dumps(_catalog_data(("two",))))
+
+    # Repeat cross-context hits and misses after warming the catalog caches.
+    for target, expected in (
+        ([], ("one",)),
+        (["alice"], ("two",)),
+        (["agent:models"], ("two",)),
+        ([], ("one",)),
+        (["agent:alice"], ("two",)),
+    ):
+        for model in ("one", "two"):
+            result = cli.main(
+                [
+                    "-r",
+                    str(tmp_path),
+                    *target,
+                    "models",
+                    "-q",
+                    f"test/{model}",
+                    *(["--json"] if json_output else []),
+                ]
+            )
+            output = capsys.readouterr()
+            assert result == 0, output.err
+            assert not output.err
+            if json_output:
+                providers = parse_model_catalog_data(
+                    json.loads(output.out, parse_float=Decimal)
+                )
+                actual = tuple(providers["test"].models) if providers else ()
+                assert actual == ((model,) if model in expected else ())
+            elif model in expected:
+                assert f"test/{model}" in output.out
+                assert "AVAILABLE" in output.out
+            else:
+                assert output.out.strip() == "No models matched query."
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+def test_models_uses_agent_provider_config_and_environment(
+    tmp_path: Path, monkeypatch, capsys, json_output: bool
+) -> None:
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.delenv("TOOLANG_MODEL_CATALOG", raising=False)
+    monkeypatch.delenv("TEST_AGENT_MODEL_KEY", raising=False)
+    (tmp_path / "catalog.json").write_text(json.dumps(_catalog_data()))
+    home = _resident_home(tmp_path, "alice")
+    (home / "config.toml").write_text(
+        '[models.providers.test]\nadapter = "messages"\n'
+        'key_env = "TEST_AGENT_MODEL_KEY"\n'
+    )
+    (home / ".env").write_text("TEST_AGENT_MODEL_KEY=synthetic-agent-key\n")
+    _resident_home(tmp_path, "bob")
+
+    for target, key_override, available in (
+        (["alice"], None, True),
+        ([], None, False),
+        (["bob"], None, False),
+        (["alice"], "", False),
+        (["alice"], None, True),
+    ):
+        if key_override is None:
+            monkeypatch.delenv("TEST_AGENT_MODEL_KEY", raising=False)
+        else:
+            monkeypatch.setenv("TEST_AGENT_MODEL_KEY", key_override)
+        result = cli.main(
+            [
+                "--root",
+                str(tmp_path),
+                *target,
+                "models",
+                "-q",
+                "test/one[adapter=messages;available=true]",
+                "-q",
+                "test/two[adapter=messages;available=true]",
+                *(["--json"] if json_output else []),
+            ]
+        )
+        output = capsys.readouterr()
+        assert result == 0, output.err
+        assert not output.err
+        assert "synthetic-agent-key" not in output.out
+        if json_output:
+            providers = parse_model_catalog_data(
+                json.loads(output.out, parse_float=Decimal)
+            )
+            assert tuple(providers) == (("test",) if available else ())
+            if available:
+                assert tuple(providers["test"].models) == ("one", "two")
+                assert providers["test"].npm == "@ai-sdk/openai-compatible"
+                assert "resolved" not in output.out
+        else:
+            assert ("test/one" in output.out) is available
+            assert ("test/two" in output.out) is available
+
+
+@pytest.mark.parametrize("source", ["agent", "environment", "explicit"])
+def test_models_agent_catalog_override_precedence(
+    tmp_path: Path, monkeypatch, capsys, source: str
+) -> None:
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.delenv("TOOLANG_MODEL_CATALOG", raising=False)
+    home = _resident_home(tmp_path, "alice")
+    paths = {
+        "root": tmp_path / "catalog.json",
+        "agent": home / "catalog.json",
+        "environment": tmp_path / "environment.json",
+        "explicit": tmp_path / "explicit.json",
+    }
+    for name, path in paths.items():
+        data = _catalog_data()
+        cast(dict[str, object], data["test"])["name"] = name
+        path.write_text(json.dumps(data))
+    if source != "agent":
+        (home / ".env").write_text(f"TOOLANG_MODEL_CATALOG={paths['environment']}\n")
+    options = ["--catalog", str(paths["explicit"])] if source == "explicit" else []
+
+    result = cli.main(["--root", str(tmp_path), "alice", "models", *options, "--json"])
+    output = capsys.readouterr()
+
+    assert result == 0, output.err
+    assert json.loads(output.out)["test"]["name"] == source
+
+
+@pytest.mark.parametrize("options", [[], ["-q", "test/*"], ["--json"]])
+def test_models_missing_agent_does_not_fall_back_or_create_a_home(
+    tmp_path: Path, capsys, options: list[str]
+) -> None:
+    result = cli.main(["--root", str(tmp_path), "missing", "models", *options])
+    output = capsys.readouterr()
+
+    assert result == 1
+    assert "Agent missing not found" in output.err
+    assert "Traceback" not in output.err
+    assert not tuple(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("invalid_input", ["config", "catalog"])
+@pytest.mark.parametrize(
+    "options", [[], ["-q", "test/*"], ["--json"], ["-q", "test/*", "--json"]]
+)
+def test_models_reports_agent_input_type_errors_without_a_traceback(
+    tmp_path: Path, monkeypatch, capsys, invalid_input: str, options: list[str]
+) -> None:
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.delenv("TOOLANG_MODEL_CATALOG", raising=False)
+    (tmp_path / "catalog.json").write_text(json.dumps(_catalog_data()))
+    home = _resident_home(tmp_path, "alice")
+    if invalid_input == "config":
+        (home / "config.toml").write_text("[models]\nproviders = []\n")
+        message = "models providers config must be a table"
+    else:
+        (home / "catalog.json").write_text('{"test": 42}')
+        message = "provider 'test' must be an object"
+
+    result = cli.main(["--root", str(tmp_path), "alice", "models", *options])
+    output = capsys.readouterr()
+
+    assert result == 1
+    assert message in output.err
+    assert "Traceback" not in output.err
+    assert not output.out
+
+
+def _resident_home(root: Path, name: str) -> Path:
+    home = root / "agents" / name
+    home.mkdir(parents=True)
+    # Inspection needs a resident home, not a parsed or running program.
+    (home / "agent.too").write_text("not a valid Toolang program\n")
+    return home
+
+
 def _disable_local_discovery(monkeypatch) -> None:
     async def empty_snapshot(_source) -> ModelCatalogSnapshot:
         return ModelCatalogSnapshot(providers={}, models=(), revision="runtime:test")
@@ -624,7 +840,7 @@ def _is_dim(text: Text, offset: int) -> bool:
     return bool(text.get_style_at_offset(Console(color_system="standard"), offset).dim)
 
 
-def _catalog_data() -> dict[str, object]:
+def _catalog_data(model_ids: Sequence[str] = ("one", "two")) -> dict[str, object]:
     return {
         "test": {
             "id": "test",
@@ -652,6 +868,7 @@ def _catalog_data() -> dict[str, object]:
                     "cost": {"input": 1.256, "output": 0},
                 }
                 for model_id, reasoning in (("one", True), ("two", False))
+                if model_id in model_ids
             },
         }
     }

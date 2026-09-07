@@ -78,6 +78,7 @@ def test_lazy_command_completes_options_using_typer_parameters() -> None:
         ("task", {"before"}, {"resident"}),
         ("workspace", {"before"}, {"resident"}),
         ("skill", {"none", "before"}, {"resident"}),
+        ("models", {"none", "before"}, {"resident"}),
         ("catalogs", {"none"}, set()),
         ("toolsets", {"none"}, set()),
     ),
@@ -109,6 +110,42 @@ def test_cli_normalize_preserves_a_command_models_catalog_override() -> None:
 
     assert args == ["retry", "run_1", "--catalog", "/tmp/models.json"]
     assert agent == "alice"
+
+
+@pytest.mark.parametrize("target", ["alice", "agent:alice", "agent:models"])
+def test_cli_normalize_routes_resident_models(target: str) -> None:
+    args, agent = normalize(
+        ["-r", "/tmp/root", target, "models", "--catalog", "/tmp/catalog.json"],
+    )
+
+    assert args == ["-r", "/tmp/root", "models", "--catalog", "/tmp/catalog.json"]
+    assert agent == target.removeprefix("agent:")
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    (
+        ["models", "alice"],
+        ["models", "agent:alice"],
+        ["alice.too", "models"],
+        ["briceyan/dev", "models"],
+    ),
+)
+def test_cli_models_rejects_unsupported_target_forms(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    arguments: list[str],
+) -> None:
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    result = _call_main(arguments)
+    output = capsys.readouterr()
+
+    assert result == 2
+    assert output.err
+    assert "Traceback" not in output.err
+    assert not tuple(tmp_path.iterdir())
 
 
 def test_cli_normalize_allows_both_orders_for_agent_self_commands() -> None:
@@ -480,6 +517,7 @@ def test_cli_bare_resident_target_shows_its_command_help(
     assert result == 0
     assert "Commands for resident agent alice." in stdout
     assert "steer" in stdout
+    assert "models" in stdout
     assert tuple(stdout.index(panel) for panel in panels) == tuple(
         sorted(stdout.index(panel) for panel in panels)
     )

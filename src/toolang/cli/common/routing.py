@@ -194,6 +194,10 @@ class OptionalPrefixAgentListCommand(OptionalPrefixAgentCommand):
     argument_help = "Also include this agent's home caps."
 
 
+class OptionalPrefixAgentModelsCommand(OptionalPrefixAgentCommand):
+    argument_help = "Use this agent's model catalog and configuration."
+
+
 class RequiredPrefixAgentCommand(PrefixAgentCommand):
     prefix_agent_metavar = "AGENT"
     argument_help = "Agent name."

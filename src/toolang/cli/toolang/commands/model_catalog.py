@@ -63,11 +63,14 @@ def models_command(
 ) -> None:
     """List or export model catalog entries."""
 
-    inspection = (
-        _matching_inspection(ctx, model_catalog=model_catalog, query=query)
-        if query and not json_
-        else _inspection(ctx, model_catalog=model_catalog)
-    )
+    try:
+        inspection = (
+            _matching_inspection(ctx, model_catalog=model_catalog, query=query)
+            if query and not json_
+            else _inspection(ctx, model_catalog=model_catalog)
+        )
+    except TypeError as error:
+        raise typer_compat.ClickException(str(error)) from error
     if inspection is None:
         typer.echo("No models matched query.")
         return
