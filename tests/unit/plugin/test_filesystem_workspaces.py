@@ -211,6 +211,111 @@ def test_glob_normalizes_directory_patterns_without_following_aliases(fs):
         _invoke(fs, "glob", path="workspace://repo/", pattern="a**b")
 
 
+def test_recursive_glob_ignores_unmatched_external_symlinks(fs):
+    _tools, context, repo = fs
+    (repo / "src").mkdir()
+    (repo / "src/main.py").write_text("pass")
+    outside = context.home / "outside"
+    outside.mkdir()
+    (outside / "secret.py").write_text("private")
+    (repo / "dependencies").symlink_to(outside, target_is_directory=True)
+    (repo / "interpreter").symlink_to(outside / "secret.py")
+
+    assert _invoke(fs, "glob", path="workspace://repo/", pattern="**/*.py")[
+        "matches"
+    ] == ["workspace://repo/src/main.py"]
+
+
+@pytest.mark.parametrize("pattern", ["**/*.py", "**/**/**/*.py"])
+def test_recursive_glob_collapses_redundant_recursive_components(
+    fs, monkeypatch, pattern
+):
+    _tools, _context, repo = fs
+    leaf = repo / "a/b/c/d/e/f"
+    leaf.mkdir(parents=True)
+    (leaf / "main.py").write_text("pass")
+    visits = {}
+    path_type = type(repo)
+    original_iterdir = path_type.iterdir
+
+    def iterdir(path):
+        visits[path] = visits.get(path, 0) + 1
+        return original_iterdir(path)
+
+    monkeypatch.setattr(path_type, "iterdir", iterdir)
+    assert _invoke(
+        fs, "glob", path="workspace://repo/", pattern=pattern, recursive=True
+    )["matches"] == ["workspace://repo/a/b/c/d/e/f/main.py"]
+    assert max(visits.values()) <= 2
+
+
+@pytest.mark.parametrize("kind", ["file", "directory", "missing"])
+def test_remove_unlinks_the_addressed_symlink_not_its_target(fs, kind):
+    _tools, _context, repo = fs
+    target = repo / "target"
+    if kind == "directory":
+        target.mkdir()
+        (target / "keep").write_text("keep")
+    elif kind == "file":
+        target.write_text("keep")
+    link = repo / "alias"
+    link.symlink_to(target, target_is_directory=kind == "directory")
+
+    assert _invoke(fs, "remove", path="workspace://repo/alias", recursive=True) == {
+        "path": "workspace://repo/alias",
+        "removed": True,
+    }
+    assert not link.is_symlink()
+    if kind != "missing":
+        assert (
+            target / "keep" if kind == "directory" else target
+        ).read_text() == "keep"
+
+
+def test_remove_can_unlink_an_alias_to_the_workspace_root(fs):
+    _tools, _context, repo = fs
+    link = repo / "self"
+    link.symlink_to(repo, target_is_directory=True)
+    _invoke(fs, "remove", path="workspace://repo/self", recursive=True)
+    assert repo.is_dir()
+    assert not link.is_symlink()
+
+
+def test_remove_cannot_unlink_an_external_entry_pointing_into_the_workspace(fs):
+    _tools, context, repo = fs
+    target = repo / "target"
+    target.write_text("keep")
+    outside = context.home / "outside"
+    outside.mkdir()
+    link = outside / "back"
+    link.symlink_to(target)
+    (repo / "bridge").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ToolangError, match="escapes workspace"):
+        _invoke(fs, "remove", path="workspace://repo/bridge/back")
+    assert target.read_text() == "keep"
+    assert link.is_symlink()
+
+
+def test_prepared_remove_keeps_the_parent_directory_when_an_alias_changes(fs):
+    tools, context, repo = fs
+    for name in ("first", "second"):
+        directory = repo / name
+        directory.mkdir()
+        (directory / "target").write_text("keep")
+        (directory / "link").symlink_to(directory / "target")
+    parent = repo / "parent"
+    parent.symlink_to(repo / "first", target_is_directory=True)
+    prepared = prepare_tool(
+        tools["fs__remove"], {"path": "workspace://repo/parent/link"}, context
+    )
+    parent.unlink()
+    parent.symlink_to(repo / "second", target_is_directory=True)
+    assert _invoke_prepared(prepared)["path"] == "workspace://repo/parent/link"
+    assert not (repo / "first/link").is_symlink()
+    assert (repo / "second/link").is_symlink()
+    assert (repo / "first/target").read_text() == "keep"
+
+
 def test_prepared_call_keeps_its_grant_but_next_call_uses_new_context(fs):
     tools, context, repo = fs
     other = repo.parent / "other"

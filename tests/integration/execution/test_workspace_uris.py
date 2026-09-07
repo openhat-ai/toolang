@@ -134,6 +134,43 @@ def test_explicit_workspace_cannot_create_an_unavailable_root_in_home(tmp_path):
     asyncio.run(scenario())
 
 
+def test_remove_symlink_honors_rules_then_unlinks_without_removing_the_target(tmp_path):
+    arguments = {"path": "workspace://repo/alias", "recursive": True}
+    harness, repo, publication = _harness(
+        tmp_path,
+        [
+            _calls(_call("first", "fs__remove", **arguments)),
+            _calls(_call("retry", "fs__remove", **arguments)),
+            _answer(),
+        ],
+    )
+    link = repo / "alias"
+    link.symlink_to(repo / "src", target_is_directory=True)
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            run = await harness.executor.run(_spec(harness, publication), tracer=tracer)
+            assert run.status == "succeeded", run.error
+            results = _results(harness, run)
+            assert results["first"].error == "operation not executed; retry required"
+            assert results["retry"].error is None
+            assert results["retry"].output == {
+                "path": arguments["path"],
+                "removed": True,
+            }
+            assert [c.payload.target for c in _recalls(harness, run)] == [
+                RulesRecallTarget("repo", "/"),
+                RulesRecallTarget("repo", "/alias"),
+            ]
+            assert not link.is_symlink()
+            assert (repo / "src/AGENTS.md").read_text() == "Scoped rules."
+            assert_run_event_integrity(tracer.events)
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
+
+
 def test_fs_protocol_follows_effective_tools(tmp_path):
     harness, _repo, publication = _harness(
         tmp_path,

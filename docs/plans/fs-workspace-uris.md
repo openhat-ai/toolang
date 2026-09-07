@@ -19,7 +19,8 @@ State adoption policy, and record schemas are out of scope. Reserve the full
   publication, without exposing physical roots. Other operations require a name.
 - Resolve within the selected existing workspace directory. Reject traversal and
   symlinks escaping it. Do not create unavailable workspace roots or fall back to
-  home. Never delete a workspace root.
+  home. Never delete a workspace root. Removing a symlink unlinks the addressed
+  entry, not its target; its parent must also remain inside the workspace.
 - All operations return URI paths, including list/glob entries. Preserve file
   contents. Glob patterns cannot escape the selected subtree; traversal must not
   follow directory symlinks. Listing must not inspect targets outside the root.

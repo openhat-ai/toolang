@@ -178,9 +178,11 @@ class FilesystemToolset:
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             resolved = Path(path)
-            if not resolved.exists():
+            if resolved.is_symlink():
+                resolved.unlink()
+            elif not resolved.exists():
                 raise ToolangError(f"path does not exist: {resolved}")
-            if resolved.is_dir():
+            elif resolved.is_dir():
                 if recursive:
                     shutil.rmtree(resolved)
                 else:
@@ -265,8 +267,14 @@ class _FilesystemTool:
             name, relative = workspace, value
         root = workspace_root(name, context)
         path = resolve_workspace_path(name, relative, root)
-        if self.name == "remove" and path.resolved == root:
-            raise ToolangError("cannot remove a workspace root")
+        if self.name == "remove":
+            entry = root / path.relative.lstrip("/")
+            if entry == root:
+                raise ToolangError("cannot remove a workspace root")
+            # Remove the named entry, not a final symlink's target. Its parent
+            # must itself be authorized, even when a link points back inside.
+            parent = authorize_workspace_path(entry.parent, root)
+            path = replace(path, resolved=parent / entry.name)
         uri = workspace_uri(name, path.relative)
         kwargs: dict[str, Any] = dict(
             arguments, path=str(path.resolved), workspace=name
@@ -334,7 +342,10 @@ def _glob_paths(
     components = list(PurePosixPath(pattern).parts)
     if not components or any("**" in part and part != "**" for part in components):
         raise ToolangError("invalid glob pattern")
-    patterns = (["**"] if recursive else []) + components
+    patterns = ["**"] if recursive else []
+    for component in components:
+        if component != "**" or not patterns or patterns[-1] != "**":
+            patterns.append(component)
     directories_only = pattern.endswith("/")
 
     def walk(directory: Path, remaining: list[str]):
@@ -345,8 +356,10 @@ def _glob_paths(
             else:
                 yield directory
             for entry in sorted(directory.iterdir()):
+                if entry.is_symlink():
+                    continue
                 authorize_workspace_path(entry, root)
-                if entry.is_dir() and not entry.is_symlink():
+                if entry.is_dir():
                     yield from walk(entry, remaining)
         else:
             for entry in sorted(directory.iterdir()):
