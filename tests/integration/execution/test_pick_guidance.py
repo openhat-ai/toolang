@@ -81,6 +81,7 @@ def _harness(tmp_path, responses, *, source=SOURCE, content=GUIDANCE):
     service = layout.home / "services/github.md"
     service.parent.mkdir(parents=True)
     _write_guidance(service, content)
+    _write_guidance(service.with_name("private.md"), "Unselected service guidance.")
     layout.program.write_text(source, encoding="utf-8")
     watcher = StateWatcher(layout)
     harness = ExecutionHarness.create(
@@ -217,20 +218,30 @@ def test_only_selected_near_counts_in_the_next_run(tmp_path: Path, recall):
 
 
 @pytest.mark.parametrize("ceiling", [False, True])
-def test_pick_requires_an_exact_allowed_ref(tmp_path: Path, ceiling):
+@pytest.mark.parametrize("kind, name", [("skill", "testing"), ("service", "github")])
+def test_pick_matches_the_effective_catalog(tmp_path: Path, ceiling, kind, name):
+    selected = f"home://{kind}s/{name}"
+    excluded = f"home://{kind}s/private"
     source = (
         SOURCE
         if ceiling
-        else SOURCE.replace("context: none", "skills = skill/testing\n  context: none")
+        else SOURCE.replace(
+            "context: none", f"{kind}s = {kind}/{name}\n  context: none"
+        )
     )
     harness, _ = _harness(
         tmp_path,
         [
             _calls(
-                _pick("name", ref="testing"),
-                _pick("wildcard", ref="home://skills/*"),
-                _pick("private", ref="home://skills/private"),
-                _pick("wrong-kind", kind="service", ref="home://skills/testing"),
+                _pick("allowed", kind=kind, ref=selected),
+                _pick("name", kind=kind, ref=name),
+                _pick("wildcard", kind=kind, ref=f"home://{kind}s/*"),
+                _pick("private", kind=kind, ref=excluded),
+                _pick(
+                    "wrong-kind",
+                    kind="service" if kind == "skill" else "skill",
+                    ref=selected,
+                ),
             ),
             _answer(),
         ],
@@ -243,19 +254,126 @@ def test_pick_requires_an_exact_allowed_ref(tmp_path: Path, ceiling):
                 harness.run_spec(
                     thread=harness.threads.create(prefix=ThreadPrefix.TERM),
                     runnable="chat",
-                    ceilings=(AgentCeiling(skills=("skill/testing",)),)
+                    ceilings=(
+                        AgentCeiling(skills=("skill/testing",))
+                        if kind == "skill"
+                        else AgentCeiling(services=("service/github",)),
+                    )
                     if ceiling
                     else (),
                 )
             )
             assert run.status == "succeeded", run.error
-            assert not _recalls(harness, run)
+            catalog = harness.adapter.invocations[0].call.instructions
+            assert f'ref="{selected}"' in catalog
+            assert f'ref="{excluded}"' not in catalog
+            (control,) = _recalls(harness, run)
+            assert control.payload.content == GUIDANCE
+            results = _results(harness, run)
+            assert results.pop("allowed").output == {"controls": [str(control.ref)]}
             assert all(
                 result.error and "available catalog" in result.error
-                for result in _results(harness, run).values()
+                for result in results.values()
             )
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["run", "execute"])
+def test_pick_uses_the_target_modules_effective_resources(tmp_path: Path, operation):
+    home_ref, module_ref = "home://services/github", "inline://services/github"
+    module_guidance = "Use the target module's guidance."
+    layout = AgentLayout.resident(tmp_path, "alice")
+    module = layout.home / "flows/research.too"
+    module.parent.mkdir(parents=True)
+    module.write_text(
+        f"""service github:
+  description = Module guidance.
+  transport = http
+  target = https://example.invalid/mcp
+
+  {module_guidance}
+
+agic worker() -> Text:
+  context: none
+  user: Complete the module task.
+
+flow research() -> Text:
+  run worker
+""",
+        encoding="utf-8",
+    )
+    directive = "hands" if operation == "run" else "handoffs"
+    harness, _ = _harness(
+        tmp_path,
+        [
+            _calls(
+                _pick("caller", kind="service", ref=home_ref),
+                _pick("foreign", kind="service", ref=module_ref),
+            ),
+            _calls(
+                ToolCall(
+                    "transfer",
+                    "transfer",
+                    f"_toolang__{operation}",
+                    {"runnable": "research"},
+                )
+            ),
+            _calls(
+                _pick("target", kind="service", ref=module_ref),
+                _pick("shadowed", kind="service", ref=home_ref),
+            ),
+            _answer(),
+            *(
+                [_calls(_pick("resumed", kind="service", ref=home_ref)), _answer()]
+                if operation == "run"
+                else []
+            ),
+        ],
+        source=SOURCE.replace(
+            "context: none", f"{directive} = research\n  context: none"
+        ),
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                ),
+                tracer=tracer,
+            )
+            assert root.status == "succeeded", root.error
+            runs = harness.store.list_run_tree(root_run_id=root.id)
+            results = {
+                key: result
+                for run in runs
+                for key, result in _results(harness, run).items()
+            }
+            for identity in ("foreign", "shadowed"):
+                assert (
+                    results[identity].error
+                    and "available catalog" in results[identity].error
+                )
+            assert results["caller"].error is None
+            assert results["target"].error is None
+            contents = [
+                c.payload.content for run in runs for c in _recalls(harness, run)
+            ]
+            assert contents == [GUIDANCE, module_guidance]
+            caller = harness.adapter.invocations[0].call.instructions
+            target = harness.adapter.invocations[2].call.instructions
+            assert f'ref="{home_ref}"' in caller and f'ref="{module_ref}"' not in caller
+            assert f'ref="{module_ref}"' in target and f'ref="{home_ref}"' not in target
+            if operation == "run":
+                assert results["resumed"].output == {"controls": []}
+                assert harness.adapter.invocations[4].call.instructions == caller
+            assert_run_event_integrity(tracer.events)
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
 
 
 def test_pick_uses_the_reloaded_resource_selection(tmp_path: Path):
@@ -307,6 +425,11 @@ def test_pick_uses_the_reloaded_resource_selection(tmp_path: Path):
             )
             assert results["allowed"].error is None
             assert len(_recalls(harness, run)) == 2
+            before = harness.adapter.invocations[0].call.instructions
+            after = harness.adapter.invocations[-1].call.instructions
+            assert 'ref="home://skills/private"' in before
+            assert 'ref="home://skills/private"' not in after
+            assert 'ref="home://skills/testing"' in after
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)
