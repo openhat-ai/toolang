@@ -43,8 +43,9 @@ including parallel lanes, failures, cancellation, and footer counts. Keep the
 existing run/execute structural grammar. Treat compact as a long-running operation
 with immediate visibility and elapsed-time refresh independent of event arrival.
 Add typed preflight provenance and honor result facts to existing Step payloads,
-so protocol deferral has distinct presentation. This includes event/record codecs
-and the Store schema-version update required for the changed encoding. Preserve
+so routine protocol retries can be hidden without hiding real failures. This
+includes event/record codecs and the Store schema-version update required for the
+changed encoding. Preserve
 execution behavior, Step kinds/statuses, tool result contracts, controls, model
 messages, CLI flags, and operational startup/shutdown progress. Inspection retains
 complete results and can expose the new facts.
@@ -65,8 +66,9 @@ arguments use a bounded operation label and preserve the actual error.
 
 - Use `✧` (U+2727 WHITE FOUR POINTED STAR) for runtime activity/result rows.
   Keep `∎` (U+220E END OF PROOF) for the existing root Run footer and its current
-  status styling; ordinary tool/model traces keep `•`. Preflight-blocked user
-  calls use `✧` for their protocol notice. Use the same runtime
+  status styling; ordinary tool/model traces keep `•`. Normal preflight retry
+  replies produce no progress row; failed preflights use `✧` for their blocked
+  operation notice. Use the same runtime
   marker while active and after success/failure/cancellation; wording and tone
   express status. Natural-language labels identify the operation, so runtime
   rows remain distinct without color. Honor and compact inherently describe
@@ -76,7 +78,8 @@ arguments use a bounded operation label and preserve the actual error.
   separate heading/footer. Failed/canceled rows use existing error/warning tones
   and include an indented reason. Do not render resource content as Markdown.
 - StepBegin starts replaceable activity; StepEnd commits one terminal outcome
-  (run/execute retain the structural completion rules below).
+  (run/execute retain their structural rules; normal preflight retry replies are
+  silent as defined below).
   Preserve the existing append-only/live behavior and event ordering. Non-TTY
   output retains terminal outcomes; compact additionally gets the bounded
   start/heartbeat feedback defined below.
@@ -105,9 +108,9 @@ execute's existing committed-transfer handling, including failure before target
 start. Runtime activity/error markers also apply inside parallel lanes; structural
 run/handoff boundaries remain governed by existing lane projection.
 
-Keep the blocked Tool Step separately visible. Its typed preflight outcome changes
-its presentation as defined below; its durable status and model-facing error
-remain unchanged. `Loaded` describes runtime recall preparation, not model adoption.
+Keep every blocked Tool Step and its model-facing error in execution records.
+Its typed preflight outcome controls visibility as defined below. `Loaded`
+describes runtime recall preparation, not model adoption.
 Loading service guidance does not mean connecting to the service.
 
 For honor, capture each discovered target/revision whose recall returns a control
@@ -121,7 +124,7 @@ uses `Loaded workspace rules: <files>; removed: <files>`. Never label a missing
 file as loaded. Retain partial facts on failure/cancellation without presenting
 the overall operation as successful or implying earlier recalls were rolled back.
 
-### Preflight facts and protocol deferral
+### Preflight facts and protocol visibility
 
 Keep honor's `{controls: [...]}` receipt as the execution contract. Enrich the
 execution facts needed by progress instead of adding UI data to model messages:
@@ -156,33 +159,38 @@ WorkspaceRuleRecall:
 
 | Condition | Original call presentation |
 | --- | --- |
-| `retry_required`, terminal failed status with the recorded blocked ToolResultPart | `✧ Deferred write: <target> — model retry required`, dim, without an error/output panel. |
+| `retry_required`, terminal failed status with the recorded blocked ToolResultPart | Hidden in progress: no activity, result, error panel, or replacement deferral notice. Honor's rule-loading outcome remains visible. |
 | `failed`, terminal failed status | `✧ Blocked write: <target> — workspace rules unavailable`, error tone; honor retains the actual loading failure and full reason. |
 | Terminal canceled status | Explicit canceled/not-executed wording and the existing cancellation reason; it takes precedence over the earlier preflight verdict. |
 | No preflight metadata | Ordinary tool lifecycle and failure rendering, even if its error text happens to match the retry-protocol string. |
 
-`write` is illustrative: use the existing tool identity/argument preview to name
-the requested action through the executor's existing summary context. The
-projector treats that summary as text, without stripping or parsing verbs. At
-StepBegin, a blocked call already has a preflight verdict; show a deferral/blocked
-notice immediately, never `Writing...` or a fake execution spinner. StepEnd
-commits one terminal notice. Both Script and Chat, including lanes, use this
-classification. A user-tool call remains a user-tool call for metrics.
-An unexpected executor error that prevents recording the blocked protocol reply
-retains its real failure/diagnostic; preflight metadata must not suppress it.
+At StepBegin, `retry_required` suppresses the original call's activity immediately,
+so no `Writing...`, failure flash, or fake spinner appears. Track its events,
+result, error references, and metrics normally; only presentation is silent.
+If StepEnd confirms the normal protocol reply, commit nothing. If it instead
+reports cancellation, lacks the expected result, or reports an unexpected executor
+failure, show the appropriate terminal diagnostic. Never hide a real failure
+solely because the Step began behind a preflight gate.
+
+Apply this in Script/Chat, TTY/plain output, and parallel lanes. Silent Steps
+create no empty blocks, gaps, structural boundaries, or lane-activity updates.
+Leave deferred boundaries for the next visible operation. Do not mark suppressed
+errors as already displayed: if a Run/Flow terminal failure references one, show
+the diagnostic at that terminal owner rather than losing its explanation.
 
 Deferral is a completed protocol reply, not an open queued operation. The model
 may retry after receiving the rules; the UI neither retries nor asks the human to
-retry. A later real Tool Step uses normal tool presentation. Do not rewrite the
-earlier notice or infer a retry link from matching paths. Failures in actual tool
-execution and failures in honor remain visible with their full diagnostics.
+retry. Show the later real Tool Step only if it occurs; invent no queued task,
+retry spinner, or success. The original protocol result remains available to
+model assembly, persistence/replay, and inspection. Failures in honor and actual
+tool execution remain visible. For blocked/error wording, use the executor's
+existing tool identity/argument summary context without parsing prose in the UI.
 
 Illustrative committed trace (synthetic resource names; timing omitted):
 
 ```text
 ✧ Loaded skill guidance: code-review
 ✧ Loaded workspace rules: repo:/src/AGENTS.md
-✧ Deferred read: workspace://repo/src/main.py — model retry required
 • read_file /src/main.py
   <ordinary tool output>
 ✧ Compacted thread history
@@ -248,8 +256,9 @@ rows. The completed row is retained in scrollback.
   Run metrics. Honor and its blocked user tool count separately. Independent
   compact-program Runs/models/history tools/costs stay outside caller metrics;
   only the outer compact Tool Step is counted. Do not imply total compaction cost.
-  A deferred/blocked original remains one user-tool call; its `✧` notice adds no
-  runtime call. Count the honor Step separately, including shared pending recalls.
+  A deferred/blocked original remains one user-tool call, even when its protocol
+  reply is hidden. These are call counts, not counts of completed side effects.
+  Visibility changes add no runtime calls; count honor separately.
 - Put runtime classification and pure label/result projection in
   `cli/common/execution_progress/runtime.py`. Keep typed presentation vocabulary
   in `types.py`; integrate through `step_projection.py`, `projector.py`, and
@@ -291,6 +300,8 @@ Unless qualified, source filenames below belong to
 - [ ] Integrate lifecycle and lane rendering in `step_projection.py` and
   `projector.py`; retain run/execute ownership and ordering. Update marker-aware
   hanging-prefix handling in `formatting.py` for `✧`, including parallel lanes.
+  Suppress normal protocol retry rows without skipping lifecycle/error bookkeeping
+  or creating blank fragments; expose non-protocol terminal failures normally.
 - [ ] Render the runtime surface consistently in `rich_rendering.py`; verify
   `src/toolang/cli/common/script_progress/console.py` and
   `src/toolang/cli/toolang/commands/chat/blocks.py` consumers.
@@ -324,7 +335,8 @@ Reuse scenarios/harnesses from `tests/integration/execution/test_pick_guidance.p
 
 1. Every known runtime leaf has distinct live/terminal presentation in Script and
    Chat. Pick skill/service, reload, honor, compact, run, and execute all have
-   success/failure/cancel coverage; ordinary tools retain existing output styling.
+   success/failure/cancel coverage; calls without preflight metadata retain their
+   existing output styling.
 2. Classification is independent of trigger and summary wording. Unknown reserved
    leaves, look-alike user names, invalid arguments, missing outputs, empty
    receipts, and unexpected outputs remain understandable without projector failure.
@@ -334,11 +346,15 @@ Reuse scenarios/harnesses from `tests/integration/execution/test_pick_guidance.p
    `repo:/src/AGENTS.md`, with root/nested rules in discovery order. Cover multiple
    workspaces, duplicate access paths, mixed removals, and old/missing summaries.
    No nonexistent rule paths, access-path substitutions, or synthetic success appears.
-   Successful preflight produces a dim deferral notice, not `Failed write` or
-   `Writing...`; rule-loading failure produces a blocked notice with real errors.
+   Successful preflight keeps honor visible and hides the original retry reply
+   entirely: no `Failed write`, `Deferred write`, `Writing...`, result panel, or
+   empty gaps. Rule-loading failure produces a blocked notice with real errors.
    Identical error text from an ordinary tool remains a failure. Assert explicit
    correlation for batches, multiple paths, and repeated honors sharing controls.
    No operation runs before model retry; protocol results/messages stay unchanged.
+   A model that never retries produces no phantom tool activity. Cancellation,
+   missing results, and unexpected failures after a silent StepBegin remain
+   visible, including Run/Flow errors pointing to a previously suppressed result.
 4. Actual compact events before the first and between later Model Steps produce
    one outer runtime operation. Cover permit waiting, reuse/no-op, failure, and
    cancellation with deterministic gates. No independent-program events, fabricated
@@ -353,7 +369,8 @@ Reuse scenarios/harnesses from `tests/integration/execution/test_pick_guidance.p
    followed by interruption, and deduplicated errors. Terminal steps clear live rows.
 6. Counts are exact for mixed user/runtime calls, failures, canceled calls, no-ops,
    child aggregation, and parallel lanes; compact internals remain excluded.
-   Preflight notices add no phantom runtime calls or executed user operations.
+   Suppression preserves call counts and adds no phantom runtime calls or executed
+   user operations; other parallel lanes and structural boundaries remain intact.
 7. Shared Script/Chat rendering passes TTY/non-TTY, uncolored output, narrow and
    wide widths, Unicode/long refs and workspace paths, and multiline errors.
    Assert exact marker code points, aligned hanging indents, and unchanged `∎`
@@ -369,7 +386,7 @@ Reuse scenarios/harnesses from `tests/integration/execution/test_pick_guidance.p
 
 ## Risks and open questions
 
-The main risks are disguising actual tool failures as protocol deferrals, losing
+The main risks are hiding actual failures with protocol retries, losing
 preflight correlation/partial rule facts, claiming adoption too early, duplicating
 run output, and double-counting nested work. Typed execution-owned facts, unchanged
 protocol replies, and interruption/batch acceptance cases address these. The Store
