@@ -22,7 +22,10 @@ URIs, #495, and AgentState snapshots, #496):
   `operation not executed; retry required`, even when honor succeeds. A rules
   preflight that needs no recall creates no honor Step.
 - Honor arguments identify accessed paths; `load_rules` discovers the actual
-  `AGENTS.md` scopes. Those file identities are not in today's terminal summary.
+  `AGENTS.md` scopes. Its receipt contains only control references. Current events
+  expose neither those rule effects nor an explicit original-call/preflight link.
+- Preflight-required retries use the same failed Tool Step/error channel as real
+  tool failures. A summary alone cannot safely distinguish the two for rendering.
 - Compact waits and runs an independent program without forwarding its internal
   events to the caller's progress. Receipts identify controls, not their adoption.
 - Script's Live area currently refreshes only on updates (`auto_refresh=False`).
@@ -39,10 +42,12 @@ Include all six runtime operations in the shared Script/Chat presentation,
 including parallel lanes, failures, cancellation, and footer counts. Keep the
 existing run/execute structural grammar. Treat compact as a long-running operation
 with immediate visibility and elapsed-time refresh independent of event arrival.
-Enrich honor's existing terminal summary with the actual recalled rule files.
-No execution behavior, Step kinds, event/record schemas, tool contracts, controls,
-model messages, CLI flags, or
-operational startup/shutdown progress change. Inspection retains complete results.
+Add typed preflight provenance and honor result facts to existing Step payloads,
+so protocol deferral has distinct presentation. This includes event/record codecs
+and the Store schema-version update required for the changed encoding. Preserve
+execution behavior, Step kinds/statuses, tool result contracts, controls, model
+messages, CLI flags, and operational startup/shutdown progress. Inspection retains
+complete results and can expose the new facts.
 
 ### Classification
 
@@ -60,7 +65,8 @@ arguments use a bounded operation label and preserve the actual error.
 
 - Use `✧` (U+2727 WHITE FOUR POINTED STAR) for runtime activity/result rows.
   Keep `∎` (U+220E END OF PROOF) for the existing root Run footer and its current
-  status styling; ordinary tool/model traces keep `•`. Use the same runtime
+  status styling; ordinary tool/model traces keep `•`. Preflight-blocked user
+  calls use `✧` for their protocol notice. Use the same runtime
   marker while active and after success/failure/cancellation; wording and tone
   express status. Natural-language labels identify the operation, so runtime
   rows remain distinct without color. Honor and compact inherently describe
@@ -99,12 +105,9 @@ execute's existing committed-transfer handling, including failure before target
 start. Runtime activity/error markers also apply inside parallel lanes; structural
 run/handoff boundaries remain governed by existing lane projection.
 
-Honor success never changes the original call's status, style, or error. Keep
-the blocked Tool Step separately visible; do not relabel it as a successful or
-merely pending operation, infer causality from adjacency, or retry from the UI.
-`Loaded` describes runtime recall preparation, including captured rule updates;
-it does not claim that the model adopted the content. The original tool error
-already explains the retry requirement, so the honor row does not repeat it.
+Keep the blocked Tool Step separately visible. Its typed preflight outcome changes
+its presentation as defined below; its durable status and model-facing error
+remain unchanged. `Loaded` describes runtime recall preparation, not model adoption.
 Loading service guidance does not mean connecting to the service.
 
 For honor, capture each discovered target/revision whose recall returns a control
@@ -115,16 +118,71 @@ logical target and retain discovery order, ancestor first within each workspace.
 List multiple files separated by commas in one terminal outcome and wrap as needed.
 Revision-zero removals use `Removed workspace rules: <files>`; a mixed outcome
 uses `Loaded workspace rules: <files>; removed: <files>`. Never label a missing
-file as loaded. Failure/cancellation retain their status and reason without a
-success claim or an implication that earlier committed recalls were rolled back.
+file as loaded. Retain partial facts on failure/cancellation without presenting
+the overall operation as successful or implying earlier recalls were rolled back.
+
+### Preflight facts and protocol deferral
+
+Keep honor's `{controls: [...]}` receipt as the execution contract. Enrich the
+execution facts needed by progress instead of adding UI data to model messages:
+
+```text
+ToolStepGiven.preflight: WorkspaceRulesPreflight | None = None
+WorkspaceRulesPreflight:
+  honor: StepRef
+  outcome: "retry_required" | "failed"
+
+ToolStepNoted.rules: tuple[WorkspaceRuleRecall, ...] = ()
+WorkspaceRuleRecall:
+  target: RulesRecallTarget  # existing workspace + logical scope directory
+  action: "loaded" | "removed"
+```
+
+- The executor supplies `preflight` on the blocked original call before its
+  StepBegin. It references the exact earlier honor Step in the same Run; the
+  original retains its model ToolCall identity/source. Honor success selects
+  `retry_required`; a rule-loading failure selects `failed`. These facts come
+  from execution, never tool arguments, receipt presence, summary/error matching,
+  or adjacency. Do not reuse `preceded_by`, which records control adoption.
+- Honor records ordered rule facts as each recall succeeds or reuses a pending
+  control. Derive `removed` from revision zero at the owner. Persist facts with
+  the Tool Step and include them in StepEnd, retaining committed partial facts
+  through cancellation/result-delivery interruption. No content, revision hash,
+  host path, or full control payload enters presentation metadata.
+- Build honor rows from typed rule facts, not a parsed human summary or Store
+  lookup. Keep `summary` as the existing readable fallback. Call variants with
+  no facts remain understandable; never invent file names. The original error
+  and empty output remain the exact model-facing preflight retry protocol.
+
+| Condition | Original call presentation |
+| --- | --- |
+| `retry_required`, terminal failed status with the recorded blocked ToolResultPart | `✧ Deferred write: <target> — model retry required`, dim, without an error/output panel. |
+| `failed`, terminal failed status | `✧ Blocked write: <target> — workspace rules unavailable`, error tone; honor retains the actual loading failure and full reason. |
+| Terminal canceled status | Explicit canceled/not-executed wording and the existing cancellation reason; it takes precedence over the earlier preflight verdict. |
+| No preflight metadata | Ordinary tool lifecycle and failure rendering, even if its error text happens to match the retry-protocol string. |
+
+`write` is illustrative: use the existing tool identity/argument preview to name
+the requested action through the executor's existing summary context. The
+projector treats that summary as text, without stripping or parsing verbs. At
+StepBegin, a blocked call already has a preflight verdict; show a deferral/blocked
+notice immediately, never `Writing...` or a fake execution spinner. StepEnd
+commits one terminal notice. Both Script and Chat, including lanes, use this
+classification. A user-tool call remains a user-tool call for metrics.
+An unexpected executor error that prevents recording the blocked protocol reply
+retains its real failure/diagnostic; preflight metadata must not suppress it.
+
+Deferral is a completed protocol reply, not an open queued operation. The model
+may retry after receiving the rules; the UI neither retries nor asks the human to
+retry. A later real Tool Step uses normal tool presentation. Do not rewrite the
+earlier notice or infer a retry link from matching paths. Failures in actual tool
+execution and failures in honor remain visible with their full diagnostics.
 
 Illustrative committed trace (synthetic resource names; timing omitted):
 
 ```text
 ✧ Loaded skill guidance: code-review
 ✧ Loaded workspace rules: repo:/src/AGENTS.md
-• failed read_file /src/main.py
-  operation not executed; retry required
+✧ Deferred read: workspace://repo/src/main.py — model retry required
 • read_file /src/main.py
   <ordinary tool output>
 ✧ Compacted thread history
@@ -190,20 +248,23 @@ rows. The completed row is retained in scrollback.
   Run metrics. Honor and its blocked user tool count separately. Independent
   compact-program Runs/models/history tools/costs stay outside caller metrics;
   only the outer compact Tool Step is counted. Do not imply total compaction cost.
+  A deferred/blocked original remains one user-tool call; its `✧` notice adds no
+  runtime call. Count the honor Step separately, including shared pending recalls.
 - Put runtime classification and pure label/result projection in
   `cli/common/execution_progress/runtime.py`. Keep typed presentation vocabulary
   in `types.py`; integrate through `step_projection.py`, `projector.py`, and
   `state.py`. Both sequential traces and lane activity use the same classifier.
-- Reuse existing events and their codecs unchanged. Honor keeps observed rule
-  targets/revisions in per-call executor state and records the resulting human
-  summary through the existing `ToolStepNoted.summary` pipeline. The projector
-  displays that summary without parsing it; the CLI owns the marker and styling.
-  Older summaries remain displayable; missing summaries fall back to a generic
-  operation label, never guessed files. No Store access, receipt dereferencing,
-  or new runtime authority is needed for rendering.
-  A receipt describes readiness only; adopted-context visualization is outside
-  this scope. Replaying the same ordered event stream produces the same committed
-  rows; renderer-owned elapsed snapshots/heartbeats are intentionally ephemeral.
+- Define the preflight/rule vocabulary in `execution/types.py`; extend existing
+  given/noted codecs in `execution/records.py` and their event serialization.
+  Validate same-Run, earlier-Step preflight references at execution boundaries.
+  Keep projection independent of Store reads and resource loading. Events without
+  the optional facts use ordinary/fallback presentation, not string heuristics.
+- Bump the Store schema version for the changed durable encoding under the
+  existing policy (42 at this baseline). Reject incompatible databases without
+  modifying them; provide no automatic migration or historical backfill. CLI and
+  remote runtime versions must support the new payloads. Preserve tool results,
+  model assembly, and existing control relations. Replay reproduces committed
+  rows; renderer-owned elapsed snapshots/heartbeats remain ephemeral.
 - Carry optional compact timing metadata (owning Step and start timestamp) on
   projected live rows, including lane rows. Keep clock sampling and refresh in
   the presenters, not `ProgressProjector`; timer ticks never manufacture events.
@@ -220,10 +281,13 @@ Unless qualified, source filenames below belong to
   scope; ship no implementation as part of this definition.
 - [ ] Add the shared classifier and runtime projection in `runtime.py` and
   `types.py`, with safe fallbacks for unknown calls and malformed previews.
-- [ ] Capture honor's observed recall targets in
-  `src/toolang/execution/executor/tool_runtime.py` and build its terminal summary
-  in `src/toolang/execution/executor/steps/tool.py`. Reuse `rules.py` discovery
-  results without changing rule selection, control receipts, or adoption.
+- [ ] Add typed preflight/rule facts and codecs in
+  `src/toolang/execution/types.py`, `records.py`, and `events.py`; update the
+  encoding version in `src/toolang/execution/store.py` under its existing policy.
+- [ ] Capture honor's rule facts in `src/toolang/execution/executor/tool_runtime.py`;
+  carry the exact honor reference/verdict into the original call and preserve
+  facts through finish/cancel in `src/toolang/execution/executor/steps/tool.py`.
+  Reuse `rules.py` discovery without changing recalls, retries, or adoption.
 - [ ] Integrate lifecycle and lane rendering in `step_projection.py` and
   `projector.py`; retain run/execute ownership and ordering. Update marker-aware
   hanging-prefix handling in `formatting.py` for `✧`, including parallel lanes.
@@ -242,7 +306,8 @@ Unless qualified, source filenames below belong to
 - [ ] Run default verification before every implementation commit:
   `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`,
   `uv run pytest`. Keep live-provider tests opt-in. Use the ordinary release path;
-  no feature flag or data migration is required.
+  no feature flag is required. Document the changed event payloads and incompatible
+  Store version in the implementation release notes; do not migrate old data.
 
 Tests belong in
 `tests/unit/cli/test_execution_progress_projector.py`,
@@ -250,6 +315,8 @@ Tests belong in
 `tests/integration/cli/test_runtime_progress.py`; a focused
 `tests/unit/cli/test_runtime_tool_progress.py` may own the new table-driven cases.
 Extend `tests/unit/cli/test_chat_tui.py` for event-independent refresh and cleanup.
+Cover codecs/schema policy in `tests/unit/execution/test_events.py`,
+`test_store_schema.py`, and `test_tool_step_summary.py`.
 Reuse scenarios/harnesses from `tests/integration/execution/test_pick_guidance.py`,
 `test_honor_rules.py`, and `test_compact_scenarios.py` without changing behavior.
 
@@ -267,6 +334,11 @@ Reuse scenarios/harnesses from `tests/integration/execution/test_pick_guidance.p
    `repo:/src/AGENTS.md`, with root/nested rules in discovery order. Cover multiple
    workspaces, duplicate access paths, mixed removals, and old/missing summaries.
    No nonexistent rule paths, access-path substitutions, or synthetic success appears.
+   Successful preflight produces a dim deferral notice, not `Failed write` or
+   `Writing...`; rule-loading failure produces a blocked notice with real errors.
+   Identical error text from an ordinary tool remains a failure. Assert explicit
+   correlation for batches, multiple paths, and repeated honors sharing controls.
+   No operation runs before model retry; protocol results/messages stay unchanged.
 4. Actual compact events before the first and between later Model Steps produce
    one outer runtime operation. Cover permit waiting, reuse/no-op, failure, and
    cancellation with deterministic gates. No independent-program events, fabricated
@@ -281,6 +353,7 @@ Reuse scenarios/harnesses from `tests/integration/execution/test_pick_guidance.p
    followed by interruption, and deduplicated errors. Terminal steps clear live rows.
 6. Counts are exact for mixed user/runtime calls, failures, canceled calls, no-ops,
    child aggregation, and parallel lanes; compact internals remain excluded.
+   Preflight notices add no phantom runtime calls or executed user operations.
 7. Shared Script/Chat rendering passes TTY/non-TTY, uncolored output, narrow and
    wide widths, Unicode/long refs and workspace paths, and multiline errors.
    Assert exact marker code points, aligned hanging indents, and unchanged `∎`
@@ -288,13 +361,21 @@ Reuse scenarios/harnesses from `tests/integration/execution/test_pick_guidance.p
    Recorded events survive existing serialization round trips and project the same
    committed results without plugin loading or Store reads. Default offline
    verification passes.
+8. Typed facts survive event round trips, persistence/restart, and interrupted
+   delivery. Canceled Steps preserve captured facts while retaining canceled
+   presentation. Invalid cross-Run/forward preflight references are rejected;
+   absent optional facts fall back safely. Incompatible Store versions are
+   rejected without modification under the existing schema policy.
 
 ## Risks and open questions
 
-The main risks are claiming adoption too early, hiding failures with receipts,
-duplicating run/handoff output, flooding preflight traces, and double-counting
-nested work. The preparation/completion labels, unchanged lifecycle ownership, one
-terminal outcome per operation, and mixed-tree acceptance cases address these.
+The main risks are disguising actual tool failures as protocol deferrals, losing
+preflight correlation/partial rule facts, claiming adoption too early, duplicating
+run output, and double-counting nested work. Typed execution-owned facts, unchanged
+protocol replies, and interruption/batch acceptance cases address these. The Store
+version change also requires a coordinated runtime/client upgrade; this definition
+does not authorize migrating or deleting existing user data.
 
 No blocking design question remains. Human confirmation is required for this
-proposed display grammar and count split before implementation.
+proposed display grammar, execution metadata, Store-version impact, and count
+split before implementation.
