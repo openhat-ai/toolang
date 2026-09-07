@@ -552,6 +552,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 "model_request",
                 "input",
                 "horizon",
+                "cwd",
                 "sandbox",
                 "authored_input",
                 "authored_commands",

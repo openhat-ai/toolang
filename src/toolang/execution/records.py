@@ -23,6 +23,7 @@ from toolang.base.types.message import (
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelCall, ModelContinuation, ToolCall
+from toolang.base.types.tool import ToolPath
 from toolang.lang.ast import FlowStmt, flow_stmt_from_data, to_data as ast_to_data
 from toolang.lang.input import PromptInvocation, RunnableInputRaw, parse_input
 from toolang.lang.types import Array, Struct, Value, validate_type, value_type
@@ -81,6 +82,7 @@ _MODEL_REQUEST_ADAPTER = TypeAdapter(ModelRequest)
 
 _MODEL_CALL_ADAPTER = TypeAdapter(ModelCall)
 _TOOL_CALL_ADAPTER = TypeAdapter(ToolCall)
+_TOOL_PATH_ADAPTER = TypeAdapter(ToolPath)
 _RUN_LIMITS_ADAPTER = TypeAdapter(RunLimits)
 
 
@@ -173,6 +175,7 @@ class RunControlPayload:
     authored_session_commands: tuple[RunCommand, ...] = ()
     prompt_invocations: tuple[PromptInvocation, ...] = ()
     horizon: FieldRef | None = None
+    cwd: ToolPath | None = None
 
     def __post_init__(self) -> None:
         _validate_run_payload(
@@ -848,6 +851,9 @@ def _control_payload_from_data(
             authored_commands=authored_commands,
             authored_session_commands=authored_session_commands,
             prompt_invocations=prompt_invocations,
+            cwd=_TOOL_PATH_ADAPTER.validate_python(payload["cwd"])
+            if payload.get("cwd") is not None
+            else None,
         )
     if kind == "reload":
         return ReloadControlPayload(
@@ -1732,6 +1738,8 @@ def _run_payload_data(
         data["state"] = payload.state
     if payload.horizon is not None:
         data["horizon"] = str(payload.horizon)
+    if payload.cwd is not None:
+        data["cwd"] = _TOOL_PATH_ADAPTER.dump_python(payload.cwd, mode="json")
     if payload.sandbox is not None:
         data["sandbox"] = payload.sandbox
     if payload.authored_input is not None:

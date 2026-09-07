@@ -13,6 +13,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from toolang.base.types.message import Message
+from toolang.base.utils.workspace_paths import capture_cwd
 from toolang.base.types.model import (
     ModelOverride,
     ModelParameters,
@@ -45,6 +46,23 @@ from toolang.lang.input import NamedInputSource, RunnableInputRaw
 
 _DETAIL_ADAPTER = TypeAdapter(RunDetail)
 _CONTROL_ADAPTER = TypeAdapter(ControlInfo)
+
+
+@pytest.mark.parametrize("operation", ["run", "retry", "rerun"])
+def test_remote_requests_reject_local_cwd_before_transport(tmp_path, operation):
+    cwd = capture_cwd(tmp_path, {})
+    request = (
+        replace(_request(), cwd=cwd)
+        if operation == "run"
+        else (RetryRequest if operation == "retry" else RerunRequest)(
+            source="run_source", commands=(), request_id="request", cwd=cwd
+        )
+    )
+    with pytest.raises(RemoteRunClientError, match="local cwd"):
+        if isinstance(request, RunRequest):
+            remote._run_request_data(request)
+        else:
+            remote._restart_request_data(request)
 
 
 class _Bytes(httpx.AsyncByteStream):

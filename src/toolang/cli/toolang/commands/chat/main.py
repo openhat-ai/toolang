@@ -200,6 +200,7 @@ def _chat_runtime(
             environ = load_runtime_environ(layout, base_environ=os.environ)
             local = LocalChatSession(
                 layout,
+                cwd=Path.cwd().resolve(),
                 sandbox="host",
                 compact_override=compact_override
                 or user_call(resolve_compact_override, environ),

@@ -2,6 +2,12 @@
 The fs tools accept workspace URIs: workspace://{name}/{path}. The path is relative to
 the named workspace root, independent of its physical host or container location.
 When fs.list is available, use path="workspace://" to discover current workspaces.
+When the caller supplies a cwd, workspace://. (also workspace://./) addresses
+that Run's fixed location; workspace://./file addresses a file there. This is an
+alias, not an additional grant. Named locations return the real workspace URI;
+an explicitly granted temporary cwd returns workspace://./ paths. The namespace
+listing reports the cwd URI when present. Child runs inherit it. Shell cd does
+not change it, and an unavailable named cwd never becomes a temporary grant.
 The list can change when a new State publication takes effect. An earlier list
 does not grant access to a workspace that is no longer available.
 Percent-encode special characters in URI paths. Reuse the URIs returned by fs

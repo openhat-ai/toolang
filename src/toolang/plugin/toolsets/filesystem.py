@@ -9,7 +9,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 import shutil
 import threading
-from typing import Any
+from typing import Any, cast
 
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool, Toolset
@@ -18,7 +18,7 @@ from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.base.utils.workspace_paths import (
     authorize_workspace_path,
     parse_workspace_uri,
-    resolve_workspace_path,
+    resolve_workspace_location,
     workspace_root,
     workspace_uri,
 )
@@ -26,6 +26,7 @@ from toolang.base.utils.workspace_paths import (
 DEFAULT_MAX_CHARS = 20_000
 _PATH_GUIDANCE = (
     " Use workspace://<name>/<path> for a configured workspace."
+    " Use workspace://./<path> for the Run's captured cwd, when available."
     " Alternatively, provide workspace with a root-relative path."
     " Agent home and the process working directory are not implicit roots."
 )
@@ -57,7 +58,7 @@ class FilesystemToolset:
     def _build_tools(self) -> dict[str, AgentTool]:
         @tool(
             name="list",
-            description="List a directory, or list available workspaces at workspace://."
+            description="List a directory, or list available workspaces at `workspace://`."
             + _PATH_GUIDANCE,
         )
         def list_dir(
@@ -265,8 +266,9 @@ class _FilesystemTool:
                     "use a workspace URI or specify workspace; agent home is not accessible"
                 )
             name, relative = workspace, value
+        path = resolve_workspace_location(name, relative, context)
+        name = cast(str, path.workspace)
         root = workspace_root(name, context)
-        path = resolve_workspace_path(name, relative, root)
         if self.name == "remove":
             entry = root / path.relative.lstrip("/")
             if entry == root:
@@ -308,13 +310,18 @@ class _FilesystemTool:
 
 
 def _list_workspaces(context: ToolContext) -> dict[str, Any]:
-    return {
+    result: dict[str, Any] = {
         "path": "workspace://",
         "entries": [
             {"name": name, "path": workspace_uri(name), "available": root.is_dir()}
             for name, root in sorted(context.workspaces.items())
         ],
     }
+    if context.cwd is not None:
+        result["cwd"] = workspace_uri(
+            cast(str, context.cwd.workspace), context.cwd.relative
+        )
+    return result
 
 
 def _list_directory(path: Path, root: Path) -> dict[str, Any]:

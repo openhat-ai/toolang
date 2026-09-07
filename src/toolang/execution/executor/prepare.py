@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 import json
 import logging
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import AgentTool
@@ -22,6 +22,7 @@ from toolang.base.types.tool import ToolService
 from toolang.common.errors import ToolangError
 from toolang.common.immutable import mutable_data
 from toolang.common.template import render_text_template
+from toolang.base.utils.workspace_paths import workspace_uri
 from toolang.lang.ast import (
     AgicDecl,
     Message as AstMessage,
@@ -405,6 +406,8 @@ def _runtime_context(
         },
     }
     environment = run.setup.environment
+    if run.cwd is not None:
+        runtime["cwd"] = workspace_uri(cast(str, run.cwd.workspace), run.cwd.relative)
     if environment is not None:
         runtime["environment"] = {
             "sandbox": environment.sandbox,

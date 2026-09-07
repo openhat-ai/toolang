@@ -90,7 +90,7 @@ def resolve_run_request(
             f"{resolved_runnable.ref!r}"
         )
 
-    return _resolve_concrete_spec(
+    spec = _resolve_concrete_spec(
         request.runnable.input,
         setup=setup,
         state=state,
@@ -105,6 +105,7 @@ def resolve_run_request(
         include=include,
         require_model_request=True,
     )
+    return replace(spec, cwd=request.cwd)
 
 
 def resolve_restart_request(

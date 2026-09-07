@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 import re
 from urllib.parse import quote, unquote
@@ -10,7 +11,7 @@ from urllib.parse import quote, unquote
 from ..errors import ToolangError
 from ..types.tool import ToolContext, ToolPath
 
-_URI = re.compile(r"workspace://([a-z0-9]+(?:-[a-z0-9]+)*)(/[^?#]*)?")
+_URI = re.compile(r"workspace://(\.|[a-z0-9]+(?:-[a-z0-9]+)*)(/[^?#]*)?")
 _BAD_ESCAPE = re.compile(r"%(?![0-9a-fA-F]{2})")
 
 
@@ -33,6 +34,39 @@ def workspace_uri(name: str, path: str = "/") -> str:
     """Encode a known workspace-relative path, not an operating-system path."""
 
     return f"workspace://{name}/" + quote(path.lstrip("/"), safe="/")
+
+
+def capture_cwd(directory: Path, workspaces: Mapping[str, str]) -> ToolPath:
+    """Capture a local caller's directory without widening a registered grant."""
+
+    directory = directory.resolve()
+    if not directory.is_dir():
+        raise ToolangError("cwd must be an existing directory")
+    for name, path in workspaces.items():
+        root = Path(path).resolve()
+        if directory.is_relative_to(root):
+            relative = directory.relative_to(root).as_posix()
+            return ToolPath(directory, name, "/" if relative == "." else f"/{relative}")
+    return ToolPath(directory, ".")
+
+
+def resolve_workspace_location(name: str, value: str, context: ToolContext) -> ToolPath:
+    """Resolve the cwd alias to its real workspace before authorization and recall."""
+
+    if name == ".":
+        cwd = context.cwd
+        if cwd is None or cwd.workspace is None:
+            raise ToolangError("no cwd is available for this run")
+        name = cwd.workspace
+        root = workspace_root(name, context)
+        if (root / cwd.relative.lstrip("/")).resolve() != cwd.resolved:
+            raise ToolangError(
+                "cwd workspace no longer resolves to its recorded location"
+            )
+        value = cwd.relative.rstrip("/") + "/" + value.lstrip("/")
+    else:
+        root = workspace_root(name, context)
+    return resolve_workspace_path(name, value, root)
 
 
 def authorize_workspace_path(path: Path, root: Path) -> Path:

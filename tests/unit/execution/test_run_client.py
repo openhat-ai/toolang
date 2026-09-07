@@ -115,6 +115,7 @@ def test_run_request_contains_only_materialized_caller_values() -> None:
         "runnable",
         "model",
         "policy",
+        "cwd",
     }
 
 
@@ -162,6 +163,7 @@ def test_restart_requests_keep_retry_and_rerun_inputs_unambiguous() -> None:
         "commands",
         "request_id",
         "anchor",
+        "cwd",
     }
     assert {item.name for item in fields(RerunRequest)} == {
         "source",
@@ -169,6 +171,7 @@ def test_restart_requests_keep_retry_and_rerun_inputs_unambiguous() -> None:
         "request_id",
         "model",
         "model_override",
+        "cwd",
     }
     assert retry.anchor == StepRef.from_local("run_source", (1,))
     assert rerun.source == retry.source

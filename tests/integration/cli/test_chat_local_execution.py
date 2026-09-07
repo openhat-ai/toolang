@@ -22,6 +22,7 @@ from toolang.base.types.message import Message, TextPart
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunPolicy
 from toolang.base.types.run import ModelCallResult
+from toolang.base.utils.workspace_paths import capture_cwd
 from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.base import ChatExecutorMetadata
 from toolang.common.errors import ToolangError
@@ -39,6 +40,7 @@ from toolang.execution.types import (
     RunRef,
 )
 from toolang.lang.input import RunnableInputRaw
+from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateRefresh
 
 
@@ -398,23 +400,33 @@ def test_local_chat_owner_loop_control_does_not_wait_on_itself(steer: bool) -> N
     assert receipts == ([receipt] if steer else [])
 
 
+@pytest.mark.parametrize("with_cwd", [False, True])
 def test_local_chat_uses_run_client_and_canonical_tracer(
     tmp_path: Path,
     monkeypatch: Any,
+    with_cwd: bool,
 ) -> None:
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source="""
+    source = """
 agic chat(_: Part[]) -> Part[]:
   recall = none
   context: none
   instruct: none
   user: {{_}}
-""",
-        responses=[ModelCallResult(message=Message.assistant("hello back"))],
+"""
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        responses=[ModelCallResult(message=Message.assistant("hello back"))] * 2,
     )
     harness.store.close()
     publication = harness.state
+    directory = tmp_path / "chat-cwd"
+    directory.mkdir()
+    (directory / "input.txt").write_text("hello")
+    if with_cwd:
+        harness.setup.layout.program.write_text(source)
+        harness.setup.layout.config.write_text(f'[workspaces]\nrepo = "{directory}"\n')
+        publication = prepare_agent_state(harness.setup.layout)
     setup_refreshes = 0
     state_refreshes = 0
 
@@ -464,6 +476,7 @@ agic chat(_: Part[]) -> Part[]:
 
     session = local.LocalChatSession(
         harness.setup.layout,
+        cwd=directory if with_cwd else None,
     )
     events: list[RunEvent] = []
     event_threads: list[int] = []
@@ -487,8 +500,11 @@ agic chat(_: Part[]) -> Part[]:
         request = session.build_request(
             thread_id,
             RunOverride(),
-            RunnableInputRaw(_="hello"),
+            RunnableInputRaw(_="@input.txt" if with_cwd else "hello"),
             session.initial_setting(),
+        )
+        assert request.cwd == (
+            capture_cwd(directory, publication.workspaces) if with_cwd else None
         )
         session.run(
             request,
@@ -520,6 +536,18 @@ agic chat(_: Part[]) -> Part[]:
         assert state_refreshes == 1
         assert set(event_threads) == {session._thread.ident}
         assert threading.get_ident() != session._thread.ident
+        if with_cwd:
+            harness.setup.layout.config.write_text("")
+            session.state_watcher.state = prepare_agent_state(harness.setup.layout)
+            next_request = session.build_request(
+                thread_id,
+                RunOverride(),
+                RunnableInputRaw(_="next"),
+                session.initial_setting(),
+            )
+            assert next_request.cwd == request.cwd
+            session.run(next_request, on_event, errors.append)
+            assert errors == []
     finally:
         session.close()
 

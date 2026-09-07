@@ -17,6 +17,7 @@ from toolang.base.types.model import ModelOverride, ModelRequest, ModelTarget
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
 from toolang.base.types.message import Message, TextPart
+from toolang.base.types.tool import ToolPath
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
@@ -200,6 +201,7 @@ class RunSpec:
     authored_session_commands: tuple[RunCommand, ...] = ()
     prompt_invocations: tuple[PromptInvocation, ...] = ()
     horizon: FieldRef | None = None
+    cwd: ToolPath | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -375,6 +377,7 @@ class RunExecutor:
             authored_session_commands=spec.authored_session_commands,
             prompt_invocations=spec.prompt_invocations,
             horizon=bound.horizon,
+            cwd=bound.cwd,
         )
         return self._launch(bound, runnable, loop=loop, tracer=tracer)
 
@@ -384,6 +387,7 @@ class RunExecutor:
         *,
         setup: AgentSetup | None = None,
         state: AgentState | None = None,
+        cwd: ToolPath | None = None,
         ceiling: AgentCeiling = AgentCeiling(),
         model: str | None = None,
         model_request: ModelRequest | None = None,
@@ -401,11 +405,13 @@ class RunExecutor:
                 or state is not None
                 or model_request is not None
                 or request_id is not None
+                or cwd is not None
             ):
                 raise ValueError(
                     "resolved rerun inputs cannot override a caller rerun request"
                 )
             request = source
+            cwd = request.cwd
             setup, state = self._current_snapshots()
             resolved = resolve_restart_request(request, setup=setup, state=state)
             source = request.source
@@ -440,6 +446,7 @@ class RunExecutor:
         )
         spec = replace(
             spec,
+            cwd=cwd,
             horizon=available_horizon(self.store, spec.thread)
             or self.store.run_horizon(source),
         )
@@ -472,6 +479,7 @@ class RunExecutor:
             authored_session_commands=spec.authored_session_commands,
             prompt_invocations=spec.prompt_invocations,
             horizon=bound.horizon,
+            cwd=bound.cwd,
         )
         return self._launch(bound, runnable, loop=loop, tracer=tracer)
 
@@ -481,6 +489,7 @@ class RunExecutor:
         *,
         setup: AgentSetup | None = None,
         state: AgentState | None = None,
+        cwd: ToolPath | None = None,
         anchor: StepRef | str | None = None,
         ceiling: AgentCeiling = AgentCeiling(),
         limits: RunLimits | None = None,
@@ -492,11 +501,17 @@ class RunExecutor:
         self._require_available()
         model_request: ModelRequest | None = None
         if isinstance(run_id, RetryRequest):
-            if setup is not None or state is not None or request_id is not None:
+            if (
+                setup is not None
+                or state is not None
+                or request_id is not None
+                or cwd is not None
+            ):
                 raise ValueError(
                     "resolved retry inputs cannot override a caller retry request"
                 )
             request = run_id
+            cwd = request.cwd
             setup = self._current_setup()
             state = self._recorded_state(request.source)
             resolved = resolve_restart_request(request, setup=setup, state=state)
@@ -512,7 +527,7 @@ class RunExecutor:
             raise TypeError("retry requires resolved setup and state")
         loop = asyncio.get_running_loop()
         sandbox = _setup_sandbox(setup)
-        self._require_retry_compatible(run_id, state, sandbox=sandbox)
+        self._require_retry_compatible(run_id, state, sandbox=sandbox, cwd=cwd)
         spec = self._source_spec(
             run_id,
             setup=setup,
@@ -678,10 +693,16 @@ class RunExecutor:
             authored_commands=preparation.authored_commands,
             authored_session_commands=preparation.authored_session_commands,
             prompt_invocations=preparation.prompt_invocations,
+            cwd=preparation.cwd,
         )
 
     def _require_retry_compatible(
-        self, run_id: str, state: AgentState, *, sandbox: str
+        self,
+        run_id: str,
+        state: AgentState,
+        *,
+        sandbox: str,
+        cwd: ToolPath | None = None,
     ) -> None:
         """Reject retry before mutation when its execution snapshot changed."""
 
@@ -705,6 +726,12 @@ class RunExecutor:
                 f"retry sandbox {sandbox} does not match original sandbox "
                 f"{control.payload.sandbox} for run {run_id}; use rerun"
             )
+        recorded_cwd = control.payload.cwd
+        if recorded_cwd is not None and recorded_cwd.workspace == ".":
+            if cwd is None or cwd.resolved != recorded_cwd.resolved:
+                raise ValueError(
+                    "retry requires renewed authorization for its temporary cwd; use rerun"
+                )
         if state.workspaces:
             if self._state is None:
                 raise ValueError("retry requires current workspace authorization")
@@ -2340,6 +2367,7 @@ class _Execution:
             state=state,
             state_ref=state_ref,
             setup=parent.setup,
+            cwd=parent.cwd,
             module=module,
             limits=parent.limits,
             ceilings=parent.ceilings,
@@ -2928,6 +2956,7 @@ def _child_binding(
         state=state,
         state_ref=state_ref,
         setup=parent.setup,
+        cwd=parent.cwd,
         module=module,
         limits=parent.limits,
         ceilings=parent.ceilings,
@@ -2994,6 +3023,7 @@ def _bind_run(
         flow_resources=resources if isinstance(runnable, FlowDecl) else None,
         created_at=utc_now(),
         horizon=spec.horizon,
+        cwd=spec.cwd,
     )
 
 
@@ -3015,6 +3045,9 @@ def _step_local(step: StepRecord, store: RunStore) -> Local:
 def _prepare_run_spec(
     spec: RunSpec,
 ) -> tuple[AgicDecl | FlowDecl, RunnableInput, AgentResources, AgentResources]:
+    if spec.cwd is not None:
+        if spec.setup.environment is not None and spec.setup.environment.container:
+            raise ToolangError("local cwd is not supported in containers")
     if spec.bindings.runnable is None:
         raise ValueError("run spec requires a runnable binding")
     runnable_name, runnable_kind = parse_runnable_ref(spec.bindings.runnable)

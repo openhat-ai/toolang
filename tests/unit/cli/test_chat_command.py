@@ -631,6 +631,7 @@ def test_chat_runtime_builds_process_local_execution_resources(
     assert captured["layout"] == layout
     assert captured["kwargs"] == {
         "sandbox": "host",
+        "cwd": Path.cwd().resolve(),
         "ceiling_overrides": {"models": ("env/*",)},
         "default_overrides": {},
         "limit_overrides": {"time": 30},

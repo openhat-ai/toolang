@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from toolang.base.errors import ToolFailure, ToolangError
@@ -35,7 +34,7 @@ from ..types import (
     TypedRef,
     local_to_protocol_data,
 )
-from .common import _ExecuteCommitted, _ExecutionFailed, _RunRejected
+from .common import _ExecuteCommitted, _ExecutionFailed, _RunRejected, workspace_grants
 from .resources import resource_caps
 from .rules import load_rules
 
@@ -107,7 +106,8 @@ class _ToolRuntime(ToolRuntime):
             home=self.state.layout.home,
             room=self.state.layout.tool_room("_toolang"),
             wd=self.state.layout.home,
-            workspaces={name: Path(path) for name, path in captured.workspaces.items()},
+            workspaces=workspace_grants(captured, self.state.prepared.run.cwd),
+            cwd=self.state.prepared.run.cwd,
         )
         resolved = tuple(
             resolve_workspace_path(workspace, path, workspace_root(workspace, context))

@@ -528,13 +528,17 @@ def _valid_endpoint_host(host: str) -> bool:
 
 
 def _run_request_data(request: RunRequest) -> dict[str, object]:
+    if request.cwd is not None:
+        raise RemoteRunClientError("local cwd is not supported by remote runs")
     return cast(
         dict[str, object],
-        _RUN_REQUEST_ADAPTER.dump_python(request, mode="json"),
+        _RUN_REQUEST_ADAPTER.dump_python(request, mode="json", exclude={"cwd"}),
     )
 
 
 def _restart_request_data(request: RetryRequest | RerunRequest) -> dict[str, object]:
+    if request.cwd is not None:
+        raise RemoteRunClientError("local cwd is not supported by remote runs")
     payload: dict[str, object] = {
         "request_id": request.request_id,
         "commands": [_run_command_data(item) for item in request.commands],

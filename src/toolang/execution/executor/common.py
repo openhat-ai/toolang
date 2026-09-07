@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 import json
 import re
+from pathlib import Path
 from typing import Any, Literal, cast
 
 from toolang.base.types.message import (
@@ -17,6 +18,7 @@ from toolang.base.types.message import (
 )
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
+from toolang.base.types.tool import ToolPath
 from toolang.common.errors import ToolangError
 from toolang.common.time import utc_now
 from toolang.lang.ast import (
@@ -128,6 +130,16 @@ class BoundRun:
     parent: StepRef | None = None
     occurrence: Occurrence | None = None
     horizon: FieldRef | None = None
+    cwd: ToolPath | None = None
+
+
+def workspace_grants(state: AgentState, cwd: ToolPath | None) -> dict[str, Path]:
+    """Combine a captured State with the execution tree's temporary cwd grant."""
+
+    grants = {name: Path(path) for name, path in state.workspaces.items()}
+    if cwd is not None and cwd.workspace == ".":
+        grants["."] = cwd.resolved
+    return grants
 
 
 @dataclass(frozen=True, slots=True)

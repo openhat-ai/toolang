@@ -88,6 +88,7 @@ class ToolContext:
     runtime: ToolRuntime | None = None
     workspaces: Mapping[str, Path] = field(default_factory=dict)
     history: ToolHistory | None = None
+    cwd: ToolPath | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspaces", MappingProxyType(dict(self.workspaces)))

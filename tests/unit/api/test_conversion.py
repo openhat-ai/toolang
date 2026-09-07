@@ -245,6 +245,7 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
     "change",
     [
         {"extra": True},
+        {"cwd": {"resolved": "/tmp/client", "workspace": ".", "relative": "/"}},
         {"thread_id": 1},
         {"runnable": {"ref": "chat", "input": {"_": None, "named": []}}},
         {"runnable": {"ref": "agic:chat", "input": {"primary": "legacy"}}},

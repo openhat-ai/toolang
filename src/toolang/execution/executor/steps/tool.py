@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Literal
 from toolang.base.protocols.tool import AgentTool, ToolHistory, ToolRuntime
 from toolang.base.types.message import ToolResultPart
 from toolang.base.types.run import ToolCall, ToolCallResult
-from toolang.base.types.tool import ToolContext, ToolPreparation, ToolService
+from toolang.base.types.tool import ToolContext, ToolPath, ToolPreparation, ToolService
 from toolang.base.utils.function_tools import prepare_tool
 from toolang.base.errors import ToolFailure
 from toolang.common.errors import ToolangError
@@ -38,7 +38,7 @@ from ...types import (
     ToolStepNoted,
     StepStatus,
 )
-from ..common import _StepFailed
+from ..common import _StepFailed, workspace_grants
 from ..tool_runtime import _ToolRuntime
 from ..tool_history import _ToolHistory
 from ..diagnostics import log_tool_call_input, log_tool_call_output
@@ -243,10 +243,10 @@ async def _execute(
                     history=_ToolHistory(state.execution.store.db_path, run.thread)
                     if plugin_name == "history" and state.execution is not None
                     else None,
-                    workspaces={
-                        name: Path(path)
-                        for name, path in agent_state.workspaces.items()
-                    },
+                    workspaces=workspace_grants(
+                        agent_state, run.cwd if plugin_name == "fs" else None
+                    ),
+                    cwd=run.cwd if plugin_name == "fs" else None,
                 )
                 preparation = prepare_tool(tool, call.input, context)
             except Exception as exc:
@@ -714,6 +714,7 @@ def _tool_context(
     runtime: ToolRuntime | None = None,
     history: ToolHistory | None = None,
     workspaces: Mapping[str, Path] | None = None,
+    cwd: ToolPath | None = None,
 ) -> ToolContext:
     plugin_name = getattr(tool, "plugin_name", None)
     if not isinstance(plugin_name, str) or not plugin_name:
@@ -728,4 +729,5 @@ def _tool_context(
         runtime=runtime,
         history=history,
         workspaces=workspaces or {},
+        cwd=cwd,
     )

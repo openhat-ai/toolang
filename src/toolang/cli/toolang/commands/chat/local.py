@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path
 import threading
@@ -15,6 +15,9 @@ from uuid import uuid4
 from toolang.base.types.message import Message
 from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling
+from toolang.base.types.tool import ToolPath
+from toolang.base.utils.workspace_paths import capture_cwd
+from toolang.lang.includes import resolve_file_include
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.calls import materialize_model_request
@@ -86,8 +89,11 @@ class LocalChatSession:
         default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
         limit_overrides: Mapping[str, int | Decimal | None] | None = None,
         compact_override: ModelOverride | None = None,
+        cwd: Path | None = None,
     ) -> None:
         self.layout = layout
+        self.cwd = cwd
+        self._cwd: ToolPath | None = None
         self.executor_metadata = ChatExecutorMetadata(
             sandbox_selector="host",
             sandbox_detail=host_sandbox_description(),
@@ -125,6 +131,13 @@ class LocalChatSession:
             state=self.state_watcher.current,
             load_state=lambda revision: self.state_watcher.load(revision),
             refresh_state=self.state_watcher.refresh_result,
+            include=(
+                lambda _setup: (
+                    lambda reference: resolve_file_include(reference, base=cwd)
+                )
+            )
+            if cwd is not None
+            else None,
         )
         self.run_client: RunClient = LocalRunClient(self.executor)
         self._surface: SessionSetting | None = None
@@ -342,7 +355,7 @@ class LocalChatSession:
         input: RunnableInputRaw,
         setting: SessionSetting,
     ) -> RunRequest:
-        return build_run_request(
+        request = build_run_request(
             thread_id=thread_id,
             request_id=f"term_{uuid4().hex}",
             input=input,
@@ -352,6 +365,7 @@ class LocalChatSession:
             resolve_model_ref=self._materialize_model_ref,
             resolve_runnable_ref=self._materialize_runnable_ref,
         )
+        return replace(request, cwd=self._cwd)
 
     def get_result(
         self,
@@ -443,6 +457,9 @@ class LocalChatSession:
         state, setup = await asyncio.gather(
             self.state_watcher.refresh(),
             self.setup_watcher.refresh(),
+        )
+        self._cwd = (
+            capture_cwd(self.cwd, state.workspaces) if self.cwd is not None else None
         )
         validate_agent_ceiling(setup, state, AgentCeiling())
         self._surface = self._current_session_setting(setup=setup, state=state)

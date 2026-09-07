@@ -23,7 +23,7 @@ from toolang.base.types.model import ModelRequest
 from toolang.base.types.run import ModelCall
 from toolang.lang.input import PromptInvocation, RunnableInputRaw
 from toolang.lang.types import Array, Struct, Value
-from toolang.base.types.tool import ToolDefinition
+from toolang.base.types.tool import ToolDefinition, ToolPath
 from toolang.base.types.policy import RunLimits
 from toolang.common.time import utc_now
 from .errors import HistoryChangedError, RunStoreSchemaError
@@ -296,6 +296,7 @@ class RunStore:
         authored_commands: tuple[RunCommand, ...] = (),
         authored_session_commands: tuple[RunCommand, ...] = (),
         prompt_invocations: tuple[PromptInvocation, ...] = (),
+        cwd: ToolPath | None = None,
     ) -> tuple[RunRecord, ControlRecord]:
         """Atomically insert one new run and its entry control."""
 
@@ -403,6 +404,7 @@ class RunStore:
                     authored_commands=authored_commands,
                     authored_session_commands=authored_session_commands,
                     prompt_invocations=prompt_invocations,
+                    cwd=cwd,
                 )
                 self._insert_control(
                     ref=control_ref,

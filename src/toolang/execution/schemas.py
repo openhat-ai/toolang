@@ -23,6 +23,7 @@ from toolang.base.types.message import Part, message_summary
 from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import RunPolicy
 from toolang.base.types.run import ModelCall
+from toolang.base.types.tool import ToolPath
 from toolang.lang.input import RunnableInputRaw
 from toolang.lang.types import Array, Struct
 from .records import (
@@ -425,6 +426,7 @@ class RunRequest:
     runnable: RunnableRequest
     model: ModelRequest | None
     policy: RunPolicy
+    cwd: ToolPath | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.thread_id, str):
@@ -451,6 +453,7 @@ class RetryRequest:
     commands: tuple[RunCommand, ...]
     request_id: str
     anchor: StepRef | None = None
+    cwd: ToolPath | None = None
 
     def __post_init__(self) -> None:
         _validate_restart_request(
@@ -478,6 +481,7 @@ class RerunRequest:
     request_id: str
     model: ModelRequest | None = None
     model_override: ModelOverride | None = None
+    cwd: ToolPath | None = None
 
     def __post_init__(self) -> None:
         _validate_restart_request(
