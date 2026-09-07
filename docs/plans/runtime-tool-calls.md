@@ -119,7 +119,7 @@ their original trigger. Restart recovery uses existing records and relations.
 
 ```javascript
 _toolang/pick({kind: "skill" | "service", ref: "<catalog ref>"})
-_toolang/honor({paths: ["<absolute access path>", ...]})
+_toolang/honor({paths: [{workspace: "<name>", path: "/<relative access path>"}, ...]})
 ```
 
 Pick resolves one exact ref allowed by the effective binding. Keep skill and
@@ -129,10 +129,11 @@ connection/auth/discovery: those remain service/* operations. Reading me/get is
 authored-data inspection, not recall. Online resolution may use the effective
 State; persist the original text so replay never needs that State.
 
-Honor receives nonempty normalized access paths, not AGENTS.md paths. Runtime
-maps them to configured workspaces and applicable AGENTS.md files. A rules target
-is a workspace name plus its scope directory relative to that root (`/`, `/src`).
-Recall keeps the existing targets and wrappers:
+Honor receives nonempty normalized workspace-relative access paths, not AGENTS.md
+paths. A leading `/` denotes the workspace root, not a host absolute path. Runtime
+discovers applicable AGENTS.md files within that workspace. A rules target is its
+workspace name plus scope directory (`/`, `/src`). Recall keeps the existing
+targets and wrappers:
 
 ```text
 rules:   {workspace, path} → <rules workspace="..." path="..." revision="...">...</rules>
@@ -140,10 +141,41 @@ skill:   {ref}             → <skill ref="..." revision="...">...</skill>
 service: {ref}             → <service ref="..." revision="...">...</service>
 ```
 
-Revision is the SHA-256 fingerprint of the exact UTF-8 recalled text, not the
-whole State revision. Store `{target, revision, content}` in an applied recall
-control; escape wrapper attributes, not stored content. Content enters a separate
-user message through the existing delta reference to that control.
+Store `{target, revision, content}` in an applied recall control; escape wrapper
+attributes, not stored content. Content enters a separate user message through
+the existing delta reference to that control.
+
+### Revisions and removal
+
+Revision is a hex-encoded uint256: SHA-256 of the exact UTF-8 recalled text for
+present content, and zero for removal. Normalize once at the boundary:
+
+- Accept 1–64 hexadecimal digits, without `0x`; short forms are allowed.
+- Store and compare zero as `"0"`; store nonzero values as 64 lowercase digits,
+  preserving leading zeroes.
+- A removal has `revision="0"` and `content=""`. An empty existing file has its
+  ordinary nonzero content hash, so it is not removal.
+
+The protocol defines revision zero as retracting earlier content for the same
+target, using the same wrapper/control and visibility rules. For applicable
+previously recalled rules, discovery checks confirmed removal as well as existing
+files; retry must present the retraction before the operation proceeds. An absent
+file never recalled needs no retraction. Authorization/read errors are failures,
+not removal. These rules do not change State revisions or ContentRef encoding.
+
+### Workspace identity
+
+Workspace name plus relative path is the logical identity on both host and
+sandbox. Preserve that anchor through path preparation, honor, and execution;
+resolve the physical path without changing the logical anchor.
+
+Overlapping workspaces remain independent. For example, `repo:/sdk/AGENTS.md`
+and `sdk:/AGENTS.md` may be the same file, but produce distinct targets
+`{workspace: "repo", path: "/sdk"}` and `{workspace: "sdk", path: "/"}`.
+Allow this redundancy; deduplicate by target, not physical file. Rules inherit
+from ancestors within the selected workspace only, not from host-only nesting.
+Bare paths matching multiple workspaces require an explicit workspace anchor;
+do not choose the deepest physical root. This adds no filesystem authorization.
 
 ### Visibility and reuse
 
@@ -179,17 +211,18 @@ picks missing guidance; assembly does not automatically restore it.
 
 ### Tool call preflight
 
-Plugins declare concrete paths; runtime owns rule discovery, revision checks,
+Plugins declare concrete access paths; runtime owns rule discovery, revision checks,
 recalls, and retry. Preparation and execution share path resolution, defaults,
-and authorization. Normalize/authorize paths before loading rules, and perform no
-requested read/write/shell action before preflight passes. Plugins do not implement
-their own message-history or recall algorithms.
+authorization, and workspace anchors. Normalize/authorize paths before loading
+rules, and perform no requested read/write/shell action before preflight passes.
+Plugins do not implement their own message-history or recall algorithms.
 
 Start with explicit fs targets and shell cwd, including reads. Discover only
-ancestor/scoped rules applicable to those paths, ancestor before descendant and
-deduplicated by target. Do not load every workspace or rules from untouched
-descendants. This does not intercept paths hidden in shell commands and is not
-a sandbox guarantee.
+ancestor/scoped rules applicable to those paths, ancestor before descendant within
+each workspace and deduplicated by target. Preserve access order across workspace
+anchors; physical nesting gives no cross-workspace priority. Do not load every
+workspace or rules from untouched descendants. This does not intercept paths
+hidden in shell commands and is not a sandbox guarantee.
 
 Rule-file reads must also satisfy existing read authorization; workspace
 membership alone does not authorize following an AGENTS.md link outside it.
@@ -261,7 +294,7 @@ Reads stay inside the current agent's Store and create no controls or injected
 user messages. Compact Runs use these tools for target records and earlier compact
 outputs; add no special recall directive, latest-compact tool, or hidden read path.
 
-## Compaction follow-up
+## Compaction and model call preflight
 
 ```text
 _toolang/compact({thread: ThreadRef, begin: RunRef | null = null, end: RunRef})
@@ -271,9 +304,12 @@ compact.too output: {thread, begin, end, summary: Text}
 ```
 
 Model call preflight prepares a candidate and checks its input budget before
-allocating a Model Step. Select a complete prefix of the calling Run's Thread:
-begin is null or its first logical root; exclusive end retains at least one
-historical root before the active root. Never drop now to make history fit.
+allocating a Model Step. At compaction, choose the boundary using the near retention
+budget and select a complete prefix of the calling Run's Thread: begin is null or
+its first logical root; exclusive end retains at least one historical root before
+the active root. Between compactions, keep the history boundary fixed while new
+messages append; do not slide or trim near on each ModelCall. Never drop now to
+make history fit.
 Pass the range unchanged to compact.too; callers cannot supply summary.
 Validate that output echoes thread/begin/end and contains a complete-prefix
 summary before creating a compact control.
@@ -307,13 +343,44 @@ work. Only validated durable outputs produce compact controls; failure does not
 invent a horizon. Committed facts survive interrupted delivery, and horizon
 changes only through existing recorded adoption.
 
-Before implementing compact, define the budget policy: account for actual
-candidate input (instructions/messages/tools/output contract), reserve output
-capacity/headroom from the model context window, and choose a near retention
-budget with at least one historical root. Specify the estimator, defaults,
-missing metadata, and oversized irreducible now behavior. Do not silently
-truncate, repeatedly compact an ineffective range, or use the Run's cumulative
-token/cost limit as its context-window budget.
+### Budget policy
+
+Resolve the output budget first from the request configuration or default, within
+the model's output limit. Pass this same budget to the adapter as the actual output
+limit and reserve it when calculating input capacity. Do not automatically reserve
+the model's maximum supported output. Account for reasoning according to adapter
+semantics, without counting it twice.
+
+```python
+input_budget = min(context_window - output_budget, input_limit) - safety_margin
+```
+
+Omit the `input_limit` term when no independent input limit exists. Normalize model
+metadata: `context_window` is the combined input/output capacity, not an input-only
+limit. Reserving the full output budget is runtime policy, even if the provider
+accepts a request that could run out of context during generation.
+
+- Estimate the complete candidate: instructions, selected far/near/now, tools,
+  output contract, and newly included honor/pick content. Proceed when the estimate
+  is at most `input_budget`; otherwise compact before committing the Model Step.
+- Use the near retention budget only to choose a compaction boundary. Root-only
+  boundaries and the mandatory retained historical root take precedence over that
+  target; Step-level splitting is deferred. No fixed post-compaction percentage
+  is required.
+- Give compact's model calls their own output budgets. After adopting the result,
+  reprepare and recheck the complete candidate, not just the summary. If it still
+  exceeds budget and no valid boundary can advance, fail explicitly. This includes
+  oversized fixed content, mandatory near, or now; never silently truncate or
+  repeat compaction of an ineffective range.
+- Maintain estimates in memory using recent valid provider usage plus estimates
+  of appended content while the request prefix is unchanged. Rebuild the baseline
+  after compaction or relevant binding changes. Never use cumulative Run usage as
+  context size or reread stable records on every call.
+
+Numeric safety-margin, near-retention, and default output budgets remain PR5
+tuning choices. Specify estimator calibration, multimodal accounting, and
+unavailable-metadata behavior in that implementation; do not treat unknown
+limits as known capacity.
 
 ## Implementation PRs and acceptance
 
@@ -325,10 +392,10 @@ adopted and retry-required from a completed filesystem operation.
 | PR | Scope and likely touchpoints | Acceptance |
 | --- | --- | --- |
 | 1 — Shared tool execution | execution/tools/runtime, base tool protocols/context, ToolStepGiven/codec, plugin loading, executor dispatch, entry points/defaults | Migrate run/execute/reload and names/receipts; preserve authorization, trigger provenance, per-call isolation, execute transfer, and model exchanges. No new tool bodies. |
-| 2 — Pick and recall visibility | Runtime plugin, executor recall handling, existing delta selection, protocol catalogs | Allowed refs; exact text/revision; last-visible/pending reuse and revision reversions; batches, changed/excluded history, State-free replay. No context deduplication. |
-| 3 — Honor and tool preflight | Shared path preparation, fs/shell, executor recall handling | Scoped/nested rules, reads/writes, batch reuse, changed files, failed loads, zero side effects before retry, no orphan runtime tool messages. |
+| 2 — Pick and recall visibility | Runtime plugin, executor recall handling, existing delta selection, protocol catalogs | Allowed refs; exact text and canonical revision, including short/zero forms; last-visible/pending reuse and revision reversions; batches, changed/excluded history, State-free replay. No context deduplication. |
+| 3 — Honor and tool preflight | Shared path preparation, fs/shell, executor recall handling | Scoped/nested rules; deletion versus empty files and failed reads; restoration; overlapping workspace anchors unchanged across host/sandbox, no physical deduplication; reads/writes, batch reuse, zero side effects before retry, no orphan runtime tool messages. |
 | 4 — History toolset | execution/tools/history, RunHistory/cursors, record serialization | Four contracts; cursor-only/wrong-tool checks, fixed ranges, dependencies/unused controls, resolved/partial output, fork/rewind, children, restart; no ModelCall rebuild. |
-| 5 — Compact and model preflight | Budget policy, executor coordinator, bundled compact.too | Full-prefix output, retained near, concurrent waiters, no recursive compact, cancel/failure/restart, intervening controls, unchanged prior calls, no-progress handling. |
+| 5 — Compact and model preflight | Budget policy, model metadata/adapter limits, executor coordinator, bundled compact.too | Matching output limit/reservation, independent input limits, exact-budget threshold, estimator reset; full-prefix output, stable retained near, concurrent waiters, no recursive compact, cancel/failure/restart, intervening controls, unchanged prior calls, irreducible input/no-progress errors. |
 
 Prioritize PRs 1–3 for honor/pick. PR4 is independent after PR1 and must precede
 PR5. Register each new tool with
@@ -339,14 +406,10 @@ results, commit-before-delivery failures, and equality of online requests and
 State-free replay. Run Ruff check/format, ty, and the default offline pytest suite
 before every commit. Validate links and keep changes within the PR's scope.
 
-## Remaining decisions and risks
+## Risks and exclusions
 
-- Before PR3, settle rules deletion/retraction and overlapping-workspace scope
-  ordering. An absent file must not silently make stale visible rules authoritative;
-  these cases need explicit tests/protocol wording, not accidental path behavior.
-- Before PR5, approve the budget policy above. Tool contracts and the existing
-  horizon/assembly semantics do not determine thresholds or token sizing.
-- Main risks: stale visibility, side effects before honor succeeds, runtime
-  results leaking into model exchanges, and lost/duplicated effects at commit
-  boundaries. External workspace permissions, general shell interception, and
-  Step-level compaction remain separate definitions.
+Main risks are stale visibility after removal, loss of workspace identity across
+environments, side effects before honor succeeds, stale token estimates, runtime
+results leaking into model exchanges, and lost/duplicated effects at commit
+boundaries. External workspace permissions, general shell interception, and
+Step-level compaction remain separate definitions.
