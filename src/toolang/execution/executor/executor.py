@@ -43,7 +43,7 @@ from toolang.plugin.models.resolution import (
     apply_model_parameters,
 )
 from toolang.plugin.models.collections import ModelCollection
-from toolang.state.state import AgentState, StatePublication, state_program
+from toolang.state.state import AgentState, state_program
 from toolang.state.watcher import StateRefresh
 from toolang.state.cache import agent_revision_dir, validate_agent_revision
 from toolang.state.prepare import load_agent_state
@@ -134,9 +134,8 @@ _LOGGER = logging.getLogger(__name__)
 _CONTROL_POLL_INTERVAL = 0.05
 
 SetupSource = Callable[[], AgentSetup]
-ExecutionState = AgentState | StatePublication
-StateSource = Callable[[], ExecutionState]
-StateLoad = Callable[[str], ExecutionState]
+StateSource = Callable[[], AgentState]
+StateLoad = Callable[[str], AgentState]
 StateRefreshSource = Callable[[], Awaitable[StateRefresh]]
 IncludeSource = Callable[[AgentSetup], IncludeResolver]
 
@@ -170,7 +169,7 @@ class _ActiveRun:
     event_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     ended: set[str] = field(default_factory=set, repr=False)
     execution: _Execution | None = field(default=None, repr=False)
-    reload_states: dict[int, ExecutionState] = field(default_factory=dict, repr=False)
+    reload_states: dict[int, AgentState] = field(default_factory=dict, repr=False)
     reload_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     reload_scheduled: bool = field(default=False, repr=False)
     reload_task: asyncio.Task[None] | None = field(default=None, repr=False)
@@ -189,7 +188,7 @@ class RunSpec:
     """Immutable inputs required to execute one runnable."""
 
     setup: AgentSetup
-    state: ExecutionState
+    state: AgentState
     thread: str
     bindings: RunBindings
     limits: RunLimits
@@ -245,7 +244,7 @@ class LocalRunHandle(Awaitable[RunRecord]):
 
     def reload(
         self,
-        state: ExecutionState,
+        state: AgentState,
         *,
         request_id: str | None = None,
     ) -> ControlRecord:
@@ -384,7 +383,7 @@ class RunExecutor:
         source: str | RerunRequest,
         *,
         setup: AgentSetup | None = None,
-        state: ExecutionState | None = None,
+        state: AgentState | None = None,
         ceiling: AgentCeiling = AgentCeiling(),
         model: str | None = None,
         model_request: ModelRequest | None = None,
@@ -481,7 +480,7 @@ class RunExecutor:
         run_id: str | RetryRequest,
         *,
         setup: AgentSetup | None = None,
-        state: ExecutionState | None = None,
+        state: AgentState | None = None,
         anchor: StepRef | str | None = None,
         ceiling: AgentCeiling = AgentCeiling(),
         limits: RunLimits | None = None,
@@ -560,7 +559,7 @@ class RunExecutor:
             raise RuntimeError("run executor has no request snapshot sources")
         return source()
 
-    def _current_snapshots(self) -> tuple[AgentSetup, ExecutionState]:
+    def _current_snapshots(self) -> tuple[AgentSetup, AgentState]:
         source = self._state
         if source is None:
             raise RuntimeError("run executor has no request snapshot sources")
@@ -576,7 +575,7 @@ class RunExecutor:
         )
         return lambda reference: resolve_file_include(reference, base=base)
 
-    def _recorded_state(self, run_id: str) -> ExecutionState:
+    def _recorded_state(self, run_id: str) -> AgentState:
         load = self._load_state
         if load is None:
             raise RuntimeError("run executor has no request snapshot sources")
@@ -590,10 +589,7 @@ class RunExecutor:
             raise ValueError(
                 f"retry state snapshot is not available: {revision}"
             ) from exc
-        if (
-            not isinstance(state, AgentState | StatePublication)
-            or state.revision != revision
-        ):
+        if not isinstance(state, AgentState) or state.revision != revision:
             raise ValueError(f"retry state snapshot is not available: {revision}")
         return state
 
@@ -602,7 +598,7 @@ class RunExecutor:
         run_id: str,
         *,
         setup: AgentSetup,
-        state: ExecutionState,
+        state: AgentState,
         ceiling: AgentCeiling,
         model: str | None,
         model_request: ModelRequest | None = None,
@@ -685,7 +681,7 @@ class RunExecutor:
         )
 
     def _require_retry_compatible(
-        self, run_id: str, state: ExecutionState, *, sandbox: str
+        self, run_id: str, state: AgentState, *, sandbox: str
     ) -> None:
         """Reject retry before mutation when its execution snapshot changed."""
 
@@ -861,7 +857,7 @@ class RunExecutor:
         self,
         *,
         run_id: str,
-        state: ExecutionState,
+        state: AgentState,
         request_id: str | None = None,
     ) -> ControlRecord:
         """Persist an immediate State reload for a locally owned run tree."""
@@ -876,15 +872,15 @@ class RunExecutor:
         self,
         *,
         run_id: str,
-        state: ExecutionState,
+        state: AgentState,
         request_id: str | None,
         triggered_by: StepRef | None = None,
     ) -> ControlRecord:
         """Persist a reload and retain its process-local State snapshot."""
 
         self._require_available()
-        if not isinstance(state, AgentState | StatePublication):
-            raise TypeError("reload requires an Agent State publication")
+        if not isinstance(state, AgentState):
+            raise TypeError("reload requires an Agent State")
         with self._active_lock:
             active = self._active.get(run_id)
             if active is None:
@@ -895,10 +891,7 @@ class RunExecutor:
                 layout,
                 state.revision,
             ).resolve()
-            durable_state = (
-                state.state if isinstance(state, StatePublication) else state
-            )
-            state_revision_dir = durable_state.revision_dir
+            state_revision_dir = state.revision_dir
             revision_dir = (
                 state_revision_dir.resolve() if state_revision_dir is not None else None
             )
@@ -911,8 +904,7 @@ class RunExecutor:
             durable_state = load_agent_state(layout, state.revision)
         except (OSError, KeyError, TypeError, ValueError) as exc:
             raise ValueError("reload requires a durable Agent State") from exc
-        expected_state = state.state if isinstance(state, StatePublication) else state
-        if durable_state != expected_state:
+        if durable_state != state:
             raise ValueError("reload Agent State does not match its durable revision")
         with active.reload_lock:
             with self._active_lock:
@@ -953,7 +945,7 @@ class RunExecutor:
                 )
             control = self._accept_reload(
                 run_id=run_id,
-                state=refreshed.publication,
+                state=refreshed.state,
                 request_id=None,
                 triggered_by=triggered_by,
             )
@@ -1516,7 +1508,7 @@ class _Execution:
         self._active = active
         self._emit_trace = emit
         self._current_state = (root.state, root.state_ref)
-        self._step_states: dict[StepRef, tuple[ExecutionState, ControlRef]] = {}
+        self._step_states: dict[StepRef, tuple[AgentState, ControlRef]] = {}
         self._preceding_controls: list[ControlRef] = []
         self._limits = _RunLimitState(root.limits)
         self._retry = retry
@@ -1537,7 +1529,7 @@ class _Execution:
             self._history = self.store.message_history(root.root_run_id)
         return self._history
 
-    def state_snapshot(self) -> tuple[ExecutionState, ControlRef]:
+    def state_snapshot(self) -> tuple[AgentState, ControlRef]:
         """Read the live binding before an uncommitted ModelCall preparation."""
         return self._current_state
 
@@ -1693,7 +1685,7 @@ class _Execution:
     def refresh_run_binding(
         self,
         binding: BoundRun,
-        state: ExecutionState,
+        state: AgentState,
         state_ref: ControlRef,
         runnable: AgicDecl | FlowDecl,
         *,
@@ -1779,7 +1771,7 @@ class _Execution:
 
     def resolve_public_input(
         self,
-        state: ExecutionState,
+        state: AgentState,
         module: str,
         name: str,
         runnable: AgicDecl | FlowDecl,
@@ -1867,7 +1859,7 @@ class _Execution:
         input: RunnableInput,
         *,
         source: FieldRef,
-        state: ExecutionState,
+        state: AgentState,
         state_ref: ControlRef,
     ) -> tuple[BoundRun, dict[str, Local]]:
         """Prepare a same-Run replacement without committing the transition."""
@@ -2206,12 +2198,12 @@ class _Execution:
         resolution: Literal["module", "state"] = "module",
         raw_input: Mapping[str, object] | None = None,
         authorize: Callable[[ResolvedRunnable], None] | None = None,
-        state_snapshot: tuple[ExecutionState, ControlRef] | None = None,
+        state_snapshot: tuple[AgentState, ControlRef] | None = None,
     ) -> Local:
         """Accept and execute one recursive child agic or flow run."""
 
         def prepare(
-            state: ExecutionState,
+            state: AgentState,
             state_ref: ControlRef,
         ) -> tuple[BoundRun, AgicDecl | FlowDecl]:
             if resolution == "state":
@@ -2308,7 +2300,7 @@ class _Execution:
         input: RunnableInput,
         *,
         parent_step: StepRef,
-        state: ExecutionState,
+        state: AgentState,
         state_ref: ControlRef,
         validate_input: bool = True,
     ) -> BoundRun:
@@ -2355,7 +2347,7 @@ class _Execution:
         module: str,
         runnable: AgicDecl | FlowDecl,
         *,
-        state: ExecutionState,
+        state: AgentState,
     ) -> tuple[AgentResources, AgentResources]:
         agent_resources = resolve_agent_resources(
             parent.setup,
@@ -2391,16 +2383,16 @@ class _Execution:
     async def _begin_child(
         self,
         prepare: Callable[
-            [ExecutionState, ControlRef],
+            [AgentState, ControlRef],
             tuple[BoundRun, AgicDecl | FlowDecl],
         ],
         *,
-        state_snapshot: tuple[ExecutionState, ControlRef] | None = None,
+        state_snapshot: tuple[AgentState, ControlRef] | None = None,
     ) -> tuple[BoundRun, AgicDecl | FlowDecl]:
         """Resolve, accept, and begin one child at the latest State boundary."""
 
         async def accept(
-            state: ExecutionState, state_ref: ControlRef
+            state: AgentState, state_ref: ControlRef
         ) -> tuple[
             BoundRun,
             AgicDecl | FlowDecl,
@@ -2718,8 +2710,8 @@ class _Execution:
 
     async def begin_step(
         self,
-        build: Callable[[ExecutionState, ControlRef], StepBegin],
-    ) -> tuple[ExecutionState, ControlRef]:
+        build: Callable[[AgentState, ControlRef], StepBegin],
+    ) -> tuple[AgentState, ControlRef]:
         """Prepare and persist one step against one serialized State snapshot."""
 
         if self._active is None:
@@ -2833,7 +2825,7 @@ class _Execution:
         ):
             self._active.interruption = None
 
-    def state_for_step(self, step: StepRef) -> tuple[ExecutionState, ControlRef]:
+    def state_for_step(self, step: StepRef) -> tuple[AgentState, ControlRef]:
         """Return the immutable State snapshot captured by one started step."""
 
         try:
@@ -2863,7 +2855,7 @@ def _child_binding(
     *,
     parent_step: StepRef,
     occurrence: Occurrence | None,
-    state: ExecutionState,
+    state: AgentState,
     state_ref: ControlRef,
 ) -> BoundRun:
     structs = {item.name: item for item in state_program(state, module).structs}
@@ -3077,7 +3069,7 @@ def _validate_prompt_invocations(
     *,
     module: str,
 ) -> None:
-    if not isinstance(spec.state, StatePublication) or not spec.prompt_invocations:
+    if not spec.prompt_invocations:
         return
     available = {
         cap.ref

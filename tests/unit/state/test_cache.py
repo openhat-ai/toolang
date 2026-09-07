@@ -99,12 +99,16 @@ def test_agent_state_revision_round_trips_exact_layers(tmp_path: Path) -> None:
             home_revision=home_revision,
         )
 
-    assert revision == agent_state_revision(root_revision, home_revision)
+    assert revision == agent_state_revision(
+        root_revision, home_revision, name=layout.name
+    )
     assert load_current_agent_revision(layout) == revision
     assert load_agent_revisions(layout, revision) == (
         revision,
         root_revision,
         home_revision,
+        layout.name,
+        {},
     )
     layers = layout.agent_state / "revs" / revision / "layers.json"
     assert sha256(layers.read_bytes()).hexdigest() == revision
@@ -317,4 +321,4 @@ def test_layer_rejects_nonportable_file_path(tmp_path: Path) -> None:
 
 def test_agent_state_revision_rejects_noncanonical_revision() -> None:
     with pytest.raises(ValueError, match="root revision"):
-        agent_state_revision("short", "0" * 64)
+        agent_state_revision("short", "0" * 64, name="alice")

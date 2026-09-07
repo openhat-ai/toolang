@@ -19,7 +19,6 @@ from toolang.execution.records import RecallControlPayload
 from toolang.execution.types import RulesRecallTarget, ThreadPrefix, ToolStepGiven
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.state.prepare import prepare_agent_state
-from toolang.state.state import publish_state_resources
 from toolang.state.watcher import StateRefresh
 
 
@@ -64,10 +63,19 @@ def _harness(tmp_path, responses, *, source=SOURCE, refresh_state=None):
     (repo / "AGENTS.md").write_text("Root rules.")
     (repo / "src/AGENTS.md").write_text("Scoped rules.")
     (repo / "src/unused/AGENTS.md").write_text("Unused rules.")
-    publication = publish_state_resources(
-        harness.state, agent_name="alice", workspaces={"repo": str(repo)}
-    )
+    publication = _workspace_state(harness, {"repo": repo})
     return harness, repo, publication
+
+
+def _workspace_state(harness, workspaces):
+    import tomlkit
+
+    harness.setup.layout.config.write_text(
+        tomlkit.dumps(
+            {"workspaces": {name: str(path) for name, path in workspaces.items()}}
+        )
+    )
+    return prepare_agent_state(harness.setup.layout)
 
 
 def _spec(harness, publication, thread=None):
@@ -369,10 +377,10 @@ def test_overlapping_anchors_remain_independent_in_honor(tmp_path):
     harness, repo, publication = _harness(
         tmp_path, [_calls(repo_call, sdk_call, bare_call), _answer()]
     )
-    publication = publish_state_resources(
-        harness.state,
-        agent_name="alice",
-        workspaces={"repo": str(repo), "sdk": str(repo / "src")},
+    # Exercise rules identity independently of configured-root overlap validation.
+    publication = replace(
+        publication,
+        home_config={"workspaces": {"repo": str(repo), "sdk": str(repo / "src")}},
     )
 
     async def scenario():
@@ -487,11 +495,7 @@ def test_reload_changes_the_workspace_at_the_tool_boundary(tmp_path):
     new_repo = repo.with_name("new-repo")
     (new_repo / "src").mkdir(parents=True)
     (new_repo / "AGENTS.md").write_text("New root rules.")
-    next_publication = publish_state_resources(
-        prepare_agent_state(harness.setup.layout),
-        agent_name="alice",
-        workspaces={"repo": str(new_repo)},
-    )
+    next_publication = _workspace_state(harness, {"repo": new_repo})
     tracer = RecordingRunTracer()
 
     async def scenario():

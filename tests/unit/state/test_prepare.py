@@ -213,6 +213,7 @@ def test_prepare_root_home_snapshot_root_and_home(tmp_path: Path) -> None:
     state = compose_layer_state(
         root,
         home_layer,
+        name="alice",
     )
     assert state.root_revision == root.revision
     assert state.home_revision == home_layer.revision
@@ -448,7 +449,7 @@ def test_prepare_detects_content_change_with_preserved_size_and_mtime(
     assert second.home_revision != first.home_revision
 
 
-def test_setup_only_config_changes_keep_state_revisions_and_artifacts(
+def test_setup_only_config_changes_revision_but_not_state_terms(
     tmp_path: Path,
 ) -> None:
     toolang_root = tmp_path / "toolang"
@@ -471,14 +472,16 @@ def test_setup_only_config_changes_keep_state_revisions_and_artifacts(
     second = prepare_agent_state(layout)
     second_root = load_root_layer(layout, second.root_revision)
 
-    assert second.revision == first.revision
-    assert second.root_revision == first.root_revision
+    assert second.revision != first.revision
+    assert second.root_revision != first.root_revision
     assert second.home_revision == first.home_revision
     assert first_root.config == second_root.config == {}
+    assert first.modules == second.modules
+    assert first.caps_by_module == second.caps_by_module
     assert not (first_root.revision_dir / "files" / "config.toml").exists()
 
 
-def test_setup_only_config_creation_and_removal_keep_state_revisions(
+def test_setup_only_config_creation_and_removal_changes_dependency_revision(
     tmp_path: Path,
 ) -> None:
     toolang_root = tmp_path / "toolang"
@@ -497,8 +500,8 @@ def test_setup_only_config_creation_and_removal_keep_state_revisions(
     config.unlink()
     removed = prepare_agent_state(layout)
 
-    assert created.revision == first.revision
-    assert created.root_revision == first.root_revision
+    assert created.revision != first.revision
+    assert created.root_revision != first.root_revision
     assert removed.revision == first.revision
     assert removed.root_revision == first.root_revision
 

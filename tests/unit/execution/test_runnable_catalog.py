@@ -24,7 +24,8 @@ def _state(source: str) -> AgentState:
     root = sha256(b"catalog-root").hexdigest()
     home = sha256(source.encode()).hexdigest()
     return AgentState(
-        revision=agent_state_revision(root, home),
+        name="alice",
+        revision=agent_state_revision(root, home, name="alice"),
         root_revision=root,
         home_revision=home,
         root_config={},

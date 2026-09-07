@@ -13,7 +13,6 @@ from typing import Literal, cast
 from toolang.catalog.types import CAP_DIRECTORY_NAMES
 
 from ..lang.ast import Program, Span
-from .config import canonical_state_config
 
 SourceNodeKind = Literal["file", "directory"]
 SOURCE_SCHEMA = 3
@@ -192,15 +191,12 @@ class SourceChangedError(RuntimeError):
 def scan_source(
     base: Path,
     paths: tuple[str, ...],
-    *,
-    project_configs: bool = False,
 ) -> SourceManifest:
     """Read and hash one complete portable source manifest."""
 
     observation = observe_source(base, paths)
     return build_source_manifest(
         observation,
-        project_configs=project_configs,
     )
 
 
@@ -239,7 +235,6 @@ def observe_source(base: Path, paths: Sequence[str]) -> SourceObservation:
 def build_source_manifest(
     observation: SourceObservation,
     *,
-    project_configs: bool,
     previous_observation: SourceObservation | None = None,
     previous_manifest: SourceManifest | None = None,
     invalidated: Collection[str] = (),
@@ -268,17 +263,7 @@ def build_source_manifest(
             if cached is not None:
                 entries.append(cached)
                 continue
-            if project_configs and item.path == "config.toml":
-                continue
         content = item.source.read_bytes()
-        if project_configs and item.path == "config.toml":
-            content = canonical_state_config(content)
-            if not content:
-                if _observe_file(item.source, relative_path=item.path) != item:
-                    raise SourceChangedError(
-                        f"source changed while reading: {item.source}"
-                    )
-                continue
         if _observe_file(item.source, relative_path=item.path) != item:
             raise SourceChangedError(f"source changed while reading: {item.source}")
         entries.append(
@@ -320,7 +305,6 @@ def root_source_manifest(
 ) -> SourceManifest:
     return build_source_manifest(
         observation,
-        project_configs=True,
         previous_observation=previous_observation,
         previous_manifest=previous_manifest,
         invalidated=invalidated,
@@ -336,7 +320,6 @@ def home_source_manifest(
 ) -> SourceManifest:
     return build_source_manifest(
         observation,
-        project_configs=True,
         previous_observation=previous_observation,
         previous_manifest=previous_manifest,
         invalidated=invalidated,
@@ -763,13 +746,9 @@ def _collect_file(
         relative_path=path.relative_to(toolang_root).as_posix(),
     )
     content = path.read_bytes()
-    if category == "config":
-        content = canonical_state_config(content)
     after = _observe_file(path, relative_path=before.path)
     if before != after:
         raise SourceChangedError(f"source changed while reading: {path}")
-    if category == "config" and not content:
-        return []
     return [
         SourceFile(
             path=path,

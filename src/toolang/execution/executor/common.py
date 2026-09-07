@@ -40,7 +40,7 @@ from toolang.lang.ast import (
 )
 from toolang.lang.input import RunnableInput
 from toolang.lang.types import Array
-from toolang.state.state import AgentState, StatePublication, state_program
+from toolang.state.state import AgentState, state_program
 from toolang.setup import AgentSetup
 
 from ..events import RunEvent, StepBegin, StepEnd
@@ -66,8 +66,8 @@ Shape = Literal["none", "item", "list"]
 FlowTransform = Literal["item", "list", "filter", "sort", "none"]
 EventEmitter = Callable[[RunEvent], Awaitable[None]]
 StepBoundary = Callable[
-    [Callable[[AgentState | StatePublication, ControlRef], StepBegin]],
-    Awaitable[tuple[AgentState | StatePublication, ControlRef]],
+    [Callable[[AgentState, ControlRef], StepBegin]],
+    Awaitable[tuple[AgentState, ControlRef]],
 ]
 _TEMPLATE_LOCAL_RE = re.compile(
     r"{{\s*(?:[#^/]\s*)?([A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z_][\w-]*)*\s*}}"
@@ -112,7 +112,7 @@ class BoundRun:
     bindings: RunBindings
     input: RunnableInput
     control_locals: tuple[RecordLocal, ...]
-    state: AgentState | StatePublication
+    state: AgentState
     state_ref: ControlRef
     setup: AgentSetup
     created_at: str
@@ -176,7 +176,7 @@ async def execute_step(
     started_at = utc_now()
 
     def build(
-        agent_state: AgentState | StatePublication,
+        agent_state: AgentState,
         state_ref: ControlRef,
     ) -> StepBegin:
         effective_binding = replace(

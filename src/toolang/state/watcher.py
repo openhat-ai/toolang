@@ -12,12 +12,8 @@ from pathlib import Path
 from watchfiles import Change, awatch
 
 from toolang.common.layout import AgentLayout
-from .config import ConfiguredWorkspaces
-from .state import (
-    AgentState,
-    StatePublication,
-    publish_state_resources,
-)
+from .config import normalize_cap_overrides
+from .state import AgentState
 from .errors import StateDiagnostic, StatePreparationError
 from .cache import (
     LayerScope,
@@ -44,10 +40,6 @@ logger = logging.getLogger(__name__)
 _RELEVANT_CHANGES = {Change.added, Change.modified, Change.deleted}
 
 
-class _WorkspaceConfigError(ValueError):
-    """A local workspace configuration cannot be published."""
-
-
 @dataclass(frozen=True, slots=True)
 class _CheckRequest:
     requested: bool
@@ -61,7 +53,7 @@ class _CheckRequest:
 class StateRefresh:
     """One completed watcher check and its exact last-valid result."""
 
-    publication: StatePublication
+    state: AgentState
     diagnostics: tuple[StateDiagnostic, ...] = ()
 
 
@@ -76,23 +68,19 @@ class StateWatcher:
         initial_state: AgentState | None = None,
     ) -> None:
         self.layout = layout
-        unknown_overrides = sorted(
-            set(allow_overrides or ()) - {"psyches", "skills", "services", "prompts"}
-        )
-        if unknown_overrides:
-            raise ValueError(
-                "unknown State allow override: " + ", ".join(unknown_overrides)
-            )
-        self._allow_overrides = dict(allow_overrides or {})
-        self._publications: dict[str, StatePublication] = {}
-        self._publication: StatePublication | None = None
+        self._allow_overrides = normalize_cap_overrides(allow_overrides)
+        self._states: dict[str, AgentState] = {}
+        self._state: AgentState | None = None
         self._checked_root_observation: SourceObservation | None = None
         self._checked_home_observation: SourceObservation | None = None
         self._checked_root_source: SourceManifest | None = None
         self._checked_home_source: SourceManifest | None = None
         self._checked_layer_revisions: tuple[str | None, str | None] | None = None
-        if initial_state is not None:
-            self._publication = self._publish(initial_state)
+        if (
+            initial_state is not None
+            and initial_state.allow_overrides == self._allow_overrides
+        ):
+            self._state = self._remember(initial_state)
             self._record_persisted_baseline(initial_state)
         else:
             try:
@@ -100,34 +88,40 @@ class StateWatcher:
             except (FileNotFoundError, KeyError, TypeError, ValueError):
                 pass
             else:
-                self._publication = self._publish(state)
-                self._record_persisted_baseline(state)
+                if state.allow_overrides == self._allow_overrides:
+                    self._state = self._remember(state)
+                    self._record_persisted_baseline(state)
         self._diagnostics: tuple[StateDiagnostic, ...] = ()
         self._check_requests: deque[_CheckRequest] = deque()
         self._check_task: asyncio.Task[None] | None = None
         self._monitoring = False
 
-    def current(self) -> StatePublication:
+    def current(self) -> AgentState:
         """Return the latest immutable State publication."""
 
-        if self._publication is None:
+        if self._state is None:
             raise RuntimeError("state watcher has not been refreshed")
-        return self._publication
+        return self._state
 
     def diagnostics(self) -> tuple[StateDiagnostic, ...]:
         """Return diagnostics for the latest rejected candidate, if any."""
 
         return self._diagnostics
 
-    def load(self, revision: str) -> StatePublication:
-        """Load one durable Agent State and derive the frozen startup policy."""
+    def load(self, revision: str) -> AgentState:
+        """Load the exact State identified by a persisted composition."""
 
-        return self._publish(load_agent_state(self.layout, revision))
+        cached = self._states.get(revision)
+        return (
+            cached
+            if cached is not None
+            else self._remember(load_agent_state(self.layout, revision))
+        )
 
-    async def refresh(self, *, force: bool = False) -> StatePublication:
+    async def refresh(self, *, force: bool = False) -> AgentState:
         """Request one serialized check and wait until that check completes."""
 
-        return (await self._request_check(requested=True, force=force)).publication
+        return (await self._request_check(requested=True, force=force)).state
 
     async def refresh_result(self, *, force: bool = False) -> StateRefresh:
         """Return one serialized check with diagnostics from that exact check."""
@@ -211,14 +205,14 @@ class StateWatcher:
                 self.layout.name,
             )
         except Exception as exc:
-            if self._publication is None:
+            if self._state is None:
                 raise
             self._diagnostics = (_candidate_diagnostic(exc),)
             logger.warning(
                 "watch.rejected agent=%s diagnostics=1",
                 self.layout.name,
             )
-            return StateRefresh(self._publication, self._diagnostics)
+            return StateRefresh(self._state, self._diagnostics)
         if (
             not requested
             and not invalidated_root
@@ -246,10 +240,10 @@ class StateWatcher:
                 invalidated=invalidated_home,
             )
         except Exception as exc:
-            if self._publication is None:
+            if self._state is None:
                 raise
             self._diagnostics = (_candidate_diagnostic(exc),)
-            return StateRefresh(self._publication, self._diagnostics)
+            return StateRefresh(self._state, self._diagnostics)
         if (
             not requested
             and not force
@@ -264,19 +258,15 @@ class StateWatcher:
                 root_source,
                 home_source,
             )
-            try:
-                publication = self._publish(self.current().state)
-            except _WorkspaceConfigError as exc:
-                self._diagnostics = (_candidate_diagnostic(exc),)
-                return StateRefresh(self.current(), self._diagnostics)
-            self._publication = publication
             self._diagnostics = ()
-            return StateRefresh(publication)
+            return StateRefresh(self.current())
         try:
             candidate = await asyncio.to_thread(
                 prepare_agent_state,
                 self.layout,
                 force=force,
+                allow_overrides=self._allow_overrides,
+                previous=self._state,
             )
         except StatePreparationError as exc:
             self._record_checked_candidate(
@@ -286,14 +276,14 @@ class StateWatcher:
                 home_source,
             )
             self._diagnostics = exc.diagnostics
-            if self._publication is None:
+            if self._state is None:
                 raise
             logger.warning(
                 "watch.rejected agent=%s diagnostics=%s",
                 self.layout.name,
                 len(exc.diagnostics),
             )
-            return StateRefresh(self._publication, self._diagnostics)
+            return StateRefresh(self._state, self._diagnostics)
         except Exception as exc:
             self._record_checked_candidate(
                 root_observation,
@@ -301,32 +291,15 @@ class StateWatcher:
                 root_source,
                 home_source,
             )
-            if self._publication is None:
+            if self._state is None:
                 raise
             self._diagnostics = (_candidate_diagnostic(exc),)
             logger.warning(
                 "watch.rejected agent=%s diagnostics=1",
                 self.layout.name,
             )
-            return StateRefresh(self._publication, self._diagnostics)
-        try:
-            publication = self._publish(candidate)
-        except _WorkspaceConfigError as exc:
-            self._record_checked_candidate(
-                root_observation,
-                home_observation,
-                root_source,
-                home_source,
-            )
-            if self._publication is None:
-                raise
-            self._diagnostics = (_candidate_diagnostic(exc),)
-            logger.warning(
-                "watch.rejected agent=%s diagnostics=1",
-                self.layout.name,
-            )
-            return StateRefresh(self._publication, self._diagnostics)
-        self._publication = publication
+            return StateRefresh(self._state, self._diagnostics)
+        self._state = self._remember(candidate)
         loaded_root_source = load_layer_source(
             self.layout,
             "root",
@@ -352,7 +325,7 @@ class StateWatcher:
             candidate.home_revision,
         )
         self._diagnostics = ()
-        return StateRefresh(self._publication)
+        return StateRefresh(self._state)
 
     async def updates(
         self,
@@ -360,12 +333,12 @@ class StateWatcher:
         stop_signal: asyncio.Event,
         interval_ms: float = DEFAULT_INTERVAL_MS,
         debounce_ms: float = DEFAULT_DEBOUNCE_MS,
-    ) -> AsyncIterator[StatePublication]:
+    ) -> AsyncIterator[AgentState]:
         if self._monitoring:
             raise RuntimeError("State watcher is already monitoring")
         self._monitoring = True
         try:
-            if self._publication is None:
+            if self._state is None:
                 await self._request_check(requested=True)
             logger.debug(
                 "watch.started root=%s agent=%s interval_ms=%s debounce_ms=%s",
@@ -420,7 +393,7 @@ class StateWatcher:
                         invalidated_root=frozenset(invalidated_root),
                         invalidated_home=frozenset(invalidated_home),
                     )
-                ).publication
+                ).state
                 if publication is not previous:
                     yield publication
         finally:
@@ -448,9 +421,9 @@ class StateWatcher:
         root_observation: SourceObservation,
         home_observation: SourceObservation,
     ) -> bool:
-        if self._publication is None:
+        if self._state is None:
             return True
-        state = self._publication.state
+        state = self._state
         try:
             return (
                 load_current_agent_revision(self.layout) != state.revision
@@ -468,9 +441,9 @@ class StateWatcher:
         root_source: SourceManifest,
         home_source: SourceManifest,
     ) -> bool:
-        if self._publication is None:
+        if self._state is None:
             return True
-        state = self._publication.state
+        state = self._state
         try:
             return (
                 load_current_agent_revision(self.layout) != state.revision
@@ -482,22 +455,12 @@ class StateWatcher:
         except (FileNotFoundError, TypeError, ValueError):
             return True
 
-    def _publish(self, state: AgentState) -> StatePublication:
-        try:
-            workspaces = ConfiguredWorkspaces(self.layout.config).list()
-        except (OSError, UnicodeError, ValueError) as exc:
-            raise _WorkspaceConfigError(str(exc)) from exc
-        existing = self._publications.get(state.revision)
-        if existing is not None and existing.workspaces == workspaces:
+    def _remember(self, state: AgentState) -> AgentState:
+        existing = self._states.get(state.revision)
+        if existing is not None:
             return existing
-        publication = publish_state_resources(
-            state,
-            agent_name=self.layout.name,
-            allow_overrides=self._allow_overrides,
-            workspaces=workspaces,
-        )
-        self._publications[state.revision] = publication
-        return publication
+        self._states[state.revision] = state
+        return state
 
     def _record_persisted_baseline(self, state: AgentState) -> None:
         """Load portable manifests without reconstructing the supplied State."""

@@ -76,7 +76,7 @@ from toolang.lang.input import (
 from toolang.state.runnable_collections import runnable_dataset
 from toolang.setup import SetupWatcher
 from toolang.state.prepare import prepare_agent_state
-from toolang.state.state import AgentState, StatePublication
+from toolang.state.state import AgentState
 from toolang.state.watcher import StateWatcher
 from toolang.up import process as agents
 from toolang.up.logging import configure_logging_plan, resolve_agent_logging
@@ -976,7 +976,7 @@ def _stored_run(
 async def _execute(
     *,
     layout: AgentLayout,
-    state: AgentState | StatePublication,
+    state: AgentState,
     store: RunStore,
     ids: IdIssuer,
     run_id: str,
@@ -1011,10 +1011,10 @@ async def _execute(
             for name, value in allow_overrides.items()
             if name in {"psyches", "skills", "services", "prompts"}
         },
-        initial_state=state.state if isinstance(state, StatePublication) else state,
+        initial_state=state,
     )
     setup = await setup_watcher.refresh()
-    state = state_watcher.current()
+    state = await state_watcher.refresh()
     fallback_model = (
         setup.models.effective_default(None) if setup.defaults.model is None else None
     )

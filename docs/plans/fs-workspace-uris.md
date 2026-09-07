@@ -30,10 +30,10 @@ State adoption policy, and record schemas are out of scope. Reserve the full
 
 ## State and rules
 
-Each Tool Step uses its captured StatePublication for discovery, resolution, and
+Each Tool Step uses its captured AgentState for discovery, resolution, and
 execution. Already-started operations retain their prepared paths; later Steps
-see adopted additions, removals, and remapping. Workspace publications may share
-the same durable State revision: do not cache mappings by revision.
+see adopted additions, removals, and remapping. Configured workspace changes
+produce a new State revision; mappings come from that revision's config snapshot.
 
 Keep workspace name and relative path through preflight and honor. Authorize
 all rule reads against the selected workspace, without an additional home grant.
@@ -51,7 +51,7 @@ needed.
 - Unit tests: all fs operations, encoding, root availability, traversal,
   symlinks, glob, output round trips, no implicit home access, and unchanged
   shell path preparation.
-- Integration tests: external rules and retries; same-revision publications;
+- Integration tests: external rules and retries; revision-bound workspace snapshots;
   add/remove/remap within a Run; updates during an operation and between honor
   and retry; parallel children and recorded-call replay.
 - Run Ruff, formatting, ty, and the complete offline pytest suite.

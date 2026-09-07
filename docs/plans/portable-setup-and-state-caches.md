@@ -12,7 +12,7 @@ Persistent identities are portable content revisions; filesystem metadata is
 only a process-local observation optimization.
 
 This refines the cache portion of `agent-setup-resource-publication.md`. It does
-not change `AgentSetup`, `StatePublication`, collection queries, execution
+not change `AgentSetup`, `AgentState`, collection queries, execution
 snapshot capture, or State reload.
 
 ## Success Criteria

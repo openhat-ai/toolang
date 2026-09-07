@@ -31,7 +31,7 @@ from toolang.execution.types import AllowOverride, RunCommand, RunOverride, Thre
 from toolang.lang.input import NamedInputSource, NamedInputSources, RunnableInputRaw
 from toolang.lang.types import Array
 from toolang.setup import ModelCollection, ToolCollection
-from toolang.state.state import CapSource, StateCap, publish_state_resources
+from toolang.state.state import CapSource, StateCap, agent_state_revision
 from tests.support.execution_harness import ExecutionHarness
 
 
@@ -308,6 +308,7 @@ def test_resolve_spec_preserves_authored_prompt_input_and_provenance(
 ) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
+        prepare_state=True,
         source="""
 prompt review:
   {{focus}} {{_}}
@@ -344,7 +345,7 @@ agic default(_: Part[]):
         harness.store.close()
 
 
-def test_resolve_spec_rejects_prompt_excluded_from_state_publication(tmp_path) -> None:
+def test_resolve_spec_rejects_prompt_excluded_from_state(tmp_path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -356,9 +357,14 @@ agic default(_: Part[]):
 """,
         responses=[],
     )
-    state = publish_state_resources(
+    state = replace(
         harness.state,
-        agent_name=harness.setup.layout.name,
+        revision=agent_state_revision(
+            harness.state.root_revision,
+            harness.state.home_revision,
+            name=harness.state.name,
+            allow_overrides={"prompts": ()},
+        ),
         allow_overrides={"prompts": ()},
     )
     try:
@@ -404,10 +410,7 @@ agic default(_: Part[]):
         ),
         meta={},
     )
-    state = publish_state_resources(
-        replace(harness.state, module_caps={"agent": (prompt,)}),
-        agent_name=harness.setup.layout.name,
-    )
+    state = replace(harness.state, module_caps={"agent": (prompt,)})
     try:
         spec = resolve_spec(
             RunOverride(

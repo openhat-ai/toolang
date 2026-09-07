@@ -22,9 +22,8 @@ from toolang.lang.input import (
 from toolang.lang.ast import AgicDecl, Program
 from toolang.setup import AgentSetup
 from toolang.state.state import (
-    AgentState,
     StateCap,
-    StatePublication,
+    AgentState,
     state_module_caps,
 )
 from toolang.plugin.models.resolution import apply_model_parameters
@@ -53,7 +52,7 @@ class RestartSpec:
     """One restart request resolved against immutable runtime snapshots."""
 
     setup: AgentSetup
-    state: AgentState | StatePublication
+    state: AgentState
     ceiling: AgentCeiling
     model: ModelRequest | None
     model_override: ModelOverride | None
@@ -75,7 +74,7 @@ def resolve_run_request(
     request: RunRequest,
     *,
     setup: AgentSetup,
-    state: AgentState | StatePublication,
+    state: AgentState,
     include: IncludeResolver | None = None,
 ) -> RunSpec:
     """Resolve one caller request against one setup and state snapshot pair."""
@@ -84,8 +83,7 @@ def resolve_run_request(
         request.model,
         setup=setup,
     )
-    durable = state.state if isinstance(state, StatePublication) else state
-    resolved_runnable = resolve_public_runnable_query(durable, request.runnable.ref)
+    resolved_runnable = resolve_public_runnable_query(state, request.runnable.ref)
     if resolved_runnable.ref != request.runnable.ref:
         raise ValueError(
             f"run runnable ref must be exact: {request.runnable.ref!r} resolves to "
@@ -113,7 +111,7 @@ def resolve_restart_request(
     request: RetryRequest | RerunRequest,
     *,
     setup: AgentSetup,
-    state: AgentState | StatePublication,
+    state: AgentState,
 ) -> RestartSpec:
     """Resolve restart policy against exactly one setup and state snapshot pair."""
 
@@ -176,7 +174,7 @@ def resolve_spec(
     input: RunnableInputRaw,
     *,
     setup: AgentSetup,
-    state: AgentState | StatePublication,
+    state: AgentState,
     thread: str,
     default_runnable: str,
     surface: RunBindings = RunBindings(),
@@ -300,7 +298,7 @@ def _resolve_concrete_spec(
     input: RunnableInputRaw,
     *,
     setup: AgentSetup,
-    state: AgentState | StatePublication,
+    state: AgentState,
     thread: str,
     bindings: RunBindings,
     model_request: ModelRequest | None,
@@ -389,7 +387,7 @@ def validate_commands(
     commands: Sequence[RunCommand],
     *,
     setup: AgentSetup,
-    state: AgentState | StatePublication,
+    state: AgentState,
     default_runnable: str,
     surface: RunBindings = RunBindings(),
 ) -> None:
@@ -409,7 +407,7 @@ def validate_commands(
         session=commands,
     )
     resolved_runnable = resolve_public_runnable_query(
-        state.state if isinstance(state, StatePublication) else state,
+        state,
         bindings.runnable or default_runnable,
     )
     module = resolved_runnable.module
@@ -448,7 +446,7 @@ def validate_session_commands(
     commands: Sequence[RunCommand],
     *,
     setup: AgentSetup,
-    state: AgentState | StatePublication,
+    state: AgentState,
     runnable_fallbacks: tuple[str, ...],
 ) -> None:
     """Validate session commands against the first available runnable fallback."""
@@ -458,7 +456,7 @@ def validate_session_commands(
         setup=setup,
         state=state,
         default_runnable=_select_runnable_fallback(
-            state.state if isinstance(state, StatePublication) else state,
+            state,
             runnable_fallbacks,
         ),
     )
@@ -486,18 +484,12 @@ def _resolve_named_sources(
 
 
 def prompt_definitions(
-    state: AgentState | StatePublication,
+    state: AgentState,
     *,
     module: str,
     program: Program,
     caps: Sequence[StateCap] | None = None,
 ) -> dict[str, PromptDefinitionIdentity]:
-    if caps is None and isinstance(state, AgentState):
-        return {
-            prompt.name: prompt_definition_identity(prompt)
-            for prompt in program.caps
-            if prompt.kind == "prompt"
-        }
     cap_refs = {
         cap.name: cap.ref
         for cap in (state_module_caps(state, module) if caps is None else caps)

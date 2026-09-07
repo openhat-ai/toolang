@@ -46,6 +46,7 @@ from toolang.execution.threads import ThreadManager
 from toolang.lang import Program
 from toolang.lang.input import resolve_runnable_input
 from toolang.state.state import AgentState, agent_state_revision
+from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateRefresh
 from toolang.plugin.models.resolution import build_model_collection
 from toolang.plugin.toolsets.collections import ToolCollection
@@ -312,17 +313,23 @@ class ExecutionHarness:
         tools: Mapping[str, AgentTool] | None = None,
         streaming: bool = False,
         state: AgentState | None = None,
+        prepare_state: bool = False,
         refresh_state: Callable[[], Awaitable[StateRefresh]] | None = None,
     ) -> ExecutionHarness:
         """Build one isolated execution runtime from authored source."""
 
         home = root / "agents" / "alice"
         runtime = home / ".runtime"
+        if prepare_state:
+            home.mkdir(parents=True, exist_ok=True)
+            (home / "agent.too").write_text(source, encoding="utf-8")
+            state = prepare_agent_state(AgentLayout.resident(root, "alice"))
         program = Program.from_source(source)
         root_revision = sha256(b"execution-test-root").hexdigest()
         home_revision = sha256(source.encode("utf-8")).hexdigest()
         state = state or AgentState(
-            revision=agent_state_revision(root_revision, home_revision),
+            name="alice",
+            revision=agent_state_revision(root_revision, home_revision, name="alice"),
             root_revision=root_revision,
             home_revision=home_revision,
             root_config={},

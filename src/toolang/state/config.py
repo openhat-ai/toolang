@@ -1,4 +1,4 @@
-"""Agent configuration for durable State and local publications."""
+"""State-owned configuration and authored workspace management."""
 
 from __future__ import annotations
 
@@ -54,23 +54,7 @@ class ConfiguredWorkspaces:
         """Parse workspace grants without requiring their paths to exist."""
 
         config = cast(dict[str, object], tomllib.loads(content))
-        raw_workspaces = config.get("workspaces")
-        if raw_workspaces is None:
-            return {}
-        if not isinstance(raw_workspaces, Mapping):
-            raise ValueError("workspaces config must be a table")
-        workspaces: dict[str, str] = {}
-        for raw_name, raw_path in sorted(raw_workspaces.items()):
-            name = str(raw_name)
-            _validate_workspace_name(name)
-            if not isinstance(raw_path, str) or not raw_path:
-                raise ValueError(f"workspace path must be a non-empty string: {name}")
-            path = Path(raw_path)
-            if not path.is_absolute():
-                raise ValueError(f"workspace path must be absolute: {name}")
-            workspaces[name] = str(path)
-        _validate_workspace_roots(workspaces)
-        return workspaces
+        return configured_workspaces(config)
 
     def add(self, path: Path, *, name: str | None = None) -> tuple[str, str]:
         """Grant one existing directory under a unique stable name."""
@@ -124,10 +108,32 @@ def parse_config(content: bytes) -> dict[str, object]:
     return cast(dict[str, object], tomllib.loads(content.decode("utf-8")))
 
 
+def configured_workspaces(config: Mapping[str, object]) -> dict[str, str]:
+    """Read and validate workspace grants from one captured config."""
+
+    raw = config.get("workspaces")
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise ValueError("workspaces config must be a table")
+    workspaces: dict[str, str] = {}
+    for name, path in sorted(cast(Mapping[str, object], raw).items()):
+        _validate_workspace_name(name)
+        if not isinstance(path, str) or not path:
+            raise ValueError(f"workspace path must be a non-empty string: {name}")
+        if not Path(path).is_absolute():
+            raise ValueError(f"workspace path must be absolute: {name}")
+        workspaces[name] = str(Path(path))
+    _validate_workspace_roots(workspaces)
+    return workspaces
+
+
 def project_state_config(config: Mapping[str, object]) -> dict[str, object]:
     """Return the semantic config fields owned by durable Agent State."""
 
     projected: dict[str, object] = {}
+    if "workspaces" in config:
+        projected["workspaces"] = configured_workspaces(config)
     for name in _CAP_TABLES:
         value = config.get(name)
         if value is None:
@@ -164,6 +170,21 @@ def canonical_state_config(content: bytes) -> bytes:
         cast(dict[str, object], tomllib.loads(content.decode("utf-8")))
     )
     return tomlkit.dumps(projected).encode("utf-8")
+
+
+def normalize_cap_overrides(
+    overrides: Mapping[str, tuple[str, ...] | None] | None,
+) -> dict[str, tuple[str, ...]]:
+    """Freeze explicit startup replacements; omitted fields use configuration."""
+
+    unknown = set(overrides or ()) - set(CAP_ALLOW_FIELDS)
+    if unknown:
+        raise ValueError("unknown State allow override: " + ", ".join(sorted(unknown)))
+    return {
+        name: tuple(value)
+        for name, value in sorted((overrides or {}).items())
+        if value is not None
+    }
 
 
 def resolve_cap_allows(

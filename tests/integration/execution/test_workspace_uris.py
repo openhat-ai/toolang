@@ -1,4 +1,4 @@
-"""Workspace URI calls follow Tool Step publications and durable honor results."""
+"""Workspace URI calls follow Tool Step States and durable honor results."""
 
 import asyncio
 from dataclasses import replace
@@ -14,6 +14,7 @@ from tests.integration.execution.test_honor_rules import (
     _recalls,
     _spec,
     _tool_steps,
+    _workspace_state,
 )
 from tests.support.execution_assertions import (
     assert_replayed,
@@ -29,16 +30,7 @@ from toolang.base.types.run import ToolCall
 from toolang.base.types.tool import ToolPreparation
 from toolang.execution.types import RulesRecallTarget, ThreadPrefix
 from toolang.plugin.toolsets.filesystem import _FilesystemTool
-from toolang.state.state import publish_state_resources
 from toolang.state.watcher import StateRefresh
-
-
-def _publication(harness, workspaces):
-    return publish_state_resources(
-        harness.state,
-        agent_name="alice",
-        workspaces={name: str(path) for name, path in workspaces.items()},
-    )
 
 
 def _results(harness, run):
@@ -61,7 +53,7 @@ def test_external_workspace_rules_and_protocol_survive_instruct_none(tmp_path):
     external = tmp_path / "external"
     external.mkdir()
     (external / "AGENTS.md").write_text("Log changes in this workspace.")
-    publication = _publication(harness, {"external": external})
+    publication = _workspace_state(harness, {"external": external})
     tracer = RecordingRunTracer()
 
     async def scenario():
@@ -104,7 +96,7 @@ def test_rule_symlinks_cannot_escape_the_workspace(tmp_path, external):
     async def scenario():
         async with harness:
             run = await harness.executor.run(
-                _spec(harness, _publication(harness, {"repo": root}))
+                _spec(harness, _workspace_state(harness, {"repo": root}))
             )
             assert "rules recall failed" in _results(harness, run)["write"].error
             assert not _recalls(harness, run)
@@ -126,7 +118,7 @@ def test_explicit_workspace_cannot_create_an_unavailable_root_in_home(tmp_path):
     async def scenario():
         async with harness:
             run = await harness.executor.run(
-                _spec(harness, _publication(harness, {"missing": missing}))
+                _spec(harness, _workspace_state(harness, {"missing": missing}))
             )
             assert "not available" in _results(harness, run)["write"].error
             assert not missing.exists()
@@ -189,7 +181,7 @@ def test_fs_protocol_follows_effective_tools(tmp_path):
     asyncio.run(scenario())
 
 
-def test_same_revision_reload_updates_listing_grants_and_mapping_in_one_run(tmp_path):
+def test_reload_updates_revision_listing_grants_and_mapping_in_one_run(tmp_path):
     changed = None
 
     async def refresh():
@@ -217,11 +209,13 @@ def test_same_revision_reload_updates_listing_grants_and_mapping_in_one_run(tmp_
     roots = {name: tmp_path / name for name in ("old", "new", "removed", "added")}
     for root in roots.values():
         root.mkdir()
-    initial = _publication(
+    initial = _workspace_state(
         harness, {"moving": roots["old"], "removed": roots["removed"]}
     )
-    changed = _publication(harness, {"moving": roots["new"], "added": roots["added"]})
-    assert initial.revision == changed.revision
+    changed = _workspace_state(
+        harness, {"moving": roots["new"], "added": roots["added"]}
+    )
+    assert initial.revision != changed.revision
     tracer = RecordingRunTracer()
 
     async def scenario():
@@ -251,7 +245,7 @@ def test_same_revision_reload_updates_listing_grants_and_mapping_in_one_run(tmp_
 
 
 @pytest.mark.parametrize("change", ["remove", "remap", "remap-without-rules"])
-def test_honor_retry_resolves_the_new_publication(tmp_path, change):
+def test_honor_retry_resolves_the_new_workspace_state(tmp_path, change):
     changed = None
 
     async def refresh():
@@ -278,8 +272,8 @@ def test_honor_retry_resolves_the_new_publication(tmp_path, change):
     (old / "AGENTS.md").write_text("Old rules.")
     if change == "remap":
         (new / "AGENTS.md").write_text("New rules.")
-    initial = _publication(harness, {"repo": old})
-    changed = _publication(harness, {} if change == "remove" else {"repo": new})
+    initial = _workspace_state(harness, {"repo": old})
+    changed = _workspace_state(harness, {} if change == "remove" else {"repo": new})
     tracer = RecordingRunTracer()
 
     async def scenario():
@@ -343,8 +337,8 @@ def test_reload_during_a_tool_keeps_its_path_and_updates_the_next_step(
     old, new = tmp_path / "old", tmp_path / "new"
     old.mkdir()
     new.mkdir()
-    initial = _publication(harness, {"repo": old})
-    changed = _publication(harness, {"repo": new})
+    initial = _workspace_state(harness, {"repo": old})
+    changed = _workspace_state(harness, {"repo": new})
     tracer = RecordingRunTracer()
 
     async def scenario():
@@ -410,8 +404,8 @@ flow parent(_: Part[]) -> Text[]:
     new.mkdir()
     (old / "AGENTS.md").write_text("Old rules.")
     (new / "AGENTS.md").write_text("New rules.")
-    initial = _publication(harness, {"repo": old})
-    changed = _publication(harness, {"repo": new})
+    initial = _workspace_state(harness, {"repo": old})
+    changed = _workspace_state(harness, {"repo": new})
     tracer = RecordingRunTracer()
 
     async def scenario():

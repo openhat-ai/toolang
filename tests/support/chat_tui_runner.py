@@ -11,7 +11,7 @@ from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.tui import ChatTuiApp
 from toolang.plugin.models.collections import ModelCollection
 from toolang.setup import AgentSetup
-from toolang.state.state import AgentState, StatePublication, publish_state_resources
+from toolang.state.state import AgentState
 from toolang.state.watcher import StateRefresh
 
 
@@ -29,7 +29,6 @@ def run_chat_tui(
             setup,
             models=ModelCollection(tuple(setup.models.resolve(ref) for ref in models)),
         )
-    publication = publish_state_resources(state, agent_name=setup.layout.name)
 
     class SetupWatcher:
         def __init__(self, _layout: object, **_kwargs: object) -> None:
@@ -49,16 +48,16 @@ def run_chat_tui(
         def __init__(self, _layout: object, **_kwargs: object) -> None:
             pass
 
-        def current(self) -> StatePublication:
-            return publication
+        def current(self) -> AgentState:
+            return state
 
-        async def refresh(self, *, force: bool = False) -> StatePublication:
+        async def refresh(self, *, force: bool = False) -> AgentState:
             del force
-            return publication
+            return state
 
         async def refresh_result(self, *, force: bool = False) -> StateRefresh:
             del force
-            return StateRefresh(publication)
+            return StateRefresh(state)
 
         async def run(self, *, stop_signal: asyncio.Event) -> None:
             await stop_signal.wait()

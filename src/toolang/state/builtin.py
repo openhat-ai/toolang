@@ -12,6 +12,7 @@ def prepare_builtin_state(source: str) -> AgentState:
         "runtime", "agent", "agent.too", "agent.too", source, digest
     ).parse()
     return compose_agent_state(
+        name="runtime",
         root_revision=sha256(b"toolang:runtime").hexdigest(),
         home_revision=digest,
         root_config={},

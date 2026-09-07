@@ -19,7 +19,6 @@ from tests.support.execution_harness import (
 )
 from toolang.execution.types import ErrorMessage, ThreadPrefix
 from toolang.lang.input import resolve_input_parts
-from toolang.state.state import publish_state_resources
 from toolang.state.watcher import StateRefresh
 
 
@@ -80,7 +79,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
             return setup
 
     monkeypatch.setattr(script, "SetupWatcher", _SetupWatcher)
-    publication = publish_state_resources(harness.state, agent_name=layout.name)
+    publication = harness.state
 
     class _StateWatcher:
         def __init__(self, actual_layout, *, initial_state, **_kwargs) -> None:
@@ -91,7 +90,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
             return publication
 
         async def refresh(self):
-            raise AssertionError("local Script must reuse its prepared initial State")
+            return publication
 
         async def refresh_result(self):
             return StateRefresh(publication)

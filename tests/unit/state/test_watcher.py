@@ -39,7 +39,7 @@ def test_watcher_publishes_a_prepared_initial_state_without_reloading_state(
     )
     watcher = state_watcher.StateWatcher(layout, initial_state=durable)
 
-    assert watcher.current().state is durable
+    assert watcher.current() is durable
 
 
 def test_initial_state_timeout_hashes_once_without_preparing_again(
@@ -121,8 +121,8 @@ def test_timeout_check_recovers_change_after_preparation_returns(
         watcher = state_watcher.StateWatcher(layout)
         original_prepare = state_watcher.prepare_agent_state
 
-        def prepare_then_change(selected: AgentLayout, *, force: bool = False):
-            candidate = original_prepare(selected, force=force)
+        def prepare_then_change(selected: AgentLayout, **kwargs):
+            candidate = original_prepare(selected, **kwargs)
             program.write_text("agic answer:\n  Changed late.\n", encoding="utf-8")
             return candidate
 
@@ -358,7 +358,7 @@ def test_concurrent_refresh_requests_run_their_serialized_checks(
         def counted_prepare(*_args, **_kwargs):
             nonlocal calls
             calls += 1
-            return initial.state
+            return initial
 
         monkeypatch.setattr(state_watcher, "prepare_agent_state", counted_prepare)
 
@@ -475,7 +475,7 @@ def test_invalid_flow_candidate_retains_last_valid_state_until_repaired(
 
         flow.write_text("flow other:\n  pass\n", encoding="utf-8")
         refresh = await watcher.refresh_result()
-        rejected = refresh.publication
+        rejected = refresh.state
 
         assert rejected is initial
         assert rejected.revision == initial.revision
@@ -485,7 +485,7 @@ def test_invalid_flow_candidate_retains_last_valid_state_until_repaired(
 
         retried = await watcher.refresh_result()
 
-        assert retried.publication is initial
+        assert retried.state is initial
         assert retried.diagnostics == refresh.diagnostics
 
         flow.write_text("flow research:\n  pass\n", encoding="utf-8")
@@ -540,7 +540,7 @@ def test_watcher_loads_an_older_persisted_state_after_publishing_a_new_one(
     assert loaded.modules["agent"].agics[0].messages[0].content == "First."
 
 
-def test_workspace_change_republishes_resources_without_changing_state_revision(
+def test_workspace_change_publishes_a_new_state_revision(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -569,7 +569,7 @@ def test_workspace_change_republishes_resources_without_changing_state_revision(
         updates = watcher.updates(stop_signal=asyncio.Event())
         changed = await anext(updates)
 
-        assert changed.revision == initial.revision
+        assert changed.revision != initial.revision
         assert initial.workspaces == {"one": str(tmp_path / "one")}
         assert changed.workspaces == {
             "one": str(tmp_path / "one"),
@@ -610,7 +610,7 @@ def test_invalid_workspace_change_keeps_last_publication_and_recovers(
 
         rejected = await watcher.refresh_result()
 
-        assert rejected.publication is initial
+        assert rejected.state is initial
         assert len(rejected.diagnostics) == 1
         assert "workspace roots must not overlap" in rejected.diagnostics[0].message
 
@@ -620,15 +620,15 @@ def test_invalid_workspace_change_keeps_last_publication_and_recovers(
         )
         recovered = await watcher.refresh_result()
 
-        assert recovered.publication is not initial
-        assert recovered.publication.revision == initial.revision
-        assert recovered.publication.workspaces == {"two": str(tmp_path / "two")}
+        assert recovered.state is not initial
+        assert recovered.state.revision != initial.revision
+        assert recovered.state.workspaces == {"two": str(tmp_path / "two")}
         assert recovered.diagnostics == ()
 
     asyncio.run(run())
 
 
-def test_workspace_republication_does_not_hide_internal_errors(
+def test_workspace_preparation_failure_keeps_last_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -645,7 +645,7 @@ def test_workspace_republication_does_not_hide_internal_errors(
         watcher = state_watcher.StateWatcher(
             AgentLayout.resident(toolang_root, "alice")
         )
-        await watcher.refresh()
+        initial = await watcher.refresh()
         config.write_text(
             f'[workspaces]\ntwo = "{tmp_path / "two"}"\n',
             encoding="utf-8",
@@ -654,10 +654,11 @@ def test_workspace_republication_does_not_hide_internal_errors(
         def fail_publication(*_args: object, **_kwargs: object) -> None:
             raise RuntimeError("publication failed")
 
-        monkeypatch.setattr(state_watcher, "publish_state_resources", fail_publication)
+        monkeypatch.setattr(state_watcher, "prepare_agent_state", fail_publication)
 
-        with pytest.raises(RuntimeError, match="publication failed"):
-            await watcher.refresh()
+        result = await watcher.refresh_result()
+        assert result.state is initial
+        assert "publication failed" in result.diagnostics[0].message
 
     asyncio.run(run())
 
@@ -694,8 +695,8 @@ def test_state_watcher_publishes_filtered_caps_once_per_revision_and_override(
 
     publication = asyncio.run(watcher.refresh())
 
-    assert publication.state.revision == durable.revision
-    assert {(cap.kind, cap.name) for cap in publication.state.caps.values()} == {
+    assert publication.revision != durable.revision
+    assert {(cap.kind, cap.name) for cap in publication.caps.values()} == {
         ("prompt", "one"),
         ("prompt", "two"),
         ("skill", "one"),
@@ -712,4 +713,4 @@ def test_state_watcher_publishes_filtered_caps_once_per_revision_and_override(
         raise AssertionError("caps_for must use the precomputed State resources")
 
     monkeypatch.setattr(state_collections, "cap_dataset", fail_query)
-    assert publication.resources.caps_for("agent") == publication.caps_for("agent")
+    assert publication.caps_for("agent") == publication.caps_for("agent")

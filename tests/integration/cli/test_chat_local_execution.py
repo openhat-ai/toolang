@@ -39,7 +39,6 @@ from toolang.execution.types import (
     RunRef,
 )
 from toolang.lang.input import RunnableInputRaw
-from toolang.state.state import publish_state_resources
 from toolang.state.watcher import StateRefresh
 
 
@@ -415,10 +414,7 @@ agic chat(_: Part[]) -> Part[]:
         responses=[ModelCallResult(message=Message.assistant("hello back"))],
     )
     harness.store.close()
-    publication = publish_state_resources(
-        harness.state,
-        agent_name=harness.setup.layout.name,
-    )
+    publication = harness.state
     setup_refreshes = 0
     state_refreshes = 0
 
@@ -538,10 +534,7 @@ def test_chat_session_does_not_create_a_thread_on_open(
         responses=[],
     )
     harness.store.close()
-    publication = publish_state_resources(
-        harness.state,
-        agent_name=harness.setup.layout.name,
-    )
+    publication = harness.state
 
     class SetupWatcher:
         def __init__(self, _layout: object, **_kwargs: object) -> None:
