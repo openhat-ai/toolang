@@ -68,12 +68,13 @@ def display_width(value: str) -> int:
 def split_hanging_prefix(value: str) -> tuple[str, str]:
     """Split one progress row into its fixed prefix and wrappable content."""
 
-    if value.startswith("• "):
-        return "• ", value[2:]
-    lane_marker = value.find("| • ")
-    if lane_marker >= 0:
-        content_start = lane_marker + len("| • ")
-        return value[:content_start], value[content_start:]
+    for marker in ("• ", "✧ "):
+        if value.startswith(marker):
+            return marker, value[2:]
+        lane_marker = value.find(f"| {marker}")
+        if lane_marker >= 0:
+            content_start = lane_marker + len(f"| {marker}")
+            return value[:content_start], value[content_start:]
     indent = len(value) - len(value.lstrip())
     return value[:indent], value[indent:]
 

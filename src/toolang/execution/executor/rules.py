@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from hashlib import sha256
 from pathlib import PurePosixPath
 
@@ -16,9 +16,15 @@ from ..types import RecallTarget, RulesRecallTarget
 class _HonorRequired(Exception):
     """A prepared original call must wait for a separate honor Tool Step."""
 
-    def __init__(self, paths: tuple[ToolPath, ...]):
+    def __init__(
+        self, paths: tuple[ToolPath, ...], files: tuple[RulesRecallTarget, ...]
+    ):
         self.paths = paths
-        super().__init__("operation not executed; retry required")
+        self.files = tuple(
+            (target.workspace, str(PurePosixPath(target.path) / "AGENTS.md"))
+            for target in files
+        )
+        super().__init__("workspace rules require recall")
 
 
 def check_rules(
@@ -29,22 +35,27 @@ def check_rules(
 ) -> None:
     """Require an honor Step unless every applicable revision is visible."""
 
+    files: list[RulesRecallTarget] = []
     try:
-        rules = load_rules(context, paths, set(pending) | set(visible))
+        rules = load_rules(
+            context, paths, set(pending) | set(visible), on_file=files.append
+        )
     except Exception as exc:
         # The honor Step owns and records rule-loading failures.
-        raise _HonorRequired(paths) from exc
+        raise _HonorRequired(paths, tuple(files)) from exc
     if any(
         rule.target in pending or visible.get(rule.target) != rule.revision
         for rule in rules
     ):
-        raise _HonorRequired(paths)
+        raise _HonorRequired(paths, tuple(files))
 
 
 def load_rules(
     context: ToolContext,
     paths: Sequence[ToolPath],
     known: Collection[RecallTarget],
+    *,
+    on_file: Callable[[RulesRecallTarget], None] | None = None,
 ) -> tuple[RecallControlPayload, ...]:
     """Read each applicable rule once, ancestor first within its logical anchor."""
 
@@ -65,17 +76,23 @@ def load_rules(
             if target in seen:
                 continue
             seen.add(target)
-            file = authorize_workspace_path(
-                root / str(scope).lstrip("/") / "AGENTS.md",
-                root,
-            )
             try:
+                file = authorize_workspace_path(
+                    root / str(scope).lstrip("/") / "AGENTS.md",
+                    root,
+                )
                 content = file.read_bytes().decode("utf-8")
             except FileNotFoundError:
                 if target not in known:
                     continue
                 content, revision = "", "0"
+            except Exception:
+                if on_file is not None:
+                    on_file(target)
+                raise
             else:
                 revision = sha256(content.encode("utf-8")).hexdigest()
+            if on_file is not None:
+                on_file(target)
             recalled.append(RecallControlPayload(target, revision, content))
     return tuple(recalled)

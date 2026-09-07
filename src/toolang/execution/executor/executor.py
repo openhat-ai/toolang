@@ -62,6 +62,7 @@ from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin, StepEnd
 from ..records import (
     CompactControlPayload,
     RecallControlPayload,
+    ReloadControlPayload,
     RunControlPayload,
     run_preparation,
     ControlRecord,
@@ -69,6 +70,8 @@ from ..records import (
     StepRecord,
 )
 from ..store import RunStore
+from ..tool_results import control_summary
+from ..tools.runtime import canceled_tool_summary
 from ..schemas import RerunRequest, RetryRequest, RunRequest
 from ..types import (
     ControlTiming,
@@ -85,6 +88,7 @@ from ..types import (
     ModelStepNoted,
     ModelStepGiven,
     ToolStepGiven,
+    ToolStepNoted,
     Occurrence,
     OccurrencePosition,
     TypedRef,
@@ -966,7 +970,8 @@ class RunExecutor:
                     or f"State reload control {terminal.status}: "
                     f"{terminal.target}@{terminal.index}"
                 )
-            return {"controls": [str(terminal.ref)]}
+            assert isinstance(terminal.payload, ReloadControlPayload)
+            return {"controls": [control_summary(terminal.ref, terminal.payload)]}
 
     def cancel_control(self, *, run_id: str, index: int) -> ControlRecord:
         """Revoke one pending reload, steer, or cancel control."""
@@ -2765,6 +2770,20 @@ class _Execution:
                     step=event.step,
                     kind=event.kind,
                     status="canceled",
+                    noted=ToolStepNoted(
+                        summary=canceled_tool_summary(event.given.summary)
+                    )
+                    if isinstance(event.given, ToolStepGiven)
+                    and event.given.plugin == "_toolang"
+                    and event.given.call.name
+                    in {
+                        "_toolang__pick",
+                        "_toolang__reload",
+                        "_toolang__compact",
+                        "_toolang__honor",
+                    }
+                    and event.given.summary
+                    else None,
                     output=RecordLocal.typed(
                         "ToolResultPart",
                         canceled_result(

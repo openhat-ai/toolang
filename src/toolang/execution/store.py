@@ -38,6 +38,7 @@ from .assembly import (
     starts_sequence,
     tail_delta,
 )
+from .tool_results import workspace_reply_from_step
 from .inspection import (
     ChildOccurrenceTotals,
     ExecutionSnapshot,
@@ -107,6 +108,7 @@ from .types import (
     Occurrence,
     Pointer,
     TypedRef,
+    ToolStepGiven,
     RunCommand,
     validate_runtime_value,
     valid_run_id,
@@ -3153,7 +3155,14 @@ class RunStore:
                 emitted.add(initial.ref)
             for boundary in view.timeline():
                 if boundary.phase == "end":
-                    for message in _replay_messages_from_step(steps[boundary.step]):
+                    step = steps[boundary.step]
+                    reply = workspace_reply_from_step(step, self.resolve_value)
+                    messages = (
+                        [Message("tool", (reply,))]
+                        if reply is not None
+                        else _replay_messages_from_step(step)
+                    )
+                    for message in messages:
                         results.append(message)
                         for part in message.parts:
                             if isinstance(part, ToolCallPart):
@@ -3861,6 +3870,8 @@ def _control_from_row(row: sqlite3.Row) -> ControlRecord:
 
 
 def _replay_messages_from_step(step: StepRecord) -> list[Message]:
+    if isinstance(step.given, ToolStepGiven) and step.given.trigger == "runtime":
+        return []
     role = step_message_role(step.kind)
     if role is None or not step.output:
         return []

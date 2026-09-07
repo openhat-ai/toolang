@@ -2,16 +2,73 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from collections.abc import Mapping
 from pathlib import PurePosixPath
 from typing import Any, Literal
 
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool, Toolset
 from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.base.utils.workspace_paths import workspace_uri
 
 TOOLSET_NAME = "_toolang"
+
+
+def canceled_tool_summary(summary: str) -> str:
+    """Preserve the discovered target when a Tool Step is canceled at begin."""
+
+    return f"Canceled {summary[:1].lower()}{summary[1:].removesuffix('...')}"
+
+
+def runtime_tool_summary(
+    name: str,
+    arguments: Mapping[str, Any],
+    status: str,
+    *,
+    output: Mapping[str, Any] | None = None,
+    files: Sequence[tuple[str, str]] = (),
+) -> str | None:
+    """Tool-owned wording; presenters own markers, layout, and elapsed time."""
+
+    labels = {
+        "pick": "service guidance"
+        if arguments.get("kind") == "service"
+        else "skill guidance",
+        "reload": "agent state",
+        "compact": "thread history",
+        "honor": "workspace rules",
+    }
+    if name not in labels:
+        return None
+    verb, running, succeeded = (
+        ("compact", "Compacting", "Compacted")
+        if name == "compact"
+        else ("load", "Loading", "Loaded")
+        if name == "pick"
+        else ("reload", "Reloading", "Reloaded")
+    )
+    action = {
+        "running": running,
+        "succeeded": succeeded,
+        "failed": f"Failed to {verb}",
+        "canceled": f"Canceled {running.lower()}",
+    }[status]
+    text = f"{action} {labels[name]}"
+    if name == "pick" and isinstance(arguments.get("ref"), str):
+        text += f": {arguments['ref']}"
+    elif name == "honor":
+        recalled = tuple(
+            (target["workspace"], target["path"])
+            for control in (output or {}).get("controls", ())
+            if (target := control.get("target", {})).get("kind") == "rules"
+        )
+        paths = tuple(
+            workspace_uri(workspace, path) for workspace, path in (recalled or files)
+        )
+        if paths:
+            text += ": " + ", ".join(paths)
+    return " ".join(text.split()) + ("..." if status == "running" else "")
 
 
 @dataclass(frozen=True, slots=True)

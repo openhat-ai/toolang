@@ -29,6 +29,76 @@ from toolang.plugin.models.adapters.messages import (
 )
 
 
+@pytest.mark.parametrize(
+    "adapter", ["responses", "chat_completions", "messages", "generate_content"]
+)
+@pytest.mark.parametrize("output", [{}, {"partial": "kept"}])
+def test_tool_error_text_reaches_each_provider_without_an_empty_output(adapter, output):
+    error = "Workspace rules were just loaded. This operation was not executed; please retry if it complies with them."
+    target = ModelTarget(
+        ref="test/model", provider="test", name="model", model="model", adapter=adapter
+    )
+    request = ModelCall(
+        "",
+        [
+            Message(
+                "assistant",
+                (ToolCallPart("tool-1", "fs__write", "fs", {}, call_id="call-1"),),
+            ),
+            Message(
+                "tool",
+                (
+                    ToolResultPart(
+                        "tool-1",
+                        "fs__write",
+                        "fs",
+                        output=output,
+                        error=error,
+                        call_id="call-1",
+                    ),
+                ),
+            ),
+        ],
+    )
+    if adapter == "responses":
+        payload = responses.response_payload(target, request, stateful=False)
+        item = next(
+            item for item in payload["input"] if item["type"] == "function_call_output"
+        )
+        assert item["call_id"] == "call-1"
+        result = json.loads(item["output"])
+    elif adapter == "chat_completions":
+        payload = chat_completions.chat_completion_payload(
+            target, request, stream=False
+        )
+        item = next(item for item in payload["messages"] if item["role"] == "tool")
+        assert item["tool_call_id"] == "call-1"
+        result = json.loads(item["content"])
+    elif adapter == "messages":
+        payload = cast(dict[str, Any], messages_payload(target, request, stream=False))
+        item = next(
+            part
+            for message in payload["messages"]
+            for part in message["content"]
+            if part["type"] == "tool_result"
+        )
+        assert item["tool_use_id"] == "call-1" and item["is_error"] is True
+        result = json.loads(item["content"])
+    else:
+        payload = cast(dict[str, Any], generate_content_payload(target, request))
+        item = next(
+            part["functionResponse"]
+            for message in payload["contents"]
+            for part in message["parts"]
+            if "functionResponse" in part
+        )
+        assert item["id"] == "call-1"
+        result = item["response"]
+    assert result["error"] == error
+    assert result.get("output") == (output or None)
+    assert set(result) <= {"ok", "name", "output", "error"}
+
+
 @pytest.mark.parametrize("change", ["none", "compaction", "instructions"])
 def test_responses_continuation_requires_unchanged_context(change: str) -> None:
     from openai.types.responses import ResponseReasoningItem

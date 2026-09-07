@@ -74,6 +74,12 @@ class ChatRunPresenter:
         app.get_live_blocks().append(block)
         self._refresh_steer_feedback(app)
 
+    def refresh(self, app: AppContext) -> None:
+        """Reuse the Chat ticker for active compaction progress."""
+
+        if self._projector.has_timed_activity:
+            self._apply(self._projector.refresh(), app)
+
     def handle_steer_receipt(self, receipt: SteerReceipt, app: AppContext) -> None:
         submission = self._steers.get(receipt.submission_id)
         if (

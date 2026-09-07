@@ -23,6 +23,8 @@ from toolang.state.state import AgentState
 
 from ..history import RunHistory
 from ..schemas import CompactionOutput
+from ..records import CompactControlPayload
+from ..tool_results import control_summary
 from ..types import FieldRef, RunRef, StepRef, ThreadRef
 from . import prompts
 
@@ -182,4 +184,9 @@ async def execute(
                 "compact output must echo its full range and contain a nonempty summary"
             )
         controls = execution.compact(step, output.ref)
-        return {"controls": [str(ref) for ref in controls]}
+        return {
+            "controls": [
+                control_summary(ref, CompactControlPayload(output.ref))
+                for ref in controls
+            ]
+        }

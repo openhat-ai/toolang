@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 
 from toolang.base.types.message import (
@@ -9,6 +10,7 @@ from toolang.base.types.message import (
     TextPart,
     ToolResultPart,
 )
+from toolang.common.time import utc_now
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
@@ -65,6 +67,7 @@ from .step_projection import (
     trace_live_rows,
     loop_terminal_rows,
     trace_terminal_rows,
+    runtime_tool_name,
 )
 from .streaming_markdown import split_stable_markdown
 from .types import ProgressBlock, ProgressRow, ProgressUpdate
@@ -77,8 +80,11 @@ class _PresentationError(RuntimeError):
 class ProgressProjector:
     """Project one ordered root Run tree into committed and live progress blocks."""
 
-    def __init__(self, *, show_boundaries: bool = True) -> None:
+    def __init__(
+        self, *, show_boundaries: bool = True, clock: Callable[[], str] = utc_now
+    ) -> None:
         self.show_boundaries = show_boundaries
+        self._clock = clock
         self._root: str | None = None
         self._root_ended = False
         self._broken = False
@@ -137,6 +143,22 @@ class ProgressProjector:
         committed = (self._diagnostic_block(message),)
         self._note_committed(committed)
         return ProgressUpdate(committed=committed, live=())
+
+    @property
+    def has_timed_activity(self) -> bool:
+        return not (self._broken or self._root_ended) and any(
+            runtime_tool_name(state.begin) == "compact"
+            for state in self._steps.values()
+        )
+
+    def refresh(self) -> ProgressUpdate:
+        """Refresh live time decorations without consuming or committing events."""
+
+        return (
+            ProgressUpdate(live=self._live_blocks())
+            if not self._broken
+            else ProgressUpdate()
+        )
 
     def _note_committed(self, blocks: tuple[ProgressBlock, ...]) -> None:
         for block in blocks:
@@ -853,6 +875,15 @@ class ProgressProjector:
 
     def _live_blocks(self) -> tuple[ProgressBlock, ...]:
         blocks: list[tuple[int, ProgressBlock]] = []
+        now = self._clock()
+        for state in self._steps.values():
+            if (
+                state.lane_owner is not None
+                and runtime_tool_name(state.begin) == "compact"
+            ):
+                self._set_lane_activity(
+                    state.lane_owner, lane_live_text(state.begin, "", now=now)
+                )
         for state in self._steps.values():
             if state.lane_owner is not None:
                 continue
@@ -881,6 +912,7 @@ class ProgressProjector:
                     *trace_live_rows(
                         state.begin,
                         state.model.pending if state.begin.kind == "model" else "",
+                        now=now,
                         marker_committed=(
                             state.model.marker_committed
                             if state.begin.kind == "model"
@@ -956,6 +988,7 @@ class ProgressProjector:
                     f"  {lane_index:>{lane_width}} | #{lane.item:>{item_width}} | "
                     f"{lane.activity}",
                     "active",
+                    wrap_live=lane.activity.startswith("✧ "),
                 )
             )
         return tuple(rows)

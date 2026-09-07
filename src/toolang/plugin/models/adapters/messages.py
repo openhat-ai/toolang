@@ -470,11 +470,14 @@ def _encode_message(
                 }
             )
         elif isinstance(part, ToolResultPart):
+            output = dict(part.output)
+            if part.error is not None:
+                output = {"error": part.error, **({"output": output} if output else {})}
             content.append(
                 {
                     "type": "tool_result",
                     "tool_use_id": part.call_id or part.tool_call_id,
-                    "content": json.dumps(part.output, ensure_ascii=False),
+                    "content": json.dumps(output, ensure_ascii=False),
                     "is_error": part.error is not None,
                 }
             )

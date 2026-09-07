@@ -15,6 +15,7 @@ from toolang.base.utils.workspace_paths import resolve_workspace_path, workspace
 from toolang.state.state import entry_ref
 
 from ..records import RecallControlPayload
+from ..tool_results import control_summary
 
 from ..runnables import (
     AgicRoutes,
@@ -95,7 +96,7 @@ class _ToolRuntime(ToolRuntime):
             content,
         )
         controls = execution.recall(self.step, payload, self.state.visible_recalls)
-        return {"controls": [str(ref) for ref in controls]}
+        return {"controls": [control_summary(ref, payload) for ref in controls]}
 
     async def honor(self, paths: tuple[tuple[str, str], ...]) -> dict[str, Any]:
         execution = self.state.execution
@@ -119,13 +120,15 @@ class _ToolRuntime(ToolRuntime):
             for c in pending
             if isinstance(c.payload, RecallControlPayload)
         }
-        refs = {
-            ref
+        summaries = {
+            ref: control_summary(ref, payload)
             for payload in load_rules(context, resolved, known)
             for ref in execution.recall(self.step, payload, self.state.visible_recalls)
         }
         return {
-            "controls": [str(ref) for ref in sorted(refs, key=lambda ref: ref.index)]
+            "controls": [
+                summaries[ref] for ref in sorted(summaries, key=lambda ref: ref.index)
+            ]
         }
 
     async def run(self, runnable: str, input: Mapping[str, Any]) -> dict[str, Any]:

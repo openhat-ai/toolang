@@ -9,6 +9,7 @@ tools. Do not combine a workspace URI with the workspace argument.
 Plain paths require an explicit workspace argument. Agent home and the process
 working directory are not implicit filesystem roots; use me tools for agent state.
 These URIs are specific to fs tools; shell commands do not recognize them.
-Workspace rules are recalled by runtime preflight. If an operation reports
-"operation not executed; retry required", follow the recalled rules and retry.
+Workspace rules are recalled by runtime preflight. If rules were just loaded and
+an operation was not executed, check the supplied rules and retry if it complies.
+Continue directly without narrating routine rule loading; report real blockers.
 </filesystem>

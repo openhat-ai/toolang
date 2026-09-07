@@ -21,7 +21,11 @@ from toolang.base.utils.function_tools import prepare_tool
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor.steps.tool import invoke_tool_call
 from toolang.execution.values import parts_from_local
-from toolang.execution.records import ExecuteControlPayload, RunControlPayload
+from toolang.execution.records import (
+    ExecuteControlPayload,
+    RunControlPayload,
+    ReloadControlPayload,
+)
 from toolang.execution.types import (
     ErrorMessage,
     ErrorRef,
@@ -816,7 +820,15 @@ flow new_flow(_: Text, brief: Brief) -> Text:
             reload_result = second_call.messages[-1].parts[0]
             assert isinstance(reload_result, ToolResultPart)
             assert reload_result.error is None
-            assert reload_result.output == {"controls": [str(reload_control.ref)]}
+            assert isinstance(reload_control.payload, ReloadControlPayload)
+            assert reload_result.output == {
+                "controls": [
+                    {
+                        "ref": str(reload_control.ref),
+                        "state": reload_control.payload.state,
+                    }
+                ]
+            }
             assert "flow:new_flow" in second_call.instructions
             dynamic = steps[3]
             assert isinstance(dynamic.given, ToolStepGiven)
@@ -1197,7 +1209,15 @@ agic parent(_: Text) -> Text:
             result = harness.adapter.invocations[1].call.messages[-1].parts[0]
             assert isinstance(result, ToolResultPart)
             assert result.error is None
-            assert result.output == {"controls": [str(reload_control.ref)]}
+            assert isinstance(reload_control.payload, ReloadControlPayload)
+            assert result.output == {
+                "controls": [
+                    {
+                        "ref": str(reload_control.ref),
+                        "state": reload_control.payload.state,
+                    }
+                ]
+            }
 
     asyncio.run(scenario())
 

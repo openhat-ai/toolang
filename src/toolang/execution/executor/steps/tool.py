@@ -13,7 +13,7 @@ import time
 from typing import TYPE_CHECKING, Literal
 
 from toolang.base.protocols.tool import AgentTool, ToolHistory, ToolRuntime
-from toolang.base.types.message import ToolResultPart
+from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ToolCall, ToolCallResult
 from toolang.base.types.tool import ToolContext, ToolPreparation, ToolService
 from toolang.base.utils.function_tools import prepare_tool
@@ -26,6 +26,8 @@ from toolang.state.state import AgentState
 
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
 from ...records import RecallControlPayload
+from ...tool_results import workspace_reply, workspace_reply_from_step
+from ...tools.runtime import runtime_tool_summary
 from ...runnables import AgicRoutes
 from ...types import (
     ControlRef,
@@ -74,6 +76,7 @@ async def _begin(
     build: Callable[[AgentState, ControlRef], StepBegin],
     *,
     trigger: Literal["model", "runtime"] = "model",
+    canceled_summary: Callable[[], str] | None = None,
 ) -> None:
     """Establish the Tool Step boundary even when interrupted during its lock wait."""
 
@@ -96,7 +99,13 @@ async def _begin(
         else:
             if interruption is None:
                 return
-        await _cancel(state, step, call, trigger=trigger)
+        await _cancel(
+            state,
+            step,
+            call,
+            trigger=trigger,
+            summary=canceled_summary() if canceled_summary else "canceled",
+        )
         raise interruption
 
 
@@ -105,6 +114,8 @@ class _ToolSummaryContext:
     family: str
     name: str
     args: tuple[str, ...]
+    arguments: Mapping[str, object]
+    files: tuple[tuple[str, str], ...] = ()
 
 
 async def execute(
@@ -138,21 +149,53 @@ async def execute(
                 "paths": [{"workspace": name, "path": path} for name, path in paths]
             },
         )
+        step = StepRef.from_local(state.prepared.run.run_id, (state.next_step,))
         try:
-            result = await _execute(state, honor, trigger="runtime")
+            result = await _execute(
+                state,
+                honor,
+                trigger="runtime",
+                input_ref=_call_source(state, call),
+                files=required.files,
+            )
         except asyncio.CancelledError:
-            await skip(state, (call,), canceled=not state.immediate_steer())
+            # Delivery can be interrupted after a successful StepEnd. As with
+            # end_step recovery, consult the committed outcome only on interruption.
+            assert state.execution is not None
+            record = state.execution.store.get_step(ref=step)
+            assert record is not None
+            reply = workspace_reply_from_step(
+                record, state.execution.store.resolve_value
+            )
+            assert reply is not None
+            state.messages.append(Message("tool", (reply,)))
+            state.last_step = step.index
             raise
-        error = "operation not executed; retry required"
-        if result.error is not None:
-            error += f"; workspace rules recall failed: {result.error}"
-        return await _execute(
-            state,
-            call,
-            tool_call_count=tool_call_count,
-            routes=routes,
-            blocked_error=error,
+        part = workspace_reply(call, error=result.error)
+        state.messages.append(Message("tool", (part,)))
+        state.last_step = step.index
+        return ToolCallResult(
+            tool_call_id=call.tool_call_id,
+            call_id=call.call_id,
+            name=call.name,
+            input=dict(call.input),
+            output={},
+            error=part.error,
         )
+
+
+def _call_source(state: _AgicState, call: ToolCall) -> FieldRef | None:
+    source = state.tool_call_sources.get(call.tool_call_id)
+    return (
+        FieldRef.from_path(
+            StepRef.from_local(state.prepared.run.run_id, (source[0],)),
+            "output",
+            "value",
+            source[1],
+        )
+        if source is not None
+        else None
+    )
 
 
 async def _execute(
@@ -162,28 +205,22 @@ async def _execute(
     trigger: Literal["model", "runtime"] = "model",
     tool_call_count: int = 1,
     routes: AgicRoutes | None = None,
-    blocked_error: str | None = None,
+    input_ref: FieldRef | None = None,
+    files: tuple[tuple[str, str], ...] = (),
 ) -> ToolCallResult:
     run = state.prepared.run
     step_index = state.next_step
     state.next_step += 1
     step_started = time.perf_counter()
     started_at = utc_now()
-    source = (
-        state.tool_call_sources.get(call.tool_call_id) if trigger == "model" else None
-    )
-    source_ref = (
-        FieldRef.from_path(
-            StepRef.from_local(run.run_id, (source[0],)), "output", "value", source[1]
-        )
-        if source is not None
-        else None
+    source_ref = input_ref or (
+        _call_source(state, call) if trigger == "model" else None
     )
     step_input: tuple[FieldRef, ...]
-    if trigger == "runtime":
-        step_input = ()
-    elif source_ref is not None:
+    if source_ref is not None:
         step_input = (source_ref,)
+    elif trigger == "runtime":
+        step_input = ()
     elif state.last_step is not None:
         step_input = (
             FieldRef.from_path(
@@ -196,7 +233,7 @@ async def _execute(
         step_input = state.initial_inputs
     prepared = state.prepared
     plugin_name = "-"
-    summary_context = _tool_summary_context(call, None)
+    summary_context = _tool_summary_context(call, None, files=files)
     preparation: ToolPreparation | Exception | None = None
     step = StepRef.from_local(run.run_id, (step_index,))
     runtime: _ToolRuntime | None = None
@@ -210,17 +247,14 @@ async def _execute(
         runtime_tools = prepared.run.setup.tools.runtime if trigger == "runtime" else {}
         # Bind the operation to the Step's State even if reload removed its Agic.
         if (
-            blocked_error is None
-            and _plugin_name(
-                runtime_tools.get(call.name) or prepared.tools.get(call.name)
-            )
+            _plugin_name(runtime_tools.get(call.name) or prepared.tools.get(call.name))
             != "_toolang"
         ):
             prepared = state.frame_for_step(agent_state, state_ref)
         tools = {**prepared.tools, **runtime_tools} if runtime_tools else prepared.tools
         tool = tools.get(call.name)
         plugin_name = _plugin_name(tool)
-        summary_context = _tool_summary_context(call, tool)
+        summary_context = _tool_summary_context(call, tool, files=files)
         runtime = (
             _ToolRuntime(
                 state, step, source_ref, tool_call_count, routes or prepared.routes
@@ -228,43 +262,37 @@ async def _execute(
             if plugin_name == "_toolang"
             else None
         )
-        if blocked_error is not None:
-            preparation = ToolangError(blocked_error)
+        try:
+            if tool is None:
+                raise ToolangError(f"unknown tool call: {call.name}")
+            context = _tool_context(
+                run_id=run.run_id,
+                layout=state.layout,
+                tool=tool,
+                services=prepared.services,
+                runtime=runtime,
+                history=_ToolHistory(state.execution.store.db_path, run.thread)
+                if plugin_name == "history" and state.execution is not None
+                else None,
+                workspaces={
+                    name: Path(path) for name, path in agent_state.workspaces.items()
+                },
+            )
+            preparation = prepare_tool(tool, call.input, context)
+        except Exception as exc:
+            preparation = exc
         else:
-            try:
-                if tool is None:
-                    raise ToolangError(f"unknown tool call: {call.name}")
-                context = _tool_context(
-                    run_id=run.run_id,
-                    layout=state.layout,
-                    tool=tool,
-                    services=prepared.services,
-                    runtime=runtime,
-                    history=_ToolHistory(state.execution.store.db_path, run.thread)
-                    if plugin_name == "history" and state.execution is not None
-                    else None,
-                    workspaces={
-                        name: Path(path)
-                        for name, path in agent_state.workspaces.items()
-                    },
-                )
-                preparation = prepare_tool(tool, call.input, context)
-            except Exception as exc:
-                preparation = exc
-            else:
-                if (
-                    trigger == "model"
-                    and state.execution is not None
-                    and any(path.workspace is not None for path in preparation.paths)
-                ):
-                    pending = {
-                        control.payload.target
-                        for control in state.execution.runtime_controls(run.run_id)
-                        if isinstance(control.payload, RecallControlPayload)
-                    }
-                    check_rules(
-                        context, preparation.paths, state.visible_recalls, pending
-                    )
+            if (
+                trigger == "model"
+                and state.execution is not None
+                and any(path.workspace is not None for path in preparation.paths)
+            ):
+                pending = {
+                    control.payload.target
+                    for control in state.execution.runtime_controls(run.run_id)
+                    if isinstance(control.payload, RecallControlPayload)
+                }
+                check_rules(context, preparation.paths, state.visible_recalls, pending)
         return StepBegin(
             step=StepRef.from_local(run.run_id, (step_index,)),
             kind="tool",
@@ -280,7 +308,14 @@ async def _execute(
         )
 
     try:
-        await _begin(state, step, call, begin_step, trigger=trigger)
+        await _begin(
+            state,
+            step,
+            call,
+            begin_step,
+            trigger=trigger,
+            canceled_summary=lambda: _tool_summary(summary_context, "canceled"),
+        )
     except _HonorRequired:
         # Preflight runs before begin is persisted; honor takes this next slot.
         state.next_step = step_index
@@ -323,7 +358,9 @@ async def _execute(
                 error=ErrorMessage(error),
                 finished_at=utc_now(),
             ),
-            canceled_noted=ToolStepNoted(summary="canceled"),
+            canceled_noted=ToolStepNoted(
+                summary=_tool_summary(summary_context, "canceled")
+            ),
         )
         _LOGGER.error(
             "Step failed thread=%s run=%s step=%s kind=tool tool=%s error=%r duration_ms=%s",
@@ -356,7 +393,7 @@ async def _execute(
             state,
             step,
             part,
-            summary=_tool_summary(summary_context, status),
+            summary=_tool_summary(summary_context, status, record.output),
             canceled_summary=_tool_summary(summary_context, "canceled"),
             error=runtime.error if runtime is not None else None,
             trigger=trigger,
@@ -569,23 +606,30 @@ def _plugin_name(tool: AgentTool | None) -> str:
 def _tool_summary_context(
     call: ToolCall,
     tool: AgentTool | None,
+    *,
+    files: tuple[tuple[str, str], ...] = (),
 ) -> _ToolSummaryContext:
     family, name = _tool_identity(call, tool)
     return _ToolSummaryContext(
         family=family,
         name=name,
         args=_argument_previews(call, tool),
+        arguments=call.input,
+        files=files,
     )
 
 
-def _tool_summary(context: _ToolSummaryContext, status: str) -> str:
-    if context.family == "_toolang" and context.name == "compact":
-        return {
-            "running": "Compacting history",
-            "succeeded": "Compacted history",
-            "failed": "Failed to compact history",
-            "canceled": "Canceled history compaction",
-        }[status]
+def _tool_summary(
+    context: _ToolSummaryContext,
+    status: str,
+    output: Mapping[str, object] | None = None,
+) -> str:
+    if context.family == "_toolang":
+        summary = runtime_tool_summary(
+            context.name, context.arguments, status, output=output, files=context.files
+        )
+        if summary is not None:
+            return summary
     template = _DEFAULT_TOOL_SUMMARY_TEMPLATES.get(status, "{{name}} {{args.0}}")
     rendered = render_text_template(
         template,
