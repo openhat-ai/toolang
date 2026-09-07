@@ -7,7 +7,17 @@ from collections.abc import Callable, Sequence
 from toolang.base.types.message import Message, MessageRole
 
 from ..message_delta import literal_delta, render_delta
-from ..types import FieldRef, Local, MessageDelta, MessageTemplate, TypedRef
+from ..control_messages import control_message
+from ..recall import recall_revisions
+from ..records import ControlRecord, RecallControlPayload, SteerControlPayload
+from ..types import (
+    FieldRef,
+    Local,
+    MessageDelta,
+    MessageTemplate,
+    RecallTarget,
+    TypedRef,
+)
 
 
 class _MessageBuffer:
@@ -16,6 +26,7 @@ class _MessageBuffer:
     def __init__(self, messages: Sequence[Message] = ()) -> None:
         self.messages: list[Message] = []
         self.pending: list[MessageTemplate] = []
+        self.recalls: dict[RecallTarget, str] = {}
         self.started = False
         self.initialize(messages)
 
@@ -25,6 +36,7 @@ class _MessageBuffer:
         other = _MessageBuffer()
         other.messages = list(self.messages)
         other.pending = list(self.pending)
+        other.recalls = dict(self.recalls)
         other.started = self.started
         return other
 
@@ -32,6 +44,7 @@ class _MessageBuffer:
         if not self.started:
             self.messages.clear()
             self.pending.clear()
+            self.recalls.clear()
             for template in literal_delta(messages).messages:
                 self._append(template)
 
@@ -39,6 +52,28 @@ class _MessageBuffer:
         """Append authored or runtime-rendered literal content."""
 
         self._append(literal_delta((message,)).messages[0])
+
+    def append_control(self, control: ControlRecord) -> None:
+        """Keep recalled revisions alongside the exact templates being appended."""
+
+        payload = control.payload
+        if not isinstance(payload, RecallControlPayload | SteerControlPayload):
+            return
+        template = control_message(control)
+        if template is None:
+            return
+        if isinstance(payload, RecallControlPayload):
+            content: object = payload.content
+        else:
+            content = next(
+                (item.value for item in payload.input if item.name == "_"), None
+            )
+        self.append_template(template, lambda _ref: content)
+        self.recalls.update(
+            recall_revisions(
+                (MessageDelta(messages=(template,)),), lambda _ref: control
+            )
+        )
 
     def prepend(self, delta: MessageDelta, messages: Sequence[Message]) -> None:
         """Record a newly consumed historical tail before this sequence's input."""

@@ -51,6 +51,7 @@ from toolang.setup import AgentSetup
 
 from ..accounting import selected_usd_cost
 from ..assembly import MessageHistory, adopted_horizon
+from ..recall import canonical_recall
 from ..calls import (
     IncludeResolver,
     materialize_model_request,
@@ -60,6 +61,7 @@ from ..calls import (
 from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin, StepEnd
 from ..records import (
     CompactControlPayload,
+    RecallControlPayload,
     RunControlPayload,
     run_preparation,
     ControlRecord,
@@ -75,6 +77,7 @@ from ..types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
+    RecallTarget,
     Local as RecordLocal,
     ControlKind,
     StepRef,
@@ -1546,6 +1549,36 @@ class _Execution:
             self.runtime_controls(run_id) if pending else (),
             RunRef(run_id),
         )
+
+    def recall(
+        self,
+        step: StepRef,
+        payload: RecallControlPayload,
+        visible: Mapping[RecallTarget, str],
+    ) -> tuple[ControlRef, ...]:
+        """Reuse pending work or record one new presentation of a resource."""
+
+        payload = canonical_recall(payload)
+        for pending in reversed(self.runtime_controls(step.run_id, refresh=False)):
+            if (
+                not isinstance(pending.payload, RecallControlPayload)
+                or pending.payload.target != payload.target
+            ):
+                continue
+            if pending.payload.revision == payload.revision:
+                return (pending.ref,)
+            break
+        else:
+            if visible.get(payload.target) == payload.revision:
+                return ()
+        control = self.store.accept_recall_control(
+            run_id=step.run_id,
+            payload=payload,
+            triggered_by=step,
+            created_at=utc_now(),
+        )
+        self._runtime_controls[step.run_id][control.index] = control
+        return (control.ref,)
 
     def next_step(self, run_id: str) -> int:
         """Return the next unused top-level physical step index."""

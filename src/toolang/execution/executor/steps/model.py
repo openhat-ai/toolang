@@ -36,13 +36,7 @@ from toolang.common.time import elapsed_ms, utc_now
 from toolang.state.state import AgentState, StatePublication
 
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
-from ...control_messages import control_message
 from ...assembly import assemble_messages
-from ...records import (
-    ControlRecord,
-    RecallControlPayload,
-    SteerControlPayload,
-)
 from ...types import (
     Local,
     ModelStepGiven,
@@ -57,7 +51,6 @@ from ...types import (
 from ..common import _StepFailed, control_local_pointer
 from ..diagnostics import log_model_request, log_model_result, log_model_target
 from ..limits import _ModelAccounting
-from .._messages import _MessageBuffer
 from . import tool as tool_step
 
 if TYPE_CHECKING:
@@ -122,7 +115,8 @@ async def execute(state: _AgicState) -> ModelCallResult:
         ):
             history = state.execution.message_history()
             next_messages.prepend(*history.tail(prepared.run.horizon))
-        _append_inputs(next_messages, preceding)
+        for control in preceding:
+            next_messages.append_control(control)
         request = ModelCall(
             instructions=_model_instructions(state, prepared),
             messages=assemble_messages(
@@ -157,6 +151,12 @@ async def execute(state: _AgicState) -> ModelCallResult:
     def adopt_begin() -> None:
         state.prepared = prepared
         state.messages = next_messages
+        state.visible_recalls = (
+            dict(state.execution.message_history().recalls(prepared.run.horizon))
+            if state.execution is not None and "near" in prepared.recall
+            else {}
+        )
+        state.visible_recalls.update(next_messages.recalls)
         state.claimed_inputs = ()
         state.next_model_inputs = None
         state.next_step = step_index + 1
@@ -540,25 +540,6 @@ def _step_input(state: _AgicState) -> tuple[FieldRef, ...]:
             "value",
         ),
     )
-
-
-def _append_inputs(
-    messages: _MessageBuffer,
-    inputs: Sequence[ControlRecord],
-) -> None:
-    for control in inputs:
-        if template := control_message(control):
-            if isinstance(control.payload, RecallControlPayload):
-                content = control.payload.content
-                messages.append_template(template, lambda _ref: content)
-            elif isinstance(control.payload, SteerControlPayload):
-                primary = next(
-                    (item for item in control.payload.input if item.name == "_"), None
-                )
-                messages.append_template(
-                    template,
-                    lambda _ref: primary.value if primary is not None else None,
-                )
 
 
 def _ensure_text_part_index(stream: _ModelStream) -> int:

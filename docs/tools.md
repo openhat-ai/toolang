@@ -119,7 +119,7 @@ remain authoritative.
 Tools do not own the model loop.
 
 For every ordinary tool-capable Agic Model Call, the executor selects the registered
-`_toolang__run`, `_toolang__execute`, and `_toolang__reload` tools. `hands` and
+`_toolang__run`, `_toolang__execute`, `_toolang__reload`, and `_toolang__pick` tools. `hands` and
 `handoffs` authorize runnable targets but do not select these definitions. An
 executor without State refresh still exposes reload and returns a correlated
 error if it is called. Statement-generated Flow evaluators, output-repair
@@ -155,3 +155,25 @@ execution events. The running summary is stored in `ToolStepGiven.summary`;
 the terminal summary uses the same key in `ToolStepNoted`.
 
 Plugin-defined summary templates are not part of the current tool contract.
+
+### Pick guidance
+
+`_toolang/pick({kind: "skill" | "service", ref: "<catalog ref>"})` recalls one
+allowed resource's body. Use the exact ref from its separate skill or service
+catalog, not a name, path, or selector. Pick neither grants tools nor connects,
+authenticates, or discovers MCP services.
+
+The Tool Step returns `{controls: [ControlRef]}`. An applied recall control holds
+the target, SHA-256 revision, and original recalled text; the next Model Call
+adopts it as a separate `<skill>` or `<service>` user message. Failures create no
+recall. Revision zero (`"0"`) denotes removal; a present empty body retains its
+nonzero hash. Other revisions use 64 lowercase hexadecimal digits.
+
+Repeated picks reuse the latest matching unadopted recall in the same Run. If
+nothing is pending and the last visible revision matches, the receipt is empty.
+Visibility comes from recall references in the committed call's selected near/now
+templates, never from XML matching, far summaries, or raw control existence.
+Content that leaves the view must be picked again; assembly does not restore it.
+Live prefixes cache these revisions, and history recovers them from the same
+saved deltas without reading historical State. Existing record encodings are
+unchanged.

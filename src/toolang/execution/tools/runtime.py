@@ -17,7 +17,7 @@ TOOLSET_NAME = "_toolang"
 class RuntimeTool(AgentTool):
     """One stateless tool using authority supplied by its executor."""
 
-    name: Literal["reload", "run", "execute"]
+    name: Literal["reload", "run", "execute", "pick"]
     description: str
     parameters: dict[str, object]
 
@@ -30,6 +30,15 @@ class RuntimeTool(AgentTool):
         runtime = context.runtime
         if runtime is None:
             raise ToolangError("runtime operations are unavailable for this tool call")
+        if self.name == "pick":
+            if set(arguments) != {"kind", "ref"}:
+                raise ToolangError("_toolang/pick requires only kind and ref")
+            kind, ref = arguments["kind"], arguments["ref"]
+            if not isinstance(kind, str) or kind not in {"skill", "service"}:
+                raise ToolangError("_toolang/pick kind must be skill or service")
+            if not isinstance(ref, str) or not ref or ref != ref.strip():
+                raise ToolangError("_toolang/pick requires an exact catalog ref")
+            return await runtime.pick(kind, ref)
         if self.name == "reload":
             if arguments:
                 raise ToolangError("_toolang/reload does not accept input")
@@ -55,7 +64,7 @@ class RuntimeTool(AgentTool):
 @dataclass(frozen=True, slots=True)
 class RuntimeToolset(Toolset):
     name: str = TOOLSET_NAME
-    description: str | None = "Run, transfer, and reload the current execution."
+    description: str | None = "Run, transfer, reload, and recall guidance."
 
     def tools(self) -> Mapping[str, AgentTool]:
         return {tool.name: tool for tool in _TOOLS}
@@ -88,6 +97,21 @@ _RUN_PARAMETERS: dict[str, object] = {
 }
 
 _TOOLS = (
+    RuntimeTool(
+        "pick",
+        "Recall allowed skill or service guidance from its exact catalog ref. "
+        "Pick applicable guidance missing from the visible messages. "
+        "This does not connect to a service or grant tools.",
+        {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": ["skill", "service"]},
+                "ref": {"type": "string", "description": "Exact ref from its catalog."},
+            },
+            "required": ["kind", "ref"],
+            "additionalProperties": False,
+        },
+    ),
     RuntimeTool(
         "run",
         "Run an authorized hand as a child Run, wait for its result, then continue. "

@@ -14,6 +14,7 @@ from toolang.base.types.message import (
 )
 
 from .message_delta import literal_delta, render_delta
+from .recall import recall_revisions
 from .control_messages import control_message
 from .records import (
     CompactControlPayload,
@@ -31,6 +32,7 @@ from .types import (
     MessageDelta,
     MessageTemplate,
     RunRef,
+    RecallTarget,
     ToolStepGiven,
     TypedRef,
 )
@@ -238,13 +240,17 @@ class MessageHistory:
         load: Callable[[Sequence[RunRef]], Mapping[RunRef, Sequence[MessageDelta]]],
         tail: Callable[[Sequence[RunRef]], MessageDelta],
         resolve: Callable[[TypedRef], object],
+        control: Callable[[ControlRef], ControlRecord],
     ) -> None:
         self.thread = thread
         self.roots = tuple(roots)
         self._load = load
         self._load_tail = tail
         self._resolve = resolve
+        self._control = control
         self._messages: dict[RunRef, tuple[Message, ...]] = {}
+        self._recalls: dict[RunRef, dict[RecallTarget, str]] = {}
+        self._selected_recalls: dict[FieldRef | None, dict[RecallTarget, str]] = {}
         self._recorded: set[RunRef] = set()
         self._selections: dict[FieldRef | None, tuple[str, tuple[Message, ...]]] = {}
         self._ranges: dict[FieldRef | None, tuple[RunRef, ...]] = {}
@@ -290,11 +296,21 @@ class MessageHistory:
                         for delta in deltas
                         for message in render_delta(delta, self._resolve)
                     )
+                    self._recalls[root] = recall_revisions(deltas, self._control)
+            revisions: dict[RecallTarget, str] = {}
             for root in selected:
                 messages.extend(self._messages[root])
+                revisions.update(self._recalls[root])
             self._selections[horizon] = summary, tuple(messages)
+            self._selected_recalls[horizon] = revisions
             self._ranges[horizon] = selected
         return self._selections[horizon]
+
+    def recalls(self, horizon: FieldRef | None) -> Mapping[RecallTarget, str]:
+        """Return recalled revisions in the selected near, never its far summary."""
+
+        self.select(horizon)
+        return self._selected_recalls[horizon]
 
     def tail(
         self, horizon: FieldRef | None

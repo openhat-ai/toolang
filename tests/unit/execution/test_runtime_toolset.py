@@ -23,6 +23,7 @@ def test_installed_runtime_toolset_has_no_old_aliases_or_future_tools() -> None:
         "_toolang__run",
         "_toolang__execute",
         "_toolang__reload",
+        "_toolang__pick",
     }
     assert set(tools.user).isdisjoint(tools.runtime)
     assert "me__get" in tools.user
@@ -52,8 +53,13 @@ class _Runtime:
         await asyncio.sleep(0)
         return {"controls": [self.marker]}
 
+    async def pick(self, kind, ref):
+        self.calls.append((kind, ref))
+        await asyncio.sleep(0)
+        return {"controls": [self.marker]}
 
-@pytest.mark.parametrize("name", ["run", "execute", "reload"])
+
+@pytest.mark.parametrize("name", ["run", "execute", "reload", "pick"])
 def test_shared_plugin_keeps_per_call_authority_isolated(
     tmp_path: Path, name: str
 ) -> None:
@@ -61,7 +67,11 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
     first, second = _Runtime("first"), _Runtime("second")
     context = ToolContext("run_first", tmp_path, tmp_path, tmp_path, runtime=first)
     arguments = (
-        {} if name == "reload" else {"runnable": "child", "input": {"_": "input"}}
+        {}
+        if name == "reload"
+        else {"kind": "skill", "ref": "home://skills/testing"}
+        if name == "pick"
+        else {"runnable": "child", "input": {"_": "input"}}
     )
 
     async def scenario():
@@ -88,6 +98,13 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
         ("run", {"runnable": "child", "step": "another"}),
         ("execute", {"runnable": "child", "input": []}),
         ("run", {"runnable": ""}),
+        (
+            "pick",
+            {"kind": "skill", "ref": "home://skills/testing", "content": "injected"},
+        ),
+        ("pick", {"kind": "rules", "ref": "/tmp"}),
+        ("pick", {"kind": [], "ref": "home://skills/testing"}),
+        ("pick", {"kind": "skill", "ref": " testing "}),
     ],
 )
 def test_runtime_arguments_cannot_supply_authority(

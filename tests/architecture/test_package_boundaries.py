@@ -189,6 +189,29 @@ def test_schema_modules_do_not_depend_on_runtime_services() -> None:
     )
 
 
+def test_runtime_toolset_depends_only_on_base_contracts() -> None:
+    violations: list[str] = []
+    path = SOURCE_ROOT / "execution" / "tools" / "runtime.py"
+    context = _module_context(path)
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        for target in _import_targets(node, context):
+            if target != "toolang" and not target.startswith("toolang."):
+                continue
+            if target == "toolang.base" or target.startswith("toolang.base."):
+                continue
+            violations.append(
+                f"{path.relative_to(SOURCE_ROOT)}:{node.lineno} -> {target}"
+            )
+
+    assert not violations, (
+        "The runtime toolset must use base protocols, not concrete runtime owners:\n"
+        + "\n".join(violations)
+    )
+
+
 def test_primitive_execution_inspection_does_not_depend_on_trees() -> None:
     violations: list[str] = []
     for name in ("inspection.py", "store.py"):

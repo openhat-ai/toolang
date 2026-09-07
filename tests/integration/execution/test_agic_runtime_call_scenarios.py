@@ -130,6 +130,7 @@ agic child(_: Text) -> Text:
                 tool.name for tool in harness.adapter.invocations[1].call.tools
             } == {
                 "_toolang__execute",
+                "_toolang__pick",
                 "_toolang__reload",
                 "_toolang__run",
             }
@@ -1473,12 +1474,14 @@ agic target(_: Text) -> Text:
                 tool.name for tool in harness.adapter.invocations[0].call.tools
             } == {
                 "_toolang__execute",
+                "_toolang__pick",
                 "_toolang__reload",
                 "_toolang__run",
                 "web__search",
             }
             assert {tool.name for tool in target_call.tools} == {
                 "_toolang__execute",
+                "_toolang__pick",
                 "_toolang__reload",
                 "_toolang__run",
                 "web__search",
@@ -1487,6 +1490,7 @@ agic target(_: Text) -> Text:
                 tool.name for tool in harness.adapter.invocations[2].call.tools
             } == {
                 "_toolang__execute",
+                "_toolang__pick",
                 "_toolang__reload",
                 "_toolang__run",
                 "web__search",
@@ -1660,6 +1664,7 @@ agic caller() -> Text:
             first_call = harness.adapter.invocations[0].call
             assert {tool.name for tool in first_call.tools} == {
                 "_toolang__execute",
+                "_toolang__pick",
                 "_toolang__reload",
                 "_toolang__run",
             }
@@ -2175,12 +2180,14 @@ agic target(_: Text) -> Text:
             after_reload = harness.adapter.invocations[2].call
             assert {tool.name for tool in before_reload.tools} == {
                 "_toolang__execute",
+                "_toolang__pick",
                 "_toolang__reload",
                 "_toolang__run",
                 "beta__use",
             }
             assert {tool.name for tool in after_reload.tools} == {
                 "_toolang__execute",
+                "_toolang__pick",
                 "_toolang__reload",
                 "_toolang__run",
                 "beta__use",
