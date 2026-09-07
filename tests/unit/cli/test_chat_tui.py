@@ -1417,7 +1417,20 @@ def test_chat_two_line_control_bars_keep_both_padding_rows(
         == Color.parse(accent).get_truecolor().hex
     ]
 
-    assert len(accent_cells) == 4
+    assert len(accent_cells) == 1
+    rows = list(Segment.split_lines(segments))
+    if not rows[0]:
+        rows = rows[1:]
+    assert [
+        row[0].style.bgcolor.get_truecolor().hex
+        for row in rows
+        if row[0].style is not None and row[0].style.bgcolor is not None
+    ] == [
+        DARK_TERMINAL_SURFACES.input_background,
+        Color.parse(accent).get_truecolor().hex,
+        DARK_TERMINAL_SURFACES.input_background,
+        DARK_TERMINAL_SURFACES.input_background,
+    ]
     assert [
         line.rstrip()
         for line in _render_text(block.render(), width=20).splitlines()
@@ -2662,7 +2675,7 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
         == rendering.QUICK_COMMAND_CONTROL_ACCENT
     ]
 
-    assert len(quick_accents) == 3
+    assert len(quick_accents) == 1
     assert all(
         segment.style is not None
         and segment.style.color is None

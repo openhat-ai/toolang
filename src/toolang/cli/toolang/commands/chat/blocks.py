@@ -148,21 +148,21 @@ def _control_bar_lines(
     lines: list[RenderableType] = [
         _control_bar_line(
             line,
-            accent=accent,
+            accent=accent if index == 0 else input_background,
             input_background=input_background,
             width=output_width,
         )
-        for line in wrapped_lines
+        for index, line in enumerate(wrapped_lines)
     ]
     return [
         _control_bar_line(
-            accent=accent,
+            accent=input_background,
             input_background=input_background,
             width=output_width,
         ),
         *lines,
         _control_bar_line(
-            accent=accent,
+            accent=input_background,
             input_background=input_background,
             width=output_width,
             corner=corner,
