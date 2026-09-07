@@ -426,6 +426,44 @@ def test_parent_history_excludes_child_steps(store):
     assert "run_a@0" in [r["id"] for r in child["dependencies"]]
 
 
+def test_run_pages_decode_only_returned_roots(store, monkeypatch):
+    import toolang.execution.store as store_module
+
+    for name in ("run_a", "run_b"):
+        start(store, name)
+        parent = step(store, name)
+        start(store, f"{name}_child", parent=parent.ref)
+        project_run_end(store, run_id=f"{name}_child")
+        project_run_end(store, run_id=name)
+    decoded = []
+    original = store_module._run_from_row
+
+    def decode(row):
+        decoded.append(row["id"])
+        return original(row)
+
+    monkeypatch.setattr(store_module, "_run_from_row", decode)
+    first = read(store, "read_runs", limit=1)
+    assert decoded == ["run_a"]
+    decoded.clear()
+    second = read(store, "read_runs", cursor=first["cursor"])
+    assert decoded == ["run_b"]
+    assert [r["id"] for r in second["runs"]] == ["run_b"]
+    assert second["cursor"] is None
+
+
+def test_run_page_continuation_does_not_capture_unreturned_children(store):
+    start(store)
+    project_run_end(store, run_id="run_a")
+    start(store, "run_b")
+    parent = step(store, "run_b")
+    start(store, "run_child", parent=parent.ref)
+    first = read(store, "read_runs", limit=1)
+    project_run_end(store, run_id="run_child")
+    second = read(store, "read_runs", cursor=first["cursor"])
+    assert [r["id"] for r in second["runs"]] == ["run_b"]
+
+
 @pytest.mark.parametrize(
     "tool,query", [("read_runs", {}), ("read_steps", {"run": "run_a"})]
 )

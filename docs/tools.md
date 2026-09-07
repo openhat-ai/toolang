@@ -99,7 +99,9 @@ updated time descending, then ID ascending; Steps use numeric order.
 
 List results contain `threads`, `runs`, or `entries` and a nullable `cursor`.
 Run pages also identify the logical `thread` and captured `head`; records retain
-physical ownership. Step pages contain their `run` and control `dependencies`,
+physical ownership. Only root Run records are read and captured by Run cursors;
+child updates alone do not invalidate these pages.
+Step pages contain their `run` and control `dependencies`,
 which may recur. Unbounded Step reads include unused owned controls; bounded
 reads include only selected Steps and their dependencies. Child internals require
 an explicit child Run read. Pages may split tool exchanges.

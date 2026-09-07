@@ -65,6 +65,7 @@ class _ToolHistory(ToolHistory):
                     end=RunRef.parse(end) if end is not None else None,
                     limit=limit,
                     reverse=from_end,
+                    include_children=False,
                 )
             )
         if not isinstance(page, ThreadView):

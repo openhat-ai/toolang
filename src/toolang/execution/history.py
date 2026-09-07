@@ -309,8 +309,9 @@ class RunHistory:
         end: RunRef | None = None,
         limit: int | None = None,
         reverse: bool = False,
+        include_children: bool = True,
     ) -> ThreadView:
-        """Capture a half-open root Run range; each page retains natural order."""
+        """Capture a half-open root Run range, optionally including its children."""
 
         _validate_page_limit(limit)
         with self._store.read_transaction():
@@ -320,7 +321,9 @@ class RunHistory:
             selected = _bounded_ids(ids, begin, end)
             selected_roots = set(selected)
             members = {
-                ref: root for ref, root in members.items() if root in selected_roots
+                ref: root
+                for ref, root in members.items()
+                if root in selected_roots and (include_children or ref == root)
             }
             scope = HistoryCursor(
                 target,
