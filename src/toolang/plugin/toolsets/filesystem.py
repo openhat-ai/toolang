@@ -2,30 +2,42 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass, field, replace
+from fnmatch import fnmatchcase
+from pathlib import Path, PurePosixPath
 import shutil
 import threading
 from typing import Any
 
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool, Toolset
-from toolang.base.types.tool import ToolContext, ToolPath
+from toolang.base.types.tool import ToolContext, ToolDefinition, ToolPreparation
 from toolang.base.utils.function_tools import create_function_tool, tool
-from toolang.base.utils.paths import resolve_tool_path
+from toolang.base.utils.workspace_paths import (
+    authorize_workspace_path,
+    parse_workspace_uri,
+    resolve_workspace_path,
+    workspace_root,
+    workspace_uri,
+)
 
 DEFAULT_MAX_CHARS = 20_000
-_PATH_GUIDANCE = " Optional workspace anchors path at that workspace root, including paths starting with /."
+_PATH_GUIDANCE = (
+    " Use workspace://<name>/<path> for a configured workspace."
+    " Alternatively, provide workspace with a root-relative path."
+    " Agent home and the process working directory are not implicit roots."
+)
 
 
 @dataclass(slots=True)
 class FilesystemToolset:
-    """Filesystem tools scoped to one agent home."""
+    """Filesystem tools for explicitly addressed, configured workspaces."""
 
     config: dict[str, Any]
     name: str = "fs"
-    description: str | None = "Inspect and edit files inside the current agent home."
+    description: str | None = "Inspect and edit workspace files."
     _max_chars: int = field(init=False, repr=False)
     _tools: dict[str, AgentTool] = field(init=False, repr=False)
     _path_locks: dict[Path, threading.Lock] = field(init=False, repr=False)
@@ -45,37 +57,20 @@ class FilesystemToolset:
     def _build_tools(self) -> dict[str, AgentTool]:
         @tool(
             name="list",
-            description="List one directory inside the current agent home."
+            description="List a directory, or list available workspaces at workspace://."
             + _PATH_GUIDANCE,
-            prepare=_prepare_path,
         )
         def list_dir(
             path: str = ".",
             workspace: str | None = None,
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            resolved = Path(path)
-            if not resolved.exists():
-                raise ToolangError(f"directory does not exist: {resolved}")
-            if not resolved.is_dir():
-                raise ToolangError(f"path is not a directory: {resolved}")
-            return {
-                "path": str(resolved),
-                "entries": [
-                    {
-                        "name": entry.name,
-                        "path": str(entry),
-                        "is_dir": entry.is_dir(),
-                    }
-                    for entry in sorted(resolved.iterdir(), key=lambda item: item.name)
-                ],
-            }
+            assert context is not None and workspace is not None
+            return _list_directory(Path(path), context.workspaces[workspace])
 
         @tool(
             name="read",
-            description="Read one text file inside the current agent home."
-            + _PATH_GUIDANCE,
-            prepare=_prepare_path,
+            description="Read one text file." + _PATH_GUIDANCE,
         )
         def read_text(
             path: str,
@@ -94,9 +89,7 @@ class FilesystemToolset:
 
         @tool(
             name="write",
-            description="Write one text file inside the current agent home."
-            + _PATH_GUIDANCE,
-            prepare=_prepare_path,
+            description="Write one text file." + _PATH_GUIDANCE,
         )
         def write_text(
             path: str,
@@ -112,9 +105,7 @@ class FilesystemToolset:
 
         @tool(
             name="append",
-            description="Append text to one file inside the current agent home."
-            + _PATH_GUIDANCE,
-            prepare=_prepare_path,
+            description="Append text to one file." + _PATH_GUIDANCE,
         )
         def append_text(
             path: str,
@@ -132,7 +123,6 @@ class FilesystemToolset:
         @tool(
             name="glob",
             description="Match file paths under one directory." + _PATH_GUIDANCE,
-            prepare=_prepare_path,
         )
         def glob(
             path: str = ".",
@@ -141,18 +131,14 @@ class FilesystemToolset:
             workspace: str | None = None,
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            resolved = Path(path)
-            matches = resolved.rglob(pattern) if recursive else resolved.glob(pattern)
-            return {
-                "path": str(resolved),
-                "pattern": pattern,
-                "matches": [str(item) for item in sorted(matches)],
-            }
+            assert context is not None and workspace is not None
+            return _glob_paths(
+                Path(path), pattern, recursive, context.workspaces[workspace]
+            )
 
         @tool(
             name="stat",
             description="Inspect one file or directory." + _PATH_GUIDANCE,
-            prepare=_prepare_path,
         )
         def stat(
             path: str, workspace: str | None = None, context: ToolContext | None = None
@@ -170,7 +156,6 @@ class FilesystemToolset:
         @tool(
             name="mkdir",
             description="Create one directory." + _PATH_GUIDANCE,
-            prepare=_prepare_path,
         )
         def mkdir(
             path: str,
@@ -185,7 +170,6 @@ class FilesystemToolset:
         @tool(
             name="remove",
             description="Remove one file or directory." + _PATH_GUIDANCE,
-            prepare=_prepare_path,
         )
         def remove(
             path: str,
@@ -205,15 +189,20 @@ class FilesystemToolset:
                 resolved.unlink()
             return {"path": str(resolved), "removed": True}
 
+        functions = (
+            list_dir,
+            read_text,
+            write_text,
+            append_text,
+            glob,
+            stat,
+            mkdir,
+            remove,
+        )
         return {
-            "list": create_function_tool(list_dir),
-            "read": create_function_tool(read_text),
-            "write": create_function_tool(write_text),
-            "append": create_function_tool(append_text),
-            "glob": create_function_tool(glob),
-            "stat": create_function_tool(stat),
-            "mkdir": create_function_tool(mkdir),
-            "remove": create_function_tool(remove),
+            wrapped.name: _FilesystemTool(wrapped)
+            for func in functions
+            for wrapped in (create_function_tool(func),)
         }
 
     def _path_lock(self, path: Path) -> threading.Lock:
@@ -231,17 +220,150 @@ def create_toolset(config: Mapping[str, Any]) -> Toolset:
     return FilesystemToolset(config=dict(config))
 
 
-def _prepare_path(
-    arguments: dict[str, Any], context: ToolContext
-) -> tuple[ToolPath, ...]:
-    value = arguments["path"]
-    path = resolve_tool_path(
-        value.strip() if isinstance(value, str) else value,
-        context,
-        workspace=arguments["workspace"],
-    )
-    arguments["path"] = str(path.resolved)
-    return (path,)
+@dataclass(frozen=True, slots=True)
+class _FilesystemTool:
+    """Bind each call's paths and presentation without retaining workspace grants."""
+
+    tool: AgentTool
+
+    @property
+    def name(self) -> str:
+        return self.tool.name
+
+    def definition(self) -> ToolDefinition:
+        return self.tool.definition()
+
+    async def invoke(
+        self, arguments: Mapping[str, Any], context: ToolContext
+    ) -> dict[str, Any]:
+        return await self.prepare(arguments, context).invoke()
+
+    def prepare(
+        self, arguments: Mapping[str, Any], context: ToolContext
+    ) -> ToolPreparation:
+        value = arguments.get("path", "." if self.name in {"list", "glob"} else None)
+        if not isinstance(value, str) or not value:
+            raise ToolangError("tool requires a non-empty path")
+        workspace = arguments.get("workspace")
+        if value.startswith("workspace:"):
+            if workspace is not None:
+                raise ToolangError("workspace URI cannot be combined with workspace")
+            if value == "workspace://":
+                if self.name != "list":
+                    raise ToolangError("only fs.list can address workspace://")
+                return ToolPreparation(
+                    (), lambda: asyncio.to_thread(_list_workspaces, context)
+                )
+            name, relative = parse_workspace_uri(value)
+        else:
+            if "://" in value:
+                raise ToolangError(f"unsupported filesystem URI: {value}")
+            if not isinstance(workspace, str) or not workspace:
+                raise ToolangError(
+                    "use a workspace URI or specify workspace; agent home is not accessible"
+                )
+            name, relative = workspace, value
+        root = workspace_root(name, context)
+        path = resolve_workspace_path(name, relative, root)
+        if self.name == "remove" and path.resolved == root:
+            raise ToolangError("cannot remove a workspace root")
+        uri = workspace_uri(name, path.relative)
+        kwargs: dict[str, Any] = dict(
+            arguments, path=str(path.resolved), workspace=name
+        )
+        # Enumeration uses the same canonical root captured during preparation.
+        bound_context = replace(context, workspaces={name: root})
+
+        async def invoke() -> dict[str, Any]:
+            try:
+                result = await self.tool.invoke(kwargs, bound_context)
+            except (OSError, ToolangError) as exc:
+                detail = exc.strerror if isinstance(exc, OSError) else str(exc)
+                detail = (detail or "filesystem operation failed").replace(
+                    str(path.resolved), uri
+                )
+                raise ToolangError(f"{uri}: {detail}") from exc
+
+            def display(physical: str) -> str:
+                suffix = Path(physical).relative_to(path.resolved)
+                relative = PurePosixPath(path.relative) / suffix.as_posix()
+                return workspace_uri(name, str(relative))
+
+            result["path"] = uri
+            for entry in result.get("entries", ()):
+                entry["path"] = display(entry["path"])
+            if "matches" in result:
+                result["matches"] = [display(item) for item in result["matches"]]
+            return result
+
+        return ToolPreparation((path,), invoke)
+
+
+def _list_workspaces(context: ToolContext) -> dict[str, Any]:
+    return {
+        "path": "workspace://",
+        "entries": [
+            {"name": name, "path": workspace_uri(name), "available": root.is_dir()}
+            for name, root in sorted(context.workspaces.items())
+        ],
+    }
+
+
+def _list_directory(path: Path, root: Path) -> dict[str, Any]:
+    entries = []
+    for entry in sorted(path.iterdir()):
+        authorize_workspace_path(entry, root)
+        entries.append(
+            {"name": entry.name, "path": str(entry), "is_dir": entry.is_dir()}
+        )
+    return {"path": str(path), "entries": entries}
+
+
+def _glob_paths(
+    path: Path, pattern: str, recursive: bool, root: Path
+) -> dict[str, Any]:
+    if (
+        not isinstance(pattern, str)
+        or not pattern
+        or pattern.startswith("/")
+        or ".." in pattern.split("/")
+    ):
+        raise ToolangError("glob pattern must stay within the selected directory")
+    # Walk explicitly: Path.glob can follow symlink directories in literal pattern
+    # components. Never enumerate a symlink target before authorizing it.
+    components = list(PurePosixPath(pattern).parts)
+    if not components or any("**" in part and part != "**" for part in components):
+        raise ToolangError("invalid glob pattern")
+    patterns = (["**"] if recursive else []) + components
+    directories_only = pattern.endswith("/")
+
+    def walk(directory: Path, remaining: list[str]):
+        part, *rest = remaining
+        if part == "**":
+            if rest:
+                yield from walk(directory, rest)
+            else:
+                yield directory
+            for entry in sorted(directory.iterdir()):
+                authorize_workspace_path(entry, root)
+                if entry.is_dir() and not entry.is_symlink():
+                    yield from walk(entry, remaining)
+        else:
+            for entry in sorted(directory.iterdir()):
+                if not fnmatchcase(entry.name, part):
+                    continue
+                authorize_workspace_path(entry, root)
+                if not rest:
+                    if not directories_only or entry.is_dir():
+                        yield entry
+                elif entry.is_dir() and not entry.is_symlink():
+                    yield from walk(entry, rest)
+
+    return {
+        "path": str(path),
+        "pattern": pattern,
+        "matches": [str(p) for p in sorted(set(walk(path, patterns)))],
+    }
 
 
 def _int_value(value: object, *, default: int) -> int:

@@ -7,7 +7,7 @@ from hashlib import sha256
 from pathlib import PurePosixPath
 
 from toolang.base.types.tool import ToolContext, ToolPath
-from toolang.base.utils.paths import authorize_home_path
+from toolang.base.utils.workspace_paths import authorize_workspace_path
 
 from ..records import RecallControlPayload
 from ..types import RecallTarget, RulesRecallTarget
@@ -53,6 +53,7 @@ def load_rules(
     for path in paths:
         if path.workspace is None:
             continue
+        root = context.workspaces[path.workspace].resolve()
         relative = PurePosixPath(path.relative)
         scopes = (
             (relative, *relative.parents)
@@ -64,11 +65,9 @@ def load_rules(
             if target in seen:
                 continue
             seen.add(target)
-            file = authorize_home_path(
-                context.workspaces[path.workspace]
-                / str(scope).lstrip("/")
-                / "AGENTS.md",
-                context.home,
+            file = authorize_workspace_path(
+                root / str(scope).lstrip("/") / "AGENTS.md",
+                root,
             )
             try:
                 content = file.read_bytes().decode("utf-8")

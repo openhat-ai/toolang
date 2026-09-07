@@ -26,6 +26,7 @@ def _tool_context(
     *,
     run_id: str = "run-1",
     services: tuple[ToolService, ...] = (),
+    workspaces: dict[str, Path] | None = None,
 ) -> ToolContext:
     return ToolContext(
         run_id=run_id,
@@ -33,6 +34,7 @@ def _tool_context(
         room=home / ".runtime" / "tools" / plugin_name,
         wd=home,
         services=services,
+        workspaces=workspaces or {},
     )
 
 
@@ -72,21 +74,24 @@ def _invoke(
     return asyncio.run(tool.invoke(arguments, context))
 
 
-def test_filesystem_tool_reads_and_writes_within_agent_home(tmp_path: Path) -> None:
+def test_filesystem_tool_reads_and_writes_within_workspace(tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
     plugin = create_filesystem_tool({})
     tools = plugin.tools()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    context = _tool_context(home, "fs", workspaces={"repo": workspace})
 
     written = _invoke(
         tools["write"],
-        {"path": "notes/todo.txt", "text": "hello"},
-        _tool_context(home, "fs"),
+        {"path": "workspace://repo/notes/todo.txt", "text": "hello"},
+        context,
     )
     loaded = _invoke(
         tools["read"],
-        {"path": "notes/todo.txt"},
-        _tool_context(home, "fs"),
+        {"path": "workspace://repo/notes/todo.txt"},
+        context,
     )
 
     assert written["path"].endswith("notes/todo.txt")
@@ -98,28 +103,31 @@ def test_filesystem_tool_appends_to_missing_file(tmp_path: Path) -> None:
     home.mkdir()
     plugin = create_filesystem_tool({})
     tools = plugin.tools()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    context = _tool_context(home, "fs", workspaces={"repo": workspace})
 
     appended = _invoke(
         tools["append"],
-        {"path": "outbox/index.md", "text": "- hello\n"},
-        _tool_context(home, "fs"),
+        {"path": "workspace://repo/outbox/index.md", "text": "- hello\n"},
+        context,
     )
     loaded = _invoke(
         tools["read"],
-        {"path": "outbox/index.md"},
-        _tool_context(home, "fs"),
+        {"path": "workspace://repo/outbox/index.md"},
+        context,
     )
 
     assert appended["bytes_appended"] == len("- hello\n")
     assert loaded["text"] == "- hello\n"
 
 
-def test_filesystem_tool_rejects_paths_outside_agent_home(tmp_path: Path) -> None:
+def test_filesystem_tool_rejects_unanchored_paths(tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
     tool = create_filesystem_tool({}).tools()["read"]
 
-    with pytest.raises(Exception, match="escapes agent home"):
+    with pytest.raises(ToolangError, match="specify workspace"):
         _invoke(
             tool,
             {"path": "../secret.txt"},

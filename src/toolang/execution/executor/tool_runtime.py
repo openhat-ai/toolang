@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from toolang.base.errors import ToolFailure, ToolangError
 from toolang.base.protocols.tool import ToolRuntime
 from toolang.base.types.tool import ToolContext
-from toolang.base.utils.paths import resolve_tool_path
+from toolang.base.utils.workspace_paths import resolve_workspace_path, workspace_root
 from toolang.state.state import StatePublication, entry_ref
 
 from ..records import RecallControlPayload
@@ -112,7 +112,7 @@ class _ToolRuntime(ToolRuntime):
             else {},
         )
         resolved = tuple(
-            resolve_tool_path(path, context, workspace=workspace)
+            resolve_workspace_path(workspace, path, workspace_root(workspace, context))
             for workspace, path in paths
         )
         pending = execution.runtime_controls(self.step.run_id)

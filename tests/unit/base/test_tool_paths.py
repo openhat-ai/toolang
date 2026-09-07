@@ -60,17 +60,17 @@ def test_workspace_does_not_expand_home_permissions(tmp_path):
 @pytest.mark.parametrize(
     "tool_name,arguments",
     [
-        ("fs__write", {"path": "link/result", "text": "done"}),
-        ("shell__execute", {"cwd": "link", "command": "printf done > result"}),
+        ("fs__write", {"path": "workspace://repo/link/result", "text": "done"}),
+        ("shell__execute", {"cwd": "repo/link", "command": "printf done > result"}),
     ],
 )
 def test_invocation_uses_the_prepared_path_not_a_retargeted_alias(
     tmp_path, tool_name, arguments
 ):
-    first, second = tmp_path / "first", tmp_path / "second"
-    first.mkdir()
+    first, second = tmp_path / "repo/first", tmp_path / "repo/second"
+    first.mkdir(parents=True)
     second.mkdir()
-    link = tmp_path / "link"
+    link = tmp_path / "repo/link"
     link.symlink_to(first, target_is_directory=True)
     prepared = prepare_tool(load_tools()[tool_name], arguments, _context(tmp_path))
     link.unlink()
@@ -102,11 +102,14 @@ def test_filesystem_tools_declare_their_defaulted_access_path(
     tmp_path, name, arguments
 ):
     context = replace(_context(tmp_path), wd=tmp_path / "repo")
+    context.wd.mkdir()
+    if name.startswith("fs__"):
+        arguments = dict(arguments, workspace="repo")
     prepared = prepare_tool(load_tools()[name], arguments, context)
     (path,) = prepared.paths
     assert path.workspace == "repo"
     assert path.resolved.is_relative_to(context.wd)
-    assert not path.resolved.exists()
+    assert path.resolved.exists() == (path.resolved == context.wd)
 
 
 def test_shell_default_cwd_is_authorized(tmp_path):
