@@ -17,6 +17,7 @@ Current built-in tools are:
 - `web`
 - `service`
 - `me`
+- `history`
 - `_toolang`
 
 All use the same plugin registration and invocation path. `_toolang` is a runtime
@@ -75,6 +76,47 @@ tool-call steps.
 Its leaf tools are `start_bridge`, `stop_bridge`, `init`, `start_auth`,
 `complete_auth`, `list_tools`, `call_tool`, `list_resources`,
 `list_resource_templates`, `read_resource`, `list_prompts`, and `get_prompt`.
+
+
+## History
+
+`history` reads the current agent's durable records through ordinary, selectable
+user tools. It creates no controls, recalls, or compaction and does not rebuild
+ModelCalls.
+
+```text
+history/read_threads(limit=20)
+history/read_runs(thread?, begin?, end?, limit=20, from_end=false)
+history/read_steps(run, begin?, end?, limit=20, from_end=false)
+history/read_output(run)
+```
+
+Thread defaults to the caller's; Run must be supplied. Bounds are Run references
+for `read_runs` and Step references for `read_steps`, covering `[begin, end)`.
+`limit` counts primary records, not tokens or dependencies. Tail reads select
+from the end while each page remains naturally ordered. Threads are ordered by
+updated time descending, then ID ascending; Steps use numeric order.
+
+List results contain `threads`, `runs`, or `entries` and a nullable `cursor`.
+Run pages also identify the logical `thread` and captured `head`; records retain
+physical ownership. Only root Run records are read and captured by Run cursors;
+child updates alone do not invalidate these pages.
+Step pages contain their `run` and control `dependencies`,
+which may recur. Unbounded Step reads include unused owned controls; bounded
+reads include only selected Steps and their dependencies. Child internals require
+an explicit child Run read. Pages may split tool exchanges.
+
+Continue using the same tool with **only** `cursor`. Membership stays fixed
+across append, rewind, and restart; changes to captured Run/Step/control facts
+invalidate continuation. Thread-list metadata is current as of each page.
+Cursors belong to the current agent Store and tool. A captured running Step
+finishing also invalidates continuation; bound reads before active Steps when
+paging stable history within an active Run.
+
+Step outputs and control inputs are resolved typed values; structural and saved
+ModelCall references remain intact. `read_output` returns `{run, status, output}`,
+where output is `{type, value, name, dim}` or null, including partial output.
+Missing targets and unresolved values fail as ordinary tool errors.
 
 
 ## Current Agent

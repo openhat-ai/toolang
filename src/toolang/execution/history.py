@@ -23,6 +23,8 @@ from .schemas import (
     RunInfo,
     ThreadDetail,
     ThreadInfo,
+    ThreadPage,
+    ThreadPageCursor,
 )
 from .run_view import RunView
 from .thread_view import ThreadView
@@ -42,6 +44,7 @@ from .types import (
 from .values import parts_from_local
 
 _CURSOR = TypeAdapter(HistoryCursor)
+_THREAD_CURSOR = TypeAdapter(ThreadPageCursor)
 
 
 class RunHistory:
@@ -49,6 +52,33 @@ class RunHistory:
 
     def __init__(self, store: RunStore) -> None:
         self._store = store
+
+    def thread_page(self, *, limit: int = 20, cursor: str | None = None) -> ThreadPage:
+        """Page captured Thread IDs, reading metadata as of each page."""
+
+        with self._store.read_transaction():
+            if cursor is None:
+                _validate_page_limit(limit)
+                scope = ThreadPageCursor(self._store.history_thread_ids(), limit, 0)
+            else:
+                scope = _THREAD_CURSOR.validate_json(cursor)
+                _validate_page_limit(scope.limit)
+                if not 0 <= scope.offset < len(scope.entries):
+                    raise ValueError("history cursor offset is out of range")
+            ids = scope.entries[scope.offset : scope.offset + scope.limit]
+            threads = []
+            for identity in ids:
+                record = self._store.get_thread(thread_id=identity)
+                if record is None:
+                    raise KeyError(identity)
+                threads.append(record)
+            offset = scope.offset + len(ids)
+            return ThreadPage(
+                tuple(threads),
+                _THREAD_CURSOR.dump_json(replace(scope, offset=offset)).decode()
+                if offset < len(scope.entries)
+                else None,
+            )
 
     def list_threads(
         self,
@@ -279,8 +309,9 @@ class RunHistory:
         end: RunRef | None = None,
         limit: int | None = None,
         reverse: bool = False,
+        include_children: bool = True,
     ) -> ThreadView:
-        """Capture a half-open root Run range; each page retains natural order."""
+        """Capture a half-open root Run range, optionally including its children."""
 
         _validate_page_limit(limit)
         with self._store.read_transaction():
@@ -290,7 +321,9 @@ class RunHistory:
             selected = _bounded_ids(ids, begin, end)
             selected_roots = set(selected)
             members = {
-                ref: root for ref, root in members.items() if root in selected_roots
+                ref: root
+                for ref, root in members.items()
+                if root in selected_roots and (include_children or ref == root)
             }
             scope = HistoryCursor(
                 target,

@@ -35,6 +35,13 @@ contracts. Tools without preparation retain the ordinary invocation path.
 The `@tool(prepare=...)` helper passes defaulted, invocation-local arguments to
 the callback, which may replace path arguments before returning their ToolPaths.
 
+The history toolset receives `ToolContext.history`, a read-only `ToolHistory`
+interface bound by the executor to the current agent Store and caller Thread.
+Its plugin depends only on base contracts, never the Store or executor. Each
+read uses a short-lived read-only Store connection in a worker thread, so it
+cannot hold the executor's Store lock. Interruption discards the late result;
+the worker closes its connection when the read finishes or fails.
+
 ### Channel
 
 Channel plugins ingest or deliver external messages.

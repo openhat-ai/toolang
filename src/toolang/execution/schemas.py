@@ -99,6 +99,34 @@ class HistoryCursor:
 
 
 @dataclass(frozen=True)
+class ThreadPage:
+    """A fixed-membership page of current Thread metadata."""
+
+    threads: tuple[ThreadRecord, ...]
+    cursor: str | None = None
+
+
+@dataclass(frozen=True)
+class ThreadPageCursor:
+    """Capture Thread ordering without freezing mutable Thread metadata."""
+
+    entries: tuple[str, ...]
+    limit: int
+    offset: int
+    version: Literal[1] = 1
+
+
+@dataclass(frozen=True)
+class HistoryToolCursor:
+    """Bind an existing reader cursor to one agent Store and tool contract."""
+
+    store: str
+    tool: Literal["read_threads", "read_runs", "read_steps"]
+    cursor: str
+    version: Literal[1] = 1
+
+
+@dataclass(frozen=True)
 class CompactionOutput:
     """The selected compact Run's typed output and its stable field reference."""
 

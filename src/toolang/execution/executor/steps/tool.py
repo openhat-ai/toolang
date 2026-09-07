@@ -12,7 +12,7 @@ import re
 import time
 from typing import TYPE_CHECKING, Literal
 
-from toolang.base.protocols.tool import AgentTool, ToolRuntime
+from toolang.base.protocols.tool import AgentTool, ToolHistory, ToolRuntime
 from toolang.base.types.message import ToolResultPart
 from toolang.base.types.run import ToolCall, ToolCallResult
 from toolang.base.types.tool import ToolContext, ToolPreparation, ToolService
@@ -40,6 +40,7 @@ from ...types import (
 )
 from ..common import _StepFailed
 from ..tool_runtime import _ToolRuntime
+from ..tool_history import _ToolHistory
 from ..diagnostics import log_tool_call_input, log_tool_call_output
 from ..rules import _HonorRequired, check_rules
 
@@ -239,6 +240,9 @@ async def _execute(
                     tool=tool,
                     services=prepared.services,
                     runtime=runtime,
+                    history=_ToolHistory(state.execution.store.db_path, run.thread)
+                    if plugin_name == "history" and state.execution is not None
+                    else None,
                     workspaces={
                         name: Path(path)
                         for name, path in agent_state.workspaces.items()
@@ -703,6 +707,7 @@ def _tool_context(
     tool: AgentTool,
     services: tuple[ToolService, ...],
     runtime: ToolRuntime | None = None,
+    history: ToolHistory | None = None,
     workspaces: Mapping[str, Path] | None = None,
 ) -> ToolContext:
     plugin_name = getattr(tool, "plugin_name", None)
@@ -716,5 +721,6 @@ def _tool_context(
         services=services,
         placement=layout.placement,
         runtime=runtime,
+        history=history,
         workspaces=workspaces or {},
     )

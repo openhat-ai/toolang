@@ -9,7 +9,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
-    from ..protocols.tool import ToolRuntime
+    from ..protocols.tool import ToolHistory, ToolRuntime
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +87,7 @@ class ToolContext:
     placement: Literal["resident", "visiting", "roaming"] = "resident"
     runtime: ToolRuntime | None = None
     workspaces: Mapping[str, Path] = field(default_factory=dict)
+    history: ToolHistory | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspaces", MappingProxyType(dict(self.workspaces)))

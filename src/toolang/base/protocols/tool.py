@@ -8,6 +8,38 @@ from typing import Any, Literal, Protocol, runtime_checkable
 from ..types.tool import ToolContext, ToolDefinition
 
 
+class ToolHistory(Protocol):
+    """Read-only history operations bound to the current agent and caller Thread."""
+
+    def read_threads(
+        self, *, limit: int = 20, cursor: str | None = None
+    ) -> dict[str, Any]: ...
+
+    def read_runs(
+        self,
+        *,
+        thread: str | None = None,
+        begin: str | None = None,
+        end: str | None = None,
+        limit: int = 20,
+        from_end: bool = False,
+        cursor: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    def read_steps(
+        self,
+        *,
+        run: str | None = None,
+        begin: str | None = None,
+        end: str | None = None,
+        limit: int = 20,
+        from_end: bool = False,
+        cursor: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    def read_output(self, *, run: str) -> dict[str, Any]: ...
+
+
 class ToolRuntime(Protocol):
     """Trusted operations bound by the executor to one runtime Tool Step."""
 
