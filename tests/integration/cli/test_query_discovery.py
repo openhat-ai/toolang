@@ -161,10 +161,8 @@ def test_each_query_enabled_list_points_to_query_help() -> None:
     for app, command, expected in commands:
         result = runner.invoke(app, command)
         assert result.exit_code == 0, result.stderr
-        output = " ".join(unstyle(result.stdout).split())
-        _toolang, _query, collection = expected.split()
-        assert "too query" in output
-        assert f"{collection}'." in output
+        output = " ".join(unstyle(result.stdout).replace("│", "").split())
+        assert f"'{expected}'." in output
 
 
 def test_allow_help_uses_collection_query_vocabulary() -> None:

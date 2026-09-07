@@ -6,9 +6,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterator
 
-import click
 import typer
 
+from toolang.base.utils import typer_compat
 from toolang.common.ids import IdIssuer
 from toolang.common.version import toolang_version
 from toolang.execution.errors import RunStoreSchemaError
@@ -37,13 +37,15 @@ def open_execution(
     layout = context_layout(ctx)
     if not layout.run_store.is_file():
         if required:
-            raise click.ClickException(f"execution history not found: {layout.name}")
+            raise typer_compat.ClickException(
+                f"execution history not found: {layout.name}"
+            )
         yield None
         return
     try:
         store = RunStore(layout.run_store, read_only=not writable)
     except RunStoreSchemaError as exc:
-        raise click.ClickException(
+        raise typer_compat.ClickException(
             run_store_schema_error(exc, path=layout.run_store)
         ) from exc
     try:

@@ -8,10 +8,10 @@ import os
 from pathlib import Path
 from typing import Annotated, Any
 
-import click
 import typer
 from dotenv import dotenv_values
 
+from toolang.base.utils import typer_compat
 from ...catalog.agent import LocalAgents
 from ...common.errors import ToolangError
 from ...common.config import resolve_ui_base_url
@@ -57,7 +57,7 @@ def context_agent(ctx: typer.Context) -> str | None:
         and state.layout is None
         and LocalAgents(state.root / "agents").get(agent) is None
     ):
-        raise click.ClickException(f"Agent {agent} not found")
+        raise typer_compat.ClickException(f"Agent {agent} not found")
     return agent
 
 
@@ -136,4 +136,4 @@ def user_call(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         ToolangError,
         ValueError,
     ) as exc:
-        raise click.ClickException(str(exc)) from exc
+        raise typer_compat.ClickException(str(exc)) from exc

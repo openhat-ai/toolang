@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+from enum import Enum
 from pathlib import Path
 import json
 
-import click
 import typer
 
+from toolang.base.utils import typer_compat
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.typer_tools import TyperToolConfig, create_typer_tools
+
+
+class _Mode(str, Enum):
+    FAST = "fast"
+    SAFE = "safe"
 
 
 def _build_test_app() -> typer.Typer:
@@ -109,7 +115,7 @@ def test_typer_tool_invocation_returns_cli_error_payload(tmp_path) -> None:
 
     assert result["ok"] is False
     assert result["exit_code"] == 2
-    assert "Missing argument 'LOCATOR'" in result["stderr"]
+    assert "Missing argument 'locator'" in result["stderr"]
 
 
 def test_typer_tool_invocation_runs_inside_tool_context_working_directory(
@@ -133,7 +139,7 @@ def test_typer_tool_invocation_runs_inside_tool_context_working_directory(
 
 
 def test_typer_tool_definition_uses_custom_click_schema() -> None:
-    class _JsonType(click.ParamType):
+    class _JsonType(typer_compat.ParamType):
         name = "json"
         tool_schema = {"type": "object"}
 
@@ -153,6 +159,69 @@ def test_typer_tool_definition_uses_custom_click_schema() -> None:
     definition = create_typer_tools(app, prog_name="too")["push"].definition()
 
     assert definition.parameters["properties"]["payload"]["type"] == "object"
+
+
+def test_typer_tool_preserves_typed_schema_and_argument_conversion(
+    tmp_path: Path,
+) -> None:
+    app = typer.Typer(add_completion=False)
+
+    @app.command()
+    def convert(
+        count: int = typer.Argument(...),
+        destination: Path = typer.Argument(...),
+        ratio: float = typer.Option(1.0, "--ratio"),
+        enabled: bool = typer.Option(True, "--enabled/--no-enabled"),
+        mode: _Mode = typer.Option(_Mode.SAFE, "--mode"),
+        tag: list[int] = typer.Option([], "--tag"),
+    ) -> dict:
+        return {
+            "count": count,
+            "destination": str(destination),
+            "ratio": ratio,
+            "enabled": enabled,
+            "mode": mode.value,
+            "tag": tag,
+        }
+
+    tool = create_typer_tools(app, prog_name="too")["convert"]
+    definition = tool.definition()
+
+    assert definition.parameters["properties"] == {
+        "count": {"type": "integer"},
+        "destination": {"type": "string"},
+        "ratio": {"type": "number", "default": 1.0},
+        "enabled": {"type": "boolean", "default": True},
+        "mode": {"type": "string", "enum": ["fast", "safe"], "default": "safe"},
+        "tag": {"type": "array", "items": {"type": "integer"}},
+    }
+    assert definition.parameters["required"] == ["count", "destination"]
+    arguments = {
+        "count": 3,
+        "destination": "output.json",
+        "ratio": 0.5,
+        "enabled": False,
+        "mode": "fast",
+        "tag": [2, 4],
+    }
+    result = asyncio.run(tool.invoke(arguments, _tool_context(tmp_path)))
+
+    assert result["ok"] is True
+    assert result["exit_code"] == 0
+    assert result["result"] == arguments
+    assert result["argv"] == [
+        "--ratio",
+        "0.5",
+        "--no-enabled",
+        "--mode",
+        "fast",
+        "--tag",
+        "2",
+        "--tag",
+        "4",
+        "3",
+        "output.json",
+    ]
 
 
 def test_typer_tool_config_can_prepare_hidden_arguments_once(tmp_path: Path) -> None:

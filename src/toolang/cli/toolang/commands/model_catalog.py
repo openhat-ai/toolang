@@ -8,10 +8,10 @@ import json
 from pathlib import Path
 from typing import Annotated, cast
 
-import click
 from rich.text import Text
 import typer
 
+from toolang.base.utils import typer_compat
 from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
 from toolang.cli.common.context import (
     ModelCatalogOption,
@@ -222,7 +222,7 @@ def _matching_inspection(
     try:
         queries = MODEL_SCHEMA.parse(query)
     except ToolangError as error:
-        raise click.ClickException(str(error)) from error
+        raise typer_compat.ClickException(str(error)) from error
     return asyncio.run(
         load_matching_catalog_inspection(
             AgentLayout.resident(context_root(ctx), agent or "default"),

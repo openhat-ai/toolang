@@ -21,6 +21,7 @@ import typer
 from typer import rich_utils
 from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 
+from toolang.base.utils import typer_compat
 from toolang.base.model_settings import parse_model_body
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunBindings, RunPolicy
@@ -104,12 +105,12 @@ _MODEL_REQUEST_ADAPTER = TypeAdapter(ModelRequest)
 class _HelpArgument(TyperArgument):
     """One signature argument displayed by Typer but parsed by the collector."""
 
-    def add_to_parser(self, parser: Any, ctx: click.Context) -> None:
+    def add_to_parser(self, parser: Any, ctx: typer_compat.Context) -> None:
         del parser, ctx
 
     def handle_parse_result(
         self,
-        ctx: click.Context,
+        ctx: typer_compat.Context,
         opts: Mapping[str, Any],
         args: list[str],
     ) -> tuple[None, list[str]]:
@@ -120,7 +121,7 @@ class _HelpArgument(TyperArgument):
 class _CollectorArgument(TyperArgument):
     """The hidden variadic parser behind the signature help arguments."""
 
-    def get_usage_pieces(self, ctx: click.Context) -> list[str]:
+    def get_usage_pieces(self, ctx: typer_compat.Context) -> list[str]:
         del ctx
         return []
 
@@ -136,7 +137,9 @@ class _RunnableCommand(TyperCommand):
         super().__init__(**kwargs)
         self._flow = flow
 
-    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+    def format_help(
+        self, ctx: typer_compat.Context, formatter: typer_compat.HelpFormatter
+    ) -> None:
         super().format_help(ctx, formatter)
         if self._flow is not None:
             console = rich_utils._get_rich_console()
@@ -150,7 +153,7 @@ class _RunnableCommand(TyperCommand):
                 highlight=False,
             )
 
-    def invoke(self, ctx: click.Context) -> Any:
+    def invoke(self, ctx: typer_compat.Context) -> Any:
         try:
             return TyperCommand.invoke(self, ctx)
         except _IncompleteRunnableInput:
@@ -215,9 +218,9 @@ def dispatch(
             standalone_mode=False,
         )
         return int(result) if isinstance(result, int) else 0
-    except click.exceptions.Exit as exc:
+    except typer_compat.Exit as exc:
         return exc.exit_code
-    except click.ClickException as exc:
+    except typer_compat.ClickException as exc:
         echo_error(exc)
         return exc.exit_code
     except (OSError, UnicodeError, ValueError, ToolangError) as exc:
@@ -291,7 +294,7 @@ def _runnable_command(
         )
 
     help_text = runnable.doc.strip() if runnable.doc else None
-    params: list[click.Parameter] = [
+    params: list[typer_compat.Parameter] = [
         TyperOption(
             param_decls=["--allow"],
             type=str,
@@ -321,7 +324,7 @@ def _runnable_command(
         ),
         TyperOption(
             param_decls=["--dev"],
-            type=click.Path(path_type=Path),
+            type=typer_compat.Path(path_type=Path),
             default=None,
             metavar="PATH",
             help=DEVELOPMENT_WHEEL_HELP,
@@ -448,7 +451,9 @@ def _collect_call(
         name, separator, value = item.partition("=")
         if separator and name in params:
             if name in raw_args:
-                raise click.BadParameter(f"argument {name} was provided more than once")
+                raise typer_compat.BadParameter(
+                    f"argument {name} was provided more than once"
+                )
             raw_args[name] = value
             continue
         input_items.append(item)
@@ -501,10 +506,14 @@ def _materialize_script_runnable_override(
 def _input_source(items: list[str], *, stdin: TextIO) -> CallInput | None:
     if items and items[0] == _LINE_INPUT_MARKER:
         if len(items) == 1:
-            raise click.UsageError("line input marker '--' requires nonempty text")
+            raise typer_compat.UsageError(
+                "line input marker '--' requires nonempty text"
+            )
         value = _join_input_items(items[1:])
         if not value.strip():
-            raise click.UsageError("line input marker '--' requires nonempty text")
+            raise typer_compat.UsageError(
+                "line input marker '--' requires nonempty text"
+            )
         return CallInput(_=value)
     if items == ["-"]:
         value = stdin.read()
@@ -518,11 +527,13 @@ def _input_source(items: list[str], *, stdin: TextIO) -> CallInput | None:
         )
         return CallInput(_=value)
     if "-" in items:
-        raise click.UsageError("stdin marker '-' must be the only primary input")
+        raise typer_compat.UsageError("stdin marker '-' must be the only primary input")
     if _LINE_INPUT_MARKER in items or _FENCED_INPUT_MARKER in items:
-        raise click.UsageError("call input marker must precede the primary input")
+        raise typer_compat.UsageError(
+            "call input marker must precede the primary input"
+        )
     if items:
-        raise click.UsageError("primary input requires '--', '-', or '---'")
+        raise typer_compat.UsageError("primary input requires '--', '-', or '---'")
     if not stdin.isatty():
         value = stdin.read()
         return CallInput(_=value) if value else None

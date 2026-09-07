@@ -11,6 +11,7 @@ import typer
 
 import toolang.cli.caps.main as caps_cli
 import toolang.cli.toolang.main as cli
+from toolang.base.utils import typer_compat
 from toolang.base.types.progress import ProgressEvent
 from toolang.common.layout import AgentLayout
 from toolang.cli.toolang.commands import script
@@ -27,6 +28,7 @@ from toolang.cli.toolang.routing import (
     select_target_help,
 )
 from toolang.cli.common.routing import extract_root_args
+from toolang.cli.common.lazy import LazyCommand
 from toolang.up import process as agents
 
 
@@ -49,8 +51,21 @@ def test_extract_root_args_supports_short_option_and_stops_at_separator() -> Non
 def test_cli_command_registry_matches_the_typer_surface() -> None:
     group = typer.main.get_command(cli.app)
 
-    assert isinstance(group, click.Group)
+    assert isinstance(group, typer_compat.Group)
     assert set(group.commands) == set(COMMAND_SPECS)
+
+
+def test_lazy_command_completes_options_using_typer_parameters() -> None:
+    group = typer.main.get_command(cli.app)
+    assert isinstance(group, typer_compat.Group)
+    command = group.commands["fmt"]
+    assert isinstance(command, LazyCommand)
+
+    with command.make_context("fmt", [], resilient_parsing=True) as ctx:
+        completions = command.shell_complete(ctx, "--tab")
+
+    assert [item.value for item in completions] == ["--tab-size"]
+    assert completions[0].help == "Number of spaces per indentation level."
 
 
 @pytest.mark.parametrize(
@@ -156,8 +171,8 @@ def test_cli_control_commands_have_consistent_order_and_descriptions() -> None:
         "fork": "Fork a thread from an earlier run.",
     }
 
-    assert isinstance(group, click.Group)
-    context = click.Context(group)
+    assert isinstance(group, typer_compat.Group)
+    context = typer_compat.Context(group)
     order = tuple(name for name in group.list_commands(context) if name in expected)
 
     assert order == tuple(expected)
@@ -201,8 +216,8 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
         ),
     }
 
-    assert isinstance(group, click.Group)
-    context = click.Context(group)
+    assert isinstance(group, typer_compat.Group)
+    context = typer_compat.Context(group)
     visible = tuple(
         name for name in group.list_commands(context) if not group.commands[name].hidden
     )
@@ -217,8 +232,8 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
 def test_workspace_commands_follow_the_public_order() -> None:
     group = typer.main.get_command(workspace_app())
 
-    assert isinstance(group, click.Group)
-    assert tuple(group.list_commands(click.Context(group))) == (
+    assert isinstance(group, typer_compat.Group)
+    assert tuple(group.list_commands(typer_compat.Context(group))) == (
         "list",
         "add",
         "remove",
@@ -239,7 +254,7 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
         "sandboxes": "List installed sandboxes.",
     }
 
-    assert isinstance(group, click.Group)
+    assert isinstance(group, typer_compat.Group)
     removed = {"threads", "runs", "model", "tool", "catalog", "toolset", "sandbox"}
     assert removed.isdisjoint(group.commands)
     assert expected_help.keys() <= group.commands.keys()
@@ -252,24 +267,31 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
     (
         (
             ["clone"],
-            "Usage: pytest clone [OPTIONS] SOURCE [TARGET]",
+            "Usage: pytest clone [OPTIONS] {source} [target]",
             "target",
-            "TEXT",
-            "[TARGET]",
+            "<str>",
+            "[target]",
         ),
         (
             ["chat"],
             "Usage: pytest AGENT chat [OPTIONS] [THREAD]",
-            "thread",
-            "TEXT",
+            "THREAD",
+            "<str>",
             "[THREAD]",
         ),
         (
+            ["chat"],
+            "Usage: pytest AGENT chat [OPTIONS] [THREAD]",
+            "agent",
+            "<str>",
+            "TEXT",
+        ),
+        (
             ["fmt"],
-            "Usage: pytest fmt [OPTIONS] [PATHS]...",
+            "Usage: pytest fmt [OPTIONS] [paths]...",
             "paths",
-            "PATH...",
-            "[PATHS]...",
+            "<path>",
+            "[paths]...",
         ),
     ),
 )

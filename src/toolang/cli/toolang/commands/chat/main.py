@@ -10,9 +10,9 @@ from pathlib import Path
 import sys
 from typing import cast
 
-import click
 import typer
 
+from toolang.base.utils import typer_compat
 from toolang.base.types.model import ModelOverride
 from toolang.base.types.message import TextDelta, TextPart, message_text
 from toolang.cli.common.policy import (
@@ -190,7 +190,7 @@ def _chat_runtime(
                 except (RemoteChatError, ValueError) as exc:
                     if remote is not None:
                         remote.close()
-                    raise click.ClickException(str(exc)) from exc
+                    raise typer_compat.ClickException(str(exc)) from exc
                 try:
                     yield remote
                 finally:
@@ -226,7 +226,7 @@ def _chat_runtime(
             finally:
                 local.close()
     except AgentServerAcquisitionError as exc:
-        raise click.ClickException(str(exc)) from exc
+        raise typer_compat.ClickException(str(exc)) from exc
 
 
 def _chat_session_override(
@@ -401,8 +401,12 @@ def _chat_interactive_scripted_local(
                 runnable_input,
                 context.get_setting(),
             )
-        except (click.ClickException, ToolangError, ValueError) as exc:
-            detail = exc.message if isinstance(exc, click.ClickException) else str(exc)
+        except (typer_compat.ClickException, ToolangError, ValueError) as exc:
+            detail = (
+                exc.message
+                if isinstance(exc, typer_compat.ClickException)
+                else str(exc)
+            )
             typer.echo(chat_friendly_error(detail), err=True)
             continue
         client.run(request, renderer.render, errors.append, renderer.handle_state)
@@ -577,7 +581,7 @@ def _target_thread_id(ctx: typer.Context, target: str | None) -> str | None:
                 raise RuntimeError("execution resources were not opened")
             run = RunHistory(resources.store).get_run(target)
         if run is None:
-            raise click.ClickException(f"run not found: {target}")
+            raise typer_compat.ClickException(f"run not found: {target}")
         return run.thread_id
     return target
 

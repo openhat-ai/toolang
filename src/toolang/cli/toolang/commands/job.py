@@ -7,10 +7,11 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Annotated, Literal, cast
 
-import click
 import typer
 from typer.core import TyperCommand
 
+from toolang.base.utils import typer_compat
+from toolang.cli.common.editor import edit_markdown
 from ....catalog import templates
 from ....catalog.types import JobStage
 from toolang.common.layout import AgentLayout
@@ -181,7 +182,7 @@ def _list(kind: JobKind, title: str) -> Callable[..., None]:
                         for run in runs
                         if run.error is not None
                     }
-        except click.ClickException as exc:
+        except typer_compat.ClickException as exc:
             typer.echo(f"warning: {exc.message}", err=True)
         try:
             inspection = JobInspection.load(
@@ -191,7 +192,7 @@ def _list(kind: JobKind, title: str) -> Callable[..., None]:
                 error_messages=error_messages,
             )
         except JobStoreSchemaError as exc:
-            raise click.ClickException(
+            raise typer_compat.ClickException(
                 _job_store_schema_error(exc, path=layout.job_store)
             ) from exc
         entries = tuple(
@@ -269,10 +270,8 @@ def _new(kind: JobKind, _title: str) -> Callable[..., None]:
         ] = False,
     ) -> None:
         agent = require_prefix_agent(ctx)
-        text = click.edit(
+        text = edit_markdown(
             templates.render_template(kind, "default", agent_name=agent),
-            extension=".md",
-            require_save=True,
         )
         if text is None:
             raise typer.Exit()
@@ -299,7 +298,7 @@ def _clone(kind: JobKind, title: str) -> Callable[..., None]:
         root, agent = context_root(ctx), require_prefix_agent(ctx)
         source = _jobs(root, agent).get(kind, id, stage=None)
         if source is None:
-            raise click.ClickException(f"{kind} not found: {id}")
+            raise typer_compat.ClickException(f"{kind} not found: {id}")
         clone_id = allocate_authored_job_id(_layout(root, agent))
         clone = source.with_meta({**source.meta, "id": clone_id})
         saved = user_call(
@@ -321,9 +320,9 @@ def _edit(kind: JobKind, title: str) -> Callable[..., None]:
         catalog = _jobs(root, agent)
         existing = catalog.get(kind, id, stage=None)
         if existing is None:
-            raise click.ClickException(f"{kind} not found: {id}")
+            raise typer_compat.ClickException(f"{kind} not found: {id}")
         text = existing.content
-        updated = click.edit(text, extension=".md", require_save=True)
+        updated = edit_markdown(text)
         if updated is None:
             raise typer.Exit()
         document = user_call(
@@ -372,7 +371,7 @@ def _reopen(kind: JobKind, title: str) -> Callable[..., None]:
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
         if kind != "task":
-            raise click.ClickException("reopen is only supported for tasks")
+            raise typer_compat.ClickException("reopen is only supported for tasks")
         runtime_post(ctx, f"/api/v1/tasks/{id}/reopen", payload={})
         typer.echo(f"task {id} reopened")
 
@@ -385,7 +384,7 @@ def _run(kind: JobKind, title: str) -> Callable[..., None]:
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
         if kind != "chore":
-            raise click.ClickException("run is only supported for chores")
+            raise typer_compat.ClickException("run is only supported for chores")
         runtime_post(ctx, f"/api/v1/chores/{id}/run", payload={})
         typer.echo(f"chore {id} manual run requested")
 
@@ -412,12 +411,12 @@ def _delete(kind: JobKind, title: str) -> Callable[..., None]:
         catalog = _jobs(root, agent)
         active = catalog.get(kind, id, stage=None)
         if active is not None and active.stage != "archived":
-            raise click.ClickException(
+            raise typer_compat.ClickException(
                 f"{kind} is not archived: {id}; archive it before deleting"
             )
         entry = catalog.get(kind, id, stage="archived")
         if entry is None:
-            raise click.ClickException(f"archived {kind} not found: {id}")
+            raise typer_compat.ClickException(f"archived {kind} not found: {id}")
         user_call(catalog.remove, kind, id)
         typer.echo(f"{kind} {id} deleted")
 
@@ -432,7 +431,7 @@ def _jobs(root: Path, agent: str) -> AuthoredJobs:
             catalog=catalog,
         )
     except (CatalogError, ValueError) as exc:
-        raise click.ClickException(str(exc)) from exc
+        raise typer_compat.ClickException(str(exc)) from exc
     return catalog
 
 
