@@ -62,7 +62,7 @@ _SENSITIVE_ARGUMENT_MARKERS = (
 )
 
 
-async def begin(
+async def _begin(
     state: _AgicState,
     step: StepRef,
     call: ToolCall,
@@ -91,7 +91,7 @@ async def begin(
         else:
             if interruption is None:
                 return
-        await cancel(state, step, call, trigger=trigger)
+        await _cancel(state, step, call, trigger=trigger)
         raise interruption
 
 
@@ -107,7 +107,6 @@ async def execute(
     call: ToolCall,
     *,
     trigger: Literal["model", "runtime"] = "model",
-    input: tuple[FieldRef, ...] | None = None,
     tool_call_count: int = 1,
     routes: AgicRoutes | None = None,
 ) -> ToolCallResult:
@@ -130,9 +129,7 @@ async def execute(
         else None
     )
     step_input: tuple[FieldRef, ...]
-    if input is not None:
-        step_input = input
-    elif trigger == "runtime":
+    if trigger == "runtime":
         step_input = ()
     elif source_ref is not None:
         step_input = (source_ref,)
@@ -183,7 +180,7 @@ async def execute(
         )
 
     step = StepRef.from_local(run.run_id, (step_index,))
-    await begin(state, step, call, begin_step, trigger=trigger)
+    await _begin(state, step, call, begin_step, trigger=trigger)
     state.prepared = prepared
     runtime = (
         _ToolRuntime(
@@ -209,7 +206,7 @@ async def execute(
             runtime=runtime,
         )
     except asyncio.CancelledError:
-        await cancel(
+        await _cancel(
             state,
             StepRef.from_local(run.run_id, (step_index,)),
             call,
@@ -257,7 +254,7 @@ async def execute(
         plugin_name=plugin_name,
     )
     try:
-        await finish(
+        await _finish(
             state,
             step,
             part,
@@ -286,7 +283,7 @@ async def execute(
     return record
 
 
-async def finish(
+async def _finish(
     state: _AgicState,
     step: StepRef,
     part: ToolResultPart,
@@ -336,7 +333,7 @@ async def finish(
         )
 
 
-async def cancel(
+async def _cancel(
     state: _AgicState,
     step: StepRef,
     call: ToolCall,
@@ -413,7 +410,7 @@ async def skip(
         state.next_step += 1
         source = state.tool_call_sources[call.tool_call_id]
         try:
-            await begin(
+            await _begin(
                 state,
                 step,
                 call,
@@ -436,7 +433,7 @@ async def skip(
                     started_at=utc_now(),
                 ),
             )
-            await cancel(
+            await _cancel(
                 state,
                 step,
                 call,

@@ -116,8 +116,8 @@ def prepare_agic(
         )
     tools = dict(resource_tools(run.setup, resources))
     routes = resolve_agic_routes(durable_state, agic)
-    inner_tools = {} if agic.name.startswith("<agic:") else run.setup.tools.runtime
-    tools.update(inner_tools)
+    runtime_tools = {} if agic.name.startswith("<agic:") else run.setup.tools.runtime
+    tools.update(runtime_tools)
     caps = resource_caps(run.state, resources, module=run.module)
     program = state_program(run.state, run.module)
     psyches = tuple(item for item in caps if item.kind == "psyche")
@@ -170,7 +170,7 @@ def prepare_agic(
     )
     instructions = _render_instructions(program, agic, system_runtime)
     runtime_instructions = (
-        render_runtime_instructions(durable_state, routes) if inner_tools else ""
+        render_runtime_instructions(durable_state, routes) if runtime_tools else ""
     )
     adapter = run.setup.adapters.get(model.adapter)
     if adapter is None:

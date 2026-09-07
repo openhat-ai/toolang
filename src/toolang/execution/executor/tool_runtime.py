@@ -21,11 +21,12 @@ from ..types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
+    Local,
     RunRef,
     StepRef,
     TypedRef,
+    local_to_protocol_data,
 )
-from ..types import Local as RecordLocal, local_to_protocol_data
 from .common import _ExecuteCommitted, _ExecutionFailed, _RunRejected
 
 if TYPE_CHECKING:
@@ -92,7 +93,7 @@ class _ToolRuntime(ToolRuntime):
             "run_id": str(target.ref.record),
             "output_type": record.type,
             "output": local_to_protocol_data(
-                RecordLocal.typed(
+                Local.typed(
                     record.type, result.value, dim=1 if result.shape == "list" else 0
                 )
             )["value"],
