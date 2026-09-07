@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Mapping
+from pathlib import PurePosixPath
 from typing import Any, Literal
 
 from toolang.base.errors import ToolangError
@@ -17,12 +18,16 @@ TOOLSET_NAME = "_toolang"
 class RuntimeTool(AgentTool):
     """One stateless tool using authority supplied by its executor."""
 
-    name: Literal["reload", "run", "execute", "pick"]
+    name: Literal["reload", "run", "execute", "pick", "honor"]
     description: str
     parameters: dict[str, object]
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(self.name, self.description, dict(self.parameters))
+
+    @property
+    def model_callable(self) -> bool:
+        return self.name != "honor"
 
     async def invoke(
         self, arguments: Mapping[str, Any], context: ToolContext
@@ -30,6 +35,32 @@ class RuntimeTool(AgentTool):
         runtime = context.runtime
         if runtime is None:
             raise ToolangError("runtime operations are unavailable for this tool call")
+        if self.name == "honor":
+            if (
+                set(arguments) != {"paths"}
+                or not isinstance(arguments["paths"], list)
+                or not arguments["paths"]
+            ):
+                raise ToolangError("_toolang/honor requires nonempty paths")
+            paths = []
+            for item in arguments["paths"]:
+                if not isinstance(item, Mapping) or set(item) != {"workspace", "path"}:
+                    raise ToolangError("honor paths require workspace and path")
+                workspace, path = item["workspace"], item["path"]
+                if not isinstance(workspace, str) or not workspace:
+                    raise ToolangError("honor requires a workspace name")
+                if (
+                    not isinstance(path, str)
+                    or not path.startswith("/")
+                    or path.startswith("//")
+                    or PurePosixPath(path).as_posix() != path
+                    or ".." in PurePosixPath(path).parts
+                ):
+                    raise ToolangError(
+                        "honor requires normalized workspace-relative paths"
+                    )
+                paths.append((workspace, path))
+            return await runtime.honor(tuple(paths))
         if self.name == "pick":
             if set(arguments) != {"kind", "ref"}:
                 raise ToolangError("_toolang/pick requires only kind and ref")
@@ -97,6 +128,30 @@ _RUN_PARAMETERS: dict[str, object] = {
 }
 
 _TOOLS = (
+    RuntimeTool(
+        "honor",
+        "Recall applicable workspace rules before a path-aware operation.",
+        {
+            "type": "object",
+            "properties": {
+                "paths": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "workspace": {"type": "string"},
+                            "path": {"type": "string"},
+                        },
+                        "required": ["workspace", "path"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["paths"],
+            "additionalProperties": False,
+        },
+    ),
     RuntimeTool(
         "pick",
         "Recall allowed skill or service guidance from its exact catalog ref. "

@@ -116,7 +116,15 @@ def prepare_agic(
         )
     tools = dict(resource_tools(run.setup, resources))
     routes = resolve_agic_routes(durable_state, agic)
-    runtime_tools = {} if agic.name.startswith("<agic:") else run.setup.tools.runtime
+    runtime_tools = (
+        {}
+        if agic.name.startswith("<agic:")
+        else {
+            name: tool
+            for name, tool in run.setup.tools.runtime.items()
+            if getattr(tool, "model_callable", True)
+        }
+    )
     tools.update(runtime_tools)
     caps = resource_caps(run.state, resources, module=run.module)
     program = state_program(run.state, run.module)

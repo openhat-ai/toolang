@@ -1332,6 +1332,7 @@ def test_tool_allow_filters_user_tools_but_keeps_runtime_registration(
         "_toolang__run",
         "_toolang__execute",
         "_toolang__pick",
+        "_toolang__honor",
         "_toolang__reload",
     }
 

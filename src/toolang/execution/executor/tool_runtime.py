@@ -5,10 +5,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from toolang.base.errors import ToolFailure, ToolangError
 from toolang.base.protocols.tool import ToolRuntime
+from toolang.base.types.tool import ToolContext
+from toolang.base.utils.paths import resolve_tool_path
 from toolang.state.state import StatePublication, entry_ref
 
 from ..records import RecallControlPayload
@@ -34,6 +37,7 @@ from ..types import (
 )
 from .common import _ExecuteCommitted, _ExecutionFailed, _RunRejected
 from .resources import resource_caps
+from .rules import load_rules
 
 if TYPE_CHECKING:
     from .runs.agic import _AgicState
@@ -87,6 +91,39 @@ class _ToolRuntime(ToolRuntime):
         )
         controls = execution.recall(self.step, payload, self.state.visible_recalls)
         return {"controls": [str(ref) for ref in controls]}
+
+    async def honor(self, paths: tuple[tuple[str, str], ...]) -> dict[str, Any]:
+        execution = self.state.execution
+        if execution is None:
+            raise RuntimeError("Agic runtime execution is unavailable")
+        captured, _ref = execution.state_for_step(self.step)
+        context = ToolContext(
+            run_id=self.step.run_id,
+            home=self.state.layout.home,
+            room=self.state.layout.tool_room("_toolang"),
+            wd=self.state.layout.home,
+            workspaces={name: Path(path) for name, path in captured.workspaces.items()}
+            if isinstance(captured, StatePublication)
+            else {},
+        )
+        resolved = tuple(
+            resolve_tool_path(path, context, workspace=workspace)
+            for workspace, path in paths
+        )
+        pending = execution.runtime_controls(self.step.run_id)
+        known = set(self.state.visible_recalls) | {
+            c.payload.target
+            for c in pending
+            if isinstance(c.payload, RecallControlPayload)
+        }
+        refs = {
+            ref
+            for payload in load_rules(context, resolved, known)
+            for ref in execution.recall(self.step, payload, self.state.visible_recalls)
+        }
+        return {
+            "controls": [str(ref) for ref in sorted(refs, key=lambda ref: ref.index)]
+        }
 
     async def run(self, runnable: str, input: Mapping[str, Any]) -> dict[str, Any]:
         state = self.state

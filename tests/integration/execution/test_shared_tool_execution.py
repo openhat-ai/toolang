@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from toolang.base.errors import ToolFailure
+from toolang.base.types.tool import ToolPreparation
 from tests.support.execution_assertions import (
     assert_replayed,
     assert_run_event_integrity,
@@ -26,6 +28,60 @@ from toolang.execution.store import RunStore
 from toolang.execution.types import ThreadPrefix, ToolStepGiven
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateWatcher
+
+
+@pytest.mark.parametrize("phase", ["prepare", "invoke"])
+def test_preparation_and_invocation_preserve_the_same_failure_receipt(tmp_path, phase):
+    failure = ToolFailure(
+        "invalid path", output={"path": "/missing", "code": "not_found"}
+    )
+
+    class PreparingTool(RecordingTool):
+        def prepare(self, arguments, context):
+            if phase == "prepare":
+                raise failure
+            return ToolPreparation((), lambda: self.invoke(arguments, context))
+
+    tool = PreparingTool("test__work", output={}, error=failure)
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic task() -> Text:\n  context: none\n  user: Task.\n",
+        tools={tool.name: tool},
+        responses=[
+            ModelCallResult(tool_calls=(ToolCall("call", "provider", tool.name, {}),)),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="task",
+                ),
+                tracer=tracer,
+            )
+            assert run.status == "succeeded", run.error
+            step = harness.store.list_steps(run_id=run.id)[1]
+            assert step.status == "failed"
+            assert step.output is not None
+            assert isinstance(step.output.value, ToolResultPart)
+            assert step.output.value.error == "invalid path"
+            assert step.output.value.output == failure.output
+            results = [
+                p
+                for m in harness.adapter.invocations[1].call.messages
+                for p in m.parts
+                if isinstance(p, ToolResultPart)
+            ]
+            assert results == [step.output.value]
+            assert len(tool.calls) == (0 if phase == "prepare" else 1)
+            assert_run_event_integrity(tracer.events)
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
 
 
 @pytest.mark.parametrize("interrupt", [False, True])

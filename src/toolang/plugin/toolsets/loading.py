@@ -8,7 +8,8 @@ from typing import Any, cast
 
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool, Toolset
-from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.base.types.tool import ToolContext, ToolDefinition, ToolPreparation
+from toolang.base.utils.function_tools import prepare_tool
 
 from toolang.plugin.loading import LoadedPlugin, PluginSource, load_plugins_with_sources
 from .registry import (
@@ -46,6 +47,15 @@ class LoadedTool(AgentTool):
             description=definition.description,
             parameters=dict(definition.parameters),
         )
+
+    @property
+    def model_callable(self) -> bool:
+        return getattr(self.leaf_tool, "model_callable", True)
+
+    def prepare(
+        self, arguments: Mapping[str, Any], context: ToolContext
+    ) -> ToolPreparation:
+        return prepare_tool(self.leaf_tool, arguments, context)
 
     async def invoke(
         self,

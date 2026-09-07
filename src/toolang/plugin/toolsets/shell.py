@@ -10,12 +10,13 @@ import locale
 import os
 from pathlib import Path
 import signal
-from typing import Any
+from typing import Any, cast
 
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool, Toolset
-from toolang.base.types.tool import ToolContext
+from toolang.base.types.tool import ToolContext, ToolPath
 from toolang.base.utils.function_tools import create_function_tool, tool
+from toolang.base.utils.paths import resolve_tool_path
 
 DEFAULT_TIMEOUT_SEC = 30
 DEFAULT_MAX_OUTPUT_CHARS = 20_000
@@ -50,16 +51,18 @@ class ShellToolset:
     def _build_tools(self) -> dict[str, AgentTool]:
         @tool(
             name="execute",
-            description="Run one shell command and capture stdout and stderr.",
+            description="Run one shell command and capture stdout and stderr. Optional workspace anchors cwd at that workspace root, including paths starting with /.",
+            prepare=_prepare_cwd,
         )
         async def execute(
             command: str,
             cwd: str | None = None,
             timeout_sec: int = self._timeout_sec,
             max_output_chars: int = self._max_output_chars,
+            workspace: str | None = None,
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            resolved_cwd = _resolve_cwd(cwd, context=context)
+            resolved_cwd = Path(cast(str, cwd))  # Preparation supplies a concrete cwd.
             timeout = _int_value(timeout_sec, default=self._timeout_sec)
             output_limit = _int_value(max_output_chars, default=self._max_output_chars)
             launch = asyncio.create_task(
@@ -127,22 +130,13 @@ def create_toolset(config: Mapping[str, Any]) -> Toolset:
     return ShellToolset(config=dict(config))
 
 
-def _resolve_cwd(raw_cwd: str | None, *, context: ToolContext | None) -> Path:
-    if context is None:
-        raise ToolangError("shell tool context is required")
-    text = str(raw_cwd or "").strip()
-    if not text:
-        return context.wd.resolve()
-    candidate = Path(text).expanduser()
-    if not candidate.is_absolute():
-        candidate = context.wd / candidate
-    resolved = candidate.resolve()
-    root = context.home.resolve()
-    try:
-        resolved.relative_to(root)
-    except ValueError as exc:
-        raise ToolangError(f"shell cwd escapes agent home: {resolved}") from exc
-    return resolved
+def _prepare_cwd(
+    arguments: dict[str, Any], context: ToolContext
+) -> tuple[ToolPath, ...]:
+    value = str(arguments["cwd"] or "").strip() or "."
+    path = resolve_tool_path(value, context, workspace=arguments["workspace"])
+    arguments["cwd"] = str(path.resolved)
+    return (path,)
 
 
 def _int_value(value: object, *, default: int) -> int:

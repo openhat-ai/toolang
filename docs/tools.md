@@ -38,6 +38,11 @@ It provides structured file operations such as:
 - `mkdir`
 - `remove`
 
+`fs` paths and `shell` cwd accept an optional `workspace` name from the published
+State. With that anchor, `/src` means `src` under the workspace root. Without it,
+paths resolve from the tool working directory; overlapping workspace matches
+require an explicit name. Workspace configuration does not expand home access.
+
 
 ## Shell
 
@@ -177,3 +182,19 @@ Content that leaves the view must be picked again; assembly does not restore it.
 Live prefixes cache these revisions, and history recovers them from the same
 saved deltas without reading historical State. Existing record encodings are
 unchanged.
+
+### Honor workspace rules
+
+For model calls to path-aware tools, runtime checks applicable `AGENTS.md` files
+from the workspace root to the target's scope. Missing or changed rules cause a
+runtime-only `_toolang/honor` Step, followed by the original tool's result:
+`error="operation not executed; retry required"`, `output={}`. The next Model Call
+receives separate `<rules>` user messages after the complete tool exchange.
+Only a subsequent retry may execute the operation; current visible rules need
+no honor Step. Honor shares pick's revision, pending-reuse, and visibility rules.
+Confirmed deletion retracts earlier rules; failed reads block the operation.
+
+Honor is registered normally but is neither advertised to nor callable by the
+model. Its results are durable, not orphan ToolResult messages. Preparation and
+execution use the same authorized paths. Initial coverage is explicit fs paths
+and shell cwd, including reads; paths hidden in shell commands are not inspected.
