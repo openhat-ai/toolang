@@ -25,6 +25,7 @@ from ...records import ControlRecord
 from ...types import (
     ControlRef,
     FieldRef,
+    RecallTarget,
     StepNoted,
     StepRef,
 )
@@ -87,6 +88,7 @@ class _AgicState:
     model_calls: int = 0
     tool_calls: int = 0
     tool_call_sources: dict[str, tuple[int, int]] = field(default_factory=dict)
+    visible_recalls: dict[RecallTarget, str] = field(default_factory=dict)
     initial_inputs: tuple[FieldRef, ...] = ()
     claimed_inputs: tuple[ControlRecord, ...] = ()
     repairing_output: bool = False

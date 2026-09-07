@@ -229,7 +229,7 @@ layers.
 
 The frame holds one selected tool mapping and effective Agic routes. Every
 ordinary tool-capable Agic call receives `_toolang__run`,
-`_toolang__execute`, and `_toolang__reload`. `hands` and `handoffs` authorize run and
+`_toolang__execute`, `_toolang__reload`, and `_toolang__pick`. `hands` and `handoffs` authorize run and
 execute targets; they do not select definitions. All tools use plugin registration
 and the same Tool Step lifecycle. A bounded route catalog lists
 the authored routes and resolved union as model hints only when `hands` or

@@ -2897,6 +2897,7 @@ class RunStore:
         facts: dict[
             RunRef, tuple[tuple[StepRecord, ...], dict[ControlRef, ControlRecord]]
         ] = {}
+        recalled: dict[ControlRef, ControlRecord] = {}
 
         def load(
             selected_roots: Sequence[RunRef],
@@ -2908,6 +2909,7 @@ class RunStore:
                 deltas = {}
                 for ref in selected_roots:
                     related = {control.ref: control for control in controls[str(ref)]}
+                    recalled.update(related)
                     selected = active_steps(steps[str(ref)], related)
                     deltas[ref] = tuple(
                         step.given.call.delta
@@ -2930,12 +2932,21 @@ class RunStore:
                 )
             )
 
+        def control(ref: ControlRef) -> ControlRecord:
+            if ref not in recalled:
+                record = self.get_control(target=str(ref.target), index=ref.index)
+                if record is None:
+                    raise ValueError(f"recall control is missing: {ref}")
+                recalled[ref] = record
+            return recalled[ref]
+
         return MessageHistory(
             str(root.thread),
             tuple(RunRef(run.id) for run in roots),
             load,
             tail,
             self.resolve_value,
+            control,
         )
 
     def run_horizon(self, run_id: str) -> FieldRef | None:

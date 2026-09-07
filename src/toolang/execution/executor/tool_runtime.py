@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Literal
 
 from toolang.base.errors import ToolFailure, ToolangError
 from toolang.base.protocols.tool import ToolRuntime
-from toolang.state.state import StatePublication
+from toolang.state.state import StatePublication, entry_ref
+
+from ..records import RecallControlPayload
 
 from ..runnables import (
     AgicRoutes,
@@ -23,11 +26,14 @@ from ..types import (
     FieldRef,
     Local,
     RunRef,
+    SkillRecallTarget,
+    ServiceRecallTarget,
     StepRef,
     TypedRef,
     local_to_protocol_data,
 )
 from .common import _ExecuteCommitted, _ExecutionFailed, _RunRejected
+from .resources import resource_caps
 
 if TYPE_CHECKING:
     from .runs.agic import _AgicState
@@ -51,6 +57,36 @@ class _ToolRuntime(ToolRuntime):
         return await execution.executor.model_reload(
             run_id=self.step.run_id, triggered_by=self.step
         )
+
+    async def pick(self, kind: Literal["skill", "service"], ref: str) -> dict[str, Any]:
+        execution = self.state.execution
+        if execution is None:
+            raise RuntimeError("Agic runtime execution is unavailable")
+        frame = self.state.frame_for_step(*execution.state_for_step(self.step))
+        resources = frame.run.resources
+        if resources is None:
+            raise RuntimeError(f"run resources missing: {self.step.run_id}")
+        cap = next(
+            (
+                cap
+                for cap in resource_caps(
+                    frame.run.state, resources, module=frame.run.module
+                )
+                if cap.kind == kind
+                and entry_ref(cap, agent_name=self.state.layout.name) == ref
+            ),
+            None,
+        )
+        if cap is None:
+            raise ToolangError(f"{kind} is not in the available catalog: {ref}")
+        content = cap.read_content()
+        payload = RecallControlPayload(
+            SkillRecallTarget(ref) if kind == "skill" else ServiceRecallTarget(ref),
+            sha256(content.encode("utf-8")).hexdigest(),
+            content,
+        )
+        controls = execution.recall(self.step, payload, self.state.visible_recalls)
+        return {"controls": [str(ref) for ref in controls]}
 
     async def run(self, runnable: str, input: Mapping[str, Any]) -> dict[str, Any]:
         state = self.state

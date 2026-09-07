@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from ..types.tool import ToolContext, ToolDefinition
 
@@ -18,6 +18,10 @@ class ToolRuntime(Protocol):
     ) -> dict[str, Any]: ...
 
     async def reload(self) -> dict[str, Any]: ...
+
+    async def pick(
+        self, kind: Literal["skill", "service"], ref: str
+    ) -> dict[str, Any]: ...
 
 
 @runtime_checkable
