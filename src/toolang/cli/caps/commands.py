@@ -7,11 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal
 
-import click
 import typer
 from typer.core import TyperGroup
 
 from toolang.base.utils import typer_compat
+from toolang.cli.common.editor import edit_markdown
 from ...catalog import templates
 from ...catalog.errors import CatalogConflictError
 from ...common.layout import AgentLayout
@@ -288,10 +288,8 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             name=name,
         ):
             raise typer_compat.ClickException(f"{title} {name} already exists")
-        text = click.edit(
+        text = edit_markdown(
             templates.render_template(kind, template, name=name, agent_name=agent_name),
-            extension=".md",
-            require_save=True,
         )
         if text is None:
             typer.echo("No changes")
@@ -327,11 +325,7 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             text = existing.content
         except FileNotFoundError as exc:
             raise typer_compat.ClickException(f"{title} {name} not found") from exc
-        updated_text = click.edit(
-            text,
-            extension=".md",
-            require_save=True,
-        )
+        updated_text = edit_markdown(text)
         if updated_text is None or updated_text == text:
             typer.echo("No changes")
             raise typer.Exit()

@@ -7,11 +7,11 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Annotated, Literal, cast
 
-import click
 import typer
 from typer.core import TyperCommand
 
 from toolang.base.utils import typer_compat
+from toolang.cli.common.editor import edit_markdown
 from ....catalog import templates
 from ....catalog.types import JobStage
 from toolang.common.layout import AgentLayout
@@ -270,10 +270,8 @@ def _new(kind: JobKind, _title: str) -> Callable[..., None]:
         ] = False,
     ) -> None:
         agent = require_prefix_agent(ctx)
-        text = click.edit(
+        text = edit_markdown(
             templates.render_template(kind, "default", agent_name=agent),
-            extension=".md",
-            require_save=True,
         )
         if text is None:
             raise typer.Exit()
@@ -324,7 +322,7 @@ def _edit(kind: JobKind, title: str) -> Callable[..., None]:
         if existing is None:
             raise typer_compat.ClickException(f"{kind} not found: {id}")
         text = existing.content
-        updated = click.edit(text, extension=".md", require_save=True)
+        updated = edit_markdown(text)
         if updated is None:
             raise typer.Exit()
         document = user_call(
