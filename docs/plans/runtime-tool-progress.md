@@ -2,28 +2,38 @@
 
 Status: proposed feature definition; implementation requires approval.
 
-## Goal and boundaries
+## Goal and call ownership
 
-Make runtime preparation observable through the toolset/runtime result protocol.
-Tools supply wording and useful facts; progress owns markers and presentation.
-Keep existing Steps, events, Store schema, controls, and ModelCall assembly.
-This PR defines the feature; it does not implement it.
+Show runtime work clearly without changing which ToolResults the model receives.
+Only workspace-rules preflight needs a synthetic result and special visibility.
 
-Current tool outputs already accept JSON objects, including structured
-`ToolFailure.output`. Existing `given.summary` and `noted.summary` carry wording.
-Use those channels; add no retry flag, event field, or separate progress log.
+| Call | Initiator | ModelCall assembly | Progress |
+| --- | --- | --- | --- |
+| pick / reload | Model | Normal ToolCall and ToolResult; controls keep their existing effects | Normal tool presentation, customized wording/marker |
+| compact | Runtime, before a Model Call | No compact ToolCall/ToolResult; compact control updates horizon | Normal tool presentation, customized wording/marker and elapsed time |
+| honor | Runtime, before a workspace operation | No honor ToolCall/ToolResult; recall controls supply rules | Show honor with customized wording/marker |
+| Blocked workspace call | Model; result supplied by preflight | Preserve the original ToolCall and supply a non-error retry notice | Hide this synthetic exchange |
+| A later workspace retry | Model, if it chooses to retry | Normal ToolCall and ToolResult | Normal tool presentation |
 
-## Result protocol
+Keep pick/reload/compact result contracts unchanged. Do not introduce a common
+runtime-result envelope. Keep run/execute presentation, Steps, events, Store
+schema, and ModelCall assembly mechanisms. No visibility settings, metric
+redesign, general plugin summary API, or fs wording sweep in this implementation.
+This PR defines the feature only.
 
-Define the shared contract in `toolang/base`. Reserve qualified result types
-`_toolang/honor`, `_toolang/pick`, `_toolang/reload`, `_toolang/compact`, and
-`_toolang/preflight`. These are ordinary ToolResult output objects, distinguishable
-from application data without parsing error text or correlating adjacent Steps:
+## Honor preflight result
+
+Keep the current order: path check, honor, then answer the blocked workspace call.
+Runtime must persist or reuse the applicable recall controls before returning the
+notice. The workspace operation has not executed, and runtime does not retry it.
+
+Define only this special output in the toolset/runtime protocol in `toolang/base`:
 
 ```json
 {
   "type": "_toolang/preflight",
-  "summary": "Workspace rules reloaded; retry required",
+  "tool_call_id": "<blocked-workspace-call-id>",
+  "message": "Workspace rules reloaded; retry required",
   "controls": [
     {
       "ref": "<recall-control-ref>",
@@ -35,56 +45,46 @@ from application data without parsing error text or correlating adjacent Steps:
 }
 ```
 
-All five results use `type`, `summary`, and `controls`. Each controls entry has a
-serialized ControlRef in `ref`, plus the facts below. Runtime captures these facts
-while performing the operation; progress needs no Store, State, or plugin reads.
+The internal honor invocation receives the original workspace tool_call_id and
+returns this receipt. Runtime uses it as the original workspace ToolResult's
+output, preserving that call's name and identity. Honor's own result remains
+internal. The extra ID lets progress identify the blocked call before its begin
+event; it is not a new Step/control relationship field.
 
-| Result | Facts accompanying each control ref |
-| --- | --- |
-| honor / preflight | `workspace`, root-relative rules scope `path`, `revision` |
-| pick | `kind` (skill/service), `resource` (exact catalog ref), `revision` |
-| reload | `state` revision |
-| compact | `thread`, `begin`, `end`, `output` (compact output reference) |
+Use `error=None`: successful preflight is not a tool failure. Under the existing
+result lifecycle, delivery of the synthetic result ends its Step successfully;
+this means a protocol reply was delivered, not that the workspace operation ran.
+The qualified type identifies the protocol; do not infer it from error text.
 
-Only created or reused controls appear in receipts. Honor reports actual recalled
-scopes, not the original file-access paths; revision `0` denotes removal. Resource
-content stays in recall controls and is not copied into result metadata. Empty
-controls are valid for no-ops; the tool supplies the corresponding summary.
-Run/execute retain their existing result contracts and structural presentation.
-
-### Preflight ordering
+Control refs must already exist. Workspace/path identify actual recalled rules
+scopes, not the attempted access path; revision `0` denotes removal. Content stays
+in recall controls rather than being copied into the notice. Controls become
+visible through existing adoption and message assembly, not through progress.
 
 ```text
-path check -> honor -> persist/reuse recall controls -> honor result
-           -> original call returns preflight result; operation not executed
-           -> next model call receives tool result and recalled rules
-           -> model applies rules and issues the appropriate next call
+Execution                              Model messages / binding
+honor -> durable recall controls       (no honor tool exchange)
+workspace call -> synthetic result     tool: Workspace rules reloaded; retry required + refs
+next Model Call adopts recalls         user: <rules ...>...</rules>
+model may issue another workspace call assistant: workspace tool call
+workspace operation executes           tool: actual result
 ```
 
-Runtime returns the tagged preflight output on the blocked original call only
-after successful honor. Its recall controls must already be durable and available
-for the existing next-call adoption path; receipt creation is not adoption.
-Use the existing structured failure channel to keep
-`ToolResult.error = "operation not executed; retry required"` alongside the
-preflight output. Preserve call identity, failed Step status, and tool/user
-message ordering. The original operation does not execute automatically.
+Honor failure/cancellation is not this successful-preflight receipt. Keep the
+real failure visible and preserve existing interruption behavior. Do not create
+a success notice when recall or result delivery fails.
 
-Failure/cancellation is not a normal preflight result. Preserve real errors and
-any receipts already produced without claiming successful recovery. The protocol
-reports completed runtime work; receiving an object does not authorize new
-access or trigger another recall. Neither error-text matching nor progress
-presentation determines execution behavior.
+## Presentation
 
-## Tool-owned wording
+Use existing tool lifecycle rendering in Script and Chat, including normal
+results for pick/reload/compact. No new receipt format or special result
+projection for those calls. Internal runtime results being visible to humans
+does not make them model messages.
 
-Add an optional tool `summary(arguments, status)` hook through the existing
-plugin/factory wrappers. Use it for active, failed, and canceled wording and as
-the success fallback. Successful results and normal preflight use their returned
-`summary`; actual failure/cancel takes precedence even when output exists.
-Runtime stores these strings in the existing given/noted summaries. Tools without
-the hook retain the generic fallback; projection never loads a plugin.
-The hook only formats original call arguments, preserving logical workspace
-paths and excluding secrets; it does not perform resource reads or operations.
+Runtime tools own their wording; put it in the existing given/noted summaries.
+Keep this customization local to runtime tools and the existing executor summary
+path, without extending every plugin/factory. Progress owns markers, tones,
+wrapping, and elapsed-time decoration.
 
 | Tool | Active wording | Successful wording |
 | --- | --- | --- |
@@ -92,73 +92,67 @@ paths and excluding secrets; it does not perform resource reads or operations.
 | pick | `Loading skill guidance: <ref>...` | `Loaded skill guidance: <ref>` |
 | reload | `Reloading agent state...` | `Reloaded agent state` |
 | compact | `Compacting thread history` | `Compacted thread history` |
-| fs read | `Reading <path>...` | `Read <path>` |
-| fs write | `Writing <path>...` | `Wrote <path>` |
 
-Pick substitutes service where appropriate. Tools append relevant targets or
-no-op wording themselves. Honor reloading includes changed and removed rules;
-reload already waits for adoption. Picking service guidance does not connect it.
-Provide concise wording in the runtime and fs toolsets, not an English-inflection
-engine or a tool-name-to-sentence table in the executor or renderer.
+Pick uses service guidance where appropriate. Failed/canceled operations keep
+their actual reasons and status wording. Use `✧` for these runtime rows, retaining
+ordinary tool `•`, root footer `∎`, and existing run/execute boundaries.
 
-Progress adds `✧` to runtime rows and retains `•` for ordinary tools and `∎`
-for root footers. It owns tone, wrapping, layout, and elapsed-time decoration;
-tool summaries contain no marker, ANSI styling, or elapsed clock.
+### Hide only the synthetic workspace exchange
 
-## Progress and lifecycle
+On successful honor StepEnd, read its receipt and remember the blocked call ID
+within that Run. This event precedes the blocked workspace StepBegin. Suppress
+that call's live activity, terminal rows, result panel, and layout gaps; show the
+honor row instead. No second notice or failed-workspace label appears.
 
-Show all runtime calls in Script and Chat. Keep run/execute's existing structural
-presentation; do not add duplicate rows for their receipts. Add no visibility
-option, filtering mode, CLI flag, or environment setting. Recognized preflight
-is a visible neutral protocol outcome, not a red failure. Errors and cancellation
-remain visible.
+Keep normal event bookkeeping, counts, and error ownership. Runtime still records
+the synthetic Step/result for assembly, replay, and inspection. Clear the one-call
+match when the exchange ends, or when the Run ends. A real
+failure/cancellation overrides suppression. Unknown/mismatched results retain
+ordinary diagnostics; never hide a real call merely because its text matches.
+A later model-issued retry is a separate call and displays normally. No retry
+means no workspace-operation row.
 
-Before a result exists, classify the known runtime calls by exact tool name.
-An ordinary call starts with its tool's active summary. If it returns preflight,
-replace that live row with the neutral preflight summary rather than a failed
-operation label.
+```text
+✧ Reloaded workspace rules
+• Executed write workspace://repo/hello.txt   # only if the model later retries
+```
 
-Runtime rows are plain and unboxed, showing supplied summary and target/ref
-details without dumping receipt JSON; inspection retains the complete output.
-Unknown results use ordinary presentation. Preserve Step bookkeeping, counts,
-error-reference ownership, and parallel lanes. A real terminal failure must not
-lose its explanation.
+No new event field, begin flag, adjacency inference, or Store lookup is needed.
+Recorded honor results provide the same correlation during progress replay.
 
-Show compact immediately on StepBegin. In TTY/Chat, refresh its elapsed time once
-per second using its own start time, including permit waiting; stop at StepEnd or
-presenter close. Reuse timestamps, duration formatting, Chat's ticker, and one
-Script refresh loop. Timer ticks create neither events nor scrollback. Non-TTY
-prints one start and one terminal line. No heartbeat, phase estimate, or internal
-compact-Run trace; terminal success/failure/cancel retains total duration.
+### Compaction elapsed time
 
-Keep one shared runtime instruction, independent of authored instruct and fs
-selection: apply recalled rules and continue directly without narrating routine
-recovery; explain real blockers, material constraints, or details the user asks
-about. Preserve scope/revision semantics and the effective-tools/output-repair
-gate. Never filter model-authored text.
+Show compact immediately at StepBegin, even before the first Model Step.
+Refresh its own elapsed time once per second in TTY/Chat, including permit
+waiting, until StepEnd or presenter close. Reuse timestamps, duration formatting,
+Chat's ticker, and one Script refresh loop. Non-TTY prints start and end only.
+No heartbeat, phase estimate, or compact-program events in the caller's progress.
+
+Keep runtime instructions concise: apply recalled rules and continue directly;
+do not narrate routine preflight recovery. Report real blockers and material
+constraints. Preserve rule scope/revision semantics, tool/repair gating, and
+model-authored text.
 
 ## Implementation and acceptance
 
-1. Add the small result contract and optional summary hook in `toolang/base`;
-   forward the hook through tool loading/function-tool wrappers. Plugins depend
-   only on base, not execution records or progress.
-2. Update `execution/tools/runtime.py`, `executor/tool_runtime.py`, and
-   `executor/steps/tool.py` to return factual receipts and tagged preflight via
-   the existing ToolResult path. Adjust compact/reload receipt producers only
-   as needed. No new schema, Step kind, control kind, or retry mechanism.
-3. Add runtime/fs wording and consolidate preflight instructions in
-   `executor/prepare.py` and `executor/prompts/`.
-4. Extend shared `cli/common/execution_progress/` projection and Script/Chat
-   presenters for receipt rendering and compact refresh.
-5. Test actual honor/retry, pick, reload, and compact results, including no-op,
-   changed/removed rules, recall failure, and cancellation. Verify controls exist
-   before receipts, metadata matches their targets, and the first blocked attempt
-   has no side effect. Ordinary errors with identical retry text stay visible.
-6. Round-trip outputs through existing records/events and replay progress without
-   resource reads. Test that every runtime operation is visible, tool-owned wording,
-   unchanged run/execute/counts, narrow/parallel output, and fake-clock cleanup.
-   Verify result/recall-message ordering, protocol injection, and unfiltered model
-   text. Run ruff check/format, ty, and the complete offline pytest suite.
+1. Define the single preflight output contract in base. Update only honor's
+   internal arguments/result and the blocked-result path in
+   `execution/tools/runtime.py`, `executor/tool_runtime.py`, and
+   `executor/steps/tool.py`. Preserve independent compact execution.
+2. Supply runtime-owned summaries through the existing summary path; customize
+   markers and honor suppression in `cli/common/execution_progress/`.
+   Integrate compact refresh in the existing Script/Chat presenters.
+3. Update the bundled preflight directions for a non-error notice. Test effective
+   model requests: pick/reload results present; honor/compact exchanges absent;
+   workspace notice present; recalls and horizon applied through existing controls.
+4. Test one successful honor with durable refs before the synthetic reply, correct
+   rule scopes/revisions, and no first-attempt side effect. Cover model retry,
+   changed retry arguments, no retry, multiple workspaces, and parallel Runs.
+5. Test complete suppression from StepBegin without a flash, unchanged later tool
+   rendering, and visible recall/delivery failure or cancellation. Round-trip
+   receipts through existing codecs and reproduce progress without resource reads.
+   Verify normal runtime outputs, counts, run/execute boundaries, and fake-clock
+   refresh/cleanup. Run ruff check/format, ty, and the full offline pytest suite.
 
-Model compliance with quiet recovery remains instruction-dependent. Human
-approval of this scope precedes implementation.
+Approval is required before implementation. The important boundary is that
+presentation never determines model history or whether an operation executes.
