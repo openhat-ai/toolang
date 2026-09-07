@@ -26,6 +26,10 @@ URIs, #495, and AgentState snapshots, #496):
   expose neither those rule effects nor an explicit original-call/preflight link.
 - Preflight-required retries use the same failed Tool Step/error channel as real
   tool failures. A summary alone cannot safely distinguish the two for rendering.
+- `prompts/instruct.default.md` and `prompts/filesystem.md` already tell the model
+  to follow recalled rules and retry, but do not constrain retry narration.
+  Authored instructions can replace the default; filesystem guidance is injected
+  only when fs tools are selected, leaving shell-only custom instructions uncovered.
 - Compact waits and runs an independent program without forwarding its internal
   events to the caller's progress. Receipts identify controls, not their adoption.
 - Script's Live area currently refreshes only on updates (`auto_refresh=False`).
@@ -45,10 +49,11 @@ with immediate visibility and elapsed-time refresh independent of event arrival.
 Add typed preflight provenance and honor result facts to existing Step payloads,
 so routine protocol retries can be hidden without hiding real failures. This
 includes event/record codecs and the Store schema-version update required for the
-changed encoding. Preserve
-execution behavior, Step kinds/statuses, tool result contracts, controls, model
-messages, CLI flags, and operational startup/shutdown progress. Inspection retains
-complete results and can expose the new facts.
+changed encoding. Preserve execution behavior, Step kinds/statuses, tool result
+contracts, controls, message ordering, CLI flags, and operational startup/shutdown
+progress. Extend model-facing runtime instructions so routine preflight recovery
+proceeds without narration. Inspection retains complete results and can expose
+the new facts.
 
 ### Classification
 
@@ -197,6 +202,54 @@ Illustrative committed trace (synthetic resource names; timing omitted):
 • <next assistant response>
 ```
 
+### Model-facing preflight protocol
+
+Hiding the protocol result does not prevent the model from narrating its retry.
+The model must understand preflight because it still issues the subsequent call;
+making recovery invisible to the model would require a different execution design.
+Require direct continuation through runtime instructions, without filtering or
+rewriting model-authored text in progress.
+
+Add one bundled `executor/prompts/preflight.md` block with this contract:
+
+```text
+<workspace-preflight>
+- Runtime owns workspace-rule discovery and recall. Its normal preflight reply,
+  "operation not executed; retry required", means the requested action has not
+  run. Consume the accompanying rules before continuing.
+- Rules apply to their named workspace and relative directory; more specific
+  scopes refine ancestor rules. Later revisions replace earlier ones for the
+  same target; revision "0" retracts that target's earlier content.
+- Apply the rules, adjust the intended call when needed, and issue the next
+  appropriate tool call directly. Do not repeat an action the rules prohibit.
+- Treat successful preflight recovery as internal execution bookkeeping. Do not
+  narrate rule loading or retrying, ask the user to retry, or restate internal
+  rules in commentary or the final answer merely because preflight occurred.
+- Explain a rule or preflight detail when the user explicitly asks, when it
+  materially changes the requested outcome, or when a real blocker or required
+  user decision prevents continuation. Report actual failures accurately.
+- This recovery applies only to the normal runtime preflight reply. Rule-loading
+  failures, cancellation, and ordinary tool errors are not this signal. Never
+  infer that an uncertain operation had no effects or blindly repeat a write.
+</workspace-preflight>
+```
+
+Append this block once through `prepare.py`'s `runtime_instructions` whenever
+tools are selected, independently of fs selection, runnable routes, or authored
+`instruct` templates (including `instruct: none`). Retain `_model_instructions`'s
+existing effective-tool/repair gate. Remove the duplicated preflight directions
+from `instruct.default.md` and `filesystem.md`; keep their unrelated guidance.
+Honor remains runtime-only and absent from model tool definitions. Preserve the
+blocked ToolResult payload, original exchange before recalled rule messages, and
+control adoption; add no model-facing execution metadata or automatic tool replay.
+
+For the reported write, the intended trace has the runtime rule-loading row,
+then the actual write and its result. The model silently applies the directory's
+logging exemption; it does not insert an explanation of that exemption or a
+"retrying the write" message. Ordinary task commentary remains allowed. This is
+an instruction-level behavior requirement, not a guarantee that every provider
+will comply; scripted adapters cannot demonstrate real-model adherence.
+
 ### Long-running compaction
 
 Compact must remain observable throughout a long event-free interval:
@@ -297,6 +350,10 @@ Unless qualified, source filenames below belong to
   carry the exact honor reference/verdict into the original call and preserve
   facts through finish/cancel in `src/toolang/execution/executor/steps/tool.py`.
   Reuse `rules.py` discovery without changing recalls, retries, or adoption.
+- [ ] Add the preflight protocol in `src/toolang/execution/executor/prompts/preflight.md`,
+  inject it through `prepare.py`, and remove its duplicated instructions from
+  `prompts/instruct.default.md` and `prompts/filesystem.md`. Preserve the existing
+  `steps/model.py` gate and tool/result/recall assembly contracts.
 - [ ] Integrate lifecycle and lane rendering in `step_projection.py` and
   `projector.py`; retain run/execute ownership and ordering. Update marker-aware
   hanging-prefix handling in `formatting.py` for `✧`, including parallel lanes.
@@ -330,6 +387,9 @@ Cover codecs/schema policy in `tests/unit/execution/test_events.py`,
 `test_store_schema.py`, and `test_tool_step_summary.py`.
 Reuse scenarios/harnesses from `tests/integration/execution/test_pick_guidance.py`,
 `test_honor_rules.py`, and `test_compact_scenarios.py` without changing behavior.
+Cover protocol loading/preparation in `tests/unit/execution/test_executor_prompts.py`
+and `test_executor_prepare.py`; verify effective requests and message ordering in
+`tests/integration/execution/test_model_assembly.py` and `test_honor_rules.py`.
 
 ## Acceptance criteria
 
@@ -351,7 +411,8 @@ Reuse scenarios/harnesses from `tests/integration/execution/test_pick_guidance.p
    empty gaps. Rule-loading failure produces a blocked notice with real errors.
    Identical error text from an ordinary tool remains a failure. Assert explicit
    correlation for batches, multiple paths, and repeated honors sharing controls.
-   No operation runs before model retry; protocol results/messages stay unchanged.
+   No operation runs before model retry; protocol results and recall messages
+   stay unchanged.
    A model that never retries produces no phantom tool activity. Cancellation,
    missing results, and unexpected failures after a silent StepBegin remain
    visible, including Run/Flow errors pointing to a previously suppressed result.
@@ -383,6 +444,16 @@ Reuse scenarios/harnesses from `tests/integration/execution/test_pick_guidance.p
    presentation. Invalid cross-Run/forward preflight references are rejected;
    absent optional facts fall back safely. Incompatible Store versions are
    rejected without modification under the existing schema policy.
+9. Effective model requests contain one preflight protocol block for default,
+   custom, and `none` instructions, including fs-only and shell-only selections
+   and agents without runnable routes. Disabled-tool/output-repair requests retain
+   their existing runtime-instruction gate. Assert the direct-continuation and
+   disclosure exceptions, unchanged ToolResult/rule-message order, and honor's
+   absence from advertised tools. A scripted rules-exemption/write sequence
+   performs no first-attempt side effect and executes the appropriate subsequent
+   call once. Preserve any actual model text; do not enforce silence with a text
+   filter. Keep provider adherence checks optional and opt-in, separate from
+   deterministic protocol/assembly acceptance tests.
 
 ## Risks and open questions
 
@@ -392,7 +463,9 @@ run output, and double-counting nested work. Typed execution-owned facts, unchan
 protocol replies, and interruption/batch acceptance cases address these. The Store
 version change also requires a coordinated runtime/client upgrade; this definition
 does not authorize migrating or deleting existing user data.
+Prompt instructions reduce routine narration but cannot guarantee model silence;
+they must not conceal material constraints or real failures.
 
 No blocking design question remains. Human confirmation is required for this
-proposed display grammar, execution metadata, Store-version impact, and count
-split before implementation.
+proposed display grammar, model protocol instructions, execution metadata,
+Store-version impact, and count split before implementation.
