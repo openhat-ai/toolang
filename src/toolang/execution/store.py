@@ -116,7 +116,7 @@ from .schemas import Record, RecordSelection, select_record
 from .thread_view import ThreadView, _ThreadProjection
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 41
+_SCHEMA_VERSION = 42
 _SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -2882,6 +2882,7 @@ class RunStore:
                 delta=delta if delta is not None else literal_delta(call.messages),
                 recall=recall,
                 tools=toolset_ref,
+                max_output_tokens=call.max_output_tokens,
                 output_schema=(
                     dict(call.output_schema) if call.output_schema is not None else None
                 ),
@@ -3064,6 +3065,7 @@ class RunStore:
                     instructions=instructions,
                     messages=assemble_messages(far, near, messages, call.recall),
                     tools=toolsets[call.tools] if call.tools is not None else (),
+                    max_output_tokens=call.max_output_tokens,
                     output_schema=dict(call.output_schema)
                     if call.output_schema is not None
                     else None,

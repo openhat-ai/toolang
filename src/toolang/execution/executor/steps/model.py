@@ -32,11 +32,13 @@ from toolang.base.types.run import (
     ToolCall,
 )
 from toolang.base.types.tool import ToolDefinition
+from toolang.base.errors import ToolangError
 from toolang.common.time import elapsed_ms, utc_now
 from toolang.state.state import AgentState, StatePublication
 
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
 from ...assembly import assemble_messages
+from ...records import ControlRecord
 from ...types import (
     Local,
     ModelStepGiven,
@@ -47,7 +49,10 @@ from ...types import (
     ErrorMessage,
     FieldRef,
     StepRef,
+    RunRef,
 )
+from .._messages import _MessageBuffer
+from ..budget import message_tokens
 from ..common import _StepFailed, control_local_pointer
 from ..diagnostics import log_model_request, log_model_result, log_model_target
 from ..limits import _ModelAccounting
@@ -58,6 +63,110 @@ if TYPE_CHECKING:
     from ..runs.agic import _AgicState
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class _NeedsCompact(Exception):
+    def __init__(self, end: RunRef) -> None:
+        self.end = end
+
+
+def _candidate(
+    state: _AgicState,
+    agent_state: AgentState | StatePublication,
+    state_ref: ControlRef,
+) -> tuple[_AgicFrame, _MessageBuffer, tuple[ControlRecord, ...], ModelCall]:
+    prepared = state.frame_for_step(agent_state, state_ref)
+    state.claimed_inputs = (*state.claimed_inputs, *state.pending_inputs())
+    recalled = (
+        state.execution.runtime_controls(prepared.run.run_id, refresh=False)
+        if state.execution is not None
+        else ()
+    )
+    preceding = tuple(
+        sorted((*state.claimed_inputs, *recalled), key=lambda control: control.index)
+    )
+    messages = state.messages.copy()
+    if not messages.started:
+        messages.initialize(prepared.messages)
+    elif prepared.prompt_context:
+        messages.append(Message.user(prepared.prompt_context))
+    if (
+        not messages.started
+        and state.execution is not None
+        and "near" in prepared.recall
+    ):
+        messages.prepend(*state.execution.message_history().tail(prepared.run.horizon))
+    for control in preceding:
+        messages.append_control(control)
+    request = ModelCall(
+        instructions=_model_instructions(state, prepared),
+        messages=assemble_messages(
+            prepared.far, prepared.near, messages.messages, prepared.recall
+        ),
+        tools=_model_tools(prepared)
+        if prepared.model.tools and not state.repairing_output
+        else (),
+        output_schema=deepcopy(state.output_binding.output_schema),
+        continuation=state.continuation,
+        max_output_tokens=prepared.output_budget,
+    )
+    return prepared, messages, preceding, request
+
+
+def _estimate_binding(prepared: _AgicFrame) -> object:
+    return (
+        prepared.model,
+        prepared.run.state.revision,
+        prepared.run.horizon,
+        prepared.recall,
+    )
+
+
+def _boundary(
+    state: _AgicState, prepared: _AgicFrame, request: ModelCall
+) -> RunRef | None:
+    budget = prepared.input_budget
+    if (
+        budget is None
+        or state.estimate.count(request, _estimate_binding(prepared)) <= budget
+    ):
+        return None
+    execution = state.execution
+    if (
+        execution is None
+        or prepared.run.thread.startswith("compact_")
+        or "near" not in prepared.recall
+    ):
+        raise ToolangError(
+            "model input exceeds its budget; no compactable near history"
+        )
+    roots = execution.message_history().near_roots(prepared.run.horizon)
+    if len(roots) < 2:
+        raise ToolangError(
+            "model input exceeds its budget; fixed content, now, or required near cannot be compacted"
+        )
+    retained = 0
+    end = roots[-1][0]
+    # Reserve at most half of the input budget for near; always retain its last
+    # historical root. Advance at least one root when compaction is necessary.
+    for index in range(len(roots) - 1, 0, -1):
+        root, messages = roots[index]
+        size = sum(message_tokens(message) for message in messages)
+        if index != len(roots) - 1 and retained + size > budget // 2:
+            break
+        retained += size
+        end = root
+    return end
+
+
+def compaction_boundary(state: _AgicState) -> RunRef | None:
+    """Reprepare after admission without committing a Step or consuming deltas."""
+    if state.execution is None:
+        raise RuntimeError("Agic runtime execution is unavailable")
+    prepared, _messages, _controls, request = _candidate(
+        state, *state.execution.state_snapshot()
+    )
+    return _boundary(state, prepared, request)
 
 
 @dataclass(slots=True)
@@ -90,46 +199,16 @@ async def execute(state: _AgicState) -> ModelCallResult:
         state_ref: ControlRef,
     ) -> StepBegin:
         nonlocal prepared, request, next_messages
-        prepared = state.frame_for_step(agent_state, state_ref)
-        # Claims survive discarded preparation; adoption clears them after commit.
-        state.claimed_inputs = (*state.claimed_inputs, *state.pending_inputs())
-        recalled = (
-            state.execution.runtime_controls(run.run_id, refresh=False)
-            if state.execution is not None
-            else ()
+        prepared, next_messages, preceding, request = _candidate(
+            state, agent_state, state_ref
         )
-        preceding = tuple(
-            sorted(
-                (*state.claimed_inputs, *recalled), key=lambda control: control.index
-            )
+        canceling = state.execution is not None and bool(
+            state.execution.pending_controls(run.run_id, "cancel")
         )
-        next_messages = state.messages.copy()
-        if not next_messages.started:
-            next_messages.initialize(prepared.messages)
-        elif prepared.prompt_context:
-            next_messages.append(Message.user(prepared.prompt_context))
-        if (
-            not next_messages.started
-            and state.execution is not None
-            and "near" in prepared.recall
-        ):
-            history = state.execution.message_history()
-            next_messages.prepend(*history.tail(prepared.run.horizon))
-        for control in preceding:
-            next_messages.append_control(control)
-        request = ModelCall(
-            instructions=_model_instructions(state, prepared),
-            messages=assemble_messages(
-                prepared.far, prepared.near, next_messages.messages, prepared.recall
-            ),
-            tools=(
-                _model_tools(prepared)
-                if prepared.model.tools and not state.repairing_output
-                else ()
-            ),
-            output_schema=deepcopy(state.output_binding.output_schema),
-            continuation=state.continuation,
-        )
+        if interruption is None and not canceling:
+            boundary = _boundary(state, prepared, request)
+            if boundary is not None:
+                raise _NeedsCompact(boundary)
         return StepBegin(
             step=StepRef.from_local(run.run_id, (step_index,)),
             kind="model",
@@ -172,6 +251,26 @@ async def execute(state: _AgicState) -> ModelCallResult:
     while True:
         try:
             await state.start_step(begin_step)
+        except _NeedsCompact as needed:
+            identity = f"compact_{run.run_id}_{state.next_step}"
+            result = await tool_step.execute(
+                state,
+                ToolCall(
+                    tool_call_id=identity,
+                    call_id=identity,
+                    name="_toolang__compact",
+                    input={"thread": run.thread, "begin": None, "end": str(needed.end)},
+                ),
+                trigger="runtime",
+            )
+            if result.error:
+                raise _StepFailed(
+                    StepRef.from_local(run.run_id, (state.next_step - 1,)),
+                    ToolangError(result.error),
+                )
+            step_index = state.next_step
+            stream = _ModelStream(step=step_index)
+            continue
         except asyncio.CancelledError as exc:
             interruption = exc
             if state.execution is None:
@@ -227,6 +326,12 @@ async def execute(state: _AgicState) -> ModelCallResult:
             current = await prepared.adapter.invoke(prepared.model, request)
         _validate_stream_result(stream, current)
         output = await _emit_response_parts(state, stream, current)
+        if prepared.input_budget is not None:
+            state.estimate.observe(
+                request,
+                _estimate_binding(prepared),
+                current.usage.input_tokens if current.usage else None,
+            )
     except asyncio.CancelledError:
         await _end_incomplete(state, stream)
         raise

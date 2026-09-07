@@ -194,6 +194,12 @@ def generate_content_payload(
         request.output_schema,
         native_schema=native_schema,
     )
+    if request.max_output_tokens is not None:
+        generation = dict(
+            cast(Mapping[str, object], payload.get("generationConfig", {}))
+        )
+        generation["maxOutputTokens"] = request.max_output_tokens
+        payload["generationConfig"] = generation
     return payload
 
 

@@ -68,6 +68,7 @@ def test_model_call_payload_uses_output_schema_and_compact_cont_key() -> None:
         "tools": [],
         "output_schema": {"type": "boolean"},
         "cont": {"cursor": "next"},
+        "max_output_tokens": None,
     }
     assert model_call_from_data(data) == call
 

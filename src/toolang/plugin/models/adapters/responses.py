@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import Any, cast
 
 from toolang.base.errors import ToolangError
@@ -308,10 +309,20 @@ def response_payload(
     previous_response_id = (
         continuation.get("previous_response_id") if stateful else None
     )
+    had_previous_response = bool(previous_response_id)
     baseline_count = continuation.get("baseline_count") if stateful else None
-    message_offset = (
-        baseline_count if isinstance(baseline_count, int) and baseline_count >= 0 else 0
-    )
+    message_offset = 0
+    if (
+        isinstance(baseline_count, int)
+        and 0 <= baseline_count <= len(request.messages)
+        and continuation.get("prefix")
+        == _context_prefix(request, request.messages[:baseline_count])
+    ):
+        message_offset = baseline_count
+    else:
+        # Compaction or a changed binding must not inherit the provider's old
+        # context, even when the number of selected messages stays unchanged.
+        previous_response_id = None
     messages = (
         request.messages[message_offset:] if previous_response_id else request.messages
     )
@@ -321,7 +332,7 @@ def response_payload(
             instructions=instructions,
             messages=messages,
             include_instructions=not bool(previous_response_id),
-            replay_tool_items=not stateful or bool(previous_response_id),
+            replay_tool_items=not stateful or had_previous_response,
         ),
     }
     if request.tools:
@@ -337,6 +348,8 @@ def response_payload(
         native_schema=native_schema,
     )
     _apply_reasoning(payload, target.reasoning)
+    if request.max_output_tokens is not None:
+        payload["max_output_tokens"] = request.max_output_tokens
     return payload
 
 
@@ -647,11 +660,28 @@ def response_continuation(
     response_id = getattr(response, "id", None)
     if not isinstance(response_id, str) or not response_id.strip():
         return None
+    messages = [*request.messages]
+    if emitted_message is not None:
+        messages.append(emitted_message)
     return {
         "previous_response_id": response_id,
-        "baseline_count": len(request.messages)
-        + (1 if emitted_message is not None else 0),
+        "baseline_count": len(messages),
+        "prefix": _context_prefix(request, messages),
     }
+
+
+def _context_prefix(request: ModelCall, messages: Sequence[Message]) -> str:
+    data = {
+        "instructions": request.instructions,
+        "messages": [message.to_data() for message in messages],
+        "tools": [tool.to_data() for tool in request.tools],
+        "output_schema": request.output_schema,
+    }
+    return sha256(
+        json.dumps(
+            data, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
 
 
 def response_usage(response: Any) -> ModelUsage | None:

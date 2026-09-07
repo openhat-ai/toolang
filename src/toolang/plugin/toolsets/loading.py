@@ -81,14 +81,15 @@ def load_tools(
     *,
     toolset_config: Mapping[str, Mapping[str, Any]] | None = None,
     queries: Sequence[str] | None = None,
+    toolsets: Sequence[str] | None = None,
 ) -> dict[str, AgentTool]:
     """Load leaf tools from installed toolsets and apply collection queries."""
 
     tools: dict[str, AgentTool] = {}
-    toolsets = _load_toolsets_with_sources(config=toolset_config)
+    installed = _load_toolsets_with_sources(config=toolset_config, names=toolsets)
     registrations: list[tuple[str, PluginSource, ToolRef, AgentTool]] = []
     model_names: set[str] = set()
-    for plugin_name, loaded in toolsets.items():
+    for plugin_name, loaded in installed.items():
         toolset = cast(Toolset, loaded.plugin)
         require_toolset_plugin_name(plugin_name, source=loaded.source)
         for leaf_name, leaf_tool in toolset.tools().items():
@@ -117,12 +118,14 @@ def load_tools(
 def _load_toolsets_with_sources(
     *,
     config: Mapping[str, Mapping[str, Any]] | None = None,
+    names: Sequence[str] | None = None,
 ) -> dict[str, LoadedPlugin]:
     toolsets: dict[str, LoadedPlugin] = {}
     loaded_plugins = load_plugins_with_sources(
         group="toolang.toolset",
         config=config,
         built_ins_first=True,
+        names=names,
     )
     for loaded in loaded_plugins:
         require_toolset_plugin_name(loaded.entry_point_name, source=loaded.source)

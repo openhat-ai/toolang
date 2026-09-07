@@ -377,10 +377,38 @@ accepts a request that could run out of context during generation.
   after compaction or relevant binding changes. Never use cumulative Run usage as
   context size or reread stable records on every call.
 
-Numeric safety-margin, near-retention, and default output budgets remain PR5
-tuning choices. Specify estimator calibration, multimodal accounting, and
-unavailable-metadata behavior in that implementation; do not treat unknown
-limits as known capacity.
+PR5 policy:
+
+- Default output: 4096 tokens, capped at the known model output limit. Honor
+  native adapter configuration; Messages thinking must fit inside this budget.
+  Persist `ModelCall.max_output_tokens` (Store schema 42) and replay it unchanged.
+  OpenAI's output limit includes reasoning tokens; see its
+  [token-counting guide](https://developers.openai.com/api/docs/guides/token-counting).
+- Responses continuation retains a fingerprint of the request prefix. A changed
+  prefix starts a fresh provider context and resends the selected tool exchanges;
+  unchanged prefixes continue using the previous response. Other adapters keep
+  their own continuation semantics.
+- Safety margin: 5% of the limiting input capacity, at least 1024 tokens. Near
+  target: half the input budget, rounded down; retain the last historical root
+  regardless of its size. Each compact advances at least one root.
+- Initial estimate: UTF-8 bytes / 3, rounded up, with serialized roles, tools and
+  output schema, 8 tokens per message and 32 request overhead. Add 4096 per image,
+  audio or document part. This is conservative accounting, not a tokenizer or a
+  guarantee for arbitrary media. Positive inclusive provider input usage replaces
+  the estimate for an unchanged prefix; otherwise reuse the estimated prefix.
+  Horizon, State, model or recall changes invalidate calibration.
+- Unknown limits disable automatic capacity checks, not output limits. A known
+  independent input limit still applies. Never infer a missing context window.
+- `compact.too` first inspects earlier compact outputs, then uses fresh child
+  Runs for bounded history pages and rolling reduction. At most 1024 page
+  iterations; incomplete coverage produces no usable summary. An individually
+  oversized history record fails explicitly: field slicing and recursive compact
+  are not implemented. Only read-only history tools are available to this program,
+  loaded through the normal factory/registration path independently of the human
+  Run's tool selectors. Loading compact does not initialize unrelated plugins.
+- Admission uses a cancellable OS file lock beside the Store, one per target
+  Thread. No Store transaction or Step-begin lock spans the wait. Canceling an
+  admitted caller cancels its own compact Run; canceling a waiter affects no owner.
 
 ## Implementation PRs and acceptance
 

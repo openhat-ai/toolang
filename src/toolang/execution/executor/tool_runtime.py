@@ -62,6 +62,11 @@ class _ToolRuntime(ToolRuntime):
             run_id=self.step.run_id, triggered_by=self.step
         )
 
+    async def compact(self, thread: str, begin: str | None, end: str) -> dict[str, Any]:
+        from .compact import execute
+
+        return await execute(self.state, self.step, thread, begin, end)
+
     async def pick(self, kind: Literal["skill", "service"], ref: str) -> dict[str, Any]:
         execution = self.state.execution
         if execution is None:

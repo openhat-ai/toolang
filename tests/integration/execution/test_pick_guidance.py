@@ -633,7 +633,8 @@ def test_compaction_excludes_old_guidance_even_when_far_mentions_it(
             summary = project_run_start(
                 harness.store,
                 run_id=harness.ids.issue_run(),
-                thread_id=f"compact_{thread}",
+                # Exercise explicit control adoption, not automatic discovery.
+                thread_id=f"summary_{thread}",
                 origin="test",
                 input=Message.user("compact"),
             )

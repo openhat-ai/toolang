@@ -153,6 +153,14 @@ class ModelCall:
             "serialization_alias": "cont",
         },
     )
+    # Inclusive output ceiling, including reasoning, fixed by the runtime.
+    max_output_tokens: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.max_output_tokens is not None and (
+            type(self.max_output_tokens) is not int or self.max_output_tokens <= 0
+        ):
+            raise ValueError("model max_output_tokens must be a positive integer")
 
 
 @dataclass(frozen=True, slots=True)

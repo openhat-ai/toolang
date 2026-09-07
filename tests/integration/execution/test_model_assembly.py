@@ -51,7 +51,9 @@ def _summary(harness, thread, end, *, summary="Earlier facts.", begin=None):
     run = project_run_start(
         harness.store,
         run_id=harness.ids.issue_run(),
-        thread_id=f"compact_{thread}",
+        # Assembly tests adopt explicitly; automatic paired-Thread discovery is
+        # covered by the compact coordinator scenarios.
+        thread_id=f"summary_{thread}",
         origin="test",
         input=Message.user("compact"),
     )

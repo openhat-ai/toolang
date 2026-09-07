@@ -1063,6 +1063,7 @@ def test_inspect_projects_complete_persisted_model_call(
         "tools": [],
         "output_schema": output_schema,
         "cont": {"provider_cursor": "next"},
+        "max_output_tokens": None,
     }
     assert references.exit_code == 0, references.stderr
     assert json.loads(references.stdout) != json.loads(projected.stdout)

@@ -581,6 +581,13 @@ def _tool_summary_context(
 
 
 def _tool_summary(context: _ToolSummaryContext, status: str) -> str:
+    if context.family == "_toolang" and context.name == "compact":
+        return {
+            "running": "Compacting history",
+            "succeeded": "Compacted history",
+            "failed": "Failed to compact history",
+            "canceled": "Canceled history compaction",
+        }[status]
     template = _DEFAULT_TOOL_SUMMARY_TEMPLATES.get(status, "{{name}} {{args.0}}")
     rendered = render_text_template(
         template,

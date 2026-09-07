@@ -199,8 +199,11 @@ def messages_payload(
         else request.instructions
     )
     options = dict(target.options)
-    explicit_max_tokens = "max_tokens" in options
-    max_tokens = options.pop("max_tokens", 4096)
+    explicit_max_tokens = (
+        request.max_output_tokens is not None or "max_tokens" in options
+    )
+    configured_max_tokens = options.pop("max_tokens", 4096)
+    max_tokens = request.max_output_tokens or configured_max_tokens
     if (
         isinstance(max_tokens, bool)
         or not isinstance(max_tokens, int)

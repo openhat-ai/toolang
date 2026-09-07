@@ -17,7 +17,7 @@ from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.loading import load_tools
 
 
-def test_installed_runtime_toolset_has_no_old_aliases_or_future_tools() -> None:
+def test_installed_runtime_toolset_has_no_old_aliases() -> None:
     tools = ToolCollection.from_tools(load_tools())
     assert set(tools.runtime) == {
         "_toolang__run",
@@ -25,6 +25,7 @@ def test_installed_runtime_toolset_has_no_old_aliases_or_future_tools() -> None:
         "_toolang__reload",
         "_toolang__pick",
         "_toolang__honor",
+        "_toolang__compact",
     }
     assert set(tools.user).isdisjoint(tools.runtime)
     assert "me__get" in tools.user
@@ -64,8 +65,14 @@ class _Runtime:
         await asyncio.sleep(0)
         return {"controls": [self.marker]}
 
+    async def compact(self, thread, begin, end):
+        self.calls.append((thread, begin, end))
+        return {"controls": [self.marker]}
 
-@pytest.mark.parametrize("name", ["run", "execute", "reload", "pick", "honor"])
+
+@pytest.mark.parametrize(
+    "name", ["run", "execute", "reload", "pick", "honor", "compact"]
+)
 def test_shared_plugin_keeps_per_call_authority_isolated(
     tmp_path: Path, name: str
 ) -> None:
@@ -77,6 +84,8 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
         if name == "reload"
         else {"paths": [{"workspace": "repo", "path": "/src"}]}
         if name == "honor"
+        else {"thread": "term_ab12", "end": "run_ab12"}
+        if name == "compact"
         else {"kind": "skill", "ref": "home://skills/testing"}
         if name == "pick"
         else {"runnable": "child", "input": {"_": "input"}}
@@ -102,6 +111,9 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
 @pytest.mark.parametrize(
     "name, arguments",
     [
+        ("compact", {"thread": "term_ab12"}),
+        ("compact", {"thread": "term_ab12", "end": 1}),
+        ("compact", {"thread": "term_ab12", "end": "run_ab12", "summary": "bad"}),
         ("reload", {"run_id": "another"}),
         ("run", {"runnable": "child", "step": "another"}),
         ("execute", {"runnable": "child", "input": []}),

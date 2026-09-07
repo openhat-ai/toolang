@@ -29,6 +29,120 @@ from toolang.plugin.models.adapters.messages import (
 )
 
 
+@pytest.mark.parametrize("change", ["none", "compaction", "instructions"])
+def test_responses_continuation_requires_unchanged_context(change: str) -> None:
+    target = ModelTarget(
+        ref="openai/model",
+        provider="openai",
+        name="model",
+        model="model",
+        adapter="responses",
+    )
+    call = Message(
+        role="assistant",
+        parts=(
+            ToolCallPart(
+                tool_call_id="fc_1",
+                call_id="call_1",
+                tool_name="shell__execute",
+                tool_family="shell",
+                input={"command": "pwd"},
+            ),
+        ),
+    )
+    result = Message(
+        role="tool",
+        parts=(
+            ToolResultPart(
+                tool_call_id="fc_1",
+                call_id="call_1",
+                tool_name="shell__execute",
+                tool_family="shell",
+                output={"stdout": "/tmp"},
+            ),
+        ),
+    )
+    previous = ModelCall("original instructions", [Message.user("old history")])
+    continuation = responses.response_continuation(
+        SimpleNamespace(id="resp_1"),
+        request=previous,
+        emitted_message=call,
+        stateful=True,
+    )
+    request = replace(
+        previous, messages=[*previous.messages, call, result], continuation=continuation
+    )
+    if change == "compaction":
+        request = replace(
+            request, messages=[Message.user("<far>summary</far>"), call, result]
+        )
+    elif change == "instructions":
+        request = replace(request, instructions="updated instructions")
+
+    payload = responses.response_payload(target, request, stateful=True)
+
+    if change == "none":
+        assert payload["previous_response_id"] == "resp_1"
+        assert [item["type"] for item in payload["input"]] == ["function_call_output"]
+    else:
+        assert "previous_response_id" not in payload
+        assert [item["type"] for item in payload["input"]] == [
+            "message",
+            "message",
+            "function_call",
+            "function_call_output",
+        ]
+        assert payload["input"][0]["content"][0]["text"] == request.instructions
+        assert isinstance(request.messages[0].parts[0], TextPart)
+        assert (
+            payload["input"][1]["content"][0]["text"]
+            == request.messages[0].parts[0].text
+        )
+
+
+@pytest.mark.parametrize(
+    "adapter, provider, options, field",
+    [
+        ("responses", "openai", {"max_output_tokens": 9000}, "max_output_tokens"),
+        ("chat_completions", "openai", {"max_tokens": 9000}, "max_completion_tokens"),
+        ("chat_completions", "deepseek", {"max_tokens": 9000}, "max_tokens"),
+        ("messages", "anthropic", {"max_tokens": 9000}, "max_tokens"),
+        (
+            "generate_content",
+            "google",
+            {"generationConfig": {"maxOutputTokens": 9000}},
+            "maxOutputTokens",
+        ),
+    ],
+)
+def test_adapter_sends_the_recorded_output_reservation(
+    adapter, provider, options, field
+) -> None:
+    target = ModelTarget(
+        ref=f"{provider}/model",
+        provider=provider,
+        name="model",
+        model="model",
+        adapter=adapter,
+        options=options,
+    )
+    request = ModelCall("instructions", [Message.user("input")], max_output_tokens=1234)
+    if adapter == "responses":
+        payload = responses.response_payload(target, request, stateful=False)
+    elif adapter == "chat_completions":
+        payload = chat_completions.chat_completion_payload(
+            target, request, stream=False
+        )
+    elif adapter == "messages":
+        payload = messages_payload(target, request, stream=False)
+    else:
+        payload = cast(
+            dict[str, Any],
+            generate_content_payload(target, request)["generationConfig"],
+        )
+    assert payload[field] == 1234
+
+
 @pytest.mark.parametrize(
     "api",
     (

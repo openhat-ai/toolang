@@ -18,7 +18,7 @@ TOOLSET_NAME = "_toolang"
 class RuntimeTool(AgentTool):
     """One stateless tool using authority supplied by its executor."""
 
-    name: Literal["reload", "run", "execute", "pick", "honor"]
+    name: Literal["reload", "run", "execute", "pick", "honor", "compact"]
     description: str
     parameters: dict[str, object]
 
@@ -27,7 +27,7 @@ class RuntimeTool(AgentTool):
 
     @property
     def model_callable(self) -> bool:
-        return self.name != "honor"
+        return self.name not in {"honor", "compact"}
 
     async def invoke(
         self, arguments: Mapping[str, Any], context: ToolContext
@@ -35,6 +35,27 @@ class RuntimeTool(AgentTool):
         runtime = context.runtime
         if runtime is None:
             raise ToolangError("runtime operations are unavailable for this tool call")
+        if self.name == "compact":
+            if not {"thread", "end"} <= set(arguments) or set(arguments) - {
+                "thread",
+                "begin",
+                "end",
+            }:
+                raise ToolangError("compact requires thread, optional begin, and end")
+            thread, begin, end = (
+                arguments["thread"],
+                arguments.get("begin"),
+                arguments["end"],
+            )
+            if (
+                not isinstance(thread, str)
+                or not isinstance(end, str)
+                or (begin is not None and not isinstance(begin, str))
+            ):
+                raise ToolangError(
+                    "compact requires string references and a nullable begin"
+                )
+            return await runtime.compact(thread, begin, end)
         if self.name == "honor":
             if (
                 set(arguments) != {"paths"}
@@ -128,6 +149,20 @@ _RUN_PARAMETERS: dict[str, object] = {
 }
 
 _TOOLS = (
+    RuntimeTool(
+        "compact",
+        "Compact a complete history prefix before the next model call.",
+        {
+            "type": "object",
+            "properties": {
+                "thread": {"type": "string"},
+                "begin": {"type": ["string", "null"]},
+                "end": {"type": "string"},
+            },
+            "required": ["thread", "end"],
+            "additionalProperties": False,
+        },
+    ),
     RuntimeTool(
         "honor",
         "Recall applicable workspace rules before a path-aware operation.",
