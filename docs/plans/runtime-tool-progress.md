@@ -1,177 +1,184 @@
-# Runtime tool progress
+# Runtime tool results and progress
 
-Status: proposed feature definition; implementation requires approval.
+Status: feature definition; no product changes in this PR.
 
-## Goal and ownership
+## Contract and boundaries
 
-Make runtime work visible through ordinary Tool Steps and self-contained results.
-Unify control summaries, not call ownership or ModelCall assembly semantics.
+Give progress the facts it needs through ordinary runtime ToolResults, while
+preserving which calls and responses belong in model messages. Currently these
+tools return control refs only, and honor interception creates a failed workspace
+Tool Step. Replace those behaviors with the following contract:
 
-| Call | Initiator | ModelCall assembly | Progress |
-| --- | --- | --- | --- |
-| pick / reload | Model | Normal ToolCall and ToolResult; controls keep their existing effects | Normal tool presentation, customized wording/marker |
-| compact | Runtime, before a Model Call | No compact tool exchange; compact control updates horizon | Show compact and elapsed time |
-| honor | Runtime, before a workspace operation | No honor tool exchange; recall controls supply rules | Show honor |
-| Blocked workspace call | Model; runtime supplies its response | Preserve the original ToolCall and supply a non-error retry notice | No Tool Step or execution events |
-| Later workspace retry | Model, if it chooses to retry | Normal ToolCall and ToolResult | Normal tool presentation |
+| Call | Initiator | Own Tool Step and progress | Own ToolResult in model messages | Effect of its controls |
+| --- | --- | --- | --- | --- |
+| pick | Model | Yes | Yes | Recall skill/service guidance |
+| reload | Model | Yes | Yes | Adopt State |
+| compact | Runtime, before a Model Call | Yes | No | Update horizon |
+| honor | Runtime, before a workspace operation | Yes | No | Recall workspace rules |
+| Intercepted workspace call | Model | No | Yes: executor supplies its response | None of its own |
 
-Show all runtime calls in this phase. Keep run/execute behavior, existing record
-and event schemas, and independent compact execution. No visibility settings,
-metrics redesign, general plugin summary API, or fs wording sweep. This PR changes
-only the definition, not product code.
+All runtime calls are shown in this phase. Keep existing control adoption,
+record/event schemas, run/execute behavior, and independent compact execution.
+No visibility settings, general plugin API redesign, or fs wording changes.
 
-## Control summaries in results
+## Runtime results
 
-For pick, honor, reload, and compact, change `controls` from reference strings to
-summary objects. Each summary contains its control `ref` and these payload facts:
-
-| Tool | Additional fields |
-| --- | --- |
-| pick | `target: {kind: "skill" or "service", ref}`, `revision` |
-| honor | `target: {kind: "rules", workspace, path}`, `revision` |
-| reload | `state` (State revision) |
-| compact | `horizon` (compact Run output reference) |
-
-Reuse the existing recall target shape. References remain pointer strings; the
-wire contract belongs in `toolang/base`, with no execution-record dependency in
-the toolset plugin. Do not copy guidance, rules content, or compact summary text
-into these results.
-
-Return only after the reported controls have been durably created or reused.
-Preserve deduplication and ordering; `controls: []` means no control was needed.
-A receipt does not imply adoption by a Model Call: recall/compact retain their
-existing adoption boundary, while reload still waits for its control to apply.
-Failures retain their real errors, not a successful receipt.
-
-The existing ToolResult and StepEnd carry these facts to progress. UI must not
-query Store or State to obtain them. For example, a future compact Run ID display
-can use `horizon`; elapsed time still comes from Step timestamps. That additional
-display is not required in this implementation.
-
-## Honor preflight
-
-Check workspace rules before creating the requested Tool Step. If recall is
-needed, execute honor as a runtime Tool Step, then answer the original call
-without executing the workspace operation. Do not create a workspace Tool Step or
-emit its execution/part events. The original Model Step's ToolCall stays intact.
-
-Honor receives the blocked `tool_call_id` alongside its normalized paths. Its
-successful, durable output is this special toolset/runtime protocol result:
+All four tools return `controls` containing summaries of the controls they have
+durably created or reused. Each item includes the control `ref` and the necessary
+payload fields. Representative output values, keyed here by tool name:
 
 ```json
 {
-  "type": "_toolang/preflight",
-  "tool_call_id": "<blocked-workspace-call-id>",
-  "message": "Workspace rules reloaded; retry required",
-  "controls": [
-    {
+  "pick": {
+    "controls": [{
+      "ref": "<recall-control-ref>",
+      "target": {"kind": "skill", "ref": "<skill-ref>"},
+      "revision": "<content-hash>"
+    }]
+  },
+  "reload": {
+    "controls": [{"ref": "<reload-control-ref>", "state": "<state-revision>"}]
+  },
+  "compact": {
+    "controls": [{"ref": "<compact-control-ref>", "horizon": "<compact-run-output-ref>"}]
+  },
+  "honor": {
+    "controls": [{
       "ref": "<recall-control-ref>",
       "target": {"kind": "rules", "workspace": "repo", "path": "/src"},
       "revision": "<content-hash>"
-    }
-  ]
+    }]
+  }
 }
 ```
 
-Runtime uses this output for the original workspace ToolResult, preserving its
-tool name, tool_call_id, and provider call_id. Set `error=None`: preflight is not
-an operation failure. Recognize the qualified protocol type, not message text.
-Workspace/path identify actual recalled rule scopes, not the attempted access
-path; revision `0` denotes removal. The operation has not executed. Runtime does
-not retry it; the model may retry, change the request, or move on.
+Pick also supports `target.kind = "service"`. Reuse the existing recall target
+shape. Honor reports actual rules scopes, not attempted access paths; revision
+`0` means removal. Content remains in controls or compact output, not summaries.
 
-```text
-Execution                              Model messages / binding
-Model Step requests workspace call     assistant: original workspace ToolCall
-honor -> durable recall controls       (no honor tool exchange)
-runtime answers original call          tool: preflight notice + control summaries
-next Model Call adopts recalls         user: recalled rules
-model may request another call         assistant: workspace ToolCall
-workspace Tool Step executes           tool: actual result
+These are ordinary results of the named tools. Honor does not return a workspace
+preflight response, another call's identity, or a retry instruction.
+
+Keep control ordering, reuse, and `controls: []` when no control is needed.
+Reported controls must exist before return; this does not imply ModelCall
+adoption. Reload still waits for application, while recall/compact keep their
+existing adoption boundary. Real failures remain errors.
+
+Define the wire shapes in `toolang/base`; plugins must not import execution
+records. Existing ToolResult/StepEnd delivers the summaries to UI without Store
+or State queries. For example, `horizon` identifies the compact Run, allowing a
+future progress change to display its ID without changing the result contract.
+
+## Workspace preflight response
+
+The executor checks rules before creating the workspace Tool Step. When recall
+is needed, it runs honor, waits for its result, then answers the original
+workspace call without executing the operation or creating its Step/events.
+
+Only this executor-generated workspace response uses the special preflight
+protocol. Its output contains the notice and honor's control summaries; the
+original call's identity belongs in the normal ToolResultPart envelope:
+
+```json
+{
+  "type": "tool_result",
+  "tool_call_id": "<original-workspace-call-id>",
+  "call_id": "<original-provider-call-id>",
+  "tool_name": "<workspace-tool-name>",
+  "tool_family": "<workspace-tool-name>",
+  "output": {
+    "type": "_toolang/preflight",
+    "message": "Workspace rules reloaded; retry required",
+    "controls": [{
+      "ref": "<recall-control-ref>",
+      "target": {"kind": "rules", "workspace": "repo", "path": "/src"},
+      "revision": "<content-hash>"
+    }]
+  }
+}
 ```
 
-Honor failure/cancellation remains visible on the honor Step. Use the same
-no-workspace-Step path for the original call's failed/interrupted response,
-preserving interruption behavior; never manufacture a successful reload notice.
+Set `error=None` (omitted by serialization). Recognize the qualified protocol
+type, not message text. This is a non-error response, not a successful workspace
+operation. Runtime never retries automatically. The model may retry, change its
+request, or move on; a later call executes and displays normally.
 
-### Persistence without a workspace Step
+Honor failure/cancellation stays visible on honor. Answer the original call
+with the corresponding failure/interruption, never a successful preflight notice;
+the intercepted workspace operation still has no Tool Step or execution events.
 
-Append the original call's response directly to the online message buffer. The
-next ModelCall delta records it as a literal ToolResultPart using the existing
-delta format; honor's own tool exchange remains excluded.
+```text
+Model output: workspace ToolCall
+  -> honor Tool Step -> recall controls -> honor ToolResult -> StepEnd / UI
+  -> executor builds workspace ToolResult -> model message buffer
+Next Model Call: original exchange + recalled rules
+  -> optional model-issued retry -> real workspace Tool Step
+```
 
-That next Model Call may never happen. The persisted honor invocation identifies
-the original Model ToolCall, and its output/outcome supplies the response facts.
-Use one response builder for live execution and unrecorded history-tail recovery.
-History must retain a complete exchange after cancellation or restart, without
-re-reading resource files, adding a message log, or rerunning honor.
+## Persistence and reconstruction
 
-Once a delta contains the response, replay uses that delta unchanged; tail
-reconstruction must not append it again. Keep tool-batch ordering and grouping,
-including other calls alongside the intercepted call. Raw Step inspection shows
-honor only; reconstructed conversation history includes the workspace response.
+Keep correlation inside execution: record a reference to the original Model
+ToolCallPart in honor's existing `Step.input` field. This is a data dependency, not
+a new control relationship or plugin argument. Honor still takes normalized paths.
 
-## Presentation
+The executor builds the workspace response from that original call and honor's
+outcome. Append it directly to the online message buffer; the next ModelCall delta
+saves the resulting literal ToolResultPart using the existing format.
 
-Use existing tool lifecycle rendering in Script and Chat. Tools own wording,
-supplied through existing given/noted summaries; progress owns markers, tones,
-wrapping, and elapsed-time decoration. Keep wording customization local to
-runtime tools and the existing executor summary path, without extending every
-plugin/factory. Result summaries provide terminal presentation data directly.
+If cancellation or a crash prevents that delta from being recorded, reconstruct
+the unrecorded history tail from the same honor Step input and outcome. Share the
+response builder between live execution and history recovery. Once the delta
+exists, replay it unchanged and do not append the response again.
 
-| Tool | Active wording | Successful wording |
+Preserve complete tool exchanges, batch ordering, and cancellation placement.
+Raw Step inspection shows honor, while conversation history includes the original
+workspace response. No synthetic Step, extra message log, resource reread, or
+UI-side correlation is needed. Lost or duplicate responses are the main risk.
+
+## Progress
+
+Use ordinary tool lifecycle presentation for pick, reload, compact, and honor.
+Tools supply wording through existing summaries; progress owns markers, layout,
+and duration formatting. The result summaries provide terminal display data.
+
+| Tool | Running | Succeeded |
 | --- | --- | --- |
-| honor | `Reloading workspace rules...` | `Reloaded workspace rules` |
 | pick | `Loading skill guidance: <ref>...` | `Loaded skill guidance: <ref>` |
 | reload | `Reloading agent state...` | `Reloaded agent state` |
 | compact | `Compacting thread history` | `Compacted thread history` |
+| honor | `Reloading workspace rules...` | `Reloaded workspace rules` |
 
-Pick uses service guidance where appropriate. Failed/canceled operations retain
-their actual reasons and status wording. Use `✧` for these runtime rows, keeping
-ordinary tool `•`, root footer `∎`, and existing run/execute boundaries.
+Pick uses service wording where appropriate. Keep actual failure/cancellation
+wording. Use `✧` for these runtime rows, retaining ordinary tool `•` and footer
+`∎`. Counts follow actual Steps. There is no workspace event to suppress, no
+first-attempt activity flash, and no duplicate workspace notice or result panel.
 
-There is no progress suppression registry: the blocked workspace Step and its
-events do not exist. Show honor once, with no workspace activity flash, duplicate
-notice, result panel, or layout gap. Only a later model-issued workspace call
-produces a normal workspace row. Counts follow actual Steps.
+Show compact from StepBegin, including permit waiting. Refresh elapsed time once
+per second in TTY/Chat until StepEnd or presenter close; reuse Step timestamps,
+Chat's ticker, and one Script refresh loop. Non-TTY prints start/end only. A final
+row can read `Compacted thread history in 1m20s`. Do not forward compact-program
+events or add heartbeats. Keep bundled directions concise: honor the recalled
+rules and continue; report real blockers rather than narrating routine recovery.
 
-Show compact immediately at StepBegin, including before the first Model Step.
-Refresh its elapsed time once per second in TTY/Chat, including permit waiting,
-until StepEnd or presenter close. Reuse timestamps, duration formatting, Chat's
-ticker, and one Script refresh loop. Non-TTY prints start and end only. No
-heartbeat, phase estimate, or compact-program events in the caller's progress.
+## Implementation touchpoints and acceptance
 
-Keep runtime instructions concise: apply recalled rules and continue directly;
-do not narrate routine preflight recovery. Report real blockers and material
-constraints. Preserve rule scope/revision semantics and model-authored text.
+- Base result schemas and `execution/executor/{tool_runtime,executor,compact}.py`:
+  enrich all four results; test exact summaries, durability before return, reused
+  controls, empty results, and real errors. Keep the runtime toolset base-only.
+- `execution/executor/steps/tool.py`: preserve the original Model ToolCall, record
+  honor's input dependency, and replace the blocked-Step path with a protocol
+  response. Test zero workspace side effects/Steps/events; one honor Step; retry,
+  changed arguments, no retry, multiple scopes/workspaces, and parallel Runs.
+- `execution/assembly.py` and affected history readers: share response construction
+  with the online buffer. Test cancellation/restart during honor and before/after
+  delta persistence, mixed tool batches, complete exchanges, and no duplicates.
+  Existing saved deltas remain unchanged. Pick/reload remain model-visible;
+  honor/compact remain internal; control effects are unchanged.
+- Runtime wording, bundled preflight directions, and Script/Chat progress under
+  `cli/common/execution_progress/`: test StepEnd round-trips, progress replay
+  without Store/State queries, ordinary later workspace calls, visible failures,
+  and fake-clock compact timing/cleanup. No event suppression state is introduced.
 
-## Implementation and acceptance
-
-1. Define the result wire shapes in base; enrich all four operations in
-   `execution/executor/tool_runtime.py`, `executor.py`, and `compact.py`.
-   Update honor's arguments in `execution/tools/runtime.py` and the base protocol.
-   Test durable refs, exact payload summaries, reused controls, and empty results.
-2. Replace the blocked-Step path in `executor/steps/tool.py` with direct response
-   generation. Share it with `execution/assembly.py` tail recovery and check the
-   affected history readers. Use existing `executor/_messages.py` and
-   `message_delta.py` support; no new persistence or event fields.
-3. Test zero workspace side effects, Steps, or execution events on interception;
-   one honor Step; and a complete original tool exchange with `error=None`.
-   Cover retry, changed arguments, no retry, multiple rule scopes/workspaces,
-   mixed tool batches, parallel Runs, and actual failure/cancellation.
-4. Test restart/cancellation before the next delta, after its persistence, and
-   during honor. Live and reconstructed responses must agree, without duplicates
-   or incomplete tool exchanges. Verify pick/reload results remain model-visible,
-   honor/compact exchanges remain internal, and controls still supply rules,
-   guidance, State, and horizon through their existing adoption paths.
-5. Customize summaries and markers in the existing runtime/progress paths under
-   `cli/common/execution_progress/`; integrate compact refresh in Script/Chat.
-   Round-trip enriched results through existing codecs and StepEnd. Test progress
-   replay without Store/State reads, normal later workspace rendering, real
-   failures, run/execute boundaries, and fake-clock refresh/cleanup. Update the
-   bundled preflight directions. Run ruff check/format, ty, and offline pytest.
-
-The main risk is losing or duplicating a model-required response after removing
-its synthetic Step. Honor records and shared tail reconstruction close that gap;
-presentation must never determine model history or whether an operation executes.
-No open design questions remain; implementation requires human approval.
+Run ruff check/format, ty, and the default offline pytest suite. This definition
+requires human approval before implementation; no further product choices are
+required for its scoped behavior.
