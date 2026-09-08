@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from toolang.lang.input import CallInput
-
 import sqlite3
 from pathlib import Path
 
@@ -27,15 +25,17 @@ from toolang.execution.records import (
 )
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
+    TypedRef,
     ControlRef,
     FieldRef,
-    Local,
     ModelStepGiven,
     Pointer,
     RunRef,
     RunStatus,
     StepRef,
 )
+from toolang.lang.input import CallInput
+from toolang.lang.types import Array
 from toolang.lang.ast import LetStmt, Span
 
 
@@ -757,7 +757,7 @@ def test_retry_rejects_applied_execute_history_without_mutation(
             runnable="agent$agic:target",
             triggered_by=trigger.ref,
             input=CallInput(
-                {"_": Local.typed("Json", source.select("input", "input", "_")).value}
+                {"_": TypedRef(source.select("input", "input", "_"), "Json")}
             ),
             created_at="2026-01-01T00:00:03Z",
         )
@@ -878,9 +878,7 @@ def test_retry_preserves_child_controls_and_revision_monotonicity(
             run_id=child.id,
             kind="steer",
             timing="next_step",
-            input=CallInput(
-                {"_": Local.typed("Part[]", Message.user("guidance").parts, 0).value}
-            ),
+            input=CallInput({"_": Array("Part[]", Message.user("guidance").parts)}),
             request_id="child-steer-request",
             created_at="2026-01-01T00:00:02Z",
         )
@@ -933,11 +931,7 @@ def test_retry_preserves_child_controls_and_revision_monotonicity(
                 kind="steer",
                 timing="next_step",
                 input=CallInput(
-                    {
-                        "_": Local.typed(
-                            "Part[]", Message.user("duplicate").parts, 0
-                        ).value
-                    }
+                    {"_": Array("Part[]", Message.user("duplicate").parts)}
                 ),
                 request_id="child-steer-request",
                 created_at="2026-01-01T00:00:04Z",
@@ -1256,9 +1250,7 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
             run_id="run_atomic_event",
             kind="steer",
             timing="next_step",
-            input=CallInput(
-                {"_": Local.typed("Part[]", Message.user("updated").parts, 0).value}
-            ),
+            input=CallInput({"_": Array("Part[]", Message.user("updated").parts)}),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
@@ -1378,9 +1370,7 @@ def test_run_control_revision_only_advances_when_control_state_changes(
             run_id="run_control_revision",
             kind="steer",
             timing="next_step",
-            input=CallInput(
-                {"_": Local.typed("Part[]", Message.user("updated").parts, 0).value}
-            ),
+            input=CallInput({"_": Array("Part[]", Message.user("updated").parts)}),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
@@ -1458,9 +1448,7 @@ def test_claimed_control_cannot_be_canceled_before_its_event_is_persisted(
             run_id="run_claimed_control",
             kind="steer",
             timing="next_step",
-            input=CallInput(
-                {"_": Local.typed("Part[]", Message.user("updated").parts, 0).value}
-            ),
+            input=CallInput({"_": Array("Part[]", Message.user("updated").parts)}),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )

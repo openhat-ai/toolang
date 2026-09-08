@@ -616,13 +616,13 @@ def output_from_data(payload: Mapping[str, object]) -> Output:
 
     if set(payload) != {"local", "binding"}:
         raise ValueError("stored output requires local and binding fields")
-    value = payload["local"]
-    if not isinstance(value, Mapping):
+    local_data = payload["local"]
+    if not isinstance(local_data, Mapping):
         raise ValueError("stored output local must be a local object")
     binding = payload["binding"]
     if binding is not None and not isinstance(binding, str):
         raise ValueError("output binding must be text or null")
-    return Output(local_from_data(cast(Mapping[str, object], value)), binding)
+    return Output(local_from_data(cast(Mapping[str, object], local_data)), binding)
 
 
 def output_to_data(output: Output) -> dict[str, object]:

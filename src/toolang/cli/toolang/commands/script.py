@@ -474,7 +474,7 @@ def _collect_call(
         if (
             runnable.input is not None
             and not runnable.input.optional
-            and input.get("_") is None
+            and "_" not in input
         ):
             raise _IncompleteRunnableInput
     return (

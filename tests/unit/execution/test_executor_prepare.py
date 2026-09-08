@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from toolang.lang.input import CallInput
-
 import asyncio
 import sqlite3
 from pathlib import Path
@@ -63,7 +61,8 @@ from toolang.lang.ast import (
 from toolang.lang.ast import (
     Message as AstMessage,
 )
-from toolang.lang.input import resolve_runnable_input
+from toolang.lang.input import CallInput, resolve_runnable_input
+from toolang.lang.types import Array
 from toolang.plugin.toolsets.registry import tool_ref_for_model_tool
 from toolang.setup import (
     AgentEnvironment,
@@ -605,8 +604,8 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert isinstance(run_payload, RunControlPayload)
         assert run_payload.input == CallInput(
             {
-                "_": RecordLocal.typed("Part[]", (TextPart("hello"), image)).value,
-                "focus": RecordLocal.typed("Text", "events").value,
+                "_": Array("Part[]", (TextPart("hello"), image)),
+                "focus": "events",
             }
         )
         assert detail.output == Output(

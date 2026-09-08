@@ -62,7 +62,7 @@ def _authored_request(
     *,
     source: str = "hello",
     runnable: str = "agic:chat",
-    named: list[dict[str, str]] | None = None,
+    arguments: dict[str, str] | None = None,
     allow: list[dict[str, object]] | None = None,
     limits: dict[str, object] | None = None,
 ) -> dict[str, object]:
@@ -73,7 +73,7 @@ def _authored_request(
             "ref": runnable,
             "input": {
                 "_": source,
-                **{item["name"]: item["source"] for item in named or []},
+                **(arguments or {}),
             },
         },
         "model": {"ref": TEST_MODEL_REF, "parameters": {}},
@@ -403,7 +403,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                     thread_id,
                     "fallback_request",
                     source="$review focus=security -\n@note.txt",
-                    named=[{"name": "tone", "source": "brief"}],
+                    arguments={"tone": "brief"},
                     limits={"cost": "2.50"},
                 ),
             )
@@ -416,7 +416,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                     thread_id,
                     "selected_request",
                     runnable="agic:selected",
-                    named=[{"name": "tone", "source": "direct"}],
+                    arguments={"tone": "direct"},
                 ),
             )
             selected_events = _sse_events(selected.text)
@@ -428,7 +428,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                     thread_id,
                     "selected_request",
                     source="duplicate",
-                    named=[{"name": "tone", "source": "duplicate"}],
+                    arguments={"tone": "duplicate"},
                 ),
             )
             invalid_policy = client.post(
@@ -455,7 +455,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                     thread_id,
                     "invalid_input_request",
                     source="invalid",
-                    named=[{"name": "not-valid", "source": "value"}],
+                    arguments={"not-valid": "value"},
                 ),
             )
             invalid_include = client.post(
@@ -464,7 +464,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                     thread_id,
                     "invalid_include_request",
                     source="@missing.txt",
-                    named=[{"name": "tone", "source": "brief"}],
+                    arguments={"tone": "brief"},
                 ),
             )
             invalid_home_include = client.post(
@@ -473,7 +473,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                     thread_id,
                     "invalid_home_include_request",
                     source="@~toolang_user_that_does_not_exist/file.txt",
-                    named=[{"name": "tone", "source": "brief"}],
+                    arguments={"tone": "brief"},
                 ),
             )
             missing_thread = client.post(

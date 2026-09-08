@@ -434,7 +434,7 @@ class ExecutionHarness:
                 declaration,
                 {
                     **({"_": primary} if primary is not None else {}),
-                    **dict(named or {}),
+                    **(named or {}),
                 },
                 structs={
                     item.name: item for item in self.state.modules[module].structs

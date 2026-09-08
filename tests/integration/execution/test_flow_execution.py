@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from toolang.lang.input import CallInput
-
 import asyncio
 import threading
 from multiprocessing import get_context
@@ -69,7 +67,8 @@ from toolang.lang.ast import (
     RunStmt,
     Span,
 )
-from toolang.lang.input import RunnableInput, resolve_runnable_input
+from toolang.lang.input import CallInput, RunnableInput, resolve_runnable_input
+from toolang.lang.types import Array
 from toolang.plugin.models.resolution import build_model_collection
 from toolang.setup import AgentEnvironment, AgentSetup, ModelCollection, ToolCollection
 
@@ -214,12 +213,8 @@ def _spec(
         input=resolve_runnable_input(
             declaration,
             {
-                **(
-                    {"_": primary if primary else None}
-                    if (primary if primary else None) is not None
-                    else {}
-                ),
-                **dict(named or {}),
+                **({"_": primary} if primary else {}),
+                **(named or {}),
             },
             structs={item.name: item for item in state.program.structs},
         ),
@@ -977,9 +972,7 @@ def test_run_control_request_is_unique_across_runs(tmp_path: Path) -> None:
         run_id="run_test",
         kind="steer",
         timing="next_step",
-        input=CallInput(
-            {"_": RecordLocal.typed("Part[]", Message.user("continue").parts, 0).value}
-        ),
+        input=CallInput({"_": Array("Part[]", Message.user("continue").parts)}),
         request_id="steer-1",
         created_at="2026-01-01T00:00:01Z",
     )
@@ -988,13 +981,7 @@ def test_run_control_request_is_unique_across_runs(tmp_path: Path) -> None:
             run_id="run_other",
             kind="steer",
             timing="next_step",
-            input=CallInput(
-                {
-                    "_": RecordLocal.typed(
-                        "Part[]", Message.user("continue").parts, 0
-                    ).value
-                }
-            ),
+            input=CallInput({"_": Array("Part[]", Message.user("continue").parts)}),
             request_id="steer-1",
             created_at="2026-01-01T00:00:03Z",
         )
@@ -1442,13 +1429,7 @@ def _accept_controls(db_path: str, run_id: str, offset: int, count: int) -> list
             run_id=run_id,
             kind="steer",
             timing="next_step",
-            input=CallInput(
-                {
-                    "_": RecordLocal.typed(
-                        "Part[]", Message.user(str(index)).parts, 0
-                    ).value
-                }
-            ),
+            input=CallInput({"_": Array("Part[]", Message.user(str(index)).parts)}),
             request_id=f"worker-{offset + index}",
             created_at="2026-01-01T00:00:01Z",
         ).index
@@ -1492,7 +1473,7 @@ def _accept_remote_cancel(db_path: str, run_id: str) -> None:
         run_id=run_id,
         kind="cancel",
         timing="immediate",
-        input=CallInput({"_": RecordLocal.typed("Text", "remote cancel", 0).value}),
+        input=CallInput({"_": "remote cancel"}),
         request_id="remote-cancel",
         created_at="2026-01-01T00:00:01Z",
     )

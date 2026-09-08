@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from toolang.lang.input import CallInput
-
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
@@ -60,7 +58,7 @@ from toolang.lang.ast import (
     SeekStmt,
     Span,
 )
-from toolang.lang.input import RunnableInput
+from toolang.lang.input import CallInput, RunnableInput
 from toolang.lang.types import Array
 
 
@@ -191,7 +189,7 @@ def project_run_start(
         if runnable_name is not None
         else f"agent${runnable_kind}:test",
         model="test",
-        input=CallInput({"_": Local.typed("Part[]", tuple(input.parts), 0).value}),
+        input=CallInput({"_": Array("Part[]", tuple(input.parts))}),
         sandbox="host" if parent_path is None else None,
         occurrence=_occurrence_from_context(run_context),
         state=_TEST_STATE if parent_path is None else None,
@@ -242,9 +240,9 @@ def project_run_control(
         run_id=run_id,
         kind=kind,
         timing=timing,
-        input=CallInput({"_": Local.typed("Part[]", tuple(input.parts), 0).value})
+        input=CallInput({"_": Array("Part[]", tuple(input.parts))})
         if kind == "steer" and input is not None
-        else CallInput({"_": Local.typed("Text", input.content, 0).value})
+        else CallInput({"_": input.content})
         if kind == "cancel" and input is not None
         else CallInput({}),
         request_id=request_id,

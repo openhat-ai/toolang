@@ -61,7 +61,7 @@ async def execute(
                             phase="until",
                         )
                     ),
-                    output_name=None,
+                    output_binding=None,
                 )
                 if boolean(condition.value, operation="until"):
                     progress.termination = "satisfied"

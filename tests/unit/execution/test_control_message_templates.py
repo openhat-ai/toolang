@@ -24,13 +24,11 @@ from toolang.execution.types import (
     AgentResources,
     ControlRef,
     FieldRef,
-    Local,
     MessageDelta,
     RunRef,
     ThreadRef,
     TypedRef,
 )
-
 from toolang.lang.input import CallInput
 
 
@@ -40,9 +38,7 @@ def test_cancel_description_is_an_attribute(reason: str | None) -> None:
         str(ControlRef.for_run("run_ab12", 1)),
         "cancel",
         CancelControlPayload(
-            CallInput({"_": Local.typed("Text", reason).value})
-            if reason is not None
-            else CallInput({})
+            CallInput({"_": reason}) if reason is not None else CallInput({})
         ),
     )
     template = control_message(control)

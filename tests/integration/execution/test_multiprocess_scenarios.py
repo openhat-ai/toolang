@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from toolang.lang.input import CallInput
-
 import asyncio
 from multiprocessing import get_context
 from pathlib import Path
@@ -30,8 +28,9 @@ from toolang.execution.records import (
 )
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import ControlRef, Local, ThreadPrefix
-from toolang.lang.input import resolve_input_parts
+from toolang.execution.types import ControlRef, ThreadPrefix
+from toolang.lang.input import CallInput, resolve_input_parts
+from toolang.lang.types import Array
 
 _CHAT_SOURCE = """
 agic chat(_: Text) -> Text:
@@ -50,11 +49,7 @@ def _accept_remote_steer(db_path: str, run_id: str) -> None:
             kind="steer",
             timing="next_call",
             input=CallInput(
-                {
-                    "_": Local.typed(
-                        "Part[]", Message.user("Use the remote guidance.").parts
-                    ).value
-                }
+                {"_": Array("Part[]", Message.user("Use the remote guidance.").parts)}
             ),
             request_id="remote-steer",
             created_at="2026-01-01T00:00:01Z",
@@ -92,9 +87,7 @@ def _accept_duplicate_request(
             run_id=run_id,
             kind="steer",
             timing="next_step",
-            input=CallInput(
-                {"_": Local.typed("Part[]", Message.user(run_id).parts).value}
-            ),
+            input=CallInput({"_": Array("Part[]", Message.user(run_id).parts)}),
             request_id="shared-control-request",
             created_at="2026-01-01T00:00:01Z",
         )
@@ -450,9 +443,9 @@ def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
             assert control.payload == SteerControlPayload(
                 input=CallInput(
                     {
-                        "_": Local.typed(
+                        "_": Array(
                             "Part[]", Message.user("Use the remote guidance.").parts
-                        ).value
+                        )
                     }
                 )
             )
@@ -636,9 +629,7 @@ def test_pending_control_has_one_cross_process_cancellation_winner(
             run_id="run_cancel_race",
             kind="steer",
             timing="next_step",
-            input=CallInput(
-                {"_": Local.typed("Part[]", Message.user("updated").parts).value}
-            ),
+            input=CallInput({"_": Array("Part[]", Message.user("updated").parts)}),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
@@ -691,9 +682,7 @@ def test_control_claim_and_cross_process_cancellation_are_linearizable(
             run_id="run_claim_cancel_race",
             kind="steer",
             timing="next_step",
-            input=CallInput(
-                {"_": Local.typed("Part[]", Message.user("updated").parts).value}
-            ),
+            input=CallInput({"_": Array("Part[]", Message.user("updated").parts)}),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
@@ -744,9 +733,7 @@ def test_only_one_process_can_claim_a_pending_control(tmp_path: Path) -> None:
             run_id="run_claim_race",
             kind="steer",
             timing="next_step",
-            input=CallInput(
-                {"_": Local.typed("Part[]", Message.user("updated").parts).value}
-            ),
+            input=CallInput({"_": Array("Part[]", Message.user("updated").parts)}),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )

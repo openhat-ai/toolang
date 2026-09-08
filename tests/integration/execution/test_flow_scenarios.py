@@ -152,6 +152,63 @@ flow parent(_: Text, argument: Json) -> Text:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("supplied", [False, True])
+def test_child_input_distinguishes_missing_input_from_json_null(
+    tmp_path: Path, supplied: bool
+) -> None:
+    source = """
+agic produce() -> Json:
+  recall = none
+  context: none
+  instruct: none
+  user: Return null.
+
+flow child(_: Json) -> Json:
+  let note =
+    observed
+
+flow parent() -> Json:
+"""
+    if supplied:
+        source += "  run produce\n"
+    source += "  run child\n"
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        responses=[ModelCallResult(message=Message.assistant("null"))]
+        if supplied
+        else [],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="flow:parent")
+            )
+            assert root.status == "failed"
+            assert root.error is not None
+            error = harness.store.resolve_error(root.error)
+            assert error == (
+                "primary input cannot be null; omit '_' for no input"
+                if supplied
+                else "child requires primary input"
+            )
+            children = [
+                run
+                for run in harness.store.list_runs(thread_id=thread, limit=None)
+                if run.parent is not None
+            ]
+            assert len(children) == int(supplied)
+            if supplied:
+                assert children[0].output is not None
+                assert (
+                    harness.store.resolve_output(children[0].output).local.value is None
+                )
+
+    asyncio.run(scenario())
+
+
 def test_model_free_flow_retry_preserves_an_absent_model_request(
     tmp_path: Path,
 ) -> None:
@@ -2285,9 +2342,7 @@ flow relay(_: Text) -> Number:
             run_control = harness.store.get_run_control(run_id=child.id, index=0)
             assert run_control is not None
             assert isinstance(run_control.payload, RunControlPayload)
-            assert run_control.payload.input == CallInput(
-                {"_": Local.typed("Number", 42, 0).value}
-            )
+            assert run_control.payload.input == CallInput({"_": 42})
             assert harness.store.resolve_value(run_control.payload.input["_"]) == 42
             assert harness.store.run_output_text(run_id=root.id) == "7"
 

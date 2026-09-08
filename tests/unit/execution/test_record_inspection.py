@@ -594,9 +594,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 revision,
                 "agic:test",
                 "test/model",
-                CallInput(
-                    {"_": Local.typed("Json", {"locals": {"input": "unchanged"}}).value}
-                ),
+                CallInput({"_": {"locals": {"input": "unchanged"}}}),
             ),
             {
                 "resources",
@@ -635,20 +633,14 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 revision,
                 "agent$agic:next",
                 CallInput(
-                    {
-                        "_": Local.typed(
-                            "Json", source.select("input", "input", "_")
-                        ).value
-                    }
+                    {"_": TypedRef(source.select("input", "input", "_"), "Json")}
                 ),
             ),
             {"state", "runnable", "input"},
         ),
         (
             "steer",
-            SteerControlPayload(
-                CallInput({"_": Local.typed("Text", "continue").value})
-            ),
+            SteerControlPayload(CallInput({"_": "continue"})),
             {"input"},
         ),
         ("cancel", CancelControlPayload(), {"input"}),

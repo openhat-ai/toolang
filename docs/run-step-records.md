@@ -24,8 +24,8 @@ run_ab12.0.1                           StepRef
 term_ab12@0                            ControlRef
 run_ab12@1                             ControlRef
 sha256_<64 lowercase hex digits>       ContentRef
-run_ab12.0/output/local/value                FieldRef
-run_ab12.0/output/local/value:Part[]         TypedRef
+run_ab12.0/output/local/value          FieldRef
+run_ab12.0/output/local/value:Part[]   TypedRef
 ```
 
 Run IDs reserve `run_`; content IDs reserve `sha256_`; Thread IDs may use

@@ -124,18 +124,13 @@ def test_parse_input_preserves_primary_and_validates_named_sources() -> None:
     assert parse_input({"_": " \t\n"}) == CallInput({"_": " \t\n"})
 
 
-def test_raw_runnable_input_uses_the_shared_call_input_shape() -> None:
-    assert isinstance(CallInput({"_": "run"}), CallInput)
-    assert CallInput({"_": "prompt"})["_"] == "prompt"
-    assert CallInput({"_": ""}) != CallInput()
-
-
 def test_call_input_copies_and_freezes_the_supplied_mapping() -> None:
     values = {"_": "", "argument": "original"}
     input = CallInput(values)
     values["argument"] = "changed"
     del values["_"]
     assert dict(input) == {"_": "", "argument": "original"}
+    assert CallInput({"_": ""}) != CallInput()
     with pytest.raises(TypeError):
         cast(Any, input)["argument"] = "changed"
     with pytest.raises(AttributeError, match="immutable"):
@@ -208,9 +203,7 @@ def test_call_input_capture_keeps_form_as_parser_only_state() -> None:
 
     assert captured == "inside\n"
     assert trailing == "\noutside"
-    assert CallInput(
-        {**({"_": captured} if captured is not None else {})}
-    ) == CallInput({"_": "inside\n"})
+    assert CallInput({"_": captured}) == CallInput({"_": "inside\n"})
 
 
 @pytest.mark.parametrize(
@@ -230,21 +223,18 @@ def test_call_input_header_rejects_invalid_marker_boundaries(
 
 
 @pytest.mark.parametrize(
-    ("source", "named", "message"),
+    ("input", "message"),
     [
-        (":model literal", (), "escape a leading colon"),
-        (None, (("1focus", "value"),), "canonical name"),
+        ({"_": ":model literal"}, "escape a leading colon"),
+        ({"1focus": "value"}, "canonical name"),
     ],
 )
 def test_parse_input_rejects_invalid_sources(
-    source: str | None,
-    named: tuple[tuple[str, str], ...],
+    input: dict[str, str],
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        parse_input(
-            {**({"_": source} if source is not None else {}), **dict(named or {})}
-        )
+        parse_input(input)
 
 
 def test_plain_input_is_one_text_part_without_rendering_unknown_tags() -> None:

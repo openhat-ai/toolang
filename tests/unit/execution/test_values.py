@@ -49,7 +49,7 @@ from toolang.execution.types import (
     local_to_protocol_data,
 )
 from toolang.execution.values import parts_from_local
-from toolang.lang.input import PromptInvocation, CallInput
+from toolang.lang.input import CallInput, PromptInvocation
 from toolang.lang.types import Array, Struct
 
 
@@ -348,7 +348,7 @@ def test_preparation_payload_round_trips_resolved_input() -> None:
         runnable="agic:worker",
         model="test/model",
         model_request=ModelRequest("test/model"),
-        input=CallInput({"_": Local.typed("Part[]", (TextPart("hello"),), 0).value}),
+        input=CallInput({"_": Array("Part[]", (TextPart("hello"),))}),
         sandbox="docker:python:3.13-slim",
     )
 
@@ -512,7 +512,7 @@ def test_preparation_payload_round_trips_authored_prompt_facts() -> None:
         runnable="agic:worker",
         model="test/model",
         model_request=ModelRequest("test/model"),
-        input=CallInput({"_": Local.typed("Part[]", (TextPart("expanded"),), 0).value}),
+        input=CallInput({"_": Array("Part[]", (TextPart("expanded"),))}),
         authored_input=CallInput(
             {"_": "$review focus=security -- inspect", "tone": "$brief"}
         ),
@@ -581,7 +581,7 @@ def test_preparation_payload_rejects_instead_of_dropping_invalid_input() -> None
         state="0" * 64,
         runnable="agic:worker",
         model="test/model",
-        input=CallInput({"_": Local.typed("Text", "hello", 0).value}),
+        input=CallInput({"_": "hello"}),
     )
     data = control_payload_to_data(payload)
     raw_input = data["input"]
@@ -646,10 +646,8 @@ def test_execute_payload_round_trips_source_pointing_locals() -> None:
         runnable="_flow_deliver$flow:deliver",
         input=CallInput(
             {
-                "_": Local.typed("Json", source.select("input", "input", "_")).value,
-                "format": Local.typed(
-                    "Json", source.select("input", "input", "format")
-                ).value,
+                "_": TypedRef(source.select("input", "input", "_"), "Json"),
+                "format": TypedRef(source.select("input", "input", "format"), "Json"),
             }
         ),
     )
@@ -666,9 +664,7 @@ def test_execute_payload_round_trips_source_pointing_locals() -> None:
         (
             "steer",
             SteerControlPayload(
-                CallInput(
-                    {"_": Local.typed("Part[]", (TextPart("continue"),), 0).value}
-                )
+                CallInput({"_": Array("Part[]", (TextPart("continue"),))})
             ),
         ),
         ("cancel", CancelControlPayload()),

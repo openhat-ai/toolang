@@ -1,7 +1,5 @@
 """Durable control identities and Step boundary relations."""
 
-from toolang.lang.input import CallInput
-
 from pathlib import Path
 import sqlite3
 import asyncio
@@ -39,12 +37,11 @@ from toolang.execution.types import (
     SkillRecallTarget,
     ServiceRecallTarget,
     ControlRef,
-    Local,
     ModelStepGiven,
     StepRef,
 )
 from toolang.base.types.run import ModelCall
-from toolang.lang.input import resolve_input_parts
+from toolang.lang.input import CallInput, resolve_input_parts
 
 
 @pytest.mark.parametrize("action", ["run", "execute"])
@@ -366,7 +363,7 @@ def test_retry_removes_emitted_controls_without_reusing_indexes(
             run_id=run.id,
             kind="cancel",
             timing="next_step",
-            input=CallInput({"_": Local.typed("Text", "stop").value}),
+            input=CallInput({"_": "stop"}),
             request_id="cancel-request",
             created_at="2026-01-01T00:00:04Z",
         )

@@ -60,6 +60,7 @@ from toolang.execution.types import (
     ToolStepGiven,
 )
 from toolang.lang.input import resolve_input_parts
+from toolang.lang.types import Array
 from toolang.setup import AgentSetup, ModelCollection, ToolCollection
 from toolang.up import process as agents
 from toolang.up.types import AgentServerRef
@@ -2084,7 +2085,7 @@ def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> Non
     ]
     assert isinstance(controls[1].payload, SteerControlPayload)
     assert controls[1].payload.input == CallInput(
-        {"_": Local.typed("Part[]", Message.user("Focus on tests").parts, 0).value}
+        {"_": Array("Part[]", Message.user("Focus on tests").parts)}
     )
 
 

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from toolang.lang.input import CallInput
-
 import asyncio
 from dataclasses import replace
 from decimal import Decimal
@@ -43,6 +41,7 @@ from toolang.execution.executor.common import BoundRun
 from toolang.execution.executor.prepare import _AgicFrame
 from toolang.execution.executor.runs.agic import _AgicState, _execute
 from toolang.execution.executor._messages import _MessageBuffer
+from toolang.lang.types import Array
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.execution.records import ControlRecord, SteerControlPayload
 from toolang.execution.types import ControlRef, Local, Output
@@ -69,7 +68,7 @@ from toolang.plugin.models.adapters import messages as messages_models
 from toolang.plugin.models.adapters import responses as responses_models
 from toolang.plugin.models.adapters.responses import encode_message, response_payload
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
-from toolang.lang.input import RunnableInput
+from toolang.lang.input import CallInput, RunnableInput
 from toolang.plugin.models.config import parse_provider_configs
 
 
@@ -2819,7 +2818,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
             kind="steer",
             timing="next_call",
             payload=SteerControlPayload(
-                CallInput({"_": Local.typed("Part[]", tuple(steer.parts), 0).value})
+                CallInput({"_": Array("Part[]", tuple(steer.parts))})
             ),
         )
     ]
@@ -2890,7 +2889,7 @@ def test_agic_commits_steer_messages_after_step_begin() -> None:
         kind="steer",
         timing="next_call",
         payload=SteerControlPayload(
-            CallInput({"_": Local.typed("Part[]", tuple(steer.parts), 0).value})
+            CallInput({"_": Array("Part[]", tuple(steer.parts))})
         ),
     )
     original_messages = list(prepared.messages)

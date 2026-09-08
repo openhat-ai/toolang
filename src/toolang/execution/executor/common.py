@@ -188,7 +188,7 @@ async def execute_step(
         )
         step_inputs = _unique_step_inputs(
             (
-                *(control_local_pointer(item, "_") for item in controls),
+                *(control_input_pointer(item, "_") for item in controls),
                 *(
                     inputs
                     if inputs is not None
@@ -523,7 +523,7 @@ def initial_locals(binding: BoundRun) -> dict[str, Local]:
     return locals
 
 
-def control_local_pointer(control: ControlRecord, name: str) -> FieldRef:
+def control_input_pointer(control: ControlRecord, name: str) -> FieldRef:
     """Point to one control input by its parameter name."""
 
     input = getattr(control.payload, "input", None)

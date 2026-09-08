@@ -1960,7 +1960,7 @@ class _Execution:
         runnable: AgicDecl | FlowDecl,
         *,
         locals: Mapping[str, Local] | None = None,
-        output_name: str | None = "_",
+        output_binding: str | None = "_",
         begun: bool = False,
     ) -> Local:
         """Execute one accepted agic or flow run and emit its lifecycle."""
@@ -2103,7 +2103,7 @@ class _Execution:
             RunEnd(
                 run=binding.run_id,
                 status="succeeded",
-                output=_run_result_output(result, name=output_name),
+                output=_run_result_output(result, binding=output_binding),
                 finished_at=utc_now(),
             )
         )
@@ -2182,7 +2182,7 @@ class _Execution:
         name: str,
         occurrence: Occurrence | None,
         *,
-        output_name: str | None = "_",
+        output_binding: str | None = "_",
         resolution: Literal["module", "state"] = "module",
         raw_input: Mapping[str, object] | None = None,
         authorize: Callable[[ResolvedRunnable], None] | None = None,
@@ -2276,7 +2276,7 @@ class _Execution:
         return await self._execute_child_binding(
             binding,
             runnable,
-            output_name=output_name,
+            output_binding=output_binding,
         )
 
     def _prepare_public_child(
@@ -2454,7 +2454,7 @@ class _Execution:
         binding: BoundRun,
         runnable: AgicDecl | FlowDecl,
         *,
-        output_name: str | None = "_",
+        output_binding: str | None = "_",
     ) -> Local:
         resources = binding.resources
         if resources is None:
@@ -2463,7 +2463,7 @@ class _Execution:
             result = await self.execute(
                 binding,
                 runnable,
-                output_name=output_name,
+                output_binding=output_binding,
                 begun=True,
             )
         except asyncio.CancelledError:
@@ -2866,42 +2866,26 @@ def _child_binding(
     state_ref: ControlRef,
 ) -> BoundRun:
     structs = {item.name: item for item in state_program(state, module).structs}
-    source_locals: dict[str, Local] = {}
-    primary_value: object | None = None
-    if runnable.input is not None:
-        primary = locals.get("_", Local())
-        if primary.shape != "none":
-            primary_value = _argument_value(primary, runnable.input)
-            source_locals["_"] = primary
-    named: dict[str, object] = {}
-    for parameter in runnable.params:
-        local = locals.get(parameter.name)
-        if local is None or local.shape == "none":
-            continue
-        named[parameter.name] = _argument_value(local, parameter)
-        source_locals[parameter.name] = local
+    parameters = {"_": runnable.input} if runnable.input is not None else {}
+    parameters.update((parameter.name, parameter) for parameter in runnable.params)
+    source_locals = {
+        name: locals[name]
+        for name in parameters
+        if name in locals and locals[name].shape != "none"
+    }
     input = resolve_runnable_input(
         runnable,
         {
-            **({"_": primary_value} if primary_value is not None else {}),
-            **dict(named or {}),
+            name: _argument_value(local, parameters[name])
+            for name, local in source_locals.items()
         },
         structs=structs,
     )
-    declared_types = {
-        **(
-            {"_": runnable.input.type_name or "Part[]"}
-            if runnable.input is not None
-            else {}
-        ),
-        **{
-            parameter.name: parameter.type_name or "Part[]"
-            for parameter in runnable.params
-        },
-    }
     control_input = CallInput(
         {
-            name: _child_control_value(source_locals[name], declared_types[name], value)
+            name: _child_control_value(
+                source_locals[name], parameters[name].type_name or "Part[]", value
+            )
             for name, value in input.items()
         }
     )
@@ -3289,7 +3273,7 @@ def _coerce_execute_output(
 def _run_result_output(
     result: Local,
     *,
-    name: str | None = "_",
+    binding: str | None = "_",
 ) -> Output | None:
     if result.shape == "none":
         return None
@@ -3311,5 +3295,5 @@ def _run_result_output(
             value=reference if reference is not None else cast(Value, concrete),
             dim=1 if result.shape == "list" else 0,
         ),
-        name,
+        binding,
     )

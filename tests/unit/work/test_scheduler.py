@@ -5,8 +5,6 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 import threading
 
-from toolang.lang.input import CallInput
-
 import pytest
 
 from toolang.base.types.message import Message, TextPart
@@ -14,13 +12,13 @@ from toolang.base.types.run import ModelCallResult
 from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.catalog.types import JobKind
 from toolang.execution.records import CreateControlPayload, RunControlPayload
-from toolang.execution.types import Local
+from toolang.lang.input import CallInput
+from toolang.lang.types import Array
 from toolang.work.authoring import new_job_file
 from toolang.work.records import JobRecord
 from toolang.work.scheduler import JobScheduler
 from toolang.work.state import load_ready_jobs
 from toolang.work.store import JobStore
-from toolang.lang.types import Array
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -188,10 +186,8 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
             assert control.payload.runnable == "agent$agic:review"
             assert control.payload.input == CallInput(
                 {
-                    "_": Local.typed(
-                        "Part[]", Message.user("Review this.").parts
-                    ).value,
-                    "focus": Local.typed("Text", "security").value,
+                    "_": Array("Part[]", Message.user("Review this.").parts),
+                    "focus": "security",
                 }
             )
             created = harness.store.get_thread_control(

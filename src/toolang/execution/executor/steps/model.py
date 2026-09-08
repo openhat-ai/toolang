@@ -54,7 +54,7 @@ from ...types import (
 )
 from .._messages import _MessageBuffer
 from ..budget import InputEstimate, message_tokens
-from ..common import _StepFailed, control_local_pointer
+from ..common import _StepFailed, control_input_pointer
 from ..diagnostics import log_model_request, log_model_result, log_model_target
 from ..limits import _ModelAccounting
 from . import tool as tool_step
@@ -230,7 +230,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             state=state_ref,
             input=(
                 *_step_input(state),
-                *(control_local_pointer(item, "_") for item in state.claimed_inputs),
+                *(control_input_pointer(item, "_") for item in state.claimed_inputs),
             ),
             preceded_by=tuple(item.ref for item in preceding),
             started_at=utc_now(),

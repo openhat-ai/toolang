@@ -96,7 +96,7 @@ def test_runnable_override_supports_every_call_input_form(
 ) -> None:
     assert parse_chat_input(source) == (
         RunOverride(runnable="agic:review"),
-        CallInput({**({"_": expected} if expected is not None else {})}),
+        CallInput({"_": expected}),
     )
 
 
@@ -113,7 +113,7 @@ def test_chat_submission_preserves_prompt_call_input_for_content_resolution(
 ) -> None:
     assert parse_chat_input(source) == (
         RunOverride(),
-        CallInput({**({"_": source} if source is not None else {})}),
+        CallInput({"_": source}),
     )
 
 

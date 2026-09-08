@@ -39,7 +39,8 @@ from toolang.execution.schemas import (
     RunRequest,
     RunnableRequest,
 )
-from toolang.execution.types import ControlRef, Local, RunCommand, StepRef
+from toolang.execution.types import ControlRef, RunCommand, StepRef
+from toolang.lang.types import Array
 from toolang.lang.input import CallInput
 
 
@@ -142,15 +143,11 @@ def _detail(run_id: str = "run_remote") -> RunDetail:
 
 def _control(action: str, run_id: str = "run_remote") -> ControlInfo:
     if action == "cancel":
-        payload = CancelControlPayload(
-            CallInput({"_": Local.typed("Text", "finished", 0).value})
-        )
+        payload = CancelControlPayload(CallInput({"_": "finished"}))
         kind = "cancel"
         timing = "immediate"
     else:
-        payload = SteerControlPayload(
-            CallInput({"_": Local.typed("Part[]", (), 0).value})
-        )
+        payload = SteerControlPayload(CallInput({"_": Array("Part[]", ())}))
         kind = "steer"
         timing = "next_step"
     return ControlInfo(

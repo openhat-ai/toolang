@@ -1,7 +1,5 @@
 """History tools expose bounded execution facts without rebuilding model calls."""
 
-from toolang.lang.input import CallInput
-
 import asyncio
 from contextlib import closing
 import threading
@@ -38,6 +36,8 @@ from toolang.execution.types import (
     ToolStepGiven,
     TypedRef,
 )
+from toolang.lang.input import CallInput
+from toolang.lang.types import Array
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.base.types.tool import HistoryToolContext
 
@@ -266,9 +266,7 @@ def test_steps_resolve_locals_and_keep_dependencies_and_model_refs(store, monkey
         run_id="run_a",
         kind="steer",
         timing="next_step",
-        input=CallInput(
-            {"_": Local.typed("Part[]", (TextPart("exact input"),), 0).value}
-        ),
+        input=CallInput({"_": Array("Part[]", (TextPart("exact input"),))}),
         request_id=None,
         created_at="2026-01-01T00:00:03Z",
     )
@@ -344,13 +342,12 @@ def test_execute_input_is_resolved_in_entries_and_dependencies(store):
         triggered_by=trigger.ref,
         input=CallInput(
             {
-                "_": Local.typed(
-                    "Json",
+                "_": TypedRef(
                     FieldRef.from_path(
                         source.ref, "output", "local", "value", 0, "input", "input", "_"
                     ),
-                    0,
-                ).value
+                    "Json",
+                )
             }
         ),
         created_at="2026-01-01T00:00:04Z",

@@ -361,10 +361,10 @@ class LocalChatSession:
     ) -> ChatResult:
         if run_id is not None:
             try:
-                local = self.history.get_output(run_id)
+                result = self.history.get_output(run_id)
             except KeyError:
                 raise ValueError(f"Run not found: {run_id}") from None
-            output = parts_from_local(local.local) if local is not None else ()
+            output = parts_from_local(result.local) if result is not None else ()
             if not output:
                 raise ValueError(f"Run has no result: {run_id}")
             return ChatResult(run_id=run_id, output=output)
@@ -378,8 +378,8 @@ class LocalChatSession:
             for run in view.runs(reverse=True):
                 if run.status != "succeeded" or run.output is None:
                     continue
-                local = self.history.get_output(run.id)
-                output = parts_from_local(local.local) if local is not None else ()
+                result = self.history.get_output(run.id)
+                output = parts_from_local(result.local) if result is not None else ()
                 if output:
                     return ChatResult(run_id=run.id, output=output)
         raise ValueError("No run result is available in this chat.")

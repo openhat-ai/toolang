@@ -328,9 +328,7 @@ agic default(_: Part[]):
         assert spec.input.get("_") == Array(
             "Part[]", (TextPart("security inspect this"),)
         )
-        assert spec.authored_input == CallInput(
-            {**({"_": prompt_source} if prompt_source is not None else {})}
-        )
+        assert spec.authored_input == CallInput({"_": prompt_source})
         assert spec.authored_commands == (RunCommand("limit", "time", 30),)
         assert len(spec.prompt_invocations) == 1
         invocation = spec.prompt_invocations[0]
@@ -483,7 +481,7 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
             default_runnable="default",
             surface=surface,
             session_commands=session,
-            surface_named_sources=CallInput(dict(named)),
+            surface_named_sources=named,
         )
 
     try:

@@ -145,13 +145,13 @@ def parse_policy_prefix(
                 )
             return (
                 merge_run_overrides(overrides),
-                CallInput({**({"_": primary} if primary is not None else {}), **named}),
+                CallInput({"_": primary, **named} if primary is not None else named),
             )
 
     remaining = source[lines[index].start :] if index < len(lines) else ""
     return (
         merge_run_overrides(overrides),
-        CallInput({**({"_": remaining} if remaining else {}), **named}),
+        CallInput({"_": remaining, **named} if remaining else named),
     )
 
 
