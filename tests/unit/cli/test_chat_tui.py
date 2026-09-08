@@ -842,7 +842,7 @@ def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> No
     assert all("─" not in line for line in lines)
 
 
-def test_chat_tool_step_has_normal_marker_and_dim_running_description() -> None:
+def test_chat_tool_step_has_dim_marker_and_running_description() -> None:
     block = blocks.ExecutionProgressBlock(
         ProgressBlock(
             "step:run_1.1",
@@ -858,7 +858,7 @@ def test_chat_tool_step_has_normal_marker_and_dim_running_description() -> None:
     segments = list(rendering.render_segments(block.render(), width=80))
     marker = next(segment for segment in segments if "›" in segment.text)
     content = next(segment for segment in segments if "Running" in segment.text)
-    assert marker.style is None or not marker.style.dim
+    assert marker.style is not None and marker.style.dim
     assert content.style is not None and content.style.dim
     assert all(
         segment.style is None or segment.style.bgcolor is None for segment in segments
@@ -893,6 +893,8 @@ def test_chat_tool_failure_stays_two_lines_without_result_surfaces(width: int) -
     assert len(lines) == 2
     assert all(len(line) <= width for line in lines)
     assert lines[0].startswith("› ")
+    marker = next(segment for segment in segments if "›" in segment.text)
+    assert marker.style is not None and marker.style.dim
     assert lines[1].startswith("  ")
     assert lines[1].endswith("…")
     assert all(

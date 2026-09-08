@@ -9,8 +9,8 @@ is approved in the implementation discussion.
 - Running, successful, and canceled tools occupy one line; failed tools occupy
   two, with an indented error on the second line. Truncate long lines.
 - Remove all tool-result blocks. Keep results in records and model messages.
-- Keep Step markers unstyled: `•` for models, `›` for ordinary tools, and `✧`
-  for runtime helpers. Use dim text for all tool summaries and red error details;
+- Use dim markers and summaries for tools: `›` for ordinary tools and `✧` for
+  runtime helpers. Keep Model/Flow `•` markers unstyled and error details red;
   preserve model Markdown and styling.
 - Preserve compact timing, hidden intercepted workspace calls, child/flow
   hierarchy, and root footers.
@@ -67,7 +67,7 @@ model names, reasoning, and runnable selection stay unchanged.
 - Fs/shell/runtime toolsets and executor tool summaries/rules: lifecycle wording,
   fallback and masking, cancellation at begin/during/end, no I/O for descriptions.
 - Shared progress projection/rendering: one/two physical lines at narrow widths,
-  distinct normal markers, dim tool summaries, red error line, no result surfaces,
+  distinct dim tool markers/summaries, red error line, no result surfaces,
   compact timer cleanup, and unchanged model/flow output.
 - `Metrics.facts` and Chat block/widget rendering: grouped usage/cost; full
   runnable refs render without modules in idle, active, and queued snapshots.

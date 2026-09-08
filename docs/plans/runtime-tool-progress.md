@@ -153,7 +153,7 @@ inspection retains the full text and result. No UI resource reads are needed.
 
 Pick uses `service/name` where appropriate. Keep actual failure/cancellation
 wording. Use `✧` for these runtime rows, ordinary tool `›`, and footer `∎`.
-All tool summaries are dim; markers stay unstyled. Counts follow actual Steps.
+All tool summaries and markers are dim. Counts follow actual Steps.
 There is no workspace event to suppress, no
 first-attempt activity flash, and no duplicate workspace error or result panel.
 

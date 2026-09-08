@@ -149,14 +149,14 @@ dynamic Run Step, and `∎` marks the root Run footer. The centered dot `·` is 
 an inline facts separator.
 
 - Model activity and output use `•` and normal text.
-- Ordinary and runtime Tool summaries are dim in every state, with a separate
-  red error line on failure.
+- Ordinary and runtime Tool markers and summaries are dim in every state, with
+  a separate red error line on failure.
 - Flow activity and terminal output use `•` and normal text.
 - Model and Flow failures use red; cancellation uses yellow.
 - Parallel lanes place the Step marker after the lane columns.
 - Headers and facts are dim.
 
-Step markers remain unstyled, independently of their following content.
+Model and Flow markers remain unstyled, independently of their following content.
 Successful Model and Flow outputs use the terminal's default foreground.
 Green is not a terminal status color.
 

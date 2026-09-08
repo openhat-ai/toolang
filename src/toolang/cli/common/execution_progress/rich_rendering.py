@@ -329,12 +329,12 @@ class _PlainRow:
 
 
 def _plain_text(value: str, style: str) -> Text:
-    """Style content while keeping the Step marker in its prefix normal."""
+    """Style rows while keeping Model and Flow markers normal."""
 
     text = Text(no_wrap=True)
     prefix, content = split_hanging_prefix(value)
     for char in prefix:
-        text.append(char, style="none" if char in {"•", "›", "✧"} else style)
+        text.append(char, style="none" if char == "•" else style)
     text.append(content, style=style)
     return text
 
