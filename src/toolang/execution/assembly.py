@@ -79,18 +79,15 @@ def tail_delta(
         if entry is not None and isinstance(
             entry.payload, RunControlPayload | ExecuteControlPayload
         ):
-            for index, value in enumerate(entry.payload.input):
-                if value.name == "_":
-                    messages.append(
-                        _local_message(
-                            "user",
-                            FieldRef.from_path(
-                                entry.ref, "payload", "input", index, "value"
-                            ),
-                            value,
-                            resolve,
-                        )
+            if "_" in entry.payload.input:
+                messages.append(
+                    _local_message(
+                        "user",
+                        FieldRef.from_path(entry.ref, "payload", "input", "_"),
+                        Local(entry.payload.input["_"]),
+                        resolve,
                     )
+                )
     deferred: dict[ControlRef, ControlRecord] = {}
     replies = {
         step.ref: reply

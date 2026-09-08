@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from toolang.lang.input import CallInput
+
 import asyncio
 import sqlite3
 from pathlib import Path
@@ -263,10 +265,16 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
         bindings=RunBindings(model="test/model", runnable="agic:chat"),
         input=resolve_runnable_input(
             agic,
-            primary=Message.user("hello").parts,
-            named={"focus": "events"},
+            {
+                **(
+                    {"_": Message.user("hello").parts}
+                    if Message.user("hello").parts is not None
+                    else {}
+                ),
+                "focus": "events",
+            },
         ),
-        control_locals=(),
+        control_input=CallInput({}),
         state=state,
         state_ref=ControlRef.for_run("run_1", 0),
         setup=setup,
@@ -291,7 +299,10 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
         context,
         run,
         agic,
-        variables={"_": run.input.primary, **run.input.named},
+        variables={
+            "_": run.input.get("_"),
+            **{name: value for name, value in run.input.items() if name != "_"},
+        },
     )
 
     assert prepared.run is run
@@ -357,9 +368,15 @@ def test_prepare_agic_keeps_declared_output_contract_out_of_instructions(
         bindings=RunBindings(model="test/model", runnable="agic:queries"),
         input=resolve_runnable_input(
             agic,
-            primary=Message.user("topic").parts,
+            {
+                **(
+                    {"_": Message.user("topic").parts}
+                    if Message.user("topic").parts is not None
+                    else {}
+                )
+            },
         ),
-        control_locals=(),
+        control_input=CallInput({}),
         state=state,
         state_ref=ControlRef.for_run("run_1", 0),
         setup=setup,
@@ -384,7 +401,10 @@ def test_prepare_agic_keeps_declared_output_contract_out_of_instructions(
         context,
         run,
         agic,
-        variables={"_": run.input.primary, **run.input.named},
+        variables={
+            "_": run.input.get("_"),
+            **{name: value for name, value in run.input.items() if name != "_"},
+        },
     )
 
     assert "<output-contract>" not in prepared.instructions
@@ -436,10 +456,9 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
         bindings=RunBindings(model="test/model", runnable="agic:review"),
         input=resolve_runnable_input(
             agic,
-            primary=(TextPart("this diagram "), image),
-            named={"appendix": document},
+            {"_": (TextPart("this diagram "), image), "appendix": document},
         ),
-        control_locals=(),
+        control_input=CallInput({}),
         state=state,
         state_ref=ControlRef.for_run("run_1", 0),
         setup=setup,
@@ -463,7 +482,10 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
         context,
         run,
         agic,
-        variables={"_": run.input.primary, **run.input.named},
+        variables={
+            "_": run.input.get("_"),
+            **{name: value for name, value in run.input.items() if name != "_"},
+        },
     )
 
     assert prepared.messages[-1].parts == (
@@ -549,8 +571,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
                     limits=setup.limits,
                     input=resolve_runnable_input(
                         agic,
-                        primary=(TextPart(text="hello"), image),
-                        named={"focus": "events"},
+                        {"_": (TextPart(text="hello"), image), "focus": "events"},
                     ),
                 ),
                 tracer=tracer,
@@ -581,9 +602,11 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert detail is not None
         run_payload = detail.controls[0].payload
         assert isinstance(run_payload, RunControlPayload)
-        assert run_payload.input == (
-            RecordLocal.typed("Part[]", (TextPart("hello"), image), "_"),
-            RecordLocal.typed("Text", "events", "focus"),
+        assert run_payload.input == CallInput(
+            {
+                "_": RecordLocal.typed("Part[]", (TextPart("hello"), image), "_").value,
+                "focus": RecordLocal.typed("Text", "events", "focus").value,
+            }
         )
         assert detail.output == RecordLocal.typed(
             "Part[]",

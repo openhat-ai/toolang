@@ -40,7 +40,7 @@ from toolang.execution.schemas import (
     RunnableRequest,
 )
 from toolang.execution.types import ControlRef, Local, RunCommand, StepRef
-from toolang.lang.input import NamedInputSource, RunnableInputRaw
+from toolang.lang.input import CallInput
 
 
 _DETAIL_ADAPTER = TypeAdapter(RunDetail)
@@ -87,11 +87,7 @@ def _request() -> RunRequest:
         thread_id="term_test",
         request_id="term_request",
         runnable=RunnableRequest(
-            "agic:chat",
-            RunnableInputRaw(
-                _="hello",
-                named=(NamedInputSource("tone", "brief"),),
-            ),
+            "agic:chat", CallInput({"_": "hello", "tone": "brief"})
         ),
         model=ModelRequest("openai/gpt-5"),
         policy=RunPolicy(
@@ -146,11 +142,15 @@ def _detail(run_id: str = "run_remote") -> RunDetail:
 
 def _control(action: str, run_id: str = "run_remote") -> ControlInfo:
     if action == "cancel":
-        payload = CancelControlPayload((Local.typed("Text", "finished", "_", 0),))
+        payload = CancelControlPayload(
+            CallInput({"_": Local.typed("Text", "finished", "_", 0).value})
+        )
         kind = "cancel"
         timing = "immediate"
     else:
-        payload = SteerControlPayload((Local.typed("Part[]", (), "_", 0),))
+        payload = SteerControlPayload(
+            CallInput({"_": Local.typed("Part[]", (), "_", 0).value})
+        )
         kind = "steer"
         timing = "next_step"
     return ControlInfo(
@@ -233,15 +233,9 @@ def test_remote_client_runs_traces_and_waits_for_detail() -> None:
                 "request_id": "term_request",
                 "runnable": {
                     "ref": "agic:chat",
-                    "input": {
-                        "_": "hello",
-                        "named": [{"name": "tone", "source": "brief"}],
-                    },
+                    "input": {"_": "hello", "tone": "brief"},
                 },
-                "model": {
-                    "ref": "openai/gpt-5",
-                    "parameters": {"reasoning": None},
-                },
+                "model": {"ref": "openai/gpt-5", "parameters": {"reasoning": None}},
                 "policy": {
                     "allow": [
                         {

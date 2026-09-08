@@ -37,7 +37,7 @@ from toolang.execution.types import (
     SessionSetting,
     StepRef,
 )
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import CallInput
 from toolang.up.types import AgentServerRef
 
 _HOST_DESCRIPTION = "macOS 27.0 arm64"
@@ -115,7 +115,7 @@ class _Client:
         self,
         thread_id: str,
         override: RunOverride,
-        input: RunnableInputRaw,
+        input: CallInput[str],
         setting: SessionSetting,
     ) -> RunRequest:
         del override
@@ -151,7 +151,7 @@ class _Client:
     ) -> None:
         del on_event, on_error, on_state
         self.starts.append(
-            (request.thread_id, request.runnable.input._ or "", request.model)
+            (request.thread_id, request.runnable.input.get("_") or "", request.model)
         )
 
     def cancel(self, run_id: str, on_error: Callable[[str], None]) -> None:
@@ -177,7 +177,7 @@ class _FailedRunClient(_Client):
     ) -> None:
         del on_error, on_state
         self.starts.append(
-            (request.thread_id, request.runnable.input._ or "", request.model)
+            (request.thread_id, request.runnable.input.get("_") or "", request.model)
         )
         on_event(
             RunEnd(

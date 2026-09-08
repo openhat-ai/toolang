@@ -11,6 +11,14 @@ needed by a consumer or information that the source cannot express directly.
 
 Keep comments rare, short, and close to what they describe.
 
+## Input Terminology
+
+Call primary input **input** and named inputs **arguments** (singular:
+**argument**). Use the full names when the distinction needs emphasis. Follow
+the [input terminology](./call-input.md#terminology) and
+[flat mapping convention](./call-input.md#flat-input-mappings) across authored
+prose, documentation, and CLI help.
+
 ## Natural Language
 
 Toolang deliberately keeps authored instructions close to natural language.

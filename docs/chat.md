@@ -16,7 +16,7 @@ Chat uses the same runtime units as the rest of Toolang:
 | `step` | One execution unit inside the run |
 
 One terminal `ChatInput` resolves to either one `QuickCommand` or one aggregate
-`RunOverride` paired with `RunnableInputRaw`. Only the runnable-input branch
+`RunOverride` paired with `CallInput[str]`. Only the runnable-input branch
 creates a run control and a run in an existing thread. A client creates the
 thread explicitly before the first run.
 

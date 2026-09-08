@@ -332,7 +332,7 @@ def test_reprepared_tool_loop_preserves_messages_and_input_dependencies(
                         FieldRef.from_path(step.ref, "output", "value")
                         for step in steps[1:3]
                     ),
-                    FieldRef.from_path(steer.ref, "payload", "input", 0, "value"),
+                    FieldRef.from_path(steer.ref, "payload", "input", "_"),
                 )
 
     asyncio.run(scenario())

@@ -31,14 +31,14 @@ from toolang.lang.ast import (
 from toolang.lang.input import (
     PromptInvocation,
     RunnableInput,
-    RunnableInputRaw,
+    CallInput,
     coerce_output,
-    decode_json_input,
+    decode_runnable_input,
     resolve_runnable_input,
     validate_value,
 )
 from toolang.lang.includes import resolve_file_include
-from toolang.lang.types import Value
+from toolang.lang.types import Array, Value
 from toolang.plugin.models.resolution import (
     apply_model_parameters,
 )
@@ -73,6 +73,7 @@ from ..store import RunStore
 from ..tool_results import control_summary
 from ..schemas import RerunRequest, RetryRequest, RunRequest
 from ..types import (
+    value_for_type,
     ControlTiming,
     AgentResources,
     ControlRef,
@@ -197,8 +198,8 @@ class RunSpec:
     limits: RunLimits
     model_request: ModelRequest | None = None
     ceilings: tuple[AgentCeiling, ...] = ()
-    input: RunnableInput = RunnableInput()
-    authored_input: RunnableInputRaw | None = None
+    input: RunnableInput = field(default_factory=CallInput)
+    authored_input: CallInput[str] | None = None
     authored_commands: tuple[RunCommand, ...] = ()
     authored_session_commands: tuple[RunCommand, ...] = ()
     prompt_invocations: tuple[PromptInvocation, ...] = ()
@@ -368,7 +369,7 @@ class RunExecutor:
             runnable=_bound_runnable(bound),
             model=_bound_model(bound),
             model_request=bound.model_request,
-            locals=bound.control_locals,
+            input=bound.control_input,
             sandbox=sandbox,
             occurrence=bound.occurrence,
             request_id=request_id,
@@ -465,7 +466,7 @@ class RunExecutor:
             runnable=_bound_runnable(bound),
             model=_bound_model(bound),
             model_request=bound.model_request,
-            locals=bound.control_locals,
+            input=bound.control_input,
             sandbox=sandbox,
             occurrence=bound.occurrence,
             request_id=request_id,
@@ -673,7 +674,7 @@ class RunExecutor:
                 )
                 else ()
             ),
-            input=_runnable_input_from_locals(
+            input=_resolve_stored_input(
                 self.store,
                 preparation.input,
             ),
@@ -832,9 +833,7 @@ class RunExecutor:
             run_id=run_id,
             kind="cancel",
             timing=timing,
-            locals=(RecordLocal.typed("Text", reason, "_", 0),)
-            if reason is not None
-            else (),
+            input=CallInput({"_": reason} if reason is not None else {}),
             request_id=request_id,
             created_at=utc_now(),
         )
@@ -859,7 +858,7 @@ class RunExecutor:
             run_id=run_id,
             kind="steer",
             timing=timing,
-            locals=(RecordLocal.typed("Part[]", tuple(message.parts), "_", 0),),
+            input=CallInput({"_": Array("Part[]", tuple(message.parts))}),
             request_id=request_id,
             created_at=utc_now(),
         )
@@ -1797,33 +1796,7 @@ class _Execution:
         program = state_program(state, module)
         structs = {item.name: item for item in program.structs}
         try:
-            parameters = {item.name: item for item in runnable.params}
-            primary = raw_input.get("_")
-            if primary is not None and runnable.input is not None:
-                primary = decode_json_input(
-                    primary,
-                    runnable.input.type_name or "Part[]",
-                    structs=structs,
-                )
-            named = {
-                name: (
-                    decode_json_input(
-                        value,
-                        parameters[name].type_name or "Part[]",
-                        structs=structs,
-                    )
-                    if name in parameters
-                    else value
-                )
-                for name, value in raw_input.items()
-                if name != "_"
-            }
-            input = resolve_runnable_input(
-                runnable,
-                primary=primary,
-                named=named,
-                structs=structs,
-            )
+            input = decode_runnable_input(runnable, raw_input, structs=structs)
         except (ToolangError, TypeError, ValueError) as exc:
             raise _RunRejected(
                 str(exc) or type(exc).__name__,
@@ -1886,7 +1859,7 @@ class _Execution:
             target.executable,
             state=state,
         )
-        control_locals = _execute_control_locals(input, source=source)
+        control_input = _execute_control_input(input, source=source)
         binding = replace(
             parent,
             horizon=self.horizon_for(parent.run_id),
@@ -1895,7 +1868,7 @@ class _Execution:
                 runnable=target.ref,
             ),
             input=input,
-            control_locals=control_locals,
+            control_input=control_input,
             state=state,
             state_ref=state_ref,
             module=target.module,
@@ -1905,7 +1878,7 @@ class _Execution:
                 resources if isinstance(target.executable, FlowDecl) else None
             ),
         )
-        return binding, _execute_locals(input, target.executable, control_locals)
+        return binding, _execute_locals(input, target.executable, control_input)
 
     def commit_execute(
         self,
@@ -1924,7 +1897,7 @@ class _Execution:
             state=binding.state.revision,
             runnable=ref,
             triggered_by=triggered_by,
-            locals=binding.control_locals,
+            input=binding.control_input,
             created_at=utc_now(),
         )
         binding = replace(binding, control_index=control.index)
@@ -2341,7 +2314,7 @@ class _Execution:
             ),
             model_request=parent.model_request,
             input=input,
-            control_locals=_input_locals(input, runnable),
+            control_input=_snapshot_input(input, runnable),
             state=state,
             state_ref=state_ref,
             setup=parent.setup,
@@ -2436,7 +2409,7 @@ class _Execution:
                     runnable=_bound_runnable(binding),
                     model=_bound_model(binding),
                     model_request=binding.model_request,
-                    locals=binding.control_locals,
+                    input=binding.control_input,
                     sandbox=None,
                     occurrence=binding.occurrence,
                     request_id=None,
@@ -2905,8 +2878,10 @@ def _child_binding(
         source_locals[parameter.name] = local
     input = resolve_runnable_input(
         runnable,
-        primary=primary_value,
-        named=named,
+        {
+            **({"_": primary_value} if primary_value is not None else {}),
+            **dict(named or {}),
+        },
         structs=structs,
     )
     declared_types = {
@@ -2920,20 +2895,12 @@ def _child_binding(
             for parameter in runnable.params
         },
     }
-    control_locals: list[RecordLocal] = []
-    resolved_values = {
-        **({"_": input.primary} if input.primary is not None else {}),
-        **input.named,
-    }
-    for name, value in resolved_values.items():
-        control_locals.append(
-            _child_control_local(
-                name,
-                source_locals[name],
-                declared_types[name],
-                cast(Value, value),
-            )
-        )
+    control_input = CallInput(
+        {
+            name: _child_control_value(source_locals[name], declared_types[name], value)
+            for name, value in input.items()
+        }
+    )
     return BoundRun(
         run_id=context.executor.ids.issue_run(),
         root_run_id=parent.root_run_id,
@@ -2944,7 +2911,7 @@ def _child_binding(
         ),
         model_request=parent.model_request,
         input=input,
-        control_locals=tuple(control_locals),
+        control_input=control_input,
         state=state,
         state_ref=state_ref,
         setup=parent.setup,
@@ -2991,7 +2958,7 @@ def _bind_run(
         runnable_name,
         kind=runnable_kind,
     )
-    control_locals = _input_locals(input, runnable)
+    control_input = _snapshot_input(input, runnable)
     return BoundRun(
         run_id=run_id,
         root_run_id=run_id,
@@ -3001,8 +2968,8 @@ def _bind_run(
             model=spec.bindings.model or "none",
         ),
         model_request=spec.model_request,
-        input=_runnable_input_from_values(control_locals),
-        control_locals=control_locals,
+        input=control_input,
+        control_input=control_input,
         state=spec.state,
         state_ref=ControlRef(RunRef(run_id), 0),
         setup=spec.setup,
@@ -3159,7 +3126,7 @@ def _validate_inputs(
 ) -> None:
     structs = {item.name: item for item in program.structs}
     params = {param.name: param for param in runnable.params}
-    args = input.named
+    args = {name: value for name, value in input.items() if name != "_"}
     unknown = sorted(set(args) - set(params))
     if unknown:
         joined = ", ".join(unknown)
@@ -3172,17 +3139,13 @@ def _validate_inputs(
     if missing:
         joined = ", ".join(missing)
         raise ValueError(f"missing named inputs for {runnable.name}: {joined}")
-    if runnable.input is None and input.primary is not None:
+    if runnable.input is None and "_" in input:
         raise ValueError(f"{runnable.name} does not accept primary input")
-    if (
-        runnable.input is not None
-        and not runnable.input.optional
-        and input.primary is None
-    ):
+    if runnable.input is not None and not runnable.input.optional and "_" not in input:
         raise ValueError(f"{runnable.name} requires primary input")
-    if runnable.input is not None and input.primary is not None:
+    if runnable.input is not None and "_" in input:
         validate_value(
-            input.primary,
+            input["_"],
             runnable.input.type_name or "Part[]",
             structs=structs,
             path="primary input",
@@ -3202,91 +3165,61 @@ def _run_event_id(event: RunEvent) -> str:
     return event.step.run_id
 
 
-def _input_locals(
+def _snapshot_input(
     input: RunnableInput,
     runnable: AgicDecl | FlowDecl,
-) -> tuple[RecordLocal, ...]:
+) -> RunnableInput:
     parameters = {item.name: item for item in runnable.params}
-    result: list[RecordLocal] = []
-    if runnable.input is not None and input.primary is not None:
-        type_name = runnable.input.type_name or "Part[]"
-        result.append(
-            RecordLocal.typed(
-                type_name=type_name,
-                value=input.primary,
-                name="_",
+    if runnable.input is not None:
+        parameters["_"] = runnable.input
+    return CallInput(
+        {
+            name: cast(
+                Value, value_for_type(parameters[name].type_name or "Part[]", value)
             )
-        )
-    for name, item in input.named.items():
-        result.append(
-            RecordLocal.typed(
-                type_name=parameters[name].type_name or "Part[]",
-                value=item,
-                name=name,
-            )
-        )
-    return tuple(result)
+            for name, value in input.items()
+        }
+    )
 
 
-def _execute_control_locals(
-    input: RunnableInput,
-    *,
-    source: FieldRef,
-) -> tuple[RecordLocal, ...]:
-    """Point raw replacement inputs into the originating Model ToolCall."""
+def _execute_control_input(
+    input: RunnableInput, *, source: FieldRef
+) -> CallInput[TypedRef]:
+    """Point replacement inputs into the originating Model ToolCall."""
 
-    result: list[RecordLocal] = []
-    if input.primary is not None:
-        pointer = source.select("input", "input", "_")
-        result.append(RecordLocal.typed("Json", pointer, "_"))
-    for name in input.named:
-        pointer = source.select("input", "input", name)
-        result.append(RecordLocal.typed("Json", pointer, name))
-    return tuple(result)
+    return CallInput(
+        {
+            name: TypedRef(source.select("input", "input", name), "Json")
+            for name in input
+        }
+    )
 
 
 def _execute_locals(
     input: RunnableInput,
     runnable: AgicDecl | FlowDecl,
-    records: tuple[RecordLocal, ...],
+    records: CallInput[TypedRef],
 ) -> dict[str, Local]:
-    """Bind concrete replacement values to their durable model-output sources."""
+    """Bind replacement values to their durable model-output sources."""
 
     types = {item.name: item.type_name or "Part[]" for item in runnable.params}
     if runnable.input is not None:
         types["_"] = runnable.input.type_name or "Part[]"
-    values = {
-        **({"_": input.primary} if input.primary is not None else {}),
-        **input.named,
-    }
     result: dict[str, Local] = {"_": Local()}
-    for record in records:
-        if record.name is None or not isinstance(record.value, TypedRef):
-            raise RuntimeError("execute input local is not a named pointer")
-        result[record.name] = Local(
-            values[record.name],
-            "item",
-            record.value.ref,
-            types[record.name],
-            record,
+    for name, pointer in records.items():
+        result[name] = Local(
+            input[name], "item", pointer.ref, types[name], RecordLocal(pointer, name)
         )
     return result
 
 
-def _child_control_local(
-    name: str,
-    local: Local,
-    type_name: str,
-    value: Value,
-) -> RecordLocal:
+def _child_control_value(
+    local: Local, type_name: str, value: Value
+) -> Value | TypedRef:
     source_type = _runtime_local_type(local)
-    return RecordLocal.typed(
-        type_name=type_name,
-        value=(
-            local.ref if local.ref is not None and source_type == type_name else value
-        ),
-        name=name,
-        dim=0,
+    return value_for_type(
+        type_name,
+        local.ref if local.ref is not None and source_type == type_name else value,
     )
 
 
@@ -3298,34 +3231,12 @@ def _runtime_local_type(local: Local) -> str | None:
     return f"{local.type_name}[]" if local.shape == "list" else local.type_name
 
 
-def _runnable_input_from_locals(
-    store: RunStore,
-    locals: Sequence[RecordLocal],
+def _resolve_stored_input(
+    store: RunStore, input: CallInput[Value | TypedRef]
 ) -> RunnableInput:
-    primary: Value | None = None
-    named: dict[str, Value] = {}
-    for local in locals:
-        value = cast(Value, store.resolve_value(local.value))
-        if local.name == "_":
-            primary = value
-        elif local.name is not None:
-            named[local.name] = value
-    return RunnableInput(primary=primary, named=named)
-
-
-def _runnable_input_from_values(
-    locals: Sequence[RecordLocal],
-) -> RunnableInput:
-    primary: Value | None = None
-    named: dict[str, Value] = {}
-    for local in locals:
-        if isinstance(local.value, TypedRef):
-            raise TypeError("top-level input local cannot be a pointer")
-        if local.name == "_":
-            primary = local.value
-        elif local.name is not None:
-            named[local.name] = local.value
-    return RunnableInput(primary=primary, named=named)
+    return CallInput(
+        {name: cast(Value, store.resolve_value(value)) for name, value in input.items()}
+    )
 
 
 def _bound_runnable(binding: BoundRun) -> str:

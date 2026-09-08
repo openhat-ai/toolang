@@ -32,7 +32,7 @@ from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.runnables import parse_runnable_ref
 from toolang.execution.schemas import ControlInfo, RunDetail, RunRequest, ThreadInfo
 from toolang.execution.types import RunOverride, SessionSetting
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import CallInput
 from toolang.execution.values import parts_from_local
 from toolang.plugin.sandboxes.host import host_sandbox_description
 
@@ -206,7 +206,7 @@ class RemoteChatSession:
         self,
         thread_id: str,
         override: RunOverride,
-        input: RunnableInputRaw,
+        input: CallInput[str],
         setting: SessionSetting,
     ) -> RunRequest:
         return cast(
@@ -585,7 +585,7 @@ class RemoteChatSession:
         self,
         thread_id: str,
         override: RunOverride,
-        input: RunnableInputRaw,
+        input: CallInput[str],
         setting: SessionSetting,
     ) -> RunRequest:
         request = build_run_request(

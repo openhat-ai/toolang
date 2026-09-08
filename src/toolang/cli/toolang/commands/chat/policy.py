@@ -17,7 +17,7 @@ from toolang.execution.policy import (
 from toolang.execution.runnables import parse_runnable_ref
 from toolang.execution.schemas import RunRequest, RunnableRequest
 from toolang.execution.types import RunOverride, SessionSetting
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import CallInput
 
 
 def setting_slash_usage(name: str) -> str:
@@ -108,7 +108,7 @@ def build_run_request(
     *,
     thread_id: str,
     request_id: str,
-    input: RunnableInputRaw,
+    input: CallInput[str],
     override: RunOverride,
     setting: SessionSetting,
     surface: SessionSetting,

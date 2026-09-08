@@ -161,7 +161,7 @@ async def execute(
                     bindings=RunBindings(model=request.ref, runnable="flow:compact"),
                     limits=frame.run.limits,
                     model_request=request,
-                    input=RunnableInput(named=expected),
+                    input=RunnableInput({**dict(expected or {})}),
                 )
             )
             try:

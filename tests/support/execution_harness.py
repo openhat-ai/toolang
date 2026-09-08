@@ -418,26 +418,24 @@ class ExecutionHarness:
             state=self.state,
             thread=thread,
             bindings=RunBindings(
-                model=(
-                    model
-                    if model is not None
-                    else self.setup.defaults.model.ref
-                    if self.setup.defaults.model is not None
-                    else None
-                ),
+                model=model
+                if model is not None
+                else self.setup.defaults.model.ref
+                if self.setup.defaults.model is not None
+                else None,
                 runnable=runnable,
             ),
-            model_request=(
-                self.setup.defaults.model
-                if model is None and self.setup.defaults.model is not None
-                else None
-            ),
+            model_request=self.setup.defaults.model
+            if model is None and self.setup.defaults.model is not None
+            else None,
             limits=limits if limits is not None else self.setup.limits,
             ceilings=ceilings,
             input=resolve_runnable_input(
                 declaration,
-                primary=primary,
-                named=named,
+                {
+                    **({"_": primary} if primary is not None else {}),
+                    **dict(named or {}),
+                },
                 structs={
                     item.name: item for item in self.state.modules[module].structs
                 },

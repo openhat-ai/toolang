@@ -38,6 +38,7 @@ from toolang.execution.records import (
 from toolang.execution.schemas import ControlInfo
 from toolang.execution.types import (
     AgentResources,
+    ControlRef,
     FieldRef,
     Local,
     Pointer,
@@ -48,7 +49,7 @@ from toolang.execution.types import (
     local_to_protocol_data,
 )
 from toolang.execution.values import parts_from_local
-from toolang.lang.input import NamedInputSource, PromptInvocation, RunnableInputRaw
+from toolang.lang.input import PromptInvocation, CallInput
 from toolang.lang.types import Array, Struct
 
 
@@ -385,13 +386,47 @@ def test_preparation_payload_round_trips_resolved_input() -> None:
         runnable="agic:worker",
         model="test/model",
         model_request=ModelRequest("test/model"),
-        input=(Local.typed("Part[]", (TextPart("hello"),), "_", 0),),
+        input=CallInput(
+            {"_": Local.typed("Part[]", (TextPart("hello"),), "_", 0).value}
+        ),
         sandbox="docker:python:3.13-slim",
     )
 
     data = control_payload_to_data(payload)
     assert data["sandbox"] == "docker:python:3.13-slim"
     assert control_payload_from_data("run", data) == payload
+
+
+def test_flat_input_codec_retains_presence_types_and_references() -> None:
+    from toolang.execution.records import call_input_from_data, call_input_to_data
+
+    pointer = TypedRef(
+        FieldRef.from_path(
+            ControlRef.for_run("run_source", 0), "payload", "input", "argument"
+        ),
+        "Text",
+    )
+    input = CallInput(
+        {
+            "_": "",
+            "zero": 0,
+            "disabled": False,
+            "nullable": None,
+            "items": Array("Text[]", ()),
+            "argument": pointer,
+            "parts": Array("Part[]", (TextPart("hello"),)),
+        }
+    )
+    encoded = call_input_to_data(input)
+    assert encoded["_"] == ""
+    assert encoded["zero"] == 0
+    assert encoded["disabled"] is False
+    assert encoded["items"] == {"?": "Text[]!", "!": []}
+    assert call_input_from_data(encoded) == input
+    assert call_input_from_data(dict(reversed(tuple(encoded.items())))) == input
+    for old in (None, [], [{"name": "_", "value": "old", "dim": 0}]):
+        with pytest.raises(ValueError, match="flat object"):
+            call_input_from_data(old)
 
 
 @pytest.mark.parametrize(
@@ -411,11 +446,8 @@ def test_preparation_payload_omits_inactive_reasoning_controls(
         state="0" * 64,
         runnable="agic:worker",
         model="test/model",
-        model_request=ModelRequest(
-            "test/model",
-            ModelParameters(reasoning),
-        ),
-        input=(),
+        model_request=ModelRequest("test/model", ModelParameters(reasoning)),
+        input=CallInput({}),
     )
 
     data = control_payload_to_data(payload)
@@ -434,7 +466,7 @@ def test_preparation_payload_preserves_an_absent_model_request() -> None:
         runnable="flow:worker",
         model="none",
         model_request=None,
-        input=(),
+        input=CallInput({}),
     )
 
     data = control_payload_to_data(payload)
@@ -452,7 +484,7 @@ def test_preparation_payload_materializes_a_legacy_model_field() -> None:
         runnable="agic:worker",
         model="test/model",
         model_request=ModelRequest("test/model"),
-        input=(),
+        input=CallInput({}),
     )
     data = control_payload_to_data(payload)
     data.pop("model_request")
@@ -471,7 +503,7 @@ def test_preparation_payload_preserves_a_legacy_model_free_run() -> None:
         runnable="flow:worker",
         model="none",
         model_request=None,
-        input=(),
+        input=CallInput({}),
     )
     data = control_payload_to_data(payload)
     data.pop("model_request")
@@ -490,7 +522,7 @@ def test_preparation_payload_rejects_a_legacy_non_exact_model_ref() -> None:
         runnable="agic:worker",
         model="test/*",
         model_request=None,
-        input=(),
+        input=CallInput({}),
     )
     data = control_payload_to_data(payload)
     data.pop("model_request")
@@ -508,7 +540,7 @@ def test_preparation_payload_rejects_a_mismatched_model_request() -> None:
             runnable="agic:worker",
             model="test/model",
             model_request=ModelRequest("other/model"),
-            input=(),
+            input=CallInput({}),
         )
 
 
@@ -520,10 +552,11 @@ def test_preparation_payload_round_trips_authored_prompt_facts() -> None:
         runnable="agic:worker",
         model="test/model",
         model_request=ModelRequest("test/model"),
-        input=(Local.typed("Part[]", (TextPart("expanded"),), "_", 0),),
-        authored_input=RunnableInputRaw(
-            _="$review focus=security -- inspect",
-            named=(NamedInputSource("tone", "$brief"),),
+        input=CallInput(
+            {"_": Local.typed("Part[]", (TextPart("expanded"),), "_", 0).value}
+        ),
+        authored_input=CallInput(
+            {"_": "$review focus=security -- inspect", "tone": "$brief"}
         ),
         authored_commands=(RunCommand("limit", "time", 30),),
         authored_session_commands=(RunCommand("default", "model", "test/model"),),
@@ -541,8 +574,8 @@ def test_preparation_payload_round_trips_authored_prompt_facts() -> None:
     data = control_payload_to_data(payload)
 
     assert data["authored_input"] == {
-        "primary": "$review focus=security -- inspect",
-        "named": [{"name": "tone", "source": "$brief"}],
+        "_": "$review focus=security -- inspect",
+        "tone": "$brief",
     }
     prompt_data = cast(list[dict[str, object]], data["prompt_invocations"])
     assert "input_scope" not in prompt_data[0]
@@ -559,7 +592,7 @@ def test_preparation_payload_reads_legacy_missing_sandbox_as_unknown() -> None:
         state="0" * 64,
         runnable="flow:worker",
         model="none",
-        input=(),
+        input=CallInput({}),
     )
 
     restored = control_payload_from_data("run", control_payload_to_data(payload))
@@ -578,7 +611,7 @@ def test_preparation_payload_rejects_noncanonical_sandbox(sandbox: str) -> None:
             state="0" * 64,
             runnable="flow:worker",
             model="none",
-            input=(),
+            input=CallInput({}),
             sandbox=sandbox,
         )
 
@@ -590,14 +623,18 @@ def test_preparation_payload_rejects_instead_of_dropping_invalid_input() -> None
         state="0" * 64,
         runnable="agic:worker",
         model="test/model",
-        input=(Local.typed("Text", "hello", "_", 0),),
+        input=CallInput({"_": Local.typed("Text", "hello", "_", 0).value}),
     )
     data = control_payload_to_data(payload)
     raw_input = data["input"]
-    assert isinstance(raw_input, list)
-    cast(list[object], raw_input).append("invalid")
+    assert isinstance(raw_input, dict)
+    cast(dict[str, object], raw_input)["argument"] = {
+        "value": "legacy",
+        "name": "argument",
+        "dim": 0,
+    }
 
-    with pytest.raises(ValueError, match="invalid local"):
+    with pytest.raises(ValueError, match=r"requires a text \? tag"):
         control_payload_from_data("run", data)
 
 
@@ -630,7 +667,7 @@ def test_reload_and_inherited_preparation_payloads_round_trip_without_revision_d
         runnable="agic:child",
         model="test/model",
         model_request=ModelRequest("test/model"),
-        input=(),
+        input=CallInput({}),
     )
 
     assert (
@@ -653,13 +690,15 @@ def test_execute_payload_round_trips_source_pointing_locals() -> None:
     payload = ExecuteControlPayload(
         state="a" * 64,
         runnable="_flow_deliver$flow:deliver",
-        input=(
-            Local.typed("Json", source.select("input", "input", "_"), "_"),
-            Local.typed(
-                "Json",
-                source.select("input", "input", "format"),
-                "format",
-            ),
+        input=CallInput(
+            {
+                "_": Local.typed(
+                    "Json", source.select("input", "input", "_"), "_"
+                ).value,
+                "format": Local.typed(
+                    "Json", source.select("input", "input", "format"), "format"
+                ).value,
+            }
         ),
     )
 
@@ -675,7 +714,9 @@ def test_execute_payload_round_trips_source_pointing_locals() -> None:
         (
             "steer",
             SteerControlPayload(
-                (Local.typed("Part[]", (TextPart("continue"),), "_", 0),)
+                CallInput(
+                    {"_": Local.typed("Part[]", (TextPart("continue"),), "_", 0).value}
+                )
             ),
         ),
         ("cancel", CancelControlPayload()),

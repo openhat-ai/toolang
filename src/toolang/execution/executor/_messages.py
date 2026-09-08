@@ -65,9 +65,7 @@ class _MessageBuffer:
         if isinstance(payload, RecallControlPayload):
             content: object = payload.content
         else:
-            content = next(
-                (item.value for item in payload.input if item.name == "_"), None
-            )
+            content = payload.input.get("_")
         self.append_template(template, lambda _ref: content)
         self.recalls.update(
             recall_revisions(

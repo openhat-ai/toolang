@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 from dataclasses import replace
+import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -13,7 +14,6 @@ from toolang.api.conversion import (
     parse_authored_rerun,
     parse_authored_run,
     parse_authored_retry,
-    parse_parts,
     parse_user_message,
 )
 from toolang.api.schemas import (
@@ -38,7 +38,7 @@ from toolang.execution.records import (
 )
 from toolang.execution.schemas import ControlInfo, RunDetail, RunInfo
 from toolang.execution.types import RunStatus
-from toolang.lang.input import resolve_runnable_input
+from toolang.lang.input import decode_runnable_input
 from toolang.lang.ast import AgicDecl
 from toolang.execution.runnables import (
     runnable_binding_defaults,
@@ -49,6 +49,30 @@ from toolang.up import AgentCore
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 _AcceptedRunStream = tuple[LocalRunHandle, EventSubscription]
+
+
+async def _reject_duplicate_input_keys(request: Request) -> None:
+    """Check collected input members before JSON dictionaries discard duplicates."""
+
+    try:
+        pairs = json.loads(await request.body(), object_pairs_hook=tuple)
+    except (ValueError, UnicodeDecodeError):
+        return  # FastAPI reports malformed JSON through its normal validation.
+    if not isinstance(pairs, tuple):
+        return
+    runnable = dict(pairs).get("runnable")
+    if not isinstance(runnable, tuple):
+        return
+    input = dict(runnable).get("input")
+    if not isinstance(input, tuple):
+        return
+    seen: set[str] = set()
+    for name, _value in input:
+        if name in seen:
+            raise HTTPException(
+                status_code=422, detail=f"duplicate input argument: {name}"
+            )
+        seen.add(name)
 
 
 async def _run_stream(
@@ -76,26 +100,21 @@ async def _run_stream(
                 thread=thread_id,
                 bindings=RunBindings(
                     runnable=resolved_runnable.ref,
-                    model=(model_request.ref if model_request is not None else None),
+                    model=model_request.ref if model_request is not None else None,
                 ),
                 model_request=model_request,
                 limits=payload.policy.limits,
                 ceilings=payload.policy.allow,
-                input=resolve_runnable_input(
+                input=decode_runnable_input(
                     runnable,
-                    primary=(
-                        parse_parts(payload.runnable.input)
-                        if payload.runnable.input
-                        else None
-                    ),
-                    named=payload.runnable.args,
+                    payload.runnable.input,
                     structs={item.name: item for item in state.modules[module].structs},
                 ),
             ),
             request_id=payload.request_id,
             tracer=live.trace(thread_id=thread_id),
         )
-    except (ToolangError, ValueError) as exc:
+    except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     subscription = live.subscribe_run(handle.run_id)
     try:
@@ -140,7 +159,7 @@ async def _retry_authored_stream(
             request,
             tracer=live.trace(thread_id=str(source.thread)),
         )
-    except (ToolangError, ValueError) as exc:
+    except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     subscription = _subscribe_accepted_run(live, response, handle)
     try:
@@ -163,7 +182,7 @@ async def _rerun_authored_stream(
             request,
             tracer=live.trace(thread_id=str(source.thread)),
         )
-    except (ToolangError, ValueError) as exc:
+    except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     subscription = _subscribe_accepted_run(live, response, handle)
     try:
@@ -222,6 +241,7 @@ def runs(
 @router.post(
     "/stream",
     summary="Execute Run Stream",
+    dependencies=[Depends(_reject_duplicate_input_keys)],
     response_class=EventSourceResponse,
 )
 async def execute_run_stream(
@@ -241,6 +261,7 @@ async def execute_run_stream(
 
 @router.post(
     "/authored/stream",
+    dependencies=[Depends(_reject_duplicate_input_keys)],
     summary="Execute Authored Run Stream",
     response_class=EventSourceResponse,
 )
@@ -445,7 +466,7 @@ async def retry_run(
             request_id=request.request_id,
             tracer=live.trace(thread_id=str(source.thread)),
         )
-    except (ToolangError, ValueError) as exc:
+    except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     control = core.store.list_run_controls(run_id=handle.run_id)[-1]
     return _control_result(core, handle.run_id, control)
@@ -485,7 +506,7 @@ async def rerun_run(
             request_id=request.request_id,
             tracer=live.trace(thread_id=str(source.thread)),
         )
-    except (ToolangError, ValueError) as exc:
+    except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     control = core.store.get_run_control(run_id=handle.run_id, index=0)
     if control is None:  # pragma: no cover - executor acceptance is atomic

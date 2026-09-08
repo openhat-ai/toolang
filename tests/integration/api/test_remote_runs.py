@@ -32,7 +32,8 @@ from toolang.execution.records import (
 )
 from toolang.execution.schemas import RunDetail, RunRequest, RunnableRequest
 from toolang.execution.types import ThreadPrefix
-from toolang.lang.input import NamedInputSource, RunnableInputRaw
+from toolang.lang.input import CallInput
+from toolang.lang.types import Array
 from toolang.up import AgentCore
 from tests.support.execution_harness import ExecutionHarness, TEST_MODEL_REF
 
@@ -70,7 +71,10 @@ def _authored_request(
         "request_id": request_id,
         "runnable": {
             "ref": runnable,
-            "input": {"_": source, "named": named or []},
+            "input": {
+                "_": source,
+                **{item["name"]: item["source"] for item in named or []},
+            },
         },
         "model": {"ref": TEST_MODEL_REF, "parameters": {}},
         "policy": {"allow": allow or [], "limits": limits or {}},
@@ -81,10 +85,122 @@ def _core_request(thread_id: str, request_id: str) -> RunRequest:
     return RunRequest(
         thread_id=thread_id,
         request_id=request_id,
-        runnable=RunnableRequest("agic:chat", RunnableInputRaw(_="hello")),
+        runnable=RunnableRequest("agic:chat", CallInput({"_": "hello"})),
         model=ModelRequest(TEST_MODEL_REF),
         policy=RunPolicy(),
     )
+
+
+def test_flat_input_contract_across_direct_and_authored_http(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic chat(_: Text, count: Number, enabled: Boolean, primary: Text, named: Text, args: Text, items: Text[]) -> Text:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[
+            ModelCallResult(message=Message.assistant("done")) for _ in range(3)
+        ],
+    )
+    harness.store.close()
+    core = AgentCore(harness.setup.layout)
+    core.setup = _Snapshot(harness.setup)
+    core.state = _Snapshot(harness.state)
+    app = create_app(core, CapsManager(core.layout), JobsManager(core.layout))
+    expected = {
+        "_": "",
+        "count": 0,
+        "enabled": False,
+        "primary": "p",
+        "named": "n",
+        "args": "a",
+        "items": Array("Text[]", ()),
+    }
+    direct = {**expected, "items": []}
+    authored = {**direct, "count": "0", "enabled": "false", "items": "[]"}
+    try:
+        with TestClient(app) as client:
+            thread = client.post("/api/v1/threads", json={"client": "script"}).json()[
+                "thread"
+            ]["id"]
+            envelope = {
+                "thread_id": thread,
+                "model": {"ref": TEST_MODEL_REF, "parameters": {}},
+                "policy": {"allow": [], "limits": {}},
+            }
+            for index, (endpoint, values) in enumerate(
+                (
+                    ("stream", direct),
+                    ("authored/stream", authored),
+                    ("stream", {**direct, "_": "$unknown -- literal"}),
+                )
+            ):
+                response = client.post(
+                    f"/api/v1/runs/{endpoint}",
+                    json={
+                        **envelope,
+                        "request_id": f"flat_{index}",
+                        "runnable": {"ref": "agic:chat", "input": values},
+                    },
+                )
+                assert response.status_code == 200, response.text
+                run_id = str(_sse_events(response.text)[0][1]["run"])
+                control = core.store.get_run_control(run_id=run_id, index=0)
+                assert control is not None and isinstance(
+                    control.payload, RunControlPayload
+                )
+                assert control.payload.input == {**expected, "_": values["_"]}
+                if endpoint == "authored/stream":
+                    assert control.payload.authored_input == authored
+                else:
+                    assert control.payload.authored_input is None
+
+            for endpoint, values in (("stream", direct), ("authored/stream", authored)):
+                for invalid in (
+                    None,
+                    [],
+                    {**values, "_": None},
+                    {**values, "unknown": "x"},
+                    {},
+                ):
+                    response = client.post(
+                        f"/api/v1/runs/{endpoint}",
+                        json={
+                            **envelope,
+                            "request_id": "invalid_flat",
+                            "runnable": {"ref": "agic:chat", "input": invalid},
+                        },
+                    )
+                    assert response.status_code == 422, response.text
+                response = client.post(
+                    f"/api/v1/runs/{endpoint}",
+                    json={
+                        **envelope,
+                        "request_id": "old_flat",
+                        "runnable": {"ref": "agic:chat", "input": values, "args": {}},
+                    },
+                )
+                assert response.status_code == 422
+                encoded = json.dumps(
+                    {
+                        **envelope,
+                        "request_id": "duplicate_flat",
+                        "runnable": {"ref": "agic:chat", "input": values},
+                    }
+                ).replace('"_": ""', '"_": "first", "_": "second"')
+                response = client.post(
+                    f"/api/v1/runs/{endpoint}",
+                    content=encoded,
+                    headers={"content-type": "application/json"},
+                )
+                assert response.status_code == 422
+                assert response.json()["detail"] == "duplicate input argument: _"
+            assert len(core.store.list_runs(thread_id=thread, limit=None)) == 3
+    finally:
+        asyncio.run(core.close())
 
 
 def test_authored_run_stream_resolves_fallback_policy_and_server_include(
@@ -257,9 +373,8 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         assert isinstance(fallback_control.payload, RunControlPayload)
         assert fallback_control.payload.limits.cost == Decimal("2.50")
         assert fallback_control.payload.sandbox == "host"
-        assert fallback_control.payload.authored_input == RunnableInputRaw(
-            _="$review focus=security -\n@note.txt",
-            named=(NamedInputSource("tone", "brief"),),
+        assert fallback_control.payload.authored_input == CallInput(
+            {"_": "$review focus=security -\n@note.txt", "tone": "brief"}
         )
         assert len(fallback_control.payload.prompt_invocations) == 1
         prompt = fallback_control.payload.prompt_invocations[0]
@@ -292,7 +407,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         assert invalid_fallback.json()["detail"] == "runnable query matched no items"
         assert invalid_input.status_code == 422
         assert (
-            "named input must use a canonical name"
+            "input keys must use canonical names"
             in (invalid_input.json()["detail"][0]["msg"])
         )
         assert invalid_include.status_code == 422

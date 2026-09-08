@@ -65,6 +65,10 @@ Flow signatures use the runnable parameter rules in
 [program.md](./program.md), including implicit `_ : Part[]`, explicit `()`, and
 named parameters.
 
+Initial input and arguments share one flat local namespace: `_` holds input
+and each parameter name holds its argument. See
+[flat input mappings](./call-input.md#flat-input-mappings).
+
 `_` is the primary local. A value statement reads a locals snapshot, computes
 one result, and applies its binding only after the complete statement succeeds.
 `far`, `near`, and `line` are reserved runtime-local names and cannot be used

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.lang.input import CallInput
+
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
@@ -93,29 +95,14 @@ def accept_run(
 
     resolved_input = (
         input
-        if isinstance(input, RunnableInput)
-        else RunnableInput(primary=Array("Part[]", input.parts))
+        if isinstance(input, CallInput)
+        else RunnableInput({"_": Array("Part[]", input.parts)})
     )
     resolved_bindings = (
         bindings
         if bindings is not None
         else RunBindings(runnable="agic:test", model="test")
     )
-    locals_value = (
-        [Local.typed("Part[]", resolved_input.primary, "_", 0)]
-        if resolved_input.primary is not None
-        else []
-    )
-    locals_value.extend(
-        Local.typed(
-            "Json",
-            value,
-            name,
-            0,
-        )
-        for name, value in resolved_input.named.items()
-    )
-
     state_ref = None
     if parent is not None:
         parent_record = next(
@@ -137,10 +124,8 @@ def accept_run(
         limits=limits if limits is not None else RunLimits(),
         runnable=f"agent${resolved_bindings.runnable or 'agic:test'}",
         model=resolved_bindings.model or "test",
-        locals=tuple(locals_value),
-        sandbox=sandbox
-        if sandbox is not None
-        else ("host" if parent is None else None),
+        input=resolved_input,
+        sandbox=sandbox if sandbox is not None else "host" if parent is None else None,
         occurrence=_occurrence_from_context(context),
         state=_TEST_STATE if parent is None else None,
         request_id=request_id,
@@ -201,13 +186,11 @@ def project_run_start(
         thread=thread_id,
         resources=AgentResources(),
         limits=RunLimits(),
-        runnable=(
-            f"agent${runnable_kind}:{runnable_name}"
-            if runnable_name is not None
-            else f"agent${runnable_kind}:test"
-        ),
+        runnable=f"agent${runnable_kind}:{runnable_name}"
+        if runnable_name is not None
+        else f"agent${runnable_kind}:test",
         model="test",
-        locals=(Local.typed("Part[]", tuple(input.parts), "_", 0),),
+        input=CallInput({"_": Local.typed("Part[]", tuple(input.parts), "_", 0).value}),
         sandbox="host" if parent_path is None else None,
         occurrence=_occurrence_from_context(run_context),
         state=_TEST_STATE if parent_path is None else None,
@@ -258,13 +241,11 @@ def project_run_control(
         run_id=run_id,
         kind=kind,
         timing=timing,
-        locals=(
-            (Local.typed("Part[]", tuple(input.parts), "_", 0),)
-            if kind == "steer" and input is not None
-            else (Local.typed("Text", input.content, "_", 0),)
-            if kind == "cancel" and input is not None
-            else ()
-        ),
+        input=CallInput({"_": Local.typed("Part[]", tuple(input.parts), "_", 0).value})
+        if kind == "steer" and input is not None
+        else CallInput({"_": Local.typed("Text", input.content, "_", 0).value})
+        if kind == "cancel" and input is not None
+        else CallInput({}),
         request_id=request_id,
         created_at=created_at or utc_now(),
     )

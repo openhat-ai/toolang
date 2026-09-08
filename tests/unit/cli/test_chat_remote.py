@@ -41,7 +41,7 @@ from toolang.execution.types import (
     LimitOverride,
     RunOverride,
 )
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import CallInput
 
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
@@ -763,7 +763,7 @@ def test_remote_chat_repeated_concrete_runs_do_not_list_models() -> None:
             request = session.build_request(
                 "term_remote",
                 override,
-                RunnableInputRaw(_="hello"),
+                CallInput({"_": "hello"}),
                 session.initial_setting(),
             )
             session.run(
@@ -835,7 +835,7 @@ def test_remote_chat_recovers_without_replaying_or_retrying(
         request = session.build_request(
             "term_remote",
             RunOverride(),
-            RunnableInputRaw(_="hello"),
+            CallInput({"_": "hello"}),
             session.initial_setting(),
         )
         session.run(
@@ -889,7 +889,7 @@ def test_remote_chat_blocks_ambiguous_pre_acceptance_failure() -> None:
             request = session.build_request(
                 "term_remote",
                 RunOverride(),
-                RunnableInputRaw(_="hello"),
+                CallInput({"_": "hello"}),
                 session.initial_setting(),
             )
             session.run(
@@ -920,7 +920,7 @@ def test_remote_chat_steer_delivers_receipt_or_error_once(failure: str | None) -
         timing="next_step",
         request_id="request_steer",
         status="pending",
-        payload=SteerControlPayload(()),
+        payload=SteerControlPayload(CallInput({})),
         error=None,
         created_at="2026-01-01T00:00:01Z",
         finished_at=None,

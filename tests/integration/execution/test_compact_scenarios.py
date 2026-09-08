@@ -127,7 +127,7 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
             tool, model = steps
             start = harness.store.list_run_controls(run_id=current.id)[0]
             assert model.input == (
-                FieldRef.from_path(start.ref, "payload", "input", 0, "value"),
+                FieldRef.from_path(start.ref, "payload", "input", "_"),
             )
             assert (
                 isinstance(tool.given, ToolStepGiven)
@@ -407,7 +407,7 @@ def test_compact_flow_carries_progress_across_real_history_pages(tmp_path):
                         model="test/scripted", runnable="flow:compact"
                     ),
                     input=RunnableInput(
-                        named={"thread": thread, "begin": None, "end": last.id}
+                        {"thread": thread, "begin": None, "end": last.id}
                     ),
                 )
             )
@@ -786,8 +786,8 @@ def test_interrupting_compact_owner_cancels_its_independent_run(tmp_path, action
                 assert retried.status == "succeeded" and retried.kind == "tool"
                 start = harness.store.list_run_controls(run_id=current.id)[0]
                 assert model.input == (
-                    FieldRef.from_path(start.ref, "payload", "input", 0, "value"),
-                    FieldRef.from_path(steer.ref, "payload", "input", 0, "value"),
+                    FieldRef.from_path(start.ref, "payload", "input", "_"),
+                    FieldRef.from_path(steer.ref, "payload", "input", "_"),
                 )
                 assert "adjusted request" in str(
                     [m.to_data() for m in harness.adapter.invocations[-1].call.messages]

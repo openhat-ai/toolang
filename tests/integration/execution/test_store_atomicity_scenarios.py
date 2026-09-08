@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.lang.input import CallInput
+
 import sqlite3
 from pathlib import Path
 
@@ -93,7 +95,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             assert connection.execute(
                 "SELECT parent FROM runs WHERE id = 'run_dot_child'"
             ).fetchone() == ("run_dot_path.2.3",)
-            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 42
+            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 43
         finally:
             connection.close()
     finally:
@@ -754,7 +756,13 @@ def test_retry_rejects_applied_execute_history_without_mutation(
             state=entry.payload.state,
             runnable="agent$agic:target",
             triggered_by=trigger.ref,
-            locals=(Local.typed("Json", source.select("input", "input", "_"), "_"),),
+            input=CallInput(
+                {
+                    "_": Local.typed(
+                        "Json", source.select("input", "input", "_"), "_"
+                    ).value
+                }
+            ),
             created_at="2026-01-01T00:00:03Z",
         )
         assert execute.status == "applied"
@@ -874,7 +882,13 @@ def test_retry_preserves_child_controls_and_revision_monotonicity(
             run_id=child.id,
             kind="steer",
             timing="next_step",
-            locals=(Local.typed("Part[]", Message.user("guidance").parts, "_", 0),),
+            input=CallInput(
+                {
+                    "_": Local.typed(
+                        "Part[]", Message.user("guidance").parts, "_", 0
+                    ).value
+                }
+            ),
             request_id="child-steer-request",
             created_at="2026-01-01T00:00:02Z",
         )
@@ -926,13 +940,12 @@ def test_retry_preserves_child_controls_and_revision_monotonicity(
                 run_id=root.id,
                 kind="steer",
                 timing="next_step",
-                locals=(
-                    Local.typed(
-                        "Part[]",
-                        Message.user("duplicate").parts,
-                        "_",
-                        0,
-                    ),
+                input=CallInput(
+                    {
+                        "_": Local.typed(
+                            "Part[]", Message.user("duplicate").parts, "_", 0
+                        ).value
+                    }
                 ),
                 request_id="child-steer-request",
                 created_at="2026-01-01T00:00:04Z",
@@ -1251,7 +1264,13 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
             run_id="run_atomic_event",
             kind="steer",
             timing="next_step",
-            locals=(Local.typed("Part[]", Message.user("updated").parts, "_", 0),),
+            input=CallInput(
+                {
+                    "_": Local.typed(
+                        "Part[]", Message.user("updated").parts, "_", 0
+                    ).value
+                }
+            ),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
@@ -1277,8 +1296,7 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
                             ControlRef.for_run("run_atomic_event", control.index),
                             "payload",
                             "input",
-                            0,
-                            "value",
+                            "_",
                         ),
                     ),
                     occurrence=None,
@@ -1372,7 +1390,13 @@ def test_run_control_revision_only_advances_when_control_state_changes(
             run_id="run_control_revision",
             kind="steer",
             timing="next_step",
-            locals=(Local.typed("Part[]", Message.user("updated").parts, "_", 0),),
+            input=CallInput(
+                {
+                    "_": Local.typed(
+                        "Part[]", Message.user("updated").parts, "_", 0
+                    ).value
+                }
+            ),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
@@ -1450,7 +1474,13 @@ def test_claimed_control_cannot_be_canceled_before_its_event_is_persisted(
             run_id="run_claimed_control",
             kind="steer",
             timing="next_step",
-            locals=(Local.typed("Part[]", Message.user("updated").parts, "_", 0),),
+            input=CallInput(
+                {
+                    "_": Local.typed(
+                        "Part[]", Message.user("updated").parts, "_", 0
+                    ).value
+                }
+            ),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )

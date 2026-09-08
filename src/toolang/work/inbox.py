@@ -176,14 +176,13 @@ def _file_run_spec(
         state=state,
         thread=thread,
         bindings=RunBindings(
-            runnable=runnable_ref,
-            model=model.ref if model is not None else None,
+            runnable=runnable_ref, model=model.ref if model is not None else None
         ),
         model_request=model,
         limits=setup.limits,
         input=resolve_runnable_input(
             runnable,
-            primary=input.parts,
+            {"_": input.parts},
             structs={item.name: item for item in state.modules[module].structs},
         ),
     )

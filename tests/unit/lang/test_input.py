@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, cast
 
 import pytest
+from typing import Any, cast
+from pydantic import TypeAdapter, ValidationError
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import (
@@ -18,11 +19,9 @@ from toolang.base.types.message import (
 from toolang.lang.ast import AgicDecl, Field, Parameter, Span, StructDecl
 from toolang.lang.errors import ToolangOutputError
 from toolang.lang.input import (
-    CallInput,
     CallInputHeader,
-    NamedInputSource,
+    CallInput,
     RunnableInput,
-    RunnableInputRaw,
     coerce_input,
     coerce_output,
     capture_call_input,
@@ -89,8 +88,8 @@ def test_runnable_input_preserves_primary_and_named_values() -> None:
     )
     input = resolve_runnable_input(
         runnable,
-        primary=(TextPart("review "), image),
-        named={
+        {
+            "_": (TextPart("review "), image),
             "count": 2,
             "metadata": {"enabled": True, "labels": ["one", "two"]},
             "part": image,
@@ -98,8 +97,8 @@ def test_runnable_input_preserves_primary_and_named_values() -> None:
         },
     )
 
-    assert input.primary == Array("Part[]", (TextPart("review "), image))
-    assert input.named == {
+    assert input.get("_") == Array("Part[]", (TextPart("review "), image))
+    assert {name: value for name, value in input.items() if name != "_"} == {
         "count": 2,
         "metadata": {"enabled": True, "labels": ("one", "two")},
         "part": image,
@@ -108,31 +107,81 @@ def test_runnable_input_preserves_primary_and_named_values() -> None:
 
 
 def test_runnable_input_rejects_unsupported_runtime_values() -> None:
+    runnable = AgicDecl(
+        name="review",
+        input=None,
+        params=(Parameter(name="unsupported", type_name="Json", span=Span(1)),),
+        span=Span(1),
+    )
     with pytest.raises(TypeError, match="unsupported run input value"):
-        RunnableInput(named=cast(Any, {"unsupported": {"set"}}))
+        resolve_runnable_input(runnable, {"unsupported": {"set"}})
 
 
 def test_parse_input_preserves_primary_and_validates_named_sources() -> None:
     assert parse_input(
-        "  Review this.\n",
-        named=(
-            NamedInputSource("focus", "security"),
-            NamedInputSource("count", "2"),
-        ),
-    ) == RunnableInputRaw(
-        _="  Review this.\n",
-        named=(
-            NamedInputSource("focus", "security"),
-            NamedInputSource("count", "2"),
-        ),
-    )
-    assert parse_input(" \t\n") == RunnableInputRaw(_=" \t\n")
+        {"_": "  Review this.\n", "focus": "security", "count": "2"}
+    ) == CallInput({"_": "  Review this.\n", "focus": "security", "count": "2"})
+    assert parse_input({"_": " \t\n"}) == CallInput({"_": " \t\n"})
 
 
 def test_raw_runnable_input_uses_the_shared_call_input_shape() -> None:
-    assert isinstance(RunnableInputRaw(_="run"), CallInput)
-    assert CallInput(_="prompt")._ == "prompt"
-    assert RunnableInputRaw(_="") != RunnableInputRaw()
+    assert isinstance(CallInput({"_": "run"}), CallInput)
+    assert CallInput({"_": "prompt"})["_"] == "prompt"
+    assert CallInput({"_": ""}) != CallInput()
+
+
+def test_call_input_copies_and_freezes_the_supplied_mapping() -> None:
+    values = {"_": "", "argument": "original"}
+    input = CallInput(values)
+    values["argument"] = "changed"
+    del values["_"]
+    assert dict(input) == {"_": "", "argument": "original"}
+    with pytest.raises(TypeError):
+        cast(Any, input)["argument"] = "changed"
+    with pytest.raises(AttributeError, match="immutable"):
+        cast(Any, input)._entries = {}
+
+
+def test_call_input_source_protocol_is_flat_and_strict() -> None:
+    adapter = TypeAdapter(CallInput[str])
+    input = adapter.validate_json('{"_":"","count":"0","named":"literal"}')
+    assert adapter.dump_python(input, mode="json") == {
+        "_": "",
+        "count": "0",
+        "named": "literal",
+    }
+    assert adapter.validate_json("{}") != input
+    assert adapter.json_schema()["type"] == "object"
+    for invalid in (None, [], {"_": None}, {"count": 0}, {"bad.name": "x"}):
+        with pytest.raises(ValidationError):
+            adapter.validate_python(invalid)
+
+
+def test_resolved_input_keeps_empty_false_zero_and_null_arguments() -> None:
+    runnable = AgicDecl(
+        name="review",
+        input=Parameter(name="_", type_name="Text", span=Span(1)),
+        params=tuple(
+            Parameter(name=name, type_name=type_name, span=Span(1))
+            for name, type_name in (
+                ("zero", "Number"),
+                ("disabled", "Boolean"),
+                ("items", "Text[]"),
+                ("nullable", "Json"),
+            )
+        ),
+        span=Span(1),
+    )
+    supplied = {"_": "", "zero": 0, "disabled": False, "items": [], "nullable": None}
+    input = resolve_runnable_input(runnable, supplied)
+    assert input == {**supplied, "items": Array("Text[]", ())}
+    assert type(RunnableInput(input)) is CallInput
+    with pytest.raises(ValueError, match="requires primary input"):
+        resolve_runnable_input(
+            runnable, {key: value for key, value in supplied.items() if key != "_"}
+        )
+    with pytest.raises(ValueError, match="cannot be null"):
+        resolve_runnable_input(runnable, {**supplied, "_": None})
 
 
 @pytest.mark.parametrize(
@@ -159,7 +208,9 @@ def test_call_input_capture_keeps_form_as_parser_only_state() -> None:
 
     assert captured == "inside\n"
     assert trailing == "\noutside"
-    assert CallInput(_=captured) == CallInput(_="inside\n")
+    assert CallInput(
+        {**({"_": captured} if captured is not None else {})}
+    ) == CallInput({"_": "inside\n"})
 
 
 @pytest.mark.parametrize(
@@ -183,7 +234,6 @@ def test_call_input_header_rejects_invalid_marker_boundaries(
     [
         (":model literal", (), "escape a leading colon"),
         (None, (("1focus", "value"),), "canonical name"),
-        (None, (("focus", "one"), ("focus", "two")), "duplicate"),
     ],
 )
 def test_parse_input_rejects_invalid_sources(
@@ -192,7 +242,9 @@ def test_parse_input_rejects_invalid_sources(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        parse_input(source, named=named)
+        parse_input(
+            {**({"_": source} if source is not None else {}), **dict(named or {})}
+        )
 
 
 def test_plain_input_is_one_text_part_without_rendering_unknown_tags() -> None:
@@ -805,3 +857,10 @@ def test_output_json_schema_normalizes_optional_and_recursive_structs() -> None:
 def test_output_json_schema_rejects_unknown_output_types() -> None:
     with pytest.raises(ToolangError, match="unknown Toolang output type: Missing"):
         output_json_schema("Missing")
+
+
+def test_duplicate_arguments_are_rejected_before_collecting_a_mapping() -> None:
+    from toolang.execution.calls import parse_call
+
+    with pytest.raises(ValueError, match="duplicate named input: focus"):
+        parse_call(":agic review focus=one focus=two -- text")

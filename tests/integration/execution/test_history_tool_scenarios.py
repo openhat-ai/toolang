@@ -1,5 +1,7 @@
 """History tools expose bounded execution facts without rebuilding model calls."""
 
+from toolang.lang.input import CallInput
+
 import asyncio
 from contextlib import closing
 import threading
@@ -263,7 +265,9 @@ def test_steps_resolve_locals_and_keep_dependencies_and_model_refs(store, monkey
         run_id="run_a",
         kind="steer",
         timing="next_step",
-        locals=(Local.typed("Part[]", (TextPart("exact input"),), "_", 0),),
+        input=CallInput(
+            {"_": Local.typed("Part[]", (TextPart("exact input"),), "_", 0).value}
+        ),
         request_id=None,
         created_at="2026-01-01T00:00:03Z",
     )
@@ -300,9 +304,9 @@ def test_steps_resolve_locals_and_keep_dependencies_and_model_refs(store, monkey
     assert page["entries"][0]["status"] == "canceled"
     assert page["entries"][0]["output"]["value"] == "exact input"
     by_id = {c["id"]: c for c in page["dependencies"]}
-    assert by_id[steer.id]["payload"]["input"][0]["value"] == [
-        {"type": "text", "text": "exact input"}
-    ]
+    assert by_id[steer.id]["payload"]["input"] == {
+        "_": {"?": "Part[]!", "!": [{"?": "TextPart", "text": "exact input"}]}
+    }
     assert unused.id not in by_id
     all_pages = collect(
         store, "read_steps", read(store, "read_steps", run="run_a", limit=1)
@@ -334,15 +338,17 @@ def test_execute_input_is_resolved_in_entries_and_dependencies(store):
         state="0" * 64,
         runnable="agent$agic:target",
         triggered_by=trigger.ref,
-        locals=(
-            Local.typed(
-                "Json",
-                FieldRef.from_path(
-                    source.ref, "output", "value", 0, "input", "input", "_"
-                ),
-                "_",
-                0,
-            ),
+        input=CallInput(
+            {
+                "_": Local.typed(
+                    "Json",
+                    FieldRef.from_path(
+                        source.ref, "output", "value", 0, "input", "input", "_"
+                    ),
+                    "_",
+                    0,
+                ).value
+            }
         ),
         created_at="2026-01-01T00:00:04Z",
     )
@@ -372,13 +378,9 @@ def test_execute_input_is_resolved_in_entries_and_dependencies(store):
     bounded = read(store, "read_steps", run="run_a", begin="run_a.2")
     for records in (whole["entries"], bounded["dependencies"]):
         serialized = next(r for r in records if r["id"] == control.id)
-        assert serialized["payload"]["input"] == [
-            {"type": "Json", "value": {"task": "inspect"}, "name": "_", "dim": 0}
-        ]
+        assert serialized["payload"]["input"] == {"_": {"?": "Json", "task": "inspect"}}
     assert isinstance(
-        store.get_run_control(run_id="run_a", index=control.index)
-        .payload.input[0]
-        .value,
+        store.get_run_control(run_id="run_a", index=control.index).payload.input["_"],
         TypedRef,
     )
 

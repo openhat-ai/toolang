@@ -51,7 +51,7 @@ from toolang.execution.types import (
     ThreadPrefix,
     TypedRef,
 )
-from toolang.lang.input import RunnableInputRaw, resolve_input_parts
+from toolang.lang.input import CallInput, resolve_input_parts
 from toolang.lang.types import Array
 from toolang.state.prepare import prepare_agent_state
 
@@ -235,10 +235,7 @@ flow relay(_: Part[]) -> Part[]:
                 RunRequest(
                     thread_id=thread,
                     request_id="term_first",
-                    runnable=RunnableRequest(
-                        "flow:relay",
-                        RunnableInputRaw(_="hello"),
-                    ),
+                    runnable=RunnableRequest("flow:relay", CallInput({"_": "hello"})),
                     model=ModelRequest("test/scripted"),
                     policy=RunPolicy(),
                 )
@@ -250,10 +247,7 @@ flow relay(_: Part[]) -> Part[]:
                 RunRequest(
                     thread_id=thread,
                     request_id="term_second",
-                    runnable=RunnableRequest(
-                        "agic:echo",
-                        RunnableInputRaw(_="hello"),
-                    ),
+                    runnable=RunnableRequest("agic:echo", CallInput({"_": "hello"})),
                     model=ModelRequest("test/scripted"),
                     policy=RunPolicy(),
                 )
@@ -414,7 +408,7 @@ flow staged(_: Part[]) -> Part[]:
             ]
             assert before[1].input == (
                 FieldRef.from_path(
-                    ControlRef.for_run(failed.id, 0), "payload", "input", 0, "value"
+                    ControlRef.for_run(failed.id, 0), "payload", "input", "_"
                 ),
             )
             previous_child = next(
@@ -2151,22 +2145,20 @@ flow relay(_: Text, suffix: Text) -> Text:
             run_control = harness.store.get_run_control(run_id=child.id, index=0)
             assert run_control is not None
             assert isinstance(run_control.payload, RunControlPayload)
-            suffix = next(
-                local for local in run_control.payload.input if local.name == "suffix"
-            )
-            assert suffix.value == TypedRef(
+            suffix = run_control.payload.input["suffix"]
+            assert suffix == TypedRef(
                 FieldRef.from_path(
-                    ControlRef.for_run(root.id, 0), "payload", "input", 1, "value"
+                    ControlRef.for_run(root.id, 0), "payload", "input", "suffix"
                 ),
                 "Text",
             )
             parent_step = harness.store.list_steps(run_id=root.id)[0]
             assert parent_step.input == (
                 FieldRef.from_path(
-                    ControlRef.for_run(root.id, 0), "payload", "input", 0, "value"
+                    ControlRef.for_run(root.id, 0), "payload", "input", "_"
                 ),
                 FieldRef.from_path(
-                    ControlRef.for_run(root.id, 0), "payload", "input", 1, "value"
+                    ControlRef.for_run(root.id, 0), "payload", "input", "suffix"
                 ),
             )
             assert harness.store.run_output_text(run_id=root.id) == "hello!"
@@ -2211,8 +2203,10 @@ flow relay(_: Text) -> Number:
             run_control = harness.store.get_run_control(run_id=child.id, index=0)
             assert run_control is not None
             assert isinstance(run_control.payload, RunControlPayload)
-            assert run_control.payload.input == (Local.typed("Number", 42, "_", 0),)
-            assert harness.store.resolve_local(run_control.payload.input[0]).value == 42
+            assert run_control.payload.input == CallInput(
+                {"_": Local.typed("Number", 42, "_", 0).value}
+            )
+            assert harness.store.resolve_value(run_control.payload.input["_"]) == 42
             assert harness.store.run_output_text(run_id=root.id) == "7"
 
     asyncio.run(scenario())

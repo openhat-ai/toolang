@@ -60,6 +60,6 @@ def test_run_spec_defaults_are_immutable() -> None:
         limits=second_setup.limits,
     )
 
-    assert first.input.primary is None
-    assert first.input.named == {}
-    assert second.input.named == {}
+    assert "_" not in first.input
+    assert first.input == {}
+    assert second.input == {}

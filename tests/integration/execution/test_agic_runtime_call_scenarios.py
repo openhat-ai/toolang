@@ -1479,11 +1479,11 @@ agic target(_: Text) -> Text:
             assert execute.triggered_by == steps[1].ref
             assert steps[2].preceded_by == (execute.ref,)
             assert len(execute.payload.input) == 1
-            control_local = execute.payload.input[0]
-            assert control_local.type == "Json"
-            assert isinstance(control_local.value, TypedRef)
-            assert control_local.value.ref == source.select("input", "input", "_")
-            assert harness.store.resolve_local(control_local).value == "work"
+            control_value = execute.payload.input["_"]
+            assert isinstance(control_value, TypedRef)
+            assert control_value.type == "Json"
+            assert control_value.ref == source.select("input", "input", "_")
+            assert harness.store.resolve_value(control_value) == "work"
             assert steps[2].input == (source.select("input", "input", "_"),)
             target_call = harness.adapter.invocations[1].call
             assert {

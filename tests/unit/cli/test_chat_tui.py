@@ -127,7 +127,7 @@ from toolang.execution.types import (
     ToolStepGiven,
 )
 from toolang.lang.ast import MapStmt, RunStmt, Span
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import CallInput
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
 _HOST_DESCRIPTION = "macOS 27.0 arm64"
@@ -3500,10 +3500,7 @@ def test_chat_tui_run_lifecycle_starts_and_stops_status_activity() -> None:
             RunRequest(
                 thread_id="term_request",
                 request_id="term_request",
-                runnable=RunnableRequest(
-                    "agic:chat",
-                    RunnableInputRaw(_="hello"),
-                ),
+                runnable=RunnableRequest("agic:chat", CallInput({"_": "hello"})),
                 model=ModelRequest("openai/gpt-5"),
                 policy=RunPolicy(),
             ),
@@ -4035,7 +4032,7 @@ def test_chat_tui_queue_panel_steers_and_removes_only_after_local_acceptance() -
             FakeClient().build_request(
                 "term_busy",
                 RunOverride(),
-                RunnableInputRaw(_="queued without run"),
+                CallInput({"_": "queued without run"}),
                 FakeClient().initial_setting(),
             ),
         )
@@ -4573,7 +4570,7 @@ def test_chat_tui_blocks_mutating_input_after_ambiguous_acceptance(
             FakeClient().build_request(
                 "term_remote",
                 RunOverride(),
-                RunnableInputRaw(_="already queued"),
+                CallInput({"_": "already queued"}),
                 FakeClient().initial_setting(),
             ),
         )
@@ -4758,7 +4755,7 @@ def test_chat_tui_request_build_failure_retains_input_and_active_run(
             self,
             thread_id: str,
             override: RunOverride,
-            input: RunnableInputRaw,
+            input: CallInput[str],
             setting: SessionSetting,
         ) -> RunRequest:
             del thread_id, override, input, setting
@@ -4793,7 +4790,7 @@ def test_chat_tui_rejects_known_unsupported_colon_effort_in_status() -> None:
             self,
             thread_id: str,
             override: RunOverride,
-            input: RunnableInputRaw,
+            input: CallInput[str],
             setting: SessionSetting,
         ) -> RunRequest:
             del override, setting
@@ -4851,10 +4848,7 @@ def test_chat_tui_uses_queued_runnable_snapshot_for_the_next_active_status() -> 
             RunRequest(
                 thread_id="term_busy",
                 request_id="term_queued",
-                runnable=RunnableRequest(
-                    "flow:research",
-                    RunnableInputRaw(_="queued"),
-                ),
+                runnable=RunnableRequest("flow:research", CallInput({"_": "queued"})),
                 model=ModelRequest("openai/gpt-5"),
                 policy=RunPolicy(),
             ),
@@ -5532,7 +5526,7 @@ class FakeClient(ChatClient):
         self,
         thread_id: str,
         override: RunOverride,
-        input: RunnableInputRaw,
+        input: CallInput[str],
         setting: SessionSetting,
     ) -> RunRequest:
         del override
@@ -5590,7 +5584,9 @@ def _steer_control(index: int, *, run_id: str = "run_1") -> ControlInfo:
         timing="next_step",
         request_id=f"request_{index}",
         status="pending",
-        payload=SteerControlPayload((_parts(*Message.user("adjust").parts),)),
+        payload=SteerControlPayload(
+            CallInput({"_": _parts(*Message.user("adjust").parts).value})
+        ),
         error=None,
         created_at="2026-01-01T00:00:01Z",
         finished_at=None,
@@ -5804,7 +5800,7 @@ def test_chat_root_context_uses_request_and_authoritative_runnable(
         thread_id="term_1",
         request_id="one",
         runnable=RunnableRequest(
-            f"{module}agic:provisional", RunnableInputRaw(_="hello")
+            f"{module}agic:provisional", CallInput({"_": "hello"})
         ),
         model=model,
         policy=RunPolicy(),
@@ -5834,7 +5830,7 @@ def test_chat_context_and_steer_corners_fit_without_losing_padding(width: int) -
         thread_id="term_1",
         request_id="one",
         runnable=RunnableRequest(
-            "agent$agic:研究研究研究研究研究", RunnableInputRaw(_="hello")
+            "agent$agic:研究研究研究研究研究", CallInput({"_": "hello"})
         ),
         model=ModelRequest(
             "provider/a-very-long-model",
@@ -5969,7 +5965,7 @@ def test_chat_queued_root_context_survives_new_defaults_and_run_transition(
             RunRequest(
                 thread_id="term_1",
                 request_id=name,
-                runnable=RunnableRequest(f"agic:{name}", RunnableInputRaw(_="hello")),
+                runnable=RunnableRequest(f"agic:{name}", CallInput({"_": "hello"})),
                 model=ModelRequest(
                     "openai/gpt-5",
                     ModelParameters(

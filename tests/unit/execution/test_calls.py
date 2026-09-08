@@ -28,7 +28,7 @@ from toolang.execution.schemas import (
     RunnableRequest,
 )
 from toolang.execution.types import AllowOverride, RunCommand, RunOverride, ThreadPrefix
-from toolang.lang.input import NamedInputSource, NamedInputSources, RunnableInputRaw
+from toolang.lang.input import CallInput
 from toolang.lang.types import Array
 from toolang.setup import ModelCollection, ToolCollection
 from toolang.state.state import CapSource, StateCap, agent_state_revision
@@ -53,7 +53,7 @@ def test_parse_call_rejects_an_override_without_runnable_input() -> None:
 
 
 def test_parse_call_allows_an_empty_call_without_an_override() -> None:
-    assert parse_call("") == (RunOverride(), RunnableInputRaw())
+    assert parse_call("") == (RunOverride(), CallInput())
 
 
 def test_restart_resolution_preserves_model_unless_rerun_replaces_it(
@@ -125,10 +125,7 @@ def test_materialized_agic_request_requires_a_model(tmp_path) -> None:
                 RunRequest(
                     thread_id="term_test",
                     request_id="request_without_model",
-                    runnable=RunnableRequest(
-                        "agic:default",
-                        RunnableInputRaw(_="hello"),
-                    ),
+                    runnable=RunnableRequest("agic:default", CallInput({"_": "hello"})),
                     model=None,
                     policy=RunPolicy(),
                 ),
@@ -153,10 +150,7 @@ def test_materialized_request_rejects_an_unqualified_runnable(tmp_path) -> None:
                 RunRequest(
                     thread_id="term_test",
                     request_id="request_with_selector",
-                    runnable=RunnableRequest(
-                        "default",
-                        RunnableInputRaw(_="hello"),
-                    ),
+                    runnable=RunnableRequest("default", CallInput({"_": "hello"})),
                     model=ModelRequest("test/scripted"),
                     policy=RunPolicy(),
                 ),
@@ -287,8 +281,10 @@ def test_resolve_spec_binds_policy_primary_and_typed_named_inputs(
             model="test/scripted",
             runnable="agic:review",
         )
-        assert spec.input.named == {"count": 2}
-        assert spec.input.primary == Array("Part[]", (TextPart("Review this."),))
+        assert {name: value for name, value in spec.input.items() if name != "_"} == {
+            "count": 2
+        }
+        assert spec.input.get("_") == Array("Part[]", (TextPart("Review this."),))
         harness.executor.validate(spec)
     finally:
         harness.store.close()
@@ -329,10 +325,12 @@ agic default(_: Part[]):
             default_runnable="default",
         )
 
-        assert spec.input.primary == Array(
+        assert spec.input.get("_") == Array(
             "Part[]", (TextPart("security inspect this"),)
         )
-        assert spec.authored_input == RunnableInputRaw(_=prompt_source)
+        assert spec.authored_input == CallInput(
+            {**({"_": prompt_source} if prompt_source is not None else {})}
+        )
         assert spec.authored_commands == (RunCommand("limit", "time", 30),)
         assert len(spec.prompt_invocations) == 1
         invocation = spec.prompt_invocations[0]
@@ -371,7 +369,7 @@ agic default(_: Part[]):
         with pytest.raises(ToolangError, match="Prompt is unavailable: review"):
             resolve_spec(
                 RunOverride(),
-                RunnableInputRaw(_="$review -- inspect this"),
+                CallInput({"_": "$review -- inspect this"}),
                 setup=harness.setup,
                 state=state,
                 thread="term_test",
@@ -413,10 +411,8 @@ agic default(_: Part[]):
     state = replace(harness.state, module_caps={"agent": (prompt,)})
     try:
         spec = resolve_spec(
-            RunOverride(
-                allow=(AllowOverride("prompts", ()),),
-            ),
-            RunnableInputRaw(_="$review -- inspect this"),
+            RunOverride(allow=(AllowOverride("prompts", ()),)),
+            CallInput({"_": "$review -- inspect this"}),
             setup=harness.setup,
             state=state,
             thread="term_test",
@@ -450,7 +446,7 @@ def test_run_default_returns_to_surface_binding_not_session_binding(
         )
 
         assert spec.bindings.runnable == "agic:default"
-        assert spec.input.named == {}
+        assert {name: value for name, value in spec.input.items() if name != "_"} == {}
     finally:
         harness.store.close()
 
@@ -475,7 +471,7 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
         *,
         surface: RunBindings = RunBindings(),
         session: tuple[RunCommand, ...] = (),
-        named: NamedInputSources = (),
+        named: CallInput[str] = CallInput(),
     ):
         commands, input = parse_call(source)
         return resolve_spec(
@@ -487,7 +483,7 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
             default_runnable="default",
             surface=surface,
             session_commands=session,
-            surface_named_sources=named,
+            surface_named_sources=CallInput(dict(named)),
         )
 
     try:
@@ -495,7 +491,7 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
         session = resolve(
             "Input",
             session=(RunCommand("default", "runnable", "agic:review"),),
-            named=(NamedInputSource("count", "2"),),
+            named=CallInput({"count": "2"}),
         )
         authored = resolve(
             ":runnable default\nInput",
@@ -515,7 +511,10 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
             model="test/scripted",
             runnable="agic:bound",
         )
-        assert (session.bindings.runnable, session.input.named) == (
+        assert (
+            session.bindings.runnable,
+            {name: value for name, value in session.input.items() if name != "_"},
+        ) == (
             "agic:review",
             {"count": 2},
         )

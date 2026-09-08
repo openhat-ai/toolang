@@ -38,7 +38,7 @@ from toolang.execution.types import (
     Local,
     RunRef,
 )
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import CallInput
 from toolang.state.watcher import StateRefresh
 
 
@@ -188,7 +188,7 @@ def test_local_chat_run_request_materializes_chat_runnable() -> None:
             RunRequest(
                 thread_id="term_test",
                 request_id="term_request",
-                runnable=RunnableRequest("agic:chat", RunnableInputRaw(_="hello")),
+                runnable=RunnableRequest("agic:chat", CallInput({"_": "hello"})),
                 model=ModelRequest("test/scripted"),
                 policy=RunPolicy(allow=(AgentCeiling(models=("test/*",)),)),
             ),
@@ -344,7 +344,7 @@ def test_local_chat_owner_loop_control_does_not_wait_on_itself(steer: bool) -> N
         timing="next_step",
         request_id="request_steer",
         status="pending",
-        payload=SteerControlPayload(()),
+        payload=SteerControlPayload(CallInput({})),
         error=None,
         created_at="2026-01-01T00:00:01Z",
         finished_at=None,
@@ -487,7 +487,7 @@ agic chat(_: Part[]) -> Part[]:
         request = session.build_request(
             thread_id,
             RunOverride(),
-            RunnableInputRaw(_="hello"),
+            CallInput({"_": "hello"}),
             session.initial_setting(),
         )
         session.run(

@@ -1,5 +1,7 @@
 """Durable control identities and Step boundary relations."""
 
+from toolang.lang.input import CallInput
+
 from pathlib import Path
 import sqlite3
 import asyncio
@@ -364,7 +366,7 @@ def test_retry_removes_emitted_controls_without_reusing_indexes(
             run_id=run.id,
             kind="cancel",
             timing="next_step",
-            locals=(Local.typed("Text", "stop", "_"),),
+            input=CallInput({"_": Local.typed("Text", "stop", "_").value}),
             request_id="cancel-request",
             created_at="2026-01-01T00:00:04Z",
         )

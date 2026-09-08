@@ -17,10 +17,9 @@ from toolang.common.query import resolve_query_sentinels
 from toolang.lang.input import (
     CallInput,
     CallInputHeader,
-    NamedInputSource,
-    NamedInputSources,
     capture_call_input,
     parse_call_input_header,
+    validate_runnable_input_names,
 )
 from toolang.lang.runnable_query import RUNNABLE_SCHEMA
 from toolang.plugin.models.collections import MODEL_SCHEMA
@@ -63,7 +62,7 @@ SETTING_OVERRIDE_FORMS: Mapping[str, tuple[str, tuple[str, ...]]] = MappingProxy
 )
 
 
-def parse_run_override(line: str) -> tuple[RunOverride, NamedInputSources]:
+def parse_run_override(line: str) -> tuple[RunOverride, CallInput[str]]:
     """Parse one leading colon override."""
 
     try:
@@ -101,12 +100,12 @@ def parse_setting_override(command: str, body: str) -> RunOverride:
 
 def parse_policy_prefix(
     source: str,
-) -> tuple[RunOverride, CallInput]:
+) -> tuple[RunOverride, CallInput[str]]:
     """Parse one complete leading override section and its remaining source."""
 
     lines = _lines(source)
     overrides: list[RunOverride] = []
-    named: list[NamedInputSource] = []
+    named: dict[str, str] = {}
     index = 0
     while index < len(lines):
         line = lines[index]
@@ -123,7 +122,10 @@ def parse_policy_prefix(
             break
         override, override_named, call_header = parsed
         overrides.append(override)
-        named.extend(override_named)
+        for name, value in override_named.items():
+            if name in named:
+                raise ValueError(f"duplicate named input: {name}")
+            named[name] = value
         index += 1
         if call_header is not None and call_header.form is not None:
             following = source[lines[index].start :] if index < len(lines) else ""
@@ -143,13 +145,13 @@ def parse_policy_prefix(
                 )
             return (
                 merge_run_overrides(overrides),
-                CallInput(_=primary, named=tuple(named)),
+                CallInput({**({"_": primary} if primary is not None else {}), **named}),
             )
 
     remaining = source[lines[index].start :] if index < len(lines) else ""
     return (
         merge_run_overrides(overrides),
-        CallInput(_=remaining or None, named=tuple(named)),
+        CallInput({**({"_": remaining} if remaining else {}), **named}),
     )
 
 
@@ -335,7 +337,7 @@ def materialize_policy(
 
 def _try_parse_override(
     line: str,
-) -> tuple[RunOverride, NamedInputSources, CallInputHeader | None] | None:
+) -> tuple[RunOverride, CallInput[str], CallInputHeader | None] | None:
     if not line.startswith(":") or line.startswith("::"):
         return None
     try:
@@ -350,7 +352,7 @@ def _try_parse_override(
         return None
     if name == "model":
         raw_body = line[len(tokens[0]) :].lstrip(" \t")
-        return RunOverride(model=parse_model_body(raw_body)), (), None
+        return RunOverride(model=parse_model_body(raw_body)), CallInput(), None
     if name in {"runnable", "agic", "flow"}:
         raw_body = line[len(tokens[0]) :].lstrip(" \t")
         header = parse_call_input_header(raw_body, label=f":{name} runnable call")
@@ -361,16 +363,16 @@ def _try_parse_override(
         override, named = _runnable_override(name, runnable_tokens)
         return override, named, header
     if name == "allow":
-        return _allow_override(body), (), None
+        return _allow_override(body), CallInput(), None
     if name == "limit":
-        return _limit_override(body), (), None
+        return _limit_override(body), CallInput(), None
     raise AssertionError(f"unhandled setting override: {name}")
 
 
 def _runnable_override(
     name: str,
     tokens: Sequence[str],
-) -> tuple[RunOverride, NamedInputSources]:
+) -> tuple[RunOverride, CallInput[str]]:
     if not tokens:
         raise ValueError(f":{name} requires a runnable identity")
     target = tokens[0]
@@ -548,14 +550,19 @@ def _merge_allow_value(
     return tuple(dict.fromkeys((*current, *update)))
 
 
-def _named_inputs(values: Sequence[str]) -> NamedInputSources:
-    result: list[NamedInputSource] = []
+def _named_inputs(values: Sequence[str]) -> CallInput[str]:
+    result: dict[str, str] = {}
     for token in values:
         name, separator, value = token.partition("=")
         if not separator:
             raise ValueError("named input must use name=value syntax")
-        result.append(NamedInputSource(name, value))
-    return tuple(result)
+        if name == "_":
+            raise ValueError("primary input must use the input capture syntax")
+        if name in result:
+            raise ValueError(f"duplicate named input: {name}")
+        result[name] = value
+    validate_runnable_input_names(result)
+    return CallInput(result)
 
 
 def _assignment(value: str, *, command: str) -> tuple[str, str]:

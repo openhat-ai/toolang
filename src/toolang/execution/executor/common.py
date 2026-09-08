@@ -38,8 +38,8 @@ from toolang.lang.ast import (
     StormStmt,
     StructDecl,
 )
-from toolang.lang.input import RunnableInput
-from toolang.lang.types import Array
+from toolang.lang.input import CallInput, RunnableInput
+from toolang.lang.types import Array, Value
 from toolang.state.state import AgentState, state_program
 from toolang.setup import AgentSetup
 
@@ -47,6 +47,7 @@ from ..events import RunEvent, StepBegin, StepEnd
 from ..records import ControlRecord, SteerControlPayload, CancelControlPayload
 from ..runnables import resolve_runnable
 from ..types import (
+    value_type,
     AgentResources,
     CollectionStepNoted,
     ControlRef,
@@ -111,7 +112,7 @@ class BoundRun:
     thread: str
     bindings: RunBindings
     input: RunnableInput
-    control_locals: tuple[RecordLocal, ...]
+    control_input: CallInput[Value | TypedRef]
     state: AgentState
     state_ref: ControlRef
     setup: AgentSetup
@@ -504,78 +505,39 @@ def initial_locals(
 ) -> dict[str, Local]:
     """Build the initial locals for one runnable run."""
 
-    records = {
-        local.name: (index, local)
-        for index, local in enumerate(binding.control_locals)
-        if local.name is not None
-    }
-    locals: dict[str, Local] = {}
-    for name, value in binding.input.named.items():
-        found = records.get(name)
-        if found is None:
-            continue
-        index, record = found
+    types = {item.name: item.type_name or "Part[]" for item in runnable.params}
+    if runnable.input is not None:
+        types["_"] = runnable.input.type_name or "Part[]"
+    locals: dict[str, Local] = {"_": Local()}
+    for name, value in binding.input.items():
+        if name not in binding.control_input:
+            raise RuntimeError(f"run control input missing: {binding.run_id}/{name}")
         pointer = FieldRef.from_path(
-            ControlRef.for_run(binding.run_id, 0),
-            "payload",
-            "input",
-            index,
-            "value",
+            ControlRef.for_run(binding.run_id, 0), "payload", "input", name
         )
         locals[name] = Local(
             value,
             "item",
             pointer,
-            record.type,
-            RecordLocal.typed(record.type, pointer, name, record.dim),
+            types[name],
+            RecordLocal.typed(types[name], pointer, name),
         )
-    if runnable.input is not None and binding.input.primary is not None:
-        found = records.get("_")
-        if found is None:
-            raise RuntimeError(f"run primary control local missing: {binding.run_id}")
-        index, record = found
-        pointer = FieldRef.from_path(
-            ControlRef.for_run(binding.run_id, 0),
-            "payload",
-            "input",
-            index,
-            "value",
-        )
-        locals["_"] = Local(
-            binding.input.primary,
-            "item",
-            pointer,
-            record.type,
-            RecordLocal.typed(record.type, pointer, "_", record.dim),
-        )
-    else:
-        locals.setdefault("_", Local())
     return locals
 
 
 def control_local_pointer(control: ControlRecord, name: str) -> FieldRef:
-    """Point to one control payload local by its immutable list index."""
+    """Point to one control input by its parameter name."""
 
-    locals_value = getattr(control.payload, "input", None)
-    if locals_value is None:
+    input = getattr(control.payload, "input", None)
+    if input is None:
         raise ValueError(
             f"control input is inherited: {control.target}@{control.index}"
         )
-    index = next(
-        (index for index, local in enumerate(locals_value) if local.name == name),
-        None,
-    )
-    if index is None:
+    if name not in input:
         raise ValueError(
-            f"control local is missing: {control.target}@{control.index}/{name}"
+            f"control input is missing: {control.target}@{control.index}/{name}"
         )
-    return FieldRef.from_path(
-        control.ref,
-        "payload",
-        "input",
-        index,
-        "value",
-    )
+    return FieldRef.from_path(control.ref, "payload", "input", name)
 
 
 def bind_flow_result(
@@ -711,12 +673,12 @@ def control_text(control: ControlRecord | None) -> str:
         return ""
     if not isinstance(control.payload, SteerControlPayload | CancelControlPayload):
         return ""
-    primary = next((item for item in control.payload.input if item.name == "_"), None)
-    if primary is None or isinstance(primary.value, TypedRef):
+    primary = control.payload.input.get("_")
+    if primary is None or isinstance(primary, TypedRef):
         return ""
-    if isinstance(primary.value, str):
-        return primary.value
-    parts = value_parts(primary.value, type_name=primary.type)
+    if isinstance(primary, str):
+        return primary
+    parts = value_parts(primary, type_name=value_type(primary))
     return message_text(parts) if parts is not None else ""
 
 

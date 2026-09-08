@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from toolang.lang.input import CallInput
+
 import asyncio
 from dataclasses import replace
 from decimal import Decimal
@@ -2817,7 +2819,9 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
             kind="steer",
             timing="next_call",
             payload=SteerControlPayload(
-                (Local.typed("Part[]", tuple(steer.parts), "_", 0),)
+                CallInput(
+                    {"_": Local.typed("Part[]", tuple(steer.parts), "_", 0).value}
+                )
             ),
         )
     ]
@@ -2888,7 +2892,7 @@ def test_agic_commits_steer_messages_after_step_begin() -> None:
         kind="steer",
         timing="next_call",
         payload=SteerControlPayload(
-            (Local.typed("Part[]", tuple(steer.parts), "_", 0),)
+            CallInput({"_": Local.typed("Part[]", tuple(steer.parts), "_", 0).value})
         ),
     )
     original_messages = list(prepared.messages)
@@ -3221,7 +3225,7 @@ def _prepared_agic(
             thread="thread-1",
             bindings=RunBindings(runnable="agic:main"),
             input=RunnableInput(),
-            control_locals=(),
+            control_input=CallInput({}),
             state=cast(Any, state),
             state_ref=ControlRef.for_run("run_1", 0),
             setup=AgentSetup(
@@ -3239,10 +3243,7 @@ def _prepared_agic(
             input=Parameter(name="_", span=Span(1)),
             messages=(
                 AstMessage(
-                    role="user",
-                    content="Reply directly.",
-                    explicit=False,
-                    span=Span(1),
+                    role="user", content="Reply directly.", explicit=False, span=Span(1)
                 ),
             ),
             span=Span(1),

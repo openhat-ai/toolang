@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
+
 import pytest
 import typer
 from typer._click.utils import strip_ansi
@@ -19,6 +20,7 @@ import toolang.cli.toolang.commands.agent as agent_commands
 import toolang.cli.toolang.commands.plugin as plugin_commands
 import toolang.cli.toolang.commands.thread as thread_commands
 import toolang.cli.toolang.main as cli
+from toolang.lang.input import CallInput
 from tests.support.execution_fixtures import (
     project_run_control,
     project_run_end,
@@ -355,7 +357,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
             status="succeeded",
             input=(
                 FieldRef.from_path(
-                    ControlRef.for_run(run.id, 0), "payload", "input", 0, "value"
+                    ControlRef.for_run(run.id, 0), "payload", "input", "_"
                 ),
             ),
             output=(TextPart(text="prepared"),),
@@ -487,7 +489,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     assert resolved_row.split()[:2] == ["/0", "FieldRef"]
     assert "→" not in resolved.stdout
     assert "run_inspect.0/input/0" not in resolved.stdout
-    assert "run_inspect@0/payload/input/0/value" in resolved.stdout
+    assert "run_inspect@0/payload/input/_" in resolved.stdout
     assert "Inspect this" not in resolved.stdout
     assert resolved_value.exit_code == 0
     assert "resolves to" not in resolved_value.stdout
@@ -2071,8 +2073,8 @@ def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> Non
         ("cancel", "immediate", "pending"),
     ]
     assert isinstance(controls[1].payload, SteerControlPayload)
-    assert controls[1].payload.input == (
-        Local.typed("Part[]", Message.user("Focus on tests").parts, "_", 0),
+    assert controls[1].payload.input == CallInput(
+        {"_": Local.typed("Part[]", Message.user("Focus on tests").parts, "_", 0).value}
     )
 
 

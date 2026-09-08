@@ -187,7 +187,7 @@ def test_run_history_resolves_pass_through_control_output(
             store,
             run_id=run.id,
             output=FieldRef.from_path(
-                ControlRef.for_run(run.id, 0), "payload", "input", 0, "value"
+                ControlRef.for_run(run.id, 0), "payload", "input", "_"
             ),
         )
 
@@ -201,9 +201,7 @@ def test_run_history_resolves_pass_through_control_output(
         assert stored.control == ControlRef.for_run(run.id, 0)
         assert stored.output == Local.typed(
             "Part[]",
-            FieldRef.from_path(
-                ControlRef.for_run(run.id, 0), "payload", "input", 0, "value"
-            ),
+            FieldRef.from_path(ControlRef.for_run(run.id, 0), "payload", "input", "_"),
             "_",
             0,
         )
@@ -211,9 +209,7 @@ def test_run_history_resolves_pass_through_control_output(
         assert detail is not None
         assert detail.output == Local.typed(
             "Part[]",
-            FieldRef.from_path(
-                ControlRef.for_run(run.id, 0), "payload", "input", 0, "value"
-            ),
+            FieldRef.from_path(ControlRef.for_run(run.id, 0), "payload", "input", "_"),
             "_",
             0,
         )
@@ -237,7 +233,7 @@ def test_resolve_local_rejects_a_pointer_to_a_different_type(tmp_path: Path) -> 
                 Local.typed(
                     "Number",
                     FieldRef.from_path(
-                        ControlRef.for_run(run.id, 0), "payload", "input", 0, "value"
+                        ControlRef.for_run(run.id, 0), "payload", "input", "_"
                     ),
                     "_",
                     0,

@@ -87,8 +87,16 @@ Control status is `pending`, `applied`, `wontapply`, or `revoked`. Timing is
 `immediate`, `next_step`, or `next_call`. Private claim and revision columns
 support concurrency and polling.
 
-Run, Rerun, Retry, Execute, Steer, and Cancel payloads store primary and named
-values in `input`. Execution-time local variables remain locals.
+Run, Execute, Steer, and Cancel payloads store flat `input` objects, keyed by
+`_` and argument names. Run entries may also store flat `authored_input` source
+text. Retry inherits entry input; rerun creates a new Run entry. Each persisted
+value retains its self-describing codec, without a Local/name/dim wrapper.
+References address `payload/input/_` or `payload/input/argumentName`.
+
+RunStore schema 43 accepts only this format. Older stores are rejected before
+mutation and remain intact for their matching runtime. There is no migration.
+Execution-time local variables and output Local bindings remain distinct from
+call input. `StepRecord.input` remains a dependency-reference list.
 
 ### RunRecord
 

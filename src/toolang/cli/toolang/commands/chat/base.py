@@ -18,7 +18,7 @@ from toolang.execution.types import (
     RunOverride,
     SessionSetting,
 )
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import CallInput
 
 if TYPE_CHECKING:
     from .blocks import MutableBlock
@@ -156,7 +156,7 @@ class ChatClient(Protocol):
         self,
         thread_id: str,
         override: RunOverride,
-        input: RunnableInputRaw,
+        input: CallInput[str],
         setting: SessionSetting,
     ) -> RunRequest: ...
 

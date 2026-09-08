@@ -7,6 +7,8 @@ from dataclasses import dataclass, field, fields, is_dataclass
 import re
 from types import UnionType
 from typing import (
+    Generic,
+    TypeVar,
     Annotated,
     Any,
     Literal,
@@ -23,7 +25,7 @@ from toolang.base.types.message import Part, message_summary
 from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import RunPolicy
 from toolang.base.types.run import ModelCall
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import CallInput, validate_runnable_input_names
 from toolang.lang.types import Array, Struct
 from .records import (
     ControlPayloadField,
@@ -62,6 +64,7 @@ from .types import (
     RunRef,
     RunCommand,
     TypedRef,
+    value_type,
     validate_occurrence,
     validate_step_given,
     validate_step_noted,
@@ -254,9 +257,16 @@ def _select_runtime_child(
 ) -> tuple[object, object, str, str]:
     if isinstance(runtime, Local):
         return _select_local_child(runtime, token, data, source=source)
+    if isinstance(runtime, CallInput):
+        child = runtime[token]
+        name = child.type if isinstance(child, TypedRef) else value_type(child)
+        return child, Any, name, name
     if isinstance(runtime, Array | Sequence) and not isinstance(
         runtime, (str, bytes, bytearray)
     ):
+        if token == "!" and isinstance(data, list):
+            name = runtime.type if isinstance(runtime, Array) else "Json"
+            return runtime, annotation, name, name
         if not _canonical_array_index(token):
             return data, Any, "Json", "Json"
         index = int(token)
@@ -400,20 +410,24 @@ class RunControlRefData:
 StepInputData = FieldRef
 
 
+T = TypeVar("T")
+
+
 @dataclass(frozen=True, slots=True)
-class RunnableRequest:
-    """One concrete runnable ref and its unresolved authored input."""
+class RunnableRequest(Generic[T]):
+    """One concrete runnable ref and its complete input."""
 
     ref: str
-    input: RunnableInputRaw
+    input: CallInput[T] = field(default_factory=CallInput)
 
     def __post_init__(self) -> None:
         if not isinstance(self.ref, str):
             raise TypeError("runnable request ref must be a string")
         if not self.ref or self.ref != self.ref.strip():
             raise ValueError("runnable request requires a canonical ref")
-        if not isinstance(self.input, RunnableInputRaw):
-            raise TypeError("runnable request input must be RunnableInputRaw")
+        if not isinstance(self.input, CallInput):
+            raise TypeError("runnable request input must be CallInput")
+        validate_runnable_input_names(self.input)
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,7 +436,7 @@ class RunRequest:
 
     thread_id: str
     request_id: str
-    runnable: RunnableRequest
+    runnable: RunnableRequest[str]
     model: ModelRequest | None
     policy: RunPolicy
 

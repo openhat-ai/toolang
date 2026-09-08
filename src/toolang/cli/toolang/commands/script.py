@@ -69,9 +69,6 @@ from toolang.lang.includes import resolve_file_include
 from toolang.lang.input import (
     CallInput,
     CallInputHeader,
-    NamedInputSource,
-    NamedInputSources,
-    RunnableInputRaw,
     capture_call_input,
     parse_input,
 )
@@ -436,7 +433,7 @@ def _collect_call(
     *,
     items: tuple[str, ...],
     stdin: TextIO,
-) -> tuple[RunOverride, RunnableInputRaw, NamedInputSources]:
+) -> tuple[RunOverride, CallInput[str], CallInput[str]]:
     params = {parameter.name: parameter for parameter in runnable.params}
     raw_args: dict[str, str] = {}
     input_items: list[str] = []
@@ -461,12 +458,10 @@ def _collect_call(
         input_items.append(item)
 
     call_input = _input_source(input_items, stdin=stdin)
-    call_source = (
-        call_input._ if call_input is not None and call_input._ is not None else ""
-    )
+    call_source = call_input.get("_", "") if call_input is not None else ""
     override, input = parse_call(call_source)
-    if call_input is not None and override.empty and not input.named:
-        input = parse_input(call_input._)
+    if call_input is not None and override.empty and set(input) <= {"_"}:
+        input = parse_input(call_input)
     has_runnable_override = override.runnable is not None
     if not has_runnable_override:
         missing = [
@@ -479,13 +474,13 @@ def _collect_call(
         if (
             runnable.input is not None
             and not runnable.input.optional
-            and input._ is None
+            and input.get("_") is None
         ):
             raise _IncompleteRunnableInput
     return (
         override,
         input,
-        tuple(NamedInputSource(name, source) for name, source in raw_args.items()),
+        CallInput(raw_args),
     )
 
 
@@ -505,17 +500,16 @@ def _materialize_script_runnable_override(
     return replace(override, runnable=dataset.schema.exact_match_for(matches[0]))
 
 
-def _input_source(items: list[str], *, stdin: TextIO) -> CallInput | None:
+def _input_source(items: list[str], *, stdin: TextIO) -> CallInput[str] | None:
     if items and items[0] == _LINE_INPUT_MARKER:
         if len(items) == 1:
             raise UsageError("line input marker '--' requires nonempty text")
         value = _join_input_items(items[1:])
         if not value.strip():
             raise UsageError("line input marker '--' requires nonempty text")
-        return CallInput(_=value)
+        return CallInput({"_": value})
     if items == ["-"]:
-        value = stdin.read()
-        return CallInput(_=value)
+        return CallInput({"_": stdin.read()})
     if items == [_FENCED_INPUT_MARKER]:
         value, _trailing = capture_call_input(
             CallInputHeader("", "fenced"),
@@ -523,7 +517,7 @@ def _input_source(items: list[str], *, stdin: TextIO) -> CallInput | None:
             label="Script runnable call",
             root=True,
         )
-        return CallInput(_=value)
+        return CallInput({"_": value} if value is not None else {})
     if "-" in items:
         raise UsageError("stdin marker '-' must be the only primary input")
     if _LINE_INPUT_MARKER in items or _FENCED_INPUT_MARKER in items:
@@ -532,7 +526,7 @@ def _input_source(items: list[str], *, stdin: TextIO) -> CallInput | None:
         raise UsageError("primary input requires '--', '-', or '---'")
     if not stdin.isatty():
         value = stdin.read()
-        return CallInput(_=value) if value else None
+        return CallInput({"_": value}) if value else None
     return None
 
 
@@ -573,8 +567,8 @@ def _run(
     runnable: str,
     runnable_kind: str,
     override: RunOverride,
-    input: RunnableInputRaw,
-    raw_named: NamedInputSources,
+    input: CallInput[str],
+    raw_named: CallInput[str],
     allow_options: tuple[str, ...],
     model_body: str | None,
     limit_options: tuple[str, ...],
@@ -718,8 +712,8 @@ async def _execute_remote(
     sandbox: str,
     runnable: str,
     override: RunOverride,
-    input: RunnableInputRaw,
-    raw_named: NamedInputSources,
+    input: CallInput[str],
+    raw_named: CallInput[str],
     session_override: RunOverride,
     quiet: bool,
     on_accept: Callable[[str], None] | None = None,
@@ -813,15 +807,15 @@ async def _execute_remote(
 
 
 def _remote_script_input(
-    input: RunnableInputRaw,
+    input: CallInput[str],
     *,
-    raw_named: NamedInputSources,
-) -> RunnableInputRaw:
+    raw_named: CallInput[str],
+) -> CallInput[str]:
     """Encode CLI-surface named sources in the authored request input."""
 
-    if input.named and raw_named:
+    if any(name != "_" for name in input) and raw_named:
         raise ValueError("named inputs cannot be supplied by both source and surface")
-    return replace(input, named=input.named or raw_named)
+    return CallInput({**raw_named, **input})
 
 
 def _remote_script_override(
@@ -990,8 +984,8 @@ async def _execute(
     sandbox: str,
     runnable: str,
     override: RunOverride,
-    input: RunnableInputRaw,
-    raw_named: NamedInputSources,
+    input: CallInput[str],
+    raw_named: CallInput[str],
     session_override: RunOverride,
     quiet: bool,
 ) -> RunRecord:

@@ -40,7 +40,7 @@ from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.schemas import ControlInfo, RunRequest
 from toolang.execution.types import RunOverride, SessionSetting, ThreadPrefix
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import CallInput
 from toolang.plugin.sandboxes.host import host_sandbox_description
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.watcher import StateWatcher
@@ -339,7 +339,7 @@ class LocalChatSession:
         self,
         thread_id: str,
         override: RunOverride,
-        input: RunnableInputRaw,
+        input: CallInput[str],
         setting: SessionSetting,
     ) -> RunRequest:
         return build_run_request(

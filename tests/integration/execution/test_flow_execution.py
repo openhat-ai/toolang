@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from toolang.lang.input import CallInput
+
 import asyncio
 import threading
 from multiprocessing import get_context
@@ -201,17 +203,23 @@ def _spec(
         state=state,
         thread=thread,
         bindings=RunBindings(
-            model=(
-                setup.defaults.model.ref if setup.defaults.model is not None else None
-            ),
+            model=setup.defaults.model.ref
+            if setup.defaults.model is not None
+            else None,
             runnable=runnable,
         ),
         limits=setup.limits,
         ceilings=(ceiling,) if ceiling is not None else (),
         input=resolve_runnable_input(
             declaration,
-            primary=primary if primary else None,
-            named=named,
+            {
+                **(
+                    {"_": primary if primary else None}
+                    if (primary if primary else None) is not None
+                    else {}
+                ),
+                **dict(named or {}),
+            },
             structs={item.name: item for item in state.program.structs},
         ),
     )
@@ -279,7 +287,7 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     assert run_control.payload.runnable == "agent$flow:pipeline"
     assert run_control.payload.model == "none"
     assert run_control.payload.limits == _setup().limits
-    assert run_control.payload.input == ()
+    assert run_control.payload.input == {}
     assert run_control.payload.resources is not None
     detail = RunHistory(store).get_run(record.id)
     assert detail is not None
@@ -768,7 +776,7 @@ def test_parallel_children_preserve_input_and_output_types(
         thread="term_test",
         bindings=RunBindings(runnable="flow:parent"),
         input=RunnableInput(),
-        control_locals=(),
+        control_input=CallInput({}),
         state=state,
         state_ref=ControlRef.for_run("run_root", 0),
         setup=setup,
@@ -825,7 +833,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
         thread="term_test",
         bindings=RunBindings(runnable="flow:parent"),
         input=RunnableInput(),
-        control_locals=(),
+        control_input=CallInput({}),
         state=state,
         state_ref=ControlRef.for_run("run_root", 0),
         setup=setup,
@@ -968,7 +976,13 @@ def test_run_control_request_is_unique_across_runs(tmp_path: Path) -> None:
         run_id="run_test",
         kind="steer",
         timing="next_step",
-        locals=(RecordLocal.typed("Part[]", Message.user("continue").parts, "_", 0),),
+        input=CallInput(
+            {
+                "_": RecordLocal.typed(
+                    "Part[]", Message.user("continue").parts, "_", 0
+                ).value
+            }
+        ),
         request_id="steer-1",
         created_at="2026-01-01T00:00:01Z",
     )
@@ -977,8 +991,12 @@ def test_run_control_request_is_unique_across_runs(tmp_path: Path) -> None:
             run_id="run_other",
             kind="steer",
             timing="next_step",
-            locals=(
-                RecordLocal.typed("Part[]", Message.user("continue").parts, "_", 0),
+            input=CallInput(
+                {
+                    "_": RecordLocal.typed(
+                        "Part[]", Message.user("continue").parts, "_", 0
+                    ).value
+                }
             ),
             request_id="steer-1",
             created_at="2026-01-01T00:00:03Z",
@@ -1007,7 +1025,7 @@ def test_run_control_acceptance_rejects_invalid_runtime_values(tmp_path: Path) -
             run_id="run_test",
             kind=cast(Any, "start"),
             timing="immediate",
-            locals=(),
+            input=CallInput({}),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
@@ -1016,16 +1034,18 @@ def test_run_control_acceptance_rejects_invalid_runtime_values(tmp_path: Path) -
             run_id="run_test",
             kind="cancel",
             timing=cast(Any, "later"),
-            locals=(),
+            input=CallInput({}),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
-    with pytest.raises(ValueError, match="steer control requires one primary local"):
+    with pytest.raises(
+        ValueError, match=r"steer control requires a concrete primary Part\[\]"
+    ):
         store.accept_run_control(
             run_id="run_test",
             kind="steer",
             timing="next_step",
-            locals=(),
+            input=CallInput({}),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
@@ -1362,8 +1382,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
                         ControlRef.for_run("run_root", 0),
                         "payload",
                         "input",
-                        0,
-                        "value",
+                        "_",
                     ),
                 ),
                 started_at="2026-01-01T00:00:02Z",
@@ -1426,8 +1445,12 @@ def _accept_controls(db_path: str, run_id: str, offset: int, count: int) -> list
             run_id=run_id,
             kind="steer",
             timing="next_step",
-            locals=(
-                RecordLocal.typed("Part[]", Message.user(str(index)).parts, "_", 0),
+            input=CallInput(
+                {
+                    "_": RecordLocal.typed(
+                        "Part[]", Message.user(str(index)).parts, "_", 0
+                    ).value
+                }
             ),
             request_id=f"worker-{offset + index}",
             created_at="2026-01-01T00:00:01Z",
@@ -1472,7 +1495,9 @@ def _accept_remote_cancel(db_path: str, run_id: str) -> None:
         run_id=run_id,
         kind="cancel",
         timing="immediate",
-        locals=(RecordLocal.typed("Text", "remote cancel", "_", 0),),
+        input=CallInput(
+            {"_": RecordLocal.typed("Text", "remote cancel", "_", 0).value}
+        ),
         request_id="remote-cancel",
         created_at="2026-01-01T00:00:01Z",
     )
@@ -1758,7 +1783,7 @@ def test_private_event_projector_persists_run_and_step_records(
             given=LetStmt(span=Span(line=1), value="done"),
             input=(
                 FieldRef.from_path(
-                    ControlRef.for_run("run_test", 0), "payload", "input", 0, "value"
+                    ControlRef.for_run("run_test", 0), "payload", "input", "_"
                 ),
             ),
             started_at="2026-01-01T00:00:02Z",

@@ -158,8 +158,7 @@ agic revise(_: Part[]) -> Part[]:
                     ControlRef.for_run(record.id, control.index),
                     "payload",
                     "input",
-                    0,
-                    "value",
+                    "_",
                 ),
             )
             assert harness.store.run_output(run_id=record.id) == (TextPart("revised"),)
@@ -413,8 +412,7 @@ agic calculate(_: Part[]) -> Part[]:
                     ControlRef.for_run(record.id, control.index),
                     "payload",
                     "input",
-                    0,
-                    "value",
+                    "_",
                 ),
             )
 
@@ -700,16 +698,16 @@ agic revise(_: Text) -> Text:
             assert second_step.aborted_by is None
             assert second_step.input == (
                 FieldRef.from_path(
-                    ControlRef.for_run(record.id, 0), "payload", "input", 0, "value"
+                    ControlRef.for_run(record.id, 0), "payload", "input", "_"
                 ),
                 FieldRef.from_path(
-                    ControlRef.for_run(record.id, 1), "payload", "input", 0, "value"
+                    ControlRef.for_run(record.id, 1), "payload", "input", "_"
                 ),
                 FieldRef.from_path(
-                    ControlRef.for_run(record.id, 2), "payload", "input", 0, "value"
+                    ControlRef.for_run(record.id, 2), "payload", "input", "_"
                 ),
                 FieldRef.from_path(
-                    ControlRef.for_run(record.id, 3), "payload", "input", 0, "value"
+                    ControlRef.for_run(record.id, 3), "payload", "input", "_"
                 ),
             )
             stored_controls = [

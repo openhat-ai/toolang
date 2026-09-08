@@ -9,7 +9,10 @@ from pydantic import TypeAdapter
 from toolang.base.protocols.tool import ToolHistory
 
 from ..history import RunHistory
+from toolang.lang.types import Value
+
 from ..records import (
+    local_value_to_data,
     CancelControlPayload,
     ControlRecord,
     ExecuteControlPayload,
@@ -169,9 +172,9 @@ def _record_data(store: RunStore, record: Record) -> dict[str, object]:
     ):
         data["payload"] = {
             **cast(dict[str, object], data["payload"]),
-            "input": [
-                local_to_protocol_data(store.resolve_local(local))
-                for local in record.payload.input
-            ],
+            "input": {
+                name: local_value_to_data(cast(Value, store.resolve_value(value)))
+                for name, value in record.payload.input.items()
+            },
         }
     return data

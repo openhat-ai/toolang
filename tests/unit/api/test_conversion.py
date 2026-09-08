@@ -30,7 +30,7 @@ from toolang.execution.schemas import (
     RunnableRequest,
 )
 from toolang.execution.types import RunCommand, StepRef
-from toolang.lang.input import NamedInputSource, RunnableInputRaw
+from toolang.lang.input import CallInput
 
 
 def test_parse_authored_run_round_trips_every_request_field() -> None:
@@ -40,13 +40,7 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
             "request_id": "term_request",
             "runnable": {
                 "ref": "agic:chat",
-                "input": {
-                    "_": "hello",
-                    "named": [
-                        {"name": "tone", "source": "brief"},
-                        {"name": "audience", "source": "maintainers"},
-                    ],
-                },
+                "input": {"_": "hello", "tone": "brief", "audience": "maintainers"},
             },
             "model": {
                 "ref": "openai/test",
@@ -73,18 +67,9 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
         request_id="term_request",
         runnable=RunnableRequest(
             "agic:chat",
-            RunnableInputRaw(
-                _="hello",
-                named=(
-                    NamedInputSource("tone", "brief"),
-                    NamedInputSource("audience", "maintainers"),
-                ),
-            ),
+            CallInput({"_": "hello", "tone": "brief", "audience": "maintainers"}),
         ),
-        model=ModelRequest(
-            "openai/test",
-            ModelParameters(ReasoningParameters("high")),
-        ),
+        model=ModelRequest("openai/test", ModelParameters(ReasoningParameters("high"))),
         policy=RunPolicy(
             allow=(
                 AgentCeiling(models=("one", "two")),
@@ -106,10 +91,7 @@ def test_parse_authored_run_accepts_canonical_reasoning_budget() -> None:
         {
             "thread_id": "term_example",
             "request_id": "term_request",
-            "runnable": {
-                "ref": "agic:chat",
-                "input": {"_": "hello", "named": []},
-            },
+            "runnable": {"ref": "agic:chat", "input": {"_": "hello"}},
             "model": {
                 "ref": "anthropic/claude",
                 "parameters": {"reasoning": {"budget_tokens": 4096}},
@@ -132,17 +114,11 @@ def test_authored_run_rejects_reasoning_effort_and_budget_together() -> None:
             {
                 "thread_id": "term_example",
                 "request_id": "term_request",
-                "runnable": {
-                    "ref": "agic:chat",
-                    "input": {"_": "hello", "named": []},
-                },
+                "runnable": {"ref": "agic:chat", "input": {"_": "hello"}},
                 "model": {
                     "ref": "openai/gpt-5",
                     "parameters": {
-                        "reasoning": {
-                            "effort": "high",
-                            "budget_tokens": 4096,
-                        }
+                        "reasoning": {"effort": "high", "budget_tokens": 4096}
                     },
                 },
                 "policy": {},
@@ -156,15 +132,10 @@ def test_authored_run_rejects_a_non_integer_reasoning_budget() -> None:
             {
                 "thread_id": "term_example",
                 "request_id": "term_request",
-                "runnable": {
-                    "ref": "agic:chat",
-                    "input": {"_": "hello", "named": []},
-                },
+                "runnable": {"ref": "agic:chat", "input": {"_": "hello"}},
                 "model": {
                     "ref": "anthropic/claude",
-                    "parameters": {
-                        "reasoning": {"budget_tokens": "4096"},
-                    },
+                    "parameters": {"reasoning": {"budget_tokens": "4096"}},
                 },
                 "policy": {},
             }
@@ -246,8 +217,13 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
     [
         {"extra": True},
         {"thread_id": 1},
-        {"runnable": {"ref": "chat", "input": {"_": None, "named": []}}},
-        {"runnable": {"ref": "agic:chat", "input": {"primary": "legacy"}}},
+        {"runnable": {"ref": "chat", "input": {}}},
+        {
+            "runnable": {
+                "ref": "agic:chat",
+                "input": {"named": [{"name": "focus", "source": "legacy"}]},
+            }
+        },
         {"model": {"ref": "openai/test", "parameters": {"temperature": 1}}},
         {"policy": {"allow": [], "limits": {"tokens": -1}}},
         {"policy": {"allow": [], "limits": {"tokens": True}}},
@@ -261,7 +237,7 @@ def test_authored_run_schema_rejects_extra_or_lossy_values(
     source: dict[str, object] = {
         "thread_id": "term_example",
         "request_id": "term_request",
-        "runnable": {"ref": "agic:chat", "input": {"_": None, "named": []}},
+        "runnable": {"ref": "agic:chat", "input": {}},
         "model": None,
         "policy": {"allow": [], "limits": {}},
     }

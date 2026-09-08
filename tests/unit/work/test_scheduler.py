@@ -5,6 +5,8 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 import threading
 
+from toolang.lang.input import CallInput
+
 import pytest
 
 from toolang.base.types.message import Message, TextPart
@@ -184,9 +186,13 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
             assert control is not None
             assert isinstance(control.payload, RunControlPayload)
             assert control.payload.runnable == "agent$agic:review"
-            assert control.payload.input == (
-                Local.typed("Part[]", Message.user("Review this.").parts, "_"),
-                Local.typed("Text", "security", "focus"),
+            assert control.payload.input == CallInput(
+                {
+                    "_": Local.typed(
+                        "Part[]", Message.user("Review this.").parts, "_"
+                    ).value,
+                    "focus": Local.typed("Text", "security", "focus").value,
+                }
             )
             created = harness.store.get_thread_control(
                 thread_id="task_review",
@@ -235,11 +241,11 @@ agic review(_: Part[], focus: Text):
         (job,) = load_ready_jobs(harness.setup.layout)
         spec = scheduler._build_spec(job)
 
-        assert spec.input.primary == Array(
+        assert spec.input["_"] == Array(
             "Part[]",
             (TextPart("Before\n<target>\nAfter\n"),),
         )
-        assert spec.input.named == {"focus": "nested"}
+        assert spec.input["focus"] == "nested"
         assert [invocation.name for invocation in spec.prompt_invocations] == ["wrap"]
     finally:
         harness.store.close()
