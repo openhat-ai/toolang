@@ -71,7 +71,6 @@ from ..records import (
 )
 from ..store import RunStore
 from ..tool_results import control_summary
-from ..tools.runtime import canceled_tool_summary
 from ..schemas import RerunRequest, RetryRequest, RunRequest
 from ..types import (
     ControlTiming,
@@ -2763,7 +2762,11 @@ class _Execution:
                 or statement_has_call(event.given),
             )
         except _RunCanceled as exc:
-            from .steps.tool import canceled_result
+            from .steps.tool import (
+                _tool_summary,
+                _tool_summary_context,
+                canceled_result,
+            )
 
             await emit(
                 StepEnd(
@@ -2771,18 +2774,15 @@ class _Execution:
                     kind=event.kind,
                     status="canceled",
                     noted=ToolStepNoted(
-                        summary=canceled_tool_summary(event.given.summary)
+                        summary=_tool_summary(
+                            _tool_summary_context(
+                                event.given.call,
+                                self.setup.tools.get(event.given.call.name),
+                            ),
+                            "canceled",
+                        )
                     )
                     if isinstance(event.given, ToolStepGiven)
-                    and event.given.plugin == "_toolang"
-                    and event.given.call.name
-                    in {
-                        "_toolang__pick",
-                        "_toolang__reload",
-                        "_toolang__compact",
-                        "_toolang__honor",
-                    }
-                    and event.given.summary
                     else None,
                     output=RecordLocal.typed(
                         "ToolResultPart",

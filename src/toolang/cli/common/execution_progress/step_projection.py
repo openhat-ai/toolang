@@ -7,7 +7,6 @@ import json
 from toolang.base.types.message import (
     TextPart,
     ToolCallPart,
-    ToolResultPart,
 )
 from toolang.execution.events import StepBegin, StepEnd
 from toolang.execution.types import (
@@ -54,7 +53,7 @@ def live_row(
     if begin.kind == "model":
         detail = one_line(preview)
         text = f"• {detail}" if detail else "• Thinking..."
-    elif dynamic_run:
+    elif dynamic_run and begin.kind != "tool":
         text = f"• Running {run_label(begin.given)}..."
     elif begin.kind == "tool":
         summary = (
@@ -68,7 +67,9 @@ def live_row(
         ):
             summary += f" · {elapsed}"
         text = f"{'✧' if name else '•'} {summary}"
-        return ProgressRow(text, "active", surface="tool_summary", wrap_live=bool(name))
+        return ProgressRow(
+            text, "runtime" if name else "active", surface="tool_summary"
+        )
     else:
         text = f"• running {begin.kind}"
     return ProgressRow(text, "active")
@@ -125,7 +126,7 @@ def trace_terminal_rows(
             return _error_rows("failed", error, tone)
         return _error_rows("canceled", error, tone)
 
-    if dynamic_run:
+    if dynamic_run and begin.kind != "tool":
         runnable = run_label(begin.given)
         if event.status == "succeeded":
             return (ProgressRow(f"• Ran {runnable}", tone),)
@@ -138,25 +139,21 @@ def trace_terminal_rows(
     label = tool_label(begin.given)
     summary = event.noted.summary if isinstance(event.noted, ToolStepNoted) else ""
     name = runtime_tool_name(begin)
+    if name:
+        tone = "runtime"
     marker = "✧" if name else "•"
     if name == "compact" and (
         elapsed := elapsed_fact(begin.started_at, event.finished_at)
     ):
         summary = f"{summary or label} in {elapsed}"
     if event.status == "succeeded":
-        rows = [
+        return (
             ProgressRow(
                 f"{marker} {summary or f'executed {label}'}",
                 tone,
                 surface="tool_summary",
-            )
-        ]
-        if name is None:
-            rows.extend(
-                ProgressRow(f"  {line}", tone, surface="tool_detail")
-                for line in _tool_output_lines(event)
-            )
-        return tuple(rows)
+            ),
+        )
     status = "failed" if event.status == "failed" else "canceled"
     rows = [
         ProgressRow(
@@ -165,16 +162,15 @@ def trace_terminal_rows(
             surface="tool_summary",
         )
     ]
-    if error:
-        rows.extend(
-            ProgressRow(
-                f"  {line}",
-                tone,
-                surface="tool_detail" if event.status == "failed" else "none",
-            )
-            for line in _split_lines(error.strip())
-        )
+    if event.status == "failed":
+        rows.append(_tool_error_row(error))
     return tuple(rows)
+
+
+def _tool_error_row(error: str) -> ProgressRow:
+    return ProgressRow(
+        f"  {one_line(error) or 'Tool call failed'}", "error", surface="tool_error"
+    )
 
 
 def flow_terminal_rows(
@@ -355,28 +351,6 @@ def _model_output_lines(event: StepEnd, *, include_text: bool = True) -> list[st
     return _flow_output_lines(event) if include_text else []
 
 
-def _tool_output_lines(event: StepEnd) -> list[str]:
-    lines: list[str] = []
-    for part in output_parts(event):
-        if not isinstance(part, ToolResultPart):
-            lines.extend(_json_lines(part.to_data()))
-            continue
-        if part.error:
-            lines.extend(_split_lines(part.error))
-        output = dict(part.output)
-        textual = [
-            value
-            for key in ("stdout", "stderr")
-            if isinstance((value := output.get(key)), str) and value
-        ]
-        if textual and set(output).issubset({"stdout", "stderr", "exit_code"}):
-            for value in textual:
-                lines.extend(_split_lines(value))
-        elif output:
-            lines.append(_compact_json(output))
-    return lines
-
-
 def _flow_output_lines(event: StepEnd) -> list[str]:
     if event.output is None:
         return []
@@ -425,17 +399,6 @@ def _json_lines(value: object) -> list[str]:
         return json.dumps(value, ensure_ascii=False, indent=2).splitlines()
     except TypeError:
         return _split_lines(str(value))
-
-
-def _compact_json(value: object) -> str:
-    try:
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-    except TypeError:
-        return one_line(str(value))
 
 
 def _count(value: int, noun: str) -> str:

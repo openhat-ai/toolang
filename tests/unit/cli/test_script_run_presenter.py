@@ -293,7 +293,7 @@ def test_tty_model_output_uses_normal_style() -> None:
     assert "\x1b[2m• Use a shared reducer." not in output
 
 
-def test_tool_output_uses_one_unmarked_continuation() -> None:
+def test_tool_output_is_not_rendered() -> None:
     output = _render(
         [
             _root_begin(),
@@ -324,17 +324,12 @@ def test_tool_output_uses_one_unmarked_continuation() -> None:
         ]
     )
 
-    assert [line.strip() for line in output.splitlines()][1:6] == [
-        "• executed web.search",
-        "",
-        "",
-        '{"results":[{},{},{}]}',
-        "",
-    ]
+    assert "• executed web.search" in output
+    assert '"results"' not in output
     assert "run_one.0" not in output
 
 
-def test_non_tty_tool_surfaces_preserve_tty_block_geometry_without_ansi() -> None:
+def test_non_tty_tool_failure_has_two_lines_without_a_result_surface() -> None:
     stream = StringIO()
     console = ProgressConsole(stream, width=32)
     console.apply(
@@ -347,7 +342,9 @@ def test_non_tty_tool_surfaces_preserve_tty_block_geometry_without_ansi() -> Non
                             "• called read_text README.md",
                             surface="tool_summary",
                         ),
-                        ProgressRow("  contents", surface="tool_detail"),
+                        ProgressRow(
+                            "  permission denied", "error", surface="tool_error"
+                        ),
                     ),
                 ),
             )
@@ -357,12 +354,9 @@ def test_non_tty_tool_surfaces_preserve_tty_block_geometry_without_ansi() -> Non
     lines = stream.getvalue().splitlines()
     assert [line.strip() for line in lines] == [
         "• called read_text README.md",
-        "",
-        "",
-        "contents",
-        "",
+        "permission denied",
     ]
-    assert all(len(line) == 32 for line in lines[2:])
+    assert lines[1] == "  permission denied"
     assert "\x1b[" not in stream.getvalue()
     assert not any(character in stream.getvalue() for character in "│└─┘▏▕▔")
 
@@ -417,12 +411,9 @@ def test_step_error_and_ownerless_run_error_use_bullet_rows() -> None:
         ]
     )
 
-    assert [line.strip() for line in step_error.splitlines()][1:6] == [
+    assert [line.strip() for line in step_error.splitlines()][1:3] == [
         "• failed web.search",
-        "",
-        "",
         "provider returned status 429",
-        "",
     ]
     assert step_error.count("provider returned status 429") == 1
     assert "!" not in step_error

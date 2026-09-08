@@ -13,8 +13,14 @@ from typing import Any
 
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool, Toolset
-from toolang.base.types.tool import ToolContext, ToolDefinition, ToolPreparation
+from toolang.base.types.tool import (
+    ToolContext,
+    ToolDefinition,
+    ToolPreparation,
+    ToolStatus,
+)
 from toolang.base.utils.function_tools import create_function_tool, tool
+from toolang.base.utils.tool_descriptions import describe_action, workspace_label
 from toolang.base.utils.workspace_paths import (
     authorize_workspace_path,
     parse_workspace_uri,
@@ -234,6 +240,39 @@ class _FilesystemTool:
 
     def definition(self) -> ToolDefinition:
         return self.tool.definition()
+
+    def describe(
+        self,
+        arguments: Mapping[str, Any],
+        status: ToolStatus,
+        output: Mapping[str, Any] | None = None,
+    ) -> str | None:
+        verbs = {
+            "list": ("list", "Listing", "Listed"),
+            "read": ("read", "Reading", "Read"),
+            "write": ("write", "Writing", "Wrote"),
+            "append": ("append to", "Appending to", "Appended to"),
+            "glob": ("match", "Matching", "Matched"),
+            "stat": ("inspect", "Inspecting", "Inspected"),
+            "mkdir": ("create directory", "Creating directory", "Created directory"),
+            "remove": ("remove", "Removing", "Removed"),
+        }[self.name]
+        path = arguments.get("path", "." if self.name in {"list", "glob"} else None)
+        workspace = arguments.get("workspace")
+        if not isinstance(path, str):
+            return None
+        if path == "workspace://" and self.name == "list" and workspace is None:
+            return describe_action(status, verbs, "workspaces")
+        if path.startswith("workspace:"):
+            if workspace is not None:
+                return None
+            workspace, path = parse_workspace_uri(path)
+        if not isinstance(workspace, str) or not workspace:
+            return None
+        target = workspace_label(workspace, path)
+        if self.name == "glob":
+            target = f"{arguments.get('pattern', '*')} in {target}"
+        return describe_action(status, verbs, target)
 
     async def invoke(
         self, arguments: Mapping[str, Any], context: ToolContext

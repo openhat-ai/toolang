@@ -781,21 +781,14 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
 
 
 @pytest.mark.parametrize(
-    ("output", "expected_output"),
+    "output",
     [
-        (
-            {"results": [{}, {}, {}, {}, {}]},
-            ['  {"results":[{},{},{},{},{}]}'],
-        ),
-        (
-            {"stdout": "first line\nsecond line\n", "exit_code": 0},
-            ["  first line", "  second line"],
-        ),
+        {"results": [{}, {}, {}, {}, {}]},
+        {"stdout": "first line\nsecond line\n", "exit_code": 0},
     ],
 )
-def test_tool_output_uses_compact_json_and_preserves_text_lines(
+def test_tool_output_is_not_projected(
     output: dict[str, object],
-    expected_output: list[str],
 ) -> None:
     reducer = ProgressProjector(show_boundaries=False)
     reducer.handle(
@@ -834,13 +827,12 @@ def test_tool_output_uses_compact_json_and_preserves_text_lines(
             ),
         )
     )
-    assert _rows(update.committed) == [["• executed web.search", *expected_output]]
+    assert _rows(update.committed) == [["• executed web.search"]]
     assert all(row.tone == "progress" for row in update.committed[0].rows)
     assert update.committed[0].rows[0].surface == "tool_summary"
-    assert all(row.surface == "tool_detail" for row in update.committed[0].rows[1:])
 
 
-def test_tool_error_preserves_complete_multiline_output() -> None:
+def test_tool_error_is_one_indented_line() -> None:
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
@@ -872,18 +864,16 @@ def test_tool_error_preserves_complete_multiline_output() -> None:
     assert _rows(terminal.committed) == [
         [
             "• failed to call web search for Toolang",
-            "  provider rejected the request",
-            "  retry after 60 seconds",
+            "  provider rejected the request retry after 60 seconds",
         ]
     ]
     assert [row.surface for row in terminal.committed[0].rows] == [
         "tool_summary",
-        "tool_detail",
-        "tool_detail",
+        "tool_error",
     ]
 
 
-def test_canceled_tool_summary_is_separated_but_error_remains_plain() -> None:
+def test_canceled_tool_has_only_its_summary() -> None:
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
@@ -911,12 +901,9 @@ def test_canceled_tool_summary_is_separated_but_error_remains_plain() -> None:
         )
     )
 
-    assert _rows(terminal.committed) == [
-        ["• canceled web search for Toolang", "  interrupted by user"]
-    ]
+    assert _rows(terminal.committed) == [["• canceled web search for Toolang"]]
     assert [row.surface for row in terminal.committed[0].rows] == [
         "tool_summary",
-        "none",
     ]
 
 

@@ -143,14 +143,13 @@ and duration formatting. Result summaries provide terminal display data.
 | pick | `Loading skill guidance: <ref>...` | `Loaded skill guidance: <ref>` |
 | reload | `Reloading agent state...` | `Reloaded agent state` |
 | compact | `Compacting thread history` | `Compacted thread history` |
-| honor | `Reloading workspace rules: workspace://repo/src/AGENTS.md...` | `Reloaded workspace rules: workspace://repo/src/AGENTS.md` |
+| honor | `Reloading workspace rules...` | `Reloaded workspace rules: [repo] src/AGENTS.md` |
 
-Honor must show both workspace and exact rules-file path while running and when
-finished, including failure/cancellation. Preflight discovery supplies identified
-rules-file paths for the existing begin summary; completion uses result summaries.
-For multiple files, list every workspace/file pair in order under the same honor
-Step, using additional detail lines as needed. Do not collapse them into a generic
-label or a count. Removed files retain their paths; no UI resource reads are needed.
+The [tool progress definition](tool-progress.md) specifies the shared description
+hook and compact rendering. Honor's running description has no discovered-file
+side channel. Terminal descriptions list the workspace/file pairs available in
+result controls, including deleted files. The renderer truncates long summaries;
+inspection retains the full text and result. No UI resource reads are needed.
 
 Pick uses service wording where appropriate. Keep actual failure/cancellation
 wording. Use `✧` for these runtime rows, retaining ordinary tool `•` and footer
@@ -170,9 +169,9 @@ and continue; report real blockers rather than narrating routine recovery.
   enrich all four results; test exact summaries, durability before return, reuse,
   empty results, and real errors. Honor summaries identify the actual rules file,
   including workspace-root files, nested files, and deletion revisions.
-- `execution/executor/{rules.py,steps/tool.py}`: carry discovered rules-file paths
-  into honor's begin summary, record the original ToolCall dependency, and replace
-  the blocked-Step path with an error-only response. Test no workspace side
+- `execution/executor/{rules.py,steps/tool.py}`: record the original ToolCall
+  dependency and replace the blocked-Step path with an error-only response.
+  Test no workspace side
   effects/Steps/events; successful honor plus retry error; changed/no retry;
   multiple workspaces/files; discovery/read failures; and parallel Runs.
 - Model adapters under `plugin/models/adapters/`: verify error text reaches each
@@ -185,7 +184,7 @@ and continue; report real blockers rather than narrating routine recovery.
   saved deltas and control effects are unchanged.
 - Runtime wording, bundled directions, and Script/Chat progress: test StepEnd
   round-trips and replay without Store/State queries, all honor workspace/file
-  identities at begin/end, normal later workspace calls, actual failures, and
+  identities from results, normal later workspace calls, actual failures, and
   fake-clock compact timing/cleanup. No event suppression state is introduced.
 
 Run ruff check/format, ty, and default offline pytest. This definition requires

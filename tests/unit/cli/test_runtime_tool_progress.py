@@ -8,6 +8,7 @@ import pytest
 
 from toolang.base.types.message import ToolResultPart
 from toolang.base.types.run import ToolCall
+from toolang.base.utils.function_tools import describe_tool
 from toolang.cli.common.execution_progress import ProgressProjector
 from toolang.cli.common.execution_progress.step_projection import (
     trace_live_rows,
@@ -18,7 +19,7 @@ from toolang.cli.common.script_progress.console import ProgressConsole
 from toolang.cli.common.execution_progress import ProgressBlock, ProgressUpdate
 from toolang.cli.toolang.commands.chat import blocks, rendering
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
-from toolang.execution.tools.runtime import runtime_tool_summary
+from toolang.execution.tools.runtime import RuntimeToolset
 from toolang.execution.types import (
     ControlRef,
     StepRef,
@@ -41,9 +42,9 @@ def _root():
     )
 
 
-def _begin(name="compact", arguments=None, files=()):
+def _begin(name="compact", arguments=None):
     arguments = arguments or {}
-    summary = runtime_tool_summary(name, arguments, "running", files=files)
+    summary = describe_tool(RuntimeToolset().tools()[name], arguments, "running")
     assert summary is not None
     return StepBegin(
         step=StepRef.parse("run_root.0"),
@@ -60,8 +61,11 @@ def _begin(name="compact", arguments=None, files=()):
 
 def _end(begin, status="succeeded", output=None):
     call = begin.given.call
-    summary = runtime_tool_summary(
-        call.name.removeprefix("_toolang__"), call.input, status, output=output
+    summary = describe_tool(
+        RuntimeToolset().tools()[call.name.removeprefix("_toolang__")],
+        call.input,
+        status,
+        output,
     )
     assert summary is not None
     return StepEnd(
@@ -111,9 +115,7 @@ def test_runtime_tools_use_owned_wording_and_progress_marker(name, arguments, te
 
 def test_honor_lists_every_rules_file_in_script_and_chat_without_store_reads():
     files = (("repo", "/AGENTS.md"), ("repo", "/src/AGENTS.md"), ("sdk", "/AGENTS.md"))
-    begin = _begin(
-        "honor", {"paths": [{"workspace": "repo", "path": "/src/file"}]}, files
-    )
+    begin = _begin("honor", {"paths": [{"workspace": "repo", "path": "/src/file"}]})
     output = {
         "controls": [
             {
@@ -125,24 +127,30 @@ def test_honor_lists_every_rules_file_in_script_and_chat_without_store_reads():
         ]
     }
     end = _end(begin, output=output)
+    assert trace_live_rows(begin, "")[0].text == "✧ Reloading workspace rules..."
     for rows in (trace_live_rows(begin, ""), trace_terminal_rows(begin, end, error="")):
         assert len(rows) == 1
         block = ProgressBlock("honor", rows)
         stream = StringIO()
-        ProgressConsole(stream, width=48, max_width=48).apply(
+        ProgressConsole(stream, width=240, max_width=240).apply(
             ProgressUpdate(committed=(block,))
         )
-        chat = blocks.ExecutionProgressBlock(block, max_width=48).render()
+        chat = blocks.ExecutionProgressBlock(block, max_width=240).render()
         rendered_chat = "".join(
             segment.text
-            for segment in rendering.render_segments(chat, width=48)
+            for segment in rendering.render_segments(chat, width=240)
             if not segment.control
         )
         for rendered in (stream.getvalue(), rendered_chat):
             compact = "".join(rendered.split())
-            assert all(
-                f"workspace://{workspace}{path}" in compact for workspace, path in files
-            )
+            if "Reloaded" in rendered:
+                assert all(
+                    f"[{workspace}]{path.lstrip('/')}" in compact
+                    for workspace, path in files
+                )
+            else:
+                assert "AGENTS.md" not in rendered
+            assert "workspace://" not in rendered
             assert "✧" in rendered
 
 
@@ -155,13 +163,13 @@ def test_runtime_tool_failure_details_and_cancellation_remain_visible(name, stat
     assert rows[0].text.startswith("✧ Failed" if error else "✧ Canceled")
     assert [row.text.strip() for row in rows[1:]] == ([error] if error else [])
     if error:
-        assert rows[1].surface == "tool_detail"
+        assert rows[1].surface == "tool_error"
 
 
 @pytest.mark.parametrize(
     "plugin,name", [("_toolang", "run"), ("_toolang", "execute"), ("fs", "read")]
 )
-def test_other_tool_results_remain_visible(plugin, name):
+def test_tool_results_remain_in_events_but_not_in_progress(plugin, name):
     call = ToolCall("call-1", "call-1", f"{plugin}__{name}", {})
     begin = StepBegin(
         step=StepRef.parse("run_root.0"),
@@ -191,10 +199,10 @@ def test_other_tool_results_remain_visible(plugin, name):
     )
     rows = trace_terminal_rows(begin, end, error="")
     assert rows[0].text.startswith("• ")
-    assert any(
-        row.surface == "tool_detail" and "Result is still available" in row.text
-        for row in rows
-    )
+    assert len(rows) == 1
+    assert rows[0].text == f"• Executed {name}"
+    assert end.output is not None and isinstance(end.output.value, ToolResultPart)
+    assert end.output.value.output == {"value": "Result is still available"}
 
 
 @pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])

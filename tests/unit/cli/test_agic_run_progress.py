@@ -325,12 +325,14 @@ def test_execute_prestart_failure_uses_a_correlated_trace_marker() -> None:
     )
 
     failed = _execute_step(
-        projector, "flow:missing", error="Runnable not found: missing"
+        projector, "flow:missing", error="Runnable not found:\nmissing"
     )
 
     assert failed.committed[0].rows == (
-        ProgressRow("• Failed to execute flow:missing", "error"),
-        ProgressRow("  Runnable not found: missing", "error"),
+        ProgressRow(
+            "• Failed to execute flow:missing", "error", surface="tool_summary"
+        ),
+        ProgressRow("  Runnable not found: missing", "error", surface="tool_error"),
     )
     assert failed.live == ()
     recovered = projector.handle(

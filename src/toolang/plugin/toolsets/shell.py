@@ -14,9 +14,10 @@ from typing import Any, cast
 
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool, Toolset
-from toolang.base.types.tool import ToolContext, ToolPath
+from toolang.base.types.tool import ToolContext, ToolPath, ToolStatus
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.base.utils.paths import resolve_tool_path
+from toolang.base.utils.tool_descriptions import describe_action
 
 DEFAULT_TIMEOUT_SEC = 30
 DEFAULT_MAX_OUTPUT_CHARS = 20_000
@@ -53,6 +54,7 @@ class ShellToolset:
             name="execute",
             description="Run one shell command and capture stdout and stderr. Optional workspace anchors cwd at that workspace root, including paths starting with /.",
             prepare=_prepare_cwd,
+            describe=_describe_execute,
         )
         async def execute(
             command: str,
@@ -106,6 +108,17 @@ class ShellToolset:
             }
 
         return {"execute": create_function_tool(execute)}
+
+
+def _describe_execute(
+    arguments: Mapping[str, Any],
+    status: ToolStatus,
+    output: Mapping[str, Any] | None = None,
+) -> str | None:
+    command = arguments.get("command")
+    if not isinstance(command, str):
+        return None
+    return describe_action(status, ("run", "Running", "Ran"), f"“{command}”")
 
 
 async def _stop_command(launch: asyncio.Task[asyncio.subprocess.Process]) -> None:

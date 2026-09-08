@@ -515,6 +515,7 @@ class ProgressProjector:
                             state.lane_owner,
                             terminal,
                             status=event.status,
+                            tool=event.kind == "tool",
                         )
         elif execute is not None:
             if not execute.ready:
@@ -833,10 +834,21 @@ class ProgressProjector:
                 continue
             prefix = f"  {lane_index:>{lane_width}} | #{lane.item:>{item_width}} | "
             terminal = lane.terminal or ("• failed",)
-            rows.append(ProgressRow(f"{prefix}{terminal[0]}", "error"))
+            rows.append(
+                ProgressRow(
+                    f"{prefix}{terminal[0]}",
+                    "runtime" if terminal[0].startswith("✧ ") else "error",
+                    surface="tool_summary" if lane.terminal_tool else "none",
+                )
+            )
             continuation = " " * (len(prefix) + 2)
             rows.extend(
-                ProgressRow(f"{continuation}{line}", "error") for line in terminal[1:]
+                ProgressRow(
+                    f"{continuation}{line}",
+                    "error",
+                    surface="tool_error" if lane.terminal_tool else "none",
+                )
+                for line in terminal[1:]
             )
         return tuple(rows)
 
@@ -987,8 +999,7 @@ class ProgressProjector:
                 ProgressRow(
                     f"  {lane_index:>{lane_width}} | #{lane.item:>{item_width}} | "
                     f"{lane.activity}",
-                    "active",
-                    wrap_live=lane.activity.startswith("✧ "),
+                    "runtime" if lane.activity.startswith("✧ ") else "active",
                 )
             )
         return tuple(rows)
@@ -1136,13 +1147,18 @@ class ProgressProjector:
         pending: PendingExecute,
         error: str,
     ) -> tuple[ProgressRow, ...]:
-        rows = [ProgressRow(f"• Failed to execute {pending.runnable}", "error")]
-        rows.extend(
-            ProgressRow(f"  {line}", "error")
-            for line in error.strip().splitlines()
-            if line
+        return (
+            ProgressRow(
+                f"• Failed to execute {pending.runnable}",
+                "error",
+                surface="tool_summary",
+            ),
+            ProgressRow(
+                f"  {one_line(error) or 'Execution did not start'}",
+                "error",
+                surface="tool_error",
+            ),
         )
-        return tuple(rows)
 
     def _finish_execute(
         self,
@@ -1377,11 +1393,13 @@ class ProgressProjector:
         terminal: tuple[str, ...],
         *,
         status: RunStatus,
+        tool: bool = False,
     ) -> None:
         lane = self._lane_state(owner)
         if lane is not None:
             lane.terminal = terminal
             lane.terminal_status = status
+            lane.terminal_tool = tool
             if terminal:
                 lane.activity = one_line(" · ".join(terminal))
 

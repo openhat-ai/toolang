@@ -8,6 +8,13 @@ import pytest
 
 from toolang.base.types.run import ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.base.utils.function_tools import (
+    create_function_tool,
+    tool as function_tool,
+)
+from toolang.plugin.toolsets.loading import LoadedTool
+from toolang.plugin.toolsets.registry import ToolRef
+from toolang.plugin.toolsets.filesystem import FilesystemToolset
 from toolang.execution.executor.steps.tool import (
     _tool_summary,
     _tool_summary_context,
@@ -113,3 +120,86 @@ def test_default_summary_omits_argument_without_a_schema_property() -> None:
     assert context.name == "call"
     assert context.args == ()
     assert _tool_summary(context, "succeeded") == "Executed call"
+
+
+@pytest.mark.parametrize("status", ["running", "succeeded", "failed", "canceled"])
+def test_description_flows_through_factory_and_loaded_tool_without_mutating_data(
+    status,
+):
+    seen = []
+
+    def describe(arguments, status, output):
+        seen.append((arguments["password"], arguments["credential"], status))
+        arguments["items"].append("changed")
+        if output is not None:
+            output["items"].append("changed")
+        return f"Custom {status}\n description"
+
+    @function_tool(
+        name="call",
+        description="Unchanged model guidance.",
+        parameters={
+            "properties": {
+                "items": {"type": "array"},
+                "password": {"type": "string"},
+                "credential": {"writeOnly": True},
+            }
+        },
+        describe=describe,
+    )
+    def call_tool(items, password, credential):
+        return {"items": items}
+
+    tool = LoadedTool(
+        "demo",
+        "built-in",
+        ToolRef("demo", "demo", "call"),
+        create_function_tool(call_tool),
+    )
+    call = _call({"items": ["original"], "password": "secret", "credential": "secret"})
+    output = {"items": ["result"]}
+    context = _tool_summary_context(call, tool)
+    assert _tool_summary(context, status, output) == f"Custom {status} description"
+    assert _tool_summary(context, status, output) == f"Custom {status} description"
+    assert seen == [("<redacted>", "<redacted>", status)] * 2
+    assert call.input == {
+        "items": ["original"],
+        "password": "secret",
+        "credential": "secret",
+    }
+    assert output == {"items": ["result"]}
+    assert tool.definition().description == "Unchanged model guidance."
+
+
+@pytest.mark.parametrize("outcome", [None, "", "   ", "raises"])
+def test_description_failure_or_empty_value_uses_generic_fallback(outcome, caplog):
+    def describe(arguments, status, output):
+        if outcome == "raises":
+            raise ValueError("never log this secret")
+        return outcome
+
+    @function_tool(describe=describe)
+    def call(value: str):
+        return {}
+
+    context = _tool_summary_context(
+        _call({"value": "original"}), create_function_tool(call)
+    )
+    assert _tool_summary(context, "succeeded") == "Executed call original"
+    assert "never log this secret" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"path": "workspace://repo/%zz"},
+        {"workspace": "repo", "path": "workspace://repo/file"},
+        {"path": 1},
+        {},
+    ],
+)
+def test_invalid_workspace_input_can_still_be_described_as_a_failure(arguments):
+    call = ToolCall("tool-1", "call-1", "fs__read", arguments)
+    context = _tool_summary_context(call, FilesystemToolset({}).tools()["read"])
+    assert _tool_summary(context, "failed").startswith("Failed read")
+    assert call.input == arguments

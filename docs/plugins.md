@@ -26,6 +26,16 @@ integration behavior and do not mutate durable runtime truth directly.
 Toolset plugins expose one `Toolset`, which may return one or more
 model-facing `AgentTool` values. `AgentTool.invoke()` is asynchronous.
 
+Leaf tools may provide `describe(arguments, status, output=None) -> str | None`;
+function tools use `@tool(describe=...)`. Status is `running`, `succeeded`,
+`failed`, or `canceled`. Return plain lifecycle wording using only these inputs:
+no I/O, styling, markers, or timing. This is separate from the model-facing tool
+definition. The executor supplies isolated data with sensitive arguments masked,
+falls back to generic wording when the hook is absent, empty, or fails, and saves
+the text in existing Step summaries. Progress reads those summaries, not plugins.
+Tool results remain available to the model and inspection, but are not displayed
+as progress blocks. Failed tools show one indented error line.
+
 Path-aware tools may implement `prepare(arguments, context) -> ToolPreparation`.
 Preparation has no requested-operation side effects: it returns authorized
 `ToolPath` values and an async invocation bound to those exact paths. Each path

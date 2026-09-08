@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-ProgressTone = Literal["progress", "normal", "active", "error", "warning"]
+ProgressTone = Literal["progress", "normal", "active", "runtime", "error", "warning"]
 ProgressFormat = Literal["plain", "markdown"]
-ProgressSurface = Literal["none", "tool_summary", "tool_detail"]
+ProgressSurface = Literal["none", "tool_summary", "tool_error"]
 ProgressLeader = Literal["none", "hyphen", "handoff"]
 
 

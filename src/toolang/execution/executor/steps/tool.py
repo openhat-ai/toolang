@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from dataclasses import dataclass
 import json
 import logging
@@ -15,8 +16,13 @@ from typing import TYPE_CHECKING, Literal
 from toolang.base.protocols.tool import AgentTool, ToolHistory, ToolRuntime
 from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ToolCall, ToolCallResult
-from toolang.base.types.tool import ToolContext, ToolPreparation, ToolService
-from toolang.base.utils.function_tools import prepare_tool
+from toolang.base.types.tool import (
+    ToolContext,
+    ToolPreparation,
+    ToolService,
+    ToolStatus,
+)
+from toolang.base.utils.function_tools import describe_tool, prepare_tool
 from toolang.base.errors import ToolFailure
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
@@ -27,7 +33,6 @@ from toolang.state.state import AgentState
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
 from ...records import RecallControlPayload
 from ...tool_results import workspace_reply, workspace_reply_from_step
-from ...tools.runtime import runtime_tool_summary
 from ...runnables import AgicRoutes
 from ...types import (
     ControlRef,
@@ -115,7 +120,7 @@ class _ToolSummaryContext:
     name: str
     args: tuple[str, ...]
     arguments: Mapping[str, object]
-    files: tuple[tuple[str, str], ...] = ()
+    tool: AgentTool | None
 
 
 async def execute(
@@ -156,7 +161,6 @@ async def execute(
                 honor,
                 trigger="runtime",
                 input_ref=_call_source(state, call),
-                files=required.files,
             )
         except asyncio.CancelledError:
             # Delivery can be interrupted after a successful StepEnd. As with
@@ -206,7 +210,6 @@ async def _execute(
     tool_call_count: int = 1,
     routes: AgicRoutes | None = None,
     input_ref: FieldRef | None = None,
-    files: tuple[tuple[str, str], ...] = (),
 ) -> ToolCallResult:
     run = state.prepared.run
     step_index = state.next_step
@@ -233,7 +236,7 @@ async def _execute(
         step_input = state.initial_inputs
     prepared = state.prepared
     plugin_name = "-"
-    summary_context = _tool_summary_context(call, None, files=files)
+    summary_context = _tool_summary_context(call, None)
     preparation: ToolPreparation | Exception | None = None
     step = StepRef.from_local(run.run_id, (step_index,))
     runtime: _ToolRuntime | None = None
@@ -254,7 +257,7 @@ async def _execute(
         tools = {**prepared.tools, **runtime_tools} if runtime_tools else prepared.tools
         tool = tools.get(call.name)
         plugin_name = _plugin_name(tool)
-        summary_context = _tool_summary_context(call, tool, files=files)
+        summary_context = _tool_summary_context(call, tool)
         runtime = (
             _ToolRuntime(
                 state, step, source_ref, tool_call_count, routes or prepared.routes
@@ -394,7 +397,7 @@ async def _execute(
             step,
             part,
             summary=_tool_summary(summary_context, status, record.output),
-            canceled_summary=_tool_summary(summary_context, "canceled"),
+            canceled_summary=_tool_summary(summary_context, "canceled", record.output),
             error=runtime.error if runtime is not None else None,
             trigger=trigger,
         )
@@ -544,6 +547,8 @@ async def skip(
         step = StepRef.from_local(state.prepared.run.run_id, (state.next_step,))
         state.next_step += 1
         source = state.tool_call_sources[call.tool_call_id]
+        tool = state.prepared.tools.get(call.name)
+        summary = _tool_summary_context(call, tool)
         try:
             await _begin(
                 state,
@@ -562,16 +567,19 @@ async def skip(
                         ),
                     ),
                     given=ToolStepGiven(
-                        plugin=_plugin_name(state.prepared.tools.get(call.name)),
+                        plugin=_plugin_name(tool),
                         call=call,
+                        summary=_tool_summary(summary, "running"),
                     ),
                     started_at=utc_now(),
                 ),
+                canceled_summary=lambda: _tool_summary(summary, "canceled"),
             )
             await _cancel(
                 state,
                 step,
                 call,
+                summary=_tool_summary(summary, "canceled"),
                 part=canceled_result(
                     call,
                     reason="canceled; operation not executed"
@@ -606,30 +614,47 @@ def _plugin_name(tool: AgentTool | None) -> str:
 def _tool_summary_context(
     call: ToolCall,
     tool: AgentTool | None,
-    *,
-    files: tuple[tuple[str, str], ...] = (),
 ) -> _ToolSummaryContext:
     family, name = _tool_identity(call, tool)
+    try:
+        properties = tool.definition().parameters.get("properties", {}) if tool else {}
+    except Exception:
+        properties = {}
+    if not isinstance(properties, Mapping):
+        properties = {}
+    arguments = dict(call.input)
+    for key in arguments:
+        schema = properties.get(key)
+        if _is_sensitive_argument(key, schema if isinstance(schema, Mapping) else {}):
+            arguments[key] = "<redacted>"
     return _ToolSummaryContext(
         family=family,
         name=name,
-        args=_argument_previews(call, tool),
-        arguments=call.input,
-        files=files,
+        args=tuple(
+            _format_argument_preview(arguments[key])
+            for key in properties
+            if key in arguments
+        ),
+        arguments=arguments,
+        tool=tool,
     )
 
 
 def _tool_summary(
     context: _ToolSummaryContext,
-    status: str,
+    status: ToolStatus,
     output: Mapping[str, object] | None = None,
 ) -> str:
-    if context.family == "_toolang":
-        summary = runtime_tool_summary(
-            context.name, context.arguments, status, output=output, files=context.files
-        )
-        if summary is not None:
-            return summary
+    if context.tool is not None:
+        try:
+            summary = describe_tool(
+                context.tool, deepcopy(context.arguments), status, deepcopy(output)
+            )
+            if isinstance(summary, str) and summary.strip():
+                return " ".join(summary.split())
+        except Exception:
+            # Presentation must not change execution or log potentially secret data.
+            _LOGGER.warning("Tool description failed for %s", context.name)
     template = _DEFAULT_TOOL_SUMMARY_TEMPLATES.get(status, "{{name}} {{args.0}}")
     rendered = render_text_template(
         template,
@@ -661,30 +686,6 @@ def _tool_identity(
         fallback_family if isinstance(fallback_family, str) else "",
         call.name or "tool",
     )
-
-
-def _argument_previews(
-    call: ToolCall,
-    tool: AgentTool | None,
-) -> tuple[str, ...]:
-    if tool is None:
-        return ()
-    try:
-        properties = tool.definition().parameters.get("properties")
-    except Exception:
-        return ()
-    if not isinstance(properties, Mapping):
-        return ()
-    previews: list[str] = []
-    for raw_name, raw_schema in properties.items():
-        if not isinstance(raw_name, str) or raw_name not in call.input:
-            continue
-        schema = raw_schema if isinstance(raw_schema, Mapping) else {}
-        if _is_sensitive_argument(raw_name, schema):
-            previews.append("<redacted>")
-        else:
-            previews.append(_format_argument_preview(call.input[raw_name]))
-    return tuple(previews)
 
 
 def _is_sensitive_argument(name: str, schema: Mapping[object, object]) -> bool:

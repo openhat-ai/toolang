@@ -8,8 +8,13 @@ from typing import Any, cast
 
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool, Toolset
-from toolang.base.types.tool import ToolContext, ToolDefinition, ToolPreparation
-from toolang.base.utils.function_tools import prepare_tool
+from toolang.base.types.tool import (
+    ToolContext,
+    ToolDefinition,
+    ToolPreparation,
+    ToolStatus,
+)
+from toolang.base.utils.function_tools import describe_tool, prepare_tool
 
 from toolang.plugin.loading import LoadedPlugin, PluginSource, load_plugins_with_sources
 from .registry import (
@@ -56,6 +61,14 @@ class LoadedTool(AgentTool):
         self, arguments: Mapping[str, Any], context: ToolContext
     ) -> ToolPreparation:
         return prepare_tool(self.leaf_tool, arguments, context)
+
+    def describe(
+        self,
+        arguments: Mapping[str, Any],
+        status: ToolStatus,
+        output: Mapping[str, Any] | None = None,
+    ) -> str | None:
+        return describe_tool(self.leaf_tool, arguments, status, output)
 
     async def invoke(
         self,

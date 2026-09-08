@@ -10,7 +10,14 @@ from typing import Any, get_args, get_origin
 
 from ..errors import ToolangError
 from ..protocols.tool import AgentTool
-from ..types.tool import ToolContext, ToolDefinition, ToolPath, ToolPreparation
+from ..types.tool import (
+    ToolContext,
+    ToolDefinition,
+    ToolDescriber,
+    ToolPath,
+    ToolPreparation,
+    ToolStatus,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +29,7 @@ class _FunctionToolSpec:
     wants_context: bool
     signature: inspect.Signature
     prepare: Callable[[dict[str, Any], ToolContext], tuple[ToolPath, ...]] | None
+    describe: ToolDescriber | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +47,18 @@ class _FunctionTool(AgentTool):
             name=self.spec.name,
             description=self.spec.description,
             parameters=self.spec.parameters,
+        )
+
+    def describe(
+        self,
+        arguments: Mapping[str, Any],
+        status: ToolStatus,
+        output: Mapping[str, Any] | None = None,
+    ) -> str | None:
+        return (
+            self.spec.describe(arguments, status, output)
+            if self.spec.describe
+            else None
         )
 
     async def invoke(
@@ -83,11 +103,13 @@ def tool(
     parameters: dict[str, Any] | None = None,
     prepare: Callable[[dict[str, Any], ToolContext], tuple[ToolPath, ...]]
     | None = None,
+    describe: ToolDescriber | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Annotate a tool; optional preparation binds paths without executing it.
 
     Preparation receives defaulted, invocation-local arguments. It may replace
     path arguments with concrete authorized paths consumed by the callable.
+    Description returns plain lifecycle wording from call/result data without I/O.
     """
 
     def decorate(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -100,6 +122,7 @@ def tool(
             wants_context="context" in signature.parameters,
             signature=signature,
             prepare=prepare,
+            describe=describe,
         )
         setattr(func, "__tool_spec__", spec)
         return func
@@ -125,6 +148,18 @@ def prepare_tool(
     if prepare is not None:
         return prepare(arguments, context)
     return ToolPreparation((), lambda: tool.invoke(arguments, context))
+
+
+def describe_tool(
+    tool: AgentTool,
+    arguments: Mapping[str, Any],
+    status: ToolStatus,
+    output: Mapping[str, Any] | None = None,
+) -> str | None:
+    """Forward optional plain-text wording; the executor owns fallback behavior."""
+
+    describe = getattr(tool, "describe", None)
+    return describe(arguments, status, output) if describe is not None else None
 
 
 def _schema_from_signature(signature: inspect.Signature) -> dict[str, Any]:

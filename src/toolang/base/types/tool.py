@@ -11,6 +11,11 @@ from typing import TYPE_CHECKING, Any, Literal
 if TYPE_CHECKING:
     from ..protocols.tool import ToolHistory, ToolRuntime
 
+ToolStatus = Literal["running", "succeeded", "failed", "canceled"]
+ToolDescriber = Callable[
+    [Mapping[str, Any], ToolStatus, Mapping[str, Any] | None], str | None
+]
+
 
 @dataclass(frozen=True, slots=True)
 class ToolDefinition:
