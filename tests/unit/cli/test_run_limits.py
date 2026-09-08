@@ -52,27 +52,28 @@ def test_compact_override_replaces_environment_without_inheriting_effort():
     assert resolve_compact_override(environ) == ModelOverride(
         identity="test/old", effort="high"
     )
-    assert resolve_compact_override(environ, ["model=test/new"]) == ModelOverride(
+    assert resolve_compact_override(environ, "test/new") == ModelOverride(
         identity="test/new"
     )
-    assert resolve_compact_override(environ, ["model=unset"]) == ModelOverride(
-        identity="unset"
+    assert resolve_compact_override(environ, "test/new effort=low") == ModelOverride(
+        identity="test/new", effort="low"
     )
+    assert resolve_compact_override(environ, "unset") == ModelOverride(identity="unset")
 
 
 @pytest.mark.parametrize(
-    "options, error",
+    "model_spec, error",
     [
-        (["models=test/*"], "unknown compact field"),
-        (["model=test/a", "model=test/b"], "duplicate compact field"),
-        (["model=effort=low"], "exact model or unset"),
-        (["model=default"], "exact model or unset"),
-        (["test/a"], "field=value"),
+        ("models=test/*", "unknown model parameter"),
+        ("", "model requires"),
+        ("effort=low", "exact model or unset"),
+        ("default", "exact model or unset"),
+        ("model=test/a", "unknown model parameter"),
     ],
 )
-def test_compact_override_rejects_ambiguous_options(options, error):
+def test_compact_override_rejects_invalid_model_specs(model_spec, error):
     with pytest.raises(ValueError, match=error):
-        resolve_compact_override({}, options)
+        resolve_compact_override({}, model_spec)
 
 
 @pytest.mark.parametrize("field", ["CAPS", "CHANNELS"])

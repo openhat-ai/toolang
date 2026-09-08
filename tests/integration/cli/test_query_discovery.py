@@ -167,10 +167,10 @@ def test_each_query_enabled_list_points_to_query_help() -> None:
         assert f"'{expected}'." in output
 
 
-def test_allow_help_uses_collection_query_vocabulary() -> None:
+def test_allow_help_uses_resource_query_vocabulary() -> None:
     result = runner.invoke(toolang_app, ["run", "--help"])
 
     assert result.exit_code == 0, result.stderr
     output = strip_ansi(result.stdout)
-    assert "COLLECTION=QUERY" in output
+    assert "RESOURCE=QUERY" in output
     assert "SELECTORS" not in output

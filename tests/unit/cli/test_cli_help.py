@@ -37,22 +37,43 @@ def test_prompt_help_uses_conventional_metavars(main, tmp_path, capsys, monkeypa
 @pytest.mark.parametrize(
     ("arguments", "options"),
     [
-        (["a", "run"], ("--limit", "--default", "--compact")),
-        (["a", "start"], ("--limit", "--default", "--compact")),
-        (["a", "chat"], ("--limit", "--default", "--compact")),
-        (["a", "retry"], ("--limit",)),
-        (["a", "rerun"], ("--limit", "--model")),
-        (["serve", "a"], ("--limit", "--default", "--compact", "--log")),
+        (
+            ["a", "run"],
+            ("--sandbox", "--allow", "--limit", "--default", "--compaction-model"),
+        ),
+        (
+            ["a", "start"],
+            ("--sandbox", "--allow", "--limit", "--default", "--compaction-model"),
+        ),
+        (
+            ["a", "chat"],
+            ("--sandbox", "--allow", "--limit", "--default", "--compaction-model"),
+        ),
+        (["a", "retry"], ("--allow", "--limit")),
+        (["a", "rerun"], ("--sandbox", "--allow", "--limit", "--model")),
+        (
+            ["serve", "a"],
+            ("--allow", "--limit", "--default", "--compaction-model", "--log"),
+        ),
     ],
 )
-def test_help_distinguishes_configuration_specifications(
+def test_help_uses_semantic_configuration_metavars(
     arguments, options, tmp_path, capsys
 ):
+    metavars = {
+        "--sandbox": "SANDBOX_SPEC",
+        "--allow": "RESOURCE=QUERY",
+        "--limit": "LIMIT=VALUE",
+        "--default": "SETTING=VALUE",
+        "--compaction-model": "MODEL_SPEC",
+        "--model": "MODEL_SPEC",
+        "--log": "LOG_SPEC",
+    }
     assert too_main(["--root", str(tmp_path), *arguments, "--help"]) == 0
     output = strip_ansi(capsys.readouterr().out)
     for option in options:
         row = next(line for line in output.splitlines() if option in line.split())
-        assert f"{option.removeprefix('--').upper()}_SPEC" in row.split()
+        assert metavars[option] in row.split()
 
 
 @pytest.mark.parametrize("main", [too_main, caps_main])

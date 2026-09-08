@@ -301,15 +301,15 @@ def _runnable_command(
             type=str,
             multiple=True,
             default=(),
-            metavar="COLLECTION=QUERY",
-            help="Set COLLECTION=QUERY. Repeat by collection.",
+            metavar="RESOURCE=QUERY",
+            help="Set RESOURCE=QUERY. Repeat by resource category.",
         ),
         TyperOption(
             param_decls=["--limit"],
             type=str,
             multiple=True,
             default=(),
-            metavar="LIMIT_SPEC",
+            metavar="LIMIT=VALUE",
             help="Set a run limit, e.g. tokens=10000. Repeat for another limit.",
         ),
         TyperOption(
@@ -322,7 +322,7 @@ def _runnable_command(
         TyperOption(
             param_decls=["--sandbox"],
             type=str,
-            metavar="SANDBOX",
+            metavar="SANDBOX_SPEC",
             default=None,
             help="Execute this run in the selected sandbox.",
         ),

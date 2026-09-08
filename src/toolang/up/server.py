@@ -170,9 +170,7 @@ def build_serve_argv(
         )
         command.extend(["--default", f"{name}={formatted}"])
     if spec.compact_override is not None:
-        command.extend(
-            ["--compact", f"model={format_model_body(spec.compact_override)}"]
-        )
+        command.extend(["--compaction-model", format_model_body(spec.compact_override)])
     for name, value in spec.limit_overrides.items():
         command.extend(["--limit", f"{name}={_format_value(value)}"])
     for inbox in spec.file_inboxes:

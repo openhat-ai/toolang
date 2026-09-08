@@ -64,7 +64,7 @@ def acquire_agent_server(
     if status is not None and status.status == "running":
         if compact_override is not None:
             raise AgentServerAcquisitionError(
-                "--compact only applies when starting a runtime; stop the agent first"
+                "--compaction-model only applies when starting a runtime; stop the agent first"
             )
         if dev is not None:
             raise AgentServerAcquisitionError(

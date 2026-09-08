@@ -107,9 +107,10 @@ must meet the same requirements; invalid choices or parameters fail without
 fallback. Set `model = "unset"` to disable automatic compaction.
 
 Override compact selection with `TOOLANG_COMPACT_MODEL='openai/gpt-5 effort=low'`
-or `too alice run --compact 'model=openai/gpt-5 effort=low'`. Precedence is CLI,
-environment, agent config, root config, then automatic selection. `--compact`
-also applies to `start` and `chat` when starting a runtime; it cannot reconfigure
+or `too alice run --compaction-model 'openai/gpt-5 effort=low'`. Precedence is CLI,
+environment, agent config, root config, then automatic selection.
+`--compaction-model` also applies to `start` and `chat` when starting a runtime;
+it cannot reconfigure
 an already running agent. There is no `compact.models` setting.
 
 ## Catalog Plugins

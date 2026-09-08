@@ -86,18 +86,12 @@ def resolve_default_overrides(
 
 def resolve_compact_override(
     environ: Mapping[str, str],
-    options: Sequence[str] | None = None,
+    model_spec: str | None = None,
 ) -> ModelOverride | None:
     """Resolve the runtime's independent compact model; CLI replaces environment."""
-    body = environ.get("TOOLANG_COMPACT_MODEL")
-    seen = False
-    for option in options or ():
-        name, value = _assignment(option, option="--compact")
-        if name != "model":
-            raise ValueError(f"unknown compact field: {name}")
-        if seen:
-            raise ValueError("duplicate compact field: model")
-        body, seen = value, True
+    body = (
+        model_spec if model_spec is not None else environ.get("TOOLANG_COMPACT_MODEL")
+    )
     if body is None:
         return None
     override = parse_model_body(body)

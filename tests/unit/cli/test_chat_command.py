@@ -624,7 +624,7 @@ def test_chat_runtime_builds_process_local_execution_resources(
     with chat._chat_runtime(
         object(),  # type: ignore[arg-type]
         sandbox="host",
-        compact_options=["model=test/compact effort=low"],
+        compaction_model="test/compact effort=low",
     ) as client:
         assert isinstance(client, Session)
 

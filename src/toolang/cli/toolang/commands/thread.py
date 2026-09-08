@@ -189,7 +189,9 @@ def rerun_command(
     sandbox: Annotated[
         str | None,
         typer.Option(
-            "--sandbox", metavar="SANDBOX", help="Execute the new run in this sandbox."
+            "--sandbox",
+            metavar="SANDBOX_SPEC",
+            help="Execute the new run in this sandbox.",
         ),
     ] = None,
     dev: Annotated[

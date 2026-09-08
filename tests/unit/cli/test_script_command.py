@@ -540,13 +540,14 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "Primary Part[] input." in stdout
     assert "<str>" not in stdout
     for option, metavar in (
-        ("--limit", "LIMIT_SPEC"),
+        ("--allow", "RESOURCE=QUERY"),
+        ("--limit", "LIMIT=VALUE"),
         ("--model", "MODEL_SPEC"),
+        ("--sandbox", "SANDBOX_SPEC"),
         ("--save", "PATH"),
     ):
         row = next(line for line in stdout.splitlines() if option in line.split())
         assert metavar in row.split()
-    assert "COLLECTION=QUERY" in stdout
     assert "--save" in stdout
     assert "--sandbox" in stdout
     assert "--dev" in stdout

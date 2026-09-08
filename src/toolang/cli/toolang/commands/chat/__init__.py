@@ -9,7 +9,7 @@ import typer
 
 from toolang.cli.common.parameters import (
     AllowOptions,
-    CompactOptions,
+    CompactionModelOption,
     DefaultOptions,
     LimitOptions,
     TextType,
@@ -34,7 +34,9 @@ def chat_command(
     sandbox: Annotated[
         str | None,
         typer.Option(
-            "--sandbox", metavar="SANDBOX", help="Execute the session in this sandbox."
+            "--sandbox",
+            metavar="SANDBOX_SPEC",
+            help="Execute the session in this sandbox.",
         ),
     ] = None,
     dev: Annotated[
@@ -44,7 +46,7 @@ def chat_command(
     allows: AllowOptions = None,
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
-    compacts: CompactOptions = None,
+    compaction_model: CompactionModelOption = None,
 ) -> None:
     from .main import chat_command as run
 
@@ -54,7 +56,7 @@ def chat_command(
         model_catalog=model_catalog,
         allows=allows,
         defaults=defaults,
-        compacts=compacts,
+        compaction_model=compaction_model,
         sandbox=sandbox,
         dev=dev,
         limits=limits,

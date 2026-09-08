@@ -38,15 +38,15 @@ AllowOptions = Annotated[
     list[str] | None,
     typer.Option(
         "--allow",
-        metavar="COLLECTION=QUERY",
-        help="Set COLLECTION=QUERY. Repeat by collection.",
+        metavar="RESOURCE=QUERY",
+        help="Set RESOURCE=QUERY. Repeat by resource category.",
     ),
 ]
 LimitOptions = Annotated[
     list[str] | None,
     typer.Option(
         "--limit",
-        metavar="LIMIT_SPEC",
+        metavar="LIMIT=VALUE",
         help="Set a run limit, e.g. tokens=10000. Repeat for another limit.",
     ),
 ]
@@ -54,18 +54,17 @@ DefaultOptions = Annotated[
     list[str] | None,
     typer.Option(
         "--default",
-        metavar="DEFAULT_SPEC",
-        help="Set model=MODEL or runnable=NAME. Repeat for another default.",
+        metavar="SETTING=VALUE",
+        help="Set a default model or runnable. Repeat for another setting.",
     ),
 ]
-CompactOptions = Annotated[
-    list[str] | None,
+CompactionModelOption = Annotated[
+    str | None,
     typer.Option(
-        "--compact",
-        metavar="COMPACT_SPEC",
+        "--compaction-model",
+        metavar="MODEL_SPEC",
         help=(
-            "Set model=MODEL (optional effort=LEVEL), or model=unset, "
-            "for a new runtime."
+            "Set an exact model (optional effort=LEVEL), or unset, for a new runtime."
         ),
     ),
 ]
