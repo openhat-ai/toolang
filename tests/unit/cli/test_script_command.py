@@ -28,7 +28,7 @@ from toolang.execution.types import (
     ThreadRef,
 )
 from toolang.lang.input import CallInput
-from toolang.lang.ast import FlowDecl, Parameter, Program, RunStmt, Span
+from toolang.lang.ast import FlowDecl, Program, RunStmt, Span
 from toolang.up.types import AgentServerRef
 from tests.support.execution_harness import ExecutionHarness
 
@@ -719,20 +719,6 @@ def test_script_without_public_runnables_still_shows_common_options(
     output = strip_ansi(capsys.readouterr().out)
     assert "─ Runnables " not in output
     _assert_common_options(output)
-
-
-@pytest.mark.parametrize("primary", [False, True])
-def test_script_argument_help_preserves_authored_docs(primary: bool) -> None:
-    parameter = Parameter(
-        span=Span(line=1),
-        name="_" if primary else "topic",
-        type_name="Text",
-        doc="  Research topic.  ",
-    )
-    argument = script._signature_argument(parameter)
-    assert argument.help is not None
-    assert argument.help.startswith("Research topic.")
-    assert ("stdin" in argument.help) is primary
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])

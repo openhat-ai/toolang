@@ -125,6 +125,12 @@ through Typer's command/parameter construction. Preserve Script's input
 collector and downstream coercion; help metadata must not introduce early
 conversion of Content or named assignment values.
 
+Keep the runnable-signature mapping reusable in
+`cli/common/runnable_parameters.py`. Its entry point accepts an authored agic
+or flow and returns native argument metadata for named parameters and accepted
+primary input. It owns order, names, type labels, requiredness, and docs;
+commands supply capture guidance and adapt parsing to their own input collector.
+
 Remove the custom Arguments table and separate capture notes. Do not build,
 copy, or hardcode Options/Arguments rows, columns, styles, or required markers.
 Use Typer's default parameter panels. Keep only local adaptations needed for
@@ -137,6 +143,8 @@ Likely implementation files:
 
 - `src/toolang/cli/toolang/commands/script.py`: descriptions, Annotated parameter
   declarations/dynamic metadata, native parameter panels, and option placement.
+- `src/toolang/cli/common/runnable_parameters.py`: reusable runnable-signature mapping.
+- `tests/unit/cli/test_runnable_parameters.py`: mapping and standalone reuse checks.
 - `tests/unit/cli/test_script_command.py`: update help expectations and cover
   common options and their placement.
 - `docs/api.md` and `docs/call-input.md`: synchronize the current CLI contract.

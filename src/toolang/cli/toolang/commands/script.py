@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
-from inspect import Parameter as SignatureParameter, Signature
 import json
 import os
 from pathlib import Path
@@ -27,11 +26,9 @@ from typer._click import Context, HelpFormatter
 from typer._click.core import ParameterSource
 from typer._click.exceptions import ClickException, UsageError
 from typer._click.parser import _OptionParser, _ParsingState
-from typer._click.types import StringParamType
 from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
-from typer.main import get_click_param, get_command_from_info
+from typer.main import get_command_from_info
 from typer.models import CommandInfo
-from typer.utils import get_params_from_function
 
 from toolang.base.model_settings import parse_model_body
 from toolang.base.types.model import ModelRequest
@@ -70,7 +67,6 @@ from toolang.lang.ast import (
     AgicDecl,
     FlowDecl,
     FlowStmt,
-    Parameter,
     Program,
     RepeatStmt,
 )
@@ -93,6 +89,7 @@ from ...common.result_saving import save_result
 from ...common.output import echo_error
 from ...common.help import CliCommand, CliGroup
 from ...common.parameters import AllowOptions, LimitOptions
+from ...common.runnable_parameters import runnable_parameters
 from ...common.execution_progress.config import resolve_progress_max_width
 from ...common.script_progress import ScriptRunPresenter
 
@@ -107,6 +104,17 @@ _MODEL_REQUEST_ADAPTER = TypeAdapter(ModelRequest)
 class _HelpArgument(TyperArgument):
     """One signature argument displayed by Typer but parsed by the collector."""
 
+    def __init__(self, argument: TyperArgument) -> None:
+        super().__init__(
+            param_decls=argument.opts,
+            type=argument.type,
+            required=argument.required,
+            metavar=argument.metavar,
+            help=argument.help,
+            show_default=argument.show_default,
+            expose_value=False,
+        )
+
     def add_to_parser(self, parser: Any, ctx: Context) -> None:
         del parser, ctx
 
@@ -118,16 +126,6 @@ class _HelpArgument(TyperArgument):
     ) -> tuple[None, list[str]]:
         del ctx, opts
         return None, args
-
-
-class _InputType(StringParamType):
-    """Show the authored type without converting input before collection."""
-
-    def __init__(self, name: str) -> None:
-        self.name = name.upper()
-
-    def get_metavar(self, param: Any, ctx: Context) -> str:
-        return self.name
 
 
 class _IncompleteRunnableInput(Exception):
@@ -514,61 +512,15 @@ def _runnable_command(
     assert isinstance(command, _RunnableCommand)
     if runnable is not None:
         command._flow = runnable if isinstance(runnable, FlowDecl) else None
-        arguments = [_signature_argument(parameter) for parameter in runnable.params]
-        if runnable.input is not None:
-            arguments.append(_signature_argument(runnable.input))
-        command.params[-1:-1] = arguments
-    return command
-
-
-def _signature_argument(parameter: Parameter) -> TyperArgument:
-    primary = parameter.name == "_"
-    help_text = (parameter.doc or "").strip()
-    if primary:
-        capture_help = (
-            "Text after arguments and options; -- explicitly starts text; "
-            "- reads stdin to EOF. Omit text to read piped or redirected stdin."
+        arguments = runnable_parameters(
+            runnable,
+            input_help=(
+                "Text after arguments and options; -- explicitly starts text; "
+                "- reads stdin to EOF. Omit text to read piped or redirected stdin."
+            ),
         )
-        help_text = f"{help_text} {capture_help}".strip()
-    annotation = Annotated[
-        str,
-        typer.Argument(
-            metavar="INPUT" if primary else f"{parameter.name}=ARGUMENT",
-            click_type=_InputType(parameter.type_name or "Part[]"),
-            help=help_text or None,
-            show_default=False,
-        ),
-    ]
-
-    def declaration() -> None:
-        """Supply a dynamic annotated signature to Typer's parameter factory."""
-
-    setattr(
-        declaration,
-        "__signature__",
-        Signature(
-            [
-                SignatureParameter(
-                    "value",
-                    kind=SignatureParameter.KEYWORD_ONLY,
-                    annotation=annotation,
-                    default=None if parameter.optional else SignatureParameter.empty,
-                )
-            ]
-        ),
-    )
-    argument, _ = get_click_param(get_params_from_function(declaration)["value"])
-    assert isinstance(argument, TyperArgument)
-    # Retain native parameter metadata while the collector owns input parsing.
-    return _HelpArgument(
-        param_decls=[parameter.name],
-        type=argument.type,
-        required=argument.required,
-        metavar=argument.metavar,
-        help=argument.help,
-        show_default=argument.show_default,
-        expose_value=False,
-    )
+        command.params[-1:-1] = [_HelpArgument(argument) for argument in arguments]
+    return command
 
 
 def _public_runnables(program: Program) -> tuple[Runnable, ...]:
