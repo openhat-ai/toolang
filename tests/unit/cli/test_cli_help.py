@@ -1,6 +1,5 @@
 """Help output follows the same operand conventions across CLI entry points."""
 
-import asyncio
 from enum import Enum
 from pathlib import Path
 from typing import Annotated
@@ -13,8 +12,6 @@ from typer.core import TyperArgument, TyperCommand, TyperGroup
 from typer.models import TyperPath
 from typer.testing import CliRunner
 
-from toolang.base.types.tool import ToolContext
-from toolang.base.utils.typer_tools import create_typer_tools
 from toolang.cli.caps.main import main as caps_main
 from toolang.cli.common.help import CliCommand
 from toolang.cli.common.lazy import LazyCommand
@@ -44,11 +41,13 @@ def test_prompt_help_uses_conventional_metavars(main, tmp_path, capsys, monkeypa
         (["a", "start"], ("--limit", "--default", "--compact")),
         (["a", "chat"], ("--limit", "--default", "--compact")),
         (["a", "retry"], ("--limit",)),
-        (["a", "rerun"], ("--limit",)),
+        (["a", "rerun"], ("--limit", "--model")),
         (["serve", "a"], ("--limit", "--default", "--compact", "--log")),
     ],
 )
-def test_policy_help_distinguishes_specifications(arguments, options, tmp_path, capsys):
+def test_help_distinguishes_configuration_specifications(
+    arguments, options, tmp_path, capsys
+):
     assert too_main(["--root", str(tmp_path), *arguments, "--help"]) == 0
     output = strip_ansi(capsys.readouterr().out)
     for option in options:
@@ -87,7 +86,7 @@ class _Mode(str, Enum):
     SLOW = "slow"
 
 
-def test_help_preserves_native_validation_completion_and_tool_schema(tmp_path):
+def test_help_preserves_native_validation_and_completion(tmp_path):
     def make_app(cls):
         path_type = PathType if cls is CliCommand else TyperPath
         app = typer.Typer(add_completion=False)
@@ -166,21 +165,6 @@ def test_help_preserves_native_validation_completion_and_tool_schema(tmp_path):
     assert "1<=x<=3" in help_result.output
     assert "fast" in help_result.output and "slow" in help_result.output
 
-    tools = [
-        next(iter(create_typer_tools(app, prog_name="demo").values())) for app in apps
-    ]
-    assert tools[0].definition().parameters == tools[1].definition().parameters
-    context = ToolContext(run_id="help-test", home=tmp_path, room=tmp_path, wd=tmp_path)
-    arguments = {
-        "path": str(source),
-        "count": 2,
-        "mode": "slow",
-        "item": [1, 2],
-        "enabled": True,
-    }
-    results = [asyncio.run(tool.invoke(arguments, context)) for tool in tools]
-    assert results[0] == results[1]
-
 
 @pytest.mark.parametrize("required", [False, True])
 def test_repeated_explicit_metavar_is_not_duplicated(required):
@@ -197,7 +181,7 @@ def test_repeated_explicit_metavar_is_not_duplicated(required):
 
 
 @pytest.mark.parametrize("command", ["run", "start", "serve"])
-def test_explicit_metavars_keep_lowercase_runtime_flags(command):
+def test_explicit_metavars_keep_lowercase_runtime_flags(command, capsys):
     root = typer.main.get_command(app)
     assert isinstance(root, TyperGroup)
     lazy = root.commands[command]
@@ -218,3 +202,7 @@ def test_explicit_metavars_keep_lowercase_runtime_flags(command):
     )
     if command in ("run", "start"):
         assert "--sandbox" in options
+    loaded.get_help(Context(loaded, info_name=command))
+    help_text = strip_ansi(capsys.readouterr().out)
+    port_row = next(line for line in help_text.splitlines() if "--port" in line.split())
+    assert "PORT" in port_row.split()

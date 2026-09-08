@@ -307,9 +307,7 @@ def run(
     ] = "127.0.0.1",
     port: Annotated[
         int | None,
-        typer.Option(
-            "--port", metavar="INTEGER", help="Bind the agent API to this port."
-        ),
+        typer.Option("--port", metavar="PORT", help="Bind the agent API to this port."),
     ] = None,
     inboxes: Annotated[
         list[Path] | None,
@@ -445,9 +443,7 @@ def start(
     ] = "127.0.0.1",
     port: Annotated[
         int | None,
-        typer.Option(
-            "--port", metavar="INTEGER", help="Bind the agent API to this port."
-        ),
+        typer.Option("--port", metavar="PORT", help="Bind the agent API to this port."),
     ] = None,
     inboxes: Annotated[
         list[Path] | None,
@@ -586,7 +582,7 @@ def serve(
         ),
     ] = None,
     port: Annotated[
-        int, typer.Option("--port", metavar="INTEGER", help="API bind port.")
+        int, typer.Option("--port", metavar="PORT", help="API bind port.")
     ] = 7001,
     allows: AllowOptions = None,
     limits: LimitOptions = None,

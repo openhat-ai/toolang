@@ -203,7 +203,7 @@ def rerun_command(
         typer.Option(
             "--model",
             help="Replace the persisted model identity or parameters.",
-            metavar="MODEL_BODY",
+            metavar="MODEL_SPEC",
         ),
     ] = None,
 ) -> None:
@@ -247,7 +247,7 @@ def rewind_command(
     point: Annotated[
         str,
         typer.Argument(
-            metavar="POINT",
+            metavar="RUN",
             click_type=TextType(),
             help="Run id to rewind before. Thread id means rewind before its latest root run.",
         ),
@@ -278,7 +278,7 @@ def fork_command(
     point: Annotated[
         str,
         typer.Argument(
-            metavar="POINT",
+            metavar="RUN",
             click_type=TextType(),
             help="Run id to fork through. Thread id means fork through its latest root run.",
         ),

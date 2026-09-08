@@ -539,8 +539,13 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "[enabled=Boolean]" not in stdout.partition("Arguments")[2]
     assert "Primary Part[] input." in stdout
     assert "<str>" not in stdout
-    limit_row = next(line for line in stdout.splitlines() if "--limit" in line.split())
-    assert "LIMIT_SPEC" in limit_row.split()
+    for option, metavar in (
+        ("--limit", "LIMIT_SPEC"),
+        ("--model", "MODEL_SPEC"),
+        ("--save", "PATH"),
+    ):
+        row = next(line for line in stdout.splitlines() if option in line.split())
+        assert metavar in row.split()
     assert "COLLECTION=QUERY" in stdout
     assert "--save" in stdout
     assert "--sandbox" in stdout

@@ -18,7 +18,7 @@ def fmt(
     paths: Annotated[
         list[Path] | None,
         typer.Argument(
-            metavar="PATHS",
+            metavar="PATH",
             click_type=PathType(),
             help="File or directory paths to format.",
         ),

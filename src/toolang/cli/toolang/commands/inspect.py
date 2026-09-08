@@ -660,7 +660,7 @@ def inspect_command(
     subjects: Annotated[
         list[str],
         typer.Argument(
-            click_type=TextType(), metavar="SUBJECT...", help=_inspect_subject_help()
+            click_type=TextType(), metavar="SUBJECT", help=_inspect_subject_help()
         ),
     ],
     human: Annotated[

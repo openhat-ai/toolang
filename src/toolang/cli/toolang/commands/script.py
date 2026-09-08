@@ -316,7 +316,7 @@ def _runnable_command(
             param_decls=["--model"],
             type=str,
             default=None,
-            metavar="MODEL_BODY",
+            metavar="MODEL_SPEC",
             help="Set the model identity and parameters for this run.",
         ),
         TyperOption(
@@ -337,7 +337,7 @@ def _runnable_command(
             param_decls=["--save"],
             type=str,
             default=None,
-            metavar="DEST",
+            metavar="PATH",
             help="Save the Run result to PATH, or use - for stdout.",
         ),
         TyperOption(
