@@ -16,7 +16,7 @@ from contextlib import (
 from dataclasses import dataclass, field
 import io
 import json
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from ..errors import ToolangError
 from ..protocols.tool import AgentTool
@@ -24,14 +24,15 @@ from ..types.tool import ToolContext, ToolDefinition
 
 if TYPE_CHECKING:
     import typer
+    from typer._click import Command, Parameter
+    from typer._click.types import ParamType
+    from typer.core import TyperArgument, TyperOption
 
 _SKIPPED_PARAM_NAMES = frozenset({"help", "install_completion", "show_completion"})
 _CURRENT_TOOL_CONTEXT: ContextVar[ToolContext | None] = ContextVar(
-    "toolang_experiments_current_tool_context",
+    "toolang_current_tool_context",
     default=None,
 )
-_TYPER_MODULE: Any | None = None
-_GET_COMMAND: Callable[[Any], Any] | None = None
 
 TyperToolPrepare = Callable[[tuple[str, ...], Mapping[str, Any], ToolContext], Any]
 TyperToolArgumentInjector = Callable[
@@ -75,7 +76,7 @@ class _CommandScope:
     """One ancestor scope and the child token it activates."""
 
     child_token: str
-    params: tuple[Any, ...]
+    params: tuple[Parameter, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,10 +85,10 @@ class _LeafCommandSpec:
 
     tool_name: str
     prog_name: str
-    root_command: Any
+    root_command: Command
     path_tokens: tuple[str, ...]
     scopes: tuple[_CommandScope, ...]
-    command: Any
+    command: Command
     config: TyperToolConfig
 
     def definition(self) -> ToolDefinition:
@@ -111,7 +112,9 @@ class _LeafCommandSpec:
     def invoke(
         self, arguments: Mapping[str, Any], context: ToolContext
     ) -> dict[str, Any]:
-        typer_compat = _require_typer_compat()
+        import typer
+        from typer._click.exceptions import ClickException
+
         prepared = (
             self.config.prepare(self.path_tokens, arguments, context)
             if self.config.prepare is not None
@@ -160,11 +163,11 @@ class _LeafCommandSpec:
                     prog_name=self.prog_name,
                     standalone_mode=False,
                 )
-        except typer_compat.ClickException as exc:
+        except ClickException as exc:
             exit_code = exc.exit_code
             with redirect_stderr(stderr):
                 exc.show()
-        except typer_compat.Exit as exc:
+        except typer.Exit as exc:
             exit_code = int(exc.exit_code or 0)
         finally:
             _CURRENT_TOOL_CONTEXT.reset(reset_token)
@@ -188,8 +191,8 @@ class _LeafCommandSpec:
             )
         return payload
 
-    def _scope_params(self) -> list[Any]:
-        params: list[Any] = []
+    def _scope_params(self) -> list[Parameter]:
+        params: list[Parameter] = []
         for scope in self.scopes:
             params.extend(scope.params)
         return params
@@ -217,7 +220,7 @@ class _TyperTool(AgentTool):
 
 
 def create_typer_tools(
-    app: "typer.Typer",
+    app: typer.Typer,
     *,
     prog_name: str,
     name_prefix: str | None = None,
@@ -226,7 +229,9 @@ def create_typer_tools(
 ) -> dict[str, AgentTool]:
     """Build tools for each leaf command in one Typer app."""
 
-    root = _require_get_command()(app)
+    from typer.main import get_command
+
+    root = get_command(app)
     resolved_configs = dict(configs or {})
     selected_paths = {
         tuple(path) for path in (include_paths or resolved_configs.keys())
@@ -256,8 +261,8 @@ def current_tool_context() -> ToolContext:
 
 
 def _collect_leaf_specs(
-    root_command: Any,
-    command: Any,
+    root_command: Command,
+    command: Command,
     *,
     path_tokens: tuple[str, ...],
     scopes: tuple[_CommandScope, ...],
@@ -266,8 +271,9 @@ def _collect_leaf_specs(
     include_paths: set[tuple[str, ...]],
     configs: Mapping[tuple[str, ...], TyperToolConfig],
 ) -> list[_LeafCommandSpec]:
-    typer_compat = _require_typer_compat()
-    if isinstance(command, typer_compat.Group) and command.commands:
+    from typer.core import TyperGroup
+
+    if isinstance(command, TyperGroup) and command.commands:
         result: list[_LeafCommandSpec] = []
         parent_params = tuple(_visible_params(command.params))
         for token, child in command.commands.items():
@@ -318,8 +324,8 @@ def _collect_leaf_specs(
     ]
 
 
-def _visible_params(params: Iterable[Any]) -> list[Any]:
-    visible: list[Any] = []
+def _visible_params(params: Iterable[Parameter]) -> list[Parameter]:
+    visible: list[Parameter] = []
     for param in params:
         if param.name in _SKIPPED_PARAM_NAMES:
             continue
@@ -337,7 +343,7 @@ def _is_selected_path(paths: Iterable[tuple[str, ...]], path: tuple[str, ...]) -
 
 
 def _command_description(
-    command: Any, path_tokens: tuple[str, ...], *, prog_name: str
+    command: Command, path_tokens: tuple[str, ...], *, prog_name: str
 ) -> str:
     summary = (command.help or command.short_help or "").strip()
     if summary:
@@ -346,7 +352,7 @@ def _command_description(
 
 
 def _schema_from_typer_params(
-    params: Iterable[Any],
+    params: Iterable[Parameter],
     *,
     hidden_params: frozenset[str],
     param_aliases: Mapping[str, str],
@@ -389,21 +395,22 @@ def _schema_from_typer_params(
     }
 
 
-def _schema_for_typer_param(param: Any) -> dict[str, Any]:
-    if getattr(param, "multiple", False) or getattr(param, "nargs", 1) != 1:
+def _schema_for_typer_param(param: Parameter) -> dict[str, Any]:
+    if param.multiple or param.nargs != 1:
         return {
             "type": "array",
-            "items": _schema_for_typer_type(getattr(param, "type", None)),
+            "items": _schema_for_typer_type(param.type),
         }
-    schema = _schema_for_typer_type(getattr(param, "type", None))
-    default = getattr(param, "default", None)
+    schema = _schema_for_typer_type(param.type)
+    default = param.default
     if default not in (None, (), []):
         schema["default"] = default
     return schema
 
 
-def _schema_for_typer_type(param_type: Any) -> dict[str, Any]:
-    typer_compat = _require_typer_compat()
+def _schema_for_typer_type(param_type: ParamType) -> dict[str, Any]:
+    from typer._types import TyperChoice
+
     custom_schema = getattr(param_type, "tool_schema", None)
     if callable(custom_schema):
         payload = custom_schema()
@@ -411,10 +418,10 @@ def _schema_for_typer_type(param_type: Any) -> dict[str, Any]:
             return dict(payload)
     elif isinstance(custom_schema, dict):
         return dict(custom_schema)
-    if isinstance(param_type, typer_compat.Choice):
+    if isinstance(param_type, TyperChoice):
         return {"type": "string", "enum": list(param_type.choices)}
-    type_name = getattr(param_type, "name", "")
-    if type_name in {"int", "integer"}:
+    type_name = param_type.name
+    if type_name == "int":
         return {"type": "integer"}
     if type_name == "float":
         return {"type": "number"}
@@ -426,7 +433,7 @@ def _schema_for_typer_type(param_type: Any) -> dict[str, Any]:
 def _build_argv(
     *,
     scopes: tuple[_CommandScope, ...],
-    command: Any,
+    command: Command,
     arguments: Mapping[str, Any],
 ) -> list[str]:
     argv: list[str] = []
@@ -437,23 +444,26 @@ def _build_argv(
     return argv
 
 
-def _serialize_params(params: Iterable[Any], values: Mapping[str, Any]) -> list[str]:
-    typer_compat = _require_typer_compat()
+def _serialize_params(
+    params: Iterable[Parameter], values: Mapping[str, Any]
+) -> list[str]:
+    from typer.core import TyperArgument, TyperOption
+
     options: list[str] = []
     args: list[str] = []
     for param in params:
         if param.name is None or param.name not in values:
             continue
         raw_value = values[param.name]
-        if isinstance(param, typer_compat.Option):
+        if isinstance(param, TyperOption):
             options.extend(_serialize_option(param, raw_value))
             continue
-        if isinstance(param, typer_compat.Argument):
+        if isinstance(param, TyperArgument):
             args.extend(_serialize_argument(param, raw_value))
     return [*options, *args]
 
 
-def _serialize_option(option: Any, raw_value: Any) -> list[str]:
+def _serialize_option(option: TyperOption, raw_value: Any) -> list[str]:
     if option.is_flag:
         bool_value = bool(raw_value)
         if bool_value:
@@ -476,7 +486,7 @@ def _serialize_option(option: Any, raw_value: Any) -> list[str]:
     return [flag, _stringify(raw_value)]
 
 
-def _serialize_argument(argument: Any, raw_value: Any) -> list[str]:
+def _serialize_argument(argument: TyperArgument, raw_value: Any) -> list[str]:
     if argument.nargs == 1:
         return [_stringify(raw_value)]
     return [
@@ -497,7 +507,7 @@ def _preferred_option_name(options: Iterable[str]) -> str | None:
         return None
     long_options = [item for item in candidates if item.startswith("--")]
     if long_options:
-        return cast(str, sorted(long_options, key=len)[0])
+        return min(long_options, key=lambda option: len(option))
     return candidates[0]
 
 
@@ -530,29 +540,3 @@ def _stringify(value: Any) -> str:
     if isinstance(value, (dict, list)):
         return json.dumps(value, ensure_ascii=False)
     return str(value)
-
-
-def _require_typer_compat() -> Any:
-    global _TYPER_MODULE
-    if _TYPER_MODULE is None:
-        try:
-            from . import typer_compat
-        except ModuleNotFoundError as exc:  # pragma: no cover - environment dependent
-            raise ToolangError(
-                "Typer tool helpers require the 'typer' dependency."
-            ) from exc
-        _TYPER_MODULE = typer_compat
-    return _TYPER_MODULE
-
-
-def _require_get_command() -> Callable[[Any], Any]:
-    global _GET_COMMAND
-    if _GET_COMMAND is None:
-        try:
-            from typer.main import get_command
-        except ModuleNotFoundError as exc:  # pragma: no cover - environment dependent
-            raise ToolangError(
-                "Typer tool helpers require the 'typer' dependency."
-            ) from exc
-        _GET_COMMAND = get_command
-    return _GET_COMMAND

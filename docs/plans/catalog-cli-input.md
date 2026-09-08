@@ -32,7 +32,7 @@ published as `api.json`.
 
 - Replace the shared `--models PATH` option with `--catalog PATH` on `info`,
   `run`, `start`, `chat`, `retry`, `rerun`, `models`, `providers`, and `serve`.
-- Remove `--models` immediately. Click's standard unknown-option error is the
+- Remove `--models` immediately. Typer's standard unknown-option error is the
   migration diagnostic; there is no hidden alias or deprecation period.
 - Keep the internal `model_catalog` parameter vocabulary. This change concerns
   the public CLI, not package-internal names.

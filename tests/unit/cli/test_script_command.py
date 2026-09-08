@@ -8,9 +8,10 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
-from click.utils import strip_ansi
 from rich.cells import cell_len
+
 from typer import rich_utils
+from typer._click.utils import strip_ansi
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.model import ModelRequest

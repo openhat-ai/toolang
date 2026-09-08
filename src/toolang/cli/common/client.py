@@ -10,8 +10,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import typer
+from typer._click.exceptions import ClickException
 
-from toolang.base.utils import typer_compat
 from toolang.up import process as agents
 from toolang.common.layout import AgentLayout
 from .context import context_root, require_prefix_agent, ui_base_url
@@ -119,9 +119,7 @@ class RuntimeClient:
 def runtime_client(ctx: typer.Context) -> RuntimeClient:
     client = running_runtime_client(ctx)
     if client is None:
-        raise typer_compat.ClickException(
-            f"agent is not running: {require_prefix_agent(ctx)}"
-        )
+        raise ClickException(f"agent is not running: {require_prefix_agent(ctx)}")
     return client
 
 
@@ -141,7 +139,7 @@ def runtime_get(ctx: typer.Context, path: str) -> Any:
     try:
         return runtime_client(ctx).get(path)
     except RuntimeClientError as exc:
-        raise typer_compat.ClickException(str(exc)) from exc
+        raise ClickException(str(exc)) from exc
 
 
 def runtime_post(
@@ -150,7 +148,7 @@ def runtime_post(
     try:
         return runtime_client(ctx).post(path, payload=payload)
     except RuntimeClientError as exc:
-        raise typer_compat.ClickException(str(exc)) from exc
+        raise ClickException(str(exc)) from exc
 
 
 def _sse_events(

@@ -5,8 +5,8 @@ import shlex
 import sys
 from typing import Literal
 
-from click import unstyle
 import pytest
+from typer._click.utils import strip_ansi
 
 from toolang.catalog import templates
 from toolang.catalog.agent import LocalAgents
@@ -74,7 +74,7 @@ def test_editor_failures_return_cli_errors_without_changing_authored_files(
     main = caps_main if entry_point == "caps" else toolang_main
     result = main(["--root", str(root), *arguments])
     output = capsys.readouterr()
-    error = " ".join(unstyle(output.err).replace("│", "").split())
+    error = " ".join(strip_ansi(output.err).replace("│", "").split())
 
     assert result == 1
     assert "Editing failed" in error

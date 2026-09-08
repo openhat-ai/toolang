@@ -10,8 +10,8 @@ import shutil
 from typing import Annotated, cast
 
 import typer
+from typer._click.exceptions import ClickException
 
-from toolang.base.utils import typer_compat
 from toolang.catalog.job import AuthoredJobs
 from toolang.catalog.agent import LocalAgents
 from toolang.common.layout import AgentLayout
@@ -61,7 +61,7 @@ def new_agent(
         )
         home = LocalAgents(root / "agents").create(agent, content=source_text)
     except FileExistsError as exc:
-        raise typer_compat.ClickException(f"Agent {agent} already exists") from exc
+        raise ClickException(f"Agent {agent} already exists") from exc
     typer.echo(f"Agent {agent} created: {home / 'agent.too'}")
 
 
@@ -94,13 +94,11 @@ def clone_agent(
             home = homes.create(name, content=agents.fetch_agent_ref(ref))
     except FileExistsError as exc:
         target_name = target or Path(source).stem
-        raise typer_compat.ClickException(
-            f"Agent {target_name} already exists"
-        ) from exc
+        raise ClickException(f"Agent {target_name} already exists") from exc
     except FileNotFoundError as exc:
-        raise typer_compat.ClickException(f"Agent {source} not found") from exc
+        raise ClickException(f"Agent {source} not found") from exc
     except ValueError as exc:
-        raise typer_compat.ClickException(str(exc)) from exc
+        raise ClickException(str(exc)) from exc
     typer.echo(f"Agent {home.name} cloned: {home / 'agent.too'}")
 
 
@@ -115,18 +113,16 @@ def remove_agent(
     process = agents.AgentProcess(layout)
     status = process.status(ui_base_url=ui_base_url())
     if status is not None and status.status in {"running", "preparing", "starting"}:
-        raise typer_compat.ClickException(active_agent_error(status))
+        raise ClickException(active_agent_error(status))
     if process.pids():
-        raise typer_compat.ClickException(f"Agent {agent} already running")
+        raise ClickException(f"Agent {agent} already running")
     try:
         user_call(asyncio.run, sandbox_runtime.release_for_removal(layout))
         LocalAgents(root / "agents").remove(agent)
     except FileNotFoundError as exc:
-        raise typer_compat.ClickException(f"Agent {agent} not found") from exc
+        raise ClickException(f"Agent {agent} not found") from exc
     except (OSError, RuntimeError) as exc:
-        raise typer_compat.ClickException(
-            f"Could not release agent {agent}: {exc}"
-        ) from exc
+        raise ClickException(f"Could not release agent {agent}: {exc}") from exc
     typer.echo(f"Agent {agent} removed")
 
 
@@ -162,7 +158,7 @@ def info_agent(
     process = agents.AgentProcess(layout)
     status = user_call(process.status, ui_base_url=ui_base_url())
     if status is None:
-        raise typer_compat.ClickException(f"Agent {agent_name} not found")
+        raise ClickException(f"Agent {agent_name} not found")
     runtime_state = process.state() or {}
     state = _prepare_state(layout)
     model_catalog = resolve_model_catalog_option(model_catalog)
@@ -253,7 +249,7 @@ def _prepare_state(layout: AgentLayout) -> AgentState:
             return state
     except Exception as exc:
         if progress.failure_stage is not None:
-            raise typer_compat.ClickException(progress.failure_message(exc)) from exc
+            raise ClickException(progress.failure_message(exc)) from exc
         raise
 
 

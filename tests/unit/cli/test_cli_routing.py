@@ -5,13 +5,13 @@ from pathlib import Path
 from threading import Barrier
 from typing import Any, cast
 
-import click
 import pytest
 import typer
+from typer._click.utils import strip_ansi
+from typer.core import TyperGroup
 
 import toolang.cli.caps.main as caps_cli
 import toolang.cli.toolang.main as cli
-from toolang.base.utils import typer_compat
 from toolang.base.types.progress import ProgressEvent
 from toolang.common.layout import AgentLayout
 from toolang.cli.toolang.commands import script
@@ -51,13 +51,13 @@ def test_extract_root_args_supports_short_option_and_stops_at_separator() -> Non
 def test_cli_command_registry_matches_the_typer_surface() -> None:
     group = typer.main.get_command(cli.app)
 
-    assert isinstance(group, typer_compat.Group)
+    assert isinstance(group, TyperGroup)
     assert set(group.commands) == set(COMMAND_SPECS)
 
 
 def test_lazy_command_completes_options_using_typer_parameters() -> None:
     group = typer.main.get_command(cli.app)
-    assert isinstance(group, typer_compat.Group)
+    assert isinstance(group, TyperGroup)
     command = group.commands["fmt"]
     assert isinstance(command, LazyCommand)
 
@@ -173,7 +173,7 @@ def test_cli_formats_a_routing_error_as_a_rich_panel(
 ) -> None:
     result = _call_main(["alice", "remove"])
     output = capsys.readouterr()
-    stderr = click.unstyle(output.err)
+    stderr = strip_ansi(output.err)
     lines = stderr.splitlines()
 
     assert result == 2
@@ -188,7 +188,7 @@ def test_cli_no_args_still_shows_root_help(
 ) -> None:
     result = _call_main([])
     output = capsys.readouterr()
-    stdout = click.unstyle(output.out)
+    stdout = strip_ansi(output.out)
 
     assert result == 2
     assert "Usage: pytest [OPTIONS] COMMAND [ARGS]..." in stdout
@@ -208,8 +208,8 @@ def test_cli_control_commands_have_consistent_order_and_descriptions() -> None:
         "fork": "Fork a thread from an earlier run.",
     }
 
-    assert isinstance(group, typer_compat.Group)
-    context = typer_compat.Context(group)
+    assert isinstance(group, TyperGroup)
+    context = typer.Context(group)
     order = tuple(name for name in group.list_commands(context) if name in expected)
 
     assert order == tuple(expected)
@@ -253,8 +253,8 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
         ),
     }
 
-    assert isinstance(group, typer_compat.Group)
-    context = typer_compat.Context(group)
+    assert isinstance(group, TyperGroup)
+    context = typer.Context(group)
     visible = tuple(
         name for name in group.list_commands(context) if not group.commands[name].hidden
     )
@@ -269,8 +269,8 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
 def test_workspace_commands_follow_the_public_order() -> None:
     group = typer.main.get_command(workspace_app())
 
-    assert isinstance(group, typer_compat.Group)
-    assert tuple(group.list_commands(typer_compat.Context(group))) == (
+    assert isinstance(group, TyperGroup)
+    assert tuple(group.list_commands(typer.Context(group))) == (
         "list",
         "add",
         "remove",
@@ -291,7 +291,7 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
         "sandboxes": "List installed sandboxes.",
     }
 
-    assert isinstance(group, typer_compat.Group)
+    assert isinstance(group, TyperGroup)
     removed = {"threads", "runs", "model", "tool", "catalog", "toolset", "sandbox"}
     assert removed.isdisjoint(group.commands)
     assert expected_help.keys() <= group.commands.keys()
@@ -341,7 +341,7 @@ def test_cli_argument_panels_show_types_without_changing_usage(
     syntax_metavar: str,
 ) -> None:
     result = _call_main([*arguments, "--help"])
-    stdout = click.unstyle(capsys.readouterr().out)
+    stdout = strip_ansi(capsys.readouterr().out)
     row = next(
         line for line in stdout.splitlines() if "│" in line and argument in line.split()
     )
@@ -446,7 +446,7 @@ def test_caps_cli_formats_a_pre_dispatch_error_as_a_rich_panel(
 ) -> None:
     result = caps_cli.main(["agent:", "skill"])
     output = capsys.readouterr()
-    stderr = click.unstyle(output.err)
+    stderr = strip_ansi(output.err)
 
     assert result == 2
     assert "╭─ Error " in stderr
@@ -505,7 +505,7 @@ def test_cli_bare_resident_target_shows_its_command_help(
 
     result = _call_main(["--root", str(tmp_path), "alice"])
     output = capsys.readouterr()
-    stdout = click.unstyle(output.out)
+    stdout = strip_ansi(output.out)
     panels = (
         "Agent Commands",
         "Cap Commands",
@@ -531,7 +531,7 @@ def test_cli_explicit_resident_target_preserves_selector_but_labels_the_agent(
 ) -> None:
     result = _call_main(["--root", str(tmp_path), "agent:alice"])
     output = capsys.readouterr()
-    stdout = click.unstyle(output.out)
+    stdout = strip_ansi(output.out)
 
     assert result == 0
     assert "Usage: pytest agent:alice" in stdout
@@ -569,7 +569,7 @@ def test_cli_missing_local_source_syntax_reports_a_script_error(
 
     result = _call_main([target])
     output = capsys.readouterr()
-    stderr = click.unstyle(output.err)
+    stderr = strip_ansi(output.err)
 
     assert result == 1
     assert f"script not found: {target}" in stderr

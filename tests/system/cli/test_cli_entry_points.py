@@ -8,12 +8,13 @@ import sys
 import tomllib
 from typing import Any
 
-import click
 import pytest
 import typer
+from typer._click import Command
+from typer._click.utils import strip_ansi
+from typer.core import TyperGroup
 from typer.testing import CliRunner
 
-from toolang.base.utils import typer_compat
 from toolang.cli.caps.main import app as caps_app
 from toolang.cli.common.lazy import LazyCommand
 from toolang.cli.toolang.main import app as toolang_app
@@ -23,10 +24,10 @@ from tests import PROJECT_ROOT
 def _command_paths(app: typer.Typer) -> tuple[tuple[str, ...], ...]:
     paths: list[tuple[str, ...]] = []
 
-    def collect(command: typer_compat.Command, prefix: tuple[str, ...]) -> None:
+    def collect(command: Command, prefix: tuple[str, ...]) -> None:
         if isinstance(command, LazyCommand):
             command = command.load()
-        if not isinstance(command, typer_compat.Group):
+        if not isinstance(command, TyperGroup):
             return
         for name, child in command.commands.items():
             path = (*prefix, name)
@@ -180,8 +181,8 @@ def test_version_option_has_no_short_alias(name: str, app: typer.Typer) -> None:
     runner = CliRunner()
     help_result = runner.invoke(app, ["--help"], prog_name=name)
     short_result = runner.invoke(app, ["-V"], prog_name=name)
-    help_output = click.unstyle(help_result.output)
-    short_output = click.unstyle(short_result.output)
+    help_output = strip_ansi(help_result.output)
+    short_output = strip_ansi(short_result.output)
 
     assert help_result.exit_code == 0, help_result.output
     assert "--version" in help_output
@@ -200,7 +201,7 @@ def test_inspect_help_is_concise_and_consistent() -> None:
     assert root_result.exit_code == 0, root_result.output
     assert inspect_result.exit_code == 0, inspect_result.output
     for result in (root_result, inspect_result):
-        output = click.unstyle(result.output)
+        output = strip_ansi(result.output)
         assert "Inspect execution subjects." in output
         assert "Inspect run records." not in output
         assert "Inspect a historical record or one of its fields." not in output

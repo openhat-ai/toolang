@@ -10,8 +10,8 @@ import sys
 from typing import Annotated
 
 import typer
+from typer._click.exceptions import ClickException, NoArgsIsHelpError
 
-from toolang.base.utils import typer_compat
 from ...up.logging import configure_logging
 from ...common.version import toolang_version
 from ..common.context import CliContext, resolve_root
@@ -64,7 +64,7 @@ def callback(
     try:
         configure_logging(spec=None, environ=os.environ)
     except ValueError as exc:
-        raise typer_compat.ClickException(str(exc)) from exc
+        raise ClickException(str(exc)) from exc
     ctx.obj = CliContext(root=resolve_root(toolang_root), agent=_PREFIX_AGENT.get())
 
 
@@ -95,11 +95,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             prog_name=_prog_name(sys.argv[0] if sys.argv else ""),
             standalone_mode=False,
         )
-    except typer_compat.Exit as exc:
+    except typer.Exit as exc:
         return exc.exit_code
-    except typer_compat.ClickException as exc:
-        if exc.__class__.__name__ != "NoArgsIsHelpError":
-            echo_error(exc)
+    except NoArgsIsHelpError as exc:
+        return exc.exit_code
+    except ClickException as exc:
+        echo_error(exc)
         return exc.exit_code
     except (FileExistsError, FileNotFoundError, ValueError) as exc:
         echo_error(str(exc))

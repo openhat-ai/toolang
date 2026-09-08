@@ -17,8 +17,7 @@ from rich.table import Table
 from rich.text import Text
 import typer
 from typer import rich_utils
-
-from toolang.base.utils import typer_compat
+from typer._click.exceptions import ClickException, UsageError
 
 if TYPE_CHECKING:
     from toolang.up.process import AgentStatus
@@ -108,17 +107,13 @@ def echo_block(text: str) -> None:
     typer.echo()
 
 
-def echo_error(error: str | typer_compat.ClickException) -> None:
+def echo_error(error: str | ClickException) -> None:
     """Render one terminal error with the shared Typer Rich presentation."""
 
-    exception = (
-        error
-        if isinstance(error, typer_compat.ClickException)
-        else typer_compat.ClickException(error)
-    )
+    exception = error if isinstance(error, ClickException) else ClickException(error)
     console = rich_utils._get_rich_console(stderr=True)
-    ctx = getattr(exception, "ctx", None)
-    if isinstance(ctx, typer_compat.Context):
+    if isinstance(exception, UsageError) and exception.ctx is not None:
+        ctx = exception.ctx
         console.print(
             Padding(rich_utils.highlighter(ctx.get_usage()), 1),
             style=rich_utils.STYLE_USAGE_COMMAND,

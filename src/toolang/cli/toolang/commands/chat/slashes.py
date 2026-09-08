@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, TypeAlias, cast
 
+from typer._click.exceptions import ClickException
 
-from toolang.base.utils import typer_compat
 from toolang.cli.common.execution_progress.formatting import (
     display_width,
     truncate,
@@ -140,7 +140,7 @@ def handle(app: AppContext, quick: QuickCommand) -> SlashOutcome | None:
         return slash.run(app, command, argument)
     except (ToolangError, ValueError) as exc:
         return error_outcome(str(exc))
-    except typer_compat.ClickException as exc:
+    except ClickException as exc:
         return error_outcome(exc.message)
 
 

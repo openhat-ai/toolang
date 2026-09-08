@@ -10,8 +10,8 @@ from typing import Annotated, Literal, cast
 from uuid import uuid4
 
 import typer
+from typer._click.exceptions import ClickException
 
-from toolang.base.utils import typer_compat
 from toolang.base.errors import ToolangError
 from toolang.base.model_settings import parse_model_body
 from toolang.base.types.message import Message
@@ -297,15 +297,15 @@ def _active_run_id(history: RunHistory, target: str) -> str:
     if target.startswith("run_"):
         run = history.get_run(target)
         if run is None:
-            raise typer_compat.ClickException(f"run not found: {target}")
+            raise ClickException(f"run not found: {target}")
         if run.status != "running":
-            raise typer_compat.ClickException(f"run is not running: {target}")
+            raise ClickException(f"run is not running: {target}")
         return run.id
     thread = history.get_thread(target, run_limit=0)
     if thread is None:
-        raise typer_compat.ClickException(f"thread not found: {target}")
+        raise ClickException(f"thread not found: {target}")
     if thread.active_run is None:
-        raise typer_compat.ClickException(f"thread has no active run: {target}")
+        raise ClickException(f"thread has no active run: {target}")
     return thread.active_run.id
 
 
@@ -313,13 +313,13 @@ def _anchor(history: RunHistory, target: str) -> tuple[str, str]:
     if target.startswith("run_"):
         run = history.get_run(target)
         if run is None:
-            raise typer_compat.ClickException(f"run not found: {target}")
+            raise ClickException(f"run not found: {target}")
         return run.thread_id, run.id
     thread = history.get_thread(target, run_limit=0)
     if thread is None:
-        raise typer_compat.ClickException(f"thread not found: {target}")
+        raise ClickException(f"thread not found: {target}")
     if thread.latest_run is None:
-        raise typer_compat.ClickException(f"thread has no runs: {target}")
+        raise ClickException(f"thread has no runs: {target}")
     return thread.id, thread.latest_run.id
 
 
@@ -364,9 +364,9 @@ def _run_retry_or_rerun(
                 )
             )
     except AgentServerAcquisitionError as exc:
-        raise typer_compat.ClickException(str(exc)) from exc
+        raise ClickException(str(exc)) from exc
     except (OSError, ToolangError, ValueError, RuntimeError) as exc:
-        raise typer_compat.ClickException(str(exc)) from exc
+        raise ClickException(str(exc)) from exc
 
 
 def _restart_commands(
@@ -496,7 +496,7 @@ def _retry_anchor(run_id: str, value: str | None) -> StepRef | None:
         return None
     text = value.strip()
     if not text:
-        raise typer_compat.ClickException("--anchor requires a step path")
+        raise ClickException("--anchor requires a step path")
     try:
         if text.startswith("run_"):
             return StepRef.parse(text)

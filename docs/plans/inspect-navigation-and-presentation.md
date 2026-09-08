@@ -353,7 +353,7 @@ structured-value renderer as step facts.
 
 ## Missing, Empty, And Invalid Data
 
-Syntax and lookup failures exit nonzero through `click.ClickException` and do
+Syntax and lookup failures exit nonzero through Typer CLI errors and do
 not print a partial document.
 
 | Condition | Behavior |

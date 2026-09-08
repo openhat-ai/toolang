@@ -229,3 +229,26 @@ def test_primitive_execution_inspection_does_not_depend_on_trees() -> None:
         "Primitive inspection must remain usable without tree projection: "
         + ", ".join(violations)
     )
+
+
+def test_external_click_is_confined_to_the_editor() -> None:
+    editor = SOURCE_ROOT / "cli" / "common" / "editor.py"
+    violations: list[str] = []
+    for root in (SOURCE_ROOT, PROJECT_ROOT / "tests"):
+        for path in sorted(root.rglob("*.py")):
+            if path == editor:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    targets = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and not node.level:
+                    targets = [node.module or ""]
+                else:
+                    continue
+                if any(target.split(".")[0] == "click" for target in targets):
+                    violations.append(f"{path.relative_to(PROJECT_ROOT)}:{node.lineno}")
+
+    assert not violations, (
+        "Use Typer outside external editor integration:\n" + "\n".join(violations)
+    )

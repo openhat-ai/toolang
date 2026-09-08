@@ -10,10 +10,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
-import click
 import pytest
-from click.testing import CliRunner
-from click.utils import strip_ansi
+import typer
+from typer._click.utils import strip_ansi
+from typer.testing import CliRunner
 
 import toolang.cli.toolang.commands.agent as agent_commands
 import toolang.cli.toolang.commands.plugin as plugin_commands
@@ -2796,16 +2796,17 @@ def test_visiting_agent_info_uses_the_materialized_layout(
 
 
 def _invoke(root: Path, *args: str, tty: bool = False):
-    @click.command(
+    app = typer.Typer(add_completion=False)
+
+    @app.command(
         context_settings={"ignore_unknown_options": True, "allow_extra_args": True}
     )
-    @click.argument("arguments", nargs=-1, type=click.UNPROCESSED)
-    def public_cli(arguments: tuple[str, ...]) -> None:
+    def public_cli(arguments: list[str]) -> None:
         if tty:
             setattr(sys.stderr, "isatty", lambda: True)
-        raise click.exceptions.Exit(cli.main(["--root", str(root), *arguments]))
+        raise typer.Exit(cli.main(["--root", str(root), *arguments]))
 
-    return runner.invoke(public_cli, list(args), env={})
+    return runner.invoke(app, list(args), env={})
 
 
 def _create_agent(root: Path, name: str = "alice") -> None:

@@ -9,8 +9,7 @@ import sys
 from typing import Annotated
 
 import typer
-
-from toolang.base.utils import typer_compat
+from typer._click.exceptions import ClickException
 
 
 def fmt(
@@ -37,27 +36,21 @@ def fmt(
     from ....lang.format import ToolangFormatError, format_source
 
     if tab_size < 1:
-        raise typer_compat.ClickException("--tab-size must be at least 1")
+        raise ClickException("--tab-size must be at least 1")
 
     def format_too_source(source: str) -> str:
         return format_source(source, tab_size=tab_size)
 
     path_args = paths or []
     if any(str(path) == "-" for path in path_args) and len(path_args) > 1:
-        raise typer_compat.ClickException(
-            "'-' cannot be combined with other path arguments"
-        )
+        raise ClickException("'-' cannot be combined with other path arguments")
 
     stdin_path_arg = _stdin_path_arg(path_args)
     if stdin_filepath is not None or stdin_path_arg is not None:
         if path_args and stdin_path_arg is None:
-            raise typer_compat.ClickException(
-                "--stdin-filepath can only be combined with '-'"
-            )
+            raise ClickException("--stdin-filepath can only be combined with '-'")
         if check:
-            raise typer_compat.ClickException(
-                "--check cannot be combined with stdin formatting"
-            )
+            raise ClickException("--check cannot be combined with stdin formatting")
         label = stdin_filepath or stdin_path_arg or Path("<stdin>")
         _format_stdin(
             label, format_source=format_too_source, error_type=ToolangFormatError
@@ -70,11 +63,11 @@ def fmt(
         try:
             source = source_path.read_text(encoding="utf-8")
         except OSError as exc:
-            raise typer_compat.ClickException(f"{source_path}: {exc}") from exc
+            raise ClickException(f"{source_path}: {exc}") from exc
         try:
             formatted = format_too_source(source)
         except ToolangFormatError as exc:
-            raise typer_compat.ClickException(f"{source_path}: {exc}") from exc
+            raise ClickException(f"{source_path}: {exc}") from exc
         if formatted == source:
             continue
         changed.append(source_path)
@@ -83,7 +76,7 @@ def fmt(
         try:
             source_path.write_text(formatted, encoding="utf-8")
         except OSError as exc:
-            raise typer_compat.ClickException(f"{source_path}: {exc}") from exc
+            raise ClickException(f"{source_path}: {exc}") from exc
 
     if check and changed:
         for source_path in changed:
@@ -103,7 +96,7 @@ def _format_stdin(
     try:
         formatted = format_source(sys.stdin.read())
     except error_type as exc:
-        raise typer_compat.ClickException(f"{stdin_filepath}: {exc}") from exc
+        raise ClickException(f"{stdin_filepath}: {exc}") from exc
     sys.stdout.write(formatted)
 
 
@@ -124,10 +117,10 @@ def _collect_format_paths(paths: list[Path]) -> list[Path]:
             )
         elif candidate.is_file():
             if candidate.suffix != ".too":
-                raise typer_compat.ClickException(f"not a .too file: {candidate}")
+                raise ClickException(f"not a .too file: {candidate}")
             candidates = [candidate]
         else:
-            raise typer_compat.ClickException(f"path not found: {candidate}")
+            raise ClickException(f"path not found: {candidate}")
         for source_path in candidates:
             resolved = source_path.resolve()
             if resolved in seen:
@@ -158,7 +151,7 @@ def parse_program(
     try:
         program = Program.from_source(text)
     except ToolangError as exc:
-        raise typer_compat.ClickException(f"{label}: {exc}") from exc
+        raise ClickException(f"{label}: {exc}") from exc
     payload = json.dumps(
         to_data(program),
         ensure_ascii=False,
@@ -172,13 +165,11 @@ def _read_source(source: Path, *, stdin_filepath: Path | None) -> tuple[Path, st
     if str(source) == "-":
         return stdin_filepath or Path("<stdin>"), sys.stdin.read()
     if stdin_filepath is not None:
-        raise typer_compat.ClickException(
-            "--stdin-filepath can only be combined with '-'"
-        )
+        raise ClickException("--stdin-filepath can only be combined with '-'")
     candidate = source.expanduser()
     if candidate.suffix != ".too":
-        raise typer_compat.ClickException(f"not a .too file: {candidate}")
+        raise ClickException(f"not a .too file: {candidate}")
     try:
         return candidate, candidate.read_text(encoding="utf-8")
     except OSError as exc:
-        raise typer_compat.ClickException(f"{candidate}: {exc}") from exc
+        raise ClickException(f"{candidate}: {exc}") from exc

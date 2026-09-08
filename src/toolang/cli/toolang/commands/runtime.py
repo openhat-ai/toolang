@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Annotated, TYPE_CHECKING
 
 import typer
+from typer._click.exceptions import ClickException
 
-from toolang.base.utils import typer_compat
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.catalog import MODEL_CATALOG_ENV
 from toolang.cli.common.policy import (
@@ -95,7 +95,7 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
                 "preparing",
                 "starting",
             }:
-                raise typer_compat.ClickException(active_agent_error(existing))
+                raise ClickException(active_agent_error(existing))
             environ = load_runtime_environ(layout, base_environ=os.environ)
             environ["TOOLANG_ROOT"] = str(layout.root)
             log_plan = resolve_agent_logging(
@@ -166,7 +166,7 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
         OSError,
         RuntimeError,
         ValueError,
-        typer_compat.ClickException,
+        ClickException,
     ) as exc:
         if launch_started:
             if cleanup_progress.failure_stage is not None:
@@ -182,11 +182,7 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
                     development_build=development_source()[0],
                 )
         else:
-            message = (
-                exc.message
-                if isinstance(exc, typer_compat.ClickException)
-                else str(exc)
-            )
+            message = exc.message if isinstance(exc, ClickException) else str(exc)
         echo_error(message)
         return 1
 
@@ -220,7 +216,7 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
         }:
             value = inline.strip() if separator else _option_value(argv, index, option)
             if not value and option != "--endpoint-host":
-                raise typer_compat.ClickException(f"{option} requires a value")
+                raise ClickException(f"{option} requires a value")
             index += 1 if separator else 2
             if option == "--inbox":
                 inboxes.append(Path(value))
@@ -240,27 +236,23 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
                 try:
                     port = int(value)
                 except ValueError as exc:
-                    raise typer_compat.ClickException(
-                        "--port expects an integer"
-                    ) from exc
+                    raise ClickException("--port expects an integer") from exc
             elif option == "--sandbox":
                 sandbox = value
             elif option == "--dev":
                 dev = Path(value)
             continue
         if token in {"--help", "-h"}:
-            raise typer_compat.ClickException(
+            raise ClickException(
                 "file request runtime usage: toolang SCRIPT --inbox PATH [--inbox PATH...]"
             )
         if token.startswith("-"):
-            raise typer_compat.ClickException(
-                f"unknown Toolang runtime option: {token}"
-            )
-        raise typer_compat.ClickException(
+            raise ClickException(f"unknown Toolang runtime option: {token}")
+        raise ClickException(
             f"unexpected agic argument for file request runtime: {token}"
         )
     if not inboxes:
-        raise typer_compat.ClickException("--inbox is required")
+        raise ClickException("--inbox is required")
     return _RoamingFileOptions(
         inboxes=tuple(inboxes),
         allows=tuple(allows),
@@ -277,7 +269,7 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
 
 def _option_value(argv: list[str], index: int, option: str) -> str:
     if index + 1 >= len(argv) or not argv[index + 1].strip():
-        raise typer_compat.ClickException(f"{option} requires a value")
+        raise ClickException(f"{option} requires a value")
     return argv[index + 1].strip()
 
 
@@ -398,9 +390,9 @@ def run(
         OSError,
         RuntimeError,
         ValueError,
-        typer_compat.ClickException,
+        ClickException,
     ) as exc:
-        if isinstance(exc, typer_compat.ClickException) and not launch_started:
+        if isinstance(exc, ClickException) and not launch_started:
             raise
         if launch_started and launch is not None:
             if cleanup_progress.failure_stage is not None:
@@ -415,8 +407,8 @@ def run(
                     dev_artifact=launch.startup.dev_artifact,
                     development_build=development_source()[0],
                 )
-            raise typer_compat.ClickException(message) from exc
-        raise typer_compat.ClickException(str(exc)) from exc
+            raise ClickException(message) from exc
+        raise ClickException(str(exc)) from exc
     raise typer.Exit(exit_code)
 
 
@@ -493,7 +485,7 @@ def start(
 
     selector = require_runtime_agent(ctx, agent)
     if user_call(agents.parse_agent_selector, selector).form != "name":
-        raise typer_compat.ClickException(
+        raise ClickException(
             "start only supports local agent names; clone the remote source first"
         )
     progress = make_cli_progress()
@@ -538,13 +530,13 @@ def start(
         RuntimeError,
         OSError,
         ValueError,
-        typer_compat.ClickException,
+        ClickException,
     ) as exc:
-        if isinstance(exc, typer_compat.ClickException) and not launch_started:
+        if isinstance(exc, ClickException) and not launch_started:
             raise
         if launch is None:
-            raise typer_compat.ClickException(str(exc)) from exc
-        raise typer_compat.ClickException(
+            raise ClickException(str(exc)) from exc
+        raise ClickException(
             runtime_startup_failure_message(
                 progress,
                 exc,
@@ -581,14 +573,14 @@ def stop(
                     progress=progress.sink,
                 ),
             )
-    except (OSError, RuntimeError, typer_compat.ClickException) as exc:
+    except (OSError, RuntimeError, ClickException) as exc:
         if progress.failure_stage is None:
             raise
-        raise typer_compat.ClickException(
+        raise ClickException(
             progress.failure_message(exc, log_path=layout.runtime_log)
         ) from exc
     if not stopped:
-        raise typer_compat.ClickException(f"Agent {agent_name} not running")
+        raise ClickException(f"Agent {agent_name} not running")
     typer.echo(f"Agent {agent_name} stopped")
 
 
@@ -685,10 +677,10 @@ def resolve_startup(
 
     root, agent = target.root, target.name
     if target.placement == "resident" and not target.home.is_dir():
-        raise typer_compat.ClickException(f"Agent {agent} not found")
+        raise ClickException(f"Agent {agent} not found")
     existing = agents.AgentProcess(target).status(ui_base_url=ui_base_url())
     if existing is not None and existing.status in {"running", "preparing", "starting"}:
-        raise typer_compat.ClickException(active_agent_error(existing))
+        raise ClickException(active_agent_error(existing))
     environ = load_runtime_environ(target, base_environ=os.environ)
     environ["TOOLANG_ROOT"] = str(root)
     if model_catalog := resolve_model_catalog_option(model_catalog):
