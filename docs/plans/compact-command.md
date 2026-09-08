@@ -40,9 +40,10 @@ permit. Persist authored and resolved input through normal Run records.
 Recheck the frozen range after admission and completion. Never hold a database
 transaction while waiting or executing a model.
 
-Carry typed `{summary, position, complete}` progress between child Runs. Preserve
-active task constraints and corrections across pages; keep traversal bookkeeping
-in `position`. The final summary contains task notes, not an execution report.
+Use one `agic compact`: the model reads the previous summary and the requested
+Runs/Steps with history tools, then returns `{thread, begin, end, summary}`.
+No intermediate progress schema, child-Run loop, or separate finalizer. Preserve
+active constraints and corrections; omit traversal bookkeeping from the summary.
 History tools cache opaque cursors in existing `contents` and return fixed-length
 content references. Execution facts remain read-only; existing self-contained
 cursors remain accepted. No new table or pagination algorithm is needed.

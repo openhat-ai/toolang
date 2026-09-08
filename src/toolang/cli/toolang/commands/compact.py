@@ -74,9 +74,8 @@ def compact_command(
 ) -> None:
     """Compact local history with thread=THREAD [begin=RUN] [end=RUN] [bare=true]."""
     state = compact_state()
-    runnable = next(
-        flow for flow in state.modules["agent"].flows if flow.name == "compact"
-    )
+    runnable = state.modules["agent"].find_agic("compact")
+    assert runnable is not None
     # The same declaration drives CLI input and execution; previous is supplied here.
     public = replace(
         runnable, params=tuple(p for p in runnable.params if p.name != "previous")
@@ -181,7 +180,7 @@ def _prepare(
         setup=replace(setup, tools=compact_tools()),
         state=compact_state(),
         thread=f"compact_{thread}",
-        bindings=RunBindings(model=request.ref, runnable="flow:compact"),
+        bindings=RunBindings(model=request.ref, runnable="agic:compact"),
         model_request=request,
         limits=setup.limits,
         input=RunnableInput(resolved),

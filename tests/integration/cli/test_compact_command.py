@@ -68,9 +68,6 @@ def harness(tmp_path):
 def responses(h, *, begin=None, end="run_8", summary="Facts zero through seven."):
     h.adapter._responses.extend(
         [
-            reply({"summary": "", "position": None, "complete": False}),
-            reply({"summary": summary, "position": None, "complete": True}),
-            reply(True),
             reply({"thread": "term_a", "begin": begin, "end": end, "summary": summary}),
         ]
     )

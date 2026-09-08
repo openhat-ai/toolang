@@ -22,17 +22,16 @@ def test_bundled_prompt_loading_does_not_depend_on_package_metadata(
     assert prompt.startswith("<runtime-instructions>")
 
 
-@pytest.mark.parametrize("name", ["compact_start", "compact_page"])
-def test_compact_progress_requires_summary_position_and_completion(name: str) -> None:
+@pytest.mark.parametrize("field", ["thread", "begin", "end", "summary"])
+def test_compact_declares_one_agic_with_structured_coverage(field: str) -> None:
     program = compact_state().modules["agent"]
-    agic = program.find_agic(name)
+    assert not program.flows
+    assert len(program.agics) == 1
+    agic = program.find_agic("compact")
     assert agic is not None and agic.output is not None
     structs = {s.name: s for s in program.structs}
-    progress = {"summary": "", "position": None, "complete": False}
-    coerce_output(progress, agic.output, structs=structs)
-    with pytest.raises(ToolangError, match="missing CompactProgress fields: complete"):
-        coerce_output(
-            {"summary": "", "position": {"complete": False}},
-            agic.output,
-            structs=structs,
-        )
+    output = {"thread": "term_a", "begin": None, "end": "run_b", "summary": "Notes."}
+    coerce_output(output, agic.output, structs=structs)
+    del output[field]
+    with pytest.raises(ToolangError, match=f"missing Compacted fields: {field}"):
+        coerce_output(output, agic.output, structs=structs)

@@ -405,11 +405,12 @@ PR5 policy:
   Horizon, State, model or recall changes invalidate calibration.
 - Unknown limits disable automatic capacity checks, not output limits. A known
   independent input limit still applies. Never infer a missing context window.
-- `compact.too` first inspects earlier compact outputs, then uses fresh child
-  Runs for bounded history pages and rolling reduction. At most 1024 page
-  iterations; incomplete coverage produces no usable summary. An individually
-  oversized history record fails explicitly: field slicing and recursive compact
-  are not implemented. Only read-only history tools are available to this program,
+- `compact.too` is one agic: read the previous summary and the requested Runs/Steps
+  with history tools, then return a structured summary and its coverage. There is
+  no child-Run loop or intermediate summary; incomplete coverage produces no
+  usable summary. Input beyond the compact model's capacity fails explicitly;
+  field slicing and recursive compact are not implemented. Only read-only history
+  tools are available to this program,
   loaded through the normal factory/registration path independently of the human
   Run's tool selectors. Loading compact does not initialize unrelated plugins.
   Compact model selection is independent of the normal Run (see below).
