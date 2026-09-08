@@ -229,17 +229,28 @@ Arguments:
 The synopsis omits `[ARGS]` when there are no named parameters and
 `INPUT` when the signature forbids primary input. Input is required whenever
 accepted; it has no brackets or ellipsis, even when supplied via stdin. The
-**Arguments** panel lists `name=TYPE` entries with uppercase types and appends
-INPUT last, followed by concise capture notes. Required and optional status is
-explicit; `[ARGS]` does not make required named arguments optional.
+**Arguments** panel uses Typer's native rendering. Named parameters use
+`name=ARGUMENT` metavars, with uppercase authored types and any parameter doc
+comments. INPUT is last, with capture guidance in its help. Typer controls type
+visibility and required markers; `[ARGS]` does not make required named arguments
+optional.
 
-Below usage, `name - description` uses the authored doc comment or `An agic.` /
-`A flow.` Flow steps follow as an indented part of the description, without a
-panel. Arguments and **Options** follow. Top-level Script help uses
-`[OPTIONS] RUNNABLE`, lists **Runnables** before Options with `agic:NAME` /
-`flow:NAME` labels and the same descriptions, and points to `RUNNABLE --help`
-for signature-specific details. Both qualified labels and bare names can be
-used to invoke a runnable.
+Below usage, runnable descriptions use `Run KIND NAME.` or
+`Run KIND NAME - DESCRIPTION` when a doc comment exists. Flows continue with
+`This flow executes the following steps:` and an indented outline in normal
+style, with blank lines between sibling steps. Arguments and **Options** follow.
+Top-level Script help uses `[OPTIONS] RUNNABLE` and
+`Run runnables from SCRIPT.` It lists **Runnables** before Options, with
+`agic:NAME` / `flow:NAME` labels and authored descriptions or `Agic NAME.` /
+`Flow NAME.` fallbacks. Both qualified labels and bare names invoke a runnable.
+
+Both levels show the same common options, ordered as `--allow`, `--limit`,
+`--model`, `--sandbox`, `--out` / `-o`, `--quiet` / `-q`, `--dev`, then `--help`.
+Common options may appear before or after RUNNABLE, before input. Explicit
+runnable-level scalar values override root values; repeated `--allow` and
+`--limit` values accumulate in command-line order. Quiet mode is enabled at
+either level. `--help` describes the level where it appears.
+
 Script mode parses policy prefixes but does not accept chat quick commands.
 
 Behavior:

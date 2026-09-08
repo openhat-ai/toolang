@@ -28,7 +28,7 @@ from toolang.execution.types import (
     ThreadRef,
 )
 from toolang.lang.input import CallInput
-from toolang.lang.ast import FlowDecl, RunStmt, Span
+from toolang.lang.ast import FlowDecl, Parameter, Program, RunStmt, Span
 from toolang.up.types import AgentServerRef
 from tests.support.execution_harness import ExecutionHarness
 
@@ -137,6 +137,99 @@ def test_script_model_body_builds_one_invocation_session_layer() -> None:
     assert override.model.effort == 4096
     assert override.allow[0].field == "models"
     assert override.limits[0].value == 1000
+
+
+@pytest.mark.parametrize("child_overrides", [False, True])
+def test_script_inherits_common_options_and_applies_child_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, child_overrides: bool
+) -> None:
+    source = _write_source(tmp_path)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        script, "_run", lambda _path, **kwargs: captured.update(kwargs) or 0
+    )
+    child = (
+        [
+            "--model",
+            "child/model",
+            "--sandbox",
+            "host",
+            "--out",
+            "child.txt",
+            "--dev",
+            str(tmp_path / "child"),
+            "--allow",
+            "tools=child/*",
+            "--limit",
+            "tokens=200",
+        ]
+        if child_overrides
+        else []
+    )
+    assert (
+        script.dispatch(
+            [],
+            [
+                str(source),
+                "--model",
+                "root/model",
+                "--sandbox",
+                "docker:python",
+                "-o",
+                "root.txt",
+                "-q",
+                "--dev",
+                str(tmp_path / "root"),
+                "--allow",
+                "tools=root/*",
+                "--limit",
+                "tokens=100",
+                "demo",
+                *child,
+                "count=2",
+                "hello",
+            ],
+            prog_name="too",
+            stdin=_UnreadableStdin(),
+        )
+        == 0
+    )
+    level = "child" if child_overrides else "root"
+    assert captured["model_body"] == f"{level}/model"
+    assert captured["sandbox"] == ("host" if child_overrides else "docker:python")
+    assert captured["save"] == f"{level}.txt"
+    assert captured["dev"] == tmp_path / level
+    assert captured["quiet"] is True
+    assert captured["allow_options"] == (
+        ("tools=root/*", "tools=child/*") if child_overrides else ("tools=root/*",)
+    )
+    assert captured["limit_options"] == (
+        ("tokens=100", "tokens=200") if child_overrides else ("tokens=100",)
+    )
+    assert captured["raw_named"] == {"count": "2"}
+    assert captured["input"] == {"_": "hello"}
+
+
+@pytest.mark.parametrize("value", ["-", "--", "---"])
+def test_script_root_option_values_do_not_start_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    source = _write_source(tmp_path)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        script, "_run", lambda _path, **kwargs: captured.update(kwargs) or 0
+    )
+    assert (
+        script.dispatch(
+            [],
+            [str(source), "-o", value, "demo", "count=2", "hello"],
+            prog_name="too",
+            stdin=_UnreadableStdin(),
+        )
+        == 0
+    )
+    assert captured["save"] == value
+    assert captured["input"] == {"_": "hello"}
 
 
 def test_script_reads_primary_input_from_stdin(
@@ -425,7 +518,7 @@ def test_script_shows_runnable_help_for_a_missing_required_parameter(
 
     assert result == 2
     assert "Usage:" in output.out
-    assert "count=NUMBER" in output.out
+    assert "count=ARGUMENT" in output.out
     assert "Run:" not in output.err
 
 
@@ -462,7 +555,7 @@ agic demo(_: Part[]):
 
     assert result == 2
     assert "Usage:" in output.out
-    assert "PART[]" in output.out
+    assert "PART[]" in strip_ansi(output.out)
     assert ("\x1b[" in output.out) is color
     assert "─ Arguments " in strip_ansi(output.out)
     assert "requires primary input" not in output.err
@@ -528,9 +621,9 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "Usage: toolang demo.too demo [OPTIONS] [ARGS] INPUT" in normalized
     assert "Run the documented demo." in stdout
     assert "Arguments" in stdout
-    assert "count=NUMBER" in stdout
-    assert "enabled=BOOLEAN" in stdout
-    assert "Optional." in stdout
+    assert "count=ARGUMENT" in stdout
+    assert "enabled=ARGUMENT" in stdout
+    assert "Optional." not in stdout
     assert "[required]" in stdout
     assert "PART[]" in stdout
     assert "─ Input " not in stdout
@@ -557,17 +650,89 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "stdout." in stdout
     assert "--verbose" not in stdout
     assert "-v" not in stdout
-    positions = tuple(
-        stdout.index(option) for option in ("--allow", "--limit", "--model")
-    )
-    assert positions == tuple(sorted(positions))
+    _assert_common_options(stdout)
     assert "--default" not in stdout
-    assert "Flow steps:" not in stdout
+    assert "This flow executes the following steps:" not in stdout
 
 
 def _help_panel(output: str, title: str) -> str:
     body = output.partition(f"─ {title} ")[2].partition("╰")[0]
     return " ".join(body.replace("│", " ").split())
+
+
+def _assert_common_options(output: str) -> None:
+    panel = _help_panel(output, "Options")
+    options = (
+        "--allow",
+        "--limit",
+        "--model",
+        "--sandbox",
+        "--out",
+        "--quiet",
+        "--dev",
+        "--help",
+    )
+    positions = [panel.index(option) for option in options]
+    assert positions == sorted(positions)
+    assert "-o" in panel and "-q" in panel
+
+
+@pytest.mark.parametrize("child", [False, True])
+def test_script_help_after_common_options_never_reads_or_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, child: bool
+) -> None:
+    source = _write_source(tmp_path)
+    monkeypatch.setattr(
+        script, "_run", lambda *_args, **_kwargs: pytest.fail("help must not run")
+    )
+    assert (
+        script.dispatch(
+            [],
+            [
+                str(source),
+                "--model",
+                "test/model",
+                *(["demo"] if child else []),
+                "--help",
+            ],
+            prog_name="too",
+            stdin=_UnreadableStdin(),
+        )
+        == 0
+    )
+    output = strip_ansi(capsys.readouterr().out)
+    assert ("─ Arguments " in output) is child
+    assert ("─ Runnables " in output) is not child
+    _assert_common_options(output)
+
+
+def test_script_without_public_runnables_still_shows_common_options(
+    tmp_path: Path, capsys
+) -> None:
+    source = _write_source(tmp_path, "agic:\n  Default behavior.\n")
+    assert (
+        script.dispatch(
+            [], [str(source), "--help"], prog_name="too", stdin=_UnreadableStdin()
+        )
+        == 0
+    )
+    output = strip_ansi(capsys.readouterr().out)
+    assert "─ Runnables " not in output
+    _assert_common_options(output)
+
+
+@pytest.mark.parametrize("primary", [False, True])
+def test_script_argument_help_preserves_authored_docs(primary: bool) -> None:
+    parameter = Parameter(
+        span=Span(line=1),
+        name="_" if primary else "topic",
+        type_name="Text",
+        doc="  Research topic.  ",
+    )
+    argument = script._signature_argument(parameter)
+    assert argument.help is not None
+    assert argument.help.startswith("Research topic.")
+    assert ("stdin" in argument.help) is primary
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
@@ -606,21 +771,25 @@ def test_script_runnable_description_uses_docs_or_kind(
         == 0
     )
     output = strip_ansi(capsys.readouterr().out)
-    summary = f"demo - {description or ('An agic.' if kind == 'agic' else 'A flow.')}"
+    summary = f"Run {kind} demo - {description}" if description else f"Run {kind} demo."
     assert " ".join(output.split()).count(summary) == 1
-    assert output.index("Usage:") < output.index("demo -") < output.index("─ Options ")
+    assert (
+        output.index("Usage:")
+        < output.index(f"Run {kind} demo")
+        < output.index("─ Options ")
+    )
     assert "Unused body text." not in output
     assert "─ Arguments " not in output
     assert "─ Input " not in output and "─ Flow" not in output
     if kind == "flow":
         assert (
-            output.index("demo -")
-            < output.index("Flow steps:")
+            output.index(f"Run {kind} demo")
+            < output.index("This flow executes the following steps:")
             < output.index("─ Options ")
         )
         assert _flow_outline_lines(output) == ["[0] Set value to note"]
     else:
-        assert "Flow steps:" not in output
+        assert "This flow executes the following steps:" not in output
 
 
 @pytest.mark.parametrize(
@@ -640,6 +809,7 @@ def test_script_runnable_description_uses_docs_or_kind(
         ("(_: Text)", "Text", []),
         ("()", None, []),
         ("(count: Number)", None, [("count", "Number", True)]),
+        ("(class: Text)", None, [("class", "Text", True)]),
         ("(enabled?: Boolean)", None, [("enabled", "Boolean", False)]),
         (
             "(items: Text[], enabled?: Boolean)",
@@ -698,21 +868,20 @@ def test_script_help_groups_signature_categories(
     assert "─ Input " not in output
     positions = []
     for name, type_name, required in arguments:
-        label = f"{name}={type_name.upper()}"
-        status = "[required]" if required else "Optional."
-        assert f"{label} {status}" in panel
+        label = f"{name}=ARGUMENT"
+        # Typer suppresses the Boolean metavar in its native renderer.
+        row = label if type_name == "Boolean" else f"{label} {type_name.upper()}"
+        assert row in panel
+        assert (f"{row} [required]" in panel) is required
         positions.append(panel.index(label))
-    if arguments:
-        suffix = " before input" if input_type else ""
-        assert f"Arguments may appear in any order{suffix}." in panel
+    assert "Optional." not in panel
+    assert "Arguments may appear" not in panel
     if input_type:
-        label = f"INPUT {input_type.upper()} [required]"
-        assert label in panel
+        label = "INPUT" if input_type == "Boolean" else f"INPUT {input_type.upper()}"
+        assert f"{label} Text after arguments and options;" in panel
         positions.append(panel.index(label))
-        assert (
-            "TEXT...; -- TEXT... starts it explicitly; - reads stdin to EOF." in panel
-        )
-        assert "Omit command-line text to read piped or redirected stdin." in panel
+        assert "-- explicitly starts text; - reads stdin to EOF." in panel
+        assert "Omit text to read piped or redirected stdin. [required]" in panel
     else:
         assert "stdin" not in output and "TEXT..." not in output
     assert positions == sorted(positions)
@@ -730,6 +899,7 @@ def test_script_help_groups_signature_categories(
         ("()", [], {}),
         ("(enabled?: Boolean)", [], {}),
         ("(count: Number)", ["count=2"], {"count": "2"}),
+        ("(class: Text)", ["class=report"], {"class": "report"}),
     ],
 )
 def test_script_without_input_runs_with_satisfied_arguments(
@@ -955,7 +1125,11 @@ def test_script_omitted_terminal_input_shows_help_without_reading(
 
 
 def _flow_outline_lines(output: str) -> list[str]:
-    block = strip_ansi(output).partition("Flow steps:")[2].partition("╭")[0]
+    block = (
+        strip_ansi(output)
+        .partition("This flow executes the following steps:")[2]
+        .partition("╭")[0]
+    )
     return [
         line[3:].rstrip()
         for line in block.splitlines()
@@ -1009,9 +1183,13 @@ agic search:
     assert output.err == ""
     assert stdout.count("Research a topic from several sources.") == 1
     assert "research - Research a topic from several sources." in stdout
-    assert stdout.index("Research a topic") < stdout.index("Flow steps:")
-    assert stdout.index("Flow steps:") < stdout.index("─ Arguments ")
-    assert stdout.count("Flow steps:") == 1
+    assert stdout.index("Research a topic") < stdout.index(
+        "This flow executes the following steps:"
+    )
+    assert stdout.index("This flow executes the following steps:") < stdout.index(
+        "─ Arguments "
+    )
+    assert stdout.count("This flow executes the following steps:") == 1
     assert "─ Flow" not in stdout
     assert _flow_outline_lines(stdout) == [
         "[0] Set value to topic",
@@ -1108,6 +1286,28 @@ def test_script_empty_flow_outline_has_a_placeholder() -> None:
     assert script._flow_outline(flow).plain == "No statements."
 
 
+def test_script_flow_outline_uses_normal_style_and_separates_sibling_steps() -> None:
+    program = Program.from_source("""flow work():
+  ## Refine the result.
+  repeat 2 times:
+    run review
+    run review
+  run review
+
+agic review:
+  Review the draft.
+""")
+    outline = script._flow_outline(program.flows[0])
+    assert not outline.style and not outline.spans
+    assert outline.plain == (
+        "[0] Refine the result.\n"
+        "    Repeat 2 times\n"
+        "  [0] Run review\n\n"
+        "  [1] Run review\n\n"
+        "[1] Run review"
+    )
+
+
 @pytest.mark.parametrize("doc", [None, "", "  \n\t ", "Run review"])
 def test_script_flow_outline_aligns_docs_at_multi_digit_ordinals(
     doc: str | None,
@@ -1119,7 +1319,7 @@ def test_script_flow_outline_aligns_docs_at_multi_digit_ordinals(
         + (RunStmt(span=Span(line=3), runnable="review", doc=doc),),
     )
 
-    lines = script._flow_outline(flow).plain.splitlines()
+    lines = [line for line in script._flow_outline(flow).plain.splitlines() if line]
 
     assert lines[10:] == (
         ["[10] Run review", "     Run review"]
@@ -1151,7 +1351,7 @@ def test_script_flow_invocation_does_not_print_the_help_outline(
     )
 
     assert calls == ["flow"]
-    assert "Flow steps:" not in capsys.readouterr().out
+    assert "This flow executes the following steps:" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -1212,8 +1412,9 @@ flow pipeline:
     assert result == 0
     assert f"Usage: {prog_name} {filename} [OPTIONS] RUNNABLE" in stdout
     assert "[ARGS]" not in stdout
-    assert f"{filename} - Run an agic or flow." in stdout
+    assert f"Run runnables from {filename}." in stdout
     assert stdout.index("─ Runnables ") < stdout.index("─ Options ")
+    _assert_common_options(stdout)
     assert all(cell_len(line) <= width for line in stdout.splitlines())
     assert "Commands" not in stdout
     assert "visible" in stdout
@@ -1223,13 +1424,13 @@ flow pipeline:
     descriptions = _help_panel(stdout, "Runnables")
     assert "agic:visible Run the visible command." in descriptions
     assert "flow:pipeline Run the pipeline." in descriptions
-    assert "agic:undocumented An agic." in descriptions
-    assert "flow:undocumented_flow A flow." in descriptions
+    assert "agic:undocumented Agic undocumented." in descriptions
+    assert "flow:undocumented_flow Flow undocumented_flow." in descriptions
     assert "visible -" not in descriptions
-    assert "Use RUNNABLE --help for its arguments and input." in stdout
+    assert "Use RUNNABLE --help" not in stdout
     assert "default" not in stdout
     assert "<agic:" not in stdout
-    assert "Flow steps:" not in stdout
+    assert "This flow executes the following steps:" not in stdout
 
 
 @pytest.mark.parametrize("width", [44, 80])
@@ -1256,7 +1457,7 @@ def test_script_long_runnable_names_keep_descriptions_visible(
     output = strip_ansi(capsys.readouterr().out)
     panel = _help_panel(output, "Runnables")
     assert "Documented." in panel
-    assert "An agic." in panel
+    assert "Agic brief." in panel
     assert "…" not in panel
     assert all(cell_len(line) <= width for line in output.splitlines())
 
@@ -1291,6 +1492,7 @@ def test_script_formats_an_unknown_runnable_as_a_rich_error(
     assert "\nError: No such command" not in stderr
 
 
+@pytest.mark.parametrize("root_options", [[], ["--quiet"]])
 @pytest.mark.parametrize(
     ("kind", "query"),
     [
@@ -1305,6 +1507,7 @@ def test_script_accepts_explicit_runnable_queries(
     monkeypatch,
     query: str,
     kind: str,
+    root_options: list[str],
 ) -> None:
     source = _write_source(
         tmp_path,
@@ -1327,7 +1530,7 @@ def test_script_accepts_explicit_runnable_queries(
 
     result = script.dispatch(
         [],
-        [str(source), query, "count=2", "--", "hello"],
+        [str(source), *root_options, query, "count=2", "--", "hello"],
         prog_name="toolang",
         stdin=StringIO(),
     )
@@ -1335,17 +1538,20 @@ def test_script_accepts_explicit_runnable_queries(
     assert result == 0
     assert captured["runnable"] == "demo"
     assert captured["runnable_kind"] == kind
+    assert captured["quiet"] is bool(root_options)
 
 
+@pytest.mark.parametrize("root_options", [[], ["--quiet"]])
 def test_script_rejects_an_explicit_runnable_kind_mismatch(
     tmp_path: Path,
     capsys,
+    root_options: list[str],
 ) -> None:
     source = _write_source(tmp_path)
 
     result = script.dispatch(
         [],
-        [str(source), "flow:demo", "count=2", "hello"],
+        [str(source), *root_options, "flow:demo", "count=2", "hello"],
         prog_name="toolang",
         stdin=StringIO(),
     )

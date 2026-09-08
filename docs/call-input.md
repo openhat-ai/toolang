@@ -203,16 +203,20 @@ without a signature. Empty and named-only signatures omit it. It denotes one
 logical input, which may span multiple shell words or come from stdin.
 Required named arguments remain required despite the `[ARGS]` abbreviation.
 
-Below usage, `name - description` shows the authored doc comment or the fallback
-`An agic.` / `A flow.` For flows, an indented outline follows `Flow steps:` as
-part of the description, before the help panels.
+Below usage, `Run KIND NAME.` describes execution. An authored doc comment
+changes this to `Run KIND NAME - DESCRIPTION`. Flows continue with
+`This flow executes the following steps:` and an indented outline before the
+help panels. All outline text uses normal style, with one blank line between
+sibling steps; each step's doc and operation description remain adjacent.
 
-The **Arguments** panel lists named parameters in signature order as `name=TYPE`,
-preserving names and uppercasing types, such as `topic=TEXT` and `items=PART[]`.
-Rows show required or optional status without inventing parameter descriptions.
-The last row is `INPUT`, with its uppercase type and required annotation, when
-primary input is accepted. Arguments may be supplied in any order, interspersed
-with command options, before input. Brief notes explain these input forms:
+The **Arguments** panel uses Typer's native parameter rendering. Named
+parameters appear in signature order as `name=ARGUMENT`, with uppercase authored
+types in the type column and any parameter doc comments in the help column.
+Typer controls type visibility, wrapping, and required markers, including its
+native suppression of Boolean type labels. Missing named parameter docs stay
+blank. The last row is `INPUT` when primary input is accepted, with its type
+and capture guidance in the argument's help. Arguments may be supplied in any
+order, interspersed with command options, before input.
 
 | Form | Behavior |
 | --- | --- |
@@ -221,11 +225,18 @@ with command options, before input. Brief notes explain these input forms:
 | `-` | Reads stdin through EOF, including an empty stream. |
 | Omitted | Reads piped or redirected stdin; an empty stream means input is absent. |
 
-Capture notes are omitted when primary input is forbidden. Empty signatures
-omit Arguments entirely. **Options** follows Arguments. Top-level Script help
-lists **Runnables** before Options, using `agic:NAME` and `flow:NAME` labels with
-the same descriptions, and directs users to `RUNNABLE --help`. Both qualified
-labels and bare names are valid runnable selectors.
+When primary input is forbidden, its row and instructions are absent. Empty
+signatures omit Arguments entirely. **Options** follows Arguments. Top-level
+Script help says `Run runnables from SCRIPT.` and lists **Runnables** before
+Options, using `agic:NAME` and `flow:NAME` labels with authored descriptions or
+`Agic NAME.` / `Flow NAME.` fallbacks. Both qualified labels and bare names are
+valid runnable selectors.
+
+Root and runnable help show the same common options, with `--dev` immediately
+before `--help`. Common options may appear on either side of RUNNABLE, before
+input. Runnable-level scalar values override root values when explicitly set;
+repeated `--allow` and `--limit` values accumulate in command-line order.
+`--quiet` at either level enables quiet mode, and `--help` describes that level.
 
 Both line forms accept the same text:
 
