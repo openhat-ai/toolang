@@ -825,13 +825,17 @@ def test_chat_tool_step_has_normal_marker_and_dim_running_description() -> None:
     block = blocks.ExecutionProgressBlock(
         ProgressBlock(
             "step:run_1.1",
-            (ProgressRow("• Running a command...", "active", surface="tool_summary"),),
+            (
+                ProgressRow(
+                    "▸ Running a command...", "progress", surface="tool_summary"
+                ),
+            ),
         ),
         live=True,
         max_width=32,
     )
     segments = list(rendering.render_segments(block.render(), width=80))
-    marker = next(segment for segment in segments if "•" in segment.text)
+    marker = next(segment for segment in segments if "▸" in segment.text)
     content = next(segment for segment in segments if "Running" in segment.text)
     assert marker.style is None or not marker.style.dim
     assert content.style is not None and content.style.dim
@@ -847,7 +851,7 @@ def test_chat_tool_failure_stays_two_lines_without_result_surfaces(width: int) -
             "step:run_1.1",
             (
                 ProgressRow(
-                    "• Failed to read a-very-long-document-name.md",
+                    "▸ Failed to read a-very-long-document-name.md",
                     surface="tool_summary",
                 ),
                 ProgressRow(
@@ -867,7 +871,7 @@ def test_chat_tool_failure_stays_two_lines_without_result_surfaces(width: int) -
     lines.pop()
     assert len(lines) == 2
     assert all(len(line) <= width for line in lines)
-    assert lines[0].startswith("• ")
+    assert lines[0].startswith("▸ ")
     assert lines[1].startswith("  ")
     assert lines[1].endswith("…")
     assert all(

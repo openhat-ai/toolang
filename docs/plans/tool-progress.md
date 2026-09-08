@@ -9,8 +9,9 @@ is approved in the implementation discussion.
 - Running, successful, and canceled tools occupy one line; failed tools occupy
   two, with an indented error on the second line. Truncate long lines.
 - Remove all tool-result blocks. Keep results in records and model messages.
-- Keep Step markers unstyled. Preserve model Markdown and ordinary tool styles;
-  use cyan for runtime helper descriptions and red for errors.
+- Keep Step markers unstyled: `•` for models, `▸` for ordinary tools, and `✧`
+  for runtime helpers. Use dim text for all tool summaries and red error details;
+  preserve model Markdown and styling.
 - Preserve compact timing, hidden intercepted workspace calls, child/flow
   hierarchy, and root footers.
 
@@ -35,11 +36,19 @@ display input: running text uses available call data; completed text identifies
 rules files from result controls. Remove executor-specific runtime wording and
 the presentation-only discovery callback.
 
-Fs displays `[workspace] relative/path` (root: `[workspace] /`); listing
+Fs displays `workspace:/relative/path` (root: `workspace:/`); listing
 `workspace://` displays “Listing/Listed workspaces”. Both existing URI and
 separate workspace/path arguments work unchanged. Shell shows its command, not
 stdout. Descriptions contain no result dumps or statistics. A nonzero shell exit
 does not change Step status under this presentation-only change.
+
+Honor uses “Loading rules...” and “Loaded rules: repo:/AGENTS.md”; completed
+summaries list only files supplied by the result. Pick uses “Loading/Loaded
+guidance: skill/name” or “service/name”, using the call's kind and resource ref.
+Reload retains “Reloading/Reloaded agent state”. These are display labels, not
+new tool input syntax. Local refs omit their storage scope in display labels;
+remote refs retain their full identity. Previously persisted summaries are not
+rewritten.
 
 ## Touchpoints and acceptance
 
@@ -48,11 +57,12 @@ does not change Step status under this presentation-only change.
 - Fs/shell/runtime toolsets and executor tool summaries/rules: lifecycle wording,
   fallback and masking, cancellation at begin/during/end, no I/O for descriptions.
 - Shared progress projection/rendering: one/two physical lines at narrow widths,
-  normal markers, cyan helpers, red error line, no result surfaces, compact timer
-  cleanup, and unchanged model/flow output.
+  distinct normal markers, dim tool summaries, red error line, no result surfaces,
+  compact timer cleanup, and unchanged model/flow output.
 - Tests cover default hooks, formatter exceptions/None and mutation isolation,
   both workspace spellings/root paths, honor results and retries, cancellation,
-  persisted replay, Chat/Script and parallel lanes.
+  persisted replay, Chat/Script and parallel lanes. Verify that namespace labels
+  never replace model-facing workspace URIs or resource refs.
 
 Run the default lint, formatting, type, and offline test suite. Review for stale
 runtime-specific wording branches and unused result-block code. No open product

@@ -44,7 +44,7 @@ from toolang.lang.ast import (
 )
 
 from .facts import elapsed_fact
-from .formatting import one_line, output_parts, run_label
+from .formatting import one_line, output_parts, run_label, split_hanging_prefix
 from .headers import statement_header, until_header
 from .state import (
     LaneOwner,
@@ -396,9 +396,8 @@ class ProgressProjector:
                 dynamic_run=state.is_dynamic_run,
             )
             if handoff is not None:
-                activity = (
-                    f"• Handoff to {handoff.runnable} · {activity.removeprefix('• ')}"
-                )
+                marker, detail = split_hanging_prefix(activity)
+                activity = f"{marker}Handoff to {handoff.runnable} · {detail}"
             self._set_lane_activity(
                 state.lane_owner,
                 activity,
@@ -816,7 +815,7 @@ class ProgressProjector:
             rows.append(
                 ProgressRow(
                     f"{prefix}{terminal[0]}",
-                    "runtime" if terminal[0].startswith("✧ ") else "error",
+                    "progress" if lane.terminal_tool else "error",
                     surface="tool_summary" if lane.terminal_tool else "none",
                 )
             )
@@ -953,11 +952,13 @@ class ProgressProjector:
         lane_width = len(str(max(state.par.lanes)))
         item_width = len(str(max(lane.item for lane in state.par.lanes.values())))
         for lane_index, lane in sorted(state.par.lanes.items()):
+            tool = lane.activity.startswith(("▸ ", "✧ "))
             rows.append(
                 ProgressRow(
                     f"  {lane_index:>{lane_width}} | #{lane.item:>{item_width}} | "
                     f"{lane.activity}",
-                    "runtime" if lane.activity.startswith("✧ ") else "active",
+                    "progress" if tool else "active",
+                    surface="tool_summary" if tool else "none",
                 )
             )
         return tuple(rows)

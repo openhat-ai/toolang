@@ -143,17 +143,16 @@ Iteration and condition headers create the same kind of stable boundary.
 
 ## Markers and Style
 
-`•` marks ordinary Steps; `✧` marks the `pick`, `reload`, `compact`, and `honor`
-runtime helpers. `---  ` opens and closes a dynamic Run Step, and `∎` marks the
-root Run footer. The centered dot `·` is only an inline facts separator.
+`•` marks Model and Flow Steps; `▸` marks ordinary tools; `✧` marks the `pick`,
+`reload`, `compact`, and `honor` runtime helpers. `---  ` opens and closes a
+dynamic Run Step, and `∎` marks the root Run footer. The centered dot `·` is only
+an inline facts separator.
 
 - Model activity and output use `•` and normal text.
-- Ordinary Tool descriptions are dim while running and after success.
-- Runtime helper descriptions are cyan, with a separate red error line on
-  failure.
+- Ordinary and runtime Tool summaries are dim in every state, with a separate
+  red error line on failure.
 - Flow activity and terminal output use `•` and normal text.
-- Ordinary failed descriptions and errors use red; canceled descriptions use
-  yellow.
+- Model and Flow failures use red; cancellation uses yellow.
 - Parallel lanes place the Step marker after the lane columns.
 - Headers and facts are dim.
 
@@ -285,18 +284,19 @@ and Step closure does not repeat the final output.
 Tool activity uses the persisted running description, replaced at completion:
 
 ```text
-• Executing search “Toolang plugin protocol” ...
-• Executed search “Toolang plugin protocol”
+▸ Executing search “Toolang plugin protocol” ...
+▸ Executed search “Toolang plugin protocol”
 ```
 
 Completed traces contain the terminal description only. Tool-owned descriptions
 can provide clearer wording and logical workspace labels:
 
 ```text
-• Listed workspaces
-✧ Reloaded workspace rules: [repo] src/AGENTS.md
-• Wrote [repo] src/example.py
-• Failed to read [repo] missing.txt
+▸ Listed workspaces
+✧ Loaded rules: repo:/src/AGENTS.md
+✧ Loaded guidance: skill/python-testing
+▸ Wrote repo:/src/example.py
+▸ Failed to read repo:/missing.txt
   File not found
 ```
 

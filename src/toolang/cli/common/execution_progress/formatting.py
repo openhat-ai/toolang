@@ -68,7 +68,7 @@ def display_width(value: str) -> int:
 def split_hanging_prefix(value: str) -> tuple[str, str]:
     """Split one progress row into its fixed prefix and wrappable content."""
 
-    for marker in ("• ", "✧ "):
+    for marker in ("• ", "▸ ", "✧ "):
         if value.startswith(marker):
             return marker, value[2:]
         lane_marker = value.find(f"| {marker}")

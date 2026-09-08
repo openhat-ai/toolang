@@ -140,10 +140,10 @@ and duration formatting. Result summaries provide terminal display data.
 
 | Tool | Running | Succeeded |
 | --- | --- | --- |
-| pick | `Loading skill guidance: <ref>...` | `Loaded skill guidance: <ref>` |
+| pick | `Loading guidance: skill/name...` | `Loaded guidance: skill/name` |
 | reload | `Reloading agent state...` | `Reloaded agent state` |
 | compact | `Compacting thread history` | `Compacted thread history` |
-| honor | `Reloading workspace rules...` | `Reloaded workspace rules: [repo] src/AGENTS.md` |
+| honor | `Loading rules...` | `Loaded rules: repo:/src/AGENTS.md` |
 
 The [tool progress definition](tool-progress.md) specifies the shared description
 hook and compact rendering. Honor's running description has no discovered-file
@@ -151,9 +151,10 @@ side channel. Terminal descriptions list the workspace/file pairs available in
 result controls, including deleted files. The renderer truncates long summaries;
 inspection retains the full text and result. No UI resource reads are needed.
 
-Pick uses service wording where appropriate. Keep actual failure/cancellation
-wording. Use `✧` for these runtime rows, retaining ordinary tool `•` and footer
-`∎`. Counts follow actual Steps. There is no workspace event to suppress, no
+Pick uses `service/name` where appropriate. Keep actual failure/cancellation
+wording. Use `✧` for these runtime rows, ordinary tool `▸`, and footer `∎`.
+All tool summaries are dim; markers stay unstyled. Counts follow actual Steps.
+There is no workspace event to suppress, no
 first-attempt activity flash, and no duplicate workspace error or result panel.
 
 Show compact from StepBegin, including permit waiting. Refresh elapsed time once

@@ -17,10 +17,10 @@ from toolang.cli.common.execution_progress.rich_rendering import (
 @pytest.mark.parametrize("runtime", [False, True])
 @pytest.mark.parametrize("width", [16, 48, 120])
 def test_tool_summary_is_one_line_with_normal_marker(width, runtime, prefix, live):
-    marker = "✧" if runtime else "•"
+    marker = "✧" if runtime else "▸"
     row = ProgressRow(
-        f"{prefix}{marker} Reading [repo] 很长的目录/" + "nested/" * 30,
-        "runtime" if runtime else "progress",
+        f"{prefix}{marker} Reading repo:/很长的目录/" + "nested/" * 30,
+        "progress",
         surface="tool_summary",
     )
     stream = StringIO()
@@ -36,11 +36,8 @@ def test_tool_summary_is_one_line_with_normal_marker(width, runtime, prefix, liv
     mark = next(s for s in segments if marker in s.text)
     assert mark.style is None or (mark.style.color is None and not mark.style.dim)
     body = next(s for s in segments if "…" in s.text)
-    if runtime:
-        assert body.style is not None and body.style.color is not None
-        assert body.style.color.name == "cyan"
-    else:
-        assert body.style is not None and body.style.dim
+    assert body.style is not None and body.style.dim
+    assert body.style.color is None
 
 
 @pytest.mark.parametrize("tone", ["normal", "error", "warning", "active"])

@@ -37,12 +37,10 @@ class RuntimeTool(Tool):
         result: ToolResult | None = None,
     ) -> str | None:
         labels = {
-            "pick": "service guidance"
-            if arguments.get("kind") == "service"
-            else "skill guidance",
+            "pick": "guidance",
             "reload": "agent state",
             "compact": "thread history",
-            "honor": "workspace rules",
+            "honor": "rules",
         }
         if self.name not in labels:
             return None
@@ -50,12 +48,19 @@ class RuntimeTool(Tool):
             ("compact", "Compacting", "Compacted")
             if self.name == "compact"
             else ("load", "Loading", "Loaded")
-            if self.name == "pick"
+            if self.name in {"pick", "honor"}
             else ("reload", "Reloading", "Reloaded")
         )
         target = labels[self.name]
         if self.name == "pick" and isinstance(arguments.get("ref"), str):
-            target += f": {arguments['ref']}"
+            kind = arguments.get("kind")
+            ref = arguments["ref"]
+            for scope in ("home", "root", "here", "inline"):
+                prefix = f"{scope}://{kind}s/"
+                if ref.startswith(prefix):
+                    ref = ref.removeprefix(prefix)
+                    break
+            target += f": {kind}/{ref}"
         elif self.name == "honor":
             files = [
                 workspace_label(item["workspace"], item["path"])
