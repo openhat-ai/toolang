@@ -105,8 +105,8 @@ def test_info_layout_aligns_avatar_with_first_detail_row(monkeypatch) -> None:
         "",
         "               EVE",
         "               ───",
-        "   logo-one    Home    /tmp/eve",
-        "   logo-two    Created now",
+        "   logo-one    Home     /tmp/eve",
+        "   logo-two    Created  now",
         "   logo-3--",
         "",
     ]

@@ -159,6 +159,7 @@ def echo_pairs_table(
 ) -> None:
     table = Table(
         box=None,
+        padding=(0, 2),
         header_style="",
         show_header=False,
         show_lines=False,
