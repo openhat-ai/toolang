@@ -143,7 +143,7 @@ Iteration and condition headers create the same kind of stable boundary.
 
 ## Markers and Style
 
-`•` marks Model and Flow Steps; `‣` marks ordinary tools; `✧` marks the `pick`,
+`•` marks Model and Flow Steps; `›` marks ordinary tools; `✧` marks the `pick`,
 `reload`, `compact`, and `honor` runtime helpers. `---  ` opens and closes a
 dynamic Run Step, and `∎` marks the root Run footer. The centered dot `·` is only
 an inline facts separator.
@@ -284,19 +284,19 @@ and Step closure does not repeat the final output.
 Tool activity uses the persisted running description, replaced at completion:
 
 ```text
-‣ Executing search “Toolang plugin protocol” ...
-‣ Executed search “Toolang plugin protocol”
+› Executing search “Toolang plugin protocol” ...
+› Executed search “Toolang plugin protocol”
 ```
 
 Completed traces contain the terminal description only. Tool-owned descriptions
 can provide clearer wording and logical workspace labels:
 
 ```text
-‣ Listed workspaces
+› Listed workspaces
 ✧ Loaded rules: repo:/src/AGENTS.md
 ✧ Loaded guidance: skill/python-testing
-‣ Wrote repo:/src/example.py
-‣ Failed to read repo:/missing.txt
+› Wrote repo:/src/example.py
+› Failed to read repo:/missing.txt
   File not found
 ```
 

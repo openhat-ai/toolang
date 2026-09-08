@@ -324,7 +324,7 @@ def test_tool_output_is_not_rendered() -> None:
         ]
     )
 
-    assert "‣ executed web.search" in output
+    assert "› executed web.search" in output
     assert '"results"' not in output
     assert "run_one.0" not in output
 
@@ -412,7 +412,7 @@ def test_step_error_and_ownerless_run_error_use_bullet_rows() -> None:
     )
 
     assert [line.strip() for line in step_error.splitlines()][1:3] == [
-        "‣ failed web.search",
+        "› failed web.search",
         "provider returned status 429",
     ]
     assert step_error.count("provider returned status 429") == 1

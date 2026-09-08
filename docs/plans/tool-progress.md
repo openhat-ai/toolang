@@ -9,7 +9,7 @@ is approved in the implementation discussion.
 - Running, successful, and canceled tools occupy one line; failed tools occupy
   two, with an indented error on the second line. Truncate long lines.
 - Remove all tool-result blocks. Keep results in records and model messages.
-- Keep Step markers unstyled: `•` for models, `‣` for ordinary tools, and `✧`
+- Keep Step markers unstyled: `•` for models, `›` for ordinary tools, and `✧`
   for runtime helpers. Use dim text for all tool summaries and red error details;
   preserve model Markdown and styling.
 - Preserve compact timing, hidden intercepted workspace calls, child/flow

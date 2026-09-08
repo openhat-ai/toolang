@@ -952,7 +952,7 @@ class ProgressProjector:
         lane_width = len(str(max(state.par.lanes)))
         item_width = len(str(max(lane.item for lane in state.par.lanes.values())))
         for lane_index, lane in sorted(state.par.lanes.items()):
-            tool = lane.activity.startswith(("‣ ", "✧ "))
+            tool = lane.activity.startswith(("› ", "✧ "))
             rows.append(
                 ProgressRow(
                     f"  {lane_index:>{lane_width}} | #{lane.item:>{item_width}} | "

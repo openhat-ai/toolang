@@ -209,7 +209,7 @@ agic child() -> Text:
                     skipped = harness.store.get_step(ref=execute_step)
                     assert skipped is not None and skipped.status == "canceled"
                     assert isinstance(skipped.noted, ToolStepNoted)
-                    assert any(row.text == f"‣ {skipped.noted.summary}" for row in rows)
+                    assert any(row.text == f"› {skipped.noted.summary}" for row in rows)
                     assert not any("Failed" in row.text for row in rows)
 
     asyncio.run(scenario())
