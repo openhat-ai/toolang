@@ -408,6 +408,67 @@ def test_confirmed_execute_without_target_step_is_not_reported_as_failed(
     assert not projector._broken
 
 
+@pytest.mark.parametrize("status", ["succeeded", "canceled", "failed"])
+def test_confirmed_execute_without_target_step_stays_in_its_parallel_lane(
+    status: Literal["succeeded", "canceled", "failed"],
+) -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    par = StepRef.parse("run_root.0")
+    step = StepRef.parse("run_worker.0")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef.for_run("run_root", 0),
+            runnable="agent$flow:parent",
+        )
+    )
+    projector.handle(
+        StepBegin(
+            step=par,
+            kind="par",
+            given=MapStmt(span=Span(line=1), runnable="worker", lanes=1),
+        )
+    )
+    projector.handle(
+        RunBegin(
+            run="run_worker",
+            parent=par,
+            control=ControlRef.for_run("run_worker", 0),
+            runnable="agent$agic:worker",
+            occurrence=Occurrence(
+                item=OccurrencePosition(index=0, count=1),
+                lane=OccurrencePosition(index=0, count=1),
+            ),
+        )
+    )
+    projector.handle(
+        StepBegin(
+            step=step,
+            kind="tool",
+            given=ToolStepGiven(
+                plugin="_toolang",
+                call=ToolCall(
+                    "execute-1", "execute-1", "_toolang__execute", {"runnable": "next"}
+                ),
+                summary="Transferring to next...",
+            ),
+        )
+    )
+    transferred = projector.handle(
+        StepEnd(
+            step=step,
+            kind="tool",
+            status="succeeded",
+            noted=ToolStepNoted(summary="Transferred to next"),
+        )
+    )
+    ended = projector.handle(RunEnd(run="run_worker", status=status))
+
+    assert transferred.committed == ended.committed == ()
+    assert transferred.live[0].rows[-1].text == "  0 | #0 | • Transferred to next"
+    assert not projector._broken
+
+
 def test_execute_prestart_failure_uses_a_correlated_trace_marker() -> None:
     projector = ProgressProjector(show_boundaries=False)
     caller = StepRef.parse("run_root.0")

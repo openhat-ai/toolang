@@ -359,11 +359,7 @@ class _TwoEndedPlainRow:
         console: Console,
         options: ConsoleOptions,
     ) -> RenderResult:
-        style = (
-            "dim"
-            if self.live and self.row.surface == "tool_summary"
-            else _STYLES[self.row.tone]
-        )
+        style = _STYLES[self.row.tone]
         width = max(1, min(options.max_width, self.max_width))
         prefix, left = split_hanging_prefix(self.row.text)
         prefix_width = display_width(prefix)

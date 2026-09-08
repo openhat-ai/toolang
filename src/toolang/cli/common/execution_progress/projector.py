@@ -473,9 +473,7 @@ class ProgressProjector:
         if state.lane_owner is not None:
             if not isinstance(event.error, ErrorRef):
                 statement = state.statement
-                if execute is not None and execute.ready:
-                    terminal = ()
-                elif state.is_flow:
+                if state.is_flow:
                     assert statement is not None
                     terminal = flow_lane_terminal_lines(
                         event,
@@ -1106,16 +1104,17 @@ class ProgressProjector:
         """Close execute presentation when no target Step boundary arrived."""
 
         rows: list[ProgressRow] = []
-        for pending in run.pending_executes:
-            rows.extend(
-                (
-                    ProgressRow(
-                        f"---  handoff to {pending.runnable}",
-                        leader="handoff",
-                    ),
-                    ProgressRow(""),
+        if run.lane_owner is None:
+            for pending in run.pending_executes:
+                rows.extend(
+                    (
+                        ProgressRow(
+                            f"---  handoff to {pending.runnable}",
+                            leader="handoff",
+                        ),
+                        ProgressRow(""),
+                    )
                 )
-            )
         run.pending_executes.clear()
         return tuple(rows)
 

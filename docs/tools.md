@@ -193,22 +193,25 @@ Toolang runtime owns:
 - how tool calls are recorded and exposed
 - the default human-readable summary for each tool-call lifecycle state
 
-Summary generation receives the tool family, leaf name, and supplied arguments
-in the tool definition's parameter order. The default summary combines only
-the leaf name and first supplied argument; it does not display the family. Its
+Leaf tools may provide `describe(arguments, status, output=None) -> str | None`
+through the [plugin contract](plugins.md). The executor supplies isolated
+call/result data with sensitive arguments masked. Missing, empty, or failed
+descriptions fall back to generic wording. The running summary is stored in
+`ToolStepGiven.summary`; the terminal summary uses `ToolStepNoted.summary`.
+
+The fallback combines the leaf name and first supplied argument in the tool
+definition's parameter order; it does not display the family. Its
 running form is `Executing NAME ARG ...`; its succeeded and failed forms are
 `Executed NAME ARG` and `Failed NAME ARG`. The canceled form is
-`Canceled NAME ARG`. Toolang normalizes and bounds argument previews and
-redacts sensitive parameter names or schemas before the summary enters
-execution events. The running summary is stored in `ToolStepGiven.summary`;
-the terminal summary uses the same key in `ToolStepNoted`.
+`Canceled NAME ARG`. Argument previews are single-line and bounded.
 
-Plugin-defined summary templates are not part of the current tool contract.
-The runtime toolset supplies pick/reload/compact/honor wording. Progress marks
-these rows with `✧` and shows compact elapsed time, refreshed once per second in
-TTY/Chat. Non-TTY prints compact start/end only.
-Successful calls show only their summary row, not the control-summary JSON result
-block. Failures retain error details; run/execute and ordinary tools are unchanged.
+Fs, shell, and runtime helpers supply wording through the same hook. Progress
+owns markers, color, timing, and layout; it reads saved summaries without calling
+plugins. Runtime helper descriptions use cyan and an unstyled `✧`; ordinary
+tools use an unstyled `•`. Compact elapsed time refreshes once per second in
+TTY/Chat; non-TTY prints start/end only. Tool traces show one summary line, plus
+an indented error line on failure, and no result blocks. Long lines are truncated.
+Run/execute retain their child and handoff hierarchy.
 
 ### Pick guidance
 
