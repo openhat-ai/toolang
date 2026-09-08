@@ -15,6 +15,8 @@ from rich.text import Text
 import typer
 from typer._click.exceptions import ClickException, UsageError
 
+from toolang.cli.common.parameters import TextType
+
 from toolang.cli.common.human_values import (
     human_scalar_text,
     human_value_renderable,
@@ -658,8 +660,7 @@ def inspect_command(
     subjects: Annotated[
         list[str],
         typer.Argument(
-            metavar="SUBJECT...",
-            help=_inspect_subject_help(),
+            click_type=TextType(), metavar="SUBJECT...", help=_inspect_subject_help()
         ),
     ],
     human: Annotated[

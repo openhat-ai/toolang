@@ -1,7 +1,5 @@
 """Task and chore commands."""
 
-from __future__ import annotations
-
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -10,6 +8,8 @@ from typing import Annotated, Literal, cast
 import typer
 from typer._click.exceptions import ClickException
 from typer.core import TyperCommand
+
+from toolang.cli.common.parameters import TextType
 
 from toolang.cli.common.editor import edit_markdown
 from ....catalog import templates
@@ -293,7 +293,9 @@ def _new(kind: JobKind, _title: str) -> Callable[..., None]:
 def _clone(kind: JobKind, title: str) -> Callable[..., None]:
     def command(
         ctx: typer.Context,
-        id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
+        id: Annotated[
+            str, typer.Argument(click_type=TextType(), help=f"{title} id", metavar="ID")
+        ],
     ) -> None:
         root, agent = context_root(ctx), require_prefix_agent(ctx)
         source = _jobs(root, agent).get(kind, id, stage=None)
@@ -314,7 +316,9 @@ def _clone(kind: JobKind, title: str) -> Callable[..., None]:
 def _edit(kind: JobKind, title: str) -> Callable[..., None]:
     def command(
         ctx: typer.Context,
-        id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
+        id: Annotated[
+            str, typer.Argument(click_type=TextType(), help=f"{title} id", metavar="ID")
+        ],
     ) -> None:
         root, agent = context_root(ctx), require_prefix_agent(ctx)
         catalog = _jobs(root, agent)
@@ -342,7 +346,9 @@ def _edit(kind: JobKind, title: str) -> Callable[..., None]:
 def _move(kind: JobKind, title: str, stage: JobStage) -> Callable[..., None]:
     def command(
         ctx: typer.Context,
-        id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
+        id: Annotated[
+            str, typer.Argument(click_type=TextType(), help=f"{title} id", metavar="ID")
+        ],
     ) -> None:
         root, agent = context_root(ctx), require_prefix_agent(ctx)
         moved = user_call(_jobs(root, agent).move, kind, id, stage)
@@ -368,7 +374,9 @@ def _archive(kind: JobKind, title: str) -> Callable[..., None]:
 def _reopen(kind: JobKind, title: str) -> Callable[..., None]:
     def command(
         ctx: typer.Context,
-        id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
+        id: Annotated[
+            str, typer.Argument(click_type=TextType(), help=f"{title} id", metavar="ID")
+        ],
     ) -> None:
         if kind != "task":
             raise ClickException("reopen is only supported for tasks")
@@ -381,7 +389,9 @@ def _reopen(kind: JobKind, title: str) -> Callable[..., None]:
 def _run(kind: JobKind, title: str) -> Callable[..., None]:
     def command(
         ctx: typer.Context,
-        id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
+        id: Annotated[
+            str, typer.Argument(click_type=TextType(), help=f"{title} id", metavar="ID")
+        ],
     ) -> None:
         if kind != "chore":
             raise ClickException("run is only supported for chores")
@@ -394,7 +404,9 @@ def _run(kind: JobKind, title: str) -> Callable[..., None]:
 def _cancel(kind: JobKind, title: str) -> Callable[..., None]:
     def command(
         ctx: typer.Context,
-        id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
+        id: Annotated[
+            str, typer.Argument(click_type=TextType(), help=f"{title} id", metavar="ID")
+        ],
     ) -> None:
         runtime_post(ctx, f"/api/v1/{kind}s/{id}/cancel", payload={})
         typer.echo(f"{kind} {id} cancel requested")
@@ -405,7 +417,9 @@ def _cancel(kind: JobKind, title: str) -> Callable[..., None]:
 def _delete(kind: JobKind, title: str) -> Callable[..., None]:
     def command(
         ctx: typer.Context,
-        id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
+        id: Annotated[
+            str, typer.Argument(click_type=TextType(), help=f"{title} id", metavar="ID")
+        ],
     ) -> None:
         root, agent = context_root(ctx), require_prefix_agent(ctx)
         catalog = _jobs(root, agent)

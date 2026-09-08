@@ -12,6 +12,8 @@ from uuid import uuid4
 import typer
 from typer._click.exceptions import ClickException
 
+from toolang.cli.common.parameters import AllowOptions, LimitOptions, TextType
+
 from toolang.base.errors import ToolangError
 from toolang.base.model_settings import parse_model_body
 from toolang.base.types.message import Message
@@ -59,10 +61,22 @@ from ...common.script_progress import ScriptRunPresenter
 
 def steer_command(
     ctx: typer.Context,
-    run: str = typer.Argument(
-        ..., help="Run id to steer. Thread id means its active run."
-    ),
-    message: str = typer.Argument(..., help="Instruction to steer the run."),
+    run: Annotated[
+        str,
+        typer.Argument(
+            metavar="RUN",
+            click_type=TextType(),
+            help="Run id to steer. Thread id means its active run.",
+        ),
+    ],
+    message: Annotated[
+        str,
+        typer.Argument(
+            metavar="MESSAGE",
+            click_type=TextType(),
+            help="Instruction to steer the run.",
+        ),
+    ],
 ) -> None:
     """Persist one next-step steer control."""
 
@@ -81,9 +95,14 @@ def steer_command(
 
 def cancel_command(
     ctx: typer.Context,
-    run: str = typer.Argument(
-        ..., help="Run id to cancel. Thread id means its active run."
-    ),
+    run: Annotated[
+        str,
+        typer.Argument(
+            metavar="RUN",
+            click_type=TextType(),
+            help="Run id to cancel. Thread id means its active run.",
+        ),
+    ],
 ) -> None:
     """Persist one immediate cancel control."""
 
@@ -100,36 +119,29 @@ def cancel_command(
 
 def retry_command(
     ctx: typer.Context,
-    run: str = typer.Argument(
-        ...,
-        help="Run id to retry. Thread id means its latest visible root run.",
-    ),
+    run: Annotated[
+        str,
+        typer.Argument(
+            metavar="RUN",
+            click_type=TextType(),
+            help="Run id to retry. Thread id means its latest visible root run.",
+        ),
+    ],
     model_catalog: ModelCatalogOption = None,
     anchor: Annotated[
         str | None,
         typer.Option(
             "--anchor",
+            metavar="STEP_PATH",
             help="Retry from this canonical or run-local step path.",
         ),
     ] = None,
     dev: Annotated[
         Path | None,
-        typer.Option(
-            "--dev",
-            help=DEVELOPMENT_WHEEL_HELP,
-        ),
+        typer.Option("--dev", metavar="PATH", help=DEVELOPMENT_WHEEL_HELP),
     ] = None,
-    allows: Annotated[
-        list[str] | None,
-        typer.Option("--allow", help="Set COLLECTION=QUERY. Repeat by collection."),
-    ] = None,
-    limit: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--limit",
-            help="Set FIELD=VALUE. Repeat for another field.",
-        ),
-    ] = None,
+    allows: AllowOptions = None,
+    limit: LimitOptions = None,
 ) -> None:
     """Retry one terminal root run from a durable step boundary."""
 
@@ -165,33 +177,27 @@ def retry_command(
 
 def rerun_command(
     ctx: typer.Context,
-    run: str = typer.Argument(
-        ...,
-        help="Run id to rerun. Thread id means its latest visible root run.",
-    ),
+    run: Annotated[
+        str,
+        typer.Argument(
+            metavar="RUN",
+            click_type=TextType(),
+            help="Run id to rerun. Thread id means its latest visible root run.",
+        ),
+    ],
     model_catalog: ModelCatalogOption = None,
     sandbox: Annotated[
         str | None,
-        typer.Option("--sandbox", help="Execute the new run in this sandbox."),
+        typer.Option(
+            "--sandbox", metavar="SANDBOX", help="Execute the new run in this sandbox."
+        ),
     ] = None,
     dev: Annotated[
         Path | None,
-        typer.Option(
-            "--dev",
-            help=DEVELOPMENT_WHEEL_HELP,
-        ),
+        typer.Option("--dev", metavar="PATH", help=DEVELOPMENT_WHEEL_HELP),
     ] = None,
-    allows: Annotated[
-        list[str] | None,
-        typer.Option("--allow", help="Set COLLECTION=QUERY. Repeat by collection."),
-    ] = None,
-    limit: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--limit",
-            help="Set FIELD=VALUE. Repeat for another field.",
-        ),
-    ] = None,
+    allows: AllowOptions = None,
+    limit: LimitOptions = None,
     model: Annotated[
         str | None,
         typer.Option(
@@ -238,10 +244,14 @@ def rerun_command(
 
 def rewind_command(
     ctx: typer.Context,
-    point: str = typer.Argument(
-        ...,
-        help="Run id to rewind before. Thread id means rewind before its latest root run.",
-    ),
+    point: Annotated[
+        str,
+        typer.Argument(
+            metavar="POINT",
+            click_type=TextType(),
+            help="Run id to rewind before. Thread id means rewind before its latest root run.",
+        ),
+    ],
     chat: Annotated[
         bool, typer.Option("--chat", help="Open chat on the rewound thread.")
     ] = False,
@@ -265,10 +275,14 @@ def rewind_command(
 
 def fork_command(
     ctx: typer.Context,
-    point: str = typer.Argument(
-        ...,
-        help="Run id to fork through. Thread id means fork through its latest root run.",
-    ),
+    point: Annotated[
+        str,
+        typer.Argument(
+            metavar="POINT",
+            click_type=TextType(),
+            help="Run id to fork through. Thread id means fork through its latest root run.",
+        ),
+    ],
     chat: Annotated[
         bool, typer.Option("--chat", help="Open chat on the forked thread.")
     ] = False,

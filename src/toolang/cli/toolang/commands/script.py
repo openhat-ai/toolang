@@ -89,6 +89,8 @@ from ...common.progress import make_cli_progress
 from ...common.remote_runtime import inspect_remote_runtime
 from ...common.result_saving import save_result
 from ...common.output import echo_error
+from ...common.help import CliCommand, CliGroup
+from ...common.parameters import SignatureType
 from ...common.execution_progress.config import resolve_progress_max_width
 from ...common.script_progress import ScriptRunPresenter
 
@@ -131,7 +133,7 @@ class _IncompleteRunnableInput(Exception):
     """A dynamic runnable command is missing required input."""
 
 
-class _RunnableCommand(TyperCommand):
+class _RunnableCommand(CliCommand):
     """Show runnable help when its collected call is incomplete."""
 
     def __init__(self, *, flow: FlowDecl | None = None, **kwargs: Any) -> None:
@@ -234,7 +236,7 @@ def _program_command(
     source_label: str,
     stdin: TextIO,
 ) -> TyperGroup:
-    group = TyperGroup(
+    group = CliGroup(
         name=source_label,
         help=f"Run an agic or flow from {source_label}.",
         no_args_is_help=True,
@@ -299,6 +301,7 @@ def _runnable_command(
             type=str,
             multiple=True,
             default=(),
+            metavar="COLLECTION=QUERY",
             help="Set COLLECTION=QUERY. Repeat by collection.",
         ),
         TyperOption(
@@ -306,6 +309,7 @@ def _runnable_command(
             type=str,
             multiple=True,
             default=(),
+            metavar="FIELD=VALUE",
             help="Set FIELD=VALUE. Repeat for another field.",
         ),
         TyperOption(
@@ -318,6 +322,7 @@ def _runnable_command(
         TyperOption(
             param_decls=["--sandbox"],
             type=str,
+            metavar="SANDBOX",
             default=None,
             help="Execute this run in the selected sandbox.",
         ),
@@ -371,7 +376,7 @@ def _runnable_command(
 def _signature_argument(parameter: Parameter) -> TyperArgument:
     return _HelpArgument(
         param_decls=[parameter.name],
-        type=str,
+        type=SignatureType(),
         required=not parameter.optional,
         metavar=f"{parameter.name}={parameter.type_name or 'Part[]'}",
         help=None,
@@ -383,7 +388,7 @@ def _input_argument(parameter: Parameter) -> TyperArgument:
     type_name = parameter.type_name or "Part[]"
     return _HelpArgument(
         param_decls=["input"],
-        type=str,
+        type=SignatureType(),
         required=not parameter.optional,
         metavar="-- INPUT... | - | ---",
         help=(

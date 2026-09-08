@@ -7,6 +7,8 @@ from typing import Annotated, Any
 import typer
 from typer._click.exceptions import UsageError
 
+from toolang.cli.common.parameters import TextType
+
 from toolang.common.query import CollectionSchema
 from toolang.plugin.models.collections import MODEL_SCHEMA
 from toolang.plugin.toolsets.collections import TOOL_SCHEMA
@@ -19,7 +21,11 @@ COLLECTIONS = ("models", "tools", "psyches", "skills", "services", "prompts")
 def query_command(
     collection: Annotated[
         str | None,
-        typer.Argument(help="Base collection whose query fields to show."),
+        typer.Argument(
+            metavar="COLLECTION",
+            click_type=TextType(),
+            help="Base collection whose query fields to show.",
+        ),
     ] = None,
     json_: Annotated[
         bool,

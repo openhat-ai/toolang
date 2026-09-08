@@ -7,6 +7,14 @@ from typing import Annotated
 
 import typer
 
+from toolang.cli.common.parameters import (
+    AllowOptions,
+    DefaultOptions,
+    LimitOptions,
+    TextType,
+)
+
+
 from toolang.cli.common.context import ModelCatalogOption
 from toolang.cli.common.agent_server import DEVELOPMENT_WHEEL_HELP
 
@@ -16,6 +24,7 @@ def chat_command(
     thread: Annotated[
         str | None,
         typer.Argument(
+            click_type=TextType(),
             help="Thread id to continue. Run id also accepted. Omit to start a new one.",
             metavar="THREAD",
         ),
@@ -24,36 +33,21 @@ def chat_command(
     sandbox: Annotated[
         str | None,
         typer.Option(
-            "--sandbox",
-            help="Execute the session in this sandbox.",
+            "--sandbox", metavar="SANDBOX", help="Execute the session in this sandbox."
         ),
     ] = None,
     dev: Annotated[
         Path | None,
-        typer.Option(
-            "--dev",
-            help=DEVELOPMENT_WHEEL_HELP,
-        ),
+        typer.Option("--dev", metavar="PATH", help=DEVELOPMENT_WHEEL_HELP),
     ] = None,
-    allows: Annotated[
-        list[str] | None,
-        typer.Option("--allow", help="Set COLLECTION=QUERY. Repeat by collection."),
-    ] = None,
-    limits: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--limit",
-            help="Set FIELD=VALUE. Repeat for another field.",
-        ),
-    ] = None,
-    defaults: Annotated[
-        list[str] | None,
-        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
-    ] = None,
+    allows: AllowOptions = None,
+    limits: LimitOptions = None,
+    defaults: DefaultOptions = None,
     compacts: Annotated[
         list[str] | None,
         typer.Option(
             "--compact",
+            metavar="FIELD=VALUE",
             help="Set model=MODEL (optional effort=LEVEL) for a new runtime.",
         ),
     ] = None,

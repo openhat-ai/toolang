@@ -11,6 +11,13 @@ from typing import Annotated, TYPE_CHECKING
 import typer
 from typer._click.exceptions import ClickException
 
+from toolang.cli.common.parameters import (
+    AllowOptions,
+    DefaultOptions,
+    LimitOptions,
+    TextType,
+)
+
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.catalog import MODEL_CATALOG_ENV
 from toolang.cli.common.policy import (
@@ -283,48 +290,44 @@ def run(
     model_catalog: ModelCatalogOption = None,
     sandbox: Annotated[
         str | None,
-        typer.Option(help="Run in this sandbox; defaults to agent config or host."),
-    ] = None,
-    allows: Annotated[
-        list[str] | None,
-        typer.Option("--allow", help="Set COLLECTION=QUERY. Repeat by collection."),
-    ] = None,
-    limits: Annotated[
-        list[str] | None,
         typer.Option(
-            "--limit",
-            help="Set FIELD=VALUE. Repeat for another field.",
+            "--sandbox",
+            metavar="SANDBOX",
+            help="Run in this sandbox; defaults to agent config or host.",
         ),
     ] = None,
-    defaults: Annotated[
-        list[str] | None,
-        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
-    ] = None,
+    allows: AllowOptions = None,
+    limits: LimitOptions = None,
+    defaults: DefaultOptions = None,
     compacts: Annotated[
         list[str] | None,
         typer.Option(
-            "--compact", help="Set model=MODEL (optional effort=LEVEL), or model=unset."
+            "--compact",
+            metavar="FIELD=VALUE",
+            help="Set model=MODEL (optional effort=LEVEL), or model=unset.",
         ),
     ] = None,
     host: Annotated[
-        str, typer.Option(help="Bind the agent API to this host.")
+        str,
+        typer.Option("--host", metavar="HOST", help="Bind the agent API to this host."),
     ] = "127.0.0.1",
     port: Annotated[
-        int | None, typer.Option(help="Bind the agent API to this port.")
+        int | None,
+        typer.Option(
+            "--port", metavar="INTEGER", help="Bind the agent API to this port."
+        ),
     ] = None,
     inboxes: Annotated[
         list[Path] | None,
         typer.Option(
             "--inbox",
+            metavar="PATH",
             help="Watch an inbox directory for file requests. Repeat to watch more than one.",
         ),
     ] = None,
     dev: Annotated[
         Path | None,
-        typer.Option(
-            "--dev",
-            help=DEVELOPMENT_WHEEL_HELP,
-        ),
+        typer.Option("--dev", metavar="PATH", help=DEVELOPMENT_WHEEL_HELP),
     ] = None,
     endpoint_host: Annotated[
         str | None,
@@ -432,48 +435,44 @@ def start(
     model_catalog: ModelCatalogOption = None,
     sandbox: Annotated[
         str | None,
-        typer.Option(help="Run in this sandbox; defaults to agent config or host."),
-    ] = None,
-    allows: Annotated[
-        list[str] | None,
-        typer.Option("--allow", help="Set COLLECTION=QUERY. Repeat by collection."),
-    ] = None,
-    limits: Annotated[
-        list[str] | None,
         typer.Option(
-            "--limit",
-            help="Set FIELD=VALUE. Repeat for another field.",
+            "--sandbox",
+            metavar="SANDBOX",
+            help="Run in this sandbox; defaults to agent config or host.",
         ),
     ] = None,
-    defaults: Annotated[
-        list[str] | None,
-        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
-    ] = None,
+    allows: AllowOptions = None,
+    limits: LimitOptions = None,
+    defaults: DefaultOptions = None,
     compacts: Annotated[
         list[str] | None,
         typer.Option(
-            "--compact", help="Set model=MODEL (optional effort=LEVEL), or model=unset."
+            "--compact",
+            metavar="FIELD=VALUE",
+            help="Set model=MODEL (optional effort=LEVEL), or model=unset.",
         ),
     ] = None,
     host: Annotated[
-        str, typer.Option(help="Bind the agent API to this host.")
+        str,
+        typer.Option("--host", metavar="HOST", help="Bind the agent API to this host."),
     ] = "127.0.0.1",
     port: Annotated[
-        int | None, typer.Option(help="Bind the agent API to this port.")
+        int | None,
+        typer.Option(
+            "--port", metavar="INTEGER", help="Bind the agent API to this port."
+        ),
     ] = None,
     inboxes: Annotated[
         list[Path] | None,
         typer.Option(
             "--inbox",
+            metavar="PATH",
             help="Watch an inbox directory for file requests. Repeat to watch more than one.",
         ),
     ] = None,
     dev: Annotated[
         Path | None,
-        typer.Option(
-            "--dev",
-            help=DEVELOPMENT_WHEEL_HELP,
-        ),
+        typer.Option("--dev", metavar="PATH", help=DEVELOPMENT_WHEEL_HELP),
     ] = None,
     endpoint_host: Annotated[
         str | None,
@@ -586,42 +585,42 @@ def stop(
 
 def serve(
     ctx: typer.Context,
-    agent: Annotated[str, typer.Argument(help="Agent name.")],
+    agent: Annotated[
+        str, typer.Argument(metavar="AGENT", click_type=TextType(), help="Agent name.")
+    ],
     model_catalog: ModelCatalogOption = None,
-    host: Annotated[str, typer.Option(help="API bind host.")] = "127.0.0.1",
+    host: Annotated[
+        str, typer.Option("--host", metavar="HOST", help="API bind host.")
+    ] = "127.0.0.1",
     endpoint_host: Annotated[
         str | None,
-        typer.Option("--endpoint-host", help="Externally visible endpoint host."),
-    ] = None,
-    port: Annotated[int, typer.Option(help="API bind port.")] = 7001,
-    allows: Annotated[
-        list[str] | None,
-        typer.Option("--allow", help="Set COLLECTION=QUERY. Repeat by collection."),
-    ] = None,
-    limits: Annotated[
-        list[str] | None,
         typer.Option(
-            "--limit",
-            help="Set FIELD=VALUE. Repeat for another field.",
+            "--endpoint-host", metavar="HOST", help="Externally visible endpoint host."
         ),
     ] = None,
-    defaults: Annotated[
-        list[str] | None,
-        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
-    ] = None,
+    port: Annotated[
+        int, typer.Option("--port", metavar="INTEGER", help="API bind port.")
+    ] = 7001,
+    allows: AllowOptions = None,
+    limits: LimitOptions = None,
+    defaults: DefaultOptions = None,
     compacts: Annotated[
         list[str] | None,
         typer.Option(
-            "--compact", help="Set model=MODEL (optional effort=LEVEL), or model=unset."
+            "--compact",
+            metavar="FIELD=VALUE",
+            help="Set model=MODEL (optional effort=LEVEL), or model=unset.",
         ),
     ] = None,
     inboxes: Annotated[
         list[Path] | None,
-        typer.Option("--inbox", help="Watch a file inbox. Repeat to watch more."),
+        typer.Option(
+            "--inbox", metavar="PATH", help="Watch a file inbox. Repeat to watch more."
+        ),
     ] = None,
     log_spec: Annotated[
         str | None,
-        typer.Option("--log", help="Python logging specification."),
+        typer.Option("--log", metavar="SPEC", help="Python logging specification."),
     ] = None,
 ) -> None:
     """Run the internal AgentServer entrypoint."""

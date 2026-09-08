@@ -1,7 +1,5 @@
 """Cap subcommands."""
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +8,8 @@ from typing import TYPE_CHECKING, Annotated, Literal
 import typer
 from typer._click.exceptions import ClickException
 from typer.core import TyperGroup
+
+from toolang.cli.common.parameters import TextType
 
 from toolang.cli.common.editor import edit_markdown
 from ...catalog import templates
@@ -207,6 +207,7 @@ def list_caps(
         typer.Option(
             "--query",
             "-q",
+            metavar="QUERY",
             help="Query cap collections. Repeat to add matches; see 'too query'.",
         ),
     ] = None,
@@ -239,12 +240,17 @@ def list_caps(
 def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
     def list_caps(
         ctx: typer.Context,
-        query: list[str] | None = typer.Option(
-            None,
-            "--query",
-            "-q",
-            help=(f"Query {kind}s. Repeat to add matches; see 'too query {kind}s'."),
-        ),
+        query: Annotated[
+            list[str] | None,
+            typer.Option(
+                "--query",
+                "-q",
+                metavar="QUERY",
+                help=(
+                    f"Query {kind}s. Repeat to add matches; see 'too query {kind}s'."
+                ),
+            ),
+        ] = None,
     ) -> None:
         from toolang.state.collections import cap_dataset, cap_table
 
@@ -272,10 +278,13 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
 def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     def new_cap(
         ctx: typer.Context,
-        name: str = typer.Argument(..., help=f"{title} name"),
+        name: Annotated[
+            str,
+            typer.Argument(metavar="NAME", click_type=TextType(), help=f"{title} name"),
+        ],
         template: Annotated[
             str,
-            typer.Option("--template", "-t", help="Template name."),
+            typer.Option("--template", "-t", metavar="NAME", help="Template name."),
         ] = "default",
     ) -> None:
         scope, agent_name = _target_scope(ctx)
@@ -312,7 +321,10 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
 def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     def edit_cap(
         ctx: typer.Context,
-        name: str = typer.Argument(..., help=f"{title} name"),
+        name: Annotated[
+            str,
+            typer.Argument(metavar="NAME", click_type=TextType(), help=f"{title} name"),
+        ],
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
@@ -347,7 +359,10 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
 def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     def add_cap(
         ctx: typer.Context,
-        ref: str = typer.Argument(..., help=f"{title} ref"),
+        ref: Annotated[
+            str,
+            typer.Argument(metavar="REF", click_type=TextType(), help=f"{title} ref"),
+        ],
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
@@ -399,7 +414,10 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
 def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     def remove_cap(
         ctx: typer.Context,
-        name: str = typer.Argument(..., help=f"{title} name"),
+        name: Annotated[
+            str,
+            typer.Argument(metavar="NAME", click_type=TextType(), help=f"{title} name"),
+        ],
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
@@ -430,7 +448,10 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
 def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     def delete_cap(
         ctx: typer.Context,
-        name: str = typer.Argument(..., help=f"{title} name"),
+        name: Annotated[
+            str,
+            typer.Argument(metavar="NAME", click_type=TextType(), help=f"{title} name"),
+        ],
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
@@ -489,11 +510,11 @@ def _target_scope(ctx: typer.Context) -> tuple[MutableScope, str]:
     return "root", "default"
 
 
-def _entry_form(entry: StateCap) -> CapForm:
+def _entry_form(entry: "StateCap") -> CapForm:
     return cap_state.entry_form(entry)
 
 
-def _entry_scope_label(entry: StateCap, *, agent_name: str) -> CapScope:
+def _entry_scope_label(entry: "StateCap", *, agent_name: str) -> CapScope:
     return cap_state.entry_scope(entry, agent_name=agent_name)
 
 
@@ -504,7 +525,7 @@ def _all_cap_entries(
     scope: CapScope | Literal["all"],
     prepare: bool,
     kinds: set[EntryKind],
-) -> tuple[StateCap, ...]:
+) -> "tuple[StateCap, ...]":
     if prepare and (toolang_root / "agents" / agent_name / "agent.too").is_file():
         from ..common.progress import make_cli_progress
 
@@ -531,11 +552,11 @@ def _all_cap_entries(
 
 
 def _state_cap_entries(
-    state: AgentState,
+    state: "AgentState",
     *,
     scope: CapScope | Literal["all"],
     kinds: set[EntryKind],
-) -> tuple[StateCap, ...]:
+) -> "tuple[StateCap, ...]":
     return tuple(
         cap
         for cap in state.caps.values()
@@ -552,7 +573,7 @@ def _named_entry(
     name: str,
     source_origin: Literal["local", "remote"] | None = None,
     source_form: cap_state.CapForm | None = None,
-) -> StateCap:
+) -> "StateCap":
     entries = cap_state.list_entries(
         toolang_root,
         agent_name,
@@ -607,7 +628,7 @@ def _configured_caps(
     )
 
 
-def _make_cap_write_progress() -> CliProgress:
+def _make_cap_write_progress() -> "CliProgress":
     from ..common.progress import make_cli_progress
 
     return make_cli_progress()
@@ -617,7 +638,7 @@ def _refresh_agent_state(
     toolang_root: Path,
     agent_name: str,
     *,
-    progress: CliProgress | None = None,
+    progress: "CliProgress | None" = None,
 ) -> None:
     if progress is not None:
         _prepare_agent_state_with_progress(toolang_root, agent_name, progress)
@@ -629,7 +650,7 @@ def _refresh_agent_state(
 def _prepare_agent_state_with_progress(
     toolang_root: Path,
     agent_name: str,
-    progress: CliProgress,
+    progress: "CliProgress",
 ) -> None:
     try:
         user_call(

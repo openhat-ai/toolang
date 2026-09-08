@@ -53,6 +53,7 @@ def models_command(
         typer.Option(
             "--query",
             "-q",
+            metavar="QUERY",
             help="Query models. Repeat to add matches; see 'too query models'.",
         ),
     ] = None,

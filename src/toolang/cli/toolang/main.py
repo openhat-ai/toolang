@@ -15,10 +15,13 @@ from typer._click import Context
 from typer._click.exceptions import ClickException, NoArgsIsHelpError
 from typer.core import TyperGroup
 
+from toolang.cli.common.parameters import RootOption
+
 from ...catalog.agent import LocalAgents
 from ...common.layout import AgentLayout
 from ...common import version as _version
 from ..common.context import CliContext, resolve_root
+from ..common.help import CliGroup
 from ..common.lazy import LazyCommand, lazy_typer_command, lazy_typer_group
 from ..common.output import echo_error
 from ..common.routing import (
@@ -88,7 +91,7 @@ _VISIBLE_COMMAND_ORDER = (
 _REGISTERED_COMMANDS: dict[str, Callable[[], LazyCommand]] = {}
 
 
-class _ToolangGroup(TyperGroup):
+class _ToolangGroup(CliGroup):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         commands = dict(kwargs.pop("commands", None) or {})
         commands.update(
@@ -145,10 +148,7 @@ def _registered_group(target: str, *, name: str, **kwargs: Any) -> None:
 @app.callback()
 def callback(
     ctx: typer.Context,
-    toolang_root: Annotated[
-        Path | None,
-        typer.Option("--root", "-r", help="Use a custom Toolang root."),
-    ] = None,
+    toolang_root: RootOption = None,
     version: Annotated[
         bool,
         typer.Option(

@@ -398,7 +398,7 @@ def test_runtime_dev_help_describes_wheel_selection() -> None:
         result = runner.invoke(cli.app, command)
 
         assert result.exit_code == 0
-        output = " ".join(strip_ansi(result.stdout).split())
+        output = " ".join(strip_ansi(result.stdout).replace("│", " ").split())
         assert "Install Toolang in a new guest from a wheel" in output
         assert "directories select the newest Toolang wheel" in output
         assert "recursively." in output

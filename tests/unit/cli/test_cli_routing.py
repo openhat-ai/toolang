@@ -304,35 +304,35 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
     (
         (
             ["clone"],
-            "Usage: pytest clone [OPTIONS] {source} [target]",
-            "target",
-            "<str>",
-            "[target]",
+            "Usage: pytest clone [OPTIONS] SOURCE [TARGET]",
+            "TARGET",
+            "TEXT",
+            "[TARGET]",
         ),
         (
             ["chat"],
             "Usage: pytest AGENT chat [OPTIONS] [THREAD]",
             "THREAD",
-            "<str>",
+            "TEXT",
             "[THREAD]",
         ),
         (
             ["chat"],
             "Usage: pytest AGENT chat [OPTIONS] [THREAD]",
-            "agent",
-            "<str>",
+            "AGENT",
             "TEXT",
+            "{AGENT}",
         ),
         (
             ["fmt"],
-            "Usage: pytest fmt [OPTIONS] [paths]...",
-            "paths",
-            "<path>",
-            "[paths]...",
+            "Usage: pytest fmt [OPTIONS] [PATHS]...",
+            "PATHS",
+            "PATH",
+            "[PATHS]...",
         ),
     ),
 )
-def test_cli_argument_panels_show_types_without_changing_usage(
+def test_cli_argument_panels_separate_names_types_and_usage_syntax(
     capsys: pytest.CaptureFixture[str],
     arguments: list[str],
     usage: str,

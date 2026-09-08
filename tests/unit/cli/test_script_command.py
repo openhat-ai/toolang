@@ -530,7 +530,7 @@ def test_script_uses_typer_help_and_authored_docs(
     assert result == 0
     assert (
         "Usage: toolang demo.too demo [OPTIONS] "
-        "{count=Number} [enabled=Boolean] {-- INPUT... | - | ---}" in normalized
+        "count=Number [enabled=Boolean] -- INPUT... | - | ---" in normalized
     )
     assert "Run the documented demo." in stdout
     assert "Arguments" in stdout
@@ -538,10 +538,15 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "enabled=Boolean" in stdout
     assert "[enabled=Boolean]" not in stdout.partition("Arguments")[2]
     assert "Primary Part[] input." in stdout
+    assert "<str>" not in stdout
+    assert "FIELD=VALUE" in stdout
+    assert "COLLECTION=QUERY" in stdout
     assert "--save" in stdout
     assert "--sandbox" in stdout
     assert "--dev" in stdout
-    assert "Save the Run result to PATH, or use - for" in stdout
+    assert "Save the Run result to PATH, or use - for stdout." in " ".join(
+        stdout.replace("│", " ").split()
+    )
     assert "stdout." in stdout
     assert "--verbose" not in stdout
     assert "-v" not in stdout
