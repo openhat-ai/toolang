@@ -14,6 +14,7 @@ from toolang.api.conversion import (
     parse_authored_rerun,
     parse_authored_run,
     parse_authored_retry,
+    parse_input_part,
     parse_user_message,
 )
 from toolang.api.schemas import (
@@ -109,6 +110,7 @@ async def _run_stream(
                     runnable,
                     payload.runnable.input,
                     structs={item.name: item for item in state.modules[module].structs},
+                    part_decoder=parse_input_part,
                 ),
             ),
             request_id=payload.request_id,

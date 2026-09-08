@@ -20,7 +20,7 @@ from toolang.api.schemas import (
     RunCancelRequest,
     RunSteerRequest,
 )
-from toolang.base.types.message import Message
+from toolang.base.types.message import ImagePart, Message, TextPart
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunPolicy
 from toolang.base.types.run import ModelCallResult, ModelUsage
@@ -33,7 +33,7 @@ from toolang.execution.records import (
 from toolang.execution.schemas import RunDetail, RunRequest, RunnableRequest
 from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import CallInput
-from toolang.lang.types import Array
+from toolang.lang.types import Array, Struct
 from toolang.up import AgentCore
 from tests.support.execution_harness import ExecutionHarness, TEST_MODEL_REF
 
@@ -199,6 +199,141 @@ agic chat(_: Text, count: Number, enabled: Boolean, primary: Text, named: Text, 
                 assert response.status_code == 422
                 assert response.json()["detail"] == "duplicate input argument: _"
             assert len(core.store.list_runs(thread_id=thread, limit=None)) == 3
+    finally:
+        asyncio.run(core.close())
+
+
+@pytest.mark.parametrize(
+    "part",
+    [
+        {"type": "text"},
+        {"type": "text", "text": 123},
+        {"type": "text", "text": None},
+        {"type": "text", "text": "hello", "extra": True},
+        {"type": "image", "image_url": 123},
+        {"type": "image", "image_url": "https://example.invalid/image", "detail": None},
+        {"type": "tool_call", "tool_call_id": "call_1", "name": "shell", "input": {}},
+    ],
+)
+def test_direct_http_rejects_invalid_parts_before_acceptance(
+    tmp_path: Path, part: dict[str, object]
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic chat(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[ModelCallResult(message=Message.assistant("done"))],
+    )
+    harness.store.close()
+    core = AgentCore(harness.setup.layout)
+    core.setup = _Snapshot(harness.setup)
+    core.state = _Snapshot(harness.state)
+    app = create_app(core, CapsManager(core.layout), JobsManager(core.layout))
+    try:
+        with TestClient(app) as client:
+            thread = client.post("/api/v1/threads", json={"client": "script"}).json()[
+                "thread"
+            ]["id"]
+            response = client.post(
+                "/api/v1/runs/stream",
+                json={
+                    "thread_id": thread,
+                    "request_id": "invalid_part",
+                    "runnable": {"ref": "agic:chat", "input": {"_": [part]}},
+                    "model": {"ref": TEST_MODEL_REF, "parameters": {}},
+                    "policy": {"allow": [], "limits": {}},
+                },
+            )
+            assert response.status_code == 422, response.text
+            assert core.store.list_runs(thread_id=thread, limit=None) == []
+    finally:
+        asyncio.run(core.close())
+
+
+def test_direct_http_validates_nested_parts_without_reinterpreting_json(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+struct Packet:
+  part: Part
+  data: Json
+
+agic chat(_: Part[], part: Part, rows: Part[][], packet: Packet, data: Json) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: ready
+""",
+        responses=[ModelCallResult(message=Message.assistant("done"))],
+    )
+    harness.store.close()
+    core = AgentCore(harness.setup.layout)
+    core.setup = _Snapshot(harness.setup)
+    core.state = _Snapshot(harness.state)
+    app = create_app(core, CapsManager(core.layout), JobsManager(core.layout))
+    image = {"type": "image", "file_id": "image-1"}
+    data = {"type": "text", "text": 123}
+    values = {
+        "_": ["ready", image],
+        "part": image,
+        "rows": [[image]],
+        "packet": {"part": image, "data": data},
+        "data": data,
+    }
+    invalid = {"type": "text"}
+    try:
+        with TestClient(app) as client:
+            thread = client.post("/api/v1/threads", json={"client": "script"}).json()[
+                "thread"
+            ]["id"]
+            envelope = {
+                "thread_id": thread,
+                "request_id": "nested_parts",
+                "model": {"ref": TEST_MODEL_REF, "parameters": {}},
+                "policy": {"allow": [], "limits": {}},
+            }
+            for change in (
+                {"part": invalid},
+                {"rows": [[invalid]]},
+                {"packet": {"part": invalid, "data": data}},
+            ):
+                response = client.post(
+                    "/api/v1/runs/stream",
+                    json={
+                        **envelope,
+                        "runnable": {"ref": "agic:chat", "input": {**values, **change}},
+                    },
+                )
+                assert response.status_code == 422, response.text
+            assert core.store.list_runs(thread_id=thread, limit=None) == []
+            response = client.post(
+                "/api/v1/runs/stream",
+                json={
+                    **envelope,
+                    "runnable": {"ref": "agic:chat", "input": values},
+                },
+            )
+            assert response.status_code == 200, response.text
+            run_id = str(_sse_events(response.text)[0][1]["run"])
+            control = core.store.get_run_control(run_id=run_id, index=0)
+            assert control is not None and isinstance(
+                control.payload, RunControlPayload
+            )
+            part = ImagePart(file_id="image-1")
+            assert control.payload.input == {
+                "_": Array("Part[]", (TextPart("ready"), part)),
+                "part": part,
+                "rows": Array("Part[][]", (Array("Part[]", (part,)),)),
+                "packet": Struct("Packet", {"part": part, "data": data}),
+                "data": data,
+            }
     finally:
         asyncio.run(core.close())
 

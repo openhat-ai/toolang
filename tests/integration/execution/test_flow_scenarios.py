@@ -72,6 +72,86 @@ def _root_step_kinds(
     ]
 
 
+@pytest.mark.parametrize("value", ["hello", 'quoted "text"'])
+def test_flow_json_arguments_retain_concrete_types_in_content(
+    tmp_path: Path, value: str
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+flow render(_: Text, argument: Json) -> Text:
+  let note =
+    {{argument}}
+""",
+        responses=[],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="flow:render",
+                    primary=(TextPart("input"),),
+                    named={"argument": json.dumps(value)},
+                )
+            )
+            assert run.status == "succeeded", run.error
+            step = harness.store.list_steps(run_id=run.id)[0]
+            assert step.output is not None
+            assert harness.store.resolve_output(step.output).local.value == Array(
+                "Part[]", (TextPart(value),)
+            )
+
+    asyncio.run(scenario())
+
+
+def test_child_input_retains_reference_when_json_contains_text(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+flow child(_: Text, argument: Text) -> Text:
+  let note =
+    {{argument}}
+
+flow parent(_: Text, argument: Json) -> Text:
+  run child
+""",
+        responses=[],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="flow:parent",
+                    primary=(TextPart("input"),),
+                    named={"argument": '"hello"'},
+                )
+            )
+            assert root.status == "succeeded", root.error
+            child = next(
+                run
+                for run in harness.store.list_runs(thread_id=thread, limit=None)
+                if run.parent is not None
+            )
+            control = harness.store.get_run_control(run_id=child.id, index=0)
+            assert control is not None and isinstance(
+                control.payload, RunControlPayload
+            )
+            assert control.payload.input["argument"] == TypedRef(
+                FieldRef.from_path(
+                    ControlRef.for_run(root.id, 0), "payload", "input", "argument"
+                ),
+                "Text",
+            )
+
+    asyncio.run(scenario())
+
+
 def test_model_free_flow_retry_preserves_an_absent_model_request(
     tmp_path: Path,
 ) -> None:

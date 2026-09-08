@@ -1973,9 +1973,7 @@ class _Execution:
         entry_binding = binding
         entry_runnable = runnable
         transferred = False
-        current = (
-            dict(locals) if locals is not None else initial_locals(binding, runnable)
-        )
+        current = dict(locals) if locals is not None else initial_locals(binding)
         statement_start = 0
         step_start = self.next_step(binding.run_id)
         self._preceding_controls.append(

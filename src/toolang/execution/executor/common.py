@@ -501,18 +501,15 @@ def _statement_child_runnable(statement: FlowStmt) -> str | None:
     return None
 
 
-def initial_locals(
-    binding: BoundRun, runnable: AgicDecl | FlowDecl
-) -> dict[str, Local]:
+def initial_locals(binding: BoundRun) -> dict[str, Local]:
     """Build the initial locals for one runnable run."""
 
-    types = {item.name: item.type_name or "Part[]" for item in runnable.params}
-    if runnable.input is not None:
-        types["_"] = runnable.input.type_name or "Part[]"
     locals: dict[str, Local] = {"_": Local()}
     for name, value in binding.input.items():
         if name not in binding.control_input:
             raise RuntimeError(f"run control input missing: {binding.run_id}/{name}")
+        stored = binding.control_input[name]
+        type_name = stored.type if isinstance(stored, TypedRef) else value_type(stored)
         pointer = FieldRef.from_path(
             ControlRef.for_run(binding.run_id, 0), "payload", "input", name
         )
@@ -520,8 +517,8 @@ def initial_locals(
             value,
             "item",
             pointer,
-            types[name],
-            RecordLocal.typed(types[name], pointer),
+            type_name,
+            RecordLocal.typed(type_name, pointer),
         )
     return locals
 

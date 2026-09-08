@@ -297,6 +297,7 @@ def decode_runnable_input(
     input: Mapping[str, object],
     *,
     structs: Mapping[str, StructDecl] | None = None,
+    part_decoder: Callable[[Mapping[str, Any]], Part] = part_from_data,
 ) -> RunnableInput:
     """Decode direct JSON values with the same signature as runtime calls."""
 
@@ -308,7 +309,10 @@ def decode_runnable_input(
         runnable,
         {
             name: decode_json_input(
-                value, parameters[name].type_name or "Part[]", structs=structs or {}
+                value,
+                parameters[name].type_name or "Part[]",
+                structs=structs or {},
+                part_decoder=part_decoder,
             )
             if name in parameters
             else value
@@ -399,10 +403,13 @@ def decode_json_input(
     type_name: str,
     *,
     structs: Mapping[str, StructDecl] | None = None,
+    part_decoder: Callable[[Mapping[str, Any]], Part] = part_from_data,
 ) -> object:
     """Decode one JSON-compatible caller value for a declared input type."""
 
-    return _decode_input_value(value, type_name, structs=structs or {})
+    return _decode_input_value(
+        value, type_name, structs=structs or {}, part_decoder=part_decoder
+    )
 
 
 def coerce_output(
@@ -1066,6 +1073,7 @@ def _decode_input_value(
     type_name: str,
     *,
     structs: Mapping[str, StructDecl],
+    part_decoder: Callable[[Mapping[str, Any]], Part],
 ) -> object:
     """Decode JSON-compatible part values against one declared input type."""
 
@@ -1073,16 +1081,21 @@ def _decode_input_value(
         if isinstance(value, str):
             return (TextPart(value),)
         if isinstance(value, Array | tuple | list):
-            return tuple(_decode_input_part(item) for item in value)
+            return tuple(
+                _decode_input_part(item, part_decoder=part_decoder) for item in value
+            )
         return value
     if type_name == "Part":
-        return _decode_input_part(value)
+        return _decode_input_part(value, part_decoder=part_decoder)
     if type_name.endswith("[]"):
         if not isinstance(value, Array | tuple | list):
             return value
         item_type = type_name[:-2]
         return tuple(
-            _decode_input_value(item, item_type, structs=structs) for item in value
+            _decode_input_value(
+                item, item_type, structs=structs, part_decoder=part_decoder
+            )
+            for item in value
         )
     struct = structs.get(type_name)
     if struct is None or not isinstance(value, Mapping):
@@ -1091,7 +1104,12 @@ def _decode_input_value(
     mapping = cast(Mapping[str, object], value)
     return {
         name: (
-            _decode_input_value(item, fields[name].type_name, structs=structs)
+            _decode_input_value(
+                item,
+                fields[name].type_name,
+                structs=structs,
+                part_decoder=part_decoder,
+            )
             if name in fields
             else item
         )
@@ -1099,14 +1117,16 @@ def _decode_input_value(
     }
 
 
-def _decode_input_part(value: object) -> object:
+def _decode_input_part(
+    value: object, *, part_decoder: Callable[[Mapping[str, Any]], Part]
+) -> object:
     if _is_part(value):
         return value
     if isinstance(value, str):
         return TextPart(value)
     if isinstance(value, Mapping):
         try:
-            return part_from_data(cast(Mapping[str, Any], value))
+            return part_decoder(cast(Mapping[str, Any], value))
         except (TypeError, ValueError) as exc:
             raise ToolangError(str(exc) or type(exc).__name__) from exc
     return value
