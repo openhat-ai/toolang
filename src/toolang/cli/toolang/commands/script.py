@@ -309,8 +309,8 @@ def _runnable_command(
             type=str,
             multiple=True,
             default=(),
-            metavar="FIELD=VALUE",
-            help="Set FIELD=VALUE. Repeat for another field.",
+            metavar="LIMIT_SPEC",
+            help="Set a run limit, e.g. tokens=10000. Repeat for another limit.",
         ),
         TyperOption(
             param_decls=["--model"],

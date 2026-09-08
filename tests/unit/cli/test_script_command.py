@@ -539,7 +539,8 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "[enabled=Boolean]" not in stdout.partition("Arguments")[2]
     assert "Primary Part[] input." in stdout
     assert "<str>" not in stdout
-    assert "FIELD=VALUE" in stdout
+    limit_row = next(line for line in stdout.splitlines() if "--limit" in line.split())
+    assert "LIMIT_SPEC" in limit_row.split()
     assert "COLLECTION=QUERY" in stdout
     assert "--save" in stdout
     assert "--sandbox" in stdout

@@ -46,15 +46,26 @@ LimitOptions = Annotated[
     list[str] | None,
     typer.Option(
         "--limit",
-        metavar="FIELD=VALUE",
-        help="Set FIELD=VALUE. Repeat for another field.",
+        metavar="LIMIT_SPEC",
+        help="Set a run limit, e.g. tokens=10000. Repeat for another limit.",
     ),
 ]
 DefaultOptions = Annotated[
     list[str] | None,
     typer.Option(
         "--default",
-        metavar="FIELD=VALUE",
-        help="Set FIELD=VALUE. Repeat for another field.",
+        metavar="DEFAULT_SPEC",
+        help="Set model=MODEL or runnable=NAME. Repeat for another default.",
+    ),
+]
+CompactOptions = Annotated[
+    list[str] | None,
+    typer.Option(
+        "--compact",
+        metavar="COMPACT_SPEC",
+        help=(
+            "Set model=MODEL (optional effort=LEVEL), or model=unset, "
+            "for a new runtime."
+        ),
     ),
 ]

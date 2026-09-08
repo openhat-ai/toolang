@@ -13,6 +13,7 @@ from typer._click.exceptions import ClickException
 
 from toolang.cli.common.parameters import (
     AllowOptions,
+    CompactOptions,
     DefaultOptions,
     LimitOptions,
     TextType,
@@ -299,14 +300,7 @@ def run(
     allows: AllowOptions = None,
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
-    compacts: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--compact",
-            metavar="FIELD=VALUE",
-            help="Set model=MODEL (optional effort=LEVEL), or model=unset.",
-        ),
-    ] = None,
+    compacts: CompactOptions = None,
     host: Annotated[
         str,
         typer.Option("--host", metavar="HOST", help="Bind the agent API to this host."),
@@ -444,14 +438,7 @@ def start(
     allows: AllowOptions = None,
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
-    compacts: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--compact",
-            metavar="FIELD=VALUE",
-            help="Set model=MODEL (optional effort=LEVEL), or model=unset.",
-        ),
-    ] = None,
+    compacts: CompactOptions = None,
     host: Annotated[
         str,
         typer.Option("--host", metavar="HOST", help="Bind the agent API to this host."),
@@ -604,14 +591,7 @@ def serve(
     allows: AllowOptions = None,
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
-    compacts: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--compact",
-            metavar="FIELD=VALUE",
-            help="Set model=MODEL (optional effort=LEVEL), or model=unset.",
-        ),
-    ] = None,
+    compacts: CompactOptions = None,
     inboxes: Annotated[
         list[Path] | None,
         typer.Option(
@@ -620,7 +600,7 @@ def serve(
     ] = None,
     log_spec: Annotated[
         str | None,
-        typer.Option("--log", metavar="SPEC", help="Python logging specification."),
+        typer.Option("--log", metavar="LOG_SPEC", help="Python logging specification."),
     ] = None,
 ) -> None:
     """Run the internal AgentServer entrypoint."""

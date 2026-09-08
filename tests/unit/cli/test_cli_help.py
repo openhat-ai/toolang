@@ -37,6 +37,25 @@ def test_prompt_help_uses_conventional_metavars(main, tmp_path, capsys, monkeypa
     assert "NAME" in next(line for line in output.splitlines() if "--template" in line)
 
 
+@pytest.mark.parametrize(
+    ("arguments", "options"),
+    [
+        (["a", "run"], ("--limit", "--default", "--compact")),
+        (["a", "start"], ("--limit", "--default", "--compact")),
+        (["a", "chat"], ("--limit", "--default", "--compact")),
+        (["a", "retry"], ("--limit",)),
+        (["a", "rerun"], ("--limit",)),
+        (["serve", "a"], ("--limit", "--default", "--compact", "--log")),
+    ],
+)
+def test_policy_help_distinguishes_specifications(arguments, options, tmp_path, capsys):
+    assert too_main(["--root", str(tmp_path), *arguments, "--help"]) == 0
+    output = strip_ansi(capsys.readouterr().out)
+    for option in options:
+        row = next(line for line in output.splitlines() if option in line.split())
+        assert f"{option.removeprefix('--').upper()}_SPEC" in row.split()
+
+
 @pytest.mark.parametrize("main", [too_main, caps_main])
 def test_error_help_path_excludes_virtual_arguments(
     main, tmp_path, capsys, monkeypatch
