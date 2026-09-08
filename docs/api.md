@@ -228,8 +228,10 @@ The synopsis omits `[ARGS]` when there are no named parameters and
 `INPUT` when the signature forbids primary input. Input is required whenever
 accepted; it has no brackets or ellipsis, even when supplied via stdin. The
 **Arguments** panel uses Typer's native rendering. Named parameters use
-`name=ARGUMENT` metavars, with uppercase authored types and any parameter doc
-comments. INPUT is last, with capture guidance in its help. Typer controls type
+`name=ARGUMENT` metavars, with uppercase authored types and parameter doc
+comments or `Named input, or simply argument`. INPUT is last, with an authored
+description or `Primary input, or simply input`, followed by
+`- from stdin, -- starts input`. Typer controls type
 visibility and required markers; `[ARGS]` does not make required named arguments
 optional.
 

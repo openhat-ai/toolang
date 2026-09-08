@@ -213,10 +213,11 @@ The **Arguments** panel uses Typer's native parameter rendering. Named
 parameters appear in signature order as `name=ARGUMENT`, with uppercase authored
 types in the type column and any parameter doc comments in the help column.
 Typer controls type visibility, wrapping, and required markers, including its
-native suppression of Boolean type labels. Missing named parameter docs stay
-blank. The last row is `INPUT` when primary input is accepted, with its type
-and capture guidance in the argument's help. Arguments may be supplied in any
-order, interspersed with command options, before input.
+native suppression of Boolean type labels. Missing docs use `Named input, or
+simply argument` for named parameters and `Primary input, or simply input` for
+INPUT. The INPUT row is last when primary input is accepted, and appends
+`- from stdin, -- starts input` to its description. Arguments may be supplied
+in any order, interspersed with command options, before input.
 
 | Form | Behavior |
 | --- | --- |

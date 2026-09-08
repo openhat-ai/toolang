@@ -857,6 +857,7 @@ def test_script_help_groups_signature_categories(
         label = f"{name}=ARGUMENT"
         # Typer suppresses the Boolean metavar in its native renderer.
         row = label if type_name == "Boolean" else f"{label} {type_name.upper()}"
+        row += " Named input, or simply argument"
         assert row in panel
         assert (f"{row} [required]" in panel) is required
         positions.append(panel.index(label))
@@ -864,10 +865,9 @@ def test_script_help_groups_signature_categories(
     assert "Arguments may appear" not in panel
     if input_type:
         label = "INPUT" if input_type == "Boolean" else f"INPUT {input_type.upper()}"
-        assert f"{label} Text after arguments and options;" in panel
+        assert f"{label} Primary input, or simply input;" in panel
         positions.append(panel.index(label))
-        assert "-- explicitly starts text; - reads stdin to EOF." in panel
-        assert "Omit text to read piped or redirected stdin. [required]" in panel
+        assert "- from stdin, -- starts input [required]" in panel
     else:
         assert "stdin" not in output and "TEXT..." not in output
     assert positions == sorted(positions)

@@ -40,7 +40,13 @@ def test_runnable_parameters_follow_the_authored_signature(
         for param in parameters
     ] == expected
     assert all(type(param) is TyperArgument for param in parameters)
-    assert all(param.help is None and not param.show_default for param in parameters)
+    assert [param.help for param in parameters] == [
+        "Primary input, or simply input"
+        if name == "_"
+        else "Named input, or simply argument"
+        for name, *_ in expected
+    ]
+    assert all(not param.show_default for param in parameters)
 
 
 @pytest.mark.parametrize("kind", [AgicDecl, FlowDecl])

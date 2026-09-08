@@ -31,6 +31,7 @@ def runnable_parameters(
     """Build named arguments in signature order, followed by accepted input.
 
     Names, authored types, requiredness, and docs come from the runnable.
+    Missing docs fall back to the input/argument terminology.
     Commands supply any input-capture help and own capture and coercion.
     """
     arguments = [_argument(parameter) for parameter in runnable.params]
@@ -41,15 +42,21 @@ def runnable_parameters(
 
 def _argument(parameter: Parameter, *, input_help: str | None = None) -> TyperArgument:
     primary = parameter.name == "_"
-    help_text = (parameter.doc or "").strip()
+    doc = (parameter.doc or "").strip()
+    help_text = doc or (
+        "Primary input, or simply input"
+        if primary
+        else "Named input, or simply argument"
+    )
     if primary and input_help:
-        help_text = f"{help_text} {input_help}".strip()
+        separator = " " if doc else "; "
+        help_text = f"{help_text}{separator}{input_help}"
     annotation = Annotated[
         str,
         typer.Argument(
             metavar="INPUT" if primary else f"{parameter.name}=ARGUMENT",
             click_type=_InputType(parameter.type_name or "Part[]"),
-            help=help_text or None,
+            help=help_text,
             show_default=False,
         ),
     ]

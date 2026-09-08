@@ -514,10 +514,7 @@ def _runnable_command(
         command._flow = runnable if isinstance(runnable, FlowDecl) else None
         arguments = runnable_parameters(
             runnable,
-            input_help=(
-                "Text after arguments and options; -- explicitly starts text; "
-                "- reads stdin to EOF. Omit text to read piped or redirected stdin."
-            ),
+            input_help="- from stdin, -- starts input",
         )
         command.params[-1:-1] = [_HelpArgument(argument) for argument in arguments]
     return command

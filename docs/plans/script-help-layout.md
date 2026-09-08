@@ -89,9 +89,8 @@ named parameters in signature order; INPUT is last. Authored type labels are
 uppercase. This example illustrates the information, not a custom table layout:
 
 ```text
-*  topic=ARGUMENT  TEXT [required]    Topic description.
-   abc=ARGUMENT    BOOLEAN           Argument description.
-*  INPUT           PART[] [required]  Input description.
+*  topic=ARGUMENT  PART[]  Named input, or simply argument [required]
+*  INPUT           PART[]  Primary input, or simply input; - from stdin, -- starts input [required]
 ```
 
 Let Typer determine columns, widths, colors, wrapping, and required-marker
@@ -102,13 +101,13 @@ the illustrative column positions or labels.
 `ARGUMENT` is the literal placeholder in named metavars, not a type or a new
 argument syntax. Actual invocation still uses `topic=value`. Optional rows
 have neither `*` nor `[required]`; do not insert `Optional.` as a description.
-Use existing parameter doc metadata when present; otherwise leave named
-descriptions blank. Do not add language syntax for parameter documentation.
+Use existing parameter doc metadata when present; otherwise use `Named input,
+or simply argument` for named parameters and `Primary input, or simply input`
+for INPUT. Do not add language syntax for parameter documentation.
 
-The INPUT argument's help includes its capture instructions: `Text after
-arguments and options; -- explicitly starts text; - reads stdin to EOF.
-Omit text to read piped or redirected stdin.` Preserve an authored
-input description before these instructions when available. No explanatory
+The INPUT argument's help appends `- from stdin, -- starts input` to its
+description. Use a semicolon after the default description, or a space after
+an authored input description. No explanatory
 paragraph follows the argument rows. Omit INPUT and its instructions when the
 signature forbids primary input; omit the panel for empty signatures.
 
