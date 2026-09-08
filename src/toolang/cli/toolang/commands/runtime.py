@@ -11,6 +11,14 @@ from typing import Annotated, TYPE_CHECKING
 import typer
 from typer._click.exceptions import ClickException
 
+from toolang.cli.common.parameters import (
+    AllowOptions,
+    CompactModelOption,
+    DefaultOptions,
+    LimitOptions,
+    TextType,
+)
+
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.catalog import MODEL_CATALOG_ENV
 from toolang.cli.common.policy import (
@@ -61,7 +69,7 @@ class _RoamingFileOptions:
     inboxes: tuple[Path, ...]
     allows: tuple[str, ...]
     defaults: tuple[str, ...]
-    compacts: tuple[str, ...]
+    compact_model: str | None
     limits: tuple[str, ...]
     host: str
     endpoint_host: str | None
@@ -130,7 +138,9 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
                     ceiling_overrides=ceiling_overrides,
                     default_overrides=default_overrides,
                     compact_override=user_call(
-                        resolve_compact_override, log_plan.environ, options.compacts
+                        resolve_compact_override,
+                        log_plan.environ,
+                        options.compact_model,
                     ),
                     limit_overrides=limit_overrides,
                     file_inboxes=options.inboxes,
@@ -191,7 +201,7 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
     inboxes: list[Path] = []
     allows: list[str] = []
     defaults: list[str] = []
-    compacts: list[str] = []
+    compact_model: str | None = None
     limits: list[str] = []
     host = "127.0.0.1"
     endpoint_host: str | None = None
@@ -206,7 +216,7 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
             "--inbox",
             "--allow",
             "--default",
-            "--compact",
+            "--compact-model",
             "--limit",
             "--host",
             "--endpoint-host",
@@ -224,8 +234,8 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
                 allows.append(value)
             elif option == "--default":
                 defaults.append(value)
-            elif option == "--compact":
-                compacts.append(value)
+            elif option == "--compact-model":
+                compact_model = value
             elif option == "--limit":
                 limits.append(value)
             elif option == "--host":
@@ -257,7 +267,7 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
         inboxes=tuple(inboxes),
         allows=tuple(allows),
         defaults=tuple(defaults),
-        compacts=tuple(compacts),
+        compact_model=compact_model,
         limits=tuple(limits),
         host=host,
         endpoint_host=endpoint_host,
@@ -283,48 +293,35 @@ def run(
     model_catalog: ModelCatalogOption = None,
     sandbox: Annotated[
         str | None,
-        typer.Option(help="Run in this sandbox; defaults to agent config or host."),
-    ] = None,
-    allows: Annotated[
-        list[str] | None,
-        typer.Option("--allow", help="Set COLLECTION=QUERY. Repeat by collection."),
-    ] = None,
-    limits: Annotated[
-        list[str] | None,
         typer.Option(
-            "--limit",
-            help="Set FIELD=VALUE. Repeat for another field.",
+            "--sandbox",
+            metavar="SANDBOX_SPEC",
+            help="Run in this sandbox; defaults to agent config or host.",
         ),
     ] = None,
-    defaults: Annotated[
-        list[str] | None,
-        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
-    ] = None,
-    compacts: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--compact", help="Set model=MODEL (optional effort=LEVEL), or model=unset."
-        ),
-    ] = None,
+    allows: AllowOptions = None,
+    limits: LimitOptions = None,
+    defaults: DefaultOptions = None,
+    compact_model: CompactModelOption = None,
     host: Annotated[
-        str, typer.Option(help="Bind the agent API to this host.")
+        str,
+        typer.Option("--host", metavar="HOST", help="Bind the agent API to this host."),
     ] = "127.0.0.1",
     port: Annotated[
-        int | None, typer.Option(help="Bind the agent API to this port.")
+        int | None,
+        typer.Option("--port", metavar="PORT", help="Bind the agent API to this port."),
     ] = None,
     inboxes: Annotated[
         list[Path] | None,
         typer.Option(
             "--inbox",
+            metavar="PATH",
             help="Watch an inbox directory for file requests. Repeat to watch more than one.",
         ),
     ] = None,
     dev: Annotated[
         Path | None,
-        typer.Option(
-            "--dev",
-            help=DEVELOPMENT_WHEEL_HELP,
-        ),
+        typer.Option("--dev", metavar="PATH", help=DEVELOPMENT_WHEEL_HELP),
     ] = None,
     endpoint_host: Annotated[
         str | None,
@@ -357,7 +354,7 @@ def run(
                 sandbox=sandbox,
                 allows=allows,
                 defaults=defaults,
-                compacts=compacts,
+                compact_model=compact_model,
                 limits=limits,
                 inboxes=inboxes,
                 port=port,
@@ -432,48 +429,35 @@ def start(
     model_catalog: ModelCatalogOption = None,
     sandbox: Annotated[
         str | None,
-        typer.Option(help="Run in this sandbox; defaults to agent config or host."),
-    ] = None,
-    allows: Annotated[
-        list[str] | None,
-        typer.Option("--allow", help="Set COLLECTION=QUERY. Repeat by collection."),
-    ] = None,
-    limits: Annotated[
-        list[str] | None,
         typer.Option(
-            "--limit",
-            help="Set FIELD=VALUE. Repeat for another field.",
+            "--sandbox",
+            metavar="SANDBOX_SPEC",
+            help="Run in this sandbox; defaults to agent config or host.",
         ),
     ] = None,
-    defaults: Annotated[
-        list[str] | None,
-        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
-    ] = None,
-    compacts: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--compact", help="Set model=MODEL (optional effort=LEVEL), or model=unset."
-        ),
-    ] = None,
+    allows: AllowOptions = None,
+    limits: LimitOptions = None,
+    defaults: DefaultOptions = None,
+    compact_model: CompactModelOption = None,
     host: Annotated[
-        str, typer.Option(help="Bind the agent API to this host.")
+        str,
+        typer.Option("--host", metavar="HOST", help="Bind the agent API to this host."),
     ] = "127.0.0.1",
     port: Annotated[
-        int | None, typer.Option(help="Bind the agent API to this port.")
+        int | None,
+        typer.Option("--port", metavar="PORT", help="Bind the agent API to this port."),
     ] = None,
     inboxes: Annotated[
         list[Path] | None,
         typer.Option(
             "--inbox",
+            metavar="PATH",
             help="Watch an inbox directory for file requests. Repeat to watch more than one.",
         ),
     ] = None,
     dev: Annotated[
         Path | None,
-        typer.Option(
-            "--dev",
-            help=DEVELOPMENT_WHEEL_HELP,
-        ),
+        typer.Option("--dev", metavar="PATH", help=DEVELOPMENT_WHEEL_HELP),
     ] = None,
     endpoint_host: Annotated[
         str | None,
@@ -504,7 +488,7 @@ def start(
                 sandbox=sandbox,
                 allows=allows,
                 defaults=defaults,
-                compacts=compacts,
+                compact_model=compact_model,
                 limits=limits,
                 inboxes=inboxes,
                 port=port,
@@ -586,42 +570,35 @@ def stop(
 
 def serve(
     ctx: typer.Context,
-    agent: Annotated[str, typer.Argument(help="Agent name.")],
+    agent: Annotated[
+        str, typer.Argument(metavar="AGENT", click_type=TextType(), help="Agent name.")
+    ],
     model_catalog: ModelCatalogOption = None,
-    host: Annotated[str, typer.Option(help="API bind host.")] = "127.0.0.1",
+    host: Annotated[
+        str, typer.Option("--host", metavar="HOST", help="API bind host.")
+    ] = "127.0.0.1",
     endpoint_host: Annotated[
         str | None,
-        typer.Option("--endpoint-host", help="Externally visible endpoint host."),
-    ] = None,
-    port: Annotated[int, typer.Option(help="API bind port.")] = 7001,
-    allows: Annotated[
-        list[str] | None,
-        typer.Option("--allow", help="Set COLLECTION=QUERY. Repeat by collection."),
-    ] = None,
-    limits: Annotated[
-        list[str] | None,
         typer.Option(
-            "--limit",
-            help="Set FIELD=VALUE. Repeat for another field.",
+            "--endpoint-host", metavar="HOST", help="Externally visible endpoint host."
         ),
     ] = None,
-    defaults: Annotated[
-        list[str] | None,
-        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
-    ] = None,
-    compacts: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--compact", help="Set model=MODEL (optional effort=LEVEL), or model=unset."
-        ),
-    ] = None,
+    port: Annotated[
+        int, typer.Option("--port", metavar="PORT", help="API bind port.")
+    ] = 7001,
+    allows: AllowOptions = None,
+    limits: LimitOptions = None,
+    defaults: DefaultOptions = None,
+    compact_model: CompactModelOption = None,
     inboxes: Annotated[
         list[Path] | None,
-        typer.Option("--inbox", help="Watch a file inbox. Repeat to watch more."),
+        typer.Option(
+            "--inbox", metavar="PATH", help="Watch a file inbox. Repeat to watch more."
+        ),
     ] = None,
     log_spec: Annotated[
         str | None,
-        typer.Option("--log", help="Python logging specification."),
+        typer.Option("--log", metavar="LOG_SPEC", help="Python logging specification."),
     ] = None,
 ) -> None:
     """Run the internal AgentServer entrypoint."""
@@ -642,7 +619,7 @@ def serve(
         port=port,
         ceiling_overrides=user_call(resolve_ceiling_overrides, {}, allows),
         default_overrides=user_call(resolve_default_overrides, {}, defaults),
-        compact_override=user_call(resolve_compact_override, environ, compacts),
+        compact_override=user_call(resolve_compact_override, environ, compact_model),
         limit_overrides=user_call(resolve_limit_overrides, {}, limits),
         file_inboxes=inboxes,
         log_spec=log_spec,
@@ -671,7 +648,7 @@ def resolve_startup(
     endpoint_host: str | None,
     dev: Path | None,
     background: bool,
-    compacts: list[str] | None = None,
+    compact_model: str | None = None,
 ) -> RuntimeLaunch:
     from toolang.up import sandbox as sandbox_runtime
 
@@ -718,7 +695,7 @@ def resolve_startup(
             ceiling_overrides=ceiling_overrides,
             default_overrides=default_overrides,
             compact_override=user_call(
-                resolve_compact_override, log_plan.environ, compacts
+                resolve_compact_override, log_plan.environ, compact_model
             ),
             limit_overrides=limit_overrides,
             file_inboxes=inboxes,

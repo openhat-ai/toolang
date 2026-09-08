@@ -37,6 +37,7 @@ def list_tools(
         typer.Option(
             "--query",
             "-q",
+            metavar="QUERY",
             help="Query tools. Repeat to add matches; see 'too query tools'.",
         ),
     ] = None,

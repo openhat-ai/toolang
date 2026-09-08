@@ -12,6 +12,8 @@ from typing import Annotated
 import typer
 from typer._click.exceptions import ClickException, NoArgsIsHelpError
 
+from toolang.cli.common.parameters import RootOption
+
 from ...up.logging import configure_logging
 from ...common.version import toolang_version
 from ..common.context import CliContext, resolve_root
@@ -44,10 +46,7 @@ app = typer.Typer(
 @app.callback()
 def callback(
     ctx: typer.Context,
-    toolang_root: Annotated[
-        Path | None,
-        typer.Option("--root", "-r", help="Use a custom Toolang root."),
-    ] = None,
+    toolang_root: RootOption = None,
     version: Annotated[
         bool,
         typer.Option(

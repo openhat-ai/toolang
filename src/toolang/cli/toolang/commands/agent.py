@@ -12,6 +12,8 @@ from typing import Annotated, cast
 import typer
 from typer._click.exceptions import ClickException
 
+from toolang.cli.common.parameters import TextType
+
 from toolang.catalog.job import AuthoredJobs
 from toolang.catalog.agent import LocalAgents
 from toolang.common.layout import AgentLayout
@@ -45,10 +47,12 @@ from . import plugin
 
 def new_agent(
     ctx: typer.Context,
-    agent: Annotated[str, typer.Argument(help="Agent name")],
+    agent: Annotated[
+        str, typer.Argument(metavar="AGENT", click_type=TextType(), help="Agent name")
+    ],
     template: Annotated[
         str,
-        typer.Option("--template", "-t", help="Template name."),
+        typer.Option("--template", "-t", metavar="NAME", help="Template name."),
     ] = "default",
 ) -> None:
     root = context_root(ctx)
@@ -67,8 +71,18 @@ def new_agent(
 
 def clone_agent(
     ctx: typer.Context,
-    source: Annotated[str, typer.Argument(help="Agent source selector.")],
-    target: Annotated[str | None, typer.Argument(help="New local agent name.")] = None,
+    source: Annotated[
+        str,
+        typer.Argument(
+            metavar="SOURCE", click_type=TextType(), help="Agent source selector."
+        ),
+    ],
+    target: Annotated[
+        str | None,
+        typer.Argument(
+            metavar="TARGET", click_type=TextType(), help="New local agent name."
+        ),
+    ] = None,
 ) -> None:
     root = context_root(ctx)
     try:
@@ -104,7 +118,9 @@ def clone_agent(
 
 def remove_agent(
     ctx: typer.Context,
-    agent: Annotated[str, typer.Argument(help="Agent name")],
+    agent: Annotated[
+        str, typer.Argument(metavar="AGENT", click_type=TextType(), help="Agent name")
+    ],
 ) -> None:
     from toolang.up import sandbox as sandbox_runtime
 

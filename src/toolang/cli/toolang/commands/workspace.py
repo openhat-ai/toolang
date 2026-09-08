@@ -7,6 +7,9 @@ from typing import Annotated
 
 import typer
 
+from toolang.cli.common.parameters import PathType, TextType
+
+
 from toolang.state.config import ConfiguredWorkspaces
 from ...common.context import context_layout, require_prefix_agent, user_call
 from ...common.output import echo_table
@@ -44,10 +47,17 @@ def workspace_app() -> typer.Typer:
 
 def add_workspace(
     ctx: typer.Context,
-    path: Annotated[Path, typer.Argument(help="Existing directory path.")],
+    path: Annotated[
+        Path,
+        typer.Argument(
+            metavar="PATH", click_type=PathType(), help="Existing directory path."
+        ),
+    ],
     name: Annotated[
         str | None,
-        typer.Option("--name", help="Workspace name, normalized to kebab case."),
+        typer.Option(
+            "--name", metavar="NAME", help="Workspace name, normalized to kebab case."
+        ),
     ] = None,
 ) -> None:
     require_prefix_agent(ctx)
@@ -73,7 +83,10 @@ def list_workspaces(ctx: typer.Context) -> None:
 
 def remove_workspace(
     ctx: typer.Context,
-    name: Annotated[str, typer.Argument(help="Workspace name.")],
+    name: Annotated[
+        str,
+        typer.Argument(metavar="NAME", click_type=TextType(), help="Workspace name."),
+    ],
 ) -> None:
     require_prefix_agent(ctx)
     configured = ConfiguredWorkspaces(context_layout(ctx).config)

@@ -236,14 +236,14 @@ Behavior:
 - TTY progress uses color and live replacement; non-TTY progress is stable,
   append-only, and contains no ANSI control sequences
 - `-q` or `--quiet` suppresses prepare and execution progress
-- `--sandbox SELECTOR` selects the execution sandbox for this invocation; an
+- `--sandbox SANDBOX_SPEC` selects the execution sandbox for this invocation; an
   already-running compatible AgentServer is attached instead
 - `--dev PATH` installs Toolang in a newly started guest from one wheel; a
   directory selects its newest Toolang wheel recursively
-- `--model MODEL_BODY` supplies an invocation model identity and typed
+- `--model MODEL_SPEC` supplies an invocation model identity and typed
   parameters, for example `--model 'openai/gpt-5 effort=high'`
-- `--limit FIELD=VALUE` overrides one run-limit field; it may be repeated
-- `--allow COLLECTION=QUERY` sets one of `models`, `tools`, `psyches`, `skills`,
+- `--limit LIMIT=VALUE` overrides one run limit; it may be repeated
+- `--allow RESOURCE=QUERY` sets one of `models`, `tools`, `psyches`, `skills`,
   `services`, or `prompts` and may be repeated
 - host execution remains embedded when no AgentServer is active; a selected
   non-host sandbox starts a temporary AgentServer and cleans it up after the run
@@ -536,10 +536,13 @@ each action and outcome as an append-only plain-text line. The stable
 `Agent NAME running: ...` and `Agent NAME started: ...` result lines are written
 only after readiness succeeds.
 
-Both commands accept repeatable `--allow COLLECTION=QUERY`,
-`--limit FIELD=VALUE`, and `--default FIELD=VALUE` options. The CLI parses these
+Both commands accept repeatable `--allow RESOURCE=QUERY`,
+`--limit LIMIT=VALUE`, and `--default SETTING=VALUE` options. The CLI parses these
 with `TOOLANG_ALLOW_*`, `TOOLANG_DEFAULT_*`, and `TOOLANG_LIMIT_*` into frozen
 field overrides passed to `SetupWatcher`.
+
+`--compact-model MODEL_SPEC` selects the new runtime's compaction model,
+using the same model expression as `--model`, without a `model=` prefix.
 
 Setup policy uses the following TOML shape in root and agent-home `config.toml`
 files:
@@ -1053,9 +1056,10 @@ Both run-streaming endpoints return the canonical `RunEvent` SSE protocol. A Web
 that needs another presentation shape adapts these events client-side; the API
 does not maintain a second chat event vocabulary.
 
-The CLI command for interactive chat is `toolang <agent> chat [thread]
-[--sandbox <selector>] [--default FIELD=VALUE]
-[--allow COLLECTION=QUERY] [--limit FIELD=VALUE]`.
+The CLI command for interactive chat is `toolang AGENT chat [THREAD]
+[--sandbox SANDBOX_SPEC] [--default SETTING=VALUE]
+[--allow RESOURCE=QUERY] [--limit LIMIT=VALUE]
+[--compact-model MODEL_SPEC]`.
 Without a thread id, the TUI creates a terminal chat thread on first input. With
 a thread id, it continues that thread. A stopped resident, roaming agent, or
 visiting agent uses embedded execution through `LocalRunClient`. A healthy

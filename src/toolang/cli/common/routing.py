@@ -12,6 +12,8 @@ from typer._click.exceptions import MissingParameter
 from typer.core import TyperArgument, TyperCommand, TyperGroup
 
 from .context import CliContext
+from .parameters import TextType
+from .help import CliCommand, CliGroup, parameter_usage
 
 
 def extract_root_args(
@@ -81,7 +83,7 @@ def explicit_agent(token: str) -> str | None:
 setattr(rich_utils, "STYLE_HELPTEXT", "")
 
 
-class PrefixAgentCommand(TyperCommand):
+class PrefixAgentCommand(CliCommand):
     """Render one virtual prefix-agent argument in help output."""
 
     prefix_agent_metavar = "[AGENT]"
@@ -93,6 +95,8 @@ class PrefixAgentCommand(TyperCommand):
     def _prefix_agent_argument(self) -> TyperArgument:
         return _HelpOnlyTyperArgument(
             param_decls=["agent"],
+            metavar="AGENT",
+            type=TextType(),
             required=False,
             default=None,
             expose_value=False,
@@ -110,7 +114,7 @@ class PrefixAgentCommand(TyperCommand):
             ctx.exit()
 
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        command_path = _strip_help_only_agent_metavars(ctx.command_path)
+        command_path = ctx.command_path
         root_name, _, remainder = command_path.partition(" ")
         prefix_path = (
             f"{root_name} {self.prefix_agent_metavar} {remainder}"
@@ -119,17 +123,28 @@ class PrefixAgentCommand(TyperCommand):
         )
         pieces = [self.options_metavar] if self.options_metavar else []
         for param in self._real_params(ctx):
-            pieces.extend(param.get_usage_pieces(ctx))
+            pieces.extend(parameter_usage(param, ctx))
         formatter.write_usage(prefix_path, " ".join(pieces))
 
 
-class RequiredPrefixAgentGroup(TyperGroup):
+class RequiredPrefixAgentGroup(CliGroup):
     """Render required AGENT between the CLI root and a command group."""
 
     prefix_agent_metavar = "AGENT"
 
+    def get_params(self, ctx: Context) -> list[Parameter]:
+        agent = _HelpOnlyTyperArgument(
+            param_decls=["agent"],
+            metavar="AGENT",
+            type=TextType(),
+            required=True,
+            expose_value=False,
+            help="Agent name.",
+        )
+        return [agent, *super().get_params(ctx)]
+
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        command_path = _strip_help_only_agent_metavars(ctx.command_path)
+        command_path = ctx.command_path
         root_name, _, remainder = command_path.partition(" ")
         prefix_path = (
             f"{root_name} {self.prefix_agent_metavar} {remainder}"
@@ -139,7 +154,7 @@ class RequiredPrefixAgentGroup(TyperGroup):
         pieces = [self.options_metavar] if self.options_metavar else []
         pieces.append(self.subcommand_metavar or "[SUBCOMMAND]")
         for param in self.get_params(ctx):
-            pieces.extend(param.get_usage_pieces(ctx))
+            pieces.extend(parameter_usage(param, ctx))
         formatter.write_usage(prefix_path, " ".join(pieces))
 
 
@@ -147,7 +162,7 @@ class PrefixAgentJobGroup(RequiredPrefixAgentGroup):
     """Render required AGENT for the existing task and chore groups."""
 
 
-class OptionalPrefixAgentGroup(TyperGroup):
+class OptionalPrefixAgentGroup(CliGroup):
     """Render optional AGENT between the runnable and command path."""
 
     prefix_agent_metavar = "[AGENT]"
@@ -159,6 +174,8 @@ class OptionalPrefixAgentGroup(TyperGroup):
     def _prefix_agent_argument(self) -> TyperArgument:
         return _HelpOnlyTyperArgument(
             param_decls=["agent"],
+            metavar="AGENT",
+            type=TextType(),
             required=False,
             default=None,
             expose_value=False,
@@ -169,7 +186,7 @@ class OptionalPrefixAgentGroup(TyperGroup):
         return [self._prefix_agent_argument(), *self._real_params(ctx)]
 
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        command_path = _strip_help_only_agent_metavars(ctx.command_path)
+        command_path = ctx.command_path
         root_name, _, remainder = command_path.partition(" ")
         prefix_path = (
             f"{root_name} {self.prefix_agent_metavar} {remainder}"
@@ -200,6 +217,8 @@ class RequiredPrefixAgentCommand(PrefixAgentCommand):
     def _prefix_agent_argument(self) -> TyperArgument:
         return _HelpOnlyTyperArgument(
             param_decls=["agent"],
+            metavar="AGENT",
+            type=TextType(),
             required=True,
             default=None,
             expose_value=False,
@@ -216,7 +235,7 @@ class RequiredPrefixAgentCommand(PrefixAgentCommand):
         return PrefixAgentCommand.parse_args(self, ctx, args)
 
 
-class RuntimeAgentCommand(TyperCommand):
+class RuntimeAgentCommand(CliCommand):
     """Render one required agent argument before the command name in help."""
 
     usage_agent_metavar = "AGENT"
@@ -235,6 +254,8 @@ class RuntimeAgentCommand(TyperCommand):
     def _help_agent_argument(self) -> TyperArgument:
         return _HelpOnlyTyperArgument(
             param_decls=["agent"],
+            metavar="AGENT",
+            type=TextType(),
             required=True,
             default=None,
             expose_value=False,
@@ -253,7 +274,7 @@ class RuntimeAgentCommand(TyperCommand):
         )
         pieces = [self.options_metavar] if self.options_metavar else []
         for param in self._visible_real_params(ctx):
-            pieces.extend(param.get_usage_pieces(ctx))
+            pieces.extend(parameter_usage(param, ctx))
         formatter.write_usage(prefix_path, " ".join(pieces))
 
 
@@ -263,7 +284,7 @@ class RunAgentCommand(RuntimeAgentCommand):
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
         pieces = [self.options_metavar] if self.options_metavar else []
         for param in self._visible_real_params(ctx):
-            pieces.extend(param.get_usage_pieces(ctx))
+            pieces.extend(parameter_usage(param, ctx))
         pieces.append(self.usage_agent_metavar)
         formatter.write_usage(ctx.command_path, " ".join(pieces))
 
@@ -276,6 +297,8 @@ class OptionalPrefixAgentTemplateCommand(OptionalPrefixAgentCommand):
     def _help_template_argument(self) -> TyperArgument:
         return _HelpOnlyTyperArgument(
             param_decls=["name"],
+            metavar="NAME",
+            type=TextType(),
             required=False,
             default=None,
             expose_value=False,
@@ -293,9 +316,9 @@ class OptionalPrefixAgentTemplateCommand(OptionalPrefixAgentCommand):
 class _HelpOnlyTyperArgument(TyperArgument):
     """One help-only argument that never participates in parsing."""
 
-    def make_metavar(self, ctx: Context, *, usage: bool = False) -> str:
-        del ctx, usage
-        return self.metavar or "TEXT"
+    def get_usage_pieces(self, ctx: Context) -> list[str]:
+        # Prefix placement is owned by the command, not the context path.
+        return []
 
     def add_to_parser(self, parser: object, ctx: Context) -> None:
         del parser, ctx
@@ -308,7 +331,3 @@ class _HelpOnlyTyperArgument(TyperArgument):
     ) -> tuple[None, list[str]]:
         del ctx, opts
         return None, args
-
-
-def _strip_help_only_agent_metavars(command_path: str) -> str:
-    return " ".join(part for part in command_path.split() if part != "TEXT")

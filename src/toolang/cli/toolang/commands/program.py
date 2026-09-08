@@ -11,11 +11,17 @@ from typing import Annotated
 import typer
 from typer._click.exceptions import ClickException
 
+from toolang.cli.common.parameters import PathType
+
 
 def fmt(
     paths: Annotated[
         list[Path] | None,
-        typer.Argument(help="File or directory paths to format."),
+        typer.Argument(
+            metavar="PATH",
+            click_type=PathType(),
+            help="File or directory paths to format.",
+        ),
     ] = None,
     check: Annotated[
         bool,
@@ -23,14 +29,15 @@ def fmt(
     ] = False,
     tab_size: Annotated[
         int,
-        typer.Option("--tab-size", help="Number of spaces per indentation level."),
+        typer.Option(
+            "--tab-size",
+            metavar="INTEGER",
+            help="Number of spaces per indentation level.",
+        ),
     ] = 2,
     stdin_filepath: Annotated[
         Path | None,
-        typer.Option(
-            "--stdin-filepath",
-            help="Path label for stdin.",
-        ),
+        typer.Option("--stdin-filepath", metavar="PATH", help="Path label for stdin."),
     ] = None,
 ) -> None:
     from ....lang.format import ToolangFormatError, format_source
@@ -133,7 +140,11 @@ def _collect_format_paths(paths: list[Path]) -> list[Path]:
 def parse_program(
     source: Annotated[
         Path,
-        typer.Argument(help="Toolang source file to parse, or '-' for stdin."),
+        typer.Argument(
+            metavar="SOURCE",
+            click_type=PathType(),
+            help="Toolang source file to parse, or '-' for stdin.",
+        ),
     ],
     compact: Annotated[
         bool,
@@ -141,7 +152,7 @@ def parse_program(
     ] = False,
     stdin_filepath: Annotated[
         Path | None,
-        typer.Option("--stdin-filepath", help="Path label for stdin."),
+        typer.Option("--stdin-filepath", metavar="PATH", help="Path label for stdin."),
     ] = None,
 ) -> None:
     from ....common.errors import ToolangError

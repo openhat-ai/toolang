@@ -93,7 +93,7 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
     )
     assert "--sandbox" not in argv
     assert "--sandbox-child" not in argv
-    assert _option_values(argv, "--compact") == ["model=test/compact effort=low"]
+    assert _option_values(argv, "--compact-model") == ["test/compact effort=low"]
     assert _option_values(argv, "--allow") == [
         "models=openai/gpt-5",
         "tools=none",

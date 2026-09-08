@@ -219,3 +219,6 @@ def test_every_cli_command_renders_help(
 
     assert result.exit_code == 0, result.output
     assert "Usage:" in result.output
+    usage = result.output.partition("Usage:")[2].splitlines()[0]
+    assert "{" not in usage
+    assert not any(label in result.output for label in ("<str>", "<int>", "<path>"))

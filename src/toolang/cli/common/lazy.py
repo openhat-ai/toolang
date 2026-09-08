@@ -11,6 +11,8 @@ from typer._click import Command, Context
 from typer.core import TyperCommand, TyperGroup
 from typer.models import CompletionItem
 
+from .help import CliCommand
+
 
 class LazyCommand(TyperCommand):
     """Expose command metadata without loading its implementation."""
@@ -112,7 +114,9 @@ def _load_typer_command(
 ) -> Command:
     callback = _load_target(target)
     command_app = _loader_app()
-    command_app.command(name, **kwargs)(callback)
+    command_kwargs = {**kwargs}
+    command_kwargs.setdefault("cls", CliCommand)
+    command_app.command(name, **command_kwargs)(callback)
     return _loaded_child(command_app, name)
 
 
