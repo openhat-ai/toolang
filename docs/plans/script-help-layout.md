@@ -149,11 +149,18 @@ Likely implementation files:
   common options and their placement.
 - `docs/api.md` and `docs/call-input.md`: synchronize the current CLI contract.
 
-Keep this definition in `docs/plans/script-help-layout.md`. Preserve the
-historical plan. No runtime, shared Content parser, coercion, persistence,
-HTTP, dependency, global help-theme, or example-content changes. Input capture
-semantics and output destinations remain unchanged. Width/theme redesign and
-new missing-input diagnostics are outside this definition.
+Remove file-inbox support as approved during review: delete `--inbox` from
+runtime commands and remove the roaming file-runtime route, launch/server
+plumbing, dedicated watcher, store, record types, layout property, and inbox-only
+examples. Update their tests and current documentation. Do not migrate or delete
+existing user data. Root options and input containing literal `--inbox` must
+follow normal Script parsing.
+
+Keep this definition in `docs/plans/script-help-layout.md` and preserve historical
+plans. Beyond the inbox removal, no runtime, persistence, HTTP, shared Content
+parser, coercion, dependency, global help-theme, or example-content changes.
+Input capture semantics and output destinations remain unchanged. Width/theme
+redesign and new missing-input diagnostics are outside this definition.
 
 Acceptance checks:
 
@@ -174,7 +181,10 @@ Acceptance checks:
 5. Verify option placement, scalar precedence,
    repeated values, quiet behavior, qualified selectors, and early help without
    stdin reads or execution. Existing input-boundary tests remain green.
-6. Run Ruff lint/format, type checks, and the default offline pytest suite.
+6. Script root/runnable commands and runtime `run`, `start`, and `serve` reject
+   `--inbox`; runtime help no longer advertises it. Actual CLI entrypoint tests
+   cover literal `--inbox` in input and option values without selecting hosting.
+7. Run Ruff lint/format, type checks, and the default offline pytest suite.
 
 The main risk is divergence between root and runnable options. Keep help and
 accepted syntax consistent without duplicating option definitions. No unresolved

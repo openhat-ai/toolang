@@ -52,7 +52,7 @@ toolang/
 ├── lang/                   # .too AST, parsing, lowering, validation, formatting
 ├── plugin/                 # plugin loading, config, and built-in implementations
 ├── state/                  # durable/prepared files and immutable agent state
-└── work/                   # effective jobs, file requests, watchers, stores, scheduling
+└── work/                   # effective jobs, watchers, stores, scheduling
 ```
 
 Packages should contain concept families rather than one file per class. Most

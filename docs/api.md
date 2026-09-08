@@ -98,7 +98,6 @@ toolang list
 PY_LOG=toolang.execution=info toolang ./examples/script-playground.too summarize -- "Summarize this workspace"
 toolang ./examples/script-playground.too --help
 toolang ./examples/script-playground.too summarize -- "Summarize this workspace"
-toolang ./examples/file-agent.too --inbox ./inbox
 toolang run alice
 toolang run alice --sandbox docker
 toolang run brice/alice
@@ -201,7 +200,6 @@ Foreground runtime port selection depends on the agent mode:
 | Resident | Local managed name such as `alice` | Reuse the agent's last port when available, otherwise choose from `7001-7999` |
 | Visiting | Remote selector such as `brice/alice` or `https://toolang.ai/alice.too` | Reuse the visiting root's last port when available, otherwise choose an OS temporary port |
 | Script run | Local `.too` path with an agic or flow name | No port for embedded host execution; attached and temporary guest execution use the selected AgentServer endpoint |
-| Roaming file runtime | Local `.too` path with `--inbox` and no agic name | Choose an OS temporary port |
 
 
 ## Script Run Surface
@@ -521,31 +519,6 @@ Pointers and prints only the selected canonical JSON value. The two display
 modes are mutually exclusive, and `--type` is not an option. Inspection is
 read-only and historical and does not load a runnable.
 
-## File Request Runtime
-
-Roaming scripts can also start a foreground file request runtime without naming
-a runnable:
-
-```bash
-toolang SCRIPT --inbox PATH [--inbox PATH...]
-```
-
-Behavior:
-
-- `SCRIPT` is materialized into its sibling `.toolang` roaming root.
-- Each `--inbox` value must name an existing directory.
-- Startup enables `runner.file` and `trigger.file`; AgentState watching is always active.
-- Startup requires an agic named `file` that accepts primary input and has no
-  required named parameters.
-- Files already present in an inbox at startup are eligible for processing.
-- Newly discovered stable files are passed to the `file` agic using the same
-  percept-part classification rules as `@PATH`.
-- File request progress is stored in `.runtime/files.db`.
-- Finished, failed, and canceled file fingerprints are not automatically retried.
-- When a runnable name is present, such as `toolang SCRIPT summarize ...`,
-  Toolang uses normal one-shot runnable invocation.
-
-
 ## Runtime Commands
 
 | Command | `name` | `shorthand` | `ref` |
@@ -641,7 +614,7 @@ new temporary non-host runtime. It is rejected for embedded host execution or
 when Chat attaches to an existing AgentServer.
 
 Commands that start a new guest accept `--dev PATH`. This includes `run`,
-`start`, `chat`, script runs, `retry`, `rerun`, and roaming file-inbox runtime.
+`start`, `chat`, script runs, `retry`, and `rerun`.
 `PATH` is either one Toolang `.whl` file or a directory to search recursively
 for Toolang wheels. Directory selection uses the most recent file modification
 time and breaks equal-time ties by absolute path. The selected concrete wheel

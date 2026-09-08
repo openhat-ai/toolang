@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from decimal import Decimal
 from pathlib import Path
 import re
@@ -164,7 +164,6 @@ def _launch_spec(
     ceiling_overrides: Mapping[str, tuple[str, ...] | None],
     default_overrides: Mapping[str, str | None],
     limit_overrides: Mapping[str, int | Decimal | None],
-    file_inboxes: Sequence[Path] | None,
     dev: Path | None,
     log_spec: str | None,
     output: SandboxOutput,
@@ -182,7 +181,6 @@ def _launch_spec(
             ceiling_overrides=ceiling_overrides,
             default_overrides=default_overrides,
             limit_overrides=limit_overrides,
-            file_inboxes=tuple(file_inboxes or ()),
             log_spec=log_spec,
         ),
         sandbox=sandbox or "host",
@@ -444,13 +442,15 @@ def test_runtime_warns_when_development_source_uses_index_package(
             assert "source at" not in stderr
 
 
-def test_roaming_file_options_accept_dev_wheel_directory() -> None:
-    options = runtime_commands._parse_roaming_file_options(
-        ["--inbox", "inbox", "--sandbox", "docker", "--dev", "dist"]
-    )
+@pytest.mark.parametrize("command", ["run", "start", "serve"])
+def test_runtime_commands_reject_inbox_option(command: str) -> None:
+    help_result = runner.invoke(cli.app, [command, "--help"])
+    assert help_result.exit_code == 0
+    assert "--inbox" not in strip_ansi(help_result.stdout)
 
-    assert options.sandbox == "docker"
-    assert options.dev == Path("dist")
+    result = runner.invoke(cli.app, [command, "alice", "--inbox", "requests"])
+    assert result.exit_code == 2
+    assert "No such option: --inbox" in strip_ansi(result.stderr)
 
 
 def test_start_launches_in_background_and_reports_endpoint(

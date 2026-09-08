@@ -213,12 +213,6 @@ def dispatch_roaming(
             _selected_command_args(body, position, target=layout.name),
             layout,
         )
-    from .commands import runtime
-
-    if runtime.is_roaming_file_request(body[1:]):
-        if global_args:
-            return _unsupported_global_options()
-        return runtime.run_roaming_file(source, body[1:])
     from .commands import script
 
     return script.dispatch(global_args, body, prog_name=prog_name)

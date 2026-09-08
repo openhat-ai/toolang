@@ -47,7 +47,7 @@ from ...common.agent_server import (
     DEVELOPMENT_WHEEL_HELP,
     warn_development_package_source,
 )
-from ...common.output import active_agent_error, echo_error
+from ...common.output import active_agent_error
 from toolang.common.version import development_source
 
 if TYPE_CHECKING:
@@ -62,225 +62,6 @@ class RuntimeLaunch:
     startup: LaunchSpec
     environ: dict[str, str]
     log_plan: LoggingPlan
-
-
-@dataclass(frozen=True, slots=True)
-class _RoamingFileOptions:
-    inboxes: tuple[Path, ...]
-    allows: tuple[str, ...]
-    defaults: tuple[str, ...]
-    compact_model: str | None
-    limits: tuple[str, ...]
-    host: str
-    endpoint_host: str | None
-    port: int | None
-    sandbox: str
-    dev: Path | None
-
-
-def is_roaming_file_request(args: list[str]) -> bool:
-    return bool(args and args[0].startswith("-")) and any(
-        token == "--inbox" or token.startswith("--inbox=") for token in args
-    )
-
-
-def run_roaming_file(source: Path, args: list[str]) -> int:
-    from toolang.up import sandbox as sandbox_runtime
-    from ...common.context import load_runtime_environ
-    from ...common.progress import make_cli_progress
-
-    progress = make_cli_progress()
-    cleanup_progress = make_cli_progress(leading_gap=True)
-    startup: LaunchSpec | None = None
-    launch_started = False
-    try:
-        with progress, cleanup_progress:
-            options = _parse_roaming_file_options(args)
-            layout = agents.materialize_roaming_program(source)
-            existing = agents.AgentProcess(layout).status(ui_base_url=ui_base_url())
-            if existing is not None and existing.status in {
-                "running",
-                "preparing",
-                "starting",
-            }:
-                raise ClickException(active_agent_error(existing))
-            environ = load_runtime_environ(layout, base_environ=os.environ)
-            environ["TOOLANG_ROOT"] = str(layout.root)
-            log_plan = resolve_agent_logging(
-                mode="run",
-                environ=environ,
-                agent_log_path=layout.runtime_log,
-            )
-            configure_logging_plan(log_plan)
-            ceiling_overrides = user_call(
-                resolve_ceiling_overrides,
-                log_plan.environ,
-                options.allows,
-            )
-            default_overrides = user_call(
-                resolve_default_overrides,
-                log_plan.environ,
-                options.defaults,
-            )
-            limit_overrides = user_call(
-                resolve_limit_overrides,
-                log_plan.environ,
-                options.limits,
-            )
-            startup = user_call(
-                asyncio.run,
-                sandbox_runtime.resolve_launch(
-                    layout=layout,
-                    host=options.host,
-                    endpoint_host=options.endpoint_host,
-                    port=options.port,
-                    sandbox=options.sandbox,
-                    ceiling_overrides=ceiling_overrides,
-                    default_overrides=default_overrides,
-                    compact_override=user_call(
-                        resolve_compact_override,
-                        log_plan.environ,
-                        options.compact_model,
-                    ),
-                    limit_overrides=limit_overrides,
-                    file_inboxes=options.inboxes,
-                    dev=options.dev,
-                    log_spec=log_plan.spec,
-                    output="inherit",
-                    log_path=log_plan.path,
-                    temporary_port=options.port is None,
-                    environ=log_plan.environ,
-                ),
-            )
-            with progress.suspended():
-                warn_development_package_source(startup)
-            launch_started = True
-            return user_call(
-                asyncio.run,
-                sandbox_runtime.run(
-                    startup,
-                    on_ready=lambda state: _report_foreground_ready(
-                        layout.name,
-                        state,
-                        progress,
-                    ),
-                    progress=progress.sink,
-                    cleanup_progress=cleanup_progress.sink,
-                ),
-            )
-    except KeyboardInterrupt:
-        return 130
-    except (
-        FileExistsError,
-        FileNotFoundError,
-        OSError,
-        RuntimeError,
-        ValueError,
-        ClickException,
-    ) as exc:
-        if launch_started:
-            if cleanup_progress.failure_stage is not None:
-                message = cleanup_progress.failure_message(
-                    exc,
-                    log_path=layout.runtime_log,
-                )
-            else:
-                message = runtime_startup_failure_message(
-                    progress,
-                    exc,
-                    dev_artifact=startup.dev_artifact if startup is not None else None,
-                    development_build=development_source()[0],
-                )
-        else:
-            message = exc.message if isinstance(exc, ClickException) else str(exc)
-        echo_error(message)
-        return 1
-
-
-def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
-    inboxes: list[Path] = []
-    allows: list[str] = []
-    defaults: list[str] = []
-    compact_model: str | None = None
-    limits: list[str] = []
-    host = "127.0.0.1"
-    endpoint_host: str | None = None
-    port: int | None = None
-    sandbox = "host"
-    dev: Path | None = None
-    index = 0
-    while index < len(argv):
-        token = argv[index]
-        option, separator, inline = token.partition("=")
-        if option in {
-            "--inbox",
-            "--allow",
-            "--default",
-            "--compact-model",
-            "--limit",
-            "--host",
-            "--endpoint-host",
-            "--port",
-            "--sandbox",
-            "--dev",
-        }:
-            value = inline.strip() if separator else _option_value(argv, index, option)
-            if not value and option != "--endpoint-host":
-                raise ClickException(f"{option} requires a value")
-            index += 1 if separator else 2
-            if option == "--inbox":
-                inboxes.append(Path(value))
-            elif option == "--allow":
-                allows.append(value)
-            elif option == "--default":
-                defaults.append(value)
-            elif option == "--compact-model":
-                compact_model = value
-            elif option == "--limit":
-                limits.append(value)
-            elif option == "--host":
-                host = value
-            elif option == "--endpoint-host":
-                endpoint_host = value or None
-            elif option == "--port":
-                try:
-                    port = int(value)
-                except ValueError as exc:
-                    raise ClickException("--port expects an integer") from exc
-            elif option == "--sandbox":
-                sandbox = value
-            elif option == "--dev":
-                dev = Path(value)
-            continue
-        if token in {"--help", "-h"}:
-            raise ClickException(
-                "file request runtime usage: toolang SCRIPT --inbox PATH [--inbox PATH...]"
-            )
-        if token.startswith("-"):
-            raise ClickException(f"unknown Toolang runtime option: {token}")
-        raise ClickException(
-            f"unexpected agic argument for file request runtime: {token}"
-        )
-    if not inboxes:
-        raise ClickException("--inbox is required")
-    return _RoamingFileOptions(
-        inboxes=tuple(inboxes),
-        allows=tuple(allows),
-        defaults=tuple(defaults),
-        compact_model=compact_model,
-        limits=tuple(limits),
-        host=host,
-        endpoint_host=endpoint_host,
-        port=port,
-        sandbox=sandbox,
-        dev=dev,
-    )
-
-
-def _option_value(argv: list[str], index: int, option: str) -> str:
-    if index + 1 >= len(argv) or not argv[index + 1].strip():
-        raise ClickException(f"{option} requires a value")
-    return argv[index + 1].strip()
 
 
 def run(
@@ -310,14 +91,6 @@ def run(
     port: Annotated[
         int | None,
         typer.Option("--port", metavar="PORT", help="Bind the agent API to this port."),
-    ] = None,
-    inboxes: Annotated[
-        list[Path] | None,
-        typer.Option(
-            "--inbox",
-            metavar="PATH",
-            help="Watch an inbox directory for file requests. Repeat to watch more than one.",
-        ),
     ] = None,
     dev: Annotated[
         Path | None,
@@ -356,7 +129,6 @@ def run(
                 defaults=defaults,
                 compact_model=compact_model,
                 limits=limits,
-                inboxes=inboxes,
                 port=port,
                 host=host,
                 endpoint_host=endpoint_host,
@@ -447,14 +219,6 @@ def start(
         int | None,
         typer.Option("--port", metavar="PORT", help="Bind the agent API to this port."),
     ] = None,
-    inboxes: Annotated[
-        list[Path] | None,
-        typer.Option(
-            "--inbox",
-            metavar="PATH",
-            help="Watch an inbox directory for file requests. Repeat to watch more than one.",
-        ),
-    ] = None,
     dev: Annotated[
         Path | None,
         typer.Option("--dev", metavar="PATH", help=DEVELOPMENT_WHEEL_HELP),
@@ -490,7 +254,6 @@ def start(
                 defaults=defaults,
                 compact_model=compact_model,
                 limits=limits,
-                inboxes=inboxes,
                 port=port,
                 host=host,
                 endpoint_host=endpoint_host,
@@ -590,12 +353,6 @@ def serve(
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
     compact_model: CompactModelOption = None,
-    inboxes: Annotated[
-        list[Path] | None,
-        typer.Option(
-            "--inbox", metavar="PATH", help="Watch a file inbox. Repeat to watch more."
-        ),
-    ] = None,
     log_spec: Annotated[
         str | None,
         typer.Option("--log", metavar="LOG_SPEC", help="Python logging specification."),
@@ -621,7 +378,6 @@ def serve(
         default_overrides=user_call(resolve_default_overrides, {}, defaults),
         compact_override=user_call(resolve_compact_override, environ, compact_model),
         limit_overrides=user_call(resolve_limit_overrides, {}, limits),
-        file_inboxes=inboxes,
         log_spec=log_spec,
     )
     raise typer.Exit(
@@ -642,7 +398,6 @@ def resolve_startup(
     allows: list[str] | None,
     defaults: list[str] | None,
     limits: list[str] | None,
-    inboxes: list[Path] | None,
     port: int | None,
     host: str,
     endpoint_host: str | None,
@@ -698,7 +453,6 @@ def resolve_startup(
                 resolve_compact_override, log_plan.environ, compact_model
             ),
             limit_overrides=limit_overrides,
-            file_inboxes=inboxes,
             dev=dev,
             log_spec=log_plan.spec,
             output="file" if background else "inherit",
