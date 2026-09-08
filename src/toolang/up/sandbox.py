@@ -102,7 +102,6 @@ async def resolve_launch(
     default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
     limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     compact_override: ModelOverride | None = None,
-    file_inboxes: Sequence[Path] | None = None,
     dev: Path | None = None,
     log_spec: str | None = None,
     output: SandboxOutput = "inherit",
@@ -125,7 +124,6 @@ async def resolve_launch(
         default_overrides=default_overrides,
         limit_overrides=limit_overrides,
         compact_override=compact_override,
-        file_inboxes=file_inboxes,
         log_spec=log_spec,
         temporary_port=temporary_port,
     )

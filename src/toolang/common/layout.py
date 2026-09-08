@@ -140,10 +140,6 @@ class AgentLayout:
         return self.runtime / "jobs.db"
 
     @property
-    def file_store(self) -> Path:
-        return self.runtime / "files.db"
-
-    @property
     def id_state(self) -> Path:
         return self.runtime / "ids.json"
 

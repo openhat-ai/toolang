@@ -44,14 +44,9 @@ from toolang.up.logging import (
     build_uvicorn_log_config,
     configure_logging,
 )
-from toolang.work import inbox as files
 from toolang.work.scheduler import JobScheduler
 
-DEFAULT_TRIGGER_INTERVAL_MS: dict[str, float] = {
-    "file": files.DEFAULT_INTERVAL_MS,
-}
 DEFAULT_WATCH_DEBOUNCE_MS = state_watcher.DEFAULT_DEBOUNCE_MS
-DEFAULT_FILE_STABLE_MS = files.DEFAULT_STABLE_MS
 RUNTIME_SHUTDOWN_TASK_TIMEOUT_SEC = 1.0
 UVICORN_GRACEFUL_SHUTDOWN_SEC = 1
 AUTO_RUNTIME_PORT_MIN = 7001
@@ -75,7 +70,6 @@ class ServeSpec:
     )
     limit_overrides: Mapping[str, int | Decimal | None] = field(default_factory=dict)
     compact_override: ModelOverride | None = None
-    file_inboxes: tuple[Path, ...] = ()
     log_spec: str | None = None
 
     def __post_init__(self) -> None:
@@ -110,13 +104,11 @@ def resolve_serve(
     default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
     limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     compact_override: ModelOverride | None = None,
-    file_inboxes: Sequence[Path] | None = None,
     log_spec: str | None = None,
     temporary_port: bool = False,
 ) -> ServeSpec:
     """Resolve explicit CLI values without constructing runtime snapshots."""
 
-    resolved_inboxes = _normalize_file_inboxes(file_inboxes)
     return ServeSpec(
         layout=layout,
         host=host,
@@ -131,7 +123,6 @@ def resolve_serve(
         default_overrides=dict(default_overrides or {}),
         limit_overrides=dict(limit_overrides or {}),
         compact_override=compact_override,
-        file_inboxes=resolved_inboxes,
         log_spec=log_spec.strip()
         if isinstance(log_spec, str) and log_spec.strip()
         else None,
@@ -173,8 +164,6 @@ def build_serve_argv(
         command.extend(["--compact-model", format_model_body(spec.compact_override)])
     for name, value in spec.limit_overrides.items():
         command.extend(["--limit", f"{name}={_format_value(value)}"])
-    for inbox in spec.file_inboxes:
-        command.extend(["--inbox", str(inbox)])
     if spec.log_spec is not None:
         command.extend(["--log", spec.log_spec])
     return tuple(command)
@@ -191,9 +180,6 @@ def serve(
     _restore_termination_signal_defaults()
     runtime_log_spec = _runtime_log_spec_value(spec.log_spec, environ)
     configure_logging(spec=runtime_log_spec, environ=environ)
-    for name, interval_ms in DEFAULT_TRIGGER_INTERVAL_MS.items():
-        if interval_ms <= 0:
-            raise ValueError(f"trigger interval must be positive: {name}")
     core = AgentCore(
         spec.layout,
         sandbox=sandbox,
@@ -205,7 +191,6 @@ def serve(
     asyncio.run(_refresh_core(core))
     state = core.state.current()
     ceiling = AgentCeiling()
-    _validate_file_agic(state, enabled=bool(spec.file_inboxes))
     validate_agent_ceiling(core.setup.current(), state, ceiling)
     cors_allowed_origins = resolve_cors_allowed_origins(
         load_setup_config(spec.layout),
@@ -265,19 +250,6 @@ def serve(
                     asyncio.create_task(core.setup.run(stop_signal=stop_signal)),
                 ]
             )
-            if spec.file_inboxes:
-                tasks.append(
-                    files.spawn(
-                        layout=spec.layout,
-                        executor=core.executor,
-                        get_agent_setup=current_setup,
-                        get_agent_state=current_state,
-                        inboxes=spec.file_inboxes,
-                        interval_ms=DEFAULT_TRIGGER_INTERVAL_MS["file"],
-                        stable_ms=DEFAULT_FILE_STABLE_MS,
-                        stop_signal=stop_signal,
-                    )
-                )
             yield
         finally:
             agents.stop_runtime_state(
@@ -340,20 +312,6 @@ def _format_allow(values: tuple[str, ...] | None) -> str:
 
 def _format_value(value: object | None) -> str:
     return "none" if value is None else str(value)
-
-
-def _validate_file_agic(state: AgentState, *, enabled: bool) -> None:
-    if not enabled:
-        return
-    agic = state.modules["agent"].find_agic("file")
-    if agic is None:
-        raise ValueError("file agic not found")
-    if agic.input is None:
-        raise ValueError("file agic must accept message input")
-    missing = [param.name for param in agic.params if not param.optional]
-    if missing:
-        joined = ", ".join(f"{name}=..." for name in missing)
-        raise ValueError(f"file agic cannot have required parameters: {joined}")
 
 
 def _restore_termination_signal_defaults() -> None:
@@ -527,21 +485,6 @@ def _runtime_webui_url(
         port = None
     base_url = resolve_ui_base_url(config, environ=environ).rstrip("/")
     return base_url if port is None else f"{base_url}/{port}"
-
-
-def _normalize_file_inboxes(
-    file_inboxes: Sequence[Path] | None,
-) -> tuple[Path, ...]:
-    if file_inboxes is None:
-        return ()
-    result: list[Path] = []
-    for value in file_inboxes:
-        path = Path(value).expanduser().resolve()
-        if not path.is_dir():
-            raise FileNotFoundError(f"inbox not found: {path}")
-        if path not in result:
-            result.append(path)
-    return tuple(result)
 
 
 def _default_endpoint_host(host: str) -> str:

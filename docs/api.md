@@ -98,7 +98,6 @@ toolang list
 PY_LOG=toolang.execution=info toolang ./examples/script-playground.too summarize -- "Summarize this workspace"
 toolang ./examples/script-playground.too --help
 toolang ./examples/script-playground.too summarize -- "Summarize this workspace"
-toolang ./examples/file-agent.too --inbox ./inbox
 toolang run alice
 toolang run alice --sandbox docker
 toolang run brice/alice
@@ -201,7 +200,6 @@ Foreground runtime port selection depends on the agent mode:
 | Resident | Local managed name such as `alice` | Reuse the agent's last port when available, otherwise choose from `7001-7999` |
 | Visiting | Remote selector such as `brice/alice` or `https://toolang.ai/alice.too` | Reuse the visiting root's last port when available, otherwise choose an OS temporary port |
 | Script run | Local `.too` path with an agic or flow name | No port for embedded host execution; attached and temporary guest execution use the selected AgentServer endpoint |
-| Roaming file runtime | Local `.too` path with `--inbox` and no agic name | Choose an OS temporary port |
 
 
 ## Script Run Surface
@@ -229,17 +227,31 @@ Arguments:
 The synopsis omits `[ARGS]` when there are no named parameters and
 `INPUT` when the signature forbids primary input. Input is required whenever
 accepted; it has no brackets or ellipsis, even when supplied via stdin. The
-**Arguments** panel lists `name=TYPE` entries with uppercase types and appends
-INPUT last, followed by concise capture notes. Required and optional status is
-explicit; `[ARGS]` does not make required named arguments optional.
+**Arguments** panel uses Typer's native rendering. Named parameters use
+`name=ARGUMENT` metavars, with uppercase authored types and parameter doc
+comments or `Named input, or simply argument`. INPUT is last, with an authored
+description or `Primary input, or simply input`, followed by
+`- from stdin, -- starts input`. Typer controls type
+visibility and required markers; `[ARGS]` does not make required named arguments
+optional.
 
-Below usage, `name - description` uses the authored doc comment or `An agic.` /
-`A flow.` Flow steps follow as an indented part of the description, without a
-panel. Arguments and **Options** follow. Top-level Script help uses
-`[OPTIONS] RUNNABLE`, lists **Runnables** before Options with `agic:NAME` /
-`flow:NAME` labels and the same descriptions, and points to `RUNNABLE --help`
-for signature-specific details. Both qualified labels and bare names can be
-used to invoke a runnable.
+Below usage, runnable descriptions use `Run KIND NAME.` or
+`Run KIND NAME - DESCRIPTION` when a doc comment exists. Flows continue with
+`The flow proceeds as follows:`, a blank line, and an outline aligned with the
+description text, in normal style with blank lines between sibling steps.
+Arguments and **Options** follow.
+Top-level Script help uses `[OPTIONS] RUNNABLE` and
+`Run runnables from SCRIPT.` It lists **Runnables** before Options, with
+`agic:NAME` / `flow:NAME` labels and authored descriptions or `Agic NAME.` /
+`Flow NAME.` fallbacks. Both qualified labels and bare names invoke a runnable.
+
+Both levels show the same common options, ordered as `--allow`, `--limit`,
+`--model`, `--sandbox`, `--out` / `-o`, `--quiet` / `-q`, `--dev`, then `--help`.
+Common options may appear before or after RUNNABLE, before input. Explicit
+runnable-level scalar values override root values; repeated `--allow` and
+`--limit` values accumulate in command-line order. Quiet mode is enabled at
+either level. `--help` describes the level where it appears.
+
 Script mode parses policy prefixes but does not accept chat quick commands.
 
 Behavior:
@@ -510,31 +522,6 @@ Pointers and prints only the selected canonical JSON value. The two display
 modes are mutually exclusive, and `--type` is not an option. Inspection is
 read-only and historical and does not load a runnable.
 
-## File Request Runtime
-
-Roaming scripts can also start a foreground file request runtime without naming
-a runnable:
-
-```bash
-toolang SCRIPT --inbox PATH [--inbox PATH...]
-```
-
-Behavior:
-
-- `SCRIPT` is materialized into its sibling `.toolang` roaming root.
-- Each `--inbox` value must name an existing directory.
-- Startup enables `runner.file` and `trigger.file`; AgentState watching is always active.
-- Startup requires an agic named `file` that accepts primary input and has no
-  required named parameters.
-- Files already present in an inbox at startup are eligible for processing.
-- Newly discovered stable files are passed to the `file` agic using the same
-  percept-part classification rules as `@PATH`.
-- File request progress is stored in `.runtime/files.db`.
-- Finished, failed, and canceled file fingerprints are not automatically retried.
-- When a runnable name is present, such as `toolang SCRIPT summarize ...`,
-  Toolang uses normal one-shot runnable invocation.
-
-
 ## Runtime Commands
 
 | Command | `name` | `shorthand` | `ref` |
@@ -630,7 +617,7 @@ new temporary non-host runtime. It is rejected for embedded host execution or
 when Chat attaches to an existing AgentServer.
 
 Commands that start a new guest accept `--dev PATH`. This includes `run`,
-`start`, `chat`, script runs, `retry`, `rerun`, and roaming file-inbox runtime.
+`start`, `chat`, script runs, `retry`, and `rerun`.
 `PATH` is either one Toolang `.whl` file or a directory to search recursively
 for Toolang wheels. Directory selection uses the most recent file modification
 time and breaks equal-time ties by absolute path. The selected concrete wheel

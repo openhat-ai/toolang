@@ -193,8 +193,13 @@ def dispatch_roaming(
 ) -> int | None:
     """Route a local source target or fall through to runnable invocation."""
 
-    global_args, body = _extract_global_args(argv)
-    selected = _selected_roaming(body)
+    selected = _selected_roaming(argv)
+    if selected is not None and selected[1] is None:
+        # Script's parser owns every token after its path, including option values.
+        global_args, body = [], argv
+    else:
+        global_args, body = _extract_global_args(argv)
+        selected = _selected_roaming(body)
     if selected is None:
         return None
     source, command, position = selected
@@ -213,12 +218,6 @@ def dispatch_roaming(
             _selected_command_args(body, position, target=layout.name),
             layout,
         )
-    from .commands import runtime
-
-    if runtime.is_roaming_file_request(body[1:]):
-        if global_args:
-            return _unsupported_global_options()
-        return runtime.run_roaming_file(source, body[1:])
     from .commands import script
 
     return script.dispatch(global_args, body, prog_name=prog_name)

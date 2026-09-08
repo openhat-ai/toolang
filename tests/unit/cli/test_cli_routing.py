@@ -677,6 +677,136 @@ def test_cli_routes_local_script_to_script_command(
 
 
 @pytest.mark.parametrize(
+    ("options", "input_tokens", "expected_input"),
+    [
+        (["--quiet"], ["--", "text", "--inbox", "literal"], "text --inbox literal"),
+        (["--sandbox", "host"], ["text", "--inbox=literal"], "text --inbox=literal"),
+        (["--out", "--inbox"], ["text"], "text"),
+        (["--dev", "--inbox"], ["text"], "text"),
+    ],
+)
+def test_cli_script_root_options_preserve_literal_inbox_tokens(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    options: list[str],
+    input_tokens: list[str],
+    expected_input: str,
+) -> None:
+    source = tmp_path / "demo.too"
+    source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        script, "_run", lambda _source_path, **kwargs: captured.update(kwargs) or 0
+    )
+
+    assert cli.main([str(source), *options, "agic:demo", *input_tokens]) == 0
+    assert captured["input"] == {"_": expected_input}
+    if options[0] == "--out":
+        assert captured["save"] == "--inbox"
+    if options[0] == "--dev":
+        assert captured["dev"] == Path("--inbox")
+
+
+@pytest.mark.parametrize("literal", ["--root", "-r", "--root=literal"])
+@pytest.mark.parametrize("root_option", [False, True])
+def test_cli_script_preserves_global_option_names_as_option_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    literal: str,
+    root_option: bool,
+) -> None:
+    source = tmp_path / "demo.too"
+    source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        script, "_run", lambda _source_path, **kwargs: captured.update(kwargs) or 0
+    )
+    header = (
+        ["--out", literal, "agic:demo"]
+        if root_option
+        else ["agic:demo", "--out", literal]
+    )
+
+    assert cli.main([str(source), *header, "text"]) == 0
+    assert captured["save"] == literal
+    assert captured["input"] == {"_": "text"}
+
+
+@pytest.mark.parametrize("literal", ["--root", "-r", "--root=literal"])
+@pytest.mark.parametrize("explicit", [False, True])
+def test_cli_script_preserves_global_option_names_in_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    literal: str,
+    explicit: bool,
+) -> None:
+    source = tmp_path / "demo.too"
+    source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        script, "_run", lambda _source_path, **kwargs: captured.update(kwargs) or 0
+    )
+
+    assert (
+        cli.main(
+            [
+                str(source),
+                "--quiet",
+                "agic:demo",
+                *(["--"] if explicit else []),
+                "text",
+                literal,
+                "body",
+            ]
+        )
+        == 0
+    )
+    assert captured["input"] == {"_": f"text {literal} body"}
+
+
+@pytest.mark.parametrize("before_source", [False, True])
+def test_cli_script_rejects_actual_global_options(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    before_source: bool,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = tmp_path / "demo.too"
+    source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("invalid input must not run"),
+    )
+    header = (
+        ["--root", str(tmp_path), str(source)]
+        if before_source
+        else [str(source), "--root", str(tmp_path)]
+    )
+
+    expected_code = 1 if before_source else 2
+    expected_error = "global CLI options" if before_source else "No such option: --root"
+    assert cli.main([*header, "agic:demo", "text"]) == expected_code
+    error = strip_ansi(capsys.readouterr().err)
+    assert expected_error in error
+
+
+@pytest.mark.parametrize("selector", [[], ["agic:demo"]])
+@pytest.mark.parametrize("option", [["--inbox", "requests"], ["--inbox=requests"]])
+def test_cli_script_rejects_inbox_option(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    selector: list[str],
+    option: list[str],
+) -> None:
+    source = tmp_path / "demo.too"
+    source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
+
+    assert cli.main([str(source), *selector, *option]) == 2
+    assert "No such option: --inbox" in strip_ansi(capsys.readouterr().err)
+
+
+@pytest.mark.parametrize(
     "arguments",
     (
         ["info"],

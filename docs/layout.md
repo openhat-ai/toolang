@@ -148,7 +148,6 @@ Key paths:
 | `logs/<agic>/<run_id>.log` | Per-run script logs when `PY_LOG` is set |
 | `jobs.db` | Ready-job checkpoints, RRULE cursors, and active claims       |
 | `runs.db` | Threads, controls, runs, steps, and replayable model inputs   |
-| `files.db` | File request claims, fingerprints, and completion state        |
 | `ids.json`     | Local id allocator state                                     |
 | `tools/`       | Per-toolset plugin working directories                       |
 | `channels/`    | Per-channel plugin working directories                       |
@@ -190,8 +189,4 @@ Durable authored state lives in:
 - agent `archive/`
 
 Durable execution state does not live in authored files. It lives in
-`jobs.db`, `runs.db`, and `files.db`.
-
-Inbox directories passed with `--inbox` are external user directories. Toolang
-does not write marker files into them; file request progress is recorded under
-the agent runtime room in `files.db`.
+`jobs.db` and `runs.db`.

@@ -9,7 +9,7 @@ import json
 import os
 from pathlib import Path
 import sys
-from typing import Any, TextIO, cast
+from typing import Annotated, Any, TextIO, cast
 from uuid import uuid4
 
 import httpx
@@ -22,11 +22,13 @@ from rich.table import Table
 from rich.text import Text
 import typer
 from typer import rich_utils
-from typer._click import Context, HelpFormatter, Parameter as CliParameter
+from typer._click import Context, HelpFormatter
+from typer._click.core import ParameterSource
 from typer._click.exceptions import ClickException, UsageError
 from typer._click.parser import _OptionParser, _ParsingState
 from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
-from typer.models import TyperPath
+from typer.main import get_command_from_info
+from typer.models import CommandInfo
 
 from toolang.base.model_settings import parse_model_body
 from toolang.base.types.model import ModelRequest
@@ -65,7 +67,6 @@ from toolang.lang.ast import (
     AgicDecl,
     FlowDecl,
     FlowStmt,
-    Parameter,
     Program,
     RepeatStmt,
 )
@@ -87,6 +88,8 @@ from ...common.remote_runtime import inspect_remote_runtime
 from ...common.result_saving import save_result
 from ...common.output import echo_error
 from ...common.help import CliCommand, CliGroup
+from ...common.parameters import AllowOptions, LimitOptions
+from ...common.runnable_parameters import runnable_parameters
 from ...common.execution_progress.config import resolve_progress_max_width
 from ...common.script_progress import ScriptRunPresenter
 
@@ -100,6 +103,17 @@ _MODEL_REQUEST_ADAPTER = TypeAdapter(ModelRequest)
 
 class _HelpArgument(TyperArgument):
     """One signature argument displayed by Typer but parsed by the collector."""
+
+    def __init__(self, argument: TyperArgument) -> None:
+        super().__init__(
+            param_decls=argument.opts,
+            type=argument.type,
+            required=argument.required,
+            metavar=argument.metavar,
+            help=argument.help,
+            show_default=argument.show_default,
+            expose_value=False,
+        )
 
     def add_to_parser(self, parser: Any, ctx: Context) -> None:
         del parser, ctx
@@ -181,9 +195,16 @@ class _RunnableCommand(CliCommand):
         console = rich_utils._get_rich_console()
         _print_help_header(console, ctx, self, flow=self._flow)
         params = self.get_params(ctx)
-        arguments = [param for param in params if isinstance(param, _HelpArgument)]
-        if arguments:
-            _print_arguments_panel(console, ctx, arguments)
+        arguments: list[TyperArgument] = [
+            param for param in params if isinstance(param, _HelpArgument)
+        ]
+        rich_utils._print_options_panel(
+            name="Arguments",
+            params=arguments,
+            ctx=ctx,
+            markup_mode="rich",
+            console=console,
+        )
         rich_utils._print_options_panel(
             name="Options",
             params=[param for param in params if isinstance(param, TyperOption)],
@@ -202,6 +223,24 @@ class _RunnableCommand(CliCommand):
 
 class _ScriptGroup(CliGroup):
     """List runnable descriptions before the script's options."""
+
+    def resolve_command(
+        self, ctx: Context, args: list[str]
+    ) -> tuple[str | None, Any, list[str]]:
+        kind, separator, name = args[0].partition(":")
+        if separator and kind in {"agic", "flow", "runnable"}:
+            name = name.strip()
+            if not name:
+                raise ValueError(f"{kind} selector cannot be empty")
+            command = self.get_command(ctx, name)
+            if not isinstance(command, _RunnableCommand):
+                raise ValueError(f"runnable not found: {name}")
+            if kind == "agic" and command._flow is not None:
+                raise ValueError(f"runnable is not an agic: {name}")
+            if kind == "flow" and command._flow is None:
+                raise ValueError(f"runnable is not a flow: {name}")
+            args = [name, *args[1:]]
+        return super().resolve_command(ctx, args)
 
     def format_help(self, ctx: Context, formatter: HelpFormatter) -> None:
         console = rich_utils._get_rich_console()
@@ -224,8 +263,6 @@ class _ScriptGroup(CliGroup):
             markup_mode="rich",
             console=console,
         )
-        if self.epilog:
-            console.print(Padding(Text(self.epilog), 1))
 
 
 def _print_help_header(
@@ -245,8 +282,9 @@ def _print_help_header(
             description = Group(
                 description,
                 Text(),
-                Text("Flow steps:", style="dim"),
-                Padding(_flow_outline(flow), (0, 2)),
+                Text("The flow proceeds as follows:"),
+                Text(),
+                _flow_outline(flow),
             )
         console.print(Padding(description, (0, 1, 1, 1)))
 
@@ -277,44 +315,6 @@ def _print_runnables_panel(console: Console, commands: list[_RunnableCommand]) -
     )
 
 
-def _print_arguments_panel(
-    console: Console,
-    ctx: Context,
-    arguments: list[_HelpArgument],
-) -> None:
-    # Metavars include literal array brackets, e.g. items=TEXT[].
-    table = Table.grid(padding=(0, 2))
-    table.add_column(style=rich_utils.STYLE_REQUIRED_SHORT, no_wrap=True)
-    table.add_column(style="bold cyan", overflow="fold")
-    table.add_column(ratio=1)
-    for argument in arguments:
-        table.add_row(
-            "*" if argument.required else "",
-            Text(argument.metavar or argument.name or ""),
-            rich_utils._get_parameter_help(param=argument, ctx=ctx, markup_mode="rich"),
-        )
-    notes: list[str] = []
-    accepts_input = any(argument.name == "_" for argument in arguments)
-    if any(argument.name != "_" for argument in arguments):
-        suffix = " before input" if accepts_input else ""
-        notes.append(f"Arguments may appear in any order{suffix}.")
-    if accepts_input:
-        notes.extend(
-            [
-                "INPUT: TEXT...; -- TEXT... starts it explicitly; - reads stdin to EOF.",
-                "Omit command-line text to read piped or redirected stdin.",
-            ]
-        )
-    console.print(
-        Panel(
-            Group(table, Text(), Text("\n".join(notes))),
-            title="Arguments",
-            title_align="left",
-            border_style=rich_utils.STYLE_OPTIONS_PANEL_BORDER,
-        )
-    )
-
-
 def _flow_outline(flow: FlowDecl) -> Text:
     """Describe authored stages once, without expanding runnable calls."""
 
@@ -322,18 +322,20 @@ def _flow_outline(flow: FlowDecl) -> Text:
 
     def append_statements(statements: tuple[FlowStmt, ...], depth: int) -> None:
         for index, statement in enumerate(statements):
+            if index:
+                outline.append("\n")
             prefix = f"{'  ' * depth}[{index}] "
             doc = " ".join(statement.doc.split()) if statement.doc else ""
             if doc:
                 outline.append(f"{prefix}{doc}\n")
                 prefix = " " * len(prefix)
-            outline.append(f"{prefix}{statement_description(statement)}\n", style="dim")
+            outline.append(f"{prefix}{statement_description(statement)}\n")
             if isinstance(statement, RepeatStmt):
                 append_statements(statement.stmts, depth + 1)
 
     append_statements(flow.stmts, 0)
     if not flow.stmts:
-        outline.append("No statements.", style="dim")
+        outline.append("No statements.")
     outline.rstrip()
     return outline
 
@@ -365,9 +367,8 @@ def dispatch(
             source_label=argv[0],
             stdin=stdin or sys.stdin,
         )
-        command_args = _typed_runnable_args(program, argv[1:])
         result = command.main(
-            args=command_args or ["--help"],
+            args=argv[1:] or ["--help"],
             prog_name=f"{prog_name} {argv[0]}",
             standalone_mode=False,
         )
@@ -389,10 +390,13 @@ def _program_command(
     source_label: str,
     stdin: TextIO,
 ) -> TyperGroup:
+    options = _runnable_command(
+        None, program=program, source_path=source_path, stdin=stdin
+    ).params
     group = _ScriptGroup(
         name=source_label,
-        help=f"{escape(source_label)} - Run an agic or flow.",
-        epilog="Use RUNNABLE --help for its arguments and input.",
+        params=[param for param in options if isinstance(param, TyperOption)],
+        help=f"Run runnables from {escape(source_label)}.",
         no_args_is_help=True,
         rich_markup_mode="rich",
         subcommand_metavar="RUNNABLE",
@@ -410,26 +414,70 @@ def _program_command(
 
 
 def _runnable_command(
-    runnable: Runnable,
+    runnable: Runnable | None,
     *,
     program: Program,
     source_path: Path,
     stdin: TextIO,
 ) -> TyperCommand:
     def callback(
-        items: tuple[str, ...],
-        allow: tuple[str, ...],
-        model: str | None,
-        limit: tuple[str, ...],
-        sandbox: str | None,
-        dev: Path | None,
-        save: str | None,
-        quiet: bool,
+        ctx: typer.Context,
+        allow: AllowOptions = None,
+        limit: LimitOptions = None,
+        model: Annotated[
+            str | None,
+            typer.Option(
+                "--model",
+                metavar="MODEL_SPEC",
+                help="Set the model identity and parameters for this run.",
+            ),
+        ] = None,
+        sandbox: Annotated[
+            str | None,
+            typer.Option(
+                "--sandbox",
+                metavar="SANDBOX_SPEC",
+                help="Execute this run in the selected sandbox.",
+            ),
+        ] = None,
+        save: Annotated[
+            str | None,
+            typer.Option(
+                "--out",
+                "-o",
+                metavar="PATH",
+                help="Save the Run result to PATH, or use - for stdout.",
+            ),
+        ] = None,
+        quiet: Annotated[
+            bool,
+            typer.Option(
+                "--quiet", "-q", help="Suppress prepare and execution progress."
+            ),
+        ] = False,
+        dev: Annotated[
+            Path | None,
+            typer.Option("--dev", metavar="PATH", help=DEVELOPMENT_WHEEL_HELP),
+        ] = None,
+        items: Annotated[list[str] | None, typer.Argument(hidden=True)] = None,
     ) -> int:
+        assert runnable is not None
+        inherited = ctx.parent.params if ctx.parent is not None else {}
+        allow = [*inherited.get("allow", ()), *(allow or ())]
+        limit = [*inherited.get("limit", ()), *(limit or ())]
+        quiet = quiet or inherited.get("quiet", False)
+        if ctx.get_parameter_source("model") != ParameterSource.COMMANDLINE:
+            model = inherited.get("model", model)
+        if ctx.get_parameter_source("sandbox") != ParameterSource.COMMANDLINE:
+            sandbox = inherited.get("sandbox", sandbox)
+        if ctx.get_parameter_source("save") != ParameterSource.COMMANDLINE:
+            save = inherited.get("save", save)
+        if ctx.get_parameter_source("dev") != ParameterSource.COMMANDLINE:
+            # Group values have not passed through Typer's callback converters.
+            root_dev = inherited.get("dev")
+            dev = Path(root_dev) if root_dev is not None else dev
         override, input, raw_named = _collect_call(
-            runnable,
-            items=items,
-            stdin=stdin,
+            runnable, items=tuple(items or ()), stdin=stdin
         )
         override = _materialize_script_runnable_override(override, program=program)
         return _run(
@@ -439,116 +487,38 @@ def _runnable_command(
             override=override,
             input=input,
             raw_named=raw_named,
-            allow_options=allow,
+            allow_options=tuple(allow),
             model_body=model,
-            limit_options=limit,
+            limit_options=tuple(limit),
             sandbox=sandbox,
             dev=dev,
             save=save,
             quiet=quiet,
         )
 
-    description = (runnable.doc or "").strip() or (
-        "An agic." if isinstance(runnable, AgicDecl) else "A flow."
-    )
-    params: list[CliParameter] = [
-        TyperOption(
-            param_decls=["--allow"],
-            type=str,
-            multiple=True,
-            default=(),
-            metavar="RESOURCE=QUERY",
-            help="Set RESOURCE=QUERY. Repeat by resource category.",
+    name = runnable.name if runnable is not None else "script"
+    kind = runnable.kind if runnable is not None else "runnable"
+    doc = (runnable.doc or "").strip() if runnable is not None else ""
+    command = get_command_from_info(
+        CommandInfo(
+            name=name,
+            cls=_RunnableCommand,
+            callback=callback,
+            help=f"Run {kind} {name} - {doc}" if doc else f"Run {kind} {name}.",
+            short_help=doc or f"{kind.capitalize()} {name}.",
         ),
-        TyperOption(
-            param_decls=["--limit"],
-            type=str,
-            multiple=True,
-            default=(),
-            metavar="LIMIT=VALUE",
-            help="Set a run limit, e.g. tokens=10000. Repeat for another limit.",
-        ),
-        TyperOption(
-            param_decls=["--model"],
-            type=str,
-            default=None,
-            metavar="MODEL_SPEC",
-            help="Set the model identity and parameters for this run.",
-        ),
-        TyperOption(
-            param_decls=["--sandbox"],
-            type=str,
-            metavar="SANDBOX_SPEC",
-            default=None,
-            help="Execute this run in the selected sandbox.",
-        ),
-        TyperOption(
-            param_decls=["--dev"],
-            type=TyperPath(path_type=Path),
-            default=None,
-            metavar="PATH",
-            help=DEVELOPMENT_WHEEL_HELP,
-        ),
-        TyperOption(
-            param_decls=["save", "--out", "-o"],
-            type=str,
-            default=None,
-            metavar="PATH",
-            help="Save the Run result to PATH, or use - for stdout.",
-        ),
-        TyperOption(
-            param_decls=["--quiet", "-q"],
-            is_flag=True,
-            default=False,
-            help="Suppress prepare and execution progress.",
-        ),
-        *(_signature_argument(parameter) for parameter in runnable.params),
-    ]
-    if runnable.input is not None:
-        params.append(_input_argument(runnable.input))
-    params.append(
-        TyperArgument(
-            param_decls=["items"],
-            type=str,
-            nargs=-1,
-            required=False,
-            default=(),
-            expose_value=True,
-            hidden=True,
-        )
-    )
-    return _RunnableCommand(
-        flow=runnable if isinstance(runnable, FlowDecl) else None,
-        name=runnable.name,
-        callback=callback,
-        params=params,
-        help=f"{runnable.name} - {description}",
-        short_help=description,
+        pretty_exceptions_short=True,
         rich_markup_mode="rich",
     )
-
-
-def _signature_argument(parameter: Parameter) -> TyperArgument:
-    return _HelpArgument(
-        param_decls=[parameter.name],
-        type=str,
-        required=not parameter.optional,
-        metavar=f"{parameter.name}={(parameter.type_name or 'Part[]').upper()}",
-        help="Optional." if parameter.optional else None,
-        expose_value=False,
-    )
-
-
-def _input_argument(parameter: Parameter) -> TyperArgument:
-    type_name = parameter.type_name or "Part[]"
-    return _HelpArgument(
-        param_decls=["_"],
-        type=str,
-        required=not parameter.optional,
-        metavar="INPUT",
-        help=escape(type_name.upper()),
-        expose_value=False,
-    )
+    assert isinstance(command, _RunnableCommand)
+    if runnable is not None:
+        command._flow = runnable if isinstance(runnable, FlowDecl) else None
+        arguments = runnable_parameters(
+            runnable,
+            input_help="- from stdin, -- starts input",
+        )
+        command.params[-1:-1] = [_HelpArgument(argument) for argument in arguments]
+    return command
 
 
 def _public_runnables(program: Program) -> tuple[Runnable, ...]:
@@ -557,30 +527,6 @@ def _public_runnables(program: Program) -> tuple[Runnable, ...]:
         for runnable in (*program.agics, *program.flows)
         if runnable.name != "default" and not runnable.name.startswith("<")
     )
-
-
-def _typed_runnable_args(program: Program, args: list[str]) -> list[str]:
-    """Remove one explicit runnable-kind prefix and validate its declaration."""
-
-    if not args:
-        return args
-    kind, separator, name = args[0].partition(":")
-    if not separator or kind not in {"agic", "flow", "runnable"}:
-        return args
-    name = name.strip()
-    if not name:
-        raise ValueError(f"{kind} selector cannot be empty")
-    matches = tuple(
-        runnable for runnable in _public_runnables(program) if runnable.name == name
-    )
-    if not matches:
-        raise ValueError(f"runnable not found: {name}")
-    runnable = matches[0]
-    if kind == "agic" and not isinstance(runnable, AgicDecl):
-        raise ValueError(f"runnable is not an agic: {name}")
-    if kind == "flow" and not isinstance(runnable, FlowDecl):
-        raise ValueError(f"runnable is not a flow: {name}")
-    return [name, *args[1:]]
 
 
 def _collect_call(

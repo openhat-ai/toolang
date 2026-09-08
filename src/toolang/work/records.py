@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from toolang.catalog.types import JobKind
 
-from .types import FileRequestStatus, JobStatus, JobTrigger
+from .types import JobStatus, JobTrigger
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,24 +27,4 @@ class JobRecord:
     next_run_at: str | None
     error: str | None
     created_at: str
-    updated_at: str
-
-
-@dataclass(frozen=True, slots=True)
-class FileRequestRecord:
-    """One persisted legacy file-inbox request."""
-
-    request_id: int
-    watch_root: str
-    relative_path: str
-    absolute_path: str
-    size: int
-    mtime_ns: int
-    fingerprint: str
-    thread_id: str
-    status: FileRequestStatus
-    run_id: str | None
-    error: str | None
-    first_seen_at: str
-    processed_at: str | None
     updated_at: str
