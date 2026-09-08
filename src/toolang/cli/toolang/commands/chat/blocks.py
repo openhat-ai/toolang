@@ -173,7 +173,7 @@ def _control_bar_lines(
 def _run_context(runnable: str, model: str, reasoning: str, width: int) -> str:
     """Fit snapshot fields, shortening the runnable before the model."""
 
-    fields = [runnable, model, *([reasoning] if reasoning else [])]
+    fields = [runnable.rpartition("$")[2], model, *([reasoning] if reasoning else [])]
     widths = [display_width(value) for value in fields]
     overflow = max(0, sum(widths) + 3 * (len(fields) - 1) - width)
     for index, size in enumerate(widths):

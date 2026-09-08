@@ -355,7 +355,7 @@ A Flow Step that owns child execution may append one dim footer:
 [2] Search the web for each query
 
 • Mapped all 6 items in parallel
-  31s · 6 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) · ≈$0.01        run_root.2
+  31s · 6 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) ≈$0.01        run_root.2
 ```
 
 Facts retain their two-cell indentation at the left, and the complete canonical
@@ -363,8 +363,9 @@ StepPath is right-aligned to the available progress width. At least two cells
 separate the fields. When they do not fit together, facts wrap under the same
 indent and the untruncated StepPath follows on a right-aligned continuation
 line. Undefined facts are omitted, and a StepPath is not displayed by itself.
-Duration, execution counts, token usage, and cost are separate facts. Counts
-form one `RUNS runs MODELS models TOOLS tools` group and omit zero categories.
+Duration, execution counts, and usage are separate facts. Tokens and cost form
+one usage group, separated by a space. Counts form one
+`RUNS runs MODELS models TOOLS tools` group and omit zero categories.
 Human durations keep milliseconds below one second, otherwise round to whole
 seconds; exact minutes omit `00s`. Stored timestamps retain their original
 precision.
@@ -415,7 +416,7 @@ boundary error:
              provider returned status 429
 
 • parallel step stopped because lane 1 (#5) failed
-  31s · 7 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) · ≈$0.01
+  31s · 7 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) ≈$0.01
 ```
 
 ## Repeat and Settle
@@ -465,9 +466,9 @@ root-owned error row. There is no separate diagnostic marker.
 Script and Chat end a root Run with the same footer:
 
 ```text
-∎ run_nrqpt0mf succeeded        1m16s · 26 runs 32 models 8 tools · ↑43.8k ↓17.6k(9.2k) · ≈$0.01
-∎ run_nrqpt0mf failed           1m16s · 26 runs 32 models 8 tools · ↑43.8k ↓17.6k(9.2k) · ≈$0.01
-∎ run_nrqpt0mf canceled         1m16s · 26 runs 32 models 8 tools · ↑43.8k ↓17.6k(9.2k) · ≈$0.01
+∎ run_nrqpt0mf succeeded        1m16s · 26 runs 32 models 8 tools · ↑43.8k ↓17.6k(9.2k) ≈$0.01
+∎ run_nrqpt0mf failed           1m16s · 26 runs 32 models 8 tools · ↑43.8k ↓17.6k(9.2k) ≈$0.01
+∎ run_nrqpt0mf canceled         1m16s · 26 runs 32 models 8 tools · ↑43.8k ↓17.6k(9.2k) ≈$0.01
 ```
 
 A CLI retry or rerun identifies the operation in the same footer instead of
@@ -580,7 +581,8 @@ show `runnable · model · reasoning` from the submitted request: explicit effor
 or token budget, otherwise `auto` for no reasoning override. An absent model
 reads `model unspecified`. This snapshot needs no catalog or persistence lookup,
 and later session defaults do not change it. The root RunBegin updates its
-runnable before the bar is committed. Long annotations
+runnable before the bar is committed. Display `kind:name` without the `module$`
+prefix, retaining the complete reference in the snapshot. Long annotations
 shorten the runnable first, then the model, preserving explicit reasoning
 where space permits. Their left background-filled accent cells distinguish
 start from steer without displaying Run IDs. The start accent uses the same ANSI
@@ -617,13 +619,15 @@ or error diagnostics. Late callbacks cannot change a completed transcript.
 
 The status bar does not paint a base background and therefore inherits the
 terminal background. Its left side begins in column zero with a runnable
-rendered as `agic:name` or `flow:name`, with no marker, spinner, or leading
-padding. While idle, this is the current default runnable. While running, it is
+rendered as `agic:name` or `flow:name` without the `module$` prefix, with no
+marker, spinner, or leading padding. While idle, this is the current default
+runnable. While running, it is
 the active root runnable. The dim label `running` follows the runnable below one
 elapsed second. At one second it becomes `running for DURATION`; `0s` is never
 shown. Durations are compact whole-second values such as `18s`, `1m20s`, and
-`1h01m01s`. If the current default runnable differs, it appears on the right as
-`DEFAULT_RUNNABLE · MODEL`; otherwise the right side contains only `MODEL`.
+`1h01m01s`. If the current default runnable's display label differs, it appears
+on the right as `DEFAULT_RUNNABLE · MODEL`; otherwise the right side contains
+only `MODEL`.
 `MODEL` is always the current default model, not an active model step. It is
 the canonical ref, `[no models available]` when the effective collection is
 empty, `MODEL · VALUE` for an

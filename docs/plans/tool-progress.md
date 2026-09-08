@@ -14,6 +14,9 @@ is approved in the implementation discussion.
   preserve model Markdown and styling.
 - Preserve compact timing, hidden intercepted workspace calls, child/flow
   hierarchy, and root footers.
+- Group token usage and cost with a space, not a fact separator.
+- Show `kind:name` without the module in Chat run-control and status bars;
+  retain complete runnable references in requests, events, and stored snapshots.
 
 ## Design
 
@@ -50,6 +53,13 @@ new tool input syntax. Local refs omit their storage scope in display labels;
 remote refs retain their full identity. Previously persisted summaries are not
 rewritten.
 
+Footer facts separate duration, execution counts, and usage with ` · `; usage
+includes both tokens and any visible cost, for example `↑12.2k ↓528 ≈$0.0003`.
+Existing unknown/zero cost handling and cost visibility remain unchanged.
+Chat bars omit the `module$` prefix before fitting labels to the terminal width.
+Status compares these display labels when omitting a matching default label;
+model names, reasoning, and runnable selection stay unchanged.
+
 ## Touchpoints and acceptance
 
 - `base/types/tool.py`, `base/utils/function_tools.py`, toolset loading: optional
@@ -59,6 +69,9 @@ rewritten.
 - Shared progress projection/rendering: one/two physical lines at narrow widths,
   distinct normal markers, dim tool summaries, red error line, no result surfaces,
   compact timer cleanup, and unchanged model/flow output.
+- `Metrics.facts` and Chat block/widget rendering: grouped usage/cost; full
+  runnable refs render without modules in idle, active, and queued snapshots.
+  Cover absent cost/usage, hidden cost, matching status labels, and narrow widths.
 - Tests cover default hooks, formatter exceptions/None and mutation isolation,
   both workspace spellings/root paths, honor results and retries, cancellation,
   persisted replay, Chat/Script and parallel lanes. Verify that namespace labels
