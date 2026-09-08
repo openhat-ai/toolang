@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from toolang.base.utils import typer_compat
+from typer._click.exceptions import ClickException
+
 from toolang.common.errors import ToolangError
 from toolang.common.query import QueryDataset
 
@@ -18,7 +19,7 @@ def query_items(
     try:
         return dataset.query(queries or None)
     except ToolangError as error:
-        raise typer_compat.ClickException(str(error)) from error
+        raise ClickException(str(error)) from error
 
 
 __all__ = ["query_items"]

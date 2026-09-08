@@ -7,10 +7,9 @@ from importlib import import_module
 from typing import Any
 
 import typer
-from typer.core import TyperCommand
-
-from toolang.base.utils import typer_compat
-from toolang.base.utils.typer_compat import CompletionItem
+from typer._click import Command, Context
+from typer.core import TyperCommand, TyperGroup
+from typer.models import CompletionItem
 
 
 class LazyCommand(TyperCommand):
@@ -20,7 +19,7 @@ class LazyCommand(TyperCommand):
         self,
         name: str,
         *,
-        loader: Callable[[], typer_compat.Command],
+        loader: Callable[[], Command],
         help: str,
         hidden: bool = False,
         rich_help_panel: str | None = None,
@@ -32,9 +31,9 @@ class LazyCommand(TyperCommand):
             rich_help_panel=rich_help_panel,
         )
         self._loader = loader
-        self._loaded: typer_compat.Command | None = None
+        self._loaded: Command | None = None
 
-    def load(self) -> typer_compat.Command:
+    def load(self) -> Command:
         """Load and cache the real command."""
 
         if self._loaded is None:
@@ -51,16 +50,16 @@ class LazyCommand(TyperCommand):
         self,
         info_name: str | None,
         args: list[str],
-        parent: typer_compat.Context | None = None,
+        parent: Context | None = None,
         **extra: Any,
-    ) -> typer_compat.Context:
+    ) -> Context:
         """Parse one invocation with the real command."""
 
         return self.load().make_context(info_name, args, parent=parent, **extra)
 
     def shell_complete(
         self,
-        ctx: typer_compat.Context,
+        ctx: Context,
         incomplete: str,
     ) -> list[CompletionItem]:
         """Complete parameters from the real command."""
@@ -91,7 +90,7 @@ def lazy_typer_group(name: str, target: str, **kwargs: Any) -> LazyCommand:
 def _lazy_command(
     name: str,
     *,
-    loader: Callable[[], typer_compat.Command],
+    loader: Callable[[], Command],
     kwargs: dict[str, Any],
 ) -> LazyCommand:
     help_text = kwargs.get("help")
@@ -110,7 +109,7 @@ def _load_typer_command(
     name: str,
     target: str,
     kwargs: dict[str, Any],
-) -> typer_compat.Command:
+) -> Command:
     callback = _load_target(target)
     command_app = _loader_app()
     command_app.command(name, **kwargs)(callback)
@@ -121,7 +120,7 @@ def _load_typer_group(
     name: str,
     target: str,
     kwargs: dict[str, Any],
-) -> typer_compat.Command:
+) -> Command:
     group = _load_target(target)
     if callable(group) and not isinstance(group, typer.Typer):
         group = group()
@@ -153,9 +152,9 @@ def _loader_callback() -> None:
     pass
 
 
-def _loaded_child(command_app: typer.Typer, name: str) -> typer_compat.Command:
+def _loaded_child(command_app: typer.Typer, name: str) -> Command:
     root = typer.main.get_command(command_app)
-    if not isinstance(root, typer_compat.Group):
+    if not isinstance(root, TyperGroup):
         raise TypeError("lazy command loader must assemble a command group")
     return root.commands[name]
 

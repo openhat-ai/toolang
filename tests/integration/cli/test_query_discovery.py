@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from click import unstyle
 import pytest
+from typer._click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from toolang.cli.caps.main import app as caps_app
@@ -21,14 +21,16 @@ def test_query_is_hidden_but_direct_help_explains_the_grammar() -> None:
     bare = runner.invoke(toolang_app, ["query"])
 
     assert root.exit_code == 0, root.stderr
-    assert "query" not in unstyle(root.stdout)
+    assert "query" not in strip_ansi(root.stdout)
     assert hidden.exit_code == 0, hidden.stderr
-    assert "query" in unstyle(hidden.stdout)
+    assert "query" in strip_ansi(hidden.stdout)
     assert query.exit_code == 0, query.stderr
-    assert 'QUERY = MATCH ("," MATCH)*' in unstyle(query.stdout)
-    assert "models, tools, psyches, skills, services, prompts" in unstyle(query.stdout)
+    assert 'QUERY = MATCH ("," MATCH)*' in strip_ansi(query.stdout)
+    assert "models, tools, psyches, skills, services, prompts" in strip_ansi(
+        query.stdout
+    )
     assert bare.exit_code == 0, bare.stderr
-    assert 'QUERY = MATCH ("," MATCH)*' in unstyle(bare.stdout)
+    assert 'QUERY = MATCH ("," MATCH)*' in strip_ansi(bare.stdout)
 
 
 @pytest.mark.parametrize(
@@ -50,10 +52,10 @@ def test_query_command_publishes_human_and_json_schema(
     machine = runner.invoke(toolang_app, ["query", collection, "--json"])
 
     assert human.exit_code == 0, human.stderr
-    assert f"Collection: {collection}" in unstyle(human.stdout)
-    assert f"Identity: {identity}" in unstyle(human.stdout)
-    assert "Fields:" in unstyle(human.stdout)
-    assert "Columns:" not in unstyle(human.stdout)
+    assert f"Collection: {collection}" in strip_ansi(human.stdout)
+    assert f"Identity: {identity}" in strip_ansi(human.stdout)
+    assert "Fields:" in strip_ansi(human.stdout)
+    assert "Columns:" not in strip_ansi(human.stdout)
     assert machine.exit_code == 0, machine.stderr
     payload = json.loads(machine.stdout)
     assert payload["collection"] == collection
@@ -66,7 +68,7 @@ def test_query_command_rejects_non_base_collections(collection: str) -> None:
     result = runner.invoke(toolang_app, ["query", collection])
 
     assert result.exit_code == 2
-    stderr = unstyle(result.stderr)
+    stderr = strip_ansi(result.stderr)
     assert "unknown query collection" in stderr
     assert "models, tools, psyches, skills, services, prompts" in stderr
 
@@ -89,7 +91,7 @@ def test_list_commands_reject_removed_query_discovery_options(
     result = runner.invoke(app, [*command, removed_option])
 
     assert result.exit_code == 2
-    assert f"No such option: {removed_option}" in unstyle(result.stderr)
+    assert f"No such option: {removed_option}" in strip_ansi(result.stderr)
 
 
 @pytest.mark.parametrize(
@@ -108,9 +110,9 @@ def test_diagnostic_and_plugin_lists_expose_no_query(command: list[str]) -> None
     query_result = runner.invoke(toolang_app, [*command, "--query", "*"])
 
     assert help_result.exit_code == 0, help_result.stderr
-    assert "--query" not in unstyle(help_result.stdout)
+    assert "--query" not in strip_ansi(help_result.stdout)
     assert query_result.exit_code == 2
-    assert "No such option: --query" in unstyle(query_result.stderr)
+    assert "No such option: --query" in strip_ansi(query_result.stderr)
 
 
 @pytest.mark.parametrize(
@@ -131,7 +133,7 @@ def test_query_enabled_commands_reject_legacy_query_options(
     result = runner.invoke(app, [*command, legacy_option, "*"])
 
     assert result.exit_code == 2
-    assert f"No such option: {legacy_option}" in unstyle(result.stderr)
+    assert f"No such option: {legacy_option}" in strip_ansi(result.stderr)
 
 
 def test_tools_reports_invalid_queries_without_a_traceback(tmp_path: Path) -> None:
@@ -147,7 +149,7 @@ def test_tools_reports_invalid_queries_without_a_traceback(tmp_path: Path) -> No
     )
 
     assert result.exit_code == 1
-    assert "unknown tools query field 'unknown'" in unstyle(result.stderr)
+    assert "unknown tools query field 'unknown'" in strip_ansi(result.stderr)
     assert "Traceback" not in result.stderr
 
 
@@ -161,7 +163,7 @@ def test_each_query_enabled_list_points_to_query_help() -> None:
     for app, command, expected in commands:
         result = runner.invoke(app, command)
         assert result.exit_code == 0, result.stderr
-        output = " ".join(unstyle(result.stdout).replace("│", "").split())
+        output = " ".join(strip_ansi(result.stdout).replace("│", "").split())
         assert f"'{expected}'." in output
 
 
@@ -169,6 +171,6 @@ def test_allow_help_uses_collection_query_vocabulary() -> None:
     result = runner.invoke(toolang_app, ["run", "--help"])
 
     assert result.exit_code == 0, result.stderr
-    output = unstyle(result.stdout)
+    output = strip_ansi(result.stdout)
     assert "COLLECTION=QUERY" in output
     assert "SELECTORS" not in output

@@ -5,11 +5,12 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 
-import click
+import typer
 from typer import rich_utils
+from typer._click import Context, HelpFormatter, Parameter
+from typer._click.exceptions import MissingParameter
 from typer.core import TyperArgument, TyperCommand, TyperGroup
 
-from toolang.base.utils import typer_compat
 from .context import CliContext
 
 
@@ -86,10 +87,10 @@ class PrefixAgentCommand(TyperCommand):
     prefix_agent_metavar = "[AGENT]"
     argument_help = "Apply to this agent's home caps instead of root caps."
 
-    def _real_params(self, ctx: typer_compat.Context) -> list[typer_compat.Parameter]:
+    def _real_params(self, ctx: Context) -> list[Parameter]:
         return TyperCommand.get_params(self, ctx)
 
-    def _prefix_agent_argument(self) -> typer_compat.Argument:
+    def _prefix_agent_argument(self) -> TyperArgument:
         return _HelpOnlyTyperArgument(
             param_decls=["agent"],
             required=False,
@@ -98,19 +99,17 @@ class PrefixAgentCommand(TyperCommand):
             help=self.argument_help,
         )
 
-    def get_params(self, ctx: typer_compat.Context) -> list[typer_compat.Parameter]:
+    def get_params(self, ctx: Context) -> list[Parameter]:
         return [self._prefix_agent_argument(), *self._real_params(ctx)]
 
-    def parse_args(self, ctx: typer_compat.Context, args: list[str]) -> list[str]:
+    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         try:
             return TyperCommand.parse_args(self, ctx, args)
-        except typer_compat.MissingParameter:
-            click.echo(ctx.get_help())
+        except MissingParameter:
+            typer.echo(ctx.get_help())
             ctx.exit()
 
-    def format_usage(
-        self, ctx: typer_compat.Context, formatter: typer_compat.HelpFormatter
-    ) -> None:
+    def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
         command_path = _strip_help_only_agent_metavars(ctx.command_path)
         root_name, _, remainder = command_path.partition(" ")
         prefix_path = (
@@ -129,9 +128,7 @@ class RequiredPrefixAgentGroup(TyperGroup):
 
     prefix_agent_metavar = "AGENT"
 
-    def format_usage(
-        self, ctx: typer_compat.Context, formatter: typer_compat.HelpFormatter
-    ) -> None:
+    def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
         command_path = _strip_help_only_agent_metavars(ctx.command_path)
         root_name, _, remainder = command_path.partition(" ")
         prefix_path = (
@@ -156,10 +153,10 @@ class OptionalPrefixAgentGroup(TyperGroup):
     prefix_agent_metavar = "[AGENT]"
     argument_help = "Apply to this agent's home caps instead of root caps."
 
-    def _real_params(self, ctx: typer_compat.Context) -> list[typer_compat.Parameter]:
+    def _real_params(self, ctx: Context) -> list[Parameter]:
         return TyperGroup.get_params(self, ctx)
 
-    def _prefix_agent_argument(self) -> typer_compat.Argument:
+    def _prefix_agent_argument(self) -> TyperArgument:
         return _HelpOnlyTyperArgument(
             param_decls=["agent"],
             required=False,
@@ -168,12 +165,10 @@ class OptionalPrefixAgentGroup(TyperGroup):
             help=self.argument_help,
         )
 
-    def get_params(self, ctx: typer_compat.Context) -> list[typer_compat.Parameter]:
+    def get_params(self, ctx: Context) -> list[Parameter]:
         return [self._prefix_agent_argument(), *self._real_params(ctx)]
 
-    def format_usage(
-        self, ctx: typer_compat.Context, formatter: typer_compat.HelpFormatter
-    ) -> None:
+    def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
         command_path = _strip_help_only_agent_metavars(ctx.command_path)
         root_name, _, remainder = command_path.partition(" ")
         prefix_path = (
@@ -202,7 +197,7 @@ class RequiredPrefixAgentCommand(PrefixAgentCommand):
     prefix_agent_metavar = "AGENT"
     argument_help = "Agent name."
 
-    def _prefix_agent_argument(self) -> typer_compat.Argument:
+    def _prefix_agent_argument(self) -> TyperArgument:
         return _HelpOnlyTyperArgument(
             param_decls=["agent"],
             required=True,
@@ -211,12 +206,12 @@ class RequiredPrefixAgentCommand(PrefixAgentCommand):
             help=self.argument_help,
         )
 
-    def parse_args(self, ctx: typer_compat.Context, args: list[str]) -> list[str]:
+    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         state = ctx.obj
         if not isinstance(state, CliContext):
             raise TypeError("missing CLI context")
         if not state.agent and "--help" not in args:
-            click.echo(ctx.get_help())
+            typer.echo(ctx.get_help())
             ctx.exit()
         return PrefixAgentCommand.parse_args(self, ctx, args)
 
@@ -227,19 +222,17 @@ class RuntimeAgentCommand(TyperCommand):
     usage_agent_metavar = "AGENT"
     argument_help = "Agent name."
 
-    def _real_params(self, ctx: typer_compat.Context) -> list[typer_compat.Parameter]:
+    def _real_params(self, ctx: Context) -> list[Parameter]:
         return TyperCommand.get_params(self, ctx)
 
-    def _visible_real_params(
-        self, ctx: typer_compat.Context
-    ) -> list[typer_compat.Parameter]:
+    def _visible_real_params(self, ctx: Context) -> list[Parameter]:
         return [
             param
             for param in self._real_params(ctx)
             if not getattr(param, "hidden", False)
         ]
 
-    def _help_agent_argument(self) -> typer_compat.Argument:
+    def _help_agent_argument(self) -> TyperArgument:
         return _HelpOnlyTyperArgument(
             param_decls=["agent"],
             required=True,
@@ -248,12 +241,10 @@ class RuntimeAgentCommand(TyperCommand):
             help=self.argument_help,
         )
 
-    def get_params(self, ctx: typer_compat.Context) -> list[typer_compat.Parameter]:
+    def get_params(self, ctx: Context) -> list[Parameter]:
         return [self._help_agent_argument(), *self._real_params(ctx)]
 
-    def format_usage(
-        self, ctx: typer_compat.Context, formatter: typer_compat.HelpFormatter
-    ) -> None:
+    def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
         root_name, _, remainder = ctx.command_path.partition(" ")
         prefix_path = (
             f"{root_name} {self.usage_agent_metavar} {remainder}"
@@ -269,9 +260,7 @@ class RuntimeAgentCommand(TyperCommand):
 class RunAgentCommand(RuntimeAgentCommand):
     argument_help = "Existing local agent name, remote agent ref, or URL."
 
-    def format_usage(
-        self, ctx: typer_compat.Context, formatter: typer_compat.HelpFormatter
-    ) -> None:
+    def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
         pieces = [self.options_metavar] if self.options_metavar else []
         for param in self._visible_real_params(ctx):
             pieces.extend(param.get_usage_pieces(ctx))
@@ -284,7 +273,7 @@ class StartAgentCommand(RuntimeAgentCommand):
 
 
 class OptionalPrefixAgentTemplateCommand(OptionalPrefixAgentCommand):
-    def _help_template_argument(self) -> typer_compat.Argument:
+    def _help_template_argument(self) -> TyperArgument:
         return _HelpOnlyTyperArgument(
             param_decls=["name"],
             required=False,
@@ -293,7 +282,7 @@ class OptionalPrefixAgentTemplateCommand(OptionalPrefixAgentCommand):
             help="Template name.",
         )
 
-    def get_params(self, ctx: typer_compat.Context) -> list[typer_compat.Parameter]:
+    def get_params(self, ctx: Context) -> list[Parameter]:
         return [
             self._prefix_agent_argument(),
             self._help_template_argument(),
@@ -304,16 +293,16 @@ class OptionalPrefixAgentTemplateCommand(OptionalPrefixAgentCommand):
 class _HelpOnlyTyperArgument(TyperArgument):
     """One help-only argument that never participates in parsing."""
 
-    def make_metavar(self, ctx: typer_compat.Context, *, usage: bool = False) -> str:
+    def make_metavar(self, ctx: Context, *, usage: bool = False) -> str:
         del ctx, usage
         return self.metavar or "TEXT"
 
-    def add_to_parser(self, parser: object, ctx: typer_compat.Context) -> None:
+    def add_to_parser(self, parser: object, ctx: Context) -> None:
         del parser, ctx
 
     def handle_parse_result(
         self,
-        ctx: typer_compat.Context,
+        ctx: Context,
         opts: Mapping[str, object],
         args: list[str],
     ) -> tuple[None, list[str]]:

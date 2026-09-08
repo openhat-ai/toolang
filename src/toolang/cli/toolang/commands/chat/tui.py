@@ -25,7 +25,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 from rich.console import Group, RenderableType
 from rich.text import Text
-from toolang.base.utils import typer_compat
+from typer._click.exceptions import ClickException
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
@@ -892,7 +892,7 @@ class ChatTuiApp:
                 validate_model_reasoning_request(
                     self.client.list_models(), request.model
                 )
-        except typer_compat.ClickException as exc:
+        except ClickException as exc:
             self.status_bar.set_error(friendly_error(exc.message))
             return False
         except (ToolangError, ValueError) as exc:

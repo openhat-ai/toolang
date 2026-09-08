@@ -6,8 +6,8 @@ from pathlib import Path
 import json
 
 import typer
+from typer._click.types import ParamType
 
-from toolang.base.utils import typer_compat
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.typer_tools import TyperToolConfig, create_typer_tools
 
@@ -138,8 +138,8 @@ def test_typer_tool_invocation_runs_inside_tool_context_working_directory(
     assert result["stdout"].strip() == str(tmp_path)
 
 
-def test_typer_tool_definition_uses_custom_click_schema() -> None:
-    class _JsonType(typer_compat.ParamType):
+def test_typer_tool_definition_uses_custom_parameter_schema() -> None:
+    class _JsonType(ParamType):
         name = "json"
         tool_schema = {"type": "object"}
 

@@ -24,7 +24,7 @@ Setup-oriented `--default` vocabulary.
 - Remove the hidden `--default` option from generated Script runnable commands.
 - Remove Script-only compatibility parsing, conflict diagnostics, and the
   deprecation warning for `--default model=...`.
-- Let Click report its standard `No such option: --default` usage error. No
+- Let Typer report its standard `No such option: --default` usage error. No
   custom migration fallback is retained.
 - Keep hidden `--default` compatibility on Chat and rerun unchanged; removing
   those surfaces is outside this change.

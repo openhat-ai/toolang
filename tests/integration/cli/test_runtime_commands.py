@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from click.utils import strip_ansi
+from typer._click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from toolang.base.errors import ToolangError

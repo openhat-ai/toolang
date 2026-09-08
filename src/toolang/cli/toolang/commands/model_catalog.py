@@ -10,8 +10,8 @@ from typing import Annotated, cast
 
 from rich.text import Text
 import typer
+from typer._click.exceptions import ClickException
 
-from toolang.base.utils import typer_compat
 from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
 from toolang.cli.common.context import (
     ModelCatalogOption,
@@ -70,7 +70,7 @@ def models_command(
             else _inspection(ctx, model_catalog=model_catalog)
         )
     except TypeError as error:
-        raise typer_compat.ClickException(str(error)) from error
+        raise ClickException(str(error)) from error
     if inspection is None:
         typer.echo("No models matched query.")
         return
@@ -225,7 +225,7 @@ def _matching_inspection(
     try:
         queries = MODEL_SCHEMA.parse(query)
     except ToolangError as error:
-        raise typer_compat.ClickException(str(error)) from error
+        raise ClickException(str(error)) from error
     return asyncio.run(
         load_matching_catalog_inspection(
             AgentLayout.resident(context_root(ctx), agent or "default"),

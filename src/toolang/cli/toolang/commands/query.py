@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 import typer
+from typer._click.exceptions import UsageError
 
-from toolang.base.utils import typer_compat
 from toolang.common.query import CollectionSchema
 from toolang.plugin.models.collections import MODEL_SCHEMA
 from toolang.plugin.toolsets.collections import TOOL_SCHEMA
@@ -30,14 +30,14 @@ def query_command(
 
     if collection is None:
         if json_:
-            raise typer_compat.UsageError("--json requires COLLECTION")
+            raise UsageError("--json requires COLLECTION")
         typer.echo(QUERY_HELP.strip())
         return
     schemas = _schemas()
     schema = schemas.get(collection)
     if schema is None:
         supported = ", ".join(COLLECTIONS)
-        raise typer_compat.BadParameter(
+        raise typer.BadParameter(
             f"unknown query collection {collection!r}; supported: {supported}",
             param_hint="COLLECTION",
         )

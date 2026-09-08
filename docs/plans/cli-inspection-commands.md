@@ -253,7 +253,7 @@ module requires a change.
    behavior.
 6. The former filter flags and 50-row window receive no inspect equivalent;
    inspect collections remain unbounded and reject unsupported options through
-   normal Click usage errors.
+   normal Typer usage errors.
 7. An Agent without `runs.db` receives the existing inspect missing-history
    error rather than the removed commands' empty-table behavior.
 8. `too catalogs` and `too toolsets` list the correct entry-point groups with

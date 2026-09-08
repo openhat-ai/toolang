@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Annotated, Literal, cast
 
 import typer
+from typer._click.exceptions import ClickException
 from typer.core import TyperCommand
 
-from toolang.base.utils import typer_compat
 from toolang.cli.common.editor import edit_markdown
 from ....catalog import templates
 from ....catalog.types import JobStage
@@ -182,7 +182,7 @@ def _list(kind: JobKind, title: str) -> Callable[..., None]:
                         for run in runs
                         if run.error is not None
                     }
-        except typer_compat.ClickException as exc:
+        except ClickException as exc:
             typer.echo(f"warning: {exc.message}", err=True)
         try:
             inspection = JobInspection.load(
@@ -192,7 +192,7 @@ def _list(kind: JobKind, title: str) -> Callable[..., None]:
                 error_messages=error_messages,
             )
         except JobStoreSchemaError as exc:
-            raise typer_compat.ClickException(
+            raise ClickException(
                 _job_store_schema_error(exc, path=layout.job_store)
             ) from exc
         entries = tuple(
@@ -298,7 +298,7 @@ def _clone(kind: JobKind, title: str) -> Callable[..., None]:
         root, agent = context_root(ctx), require_prefix_agent(ctx)
         source = _jobs(root, agent).get(kind, id, stage=None)
         if source is None:
-            raise typer_compat.ClickException(f"{kind} not found: {id}")
+            raise ClickException(f"{kind} not found: {id}")
         clone_id = allocate_authored_job_id(_layout(root, agent))
         clone = source.with_meta({**source.meta, "id": clone_id})
         saved = user_call(
@@ -320,7 +320,7 @@ def _edit(kind: JobKind, title: str) -> Callable[..., None]:
         catalog = _jobs(root, agent)
         existing = catalog.get(kind, id, stage=None)
         if existing is None:
-            raise typer_compat.ClickException(f"{kind} not found: {id}")
+            raise ClickException(f"{kind} not found: {id}")
         text = existing.content
         updated = edit_markdown(text)
         if updated is None:
@@ -371,7 +371,7 @@ def _reopen(kind: JobKind, title: str) -> Callable[..., None]:
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
         if kind != "task":
-            raise typer_compat.ClickException("reopen is only supported for tasks")
+            raise ClickException("reopen is only supported for tasks")
         runtime_post(ctx, f"/api/v1/tasks/{id}/reopen", payload={})
         typer.echo(f"task {id} reopened")
 
@@ -384,7 +384,7 @@ def _run(kind: JobKind, title: str) -> Callable[..., None]:
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
         if kind != "chore":
-            raise typer_compat.ClickException("run is only supported for chores")
+            raise ClickException("run is only supported for chores")
         runtime_post(ctx, f"/api/v1/chores/{id}/run", payload={})
         typer.echo(f"chore {id} manual run requested")
 
@@ -411,12 +411,12 @@ def _delete(kind: JobKind, title: str) -> Callable[..., None]:
         catalog = _jobs(root, agent)
         active = catalog.get(kind, id, stage=None)
         if active is not None and active.stage != "archived":
-            raise typer_compat.ClickException(
+            raise ClickException(
                 f"{kind} is not archived: {id}; archive it before deleting"
             )
         entry = catalog.get(kind, id, stage="archived")
         if entry is None:
-            raise typer_compat.ClickException(f"archived {kind} not found: {id}")
+            raise ClickException(f"archived {kind} not found: {id}")
         user_call(catalog.remove, kind, id)
         typer.echo(f"{kind} {id} deleted")
 
@@ -431,7 +431,7 @@ def _jobs(root: Path, agent: str) -> AuthoredJobs:
             catalog=catalog,
         )
     except (CatalogError, ValueError) as exc:
-        raise typer_compat.ClickException(str(exc)) from exc
+        raise ClickException(str(exc)) from exc
     return catalog
 
 

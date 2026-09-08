@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from typer._click.exceptions import ClickException
 
-from toolang.base.utils import typer_compat
 from toolang.base.types.message import TextPart
 from toolang.base.types.model import (
     ModelParameters,
@@ -537,7 +537,7 @@ def test_prompt_toolkit_reports_invalid_color_scheme_before_tui_start(
     )
 
     with pytest.raises(
-        typer_compat.ClickException,
+        ClickException,
         match="three #RRGGBB colors in input,queue,code order",
     ):
         chat._chat_interactive_prompt_toolkit(
@@ -728,7 +728,7 @@ def test_chat_runtime_does_not_fall_back_after_remote_health_failure(
         ),
     )
 
-    with pytest.raises(typer_compat.ClickException, match="health failed"):
+    with pytest.raises(ClickException, match="health failed"):
         with chat._chat_runtime(
             object(),  # type: ignore[arg-type]
             sandbox=None,
@@ -826,7 +826,7 @@ def test_chat_runtime_closes_temporary_runtime_after_remote_initialization_failu
     monkeypatch.setattr(chat, "acquire_agent_server", agent_server_context)
     monkeypatch.setattr(chat, "RemoteChatSession", failed_remote)
 
-    with pytest.raises(typer_compat.ClickException, match="initialization failed"):
+    with pytest.raises(ClickException, match="initialization failed"):
         with chat._chat_runtime(
             object(),  # type: ignore[arg-type]
             sandbox="docker",

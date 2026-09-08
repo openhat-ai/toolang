@@ -6,11 +6,12 @@ import json
 from pathlib import Path
 from typing import cast
 
-from click import unstyle
 import pytest
 from rich.console import Console
 from rich.text import Text
+
 from typer import rich_utils
+from typer._click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
@@ -25,7 +26,7 @@ runner = CliRunner()
 
 def test_model_catalog_override_is_scoped_to_consuming_commands() -> None:
     result = runner.invoke(cli.app, ["--help"])
-    stdout = unstyle(result.stdout)
+    stdout = strip_ansi(result.stdout)
 
     assert result.exit_code == 0, result.stderr
     assert "models" in stdout
@@ -49,24 +50,24 @@ def test_model_catalog_override_is_scoped_to_consuming_commands() -> None:
     ):
         command_result = runner.invoke(cli.app, command)
         assert command_result.exit_code == 0, command_result.stderr
-        command_help = unstyle(command_result.stdout)
+        command_help = strip_ansi(command_result.stdout)
         assert "--catalog" in command_help
         assert "--models" not in command_help
 
     for command in (["list", "--help"], ["adapters", "--help"]):
         command_result = runner.invoke(cli.app, command)
         assert command_result.exit_code == 0, command_result.stderr
-        command_help = unstyle(command_result.stdout)
+        command_help = strip_ansi(command_result.stdout)
         assert "--catalog" not in command_help
         assert "--models" not in command_help
 
     unsupported = runner.invoke(cli.app, ["--catalog", "catalog.json", "list"])
     assert unsupported.exit_code == 2
-    assert "No such option: --catalog" in unstyle(unsupported.stderr)
+    assert "No such option: --catalog" in strip_ansi(unsupported.stderr)
 
     removed = runner.invoke(cli.app, ["models", "--models", "models.json"])
     assert removed.exit_code == 2
-    assert "No such option: --models" in unstyle(removed.stderr)
+    assert "No such option: --models" in strip_ansi(removed.stderr)
 
 
 def test_models_is_a_leaf_command_without_file_output_options() -> None:
@@ -75,7 +76,7 @@ def test_models_is_a_leaf_command_without_file_output_options() -> None:
 
     assert models_result.exit_code == 0, models_result.stderr
     assert providers_result.exit_code == 0, providers_result.stderr
-    models_help = " ".join(unstyle(models_result.stdout).replace("│", "").split())
+    models_help = " ".join(strip_ansi(models_result.stdout).replace("│", "").split())
     assert "--query" in models_help
     assert "--query-help" not in models_help
     assert "--query-schema" not in models_help
@@ -85,12 +86,12 @@ def test_models_is_a_leaf_command_without_file_output_options() -> None:
     assert "Write filtered models as JSON." in models_help
     assert "--output" not in models_help
     assert "--force" not in models_help
-    assert "Write catalog providers as JSON." in unstyle(providers_result.stdout)
+    assert "Write catalog providers as JSON." in strip_ansi(providers_result.stdout)
 
     for subcommand in ("inspect", "update"):
         result = runner.invoke(cli.app, ["models", subcommand])
         assert result.exit_code != 0
-        assert "unexpected extra argument" in unstyle(result.stderr).lower()
+        assert "unexpected extra argument" in strip_ansi(result.stderr).lower()
 
 
 def test_models_query_exports_a_valid_complete_catalog(
@@ -287,7 +288,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
     )
 
     assert result.exit_code == 0, result.stderr
-    stdout = unstyle(result.stdout)
+    stdout = strip_ansi(result.stdout)
     header = next(line for line in stdout.splitlines() if "CONTEXT" in line)
     row = next(line for line in stdout.splitlines() if "test/one" in line)
     assert all(
@@ -440,7 +441,7 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
     )
 
     assert result.exit_code == 0, result.stderr
-    stdout = unstyle(result.stdout)
+    stdout = strip_ansi(result.stdout)
     assert "llama_cpp/offline" in stdout
     assert "4 models from 3 catalogs: models.dev 2, ollama 1, llama_cpp 1" in stdout
 
@@ -525,7 +526,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
     )
 
     assert result.exit_code == 0, result.stderr
-    stdout = unstyle(result.stdout)
+    stdout = strip_ansi(result.stdout)
     header = next(line for line in stdout.splitlines() if "API" in line)
     row = next(line for line in stdout.splitlines() if "https://api.test/v1" in line)
     assert [header.index(label) for label in ("ADAPTERS", "API", "ENV")] == sorted(
@@ -634,7 +635,7 @@ def test_models_help_describes_optional_agent_without_loading(
 
     result = cli.main(["--root", str(tmp_path), *target, "models", "--help"])
     output = capsys.readouterr()
-    stdout = unstyle(output.out)
+    stdout = strip_ansi(output.out)
 
     assert result == 0
     assert ("\x1b[" in output.out) is colored

@@ -281,7 +281,7 @@ projector semantics. Tests must distinguish:
 | projector unsupported for final subject | invalid projector |
 | `model-call` on a non-model Step | wrong semantic Step kind |
 
-Exact wording may retain existing Click prefixes. No handler may fall through
+Exact wording may retain standard Typer prefixes. No handler may fall through
 to a different interpretation after one category is selected.
 
 ## Design Touchpoints

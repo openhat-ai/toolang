@@ -387,7 +387,7 @@ Failed to install Toolang
 The first line remains a verb-first progress sentence and contains no agent
 name. Continuations use exactly the applicable fields above. `Stage` and
 `Reason` are mandatory; `Fix` and `Log` are conditional. The responsible
-command and presenter compose this block once. Typer, Click, sandbox logs, and
+command and presenter compose this block once. Typer, sandbox logs, and
 outer exception handlers must not repeat the same cause as another top-level
 error. An error before any operational event continues through the normal CLI
 error path.
