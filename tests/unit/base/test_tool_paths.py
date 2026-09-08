@@ -71,7 +71,7 @@ def test_invocation_uses_the_resolved_path_not_a_retargeted_alias(
     link.symlink_to(first, target_is_directory=True)
     tool = load_tools()[tool_name]
     context = _context(tmp_path)
-    assert tool.touchpoints(arguments, context)
+    assert tool.paths(arguments, context)
     link.unlink()
     link.symlink_to(second, target_is_directory=True)
 
@@ -106,7 +106,7 @@ def test_filesystem_tools_declare_their_defaulted_access_path(
         arguments = dict(arguments, workspace="repo")
     else:
         arguments = dict(arguments, cwd="repo")
-    points = load_tools()[name].touchpoints(arguments, context)
+    points = load_tools()[name].paths(arguments, context)
     assert points is not None
     assert list(points) == ["repo"]
     assert points["repo"][0].startswith("/")
@@ -115,7 +115,7 @@ def test_filesystem_tools_declare_their_defaulted_access_path(
 def test_shell_default_cwd_is_authorized(tmp_path):
     context = _context(tmp_path)
     tool = load_tools()["shell__execute"]
-    assert tool.touchpoints({"command": "true"}, context) == {}
+    assert tool.paths({"command": "true"}, context) == {}
     assert asyncio.run(tool.invoke({"command": "pwd"}, context)).output["cwd"] == str(
         tmp_path
     )

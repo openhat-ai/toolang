@@ -176,7 +176,7 @@ def test_nested_workspaces_keep_the_explicit_uri_identity(fs):
     ]:
         arguments = {"path": uri, "text": "done"}
         tool = tools["fs__write"]
-        assert tool.touchpoints(arguments, context) == {workspace: (relative,)}
+        assert tool.paths(arguments, context) == {workspace: (relative,)}
         assert asyncio.run(tool.invoke(arguments, context)).output["path"] == uri
 
 
@@ -292,7 +292,7 @@ def test_remove_keeps_the_parent_directory_when_an_alias_changes(fs):
     parent.symlink_to(repo / "first", target_is_directory=True)
     tool = tools["fs__remove"]
     arguments = {"path": "workspace://repo/parent/link"}
-    assert tool.touchpoints(arguments, context) == {"repo": ("/parent/link",)}
+    assert tool.paths(arguments, context) == {"repo": ("/parent/link",)}
     parent.unlink()
     parent.symlink_to(repo / "second", target_is_directory=True)
     assert (
@@ -309,8 +309,8 @@ def test_call_keeps_its_captured_grant_but_next_call_uses_new_context(fs):
     other = repo.parent / "other"
     other.mkdir()
     args = {"path": "workspace://repo/file", "text": "old"}
-    assert tools["fs__write"].touchpoints(args, context) == {"repo": ("/file",)}
-    assert tools["fs__list"].touchpoints({"path": "workspace://"}, context) == {}
+    assert tools["fs__write"].paths(args, context) == {"repo": ("/file",)}
+    assert tools["fs__list"].paths({"path": "workspace://"}, context) == {}
     changed = replace(context, workspaces={"repo": other, "new": repo})
     assert (
         asyncio.run(tools["fs__write"].invoke(args, context)).output["path"]
@@ -336,7 +336,7 @@ def test_call_keeps_its_captured_grant_but_next_call_uses_new_context(fs):
         ).output["entries"]
     ] == ["new", "repo"]
     with pytest.raises(ToolangError, match="not available"):
-        tools["fs__write"].touchpoints(args, replace(context, workspaces={}))
+        tools["fs__write"].paths(args, replace(context, workspaces={}))
 
 
 def test_plain_paths_require_a_workspace_and_shell_is_unchanged(fs):
@@ -351,9 +351,7 @@ def test_plain_paths_require_a_workspace_and_shell_is_unchanged(fs):
     )
     assert (repo / "file").read_text() == "done"
     with pytest.raises(ToolangError, match="escapes agent home"):
-        tools["shell__execute"].touchpoints(
-            {"cwd": str(repo), "command": "true"}, context
-        )
+        tools["shell__execute"].paths({"cwd": str(repo), "command": "true"}, context)
 
 
 @pytest.mark.parametrize(

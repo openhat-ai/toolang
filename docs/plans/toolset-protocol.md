@@ -10,7 +10,7 @@ description hooks in the tool-progress plan.
 ## Contract
 
 - `Toolset.tools()` exposes `Tool` instances. `Tool` supplies default `summary`
-  and `touchpoints` methods returning `None`.
+  and `paths` methods returning `None`.
 - `invoke(arguments, context)` returns `ToolResult(output={}, error=None)`.
   Only `output` is extensible JSON data. An error may retain partial output.
   Call identity, timing, and cancellation belong to the executor.
@@ -18,7 +18,7 @@ description hooks in the tool-progress plan.
   running; a result's error distinguishes failure from success. Executor prefixes
   running wording with `Canceled:` on cancellation, or uses its generic fallback.
   Progress owns markers, styles, duration, and layout.
-- `touchpoints(arguments, context)` returns workspace names mapped to tuples of
+- `paths(arguments, context)` returns workspace names mapped to tuples of
   normalized workspace-relative paths. `None` means unsupported; an empty mapping
   means no workspace paths for this call. It performs no requested operation.
 - Remove `ToolPreparation`, `ToolPath`, and duck-typed hook discovery. The only
@@ -46,6 +46,6 @@ execution, replay, progress, and provider-offline tests must continue to pass.
 
 This is a Python plugin API change; migrate all repository implementations and
 examples together without keeping old hook aliases. A context is invocation-local,
-not reusable mutable Run state. Shell touchpoints cover its explicit cwd, not all
+not reusable mutable Run state. Shell paths cover its explicit cwd, not all
 paths within arbitrary commands. No new sandbox policy or retry behavior is added.
 There are no outstanding design decisions in this scope.

@@ -27,7 +27,7 @@ def test_default_hooks_and_result_contract(tmp_path):
     context = ToolContext(tmp_path, tmp_path)
     assert echo.summary({}) is None
     assert echo.summary({}, ToolResult()) is None
-    assert echo.touchpoints({}, context) is None
+    assert echo.paths({}, context) is None
     assert asyncio.run(echo.invoke({"value": 1}, context)) == ToolResult({"value": 1})
     assert {f.name for f in fields(ToolResult)} == {"output", "error"}
     first, second = ToolResult(), ToolResult()
@@ -58,12 +58,12 @@ def test_function_hooks_use_the_tool_contract_without_defaulting_arguments(
 ):
     observed = []
 
-    def touchpoints(arguments, context):
+    def paths(arguments, context):
         observed.append((dict(arguments), context))
         return points
 
     @tool(
-        touchpoints=touchpoints,
+        paths=paths,
         summary=lambda arguments, result: "Done" if result else "Working",
     )
     def work(path="/src"):
@@ -72,7 +72,7 @@ def test_function_hooks_use_the_tool_contract_without_defaulting_arguments(
     wrapped = create_function_tool(work)
     context = ToolContext(tmp_path, tmp_path)
     arguments = {}
-    assert wrapped.touchpoints(arguments, context) == points
+    assert wrapped.paths(arguments, context) == points
     assert observed == [({}, context)]
     assert wrapped.summary(arguments) == "Working"
     result = asyncio.run(wrapped.invoke(arguments, context))
@@ -107,7 +107,7 @@ def test_non_path_tools_do_not_inspect_workspace_filesystem(tmp_path, monkeypatc
     roots = {"repo": tmp_path / "unavailable"}
     context = ToolContext(tmp_path, tmp_path, roots)
     assert context.workspaces == roots
-    assert Echo().touchpoints({}, context) is None
+    assert Echo().paths({}, context) is None
 
 
 def test_calls_share_tools_but_not_resolved_targets(tmp_path):
@@ -119,7 +119,7 @@ def test_calls_share_tools_but_not_resolved_targets(tmp_path):
     write = load_tools(queries=("fs/write",))["fs__write"]
     old_input = {"workspace": "repo", "path": "file", "text": "old"}
     new_input = {**old_input, "text": "new"}
-    assert write.touchpoints(old_input, old) == write.touchpoints(new_input, new)
+    assert write.paths(old_input, old) == write.paths(new_input, new)
 
     async def invoke():
         return await asyncio.gather(
@@ -142,7 +142,7 @@ def test_workspace_root_alias_is_bound_for_one_call(tmp_path):
     context = ToolContext(tmp_path, tmp_path, {"repo": alias})
     listing = load_tools(queries=("fs/list",))["fs__list"]
     arguments = {"workspace": "repo", "path": "/"}
-    assert listing.touchpoints(arguments, context) == {"repo": ("/",)}
+    assert listing.paths(arguments, context) == {"repo": ("/",)}
     alias.unlink()
     alias.symlink_to(second, target_is_directory=True)
     result = asyncio.run(listing.invoke(arguments, context))

@@ -52,7 +52,7 @@ class ShellToolset:
         @tool(
             name="execute",
             description="Run one shell command and capture stdout and stderr. Optional workspace anchors cwd at that workspace root, including paths starting with /.",
-            touchpoints=_touchpoints,
+            paths=_paths,
             summary=_summary,
         )
         async def execute(
@@ -144,7 +144,7 @@ def create_toolset(config: Mapping[str, Any]) -> Toolset:
     return ShellToolset(config=dict(config))
 
 
-def _touchpoints(
+def _paths(
     arguments: Mapping[str, Any], context: ToolContext
 ) -> Mapping[str, tuple[str, ...]]:
     value = str(arguments.get("cwd") or "").strip() or "."

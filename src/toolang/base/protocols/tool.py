@@ -81,7 +81,7 @@ class Tool(ABC):
         """Plain call wording from arguments/result only; None uses executor wording."""
         return None
 
-    def touchpoints(
+    def paths(
         self, arguments: Mapping[str, Any], context: ToolContext
     ) -> Mapping[str, tuple[str, ...]] | None:
         """Workspace-relative paths, without executing the requested operation.

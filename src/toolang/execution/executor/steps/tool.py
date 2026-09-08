@@ -278,10 +278,10 @@ async def _execute(
                     name: Path(path) for name, path in agent_state.workspaces.items()
                 },
             )
-            touchpoints = tool.touchpoints(call.input, context)
+            tool_paths = tool.paths(call.input, context)
             paths = tuple(
                 (workspace, path)
-                for workspace, values in (touchpoints or {}).items()
+                for workspace, values in (tool_paths or {}).items()
                 for path in values
             )
             operation = tool

@@ -30,13 +30,13 @@ from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateWatcher
 
 
-@pytest.mark.parametrize("phase", ["touchpoints", "invoke"])
-def test_touchpoint_errors_and_result_failures_are_recorded(tmp_path, phase):
+@pytest.mark.parametrize("phase", ["paths", "invoke"])
+def test_path_errors_and_result_failures_are_recorded(tmp_path, phase):
     output = {"path": "/missing", "code": "not_found"} if phase == "invoke" else {}
 
     class PreparingTool(RecordingTool):
-        def touchpoints(self, arguments, context):
-            if phase == "touchpoints":
+        def paths(self, arguments, context):
+            if phase == "paths":
                 raise ToolangError("invalid path")
             return {}
 
@@ -79,7 +79,7 @@ def test_touchpoint_errors_and_result_failures_are_recorded(tmp_path, phase):
                 if isinstance(p, ToolResultPart)
             ]
             assert results == [step.output.value]
-            assert len(tool.calls) == (0 if phase == "touchpoints" else 1)
+            assert len(tool.calls) == (0 if phase == "paths" else 1)
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())

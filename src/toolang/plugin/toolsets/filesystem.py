@@ -307,7 +307,7 @@ class _FilesystemTool(Tool):
             output["matches"] = [display(item) for item in output["matches"]]
         return result
 
-    def touchpoints(
+    def paths(
         self, arguments: Mapping[str, Any], context: ToolContext
     ) -> Mapping[str, tuple[str, ...]]:
         target = self._target(arguments)

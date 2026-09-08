@@ -15,7 +15,7 @@ from ..types.tool import (
     ToolDefinition,
     ToolResult,
     ToolSummary,
-    ToolTouchpoints,
+    ToolPaths,
 )
 
 
@@ -27,7 +27,7 @@ class _FunctionToolSpec:
     func: Callable[..., Any]
     wants_context: bool
     signature: inspect.Signature
-    touchpoints: ToolTouchpoints | None
+    paths: ToolPaths | None
     summary: ToolSummary | None
 
 
@@ -55,12 +55,10 @@ class _FunctionTool(Tool):
     ) -> str | None:
         return self.spec.summary(arguments, result) if self.spec.summary else None
 
-    def touchpoints(
+    def paths(
         self, arguments: Mapping[str, Any], context: ToolContext
     ) -> Mapping[str, tuple[str, ...]] | None:
-        return (
-            self.spec.touchpoints(arguments, context) if self.spec.touchpoints else None
-        )
+        return self.spec.paths(arguments, context) if self.spec.paths else None
 
     async def invoke(
         self,
@@ -92,10 +90,10 @@ def tool(
     name: str | None = None,
     description: str | None = None,
     parameters: dict[str, Any] | None = None,
-    touchpoints: ToolTouchpoints | None = None,
+    paths: ToolPaths | None = None,
     summary: ToolSummary | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Annotate a function with the same summary/touchpoints hooks as a Tool."""
+    """Annotate a function with the same summary/paths hooks as a Tool."""
 
     def decorate(func: Callable[..., Any]) -> Callable[..., Any]:
         signature = inspect.signature(func)
@@ -106,7 +104,7 @@ def tool(
             func=func,
             wants_context="context" in signature.parameters,
             signature=signature,
-            touchpoints=touchpoints,
+            paths=paths,
             summary=summary,
         )
         setattr(func, "__tool_spec__", spec)

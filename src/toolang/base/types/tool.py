@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from ..protocols.tool import ToolHistory, ToolRuntime
 
 ToolSummary = Callable[[Mapping[str, Any], "ToolResult | None"], str | None]
-ToolTouchpoints = Callable[
+ToolPaths = Callable[
     [Mapping[str, Any], "ToolContext"], Mapping[str, tuple[str, ...]] | None
 ]
 

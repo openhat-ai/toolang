@@ -55,10 +55,10 @@ class LoadedTool(Tool):
     def model_callable(self) -> bool:
         return getattr(self.leaf_tool, "model_callable", True)
 
-    def touchpoints(
+    def paths(
         self, arguments: Mapping[str, Any], context: ToolContext
     ) -> Mapping[str, tuple[str, ...]] | None:
-        return self.leaf_tool.touchpoints(arguments, context)
+        return self.leaf_tool.paths(arguments, context)
 
     def summary(
         self,

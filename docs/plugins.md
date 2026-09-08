@@ -33,7 +33,7 @@ class Tool:
     def definition(self) -> ToolDefinition: ...
     async def invoke(self, arguments, context) -> ToolResult: ...
     def summary(self, arguments, result=None) -> str | None: ...
-    def touchpoints(self, arguments, context) -> Mapping[str, tuple[str, ...]] | None: ...
+    def paths(self, arguments, context) -> Mapping[str, tuple[str, ...]] | None: ...
 ```
 
 `ToolResult(output={}, error=None)` has one extensible field: `output`, a JSON
@@ -52,7 +52,7 @@ The two optional methods default to `None`:
   back to its generic cancellation wording when no summary is available.
   Progress reads saved summaries,
   never plugins, and displays no result blocks.
-- `touchpoints`: workspace names mapped to tuples of normalized root-relative
+- `paths`: workspace names mapped to tuples of normalized root-relative
   paths, for example `{"repo": ("/src/main.py",)}`. None means unsupported;
   `{}` means this call has no workspace paths. It must not execute the operation
   or mutate arguments. Runtime owns rules discovery, recall, and retry; actual
@@ -68,7 +68,7 @@ operations, history access, effective service credentials, or agent management.
 Ordinary tools receive none of those dependencies.
 
 The used function adapter remains available: annotate a sync/async function with
-`@tool(summary=..., touchpoints=...)`, then `create_function_tool(function)`.
+`@tool(summary=..., paths=...)`, then `create_function_tool(function)`.
 Hooks have exactly the Tool signatures and see the original arguments (including
 omitted defaults). An explicit `context` function parameter is injected. Return
 `ToolResult` directly, or let the adapter wrap a dict, None (empty output), or a
