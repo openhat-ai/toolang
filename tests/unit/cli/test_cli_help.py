@@ -19,6 +19,21 @@ from toolang.cli.common.parameters import PathType
 from toolang.cli.toolang.main import app, main as too_main
 
 
+@pytest.mark.parametrize("args", [["--help"], ["--thread", "--help"], ["-t", "--help"]])
+def test_chat_help_uses_the_canonical_optional_thread_option(
+    args, tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr("sys.argv", ["too"])
+    assert too_main(["--root", str(tmp_path), "a", "chat", *args]) == 0
+    output = strip_ansi(capsys.readouterr().out)
+    usage = output.partition("Usage:")[2].splitlines()[0].strip()
+    assert usage == "too AGENT chat [OPTIONS]"
+    row = next(line for line in output.splitlines() if "[THREAD]" in line)
+    assert "--thread" in row and "-t" in row
+    assert row.index("--thread") < row.index("-t", row.index("--thread") + 8)
+    assert "most recently updated thread" in " ".join(output.split())
+
+
 @pytest.mark.parametrize("main", [too_main, caps_main])
 def test_prompt_help_uses_conventional_metavars(main, tmp_path, capsys, monkeypatch):
     monkeypatch.setattr("sys.argv", ["too"])

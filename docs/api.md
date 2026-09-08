@@ -111,7 +111,8 @@ toolang info alice
 toolang alice info
 toolang ./examples/deep_search.too info
 toolang alice chat
-toolang alice chat term_3nprht9x
+toolang alice chat --thread
+toolang alice chat --thread term_3nprht9x
 toolang alice chat --sandbox docker
 toolang alice inspect controls
 toolang alice inspect threads
@@ -317,7 +318,7 @@ The same roaming source path can select agent commands:
 ```bash
 toolang SCRIPT info
 toolang SCRIPT run
-toolang SCRIPT chat [THREAD]
+toolang SCRIPT chat [--thread [THREAD]]
 toolang SCRIPT inspect SUBJECT... [PROJECTOR] [--human | --json]
 toolang SCRIPT retry RUN [--anchor STEP]
 toolang SCRIPT rerun RUN
@@ -334,7 +335,7 @@ Visiting selectors support the same agent-self and execution-history commands:
 ```bash
 toolang brice/alice info
 toolang brice/alice run
-toolang brice/alice chat [THREAD]
+toolang brice/alice chat [--thread [THREAD]]
 toolang brice/alice inspect SUBJECT... [PROJECTOR] [--human | --json]
 toolang brice/alice retry RUN
 ```
@@ -1084,13 +1085,27 @@ Both run-streaming endpoints return the canonical `RunEvent` SSE protocol. A Web
 that needs another presentation shape adapts these events client-side; the API
 does not maintain a second chat event vocabulary.
 
-The CLI command for interactive chat is `toolang AGENT chat [THREAD]
+The CLI command for interactive chat is `toolang AGENT chat [--thread [THREAD]]
 [--sandbox SANDBOX_SPEC] [--default SETTING=VALUE]
 [--allow RESOURCE=QUERY] [--limit LIMIT=VALUE]
 [--compact-model MODEL_SPEC]`.
-Without a thread id, the TUI creates a terminal chat thread on first input. With
-a thread id, it continues that thread. A stopped resident, roaming agent, or
-visiting agent uses embedded execution through `LocalRunClient`. A healthy
+The `--thread` option has a short alias, `-t`, and accepts an optional value:
+
+- Omit the option to start a new session; its terminal thread is created on
+  first input. Help and exit without input do not create a thread.
+- Pass bare `--thread` to resume the selected agent's most recently updated
+  thread, including recorded run activity. All thread origins and statuses
+  participate in selection. If no thread exists, the command fails with guidance
+  to omit the option to start a new session.
+- Pass `--thread THREAD` to continue that thread, or `--thread RUN` to continue
+  the run's thread. `--thread=THREAD` and `-tTHREAD` also accept explicit values.
+
+An explicitly empty thread value is invalid. Repeating the option uses the last
+occurrence. A following option, as in `--thread --sandbox host`, leaves thread
+selection bare. Positional thread IDs are no longer accepted.
+
+A stopped resident, roaming agent, or visiting agent uses embedded execution
+through `LocalRunClient`. A healthy
 running resident uses its recorded endpoint through `RemoteRunClient`; an
 unready or unhealthy resident fails without starting a competing embedded
 executor. Explicit Chat policy options become remotely validated session

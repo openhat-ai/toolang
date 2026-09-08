@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import subprocess
+import sys
 from threading import Barrier
 from typing import Any, cast
 
@@ -66,6 +68,22 @@ def test_lazy_command_completes_options_using_typer_parameters() -> None:
 
     assert [item.value for item in completions] == ["--tab-size"]
     assert completions[0].help == "Number of spaces per indentation level."
+
+
+def test_thread_option_registration_keeps_chat_runtime_imports_lazy() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import toolang.cli.toolang.main; "
+            "assert 'toolang.cli.toolang.commands.chat' not in sys.modules; "
+            "assert 'toolang.cli.common.agent_server' not in sys.modules",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize(
@@ -311,14 +329,7 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
         ),
         (
             ["chat"],
-            "Usage: pytest AGENT chat [OPTIONS] [THREAD]",
-            "THREAD",
-            "TEXT",
-            "[THREAD]",
-        ),
-        (
-            ["chat"],
-            "Usage: pytest AGENT chat [OPTIONS] [THREAD]",
+            "Usage: pytest AGENT chat [OPTIONS]",
             "AGENT",
             "TEXT",
             "{AGENT}",
@@ -670,7 +681,9 @@ def test_cli_routes_local_script_to_script_command(
     (
         ["info"],
         ["chat"],
-        ["chat", "term_1"],
+        ["chat", "--thread"],
+        ["chat", "--thread", "term_1"],
+        ["chat", "-t", "term_1"],
         ["inspect", "run_1"],
         ["steer", "run_1", "change direction"],
         ["retry", "run_1"],
@@ -807,13 +820,13 @@ def test_cli_routes_visiting_chat_through_materialization(
     monkeypatch.setattr(agents, "resolve_visiting_layout", resolve)
 
     result = dispatch_visiting(
-        [selector, "chat", "term_1"],
+        [selector, "chat", "--thread", "term_1"],
         run_app=run_app,
     )
 
     assert result == 12
     assert captured["source"] == selector
-    assert captured["args"] == ["chat", "term_1"]
+    assert captured["args"] == ["chat", "--thread", "term_1"]
     assert captured["layout"] == layout
 
 

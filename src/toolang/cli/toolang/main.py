@@ -16,6 +16,7 @@ from typer._click.exceptions import ClickException, NoArgsIsHelpError
 from typer.core import TyperGroup
 
 from toolang.cli.common.parameters import RootOption
+from toolang.cli.common.options import BARE_VALUE, OptionalValueCommand
 
 from ...catalog.agent import LocalAgents
 from ...common.layout import AgentLayout
@@ -89,6 +90,10 @@ _VISIBLE_COMMAND_ORDER = (
     *_INSPECTION_PANEL_COMMAND_ORDER,
 )
 _REGISTERED_COMMANDS: dict[str, Callable[[], LazyCommand]] = {}
+
+
+class _ChatCommand(OptionalValueCommand, RequiredPrefixAgentCommand):
+    optional_values = {"thread": BARE_VALUE}
 
 
 class _ToolangGroup(CliGroup):
@@ -311,7 +316,7 @@ _registered_command(
     "chat",
     "toolang.cli.toolang.commands.chat:chat_command",
     help="Start an interactive TUI.",
-    cls=RequiredPrefixAgentCommand,
+    cls=_ChatCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
 )
 _registered_command(
