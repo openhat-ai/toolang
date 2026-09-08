@@ -282,7 +282,7 @@ class RunHistory:
             return self._store.rebuild_model_calls((record,))[ref]
 
     def get_compaction(self, thread: ThreadRef | str) -> CompactionOutput | None:
-        """Locate the paired compact Thread's latest successful output; never run it."""
+        """Find the latest applicable full-prefix summary, skipping interval tests."""
 
         target = ThreadRef.parse(thread)
         with self._store.read_transaction():
@@ -290,6 +290,10 @@ class RunHistory:
                 raise KeyError(str(target))
             compact_id = f"compact_{target}"
             if self._store.get_thread(thread_id=compact_id) is None:
+                return None
+            _, _, target_members = self._store.history_thread_members(str(target))
+            roots = tuple(ref for ref, root in target_members.items() if ref == root)
+            if len(roots) < 2:
                 return None
             _, _, members = self._store.history_thread_members(compact_id)
             for run_id, root_id in reversed(members.items()):
@@ -299,6 +303,29 @@ class RunHistory:
                 if run.status == "succeeded" and run.output is not None:
                     output = self.get_output(run.id)
                     assert output is not None
+                    raw = output.local.value
+                    if not isinstance(raw, Mapping):
+                        continue
+                    value = cast(Mapping[str, object], raw)
+                    control = self._store.get_run_control(run_id=run.id, index=0)
+                    assert control is not None and isinstance(
+                        control.payload, RunControlPayload
+                    )
+                    input = control.payload.input
+                    summary = value.get("summary")
+                    if not (
+                        value.get("thread") == input.get("thread") == str(target)
+                        and value.get("begin") in (None, roots[0])
+                        and value.get("end") == input.get("end")
+                        and value.get("end") in roots[1:]
+                        and isinstance(summary, str)
+                        and summary.strip()
+                        and (
+                            input.get("begin") in (None, roots[0])
+                            or input.get("previous")
+                        )
+                    ):
+                        continue
                     return CompactionOutput(
                         FieldRef.from_path(RunRef(run.id), "output"), output
                     )

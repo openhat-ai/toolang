@@ -161,7 +161,13 @@ async def execute(
                     bindings=RunBindings(model=request.ref, runnable="flow:compact"),
                     limits=frame.run.limits,
                     model_request=request,
-                    input=RunnableInput(expected),
+                    input=RunnableInput(
+                        {
+                            key: value
+                            for key, value in expected.items()
+                            if value is not None
+                        }
+                    ),
                 )
             )
             try:

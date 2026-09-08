@@ -529,12 +529,12 @@ def _public_runnables(program: Program) -> tuple[Runnable, ...]:
     )
 
 
-def _collect_call(
+def collect_named_arguments(
     runnable: Runnable,
     *,
     items: tuple[str, ...],
-    stdin: TextIO,
-) -> tuple[RunOverride, CallInput[str], CallInput[str]]:
+) -> tuple[CallInput[str], list[str]]:
+    """Collect declared named arguments and leave primary input to the caller."""
     params = {parameter.name: parameter for parameter in runnable.params}
     raw_args: dict[str, str] = {}
     input_items: list[str] = []
@@ -550,6 +550,16 @@ def _collect_call(
             continue
         raise UsageError(f"unknown argument: {name}; use '--' to start input")
 
+    return CallInput(raw_args), input_items
+
+
+def _collect_call(
+    runnable: Runnable,
+    *,
+    items: tuple[str, ...],
+    stdin: TextIO,
+) -> tuple[RunOverride, CallInput[str], CallInput[str]]:
+    raw_args, input_items = collect_named_arguments(runnable, items=items)
     call_input = _input_source(input_items, stdin=stdin)
     call_source = call_input.get("_", "") if call_input is not None else ""
     override, input = parse_call(call_source)
@@ -1124,7 +1134,7 @@ async def _execute(
             run_id=run_id,
             tracer=tracer,
         )
-        return await _await_script_run(handle)
+        return await await_script_run(handle)
     finally:
         try:
             await executor.stop()
@@ -1133,7 +1143,7 @@ async def _execute(
                 tracer.close()
 
 
-async def _await_script_run(handle: LocalRunHandle) -> RunRecord:
+async def await_script_run(handle: LocalRunHandle) -> RunRecord:
     """Cancel an owned one-shot run when its script caller is interrupted."""
 
     try:

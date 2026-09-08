@@ -408,9 +408,7 @@ def test_compact_flow_carries_progress_across_real_history_pages(tmp_path):
                     bindings=RunBindings(
                         model="test/scripted", runnable="flow:compact"
                     ),
-                    input=RunnableInput(
-                        {"thread": thread, "begin": None, "end": last.id}
-                    ),
+                    input=RunnableInput({"thread": thread, "end": last.id}),
                 )
             )
             assert compact.status == "succeeded", compact.error

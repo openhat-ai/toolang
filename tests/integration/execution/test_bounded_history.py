@@ -8,6 +8,7 @@ import sqlite3
 import pytest
 
 from tests.support.execution_fixtures import (
+    accept_run,
     project_run_control,
     project_run_end,
     project_run_start,
@@ -33,6 +34,7 @@ from toolang.execution.types import (
     StepRef,
     ThreadRef,
 )
+from toolang.lang.input import RunnableInput
 import toolang.execution.store as store_module
 
 
@@ -608,6 +610,7 @@ def test_compaction_output_reader_uses_latest_success_and_keeps_range_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     start(store)
+    start(store, "run_b")
     history = RunHistory(store)
     assert history.get_compaction("term_a") is None
     start(store, "run_old", thread="compact_term_a")
@@ -619,13 +622,22 @@ def test_compaction_output_reader_uses_latest_success_and_keeps_range_metadata(
             {
                 "thread": "term_a",
                 "begin": None,
-                "end": "run_a",
+                "end": "run_b",
                 "summary": "earlier facts",
             }
         ),
         None,
     )
-    start(store, "run_compact", thread="compact_term_a")
+    accept_run(
+        store,
+        run_id="run_compact",
+        parent=None,
+        thread="compact_term_a",
+        input=RunnableInput({"thread": "term_a", "end": "run_b"}),
+        context={},
+        request_id=None,
+        created_at="2026-01-01T00:00:00Z",
+    )
     project_run_end(store, run_id="run_compact", output=output)
     start(store, "run_failed", thread="compact_term_a")
     project_run_end(store, run_id="run_failed", status="failed")
