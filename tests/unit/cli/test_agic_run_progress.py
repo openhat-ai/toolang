@@ -87,7 +87,7 @@ def _execute_step(
     )
     assert starting.committed == ()
     assert starting.live[0].rows == (
-        ProgressRow(f"▸ Executing {runnable}...", "progress", surface="tool_summary"),
+        ProgressRow(f"‣ Executing {runnable}...", "progress", surface="tool_summary"),
     )
     assert len(starting.live) == 1
     result = ToolResultPart(
@@ -332,7 +332,7 @@ def test_execute_uses_its_persisted_running_description() -> None:
         )
     )
     assert starting.live[0].rows == (
-        ProgressRow("▸ Transferring to next...", "progress", surface="tool_summary"),
+        ProgressRow("‣ Transferring to next...", "progress", surface="tool_summary"),
     )
 
 
@@ -373,7 +373,7 @@ def test_uncommitted_execute_uses_its_tool_outcome(
     )
     expected = (
         ProgressRow(
-            f"▸ {summary}",
+            f"‣ {summary}",
             "progress",
             surface="tool_summary",
         ),
@@ -466,7 +466,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
     )
     if next_tool is not None:
         plugin = "fs" if next_tool == "read" else "_toolang"
-        marker = "▸" if next_tool == "read" else "✧"
+        marker = "‣" if next_tool == "read" else "✧"
         summary = "Reading repo:/file..." if next_tool == "read" else "Loading rules..."
         target = StepRef.parse("run_worker.1")
         started = projector.handle(
@@ -496,7 +496,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
     ended = projector.handle(RunEnd(run="run_worker", status=status))
 
     assert transferred.committed == ended.committed == ()
-    assert transferred.live[0].rows[-1].text == "  0 | #0 | ▸ Transferred to next"
+    assert transferred.live[0].rows[-1].text == "  0 | #0 | ‣ Transferred to next"
     assert not projector._broken
 
 
@@ -527,7 +527,7 @@ def test_execute_prestart_failure_uses_a_correlated_trace_marker() -> None:
 
     assert failed.committed[0].rows == (
         ProgressRow(
-            "▸ Failed to execute flow:missing", "progress", surface="tool_summary"
+            "‣ Failed to execute flow:missing", "progress", surface="tool_summary"
         ),
         ProgressRow("  Runnable not found: missing", "error", surface="tool_error"),
     )

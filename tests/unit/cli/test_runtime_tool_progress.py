@@ -203,9 +203,9 @@ def test_tool_results_remain_in_events_but_not_in_progress(plugin, name):
         ),
     )
     rows = trace_terminal_rows(begin, end, error="")
-    assert rows[0].text.startswith("▸ ")
+    assert rows[0].text.startswith("‣ ")
     assert len(rows) == 1
-    assert rows[0].text == f"▸ Executed {name}"
+    assert rows[0].text == f"‣ Executed {name}"
     assert end.output is not None and isinstance(end.output.value, ToolResultPart)
     assert end.output.value.output == {"value": "Result is still available"}
 

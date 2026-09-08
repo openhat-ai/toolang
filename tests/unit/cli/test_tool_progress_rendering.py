@@ -17,7 +17,7 @@ from toolang.cli.common.execution_progress.rich_rendering import (
 @pytest.mark.parametrize("runtime", [False, True])
 @pytest.mark.parametrize("width", [16, 48, 120])
 def test_tool_summary_is_one_line_with_normal_marker(width, runtime, prefix, live):
-    marker = "✧" if runtime else "▸"
+    marker = "✧" if runtime else "‣"
     row = ProgressRow(
         f"{prefix}{marker} Reading repo:/很长的目录/" + "nested/" * 30,
         "progress",

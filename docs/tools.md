@@ -210,7 +210,7 @@ running form is `Executing NAME ARG ...`; its succeeded and failed forms are
 Fs, shell, and runtime helpers supply wording through the same hook. Progress
 owns markers, color, timing, and layout; it reads saved summaries without calling
 plugins. Tool summaries are dim, with unstyled markers: `✧` for runtime helpers
-and `▸` for ordinary tools. Model and Flow markers remain `•`. Compact elapsed
+and `‣` for ordinary tools. Model and Flow markers remain `•`. Compact elapsed
 time refreshes once per second in TTY/Chat; non-TTY prints start/end only.
 Tool traces show one summary line, plus
 an indented error line on failure, and no result blocks. Long lines are truncated.

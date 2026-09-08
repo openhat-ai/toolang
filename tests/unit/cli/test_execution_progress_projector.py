@@ -708,7 +708,7 @@ def test_parallel_lane_tool_call_only_model_hands_activity_to_tool_step() -> Non
     assert _rows(tool.live) == [
         [
             "• running · 0/1 succeeded · 1 active",
-            "  0 | #0 | ▸ executing web.search",
+            "  0 | #0 | ‣ executing web.search",
         ]
     ]
 
@@ -827,7 +827,7 @@ def test_tool_output_is_not_projected(
             ),
         )
     )
-    assert _rows(update.committed) == [["▸ executed web.search"]]
+    assert _rows(update.committed) == [["‣ executed web.search"]]
     assert all(row.tone == "progress" for row in update.committed[0].rows)
     assert update.committed[0].rows[0].surface == "tool_summary"
 
@@ -849,7 +849,7 @@ def test_tool_error_is_one_indented_line() -> None:
             given=_tool(summary="calling web search for Toolang"),
         )
     )
-    assert _rows(live.live) == [["▸ calling web search for Toolang"]]
+    assert _rows(live.live) == [["‣ calling web search for Toolang"]]
 
     terminal = projector.handle(
         StepEnd(
@@ -863,7 +863,7 @@ def test_tool_error_is_one_indented_line() -> None:
 
     assert _rows(terminal.committed) == [
         [
-            "▸ failed to call web search for Toolang",
+            "‣ failed to call web search for Toolang",
             "  provider rejected the request retry after 60 seconds",
         ]
     ]
@@ -902,7 +902,7 @@ def test_canceled_tool_has_only_its_summary() -> None:
         )
     )
 
-    assert _rows(terminal.committed) == [["▸ canceled web search for Toolang"]]
+    assert _rows(terminal.committed) == [["‣ canceled web search for Toolang"]]
     assert [row.surface for row in terminal.committed[0].rows] == [
         "tool_summary",
     ]
@@ -1202,7 +1202,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
     assert _rows(streamed.live) == [
         [
             "• running · 0/8 succeeded · 2 active",
-            "  0 | #4 | ▸ executing fetch_page",
+            "  0 | #4 | ‣ executing fetch_page",
             "  1 | #5 | • first lane line second lane line",
         ]
     ]
@@ -1218,7 +1218,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
     assert _rows(failed.live) == [
         [
             "• running · 0/8 succeeded · 2 active",
-            "  0 | #4 | ▸ failed fetch_page · provider returned status 429",
+            "  0 | #4 | ‣ failed fetch_page · provider returned status 429",
             "  1 | #5 | • first lane line second lane line",
         ]
     ]
@@ -1232,7 +1232,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
     assert _rows(child_failed.live) == [
         [
             "• running · 0/8 succeeded · 1 failed · 1 canceling",
-            "  0 | #4 | ▸ failed fetch_page · provider returned status 429",
+            "  0 | #4 | ‣ failed fetch_page · provider returned status 429",
             "  1 | #5 | • canceling",
         ]
     ]
@@ -1263,7 +1263,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
     assert _rows(terminal.committed) == [
         [
             "• Parallel execution stopped: 0/8 succeeded, 1 failed, and 1 was canceled",
-            "  0 | #4 | ▸ failed fetch_page",
+            "  0 | #4 | ‣ failed fetch_page",
             "             provider returned status 429",
             "",
             "• parallel step stopped because lane 0 (#4) failed",
@@ -1677,7 +1677,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
     assert _rows(live.live) == [
         [
             "• running · 0/2 succeeded · 1 active",
-            "  0 | #0 | ▸ executing fetch_page",
+            "  0 | #0 | ‣ executing fetch_page",
         ]
     ]
     reducer.handle(
