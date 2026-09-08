@@ -105,6 +105,14 @@ class _ToolangGroup(CliGroup):
         return [*visible, *(name for name in names if name not in visible)]
 
 
+class _RootToolangGroup(_ToolangGroup):
+    """Include the current CLI version in the outermost help description."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.help = f"toolang {_version.toolang_version()}\n\n{self.help}"
+
+
 def _version_callback(value: bool) -> None:
     if not value:
         return
@@ -113,7 +121,7 @@ def _version_callback(value: bool) -> None:
 
 
 app = typer.Typer(
-    cls=_ToolangGroup,
+    cls=_RootToolangGroup,
     help="Run and manage Toolang agents.",
     add_completion=False,
     invoke_without_command=True,

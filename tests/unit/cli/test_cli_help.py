@@ -17,6 +17,53 @@ from toolang.cli.common.help import CliCommand
 from toolang.cli.common.lazy import LazyCommand
 from toolang.cli.common.parameters import PathType
 from toolang.cli.toolang.main import app, main as too_main
+from toolang.common import version
+
+
+@pytest.mark.parametrize("prog_name", ["too", "toolang"])
+@pytest.mark.parametrize(("arguments", "exit_code"), [(["--help"], 0), ([], 2)])
+@pytest.mark.parametrize(
+    "current_version", ["v0.3.0", "v0.3.0-12-g12345678*", "unknown"]
+)
+def test_root_help_shows_the_current_version(
+    prog_name, arguments, exit_code, current_version, tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr("sys.argv", [prog_name])
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path))
+    monkeypatch.setattr(version, "toolang_version", lambda: current_version)
+
+    assert too_main(arguments) == exit_code
+    output = strip_ansi(capsys.readouterr().out)
+    lines = [line.strip() for line in output.splitlines()]
+    banner = f"toolang {current_version}"
+    assert lines.count(banner) == 1
+    assert lines.index(banner) < lines.index("Run and manage Toolang agents.")
+    assert f"Usage: {prog_name} [OPTIONS] COMMAND [ARGS]..." in output
+    for panel in ("Options", "Agent Commands", "Work Commands", "Cap Commands"):
+        assert panel in output
+
+    assert too_main(["--version"]) == 0
+    assert capsys.readouterr().out.strip() == banner
+
+
+@pytest.mark.parametrize(
+    ("main", "arguments"),
+    [
+        (too_main, ["agent:alice", "--help"]),
+        (too_main, ["info", "--help"]),
+        (too_main, ["prompt", "--help"]),
+        (caps_main, ["--help"]),
+    ],
+)
+def test_other_help_does_not_show_the_root_version_banner(
+    main, arguments, tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr(version, "toolang_version", lambda: "v0.3.0-test")
+
+    assert main(["--root", str(tmp_path), *arguments]) == 0
+    output = strip_ansi(capsys.readouterr().out)
+    assert "Usage:" in output
+    assert "v0.3.0-test" not in output
 
 
 @pytest.mark.parametrize("main", [too_main, caps_main])
