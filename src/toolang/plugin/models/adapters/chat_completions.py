@@ -38,6 +38,7 @@ from toolang.base.types.tool import ToolDefinition
 
 from ._structured_output import (
     append_structured_output_directive,
+    is_object_schema,
     openai_strict_object_schema,
 )
 from ._usage import billing_value, optional_int, reported_cost
@@ -282,6 +283,12 @@ def chat_completion_payload(
         payload,
         request.output_schema,
         native_schema=native_schema,
+        json_object=(
+            target.provider.lower() == "deepseek"
+            and target.structured_output is True
+            and request.output_schema is not None
+            and is_object_schema(request.output_schema)
+        ),
     )
     _apply_reasoning(payload, target)
     if request.max_output_tokens is not None:
@@ -304,6 +311,7 @@ def _apply_structured_output(
     schema: dict[str, object] | None,
     *,
     native_schema: dict[str, object] | None,
+    json_object: bool,
 ) -> None:
     if schema is None:
         return
@@ -312,6 +320,8 @@ def _apply_structured_output(
             "Chat Completions response_format conflicts with normalized structured output"
         )
     if native_schema is None:
+        if json_object:
+            payload["response_format"] = {"type": "json_object"}
         return
     payload["response_format"] = {
         "type": "json_schema",

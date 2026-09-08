@@ -104,15 +104,6 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
                             ),
                         )
                     ),
-                    reply({"summary": "", "position": None, "complete": False}),
-                    reply(
-                        {
-                            "summary": summary["summary"],
-                            "position": None,
-                            "complete": True,
-                        }
-                    ),
-                    reply("true"),
                     reply(summary),
                     reply("now"),
                     reply("later"),
@@ -215,9 +206,6 @@ async def seed(harness):
 
 def compact_responses(thread, end, *, summary="Earlier facts."):
     return [
-        reply({"summary": "", "position": None, "complete": False}),
-        reply({"summary": summary, "position": None, "complete": True}),
-        reply("true"),
         reply({"thread": thread, "begin": None, "end": end, "summary": summary}),
     ]
 
@@ -344,7 +332,7 @@ def test_unrecorded_flow_tails_remain_compactable(tmp_path):
     asyncio.run(scenario())
 
 
-def test_compact_flow_carries_progress_across_real_history_pages(tmp_path):
+def test_compact_reads_previous_summary_and_history_pages_in_one_run(tmp_path):
     from toolang.base.types.policy import RunBindings
     from toolang.common.time import utc_now
     from toolang.execution.executor.compact import compact_state, compact_tools
@@ -354,7 +342,9 @@ def test_compact_flow_carries_progress_across_real_history_pages(tmp_path):
     from toolang.lang.input import RunnableInput
 
     harness = ExecutionHarness.create(
-        tmp_path, source=SOURCE, responses=[reply("first output"), reply("retained")]
+        tmp_path,
+        source=SOURCE,
+        responses=[reply("old output"), reply("new output"), reply("retained")],
     )
 
     def call(name, arguments):
@@ -363,80 +353,86 @@ def test_compact_flow_carries_progress_across_real_history_pages(tmp_path):
     async def scenario():
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            first = await harness.executor.run(spec(harness, thread, "first input"))
+            await harness.executor.run(spec(harness, thread, "old input"))
+            first = await harness.executor.run(spec(harness, thread, "new input"))
             last = await harness.executor.run(spec(harness, thread, "last input"))
             compact_thread = f"compact_{thread}"
             harness.store.create_thread(
                 thread_id=compact_thread, origin="script", created_at=utc_now()
             )
+            constrain(harness, context=32000)
+
+            async def run_compact(**input):
+                return await harness.executor.run(
+                    RunSpec(
+                        setup=replace(harness.setup, tools=compact_tools()),
+                        state=compact_state(),
+                        thread=compact_thread,
+                        limits=harness.setup.limits,
+                        bindings=RunBindings(
+                            model="test/scripted", runnable="agic:compact"
+                        ),
+                        input=RunnableInput({"thread": thread, **input}),
+                    )
+                )
+
+            prior = {
+                "thread": thread,
+                "begin": None,
+                "end": first.id,
+                "summary": "Earlier facts.",
+            }
+            harness.adapter._responses.append(reply(prior))
+            previous = await run_compact(end=first.id, bare=True)
+            assert previous.status == "succeeded"
             cursor = _ToolHistory(harness.store.db_path, thread).read_steps(
                 run=first.id, limit=1
             )["cursor"]
             assert cursor is not None
-            progress = {"summary": "first page", "position": cursor, "complete": False}
             output = {
                 "thread": thread,
                 "begin": None,
                 "end": last.id,
-                "summary": "Both pages.",
+                "summary": "Earlier facts and new input.",
             }
             harness.adapter._responses.extend(
                 [
+                    call("history__read_output", {"run": previous.id}),
                     call(
                         "history__read_runs",
-                        {"thread": compact_thread, "limit": 1, "from_end": True},
+                        {"thread": thread, "begin": first.id, "end": last.id},
                     ),
-                    reply({"summary": "", "position": None, "complete": False}),
                     call("history__read_steps", {"run": first.id, "limit": 1}),
-                    reply(progress),
-                    reply("false"),
                     call("history__read_steps", {"cursor": cursor}),
-                    reply(
-                        {"summary": "Both pages.", "position": None, "complete": True}
-                    ),
-                    reply("true"),
                     reply(output),
                 ]
             )
-            constrain(harness, context=32000)
-            compact = await harness.executor.run(
-                RunSpec(
-                    setup=replace(harness.setup, tools=compact_tools()),
-                    state=compact_state(),
-                    thread=compact_thread,
-                    limits=harness.setup.limits,
-                    bindings=RunBindings(
-                        model="test/scripted", runnable="flow:compact"
-                    ),
-                    input=RunnableInput(
-                        {"thread": thread, "begin": None, "end": last.id}
-                    ),
-                )
+            compact = await run_compact(
+                begin=first.id, end=last.id, previous=f"{previous.id}/output"
             )
             assert compact.status == "succeeded", compact.error
             history = RunHistory(harness.store)
             result = history.get_output(compact.id)
             assert result is not None
             assert local_to_protocol_data(result.local)["value"] == output
-            second_page_request = harness.adapter.invocations[7].call
-            assert "first page" in str(
-                [m.to_data() for m in second_page_request.messages]
-            )
-            steps = [
-                step
-                for run in history.thread_view(compact_thread).members
-                for step in harness.store.list_steps(run_id=run.id)
-            ]
+            view = history.thread_view(compact_thread)
+            assert {r.id for r in view.members} == {previous.id, compact.id}
+            steps = harness.store.list_steps(run_id=compact.id)
             reads = [s for s in steps if isinstance(s.given, ToolStepGiven)]
-            assert len(reads) == 3 and all(s.status == "succeeded" for s in reads)
-            assert [
-                history.get_model_call(s.ref) for s in steps if s.kind == "model"
-            ] == [invocation.call for invocation in harness.adapter.invocations[2:]]
+            assert len(reads) == 4 and all(s.status == "succeeded" for s in reads)
+            calls = [history.get_model_call(s.ref) for s in steps if s.kind == "model"]
+            assert calls == [
+                invocation.call for invocation in harness.adapter.invocations[4:]
+            ]
+            # The same Run retains all tool responses until the final summary.
+            text = str([m.to_data() for m in calls[-1].messages])
+            assert "Earlier facts." in text and "new input" in text
+            assert cursor in text
 
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("failure", ["provider", "wrong_range", "empty", "oversized"])
+@pytest.mark.parametrize("failure", ["provider", "wrong_range", "empty"])
 def test_compact_failure_never_dispatches_the_oversized_normal_call(tmp_path, failure):
     harness = seeded_harness(tmp_path)
 
@@ -446,13 +442,7 @@ def test_compact_failure_never_dispatches_the_oversized_normal_call(tmp_path, fa
             turns = compact_responses(
                 thread,
                 end,
-                summary=(
-                    ""
-                    if failure == "empty"
-                    else "large " * 15000
-                    if failure == "oversized"
-                    else "facts"
-                ),
+                summary="" if failure == "empty" else "facts",
             )
             if failure == "provider":
                 turns = [RuntimeError("provider unavailable")]
@@ -597,7 +587,7 @@ def test_compact_selects_its_own_model_and_parameters(tmp_path, selection):
             assert current.status == "succeeded", current.error
             expected = "test/first" if selection == "auto" else "test/second"
             compact_calls = harness.adapter.invocations[3:-1]
-            assert len(compact_calls) == 4
+            assert len(compact_calls) == 1
             assert all(call.target.ref == expected for call in compact_calls)
             assert all(
                 call.target.reasoning

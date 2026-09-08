@@ -158,10 +158,16 @@ async def execute(
                     setup=setup,
                     state=compact_state(),
                     thread=compact_thread,
-                    bindings=RunBindings(model=request.ref, runnable="flow:compact"),
+                    bindings=RunBindings(model=request.ref, runnable="agic:compact"),
                     limits=frame.run.limits,
                     model_request=request,
-                    input=RunnableInput(expected),
+                    input=RunnableInput(
+                        {
+                            key: value
+                            for key, value in expected.items()
+                            if value is not None
+                        }
+                    ),
                 )
             )
             try:

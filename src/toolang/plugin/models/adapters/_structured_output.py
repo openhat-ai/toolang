@@ -32,6 +32,21 @@ def append_structured_output_directive(
     )
 
 
+def is_object_schema(schema: Mapping[str, object]) -> bool:
+    """Recognize an object root, including a normalized local struct reference."""
+    root: object = schema
+    if "$ref" in schema:
+        name = _local_definition_name(schema["$ref"])
+        definitions = schema.get("$defs", {})
+        if name is None or not isinstance(definitions, Mapping):
+            return False
+        root = cast(Mapping[str, object], definitions).get(name)
+    return (
+        isinstance(root, Mapping)
+        and cast(Mapping[str, object], root).get("type") == "object"
+    )
+
+
 def openai_strict_object_schema(
     schema: Mapping[str, object],
 ) -> dict[str, object] | None:

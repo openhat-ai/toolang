@@ -1210,16 +1210,27 @@ def test_generate_content_uses_native_schema_with_tools_for_gemini_3() -> None:
     assert "systemInstruction" not in payload
 
 
-def test_chat_completions_falls_back_for_deepseek_json_output() -> None:
-    schema: dict[str, object] = {
-        "additionalProperties": False,
-        "properties": {"answer": {"type": "boolean"}},
-        "required": ["answer"],
-        "type": "object",
-    }
+@pytest.mark.parametrize("with_tools", [False, True])
+@pytest.mark.parametrize(
+    ("schema", "json_object"),
+    [
+        ({"type": "object", "properties": {"answer": {"type": "boolean"}}}, True),
+        (
+            {"$ref": "#/$defs/Progress", "$defs": {"Progress": {"type": "object"}}},
+            True,
+        ),
+        ({"type": "boolean"}, False),
+        ({"type": "array", "items": {"type": "string"}}, False),
+        ({}, False),
+    ],
+)
+def test_deepseek_uses_json_mode_only_for_object_outputs(
+    schema, json_object, with_tools
+) -> None:
     request = ModelCall(
         instructions="Keep this logical instruction unchanged.",
         messages=[Message.user("Decide.")],
+        tools=(_tool(),) if with_tools else (),
         output_schema=schema,
     )
     target = ModelTarget(
@@ -1237,7 +1248,10 @@ def test_chat_completions_falls_back_for_deepseek_json_output() -> None:
         stream=False,
     )
 
-    assert "response_format" not in payload
+    assert payload.get("response_format") == (
+        {"type": "json_object"} if json_object else None
+    )
+    assert ("tools" in payload) is with_tools
     schema_text = json.dumps(schema, separators=(",", ":"), sort_keys=True)
     assert schema_text in payload["messages"][0]["content"]
     assert request.instructions == "Keep this logical instruction unchanged."

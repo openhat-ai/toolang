@@ -89,7 +89,7 @@ from ...common.result_saving import save_result
 from ...common.output import echo_error
 from ...common.help import CliCommand, CliGroup
 from ...common.parameters import AllowOptions, LimitOptions
-from ...common.runnable_parameters import runnable_parameters
+from ...common.runnable_parameters import RunnableArgument, runnable_parameters
 from ...common.execution_progress.config import resolve_progress_max_width
 from ...common.script_progress import ScriptRunPresenter
 
@@ -99,33 +99,6 @@ _UNPERSISTED_THREAD = "<unpersisted-script-thread>"
 _THREAD_INFO_ADAPTER = TypeAdapter(ThreadInfo)
 _RUN_POLICY_ADAPTER = TypeAdapter(RunPolicy)
 _MODEL_REQUEST_ADAPTER = TypeAdapter(ModelRequest)
-
-
-class _HelpArgument(TyperArgument):
-    """One signature argument displayed by Typer but parsed by the collector."""
-
-    def __init__(self, argument: TyperArgument) -> None:
-        super().__init__(
-            param_decls=argument.opts,
-            type=argument.type,
-            required=argument.required,
-            metavar=argument.metavar,
-            help=argument.help,
-            show_default=argument.show_default,
-            expose_value=False,
-        )
-
-    def add_to_parser(self, parser: Any, ctx: Context) -> None:
-        del parser, ctx
-
-    def handle_parse_result(
-        self,
-        ctx: Context,
-        opts: Mapping[str, Any],
-        args: list[str],
-    ) -> tuple[None, list[str]]:
-        del ctx, opts
-        return None, args
 
 
 class _IncompleteRunnableInput(Exception):
@@ -183,7 +156,7 @@ class _RunnableCommand(CliCommand):
         names = {
             param.name
             for param in self.get_params(ctx)
-            if isinstance(param, _HelpArgument)
+            if isinstance(param, RunnableArgument)
         }
         if names - {"_"}:
             pieces.append("[ARGS]")
@@ -196,7 +169,7 @@ class _RunnableCommand(CliCommand):
         _print_help_header(console, ctx, self, flow=self._flow)
         params = self.get_params(ctx)
         arguments: list[TyperArgument] = [
-            param for param in params if isinstance(param, _HelpArgument)
+            param for param in params if isinstance(param, RunnableArgument)
         ]
         rich_utils._print_options_panel(
             name="Arguments",
@@ -516,8 +489,9 @@ def _runnable_command(
         arguments = runnable_parameters(
             runnable,
             input_help="- from stdin, -- starts input",
+            help_only=True,
         )
-        command.params[-1:-1] = [_HelpArgument(argument) for argument in arguments]
+        command.params[-1:-1] = arguments
     return command
 
 
@@ -529,12 +503,12 @@ def _public_runnables(program: Program) -> tuple[Runnable, ...]:
     )
 
 
-def _collect_call(
+def collect_named_arguments(
     runnable: Runnable,
     *,
     items: tuple[str, ...],
-    stdin: TextIO,
-) -> tuple[RunOverride, CallInput[str], CallInput[str]]:
+) -> tuple[CallInput[str], list[str]]:
+    """Collect declared named arguments and leave primary input to the caller."""
     params = {parameter.name: parameter for parameter in runnable.params}
     raw_args: dict[str, str] = {}
     input_items: list[str] = []
@@ -550,6 +524,16 @@ def _collect_call(
             continue
         raise UsageError(f"unknown argument: {name}; use '--' to start input")
 
+    return CallInput(raw_args), input_items
+
+
+def _collect_call(
+    runnable: Runnable,
+    *,
+    items: tuple[str, ...],
+    stdin: TextIO,
+) -> tuple[RunOverride, CallInput[str], CallInput[str]]:
+    raw_args, input_items = collect_named_arguments(runnable, items=items)
     call_input = _input_source(input_items, stdin=stdin)
     call_source = call_input.get("_", "") if call_input is not None else ""
     override, input = parse_call(call_source)
@@ -1124,7 +1108,7 @@ async def _execute(
             run_id=run_id,
             tracer=tracer,
         )
-        return await _await_script_run(handle)
+        return await await_script_run(handle)
     finally:
         try:
             await executor.stop()
@@ -1133,7 +1117,7 @@ async def _execute(
                 tracer.close()
 
 
-async def _await_script_run(handle: LocalRunHandle) -> RunRecord:
+async def await_script_run(handle: LocalRunHandle) -> RunRecord:
     """Cancel an owned one-shot run when its script caller is interrupted."""
 
     try:

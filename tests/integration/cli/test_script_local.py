@@ -239,7 +239,7 @@ def test_script_cancellation_cancels_its_owned_run(tmp_path: Path) -> None:
                     primary=resolve_input_parts("wait"),
                 )
             )
-            waiter = asyncio.create_task(script._await_script_run(handle))
+            waiter = asyncio.create_task(script.await_script_run(handle))
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
             waiter.cancel()
 
