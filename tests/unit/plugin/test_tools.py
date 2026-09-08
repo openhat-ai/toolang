@@ -10,8 +10,8 @@ from typing import Any
 import pytest
 
 from toolang.base.errors import ToolangError
-from toolang.base.protocols.tool import AgentTool
-from toolang.base.types.tool import ToolContext, ToolService
+from toolang.base.protocols.tool import Tool
+from toolang.base.types.tool import ToolContext, ToolService, ServiceToolContext
 from toolang.plugin.toolsets.filesystem import create_toolset as create_filesystem_tool
 from toolang.plugin.toolsets.service_use import (
     create_toolset as create_service_use_tool,
@@ -28,11 +28,9 @@ def _tool_context(
     services: tuple[ToolService, ...] = (),
     workspaces: dict[str, Path] | None = None,
 ) -> ToolContext:
-    return ToolContext(
-        run_id=run_id,
+    return ServiceToolContext(
         home=home,
         room=home / ".runtime" / "tools" / plugin_name,
-        wd=home,
         services=services,
         workspaces=workspaces or {},
     )
@@ -67,11 +65,11 @@ def _service_context(
 
 
 def _invoke(
-    tool: AgentTool,
+    tool: Tool,
     arguments: dict[str, object],
     context: ToolContext,
 ) -> dict[str, Any]:
-    return asyncio.run(tool.invoke(arguments, context))
+    return asyncio.run(tool.invoke(arguments, context)).output
 
 
 def test_filesystem_tool_reads_and_writes_within_workspace(tmp_path: Path) -> None:

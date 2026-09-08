@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from toolang.base.errors import ToolangError
-from toolang.base.protocols.tool import AgentTool
+from toolang.base.protocols.tool import Tool
 from toolang.base.utils.tools import (
     encode_tool_name,
     is_internal_toolset_name,
@@ -81,7 +81,7 @@ def require_toolset_plugin_name(plugin_name: str, *, source: PluginSource) -> No
     require_public_tool_name(plugin_name, kind="toolset plugin")
 
 
-def tool_ref_for_model_tool(model_name: str, tool: AgentTool) -> ToolRef:
+def tool_ref_for_model_tool(model_name: str, tool: Tool) -> ToolRef:
     """Return the structured public ref for one loaded model-facing tool."""
 
     ref = getattr(tool, "ref", None)
@@ -101,7 +101,7 @@ def tool_ref_for_model_tool(model_name: str, tool: AgentTool) -> ToolRef:
     return ToolRef(plugin=plugin_name, toolset=toolset_name, name=leaf)
 
 
-def _tool_leaf_name(tool: AgentTool) -> str:
+def _tool_leaf_name(tool: Tool) -> str:
     leaf_tool = getattr(tool, "leaf_tool", None)
     leaf = getattr(leaf_tool, "name", None)
     if isinstance(leaf, str) and leaf:

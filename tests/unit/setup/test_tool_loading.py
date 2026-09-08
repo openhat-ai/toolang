@@ -4,13 +4,13 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from toolang.base.protocols.tool import AgentTool
-from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.base.protocols.tool import Tool
+from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.common.layout import AgentLayout
 from toolang.setup import tools as setup_tools
 
 
-class _Tool(AgentTool):
+class _Tool(Tool):
     name = "shell__echo"
 
     def definition(self) -> ToolDefinition:
@@ -20,9 +20,9 @@ class _Tool(AgentTool):
         self,
         arguments: Mapping[str, Any],
         context: ToolContext,
-    ) -> dict[str, Any]:
+    ) -> ToolResult:
         del arguments, context
-        return {}
+        return ToolResult({})
 
 
 def test_tool_loader_applies_config_without_loading_models(

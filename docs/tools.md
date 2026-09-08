@@ -3,7 +3,7 @@
 Toolang exposes tools through the toolset plugin family.
 
 Tools execute inside normal runs and are recorded as `tool` Steps.
-`AgentTool.invoke()` is asynchronous. Function-tool wrappers await native
+`Tool.invoke()` is asynchronous. Function-tool wrappers await native
 async callables and isolate synchronous Python callables in a worker thread,
 so blocking tool implementations do not stall the run event loop.
 
@@ -41,7 +41,7 @@ It provides structured file operations such as:
 
 `fs` paths and `shell` cwd accept an optional `workspace` name from the published
 State. With that anchor, `/src` means `src` under the workspace root. Without it,
-paths resolve from the tool working directory; overlapping workspace matches
+paths resolve from the agent home; overlapping workspace matches
 require an explicit name. Workspace configuration does not expand home access.
 
 
@@ -124,7 +124,7 @@ Missing targets and unresolved values fail as ordinary tool errors.
 `me` exposes structured operations for the current agent's authored data. It
 follows normal resource selection and can be denied by policy.
 
-The executor injects the current agent layout through `ToolContext`. `me`
+The executor injects the current agent layout through `AgentStateToolContext`. `me`
 tools do not accept an agent name, home directory, root directory, or arbitrary
 path for choosing another target. They expose no layer selector and operate
 only on the current agent's home layer; `me` does not read or modify root-layer
@@ -174,7 +174,7 @@ calls, and tool-disabled models receive no runtime tools.
 
 `AgentSetup.tools` retains registered runtime tools independently of user tool
 ceilings. Each invocation has an ordinary Tool Step. Trusted runtime tools receive
-per-call operations through `ToolContext.runtime`, not the Store or executor.
+per-call operations through `RuntimeToolContext.runtime`, not the Store or executor.
 Run creates a child owned by its Tool Step and returns `{run_id, output_type, output}`.
 Execute returns `{controls: [ControlRef]}` and finishes its Tool Step before
 transferring execution. Reload returns `{controls: [{ref, state}]}` after adopting
@@ -193,22 +193,27 @@ Toolang runtime owns:
 - how tool calls are recorded and exposed
 - the default human-readable summary for each tool-call lifecycle state
 
-Summary generation receives the tool family, leaf name, and supplied arguments
-in the tool definition's parameter order. The default summary combines only
-the leaf name and first supplied argument; it does not display the family. Its
+Leaf tools may provide `summary(arguments, result=None) -> str | None`
+through the [plugin contract](plugins.md). The executor supplies isolated
+call/result data with sensitive arguments masked. Missing, empty, or failed
+summaries fall back to generic wording. No result means running; `ToolResult.error`
+distinguishes failure from success. Cancellation uses executor wording.
+The running summary is stored in
+`ToolStepGiven.summary`; the terminal summary uses `ToolStepNoted.summary`.
+
+The fallback combines the leaf name and first supplied argument in the tool
+definition's parameter order; it does not display the family. Its
 running form is `Executing NAME ARG ...`; its succeeded and failed forms are
 `Executed NAME ARG` and `Failed NAME ARG`. The canceled form is
-`Canceled NAME ARG`. Toolang normalizes and bounds argument previews and
-redacts sensitive parameter names or schemas before the summary enters
-execution events. The running summary is stored in `ToolStepGiven.summary`;
-the terminal summary uses the same key in `ToolStepNoted`.
+`Canceled NAME ARG`. Argument previews are single-line and bounded.
 
-Plugin-defined summary templates are not part of the current tool contract.
-The runtime toolset supplies pick/reload/compact/honor wording. Progress marks
-these rows with `✧` and shows compact elapsed time, refreshed once per second in
-TTY/Chat. Non-TTY prints compact start/end only.
-Successful calls show only their summary row, not the control-summary JSON result
-block. Failures retain error details; run/execute and ordinary tools are unchanged.
+Fs, shell, and runtime helpers supply wording through the same hook. Progress
+owns markers, color, timing, and layout; it reads saved summaries without calling
+plugins. Runtime helper descriptions use cyan and an unstyled `✧`; ordinary
+tools use an unstyled `•`. Compact elapsed time refreshes once per second in
+TTY/Chat; non-TTY prints start/end only. Tool traces show one summary line, plus
+an indented error line on failure, and no result blocks. Long lines are truncated.
+Run/execute retain their child and handoff hierarchy.
 
 ### Pick guidance
 

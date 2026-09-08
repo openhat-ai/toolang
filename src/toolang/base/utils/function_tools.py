@@ -9,8 +9,14 @@ import inspect
 from typing import Any, get_args, get_origin
 
 from ..errors import ToolangError
-from ..protocols.tool import AgentTool
-from ..types.tool import ToolContext, ToolDefinition, ToolPath, ToolPreparation
+from ..protocols.tool import Tool
+from ..types.tool import (
+    ToolContext,
+    ToolDefinition,
+    ToolResult,
+    ToolSummary,
+    ToolPaths,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,12 +27,13 @@ class _FunctionToolSpec:
     func: Callable[..., Any]
     wants_context: bool
     signature: inspect.Signature
-    prepare: Callable[[dict[str, Any], ToolContext], tuple[ToolPath, ...]] | None
+    paths: ToolPaths | None
+    summary: ToolSummary | None
 
 
 @dataclass(frozen=True, slots=True)
-class _FunctionTool(AgentTool):
-    """AgentTool backed by one Python callable."""
+class _FunctionTool(Tool):
+    """Tool backed by one Python callable."""
 
     spec: _FunctionToolSpec
 
@@ -41,16 +48,23 @@ class _FunctionTool(AgentTool):
             parameters=self.spec.parameters,
         )
 
+    def summary(
+        self,
+        arguments: Mapping[str, Any],
+        result: ToolResult | None = None,
+    ) -> str | None:
+        return self.spec.summary(arguments, result) if self.spec.summary else None
+
+    def paths(
+        self, arguments: Mapping[str, Any], context: ToolContext
+    ) -> Mapping[str, tuple[str, ...]] | None:
+        return self.spec.paths(arguments, context) if self.spec.paths else None
+
     async def invoke(
         self,
         arguments: Mapping[str, Any],
         context: ToolContext,
-    ) -> dict[str, Any]:
-        return await self.prepare(arguments, context).invoke()
-
-    def prepare(
-        self, arguments: Mapping[str, Any], context: ToolContext
-    ) -> ToolPreparation:
+    ) -> ToolResult:
         kwargs = {
             name: value
             for name, value in arguments.items()
@@ -58,22 +72,17 @@ class _FunctionTool(AgentTool):
         }
         if self.spec.wants_context:
             kwargs["context"] = context
-        paths = ()
-        if self.spec.prepare is not None:
-            bound = self.spec.signature.bind(**kwargs)
-            bound.apply_defaults()
-            kwargs = dict(bound.arguments)
-            paths = self.spec.prepare(kwargs, context)
-        return ToolPreparation(paths, lambda: self._invoke(kwargs))
-
-    async def _invoke(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         if inspect.iscoroutinefunction(self.spec.func):
             value = await self.spec.func(**kwargs)
         else:
             value = await asyncio.to_thread(self.spec.func, **kwargs)
         if inspect.isawaitable(value):
             value = await value
-        return _normalize_output(value)
+        return (
+            value
+            if isinstance(value, ToolResult)
+            else ToolResult(_normalize_output(value))
+        )
 
 
 def tool(
@@ -81,14 +90,10 @@ def tool(
     name: str | None = None,
     description: str | None = None,
     parameters: dict[str, Any] | None = None,
-    prepare: Callable[[dict[str, Any], ToolContext], tuple[ToolPath, ...]]
-    | None = None,
+    paths: ToolPaths | None = None,
+    summary: ToolSummary | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Annotate a tool; optional preparation binds paths without executing it.
-
-    Preparation receives defaulted, invocation-local arguments. It may replace
-    path arguments with concrete authorized paths consumed by the callable.
-    """
+    """Annotate a function with the same summary/paths hooks as a Tool."""
 
     def decorate(func: Callable[..., Any]) -> Callable[..., Any]:
         signature = inspect.signature(func)
@@ -99,7 +104,8 @@ def tool(
             func=func,
             wants_context="context" in signature.parameters,
             signature=signature,
-            prepare=prepare,
+            paths=paths,
+            summary=summary,
         )
         setattr(func, "__tool_spec__", spec)
         return func
@@ -107,24 +113,13 @@ def tool(
     return decorate
 
 
-def create_function_tool(func: Callable[..., Any]) -> AgentTool:
+def create_function_tool(func: Callable[..., Any]) -> Tool:
     """Build one tool from a callable annotated with `@tool`."""
 
     spec = getattr(func, "__tool_spec__", None)
     if spec is None:
         raise ToolangError(f"function is not marked as a tool: {func!r}")
     return _FunctionTool(spec=spec)
-
-
-def prepare_tool(
-    tool: AgentTool, arguments: Mapping[str, Any], context: ToolContext
-) -> ToolPreparation:
-    """Use an optional plugin preparation hook without requiring it of all tools."""
-
-    prepare = getattr(tool, "prepare", None)
-    if prepare is not None:
-        return prepare(arguments, context)
-    return ToolPreparation((), lambda: tool.invoke(arguments, context))
 
 
 def _schema_from_signature(signature: inspect.Signature) -> dict[str, Any]:

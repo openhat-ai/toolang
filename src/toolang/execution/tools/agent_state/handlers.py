@@ -11,8 +11,9 @@ from typing import Any, NoReturn, cast
 import frontmatter
 from yaml import YAMLError
 
-from toolang.base.errors import ToolFailure
+from .errors import ResourceError
 from toolang.base.types.tool import ToolContext
+from .types import AgentStateToolContext
 from toolang.catalog import cap as caps
 from toolang.catalog.errors import (
     CatalogConflictError,
@@ -69,7 +70,7 @@ def execute(request: ResourceRequest, context: ToolContext) -> dict[str, Any]:
         if request.operation == "update":
             return _update(scope, request)
         return _delete(scope, request.kind, _key(request), request.if_digest)
-    except ToolFailure:
+    except ResourceError:
         raise
     except DigestMismatchError as exc:
         fail(
@@ -308,6 +309,14 @@ def _delete(
 
 
 def _scope(context: ToolContext, request: ResourceRequest) -> AgentStateScope:
+    if not isinstance(context, AgentStateToolContext):
+        fail(
+            "invalid_request",
+            "me requires a current agent context",
+            operation=request.operation,
+            kind=request.kind,
+            key=request.key,
+        )
     authored_home = context.home.expanduser()
     unsafe_context = authored_home.is_symlink() or authored_home.parent.is_symlink()
     home = authored_home.resolve()
@@ -320,13 +329,7 @@ def _scope(context: ToolContext, request: ResourceRequest) -> AgentStateScope:
             key=request.key,
             issues=(issue("invalid-context", "kind", "agent home required"),),
         )
-    return AgentStateScope(
-        AgentLayout(
-            root=home.parent.parent,
-            name=home.name,
-            placement=context.placement,
-        )
-    )
+    return AgentStateScope(context.layout)
 
 
 def _jobs(

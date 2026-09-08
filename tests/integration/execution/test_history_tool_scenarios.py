@@ -19,7 +19,6 @@ from tests.support.execution_fixtures import (
 from tests.support.execution_harness import ExecutionHarness, RecordingRunTracer
 from toolang.base.types.message import Message, TextPart, ToolCallPart, ToolResultPart
 from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall
-from toolang.base.types.tool import ToolContext
 from toolang.execution.errors import HistoryChangedError
 from toolang.execution.executor.tool_history import _ToolHistory
 from toolang.execution.history import RunHistory
@@ -37,6 +36,7 @@ from toolang.execution.types import (
     TypedRef,
 )
 from toolang.plugin.toolsets.loading import load_tools
+from toolang.base.types.tool import HistoryToolContext
 
 
 @pytest.fixture
@@ -71,14 +71,12 @@ def step(store, run="run_a", index=0, *, output=None, kind="value", status="succ
 
 
 def read(store, tool, *, caller="term_a", **query):
-    context = ToolContext(
-        "run_caller",
-        store.db_path.parent,
+    context = HistoryToolContext(
         store.db_path.parent,
         store.db_path.parent,
         history=_ToolHistory(store.db_path, caller),
     )
-    return asyncio.run(load_tools()[f"history__{tool}"].invoke(query, context))
+    return asyncio.run(load_tools()[f"history__{tool}"].invoke(query, context)).output
 
 
 def collect(store, tool, page):

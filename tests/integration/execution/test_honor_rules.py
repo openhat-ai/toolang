@@ -334,8 +334,8 @@ def test_failed_rule_reads_block_the_operation_without_retraction(tmp_path, fail
             (original,) = _results(harness.adapter.invocations[-1].call.messages)
             assert "operation not executed" in original.error
             assert "were just loaded" not in original.error
-            assert "workspace://repo/src/AGENTS.md" in honor.given.summary
-            assert "workspace://repo/src/AGENTS.md" in honor.noted.summary
+            assert honor.given.summary == "Reloading workspace rules..."
+            assert honor.noted.summary == "Failed to reload workspace rules"
             assert not _recalls(harness, run)
             assert not (repo / "src/result").exists()
             assert all(
@@ -395,7 +395,11 @@ def test_interrupted_honor_closes_every_announced_tool_call(
                 "succeeded" if event_type is StepEnd else "canceled"
             )
             assert steps[1].status == "canceled"
-            assert "workspace://repo/src/AGENTS.md" in steps[0].noted.summary
+            assert steps[1].noted.summary == "Canceled: Writing [repo] src/result"
+            if event_type is StepEnd:
+                assert "[repo] src/AGENTS.md" in steps[0].noted.summary
+            else:
+                assert steps[0].noted.summary == "Canceled: Reloading workspace rules"
             messages = harness.store.recent_conversation_messages(
                 thread_id=run.thread.id
             )

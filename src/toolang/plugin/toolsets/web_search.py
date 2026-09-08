@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from anyio import to_process
 
 from toolang.base.errors import ToolangError
-from toolang.base.protocols.tool import AgentTool, Toolset
+from toolang.base.protocols.tool import Tool, Toolset
 from toolang.base.utils.function_tools import create_function_tool, tool
 
 DEFAULT_TOP_K = 5
@@ -29,7 +29,7 @@ class WebSearchToolset:
     )
     _top_k: int = field(init=False, repr=False)
     _timeout: int = field(init=False, repr=False)
-    _tools: dict[str, AgentTool] = field(init=False, repr=False)
+    _tools: dict[str, Tool] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._top_k = _int_value(self.config.get("top_k"), default=DEFAULT_TOP_K)
@@ -39,10 +39,10 @@ class WebSearchToolset:
         )
         self._tools = self._build_tools()
 
-    def tools(self) -> Mapping[str, AgentTool]:
+    def tools(self) -> Mapping[str, Tool]:
         return dict(self._tools)
 
-    def _build_tools(self) -> dict[str, AgentTool]:
+    def _build_tools(self) -> dict[str, Tool]:
         @tool(name="search", description="Search the public web.")
         async def search(
             query: str,

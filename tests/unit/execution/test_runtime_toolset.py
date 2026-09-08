@@ -10,11 +10,11 @@ import pytest
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.run import ToolCall
-from toolang.base.types.tool import ToolContext
 from toolang.execution.records import step_given_from_data, step_given_to_data
 from toolang.execution.types import ToolStepGiven
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.loading import load_tools
+from toolang.base.types.tool import RuntimeToolContext, ToolResult
 
 
 def test_installed_runtime_toolset_has_no_old_aliases() -> None:
@@ -43,31 +43,33 @@ class _Runtime:
     async def run(self, runnable, input):
         self.calls.append((runnable, dict(input)))
         await asyncio.sleep(0)
-        return {"run_id": self.marker, "output_type": "Text", "output": input["_"]}
+        return ToolResult(
+            {"run_id": self.marker, "output_type": "Text", "output": input["_"]}
+        )
 
     async def execute(self, runnable, input):
         self.calls.append((runnable, dict(input)))
         await asyncio.sleep(0)
-        return {"controls": [self.marker]}
+        return ToolResult({"controls": [self.marker]})
 
     async def reload(self):
         self.calls.append("reload")
         await asyncio.sleep(0)
-        return {"controls": [self.marker]}
+        return ToolResult({"controls": [self.marker]})
 
     async def pick(self, kind, ref):
         self.calls.append((kind, ref))
         await asyncio.sleep(0)
-        return {"controls": [self.marker]}
+        return ToolResult({"controls": [self.marker]})
 
     async def honor(self, paths):
         self.calls.append(paths)
         await asyncio.sleep(0)
-        return {"controls": [self.marker]}
+        return ToolResult({"controls": [self.marker]})
 
     async def compact(self, thread, begin, end):
         self.calls.append((thread, begin, end))
-        return {"controls": [self.marker]}
+        return ToolResult({"controls": [self.marker]})
 
 
 @pytest.mark.parametrize(
@@ -78,7 +80,7 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
 ) -> None:
     tool = load_tools()[f"_toolang__{name}"]
     first, second = _Runtime("first"), _Runtime("second")
-    context = ToolContext("run_first", tmp_path, tmp_path, tmp_path, runtime=first)
+    context = RuntimeToolContext(tmp_path, tmp_path, runtime=first)
     arguments = (
         {}
         if name == "reload"
@@ -94,18 +96,20 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
     async def scenario():
         return await asyncio.gather(
             tool.invoke(arguments, context),
-            tool.invoke(
-                arguments, replace(context, run_id="run_second", runtime=second)
-            ),
+            tool.invoke(arguments, replace(context, runtime=second)),
         )
 
     results = asyncio.run(scenario())
+    assert all(result.error is None for result in results)
     assert first.calls == second.calls
     assert len(first.calls) == 1
     if name == "run":
-        assert [result["run_id"] for result in results] == ["first", "second"]
+        assert [result.output["run_id"] for result in results] == ["first", "second"]
     else:
-        assert results == [{"controls": ["first"]}, {"controls": ["second"]}]
+        assert [result.output for result in results] == [
+            {"controls": ["first"]},
+            {"controls": ["second"]},
+        ]
 
 
 @pytest.mark.parametrize(
@@ -136,9 +140,9 @@ def test_runtime_arguments_cannot_supply_authority(
     tmp_path: Path, name, arguments
 ) -> None:
     runtime = _Runtime("unused")
-    context = ToolContext("run_owner", tmp_path, tmp_path, tmp_path, runtime=runtime)
+    context = RuntimeToolContext(tmp_path, tmp_path, runtime=runtime)
     with pytest.raises(ToolangError):
-        asyncio.run(load_tools()[f"_toolang__{name}"].invoke(arguments, context))
+        asyncio.run(load_tools()[f"_toolang__{name}"].invoke(arguments, context)).output
     assert runtime.calls == []
 
 

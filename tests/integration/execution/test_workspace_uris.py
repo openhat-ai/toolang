@@ -28,7 +28,6 @@ from tests.support.execution_harness import (
 )
 from toolang.base.types.message import TextPart, ToolResultPart, message_text
 from toolang.base.types.run import ToolCall
-from toolang.base.types.tool import ToolPreparation
 from toolang.execution.executor import RunExecutor
 from toolang.execution.schemas import RetryRequest
 from toolang.execution.types import RulesRecallTarget, ThreadPrefix
@@ -443,20 +442,14 @@ def test_reload_during_a_tool_keeps_its_path_and_updates_the_next_step(
     tmp_path, monkeypatch
 ):
     gate = AsyncGate()
-    original_prepare = _FilesystemTool.prepare
+    original_invoke = _FilesystemTool.invoke
 
-    def prepare(self, arguments, context):
-        prepared = original_prepare(self, arguments, context)
-        if self.name != "write" or gate.entered:
-            return prepared
-
-        async def invoke():
+    async def invoke(self, arguments, context):
+        if self.name == "write" and not gate.entered:
             await gate.wait()
-            return await prepared.invoke()
+        return await original_invoke(self, arguments, context)
 
-        return ToolPreparation(prepared.paths, invoke)
-
-    monkeypatch.setattr(_FilesystemTool, "prepare", prepare)
+    monkeypatch.setattr(_FilesystemTool, "invoke", invoke)
     uri = "workspace://repo/file"
     harness, _repo, _pub = _harness(
         tmp_path,

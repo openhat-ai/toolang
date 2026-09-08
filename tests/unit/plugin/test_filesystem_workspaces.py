@@ -7,7 +7,6 @@ import pytest
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.tool import ToolContext
-from toolang.base.utils.function_tools import prepare_tool
 from toolang.base.utils.workspace_paths import parse_workspace_uri, workspace_uri
 from toolang.plugin.toolsets.loading import load_tools
 
@@ -19,25 +18,14 @@ def fs(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     context = ToolContext(
-        "run_test",
-        home,
-        home,
-        home,
-        workspaces={"repo": repo, "unavailable": tmp_path / "missing"},
+        home, home, workspaces={"repo": repo, "unavailable": tmp_path / "missing"}
     )
     return load_tools(queries=("fs/*", "shell/*")), context, repo
 
 
 def _invoke(fs, name, **arguments):
     tools, context, _repo = fs
-    return asyncio.run(tools[f"fs__{name}"].invoke(arguments, context))
-
-
-def _invoke_prepared(preparation):
-    async def invoke():
-        return await preparation.invoke()
-
-    return asyncio.run(invoke())
+    return asyncio.run(tools[f"fs__{name}"].invoke(arguments, context)).output
 
 
 def test_all_filesystem_operations_and_uri_results(fs):
@@ -153,7 +141,7 @@ def test_symlinks_and_glob_cannot_escape_workspace(fs):
         ("glob", {"path": "workspace://repo/", "recursive": True}),
     ]:
         with pytest.raises(ToolangError, match="escapes workspace"):
-            asyncio.run(tools[f"fs__{name}"].invoke(arguments, context))
+            asyncio.run(tools[f"fs__{name}"].invoke(arguments, context)).output
     assert not (outside / "new").exists()
 
 
@@ -186,13 +174,10 @@ def test_nested_workspaces_keep_the_explicit_uri_identity(fs):
         ("workspace://repo/sdk/file", "repo", "/sdk/file"),
         ("workspace://sdk/file", "sdk", "/file"),
     ]:
-        prepared = prepare_tool(
-            tools["fs__write"], {"path": uri, "text": "done"}, context
-        )
-        (path,) = prepared.paths
-        assert (path.workspace, path.relative) == (workspace, relative)
-        assert path.resolved == nested / "file"
-        assert _invoke_prepared(prepared)["path"] == uri
+        arguments = {"path": uri, "text": "done"}
+        tool = tools["fs__write"]
+        assert tool.paths(arguments, context) == {workspace: (relative,)}
+        assert asyncio.run(tool.invoke(arguments, context)).output["path"] == uri
 
 
 def test_glob_normalizes_directory_patterns_without_following_aliases(fs):
@@ -296,7 +281,7 @@ def test_remove_cannot_unlink_an_external_entry_pointing_into_the_workspace(fs):
     assert link.is_symlink()
 
 
-def test_prepared_remove_keeps_the_parent_directory_when_an_alias_changes(fs):
+def test_remove_keeps_the_parent_directory_when_an_alias_changes(fs):
     tools, context, repo = fs
     for name in ("first", "second"):
         directory = repo / name
@@ -305,31 +290,42 @@ def test_prepared_remove_keeps_the_parent_directory_when_an_alias_changes(fs):
         (directory / "link").symlink_to(directory / "target")
     parent = repo / "parent"
     parent.symlink_to(repo / "first", target_is_directory=True)
-    prepared = prepare_tool(
-        tools["fs__remove"], {"path": "workspace://repo/parent/link"}, context
-    )
+    tool = tools["fs__remove"]
+    arguments = {"path": "workspace://repo/parent/link"}
+    assert tool.paths(arguments, context) == {"repo": ("/parent/link",)}
     parent.unlink()
     parent.symlink_to(repo / "second", target_is_directory=True)
-    assert _invoke_prepared(prepared)["path"] == "workspace://repo/parent/link"
+    assert (
+        asyncio.run(tool.invoke(arguments, context)).output["path"]
+        == "workspace://repo/parent/link"
+    )
     assert not (repo / "first/link").is_symlink()
     assert (repo / "second/link").is_symlink()
     assert (repo / "first/target").read_text() == "keep"
 
 
-def test_prepared_call_keeps_its_grant_but_next_call_uses_new_context(fs):
+def test_call_keeps_its_captured_grant_but_next_call_uses_new_context(fs):
     tools, context, repo = fs
     other = repo.parent / "other"
     other.mkdir()
     args = {"path": "workspace://repo/file", "text": "old"}
-    prepared = prepare_tool(tools["fs__write"], args, context)
-    listing = prepare_tool(tools["fs__list"], {"path": "workspace://"}, context)
+    assert tools["fs__write"].paths(args, context) == {"repo": ("/file",)}
+    assert tools["fs__list"].paths({"path": "workspace://"}, context) == {}
     changed = replace(context, workspaces={"repo": other, "new": repo})
-    assert _invoke_prepared(prepared)["path"] == "workspace://repo/file"
+    assert (
+        asyncio.run(tools["fs__write"].invoke(args, context)).output["path"]
+        == "workspace://repo/file"
+    )
     assert (repo / "file").read_text() == "old"
     assert not (other / "file").exists()
-    asyncio.run(tools["fs__write"].invoke({**args, "text": "new"}, changed))
+    asyncio.run(tools["fs__write"].invoke({**args, "text": "new"}, changed)).output
     assert (other / "file").read_text() == "new"
-    assert [e["name"] for e in _invoke_prepared(listing)["entries"]] == [
+    assert [
+        e["name"]
+        for e in asyncio.run(
+            tools["fs__list"].invoke({"path": "workspace://"}, context)
+        ).output["entries"]
+    ] == [
         "repo",
         "unavailable",
     ]
@@ -337,10 +333,10 @@ def test_prepared_call_keeps_its_grant_but_next_call_uses_new_context(fs):
         e["name"]
         for e in asyncio.run(
             tools["fs__list"].invoke({"path": "workspace://"}, changed)
-        )["entries"]
+        ).output["entries"]
     ] == ["new", "repo"]
     with pytest.raises(ToolangError, match="not available"):
-        prepare_tool(tools["fs__write"], args, replace(context, workspaces={}))
+        tools["fs__write"].paths(args, replace(context, workspaces={}))
 
 
 def test_plain_paths_require_a_workspace_and_shell_is_unchanged(fs):
@@ -355,9 +351,7 @@ def test_plain_paths_require_a_workspace_and_shell_is_unchanged(fs):
     )
     assert (repo / "file").read_text() == "done"
     with pytest.raises(ToolangError, match="escapes agent home"):
-        prepare_tool(
-            tools["shell__execute"], {"cwd": str(repo), "command": "true"}, context
-        )
+        tools["shell__execute"].paths({"cwd": str(repo), "command": "true"}, context)
 
 
 @pytest.mark.parametrize(

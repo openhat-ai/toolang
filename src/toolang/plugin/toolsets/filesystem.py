@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 import shutil
@@ -12,9 +12,14 @@ import threading
 from typing import Any
 
 from toolang.base.errors import ToolangError
-from toolang.base.protocols.tool import AgentTool, Toolset
-from toolang.base.types.tool import ToolContext, ToolDefinition, ToolPreparation
+from toolang.base.protocols.tool import Tool, Toolset
+from toolang.base.types.tool import (
+    ToolContext,
+    ToolDefinition,
+    ToolResult,
+)
 from toolang.base.utils.function_tools import create_function_tool, tool
+from toolang.base.utils.tool_descriptions import action_summary, workspace_label
 from toolang.base.utils.workspace_paths import (
     authorize_workspace_path,
     parse_workspace_uri,
@@ -39,7 +44,7 @@ class FilesystemToolset:
     name: str = "fs"
     description: str | None = "Inspect and edit workspace files."
     _max_chars: int = field(init=False, repr=False)
-    _tools: dict[str, AgentTool] = field(init=False, repr=False)
+    _tools: dict[str, Tool] = field(init=False, repr=False)
     _path_locks: dict[Path, threading.Lock] = field(init=False, repr=False)
     _path_locks_guard: threading.Lock = field(init=False, repr=False)
 
@@ -51,10 +56,10 @@ class FilesystemToolset:
         self._path_locks_guard = threading.Lock()
         self._tools = self._build_tools()
 
-    def tools(self) -> Mapping[str, AgentTool]:
+    def tools(self) -> Mapping[str, Tool]:
         return dict(self._tools)
 
-    def _build_tools(self) -> dict[str, AgentTool]:
+    def _build_tools(self) -> dict[str, Tool]:
         @tool(
             name="list",
             description="List a directory, or list available workspaces at workspace://."
@@ -66,7 +71,7 @@ class FilesystemToolset:
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             assert context is not None and workspace is not None
-            return _list_directory(Path(path), context.workspaces[workspace])
+            return _list_directory(Path(path), workspace_root(workspace, context))
 
         @tool(
             name="read",
@@ -133,7 +138,7 @@ class FilesystemToolset:
         ) -> dict[str, Any]:
             assert context is not None and workspace is not None
             return _glob_paths(
-                Path(path), pattern, recursive, context.workspaces[workspace]
+                Path(path), pattern, recursive, workspace_root(workspace, context)
             )
 
         @tool(
@@ -223,10 +228,10 @@ def create_toolset(config: Mapping[str, Any]) -> Toolset:
 
 
 @dataclass(frozen=True, slots=True)
-class _FilesystemTool:
+class _FilesystemTool(Tool):
     """Bind each call's paths and presentation without retaining workspace grants."""
 
-    tool: AgentTool
+    tool: Tool
 
     @property
     def name(self) -> str:
@@ -235,14 +240,86 @@ class _FilesystemTool:
     def definition(self) -> ToolDefinition:
         return self.tool.definition()
 
+    def summary(
+        self,
+        arguments: Mapping[str, Any],
+        result: ToolResult | None = None,
+    ) -> str | None:
+        verbs = {
+            "list": ("list", "Listing", "Listed"),
+            "read": ("read", "Reading", "Read"),
+            "write": ("write", "Writing", "Wrote"),
+            "append": ("append to", "Appending to", "Appended to"),
+            "glob": ("match", "Matching", "Matched"),
+            "stat": ("inspect", "Inspecting", "Inspected"),
+            "mkdir": ("create directory", "Creating directory", "Created directory"),
+            "remove": ("remove", "Removing", "Removed"),
+        }[self.name]
+        path = arguments.get("path", "." if self.name in {"list", "glob"} else None)
+        workspace = arguments.get("workspace")
+        if not isinstance(path, str):
+            return None
+        if path == "workspace://" and self.name == "list" and workspace is None:
+            return action_summary(result, verbs, "workspaces")
+        if path.startswith("workspace:"):
+            if workspace is not None:
+                return None
+            workspace, path = parse_workspace_uri(path)
+        if not isinstance(workspace, str) or not workspace:
+            return None
+        target = workspace_label(workspace, path)
+        if self.name == "glob":
+            target = f"{arguments.get('pattern', '*')} in {target}"
+        return action_summary(result, verbs, target)
+
     async def invoke(
         self, arguments: Mapping[str, Any], context: ToolContext
-    ) -> dict[str, Any]:
-        return await self.prepare(arguments, context).invoke()
+    ) -> ToolResult:
+        target = self._target(arguments)
+        if target is None:
+            return ToolResult(await asyncio.to_thread(_list_workspaces, context))
+        name, value = target
+        resolved, relative = resolve_workspace_path(
+            name, value, context, follow=self.name != "remove"
+        )
+        uri = workspace_uri(name, relative)
+        kwargs = dict(arguments, path=str(resolved), workspace=name)
+        try:
+            result = await self.tool.invoke(kwargs, context)
+        except (OSError, ToolangError) as exc:
+            detail = exc.strerror if isinstance(exc, OSError) else str(exc)
+            detail = (detail or "filesystem operation failed").replace(
+                str(resolved), uri
+            )
+            raise ToolangError(f"{uri}: {detail}") from exc
+        if result.error is not None:
+            return result
 
-    def prepare(
+        def display(physical: str) -> str:
+            suffix = Path(physical).relative_to(resolved)
+            return workspace_uri(name, str(PurePosixPath(relative) / suffix.as_posix()))
+
+        output = result.output
+        output["path"] = uri
+        for entry in output.get("entries", ()):
+            entry["path"] = display(entry["path"])
+        if "matches" in output:
+            output["matches"] = [display(item) for item in output["matches"]]
+        return result
+
+    def paths(
         self, arguments: Mapping[str, Any], context: ToolContext
-    ) -> ToolPreparation:
+    ) -> Mapping[str, tuple[str, ...]]:
+        target = self._target(arguments)
+        if target is None:
+            return {}
+        name, value = target
+        _resolved, relative = resolve_workspace_path(
+            name, value, context, follow=self.name != "remove"
+        )
+        return {name: (relative,)}
+
+    def _target(self, arguments: Mapping[str, Any]) -> tuple[str, str] | None:
         value = arguments.get("path", "." if self.name in {"list", "glob"} else None)
         if not isinstance(value, str) or not value:
             raise ToolangError("tool requires a non-empty path")
@@ -253,9 +330,7 @@ class _FilesystemTool:
             if value == "workspace://":
                 if self.name != "list":
                     raise ToolangError("only fs.list can address workspace://")
-                return ToolPreparation(
-                    (), lambda: asyncio.to_thread(_list_workspaces, context)
-                )
+                return None
             name, relative = parse_workspace_uri(value)
         else:
             if "://" in value:
@@ -265,46 +340,7 @@ class _FilesystemTool:
                     "use a workspace URI or specify workspace; agent home is not accessible"
                 )
             name, relative = workspace, value
-        root = workspace_root(name, context)
-        path = resolve_workspace_path(name, relative, root)
-        if self.name == "remove":
-            entry = root / path.relative.lstrip("/")
-            if entry == root:
-                raise ToolangError("cannot remove a workspace root")
-            # Remove the named entry, not a final symlink's target. Its parent
-            # must itself be authorized, even when a link points back inside.
-            parent = authorize_workspace_path(entry.parent, root)
-            path = replace(path, resolved=parent / entry.name)
-        uri = workspace_uri(name, path.relative)
-        kwargs: dict[str, Any] = dict(
-            arguments, path=str(path.resolved), workspace=name
-        )
-        # Enumeration uses the same canonical root captured during preparation.
-        bound_context = replace(context, workspaces={name: root})
-
-        async def invoke() -> dict[str, Any]:
-            try:
-                result = await self.tool.invoke(kwargs, bound_context)
-            except (OSError, ToolangError) as exc:
-                detail = exc.strerror if isinstance(exc, OSError) else str(exc)
-                detail = (detail or "filesystem operation failed").replace(
-                    str(path.resolved), uri
-                )
-                raise ToolangError(f"{uri}: {detail}") from exc
-
-            def display(physical: str) -> str:
-                suffix = Path(physical).relative_to(path.resolved)
-                relative = PurePosixPath(path.relative) / suffix.as_posix()
-                return workspace_uri(name, str(relative))
-
-            result["path"] = uri
-            for entry in result.get("entries", ()):
-                entry["path"] = display(entry["path"])
-            if "matches" in result:
-                result["matches"] = [display(item) for item in result["matches"]]
-            return result
-
-        return ToolPreparation((path,), invoke)
+        return name, relative
 
 
 def _list_workspaces(context: ToolContext) -> dict[str, Any]:

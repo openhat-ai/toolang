@@ -1,5 +1,8 @@
 # Implement Tool Call Terminal Blocks
 
+The result-block layout and marker styling below are superseded by
+[Tool-owned progress descriptions](tool-progress.md).
+
 ## Work Type and Approval
 
 Feature implementation. The human approved this behavior on 2026-08-22 by

@@ -7,11 +7,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from toolang.base.protocols.tool import AgentTool, Toolset
-from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.base.protocols.tool import Tool, Toolset
+from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 
 from .handlers import execute
 from .schemas import Operation, decode_request, tool_parameters
+from .errors import ResourceError
 
 _DESCRIPTIONS: dict[Operation, str] = {
     "list": (
@@ -40,7 +41,7 @@ _DESCRIPTIONS: dict[Operation, str] = {
 
 
 @dataclass(frozen=True, slots=True)
-class AgentStateActionTool(AgentTool):
+class AgentStateActionTool(Tool):
     """One operation over the compact current-agent resource protocol."""
 
     operation: Operation
@@ -60,9 +61,12 @@ class AgentStateActionTool(AgentTool):
         self,
         arguments: Mapping[str, Any],
         context: ToolContext,
-    ) -> dict[str, Any]:
-        request = decode_request(self.operation, arguments)
-        return await asyncio.to_thread(execute, request, context)
+    ) -> ToolResult:
+        try:
+            request = decode_request(self.operation, arguments)
+            return ToolResult(await asyncio.to_thread(execute, request, context))
+        except ResourceError as exc:
+            return exc.result
 
 
 @dataclass(slots=True)
@@ -75,7 +79,7 @@ class AgentStateToolset:
         "List, get, create, update, and delete this agent's tasks, chores, "
         "psyches, skills, services, prompts, and flows."
     )
-    _tools: dict[str, AgentTool] = field(init=False, repr=False)
+    _tools: dict[str, Tool] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         operations: tuple[Operation, ...] = (
@@ -89,7 +93,7 @@ class AgentStateToolset:
             operation: AgentStateActionTool(operation) for operation in operations
         }
 
-    def tools(self) -> Mapping[str, AgentTool]:
+    def tools(self) -> Mapping[str, Tool]:
         return dict(self._tools)
 
 

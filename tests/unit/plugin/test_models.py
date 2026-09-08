@@ -12,7 +12,7 @@ from typing import Any, cast
 import pytest
 
 from toolang.base.protocols.model import ModelAdapter
-from toolang.base.protocols.tool import AgentTool
+from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import (
     AudioPart,
     DocumentPart,
@@ -33,7 +33,7 @@ from toolang.base.types.model import (
 )
 from toolang.base.types.policy import RunBindings
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
-from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, StepEnd
@@ -79,7 +79,7 @@ def load_config_layers(root: Path, agent_name: str) -> tuple[dict[str, object], 
     return tuple(layers)
 
 
-class _FakeTool(AgentTool):
+class _FakeTool(Tool):
     name = "shell__execute"
     plugin_name = "shell"
     toolset = "shell"
@@ -91,9 +91,9 @@ class _FakeTool(AgentTool):
             parameters={"type": "object"},
         )
 
-    async def invoke(self, arguments, context: ToolContext) -> dict[str, Any]:
+    async def invoke(self, arguments, context: ToolContext) -> ToolResult:
         del context
-        return {"ok": True, "stdout": f"ran:{arguments['command']}"}
+        return ToolResult({"ok": True, "stdout": f"ran:{arguments['command']}"})
 
 
 class _FakeModels(ModelAdapter):

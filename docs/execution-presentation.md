@@ -143,29 +143,30 @@ Iteration and condition headers create the same kind of stable boundary.
 
 ## Markers and Style
 
-`•` is the only Step execution-row marker. `---  ` opens and closes a dynamic
-Run Step, and `∎` marks the root Run footer. There is no separate marker for
-errors, control decisions, or parallel work. The centered dot `·` is only an
-inline facts separator.
+`•` marks ordinary Steps; `✧` marks the `pick`, `reload`, `compact`, and `honor`
+runtime helpers. `---  ` opens and closes a dynamic Run Step, and `∎` marks the
+root Run footer. The centered dot `·` is only an inline facts separator.
 
 - Model activity and output use `•` and normal text.
-- Tool activity uses `•` and normal text. Its successful terminal marker,
-  action, and output are dim.
+- Ordinary Tool descriptions are dim while running and after success.
+- Runtime helper descriptions are cyan, with a separate red error line on
+  failure.
 - Flow activity and terminal output use `•` and normal text.
-- Errors use `•` with error styling; cancellation uses warning styling.
-- Parallel lanes place `•` after the lane columns.
+- Ordinary failed descriptions and errors use red; canceled descriptions use
+  yellow.
+- Parallel lanes place the Step marker after the lane columns.
 - Headers and facts are dim.
 
-Terminal markers use the same color and intensity as their following content.
-Successful Model and Flow outputs use the terminal's default foreground;
-successful Tool terminal output uses that foreground dimmed. Failure uses red
-and cancellation uses yellow. Green is not a terminal status color.
+Step markers remain unstyled, independently of their following content.
+Successful Model and Flow outputs use the terminal's default foreground.
+Green is not a terminal status color.
 
 Step paths appear only at the right edge of facts-bearing Flow Step footers. A
 dynamic Run Step footer instead identifies its direct child Run. Binding
 effects, result pointers, and control decisions are not displayed. Model and
-Tool Steps also omit duration, model name, exit code, usage, cost, and other
-per-Step facts.
+Tool Steps also omit model name, exit code, usage, cost, and other per-Step
+facts. Compact alone shows elapsed time while running and its duration when
+done.
 
 ## Agic Dynamic Run Steps
 
@@ -281,52 +282,60 @@ stable. Only the unfinished block remains live. The transition does not visibly
 change already-rendered text. At Part closure the remaining tail is committed,
 and Step closure does not repeat the final output.
 
-Tool activity and terminal output use this form:
+Tool activity uses the persisted running description, replaced at completion:
 
 ```text
 • Executing search “Toolang plugin protocol” ...
-
 • Executed search “Toolang plugin protocol”
-
-  [                                                            ] background
-  [ {"results":[{"url":"https://example.com"}]}          ]
-  [                                                            ]
 ```
 
-The brackets above label colored cells; they are not emitted as terminal
-glyphs.
+Completed traces contain the terminal description only. Tool-owned descriptions
+can provide clearer wording and logical workspace labels:
+
+```text
+• Listed workspaces
+✧ Reloaded workspace rules: [repo] src/AGENTS.md
+• Wrote [repo] src/example.py
+• Failed to read [repo] missing.txt
+  File not found
+```
 
 Every Step begins after one unpainted blank line, including model output that
 follows a Tool Step. A preceding statement, iteration, or condition header can
 own that same separator through its trailing blank row; the following Step
 does not add a second one. Continuation rows from the same Step do not add
-another separator. A standalone live Tool summary is dim, including its marker;
-terminal Tool summaries remain ordinary progress rows. After another unpainted
-blank line, a succeeded result or failed diagnostic follows on a borderless,
-background-filled detail surface. The detail content has one empty row above
-and below it and one empty column on each side, matching code-block padding. The
-detail surface wraps like a code block and fills the available progress width
-up to `TOOLANG_PROGRESS_MAX_WIDTH`. Non-TTY output preserves the same gaps,
-padding, and width while omitting ANSI sequences. In interactive Chat the
-surface uses Code background; Script retains its ANSI-slot-8 presentation.
+another separator. Running, successful, and canceled tools occupy one physical
+line. Failed tools occupy two: the summary and a two-cell-indented error, without
+an intervening blank row or background surface. Long lines are truncated to the
+available width, bounded by `TOOLANG_PROGRESS_MAX_WIDTH`. Script and Chat use
+the same layout; non-TTY output omits ANSI sequences and live replacement.
 
 The executor records a human-readable `summary` when the Tool Step begins and
-another when it ends. Summary generation receives the tool `family`, leaf
-`name`, and supplied `args` in tool-schema declaration order. The default
-summary uses only `name` and the first argument; it does not repeat `family`.
+another when it ends. A leaf tool may supply
+`summary(arguments, result=None) -> str | None`, including through
+`@tool(summary=...)`. No result means running; `ToolResult.error` distinguishes
+failure from success, while cancellation uses executor wording.
+The hook receives isolated call/result data with sensitive
+arguments masked. It performs no I/O and supplies no markers, styling, or timing.
+The executor uses generic wording when the hook is absent, empty, or raises.
+Progress reads the saved summaries; it never invokes plugins during replay.
+
+The default summary uses the leaf `name` and first supplied argument in
+tool-schema declaration order; it does not repeat the tool family.
 The default running form is `Executing NAME ARG ...`; the succeeded and failed
 forms are `Executed NAME ARG` and `Failed NAME ARG`; the canceled form is
 `Canceled NAME ARG`. Argument previews are single-line, bounded, and redact
-sensitive fields. A failed or canceled Tool Step records the corresponding
-terminal summary; its concrete error remains a separate diagnostic
-continuation.
+sensitive fields. Only failure adds a diagnostic continuation; cancellation
+remains one line. Honor's running description is generic; its terminal
+description identifies the workspace and rules files available in its result.
 
 Historical Steps without summaries retain the compatibility forms `executing
 TOOL`, `executed TOOL`, `failed TOOL`, and `canceled TOOL`.
 
-Structured Tool results use compact single-line JSON. Textual `stdout` and
-`stderr` preserve their original lines. Model `ToolCallPart` values are not
-displayed; the following Tool Step owns the visible call activity. Mixed Model
+Tool results, including JSON, stdout, and stderr, are not displayed as progress
+blocks. They remain in records and model messages. Dynamic run and handoff
+calls retain their hierarchy. Model `ToolCallPart` values are not displayed;
+the following Tool Step owns the visible call activity. Mixed Model
 output retains its text and other displayable Parts. A successful Model Step
 containing only tool-call Parts commits no terminal row and leaves its live
 position to the following Tool Step. This presentation suppression does not
@@ -536,8 +545,8 @@ Interactive Chat resolves one concrete palette before prompt_toolkit begins
 reading keyboard input. The public backgrounds are Input, Queue, and Code, in
 that order. Input fills the input box and the non-accent cells of Run, Steer,
 and Quick Command bars. Queue fills the adjacent queue area; a focused queue
-selection uses Input. Code fills tool-detail and fenced-code rectangles. These
-surfaces assign no ordinary foreground: normal text inherits the terminal
+selection uses Input. Code fills fenced-code rectangles. These surfaces assign
+no ordinary foreground: normal text inherits the terminal
 foreground, dim text adds only the dim attribute, and the input cursor uses
 reverse video.
 

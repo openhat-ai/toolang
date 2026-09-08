@@ -6,15 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from toolang.base.errors import ToolFailure
 from toolang.base.types.run import ToolCall
-from toolang.base.types.tool import ToolContext, ToolDefinition
-from toolang.base.utils.function_tools import prepare_tool
+from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.execution.executor.steps.tool import invoke_tool_call
+from toolang.base.protocols.tool import Tool
 
 
 @dataclass(frozen=True, slots=True)
-class _FailingTool:
+class _FailingTool(Tool):
     name: str = "demo__fail"
     plugin_name: str = "demo"
 
@@ -29,10 +28,10 @@ class _FailingTool:
         self,
         arguments: Mapping[str, Any],
         context: ToolContext,
-    ) -> dict[str, Any]:
+    ) -> ToolResult:
         del arguments, context
-        raise ToolFailure(
-            "request is invalid",
+        return ToolResult(
+            error="request is invalid",
             output={"error": {"code": "invalid_request", "issues": []}},
         )
 
@@ -42,11 +41,12 @@ def test_generic_tool_dispatch_preserves_structured_failure_output(
 ) -> None:
     tool = _FailingTool()
     call = ToolCall("tool-1", "call-1", tool.name, {})
-    context = ToolContext("run-test", tmp_path, tmp_path, tmp_path)
+    context = ToolContext(tmp_path, tmp_path)
     result = asyncio.run(
         invoke_tool_call(
             call=call,
-            preparation=prepare_tool(tool, call.input, context),
+            tool=tool,
+            context=context,
         )
     )
 

@@ -9,12 +9,7 @@ from toolang.base.utils.function_tools import create_function_tool, tool
 
 
 def _context(home: Path) -> ToolContext:
-    return ToolContext(
-        run_id="run-1",
-        home=home,
-        room=home / ".runtime" / "tools" / "test",
-        wd=home,
-    )
+    return ToolContext(home=home, room=home / ".runtime" / "tools" / "test")
 
 
 def test_function_tool_runs_sync_callable_in_worker_thread(tmp_path: Path) -> None:
@@ -26,7 +21,7 @@ def test_function_tool_runs_sync_callable_in_worker_thread(tmp_path: Path) -> No
 
     result = asyncio.run(
         create_function_tool(current_thread).invoke({}, _context(tmp_path))
-    )
+    ).output
 
     assert result["thread"] != owner_thread
 
@@ -41,17 +36,17 @@ def test_function_tool_awaits_async_callable_on_owner_loop(tmp_path: Path) -> No
 
     result = asyncio.run(
         create_function_tool(current_thread).invoke({}, _context(tmp_path))
-    )
+    ).output
 
     assert result["thread"] == owner_thread
 
 
-def test_unprepared_function_keeps_its_original_argument_binding(tmp_path: Path):
+def test_function_preserves_keyword_argument_binding(tmp_path: Path):
     @tool()
     def accepts_kwargs(**kwargs):
         return kwargs
 
     result = asyncio.run(
         create_function_tool(accepts_kwargs).invoke({}, _context(tmp_path))
-    )
+    ).output
     assert result == {}

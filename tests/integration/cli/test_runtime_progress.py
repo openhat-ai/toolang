@@ -16,7 +16,7 @@ from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.cli.common.execution_progress import ProgressProjector
 from toolang.execution.events import StepBegin, StepEnd
-from toolang.execution.types import ThreadPrefix, ToolStepGiven
+from toolang.execution.types import ThreadPrefix, ToolStepGiven, ToolStepNoted
 from toolang.execution.values import parts_from_local
 from tests.support.execution_assertions import assert_run_event_integrity
 
@@ -202,11 +202,14 @@ agic child() -> Text:
                     assert any("Run child" in row.text for row in rows)
             else:
                 assert handoffs == []
-                if outcome in {"failed", "canceled"}:
-                    assert any("Failed to execute" in row.text for row in rows)
+                if outcome == "failed":
+                    assert any("Failed execute" in row.text for row in rows)
                 else:
                     assert execute_step is not None
                     skipped = harness.store.get_step(ref=execute_step)
                     assert skipped is not None and skipped.status == "canceled"
+                    assert isinstance(skipped.noted, ToolStepNoted)
+                    assert any(row.text == f"• {skipped.noted.summary}" for row in rows)
+                    assert not any("Failed" in row.text for row in rows)
 
     asyncio.run(scenario())

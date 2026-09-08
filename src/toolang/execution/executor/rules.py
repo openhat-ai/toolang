@@ -2,77 +2,69 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from hashlib import sha256
 from pathlib import PurePosixPath
 
-from toolang.base.types.tool import ToolContext, ToolPath
-from toolang.base.utils.workspace_paths import authorize_workspace_path
+from toolang.base.types.tool import ToolContext
+from toolang.base.utils.workspace_paths import (
+    authorize_workspace_path,
+    resolve_workspace_path,
+    workspace_root,
+)
 
 from ..records import RecallControlPayload
 from ..types import RecallTarget, RulesRecallTarget
 
 
 class _HonorRequired(Exception):
-    """A prepared original call must wait for a separate honor Tool Step."""
+    """A path-aware call must wait for a separate honor Tool Step."""
 
-    def __init__(
-        self, paths: tuple[ToolPath, ...], files: tuple[RulesRecallTarget, ...]
-    ):
+    def __init__(self, paths: tuple[tuple[str, str], ...]):
         self.paths = paths
-        self.files = tuple(
-            (target.workspace, str(PurePosixPath(target.path) / "AGENTS.md"))
-            for target in files
-        )
         super().__init__("workspace rules require recall")
 
 
 def check_rules(
     context: ToolContext,
-    paths: tuple[ToolPath, ...],
+    paths: tuple[tuple[str, str], ...],
     visible: Mapping[RecallTarget, str],
     pending: Collection[RecallTarget],
 ) -> None:
     """Require an honor Step unless every applicable revision is visible."""
 
-    files: list[RulesRecallTarget] = []
     try:
-        rules = load_rules(
-            context, paths, set(pending) | set(visible), on_file=files.append
-        )
+        rules = load_rules(context, paths, set(pending) | set(visible))
     except Exception as exc:
         # The honor Step owns and records rule-loading failures.
-        raise _HonorRequired(paths, tuple(files)) from exc
+        raise _HonorRequired(paths) from exc
     if any(
         rule.target in pending or visible.get(rule.target) != rule.revision
         for rule in rules
     ):
-        raise _HonorRequired(paths, tuple(files))
+        raise _HonorRequired(paths)
 
 
 def load_rules(
     context: ToolContext,
-    paths: Sequence[ToolPath],
+    paths: Sequence[tuple[str, str]],
     known: Collection[RecallTarget],
-    *,
-    on_file: Callable[[RulesRecallTarget], None] | None = None,
 ) -> tuple[RecallControlPayload, ...]:
     """Read each applicable rule once, ancestor first within its logical anchor."""
 
     recalled: list[RecallControlPayload] = []
     seen: set[RulesRecallTarget] = set()
-    for path in paths:
-        if path.workspace is None:
-            continue
-        root = context.workspaces[path.workspace].resolve()
-        relative = PurePosixPath(path.relative)
+    for workspace, value in paths:
+        root = workspace_root(workspace, context)
+        resolved, normalized = resolve_workspace_path(workspace, value, context)
+        relative = PurePosixPath(normalized)
         scopes = (
             (relative, *relative.parents)
-            if path.resolved.is_dir() or not path.resolved.exists()
+            if resolved.is_dir() or not resolved.exists()
             else relative.parents
         )
         for scope in reversed(scopes):
-            target = RulesRecallTarget(path.workspace, str(scope))
+            target = RulesRecallTarget(workspace, str(scope))
             if target in seen:
                 continue
             seen.add(target)
@@ -86,13 +78,7 @@ def load_rules(
                 if target not in known:
                     continue
                 content, revision = "", "0"
-            except Exception:
-                if on_file is not None:
-                    on_file(target)
-                raise
             else:
                 revision = sha256(content.encode("utf-8")).hexdigest()
-            if on_file is not None:
-                on_file(target)
             recalled.append(RecallControlPayload(target, revision, content))
     return tuple(recalled)

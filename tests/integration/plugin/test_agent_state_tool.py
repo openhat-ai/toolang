@@ -5,48 +5,47 @@ from pathlib import Path
 from typing import Any
 
 import frontmatter
-import pytest
 
-from toolang.base.errors import ToolFailure
-from toolang.base.protocols.tool import AgentTool
+from toolang.base.protocols.tool import Tool
 from toolang.base.types.tool import ToolContext
 from toolang.catalog import cap as caps
 from toolang.catalog.job import AuthoredJobs
 from toolang.execution.tools.agent_state import create_toolset
+from toolang.execution.tools.agent_state.types import AgentStateToolContext
+from toolang.common.layout import AgentLayout
 
 
 def _context(toolang_root: Path, agent_name: str = "alice") -> ToolContext:
     home = toolang_root / "agents" / agent_name
     home.mkdir(parents=True, exist_ok=True)
     (home / "agent.too").write_text(f"agent {agent_name}\n", encoding="utf-8")
-    return ToolContext(
-        run_id="run-1",
+    return AgentStateToolContext(
         home=home,
         room=home / ".runtime" / "tools" / "me",
-        wd=home,
+        layout=AgentLayout(root=toolang_root, name=agent_name, placement="resident"),
     )
 
 
 def _invoke(
-    tool: AgentTool,
+    tool: Tool,
     arguments: dict[str, object],
     context: ToolContext,
 ) -> dict[str, Any]:
-    return asyncio.run(tool.invoke(arguments, context))
+    return asyncio.run(tool.invoke(arguments, context)).output
 
 
-def _tools() -> dict[str, AgentTool]:
+def _tools() -> dict[str, Tool]:
     return dict(create_toolset({}).tools())
 
 
 def _error(
-    tool: AgentTool,
+    tool: Tool,
     arguments: dict[str, object],
     context: ToolContext,
 ) -> dict[str, Any]:
-    with pytest.raises(ToolFailure) as raised:
-        _invoke(tool, arguments, context)
-    return raised.value.output["error"]
+    result = asyncio.run(tool.invoke(arguments, context))
+    assert result.error is not None
+    return result.output["error"]
 
 
 def test_compact_toolset_exposes_five_closed_schemas() -> None:
@@ -827,11 +826,10 @@ def test_compact_tool_rejects_symlinked_agent_home(tmp_path: Path) -> None:
     target.joinpath("agent.too").write_text("agent bob\n", encoding="utf-8")
     home = root / "agents" / "alice"
     home.symlink_to(target, target_is_directory=True)
-    context = ToolContext(
-        run_id="run-1",
+    context = AgentStateToolContext(
         home=home,
         room=home / ".runtime" / "tools" / "me",
-        wd=home,
+        layout=AgentLayout(root=root, name="alice", placement="resident"),
     )
 
     error = _error(_tools()["list"], {"kind": "task"}, context)
@@ -843,10 +841,7 @@ def test_compact_tool_rejects_non_agent_home_with_structured_error(
     tmp_path: Path,
 ) -> None:
     context = ToolContext(
-        run_id="run-1",
-        home=tmp_path / "alice",
-        room=tmp_path / "alice" / ".runtime" / "tools" / "me",
-        wd=tmp_path / "alice",
+        home=tmp_path / "alice", room=tmp_path / "alice" / ".runtime" / "tools" / "me"
     )
 
     error = _error(_tools()["list"], {"kind": "task"}, context)

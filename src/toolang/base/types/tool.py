@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..protocols.tool import ToolHistory, ToolRuntime
+
+ToolSummary = Callable[[Mapping[str, Any], "ToolResult | None"], str | None]
+ToolPaths = Callable[
+    [Mapping[str, Any], "ToolContext"], Mapping[str, tuple[str, ...]] | None
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +52,7 @@ class ToolDefinition:
 
 @dataclass(frozen=True, slots=True)
 class ToolService:
-    """One effective service exposed to tools for an immutable run."""
+    """One effective service in a captured tool call."""
 
     name: str
     meta: Mapping[str, object]
@@ -59,35 +64,46 @@ class ToolService:
 
 
 @dataclass(frozen=True, slots=True)
-class ToolPath:
-    """An authorized physical path with its optional logical workspace anchor."""
+class ToolResult:
+    """A completed tool operation; output contains only JSON-compatible data."""
 
-    resolved: Path
-    workspace: str | None = None
-    relative: str = "/"
-
-
-@dataclass(frozen=True, slots=True)
-class ToolPreparation:
-    """Access paths and the operation bound to exactly those prepared paths."""
-
-    paths: tuple[ToolPath, ...]
-    invoke: Callable[[], Awaitable[dict[str, Any]]]
+    output: dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ToolContext:
     """Resolved context passed into one tool call."""
 
-    run_id: str
     home: Path
     room: Path
-    wd: Path
-    services: tuple[ToolService, ...] = ()
-    placement: Literal["resident", "visiting", "roaming"] = "resident"
-    runtime: ToolRuntime | None = None
     workspaces: Mapping[str, Path] = field(default_factory=dict)
-    history: ToolHistory | None = None
+    # A context belongs to one invocation. Reusing resolutions binds preflight
+    # and execution to the same targets without a second execution protocol.
+    _paths: dict[tuple[Path, str, bool], tuple[Path, str]] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspaces", MappingProxyType(dict(self.workspaces)))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RuntimeToolContext(ToolContext):
+    """Executor authority supplied only to the runtime toolset."""
+
+    runtime: ToolRuntime
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class HistoryToolContext(ToolContext):
+    """Read-only history supplied only to the history toolset."""
+
+    history: ToolHistory
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ServiceToolContext(ToolContext):
+    """Effective services supplied only to the service toolset."""
+
+    services: tuple[ToolService, ...]

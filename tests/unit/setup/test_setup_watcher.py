@@ -12,7 +12,7 @@ import pytest
 
 from toolang.base.protocols.model import ModelCatalog
 from toolang.base.model_settings import parse_model_body
-from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.common.errors import ToolangError
 from toolang.base.types.model import (
     Model,
@@ -40,9 +40,10 @@ from toolang.setup.catalog import (
     load_matching_catalog_inspection,
 )
 from toolang.setup.watcher import DEFAULT_INTERVAL_MS
+from toolang.base.protocols.tool import Tool
 
 
-class _Tool:
+class _Tool(Tool):
     name = "one"
     plugin_name = "test"
     toolset = "alpha"
@@ -54,9 +55,9 @@ class _Tool:
         self,
         arguments: Mapping[str, Any],
         context: ToolContext,
-    ) -> dict[str, Any]:
+    ) -> ToolResult:
         del arguments, context
-        return {}
+        return ToolResult({})
 
 
 def test_setup_watcher_current_requires_initial_refresh(tmp_path: Path) -> None:

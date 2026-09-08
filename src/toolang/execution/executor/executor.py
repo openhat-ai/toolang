@@ -12,7 +12,7 @@ import time
 from typing import Any, Literal, cast
 
 from toolang.base.model_settings import apply_model_override
-from toolang.base.errors import ToolFailure
+from toolang.base.types.tool import ToolResult
 from toolang.base.types.model import ModelOverride, ModelRequest, ModelTarget
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
@@ -71,7 +71,6 @@ from ..records import (
 )
 from ..store import RunStore
 from ..tool_results import control_summary
-from ..tools.runtime import canceled_tool_summary
 from ..schemas import RerunRequest, RetryRequest, RunRequest
 from ..types import (
     ControlTiming,
@@ -936,9 +935,7 @@ class RunExecutor:
             self._observe_control(control)
         return control
 
-    async def model_reload(
-        self, *, run_id: str, triggered_by: StepRef
-    ) -> dict[str, object]:
+    async def model_reload(self, *, run_id: str, triggered_by: StepRef) -> ToolResult:
         """Refresh and synchronously apply State for one model runtime tool."""
 
         with self._active_lock:
@@ -954,8 +951,9 @@ class RunExecutor:
                 raise RuntimeError(f"run execution is unavailable: {run_id}")
             diagnostics = [asdict(item) for item in refreshed.diagnostics]
             if diagnostics:
-                raise ToolFailure(
-                    "Agent State refresh failed", output={"diagnostics": diagnostics}
+                return ToolResult(
+                    error="Agent State refresh failed",
+                    output={"diagnostics": diagnostics},
                 )
             control = self._accept_reload(
                 run_id=run_id,
@@ -971,7 +969,9 @@ class RunExecutor:
                     f"{terminal.target}@{terminal.index}"
                 )
             assert isinstance(terminal.payload, ReloadControlPayload)
-            return {"controls": [control_summary(terminal.ref, terminal.payload)]}
+            return ToolResult(
+                {"controls": [control_summary(terminal.ref, terminal.payload)]}
+            )
 
     def cancel_control(self, *, run_id: str, index: int) -> ControlRecord:
         """Revoke one pending reload, steer, or cancel control."""
@@ -2763,7 +2763,11 @@ class _Execution:
                 or statement_has_call(event.given),
             )
         except _RunCanceled as exc:
-            from .steps.tool import canceled_result
+            from .steps.tool import (
+                _tool_summary,
+                _tool_summary_context,
+                canceled_result,
+            )
 
             await emit(
                 StepEnd(
@@ -2771,18 +2775,15 @@ class _Execution:
                     kind=event.kind,
                     status="canceled",
                     noted=ToolStepNoted(
-                        summary=canceled_tool_summary(event.given.summary)
+                        summary=_tool_summary(
+                            _tool_summary_context(
+                                event.given.call,
+                                self.setup.tools.get(event.given.call.name),
+                            ),
+                            "canceled",
+                        )
                     )
                     if isinstance(event.given, ToolStepGiven)
-                    and event.given.plugin == "_toolang"
-                    and event.given.call.name
-                    in {
-                        "_toolang__pick",
-                        "_toolang__reload",
-                        "_toolang__compact",
-                        "_toolang__honor",
-                    }
-                    and event.given.summary
                     else None,
                     output=RecordLocal.typed(
                         "ToolResultPart",

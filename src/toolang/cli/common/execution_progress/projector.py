@@ -264,7 +264,7 @@ class ProgressProjector:
         run.end = event
         if event.error is not None:
             self._errors[FieldRef.from_path(RunRef(event.run), "error")] = event.error
-        execute_rows = self._finish_execute(run, event)
+        execute_rows = self._finish_execute(run)
 
         owner = (
             self._steps.get(run.begin.parent) if run.begin.parent is not None else None
@@ -399,8 +399,6 @@ class ProgressProjector:
                 activity = (
                     f"• Handoff to {handoff.runnable} · {activity.removeprefix('• ')}"
                 )
-            elif pending := self._pending_execute(run, event):
-                activity = f"• Executing {pending.runnable}..."
             self._set_lane_activity(
                 state.lane_owner,
                 activity,
@@ -475,18 +473,7 @@ class ProgressProjector:
         if state.lane_owner is not None:
             if not isinstance(event.error, ErrorRef):
                 statement = state.statement
-                if execute is not None:
-                    terminal = (
-                        ()
-                        if execute.ready
-                        else tuple(
-                            row.text
-                            for row in self._execute_failure_rows(
-                                execute, self._error_text(event.error) or event.status
-                            )
-                        )
-                    )
-                elif state.is_flow:
+                if state.is_flow:
                     assert statement is not None
                     terminal = flow_lane_terminal_lines(
                         event,
@@ -515,17 +502,10 @@ class ProgressProjector:
                             state.lane_owner,
                             terminal,
                             status=event.status,
+                            tool=event.kind == "tool",
                         )
-        elif execute is not None:
-            if not execute.ready:
-                block = self._commit_block(
-                    state,
-                    self._execute_failure_rows(
-                        execute, self._error_text(event.error) or event.status
-                    ),
-                )
-            else:
-                self._release_boundaries(state.boundaries)
+        elif execute is not None and execute.ready:
+            self._release_boundaries(state.boundaries)
         elif state.is_dynamic_run:
             if state.dynamic_child_run_id is None:
                 if isinstance(event.error, ErrorRef):
@@ -833,10 +813,21 @@ class ProgressProjector:
                 continue
             prefix = f"  {lane_index:>{lane_width}} | #{lane.item:>{item_width}} | "
             terminal = lane.terminal or ("• failed",)
-            rows.append(ProgressRow(f"{prefix}{terminal[0]}", "error"))
+            rows.append(
+                ProgressRow(
+                    f"{prefix}{terminal[0]}",
+                    "runtime" if terminal[0].startswith("✧ ") else "error",
+                    surface="tool_summary" if lane.terminal_tool else "none",
+                )
+            )
             continuation = " " * (len(prefix) + 2)
             rows.extend(
-                ProgressRow(f"{continuation}{line}", "error") for line in terminal[1:]
+                ProgressRow(
+                    f"{continuation}{line}",
+                    "error",
+                    surface="tool_error" if lane.terminal_tool else "none",
+                )
+                for line in terminal[1:]
             )
         return tuple(rows)
 
@@ -886,8 +877,6 @@ class ProgressProjector:
                 )
         for state in self._steps.values():
             if state.lane_owner is not None:
-                continue
-            if self._pending_execute(self._runs[state.begin.step.run_id], state.begin):
                 continue
             if state.is_dynamic_run:
                 if state.dynamic_child_run_id is None:
@@ -951,25 +940,6 @@ class ProgressProjector:
                         ),
                     )
                 )
-        for run in self._runs.values():
-            if run.end is not None or run.lane_owner is not None:
-                continue
-            for pending in run.pending_executes:
-                blocks.append(
-                    (
-                        pending.sequence,
-                        ProgressBlock(
-                            self._execute_block_key(run.begin.run, pending),
-                            (
-                                ProgressRow(
-                                    f"• Executing {pending.runnable}...",
-                                    "active",
-                                ),
-                            ),
-                            gap_before=not self._ends_with_blank,
-                        ),
-                    )
-                )
         return tuple(
             block for _sequence, block in sorted(blocks, key=lambda item: item[0])
         )
@@ -987,8 +957,7 @@ class ProgressProjector:
                 ProgressRow(
                     f"  {lane_index:>{lane_width}} | #{lane.item:>{item_width}} | "
                     f"{lane.activity}",
-                    "active",
-                    wrap_live=lane.activity.startswith("✧ "),
+                    "runtime" if lane.activity.startswith("✧ ") else "active",
                 )
             )
         return tuple(rows)
@@ -1046,7 +1015,6 @@ class ProgressProjector:
                 PendingExecute(
                     tool_call_id=given.call.tool_call_id,
                     runnable=run_label(given),
-                    sequence=state.sequence,
                 )
             )
 
@@ -1132,28 +1100,12 @@ class ProgressProjector:
         )
 
     @staticmethod
-    def _execute_failure_rows(
-        pending: PendingExecute,
-        error: str,
-    ) -> tuple[ProgressRow, ...]:
-        rows = [ProgressRow(f"• Failed to execute {pending.runnable}", "error")]
-        rows.extend(
-            ProgressRow(f"  {line}", "error")
-            for line in error.strip().splitlines()
-            if line
-        )
-        return tuple(rows)
-
-    def _finish_execute(
-        self,
-        run: RunState,
-        event: RunEnd,
-    ) -> tuple[ProgressRow, ...]:
+    def _finish_execute(run: RunState) -> tuple[ProgressRow, ...]:
         """Close execute presentation when no target Step boundary arrived."""
 
         rows: list[ProgressRow] = []
-        for pending in run.pending_executes:
-            if event.status == "succeeded" and pending.ready:
+        if run.lane_owner is None:
+            for pending in run.pending_executes:
                 rows.extend(
                     (
                         ProgressRow(
@@ -1163,14 +1115,8 @@ class ProgressProjector:
                         ProgressRow(""),
                     )
                 )
-            else:
-                rows.extend(self._execute_failure_rows(pending, ""))
         run.pending_executes.clear()
         return tuple(rows)
-
-    @staticmethod
-    def _execute_block_key(run_id: str, pending: PendingExecute) -> str:
-        return f"execute:{run_id}:{pending.tool_call_id or pending.sequence}"
 
     def _dynamic_run_header(self, state: StepState) -> ProgressBlock:
         rows = (
@@ -1377,11 +1323,13 @@ class ProgressProjector:
         terminal: tuple[str, ...],
         *,
         status: RunStatus,
+        tool: bool = False,
     ) -> None:
         lane = self._lane_state(owner)
         if lane is not None:
             lane.terminal = terminal
             lane.terminal_status = status
+            lane.terminal_tool = tool
             if terminal:
                 lane.activity = one_line(" · ".join(terminal))
 

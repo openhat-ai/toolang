@@ -8,7 +8,7 @@ from types import MappingProxyType
 from typing import cast
 
 from toolang.base.errors import ToolangError
-from toolang.base.protocols.tool import AgentTool
+from toolang.base.protocols.tool import Tool
 from toolang.common.query import (
     CollectionDefinition,
     CollectionSchema,
@@ -64,7 +64,7 @@ class ToolEntry:
     key: str
     ref: str
     model_name: str
-    tool: AgentTool
+    tool: Tool
 
     def __post_init__(self) -> None:
         if not self.key or self.key != self.key.strip():
@@ -74,7 +74,7 @@ class ToolEntry:
 
 
 @dataclass(frozen=True, slots=True, eq=False, init=False)
-class ToolCollection(Mapping[str, AgentTool]):
+class ToolCollection(Mapping[str, Tool]):
     """Immutable effective tools with one shared matcher and exact indexes."""
 
     entries: tuple[ToolEntry, ...]
@@ -124,7 +124,7 @@ class ToolCollection(Mapping[str, AgentTool]):
     @classmethod
     def from_tools(
         cls,
-        tools: Mapping[str, AgentTool],
+        tools: Mapping[str, Tool],
         *,
         plugin_sources: Mapping[str, str] | None = None,
     ) -> ToolCollection:
@@ -143,7 +143,7 @@ class ToolCollection(Mapping[str, AgentTool]):
                 key=view.model_name,
                 ref=f"{view.toolset}/{view.name}",
                 model_name=view.model_name,
-                tool=cast(AgentTool, view.record),
+                tool=cast(Tool, view.record),
             )
             for view in views
         )
@@ -255,7 +255,7 @@ class ToolCollection(Mapping[str, AgentTool]):
     def refs(self) -> tuple[str, ...]:
         return tuple(entry.ref for entry in self.entries)
 
-    def __getitem__(self, key: str) -> AgentTool:
+    def __getitem__(self, key: str) -> Tool:
         return self._by_name[key].tool
 
     def __iter__(self) -> Iterator[str]:
@@ -303,7 +303,7 @@ def _validate_tool_entries(
 
 
 def tool_dataset(
-    tools: Mapping[str, AgentTool],
+    tools: Mapping[str, Tool],
     *,
     plugin_sources: Mapping[str, str] | None = None,
 ) -> QueryDataset[ToolQueryView]:
@@ -324,7 +324,7 @@ def tool_dataset(
 
 def _tool_view(
     model_name: str,
-    tool: AgentTool,
+    tool: Tool,
     *,
     plugin_sources: Mapping[str, str] | None = None,
 ) -> ToolQueryView:

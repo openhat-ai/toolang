@@ -7,15 +7,23 @@ from typing import Any
 import pytest
 
 from toolang.base.types.run import ToolCall
-from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
+from toolang.base.utils.function_tools import (
+    create_function_tool,
+    tool as function_tool,
+)
+from toolang.plugin.toolsets.loading import LoadedTool
+from toolang.plugin.toolsets.registry import ToolRef
+from toolang.plugin.toolsets.filesystem import FilesystemToolset
 from toolang.execution.executor.steps.tool import (
     _tool_summary,
     _tool_summary_context,
 )
+from toolang.base.protocols.tool import Tool
 
 
 @dataclass(frozen=True, slots=True)
-class _Tool:
+class _Tool(Tool):
     parameters: dict[str, Any]
     name: str = "demo__call"
 
@@ -30,9 +38,9 @@ class _Tool:
         self,
         arguments: Mapping[str, Any],
         context: ToolContext,
-    ) -> dict[str, Any]:
+    ) -> ToolResult:
         del arguments, context
-        return {}
+        return ToolResult({})
 
 
 def _call(input: dict[str, Any]) -> ToolCall:
@@ -113,3 +121,103 @@ def test_default_summary_omits_argument_without_a_schema_property() -> None:
     assert context.name == "call"
     assert context.args == ()
     assert _tool_summary(context, "succeeded") == "Executed call"
+
+
+@pytest.mark.parametrize("status", ["running", "succeeded", "failed", "canceled"])
+def test_description_flows_through_factory_and_loaded_tool_without_mutating_data(
+    status,
+):
+    seen = []
+
+    def summary(arguments, result):
+        phase = (
+            "running" if result is None else "failed" if result.error else "succeeded"
+        )
+        seen.append((arguments["password"], arguments["credential"], phase))
+        arguments["items"].append("changed")
+        if result is not None:
+            result.output["items"].append("changed")
+        return f"Custom {phase}\n description"
+
+    @function_tool(
+        name="call",
+        description="Unchanged model guidance.",
+        parameters={
+            "properties": {
+                "items": {"type": "array"},
+                "password": {"type": "string"},
+                "credential": {"writeOnly": True},
+            }
+        },
+        summary=summary,
+    )
+    def call_tool(items, password, credential):
+        return {"items": items}
+
+    tool = LoadedTool(
+        "demo",
+        "built-in",
+        ToolRef("demo", "demo", "call"),
+        create_function_tool(call_tool),
+    )
+    call = _call({"items": ["original"], "password": "secret", "credential": "secret"})
+    output = {"items": ["result"]}
+    context = _tool_summary_context(call, tool)
+    result = (
+        None
+        if status == "running"
+        else ToolResult(output, error="failed" if status == "failed" else None)
+    )
+    if status == "canceled":
+        assert (
+            _tool_summary(context, status, result)
+            == "Canceled: Custom running description"
+        )
+        assert seen == [("<redacted>", "<redacted>", "running")]
+        assert output == {"items": ["result"]}
+        assert call.input["items"] == ["original"]
+        return
+    assert _tool_summary(context, status, result) == f"Custom {status} description"
+    assert _tool_summary(context, status, result) == f"Custom {status} description"
+    assert seen == [("<redacted>", "<redacted>", status)] * 2
+    assert call.input == {
+        "items": ["original"],
+        "password": "secret",
+        "credential": "secret",
+    }
+    assert output == {"items": ["result"]}
+    assert tool.definition().description == "Unchanged model guidance."
+
+
+@pytest.mark.parametrize("outcome", [None, "", "   ", "raises"])
+def test_description_failure_or_empty_value_uses_generic_fallback(outcome, caplog):
+    def summary(arguments, result):
+        if outcome == "raises":
+            raise ValueError("never log this secret")
+        return outcome
+
+    @function_tool(summary=summary)
+    def call(value: str):
+        return {}
+
+    context = _tool_summary_context(
+        _call({"value": "original"}), create_function_tool(call)
+    )
+    assert _tool_summary(context, "succeeded") == "Executed call original"
+    assert "never log this secret" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"path": "workspace://repo/%zz"},
+        {"workspace": "repo", "path": "workspace://repo/file"},
+        {"path": 1},
+        {},
+    ],
+)
+def test_invalid_workspace_input_can_still_be_described_as_a_failure(arguments):
+    call = ToolCall("tool-1", "call-1", "fs__read", arguments)
+    context = _tool_summary_context(call, FilesystemToolset({}).tools()["read"])
+    assert _tool_summary(context, "failed").startswith("Failed read")
+    assert call.input == arguments
