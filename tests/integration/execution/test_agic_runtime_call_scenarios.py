@@ -17,7 +17,6 @@ from tests.support.execution_harness import (
 from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.base.types.tool import ToolContext
-from toolang.base.utils.function_tools import prepare_tool
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor.steps.tool import invoke_tool_call
 from toolang.execution.values import parts_from_local
@@ -586,13 +585,12 @@ def test_generic_dispatch_requires_per_call_runtime_authority(tmp_path: Path) ->
     from toolang.plugin.toolsets.loading import load_tools
 
     call = ToolCall("execute", "provider-execute", "_toolang__execute", {})
-    context = ToolContext("run-test", tmp_path, tmp_path, tmp_path)
+    context = ToolContext(tmp_path, tmp_path)
     result = asyncio.run(
         invoke_tool_call(
             call=call,
-            preparation=prepare_tool(
-                load_tools(queries=("_toolang/*",))[call.name], call.input, context
-            ),
+            tool=load_tools(queries=("_toolang/*",))[call.name],
+            context=context,
         )
     )
 

@@ -9,7 +9,7 @@ from typing import Any, cast
 import pytest
 
 from toolang.base.types.model import ModelRequest
-from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.base.types.policy import RunDefaults
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
@@ -31,9 +31,10 @@ from toolang.plugin.models.resolution import build_model_collection
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.setup import AgentSetup
 from tests.support.execution_harness import FakeModels
+from toolang.base.protocols.tool import Tool
 
 
-class _Tool:
+class _Tool(Tool):
     def __init__(self, toolset: str, name: str) -> None:
         self.toolset = toolset
         self.name = f"{toolset}__{name}"
@@ -52,9 +53,9 @@ class _Tool:
         self,
         arguments: Mapping[str, Any],
         context: ToolContext,
-    ) -> dict[str, Any]:
+    ) -> ToolResult:
         del arguments, context
-        return {}
+        return ToolResult({})
 
 
 def _directive(name: str, *values: str) -> Directive:

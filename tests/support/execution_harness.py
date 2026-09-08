@@ -11,7 +11,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
 
-from toolang.base.protocols.tool import AgentTool
+from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import Part, TextPart
 from toolang.base.types.model import (
     ModelInfo,
@@ -32,7 +32,7 @@ from toolang.base.types.run import (
     ModelPartUpdate,
     ModelStreamHandler,
 )
-from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, RunTracer
@@ -246,7 +246,7 @@ class RecordingRunTracer(RunTracer):
         self.events.append(event)
 
 
-class RecordingTool:
+class RecordingTool(Tool):
     """Return one fixed result and retain every tool invocation."""
 
     def __init__(
@@ -282,13 +282,13 @@ class RecordingTool:
         self,
         arguments: Mapping[str, Any],
         context: ToolContext,
-    ) -> dict[str, Any]:
+    ) -> ToolResult:
         self.calls.append((dict(arguments), context))
         if self.gate is not None:
             await self.gate.wait()
         if self.error is not None:
             raise self.error
-        return dict(self.output)
+        return ToolResult(dict(self.output))
 
 
 @dataclass(slots=True)
@@ -310,7 +310,7 @@ class ExecutionHarness:
         *,
         source: str,
         responses: Sequence[ScriptedResponse],
-        tools: Mapping[str, AgentTool] | None = None,
+        tools: Mapping[str, Tool] | None = None,
         streaming: bool = False,
         state: AgentState | None = None,
         prepare_state: bool = False,

@@ -7,13 +7,14 @@ import pytest
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.model import ModelInfo, ModelTarget
-from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.plugin.models.collections import ModelCollection, ModelEntry
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.common.query import QueryDataset
+from toolang.base.protocols.tool import Tool
 
 
-class _Tool:
+class _Tool(Tool):
     plugin_name = "test"
 
     def __init__(self, toolset: str, name: str) -> None:
@@ -31,9 +32,9 @@ class _Tool:
         self,
         arguments: Mapping[str, Any],
         context: ToolContext,
-    ) -> dict[str, Any]:
+    ) -> ToolResult:
         del arguments, context
-        return {}
+        return ToolResult({})
 
 
 def _model_entry(

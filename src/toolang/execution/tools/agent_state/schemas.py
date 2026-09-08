@@ -7,7 +7,8 @@ from dataclasses import dataclass
 import re
 from typing import Any, Literal, NoReturn, cast
 
-from toolang.base.errors import ToolFailure
+from .errors import ResourceError
+
 
 ResourceKind = Literal[
     "task",
@@ -343,7 +344,7 @@ def fail(
         error["kind"] = safe_kind
     if safe_key is not None:
         error["key"] = safe_key
-    raise ToolFailure(safe_message, output={"error": error})
+    raise ResourceError(safe_message, output={"error": error})
 
 
 def _validate_content(

@@ -1324,7 +1324,7 @@ agic calculate(_: Part[]) -> Part[]:
             assert len(tool.calls) == 1
             arguments, context = tool.calls[0]
             assert arguments == {"value": 3}
-            assert context.run_id == record.id
+            assert not hasattr(context, "run_id")
             assert [
                 step.kind for step in harness.store.list_steps(run_id=record.id)
             ] == ["model", "tool", "model"]

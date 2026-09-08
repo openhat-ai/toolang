@@ -13,17 +13,17 @@ import re
 import time
 from typing import TYPE_CHECKING, Literal
 
-from toolang.base.protocols.tool import AgentTool, ToolHistory, ToolRuntime
+from toolang.base.protocols.tool import Tool, ToolHistory, ToolRuntime
 from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ToolCall, ToolCallResult
 from toolang.base.types.tool import (
     ToolContext,
-    ToolPreparation,
+    ToolResult,
     ToolService,
-    ToolStatus,
+    RuntimeToolContext,
+    HistoryToolContext,
+    ServiceToolContext,
 )
-from toolang.base.utils.function_tools import describe_tool, prepare_tool
-from toolang.base.errors import ToolFailure
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.common.template import render_text_template
@@ -34,6 +34,7 @@ from ...events import PartBegin, PartEnd, StepBegin, StepEnd
 from ...records import RecallControlPayload
 from ...tool_results import workspace_reply, workspace_reply_from_step
 from ...runnables import AgicRoutes
+from ...tools.agent_state.types import AgentStateToolContext
 from ...types import (
     ControlRef,
     ErrorMessage,
@@ -120,7 +121,7 @@ class _ToolSummaryContext:
     name: str
     args: tuple[str, ...]
     arguments: Mapping[str, object]
-    tool: AgentTool | None
+    tool: Tool | None
 
 
 async def execute(
@@ -140,11 +141,7 @@ async def execute(
             state, call, trigger=trigger, tool_call_count=tool_call_count, routes=routes
         )
     except _HonorRequired as required:
-        paths = dict.fromkeys(
-            (path.workspace, path.relative)
-            for path in required.paths
-            if path.workspace is not None
-        )
+        paths = dict.fromkeys(required.paths)
         identity = f"honor_{state.prepared.run.run_id}_{state.next_step}"
         honor = ToolCall(
             tool_call_id=identity,
@@ -237,7 +234,8 @@ async def _execute(
     prepared = state.prepared
     plugin_name = "-"
     summary_context = _tool_summary_context(call, None)
-    preparation: ToolPreparation | Exception | None = None
+    operation: Tool | Exception | None = None
+    context: ToolContext | None = None
     step = StepRef.from_local(run.run_id, (step_index,))
     runtime: _ToolRuntime | None = None
 
@@ -246,7 +244,7 @@ async def _execute(
         state_ref: ControlRef,
     ) -> StepBegin:
         nonlocal prepared, plugin_name, summary_context
-        nonlocal preparation, runtime
+        nonlocal operation, context, runtime
         runtime_tools = prepared.run.setup.tools.runtime if trigger == "runtime" else {}
         # Bind the operation to the Step's State even if reload removed its Agic.
         if (
@@ -269,7 +267,6 @@ async def _execute(
             if tool is None:
                 raise ToolangError(f"unknown tool call: {call.name}")
             context = _tool_context(
-                run_id=run.run_id,
                 layout=state.layout,
                 tool=tool,
                 services=prepared.services,
@@ -281,21 +278,23 @@ async def _execute(
                     name: Path(path) for name, path in agent_state.workspaces.items()
                 },
             )
-            preparation = prepare_tool(tool, call.input, context)
+            touchpoints = tool.touchpoints(call.input, context)
+            paths = tuple(
+                (workspace, path)
+                for workspace, values in (touchpoints or {}).items()
+                for path in values
+            )
+            operation = tool
         except Exception as exc:
-            preparation = exc
+            operation = exc
         else:
-            if (
-                trigger == "model"
-                and state.execution is not None
-                and any(path.workspace is not None for path in preparation.paths)
-            ):
+            if trigger == "model" and state.execution is not None and paths:
                 pending = {
                     control.payload.target
                     for control in state.execution.runtime_controls(run.run_id)
                     if isinstance(control.payload, RecallControlPayload)
                 }
-                check_rules(context, preparation.paths, state.visible_recalls, pending)
+                check_rules(context, paths, state.visible_recalls, pending)
         return StepBegin(
             step=StepRef.from_local(run.run_id, (step_index,)),
             kind="tool",
@@ -339,8 +338,8 @@ async def _execute(
         plugin_name=plugin_name,
     )
     try:
-        assert preparation is not None
-        record = await invoke_tool_call(call=call, preparation=preparation)
+        assert operation is not None
+        record = await invoke_tool_call(call=call, tool=operation, context=context)
     except asyncio.CancelledError:
         await _cancel(
             state,
@@ -357,7 +356,11 @@ async def _execute(
                 step=StepRef.from_local(run.run_id, (step_index,)),
                 kind="tool",
                 status="failed",
-                noted=ToolStepNoted(summary=_tool_summary(summary_context, "failed")),
+                noted=ToolStepNoted(
+                    summary=_tool_summary(
+                        summary_context, "failed", ToolResult(error=error)
+                    )
+                ),
                 error=ErrorMessage(error),
                 finished_at=utc_now(),
             ),
@@ -396,8 +399,10 @@ async def _execute(
             state,
             step,
             part,
-            summary=_tool_summary(summary_context, status, record.output),
-            canceled_summary=_tool_summary(summary_context, "canceled", record.output),
+            summary=_tool_summary(
+                summary_context, status, ToolResult(record.output, record.error)
+            ),
+            canceled_summary=_tool_summary(summary_context, "canceled"),
             error=runtime.error if runtime is not None else None,
             trigger=trigger,
         )
@@ -604,7 +609,7 @@ async def skip(
         raise interruption
 
 
-def _plugin_name(tool: AgentTool | None) -> str:
+def _plugin_name(tool: Tool | None) -> str:
     plugin_name = getattr(tool, "plugin_name", None)
     if isinstance(plugin_name, str) and plugin_name:
         return plugin_name
@@ -613,7 +618,7 @@ def _plugin_name(tool: AgentTool | None) -> str:
 
 def _tool_summary_context(
     call: ToolCall,
-    tool: AgentTool | None,
+    tool: Tool | None,
 ) -> _ToolSummaryContext:
     family, name = _tool_identity(call, tool)
     try:
@@ -642,16 +647,22 @@ def _tool_summary_context(
 
 def _tool_summary(
     context: _ToolSummaryContext,
-    status: ToolStatus,
-    output: Mapping[str, object] | None = None,
+    status: Literal["running", "succeeded", "failed", "canceled"],
+    result: ToolResult | None = None,
 ) -> str:
     if context.tool is not None:
         try:
-            summary = describe_tool(
-                context.tool, deepcopy(context.arguments), status, deepcopy(output)
+            summary = context.tool.summary(
+                deepcopy(context.arguments),
+                None if status == "canceled" else deepcopy(result),
             )
             if isinstance(summary, str) and summary.strip():
-                return " ".join(summary.split())
+                summary = " ".join(summary.split())
+                return (
+                    f"Canceled: {summary.removesuffix('...').rstrip()}"
+                    if status == "canceled"
+                    else summary
+                )
         except Exception:
             # Presentation must not change execution or log potentially secret data.
             _LOGGER.warning("Tool description failed for %s", context.name)
@@ -669,7 +680,7 @@ def _tool_summary(
 
 def _tool_identity(
     call: ToolCall,
-    tool: AgentTool | None,
+    tool: Tool | None,
 ) -> tuple[str, str]:
     ref = getattr(tool, "ref", None)
     family = getattr(ref, "toolset", None)
@@ -728,17 +739,19 @@ def _truncate_argument(value: str, limit: int) -> str:
 async def invoke_tool_call(
     *,
     call: ToolCall,
-    preparation: ToolPreparation | Exception,
+    tool: Tool | Exception,
+    context: ToolContext | None,
 ) -> ToolCallResult:
-    """Deliver a prepared operation or failure without resolving anything again."""
+    """Translate the plugin result into an execution result with call identity."""
 
     try:
-        if isinstance(preparation, Exception):
-            raise preparation
-        output = await preparation.invoke()
-        error = None
+        if isinstance(tool, Exception):
+            raise tool
+        assert context is not None
+        result = await tool.invoke(call.input, context)
+        output, error = result.output, result.error
     except Exception as exc:
-        output = dict(exc.output) if isinstance(exc, ToolFailure) else {}
+        output = {}
         error = str(exc) or type(exc).__name__
     return ToolCallResult(
         tool_call_id=call.tool_call_id,
@@ -752,9 +765,8 @@ async def invoke_tool_call(
 
 def _tool_context(
     *,
-    run_id: str,
     layout: AgentLayout,
-    tool: AgentTool,
+    tool: Tool,
     services: tuple[ToolService, ...],
     runtime: ToolRuntime | None = None,
     history: ToolHistory | None = None,
@@ -763,14 +775,13 @@ def _tool_context(
     plugin_name = getattr(tool, "plugin_name", None)
     if not isinstance(plugin_name, str) or not plugin_name:
         raise ToolangError(f"unknown toolset plugin for tool: {tool.name}")
-    return ToolContext(
-        run_id=run_id,
-        home=layout.home,
-        room=layout.tool_room(plugin_name),
-        wd=layout.home,
-        services=services,
-        placement=layout.placement,
-        runtime=runtime,
-        history=history,
-        workspaces=workspaces or {},
-    )
+    args = (layout.home, layout.tool_room(plugin_name), workspaces or {})
+    if plugin_name == "_toolang" and runtime is not None:
+        return RuntimeToolContext(*args, runtime=runtime)
+    if plugin_name == "history" and history is not None:
+        return HistoryToolContext(*args, history=history)
+    if plugin_name == "service":
+        return ServiceToolContext(*args, services=services)
+    if plugin_name == "me":
+        return AgentStateToolContext(*args, layout=layout)
+    return ToolContext(*args)

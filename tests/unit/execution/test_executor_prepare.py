@@ -8,7 +8,7 @@ from typing import Any, cast
 
 from pydantic import TypeAdapter
 
-from toolang.base.protocols.tool import AgentTool
+from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import (
     AudioPart,
     DocumentPart,
@@ -25,7 +25,7 @@ from toolang.base.types.model import (
 )
 from toolang.base.types.policy import RunBindings
 from toolang.base.types.run import ModelCall, ModelCallResult
-from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, RunTracer, StepBegin
@@ -135,7 +135,7 @@ class _Adapter:
         return await self.invoke(target, request)
 
 
-class _Tool(AgentTool):
+class _Tool(Tool):
     name = "shell__execute"
     plugin_name = "shell"
     toolset = "shell"
@@ -143,8 +143,8 @@ class _Tool(AgentTool):
     def definition(self) -> ToolDefinition:
         return ToolDefinition(name=self.name, description="Run a command.")
 
-    async def invoke(self, arguments, context: ToolContext) -> dict[str, object]:
-        return {}
+    async def invoke(self, arguments, context: ToolContext) -> ToolResult:
+        return ToolResult({})
 
 
 class _Tracer(RunTracer):

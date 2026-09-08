@@ -7,14 +7,12 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from toolang.base.errors import ToolangError
-from toolang.base.protocols.tool import AgentTool, Toolset
+from toolang.base.protocols.tool import Tool, Toolset
 from toolang.base.types.tool import (
     ToolContext,
     ToolDefinition,
-    ToolPreparation,
-    ToolStatus,
+    ToolResult,
 )
-from toolang.base.utils.function_tools import describe_tool, prepare_tool
 
 from toolang.plugin.loading import LoadedPlugin, PluginSource, load_plugins_with_sources
 from .registry import (
@@ -25,13 +23,13 @@ from .registry import (
 
 
 @dataclass(frozen=True, slots=True)
-class LoadedTool(AgentTool):
+class LoadedTool(Tool):
     """One model-facing tool loaded from a named toolset."""
 
     plugin_name: str
     source: PluginSource
     ref: ToolRef
-    leaf_tool: AgentTool
+    leaf_tool: Tool
 
     @property
     def name(self) -> str:
@@ -57,24 +55,23 @@ class LoadedTool(AgentTool):
     def model_callable(self) -> bool:
         return getattr(self.leaf_tool, "model_callable", True)
 
-    def prepare(
+    def touchpoints(
         self, arguments: Mapping[str, Any], context: ToolContext
-    ) -> ToolPreparation:
-        return prepare_tool(self.leaf_tool, arguments, context)
+    ) -> Mapping[str, tuple[str, ...]] | None:
+        return self.leaf_tool.touchpoints(arguments, context)
 
-    def describe(
+    def summary(
         self,
         arguments: Mapping[str, Any],
-        status: ToolStatus,
-        output: Mapping[str, Any] | None = None,
+        result: ToolResult | None = None,
     ) -> str | None:
-        return describe_tool(self.leaf_tool, arguments, status, output)
+        return self.leaf_tool.summary(arguments, result)
 
     async def invoke(
         self,
         arguments: Mapping[str, Any],
         context: ToolContext,
-    ) -> dict[str, Any]:
+    ) -> ToolResult:
         return await self.leaf_tool.invoke(arguments, context)
 
 
@@ -95,17 +92,19 @@ def load_tools(
     toolset_config: Mapping[str, Mapping[str, Any]] | None = None,
     queries: Sequence[str] | None = None,
     toolsets: Sequence[str] | None = None,
-) -> dict[str, AgentTool]:
+) -> dict[str, Tool]:
     """Load leaf tools from installed toolsets and apply collection queries."""
 
-    tools: dict[str, AgentTool] = {}
+    tools: dict[str, Tool] = {}
     installed = _load_toolsets_with_sources(config=toolset_config, names=toolsets)
-    registrations: list[tuple[str, PluginSource, ToolRef, AgentTool]] = []
+    registrations: list[tuple[str, PluginSource, ToolRef, Tool]] = []
     model_names: set[str] = set()
     for plugin_name, loaded in installed.items():
         toolset = cast(Toolset, loaded.plugin)
         require_toolset_plugin_name(plugin_name, source=loaded.source)
         for leaf_name, leaf_tool in toolset.tools().items():
+            if not isinstance(leaf_tool, Tool):
+                raise ToolangError(f"tool {plugin_name}/{leaf_name} must inherit Tool")
             ref = parse_tool_registration_key(
                 plugin_name,
                 leaf_name,
@@ -161,9 +160,9 @@ def _load_toolsets_with_sources(
 
 
 def query_tools(
-    tools: dict[str, AgentTool],
+    tools: dict[str, Tool],
     queries: Sequence[str] | None,
-) -> dict[str, AgentTool]:
+) -> dict[str, Tool]:
     from .collections import tool_dataset
 
     if queries is None:
@@ -171,13 +170,13 @@ def query_tools(
     if not queries:
         return {}
     return {
-        item.model_name: cast(AgentTool, item.record)
+        item.model_name: cast(Tool, item.record)
         for item in tool_dataset(tools).query(queries)
     }
 
 
 def validate_tool_queries(
-    tools: dict[str, AgentTool],
+    tools: dict[str, Tool],
     queries: Sequence[str] | None,
 ) -> None:
     from .collections import tool_dataset

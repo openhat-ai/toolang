@@ -8,10 +8,10 @@ import pytest
 
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.model import ModelAdapter
-from toolang.base.protocols.tool import AgentTool, Toolset
+from toolang.base.protocols.tool import Tool, Toolset
 from toolang.base.types.model import ModelCatalogSnapshot, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult
-from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.plugin.models.loading import load_model_adapters, load_model_catalogs
 from toolang.plugin.toolsets.collections import tool_dataset
@@ -57,7 +57,7 @@ class _FakeEntryPoint:
 
 
 @dataclass(frozen=True, slots=True)
-class _TestTool(AgentTool):
+class _TestTool(Tool):
     name: str
 
     def definition(self) -> ToolDefinition:
@@ -67,9 +67,9 @@ class _TestTool(AgentTool):
         self,
         arguments: Mapping[str, Any],
         context: ToolContext,
-    ) -> dict[str, Any]:
+    ) -> ToolResult:
         del arguments, context
-        return {}
+        return ToolResult({})
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +79,7 @@ class _TestToolset(Toolset):
     leaf_name: str
     description: str | None = None
 
-    def tools(self) -> Mapping[str, AgentTool]:
+    def tools(self) -> Mapping[str, Tool]:
         return {self.key: _TestTool(self.leaf_name)}
 
 
@@ -287,7 +287,7 @@ def test_load_tools_accepts_explicit_toolset_keys(monkeypatch) -> None:
         name: str = "tracker"
         description: str | None = None
 
-        def tools(self) -> Mapping[str, AgentTool]:
+        def tools(self) -> Mapping[str, Tool]:
             return {
                 "issues/search": create_function_tool(search),
                 "issues/create": create_function_tool(create),
@@ -547,9 +547,9 @@ def test_one_python_package_can_define_multiple_toolang_plugins(monkeypatch) -> 
     class DemoToolset(Toolset):
         name: str
         description: str | None
-        _tools: Mapping[str, AgentTool]
+        _tools: Mapping[str, Tool]
 
-        def tools(self) -> Mapping[str, AgentTool]:
+        def tools(self) -> Mapping[str, Tool]:
             return self._tools
 
     def create_alpha_toolset(config: Mapping[str, Any]) -> Toolset:
@@ -625,7 +625,7 @@ def test_plugin_factories_receive_fresh_nested_config_mappings(monkeypatch) -> N
         name: str = "mutable"
         description: str | None = None
 
-        def tools(self) -> Mapping[str, AgentTool]:
+        def tools(self) -> Mapping[str, Tool]:
             return {}
 
     def create_toolset(config: Mapping[str, Any]) -> Toolset:

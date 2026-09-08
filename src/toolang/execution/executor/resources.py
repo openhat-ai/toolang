@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import cast
 
-from toolang.base.protocols.tool import AgentTool
+from toolang.base.protocols.tool import Tool
 from toolang.base.types.model import ModelTarget
 from toolang.base.types.policy import AgentCeiling
 from toolang.common.errors import ToolangError
@@ -237,7 +237,7 @@ def validate_model_binding(
 def resource_tools(
     setup: AgentSetup,
     resources: AgentResources,
-) -> Mapping[str, AgentTool]:
+) -> Mapping[str, Tool]:
     """Resolve stable tool identities against the current immutable setup."""
 
     return dict(_resource_tool_collection(setup, resources))
@@ -295,7 +295,7 @@ def snapshot_model_selection(
 def _agent_resources(
     *,
     models: ModelCollection,
-    tools: Mapping[str, AgentTool],
+    tools: Mapping[str, Tool],
     caps: tuple[StateCap, ...],
 ) -> AgentResources:
     return AgentResources(

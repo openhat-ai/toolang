@@ -16,16 +16,19 @@ is approved in the implementation discussion.
 
 ## Design
 
-Leaf tools may implement `describe(arguments, status, output=None) -> str | None`.
-Status is running, succeeded, failed, or canceled. The hook returns plain text
+Leaf tools may override `summary(arguments, result=None) -> str | None` as defined
+in [the toolset protocol](toolset-protocol.md). No result means running; result
+errors distinguish failure from success. Cancellation uses executor wording.
+The hook returns plain text
 from call/result data only: no I/O, markers, colors, elapsed time, or wrapping.
 It is separate from the model-facing `ToolDefinition.description`.
 
 The function-tool factory and `LoadedTool` forward this optional hook. Executor
 supplies isolated data with existing sensitive-argument masking, uses its generic
 fallback for absent/empty/failed descriptions, and persists the resulting text
-in existing given/noted summaries. Old plugins and recorded summaries remain
-usable without recomputation. Formatting cannot affect execution outcomes.
+in existing given/noted summaries. Recorded summaries remain usable without
+recomputation. Plugins migrate to the Tool protocol; formatting cannot affect
+execution outcomes.
 
 Fs, shell, and runtime helpers use this same path. Honor has no extra `files`
 display input: running text uses available call data; completed text identifies
@@ -47,7 +50,7 @@ does not change Step status under this presentation-only change.
 - Shared progress projection/rendering: one/two physical lines at narrow widths,
   normal markers, cyan helpers, red error line, no result surfaces, compact timer
   cleanup, and unchanged model/flow output.
-- Tests cover old plugins, formatter exceptions/None and mutation isolation,
+- Tests cover default hooks, formatter exceptions/None and mutation isolation,
   both workspace spellings/root paths, honor results and retries, cancellation,
   persisted replay, Chat/Script and parallel lanes.
 

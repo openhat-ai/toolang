@@ -312,8 +312,10 @@ the same layout; non-TTY output omits ANSI sequences and live replacement.
 
 The executor records a human-readable `summary` when the Tool Step begins and
 another when it ends. A leaf tool may supply
-`describe(arguments, status, output=None) -> str | None`, including through
-`@tool(describe=...)`. The hook receives isolated call/result data with sensitive
+`summary(arguments, result=None) -> str | None`, including through
+`@tool(summary=...)`. No result means running; `ToolResult.error` distinguishes
+failure from success, while cancellation uses executor wording.
+The hook receives isolated call/result data with sensitive
 arguments masked. It performs no I/O and supplies no markers, styling, or timing.
 The executor uses generic wording when the hook is absent, empty, or raises.
 Progress reads the saved summaries; it never invokes plugins during replay.

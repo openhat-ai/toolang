@@ -13,8 +13,13 @@ import threading
 from typing import Any, Literal, cast
 
 from toolang.base.errors import ToolangError
-from toolang.base.protocols.tool import AgentTool, Toolset
-from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.base.protocols.tool import Tool, Toolset
+from toolang.base.types.tool import (
+    ToolContext,
+    ToolDefinition,
+    ToolResult,
+    ServiceToolContext,
+)
 
 ServiceTransport = Literal["http", "stdio"]
 ConnectionFileWriter = Callable[[str, dict[str, Any]], None]
@@ -43,7 +48,7 @@ class ServiceRuntime:
 
 
 @dataclass(frozen=True, slots=True)
-class _LeafTool(AgentTool):
+class _LeafTool(Tool):
     name: str
     _definition: ToolDefinition
     _invoke: Callable[[Mapping[str, Any], ToolContext], dict[str, Any]]
@@ -55,8 +60,8 @@ class _LeafTool(AgentTool):
         self,
         arguments: Mapping[str, Any],
         context: ToolContext,
-    ) -> dict[str, Any]:
-        return await asyncio.to_thread(self._invoke, arguments, context)
+    ) -> ToolResult:
+        return ToolResult(await asyncio.to_thread(self._invoke, arguments, context))
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +69,7 @@ class _ServiceUseAdapter:
     connection_version: int | None
     write_connection_file: ConnectionFileWriter
 
-    def build_tools(self) -> dict[str, AgentTool]:
+    def build_tools(self) -> dict[str, Tool]:
         service_schema = self._service_schema()
         tools = {
             "start_bridge": self._tool(
@@ -250,7 +255,7 @@ class _ServiceUseAdapter:
         description: str,
         parameters: dict[str, Any],
         invoke_fn: Callable[[ServiceRuntime, Mapping[str, Any]], dict[str, Any]],
-    ) -> AgentTool:
+    ) -> Tool:
         definition = ToolDefinition(
             name=name,
             description=description,
@@ -541,7 +546,7 @@ class ServiceUseToolset:
     write_connection_file: ConnectionFileWriter
     name: str
     description: str | None = None
-    _tools: dict[str, AgentTool] = field(init=False, repr=False)
+    _tools: dict[str, Tool] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         adapter = _ServiceUseAdapter(
@@ -550,7 +555,7 @@ class ServiceUseToolset:
         )
         self._tools = adapter.build_tools()
 
-    def tools(self) -> Mapping[str, AgentTool]:
+    def tools(self) -> Mapping[str, Tool]:
         return dict(self._tools)
 
 
@@ -570,6 +575,8 @@ def _context_service(
     context: ToolContext,
     service_name: str,
 ) -> VisibleService | None:
+    if not isinstance(context, ServiceToolContext):
+        return None
     for service in context.services:
         if service.name != service_name:
             continue

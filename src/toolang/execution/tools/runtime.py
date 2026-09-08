@@ -8,15 +8,20 @@ from pathlib import PurePosixPath
 from typing import Any, Literal
 
 from toolang.base.errors import ToolangError
-from toolang.base.protocols.tool import AgentTool, Toolset
-from toolang.base.types.tool import ToolContext, ToolDefinition, ToolStatus
-from toolang.base.utils.tool_descriptions import describe_action, workspace_label
+from toolang.base.protocols.tool import Tool, Toolset
+from toolang.base.types.tool import (
+    ToolContext,
+    ToolDefinition,
+    ToolResult,
+    RuntimeToolContext,
+)
+from toolang.base.utils.tool_descriptions import action_summary, workspace_label
 
 TOOLSET_NAME = "_toolang"
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeTool(AgentTool):
+class RuntimeTool(Tool):
     """One stateless tool using authority supplied by its executor."""
 
     name: Literal["reload", "run", "execute", "pick", "honor", "compact"]
@@ -26,11 +31,10 @@ class RuntimeTool(AgentTool):
     def definition(self) -> ToolDefinition:
         return ToolDefinition(self.name, self.description, dict(self.parameters))
 
-    def describe(
+    def summary(
         self,
         arguments: Mapping[str, Any],
-        status: ToolStatus,
-        output: Mapping[str, Any] | None = None,
+        result: ToolResult | None = None,
     ) -> str | None:
         labels = {
             "pick": "service guidance"
@@ -55,12 +59,12 @@ class RuntimeTool(AgentTool):
         elif self.name == "honor":
             files = [
                 workspace_label(item["workspace"], item["path"])
-                for control in (output or {}).get("controls", ())
+                for control in (result.output if result else {}).get("controls", ())
                 if (item := control.get("target", {})).get("kind") == "rules"
             ]
             if files:
                 target += ": " + ", ".join(files)
-        return describe_action(status, verbs, target)
+        return action_summary(result, verbs, target)
 
     @property
     def model_callable(self) -> bool:
@@ -68,10 +72,10 @@ class RuntimeTool(AgentTool):
 
     async def invoke(
         self, arguments: Mapping[str, Any], context: ToolContext
-    ) -> dict[str, Any]:
-        runtime = context.runtime
-        if runtime is None:
+    ) -> ToolResult:
+        if not isinstance(context, RuntimeToolContext):
             raise ToolangError("runtime operations are unavailable for this tool call")
+        runtime = context.runtime
         if self.name == "compact":
             if not {"thread", "end"} <= set(arguments) or set(arguments) - {
                 "thread",
@@ -155,7 +159,7 @@ class RuntimeToolset(Toolset):
     name: str = TOOLSET_NAME
     description: str | None = "Run, transfer, reload, and recall guidance."
 
-    def tools(self) -> Mapping[str, AgentTool]:
+    def tools(self) -> Mapping[str, Tool]:
         return {tool.name: tool for tool in _TOOLS}
 
 

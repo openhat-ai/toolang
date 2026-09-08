@@ -3,7 +3,7 @@
 Toolang exposes tools through the toolset plugin family.
 
 Tools execute inside normal runs and are recorded as `tool` Steps.
-`AgentTool.invoke()` is asynchronous. Function-tool wrappers await native
+`Tool.invoke()` is asynchronous. Function-tool wrappers await native
 async callables and isolate synchronous Python callables in a worker thread,
 so blocking tool implementations do not stall the run event loop.
 
@@ -41,7 +41,7 @@ It provides structured file operations such as:
 
 `fs` paths and `shell` cwd accept an optional `workspace` name from the published
 State. With that anchor, `/src` means `src` under the workspace root. Without it,
-paths resolve from the tool working directory; overlapping workspace matches
+paths resolve from the agent home; overlapping workspace matches
 require an explicit name. Workspace configuration does not expand home access.
 
 
@@ -124,7 +124,7 @@ Missing targets and unresolved values fail as ordinary tool errors.
 `me` exposes structured operations for the current agent's authored data. It
 follows normal resource selection and can be denied by policy.
 
-The executor injects the current agent layout through `ToolContext`. `me`
+The executor injects the current agent layout through `AgentStateToolContext`. `me`
 tools do not accept an agent name, home directory, root directory, or arbitrary
 path for choosing another target. They expose no layer selector and operate
 only on the current agent's home layer; `me` does not read or modify root-layer
@@ -174,7 +174,7 @@ calls, and tool-disabled models receive no runtime tools.
 
 `AgentSetup.tools` retains registered runtime tools independently of user tool
 ceilings. Each invocation has an ordinary Tool Step. Trusted runtime tools receive
-per-call operations through `ToolContext.runtime`, not the Store or executor.
+per-call operations through `RuntimeToolContext.runtime`, not the Store or executor.
 Run creates a child owned by its Tool Step and returns `{run_id, output_type, output}`.
 Execute returns `{controls: [ControlRef]}` and finishes its Tool Step before
 transferring execution. Reload returns `{controls: [{ref, state}]}` after adopting
@@ -193,10 +193,12 @@ Toolang runtime owns:
 - how tool calls are recorded and exposed
 - the default human-readable summary for each tool-call lifecycle state
 
-Leaf tools may provide `describe(arguments, status, output=None) -> str | None`
+Leaf tools may provide `summary(arguments, result=None) -> str | None`
 through the [plugin contract](plugins.md). The executor supplies isolated
 call/result data with sensitive arguments masked. Missing, empty, or failed
-descriptions fall back to generic wording. The running summary is stored in
+summaries fall back to generic wording. No result means running; `ToolResult.error`
+distinguishes failure from success. Cancellation uses executor wording.
+The running summary is stored in
 `ToolStepGiven.summary`; the terminal summary uses `ToolStepNoted.summary`.
 
 The fallback combines the leaf name and first supplied argument in the tool

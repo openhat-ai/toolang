@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 
 from toolang.base.protocols.model import ModelAdapter, ModelCatalog
-from toolang.base.protocols.tool import AgentTool
+from toolang.base.protocols.tool import Tool
 from toolang.base.types.model import ModelCatalogSnapshot, ModelInfo, ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
@@ -98,7 +98,7 @@ class _Candidate:
     toolset_configs: dict[str, dict[str, object]]
     catalog_configs: dict[str, dict[str, object]]
     adapters: dict[str, ModelAdapter]
-    tools: dict[str, AgentTool]
+    tools: dict[str, Tool]
     catalogs: dict[str, ModelCatalog]
     observation: FileObservation
     source: CatalogSource
@@ -141,7 +141,7 @@ class SetupWatcher:
         self._toolset_configs: dict[str, dict[str, object]] | None = None
         self._catalog_configs: dict[str, dict[str, object]] | None = None
         self._adapters: dict[str, ModelAdapter] = {}
-        self._tools: dict[str, AgentTool] = {}
+        self._tools: dict[str, Tool] = {}
         self._catalogs: dict[str, ModelCatalog] = {}
         self._static_catalog: ModelCatalogSnapshot | None = None
         self._additional_catalogs: (
@@ -601,7 +601,7 @@ def _build_setup(
     resolved_catalog: ModelCatalogSnapshot,
     model_infos: tuple[ModelInfo, ...],
     adapters: dict[str, ModelAdapter],
-    tools: dict[str, AgentTool],
+    tools: dict[str, Tool],
     envs: dict[str, str],
     provider_configs: Mapping[str, ProviderConfig],
     allow: AgentCeiling,

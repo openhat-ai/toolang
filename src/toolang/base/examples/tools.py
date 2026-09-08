@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..protocols.tool import AgentTool, Toolset
+from ..protocols.tool import Tool, Toolset
 from ..types.tool import ToolContext
 from ..utils.function_tools import create_function_tool, tool
 
@@ -16,9 +16,9 @@ from ..utils.function_tools import create_function_tool, tool
 class _ExampleToolset(Toolset):
     name: str
     description: str | None
-    _tools: dict[str, AgentTool]
+    _tools: dict[str, Tool]
 
-    def tools(self) -> Mapping[str, AgentTool]:
+    def tools(self) -> Mapping[str, Tool]:
         return dict(self._tools)
 
 
@@ -50,7 +50,7 @@ def create_echo_toolset(config: Mapping[str, Any]) -> Toolset:
         return {
             "text": output,
             "length": len(output),
-            "wd": str(context.wd),
+            "wd": str(context.home),
         }
 
     return _ExampleToolset(
@@ -104,7 +104,7 @@ def create_working_tree_toolset(config: Mapping[str, Any]) -> Toolset:
         effective_limit = _limit(limit, fallback=max_entries)
         entries = sorted(directory.iterdir(), key=lambda entry: entry.name)
         return {
-            "path": _display_path(context.wd.resolve(), directory),
+            "path": _display_path(context.home.resolve(), directory),
             "entries": [
                 {"name": entry.name, "kind": "dir" if entry.is_dir() else "file"}
                 for entry in entries[:effective_limit]
@@ -141,7 +141,7 @@ def _limit(value: object, *, fallback: int) -> int:
 
 
 def _resolve_path(context: ToolContext, path_value: str) -> Path:
-    root = context.wd.resolve()
+    root = context.home.resolve()
     resolved = (root / Path(path_value)).resolve()
     if resolved != root and root not in resolved.parents:
         raise ValueError("path escapes the working directory")

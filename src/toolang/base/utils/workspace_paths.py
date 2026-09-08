@@ -8,7 +8,7 @@ import re
 from urllib.parse import quote, unquote
 
 from ..errors import ToolangError
-from ..types.tool import ToolContext, ToolPath
+from ..types.tool import ToolContext
 
 _URI = re.compile(r"workspace://([a-z0-9]+(?:-[a-z0-9]+)*)(/[^?#]*)?")
 _BAD_ESCAPE = re.compile(r"%(?![0-9a-fA-F]{2})")
@@ -49,15 +49,27 @@ def workspace_root(name: str, context: ToolContext) -> Path:
 
     if name not in context.workspaces:
         raise ToolangError(f"workspace is not available: {name}")
-    root = context.workspaces[name].resolve()
+    root = context.workspaces[name]
+    # The empty path is reserved for the root snapshot; operations use nonempty
+    # paths. Resolve only requested roots, not every workspace for every tool.
+    key = (root, "", True)
+    if key not in context._paths:
+        context._paths[key] = (root.resolve(), "/")
+    root = context._paths[key][0]
     if not root.is_dir():
         raise ToolangError(f"workspace directory is not available: {name}")
     return root
 
 
-def resolve_workspace_path(name: str, value: str, root: Path) -> ToolPath:
+def resolve_workspace_path(
+    name: str, value: str, context: ToolContext, *, follow: bool = True
+) -> tuple[Path, str]:
     """Bind a workspace-relative path to a concrete, authorized target."""
 
+    root = workspace_root(name, context)
+    key = (root, value, follow)
+    if key in context._paths:
+        return context._paths[key]
     candidate = root / value.lstrip("/")
     normalized = Path(os.path.abspath(candidate))
     if not normalized.is_relative_to(root):
@@ -67,4 +79,13 @@ def resolve_workspace_path(name: str, value: str, root: Path) -> ToolPath:
     if ".." in candidate.parts and normalized.resolve() != resolved:
         normalized = resolved
     relative = "/" + normalized.relative_to(root).as_posix()
-    return ToolPath(resolved, name, "/" if relative == "/." else relative)
+    relative = "/" if relative == "/." else relative
+    if not follow:
+        entry = root / relative.lstrip("/")
+        if entry == root:
+            raise ToolangError("cannot remove a workspace root")
+        # Unlink the addressed entry, not a final symlink's target.
+        resolved = authorize_workspace_path(entry.parent, root) / entry.name
+    result = (resolved, relative)
+    context._paths[key] = result
+    return result

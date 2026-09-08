@@ -8,7 +8,7 @@ import pytest
 
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import ToolHistory
-from toolang.base.types.tool import ToolContext
+from toolang.base.types.tool import ToolContext, HistoryToolContext
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.loading import load_tools
 
@@ -60,9 +60,7 @@ def test_history_is_an_ordinary_selectable_user_toolset():
 )
 def test_history_authority_is_per_call(tmp_path, name, query):
     first, second = Reader("first"), Reader("second")
-    context = ToolContext(
-        "run_a", tmp_path, tmp_path, tmp_path, history=cast(ToolHistory, first)
-    )
+    context = HistoryToolContext(tmp_path, tmp_path, history=cast(ToolHistory, first))
     tool = load_tools()[f"history__{name}"]
 
     async def scenario():
@@ -71,7 +69,12 @@ def test_history_authority_is_per_call(tmp_path, name, query):
             tool.invoke(query, replace(context, history=cast(ToolHistory, second))),
         )
 
-    assert asyncio.run(scenario()) == [{"reader": "first"}, {"reader": "second"}]
+    results = asyncio.run(scenario())
+    assert all(result.error is None for result in results)
+    assert [result.output for result in results] == [
+        {"reader": "first"},
+        {"reader": "second"},
+    ]
     assert first.calls == second.calls == [(name, query)]
 
 
@@ -100,15 +103,13 @@ def test_history_authority_is_per_call(tmp_path, name, query):
 )
 def test_invalid_query_never_reaches_the_reader(tmp_path, name, query):
     reader = Reader("unused")
-    context = ToolContext(
-        "run_a", tmp_path, tmp_path, tmp_path, history=cast(ToolHistory, reader)
-    )
+    context = HistoryToolContext(tmp_path, tmp_path, history=cast(ToolHistory, reader))
     with pytest.raises(ToolangError):
-        asyncio.run(load_tools()[f"history__{name}"].invoke(query, context))
+        asyncio.run(load_tools()[f"history__{name}"].invoke(query, context)).output
     assert reader.calls == []
 
 
 def test_history_requires_executor_supplied_access(tmp_path):
-    context = ToolContext("run_a", tmp_path, tmp_path, tmp_path)
+    context = ToolContext(tmp_path, tmp_path)
     with pytest.raises(ToolangError, match="unavailable"):
-        asyncio.run(load_tools()["history__read_threads"].invoke({}, context))
+        asyncio.run(load_tools()["history__read_threads"].invoke({}, context)).output

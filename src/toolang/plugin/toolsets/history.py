@@ -6,12 +6,17 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from toolang.base.errors import ToolangError
-from toolang.base.protocols.tool import AgentTool, Toolset
-from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.base.protocols.tool import Tool, Toolset
+from toolang.base.types.tool import (
+    ToolContext,
+    ToolDefinition,
+    ToolResult,
+    HistoryToolContext,
+)
 
 
 @dataclass(frozen=True, slots=True)
-class HistoryTool(AgentTool):
+class HistoryTool(Tool):
     name: Literal["read_threads", "read_runs", "read_steps", "read_output"]
     description: str
     parameters: dict[str, Any]
@@ -21,10 +26,10 @@ class HistoryTool(AgentTool):
 
     async def invoke(
         self, arguments: Mapping[str, Any], context: ToolContext
-    ) -> dict[str, Any]:
-        history = context.history
-        if history is None:
+    ) -> ToolResult:
+        if not isinstance(context, HistoryToolContext):
             raise ToolangError("history is unavailable for this tool call")
+        history = context.history
         unknown = set(arguments) - self.parameters["properties"].keys()
         if unknown:
             raise ToolangError(
@@ -48,7 +53,9 @@ class HistoryTool(AgentTool):
                 raise ToolangError("history limit must be a positive integer")
             if type(arguments.get("from_end", False)) is not bool:
                 raise ToolangError("history from_end must be a boolean")
-        return await asyncio.to_thread(getattr(history, self.name), **arguments)
+        return ToolResult(
+            await asyncio.to_thread(getattr(history, self.name), **arguments)
+        )
 
 
 def _parameters(*, target: str | None = None, ranged: bool = False) -> dict[str, Any]:
@@ -123,7 +130,7 @@ class HistoryToolset(Toolset):
         "Read this agent's durable Threads, Runs, Steps, and outputs."
     )
 
-    def tools(self) -> Mapping[str, AgentTool]:
+    def tools(self) -> Mapping[str, Tool]:
         return {tool.name: tool for tool in _TOOLS}
 
 

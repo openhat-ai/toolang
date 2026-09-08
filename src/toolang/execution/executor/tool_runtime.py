@@ -8,10 +8,9 @@ from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from toolang.base.errors import ToolFailure, ToolangError
+from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import ToolRuntime
-from toolang.base.types.tool import ToolContext
-from toolang.base.utils.workspace_paths import resolve_workspace_path, workspace_root
+from toolang.base.types.tool import ToolContext, ToolResult
 from toolang.state.state import entry_ref
 
 from ..records import RecallControlPayload
@@ -55,7 +54,7 @@ class _ToolRuntime(ToolRuntime):
     error: ErrorMessage | ErrorRef | None = None
     failure: Exception | None = None
 
-    async def reload(self) -> dict[str, Any]:
+    async def reload(self) -> ToolResult:
         execution = self.state.execution
         if execution is None:
             raise RuntimeError("Agic runtime execution is unavailable")
@@ -63,12 +62,12 @@ class _ToolRuntime(ToolRuntime):
             run_id=self.step.run_id, triggered_by=self.step
         )
 
-    async def compact(self, thread: str, begin: str | None, end: str) -> dict[str, Any]:
+    async def compact(self, thread: str, begin: str | None, end: str) -> ToolResult:
         from .compact import execute
 
-        return await execute(self.state, self.step, thread, begin, end)
+        return ToolResult(await execute(self.state, self.step, thread, begin, end))
 
-    async def pick(self, kind: Literal["skill", "service"], ref: str) -> dict[str, Any]:
+    async def pick(self, kind: Literal["skill", "service"], ref: str) -> ToolResult:
         execution = self.state.execution
         if execution is None:
             raise RuntimeError("Agic runtime execution is unavailable")
@@ -96,23 +95,19 @@ class _ToolRuntime(ToolRuntime):
             content,
         )
         controls = execution.recall(self.step, payload, self.state.visible_recalls)
-        return {"controls": [control_summary(ref, payload) for ref in controls]}
+        return ToolResult(
+            {"controls": [control_summary(ref, payload) for ref in controls]}
+        )
 
-    async def honor(self, paths: tuple[tuple[str, str], ...]) -> dict[str, Any]:
+    async def honor(self, paths: tuple[tuple[str, str], ...]) -> ToolResult:
         execution = self.state.execution
         if execution is None:
             raise RuntimeError("Agic runtime execution is unavailable")
         captured, _ref = execution.state_for_step(self.step)
         context = ToolContext(
-            run_id=self.step.run_id,
             home=self.state.layout.home,
             room=self.state.layout.tool_room("_toolang"),
-            wd=self.state.layout.home,
             workspaces={name: Path(path) for name, path in captured.workspaces.items()},
-        )
-        resolved = tuple(
-            resolve_workspace_path(workspace, path, workspace_root(workspace, context))
-            for workspace, path in paths
         )
         pending = execution.runtime_controls(self.step.run_id)
         known = set(self.state.visible_recalls) | {
@@ -122,16 +117,19 @@ class _ToolRuntime(ToolRuntime):
         }
         summaries = {
             ref: control_summary(ref, payload)
-            for payload in load_rules(context, resolved, known)
+            for payload in load_rules(context, paths, known)
             for ref in execution.recall(self.step, payload, self.state.visible_recalls)
         }
-        return {
-            "controls": [
-                summaries[ref] for ref in sorted(summaries, key=lambda ref: ref.index)
-            ]
-        }
+        return ToolResult(
+            {
+                "controls": [
+                    summaries[ref]
+                    for ref in sorted(summaries, key=lambda ref: ref.index)
+                ]
+            }
+        )
 
-    async def run(self, runnable: str, input: Mapping[str, Any]) -> dict[str, Any]:
+    async def run(self, runnable: str, input: Mapping[str, Any]) -> ToolResult:
         state = self.state
         execution = state.execution
         if execution is None:
@@ -151,9 +149,10 @@ class _ToolRuntime(ToolRuntime):
         except (_RunRejected, _ExecutionFailed) as exc:
             if isinstance(exc, _ExecutionFailed):
                 self.error = exc.error
-            raise ToolFailure(
-                str(exc), output=exc.details if isinstance(exc, _RunRejected) else {}
-            ) from exc
+            return ToolResult(
+                error=str(exc),
+                output=exc.details if isinstance(exc, _RunRejected) else {},
+            )
         except Exception as exc:
             self.failure = exc
             raise
@@ -168,17 +167,21 @@ class _ToolRuntime(ToolRuntime):
             raise RuntimeError("runtime run result is missing its child run reference")
         state.output = target.ref
         state.record_output(target.ref)
-        return {
-            "run_id": str(target.ref.record),
-            "output_type": record.type,
-            "output": local_to_protocol_data(
-                Local.typed(
-                    record.type, result.value, dim=1 if result.shape == "list" else 0
-                )
-            )["value"],
-        }
+        return ToolResult(
+            {
+                "run_id": str(target.ref.record),
+                "output_type": record.type,
+                "output": local_to_protocol_data(
+                    Local.typed(
+                        record.type,
+                        result.value,
+                        dim=1 if result.shape == "list" else 0,
+                    )
+                )["value"],
+            }
+        )
 
-    async def execute(self, runnable: str, input: Mapping[str, Any]) -> dict[str, Any]:
+    async def execute(self, runnable: str, input: Mapping[str, Any]) -> ToolResult:
         if self.source is None:
             raise ToolangError("execute requires a model ToolCall source")
         if self.tool_call_count != 1:
@@ -211,18 +214,20 @@ class _ToolRuntime(ToolRuntime):
             )
             committed = execution.commit_execute(binding, triggered_by=self.step)
         except _RunRejected as exc:
-            raise ToolFailure(str(exc), output=exc.details) from exc
+            return ToolResult(error=str(exc), output=exc.details)
         except (ToolangError, TypeError, ValueError):
             raise
         except Exception as exc:
             self.failure = exc
             raise
         self.transfer = _ExecuteCommitted(committed, target.executable, locals)
-        return {
-            "controls": [
-                str(ControlRef(RunRef(committed.run_id), committed.control_index))
-            ]
-        }
+        return ToolResult(
+            {
+                "controls": [
+                    str(ControlRef(RunRef(committed.run_id), committed.control_index))
+                ]
+            }
+        )
 
     def _authorize(
         self, operation: Literal["run", "execute"], target: ResolvedRunnable

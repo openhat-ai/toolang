@@ -8,16 +8,15 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 import locale
 import os
-from pathlib import Path
 import signal
-from typing import Any, cast
+from typing import Any
 
 from toolang.base.errors import ToolangError
-from toolang.base.protocols.tool import AgentTool, Toolset
-from toolang.base.types.tool import ToolContext, ToolPath, ToolStatus
+from toolang.base.protocols.tool import Tool, Toolset
+from toolang.base.types.tool import ToolContext, ToolResult
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.base.utils.paths import resolve_tool_path
-from toolang.base.utils.tool_descriptions import describe_action
+from toolang.base.utils.tool_descriptions import action_summary
 
 DEFAULT_TIMEOUT_SEC = 30
 DEFAULT_MAX_OUTPUT_CHARS = 20_000
@@ -34,7 +33,7 @@ class ShellToolset:
     )
     _timeout_sec: int = field(init=False, repr=False)
     _max_output_chars: int = field(init=False, repr=False)
-    _tools: dict[str, AgentTool] = field(init=False, repr=False)
+    _tools: dict[str, Tool] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._timeout_sec = _int_value(
@@ -46,15 +45,15 @@ class ShellToolset:
         )
         self._tools = self._build_tools()
 
-    def tools(self) -> Mapping[str, AgentTool]:
+    def tools(self) -> Mapping[str, Tool]:
         return dict(self._tools)
 
-    def _build_tools(self) -> dict[str, AgentTool]:
+    def _build_tools(self) -> dict[str, Tool]:
         @tool(
             name="execute",
             description="Run one shell command and capture stdout and stderr. Optional workspace anchors cwd at that workspace root, including paths starting with /.",
-            prepare=_prepare_cwd,
-            describe=_describe_execute,
+            touchpoints=_touchpoints,
+            summary=_summary,
         )
         async def execute(
             command: str,
@@ -64,7 +63,10 @@ class ShellToolset:
             workspace: str | None = None,
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
-            resolved_cwd = Path(cast(str, cwd))  # Preparation supplies a concrete cwd.
+            assert context is not None
+            resolved_cwd, _workspace, _relative = resolve_tool_path(
+                str(cwd or "").strip() or ".", context, workspace=workspace
+            )
             timeout = _int_value(timeout_sec, default=self._timeout_sec)
             output_limit = _int_value(max_output_chars, default=self._max_output_chars)
             launch = asyncio.create_task(
@@ -110,15 +112,14 @@ class ShellToolset:
         return {"execute": create_function_tool(execute)}
 
 
-def _describe_execute(
+def _summary(
     arguments: Mapping[str, Any],
-    status: ToolStatus,
-    output: Mapping[str, Any] | None = None,
+    result: ToolResult | None = None,
 ) -> str | None:
     command = arguments.get("command")
     if not isinstance(command, str):
         return None
-    return describe_action(status, ("run", "Running", "Ran"), f"“{command}”")
+    return action_summary(result, ("run", "Running", "Ran"), f"“{command}”")
 
 
 async def _stop_command(launch: asyncio.Task[asyncio.subprocess.Process]) -> None:
@@ -143,13 +144,14 @@ def create_toolset(config: Mapping[str, Any]) -> Toolset:
     return ShellToolset(config=dict(config))
 
 
-def _prepare_cwd(
-    arguments: dict[str, Any], context: ToolContext
-) -> tuple[ToolPath, ...]:
-    value = str(arguments["cwd"] or "").strip() or "."
-    path = resolve_tool_path(value, context, workspace=arguments["workspace"])
-    arguments["cwd"] = str(path.resolved)
-    return (path,)
+def _touchpoints(
+    arguments: Mapping[str, Any], context: ToolContext
+) -> Mapping[str, tuple[str, ...]]:
+    value = str(arguments.get("cwd") or "").strip() or "."
+    _resolved, workspace, relative = resolve_tool_path(
+        value, context, workspace=arguments.get("workspace")
+    )
+    return {workspace: (relative,)} if workspace is not None else {}
 
 
 def _int_value(value: object, *, default: int) -> int:

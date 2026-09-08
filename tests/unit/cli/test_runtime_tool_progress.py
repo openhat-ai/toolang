@@ -8,7 +8,8 @@ import pytest
 
 from toolang.base.types.message import ToolResultPart
 from toolang.base.types.run import ToolCall
-from toolang.base.utils.function_tools import describe_tool
+from toolang.base.types.tool import ToolResult
+from toolang.execution.executor.steps.tool import _tool_summary, _tool_summary_context
 from toolang.cli.common.execution_progress import ProgressProjector
 from toolang.cli.common.execution_progress.step_projection import (
     trace_live_rows,
@@ -44,7 +45,7 @@ def _root():
 
 def _begin(name="compact", arguments=None):
     arguments = arguments or {}
-    summary = describe_tool(RuntimeToolset().tools()[name], arguments, "running")
+    summary = RuntimeToolset().tools()[name].summary(arguments)
     assert summary is not None
     return StepBegin(
         step=StepRef.parse("run_root.0"),
@@ -61,11 +62,12 @@ def _begin(name="compact", arguments=None):
 
 def _end(begin, status="succeeded", output=None):
     call = begin.given.call
-    summary = describe_tool(
-        RuntimeToolset().tools()[call.name.removeprefix("_toolang__")],
-        call.input,
+    summary = _tool_summary(
+        _tool_summary_context(
+            call, RuntimeToolset().tools()[call.name.removeprefix("_toolang__")]
+        ),
         status,
-        output,
+        ToolResult(output or {}, error="failed" if status == "failed" else None),
     )
     assert summary is not None
     return StepEnd(

@@ -28,7 +28,7 @@ from tests.support.execution_fixtures import (
 from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import Message, TextPart, ToolResultPart
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
-from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.catalog import templates
 from toolang.catalog.agent import LocalAgents
 from toolang.catalog.job import AuthoredJobs, JobFile
@@ -62,6 +62,7 @@ from toolang.up import process as agents
 from toolang.up.types import AgentServerRef
 from toolang.work.state import load_ready_jobs
 from toolang.work.store import JobStore
+from toolang.base.protocols.tool import Tool
 
 runner = CliRunner()
 
@@ -2834,7 +2835,7 @@ class _EmptySetupWatcher:
         )
 
 
-class _FakeTool:
+class _FakeTool(Tool):
     name = "echo"
     plugin_name = "shell"
     toolset = "shell"
@@ -2846,6 +2847,6 @@ class _FakeTool:
         self,
         arguments: Mapping[str, Any],
         context: ToolContext,
-    ) -> dict[str, Any]:
+    ) -> ToolResult:
         del context
-        return dict(arguments)
+        return ToolResult(dict(arguments))

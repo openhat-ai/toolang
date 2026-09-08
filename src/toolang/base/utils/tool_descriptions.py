@@ -1,21 +1,22 @@
 """Plain-text building blocks for tool-owned lifecycle descriptions."""
 
-from ..types.tool import ToolStatus
+from ..types.tool import ToolResult
 
 
-def describe_action(
-    status: ToolStatus, verbs: tuple[str, str, str], target: str
+def action_summary(
+    result: ToolResult | None, verbs: tuple[str, str, str], target: str
 ) -> str:
     """Describe an action without choosing its terminal presentation."""
 
     verb, running, succeeded = verbs
-    action = {
-        "running": running,
-        "succeeded": succeeded,
-        "failed": f"Failed to {verb}",
-        "canceled": f"Canceled {running.lower()}",
-    }[status]
-    return f"{action} {target}" + ("..." if status == "running" else "")
+    action = (
+        running
+        if result is None
+        else f"Failed to {verb}"
+        if result.error is not None
+        else succeeded
+    )
+    return f"{action} {target}" + ("..." if result is None else "")
 
 
 def workspace_label(name: str, path: str) -> str:

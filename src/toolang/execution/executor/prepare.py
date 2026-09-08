@@ -10,7 +10,7 @@ import re
 from typing import TYPE_CHECKING
 
 from toolang.base.protocols.model import ModelAdapter
-from toolang.base.protocols.tool import AgentTool
+from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import (
     Message,
     Part,
@@ -71,7 +71,7 @@ class _AgicFrame:
     instructions: str
     prompt_context: str
     messages: tuple[Message, ...]
-    tools: dict[str, AgentTool]
+    tools: dict[str, Tool]
     routes: AgicRoutes
     services: tuple[ToolService, ...]
     runtime_instructions: str = ""

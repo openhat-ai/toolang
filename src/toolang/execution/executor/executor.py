@@ -12,7 +12,7 @@ import time
 from typing import Any, Literal, cast
 
 from toolang.base.model_settings import apply_model_override
-from toolang.base.errors import ToolFailure
+from toolang.base.types.tool import ToolResult
 from toolang.base.types.model import ModelOverride, ModelRequest, ModelTarget
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
@@ -935,9 +935,7 @@ class RunExecutor:
             self._observe_control(control)
         return control
 
-    async def model_reload(
-        self, *, run_id: str, triggered_by: StepRef
-    ) -> dict[str, object]:
+    async def model_reload(self, *, run_id: str, triggered_by: StepRef) -> ToolResult:
         """Refresh and synchronously apply State for one model runtime tool."""
 
         with self._active_lock:
@@ -953,8 +951,9 @@ class RunExecutor:
                 raise RuntimeError(f"run execution is unavailable: {run_id}")
             diagnostics = [asdict(item) for item in refreshed.diagnostics]
             if diagnostics:
-                raise ToolFailure(
-                    "Agent State refresh failed", output={"diagnostics": diagnostics}
+                return ToolResult(
+                    error="Agent State refresh failed",
+                    output={"diagnostics": diagnostics},
                 )
             control = self._accept_reload(
                 run_id=run_id,
@@ -970,7 +969,9 @@ class RunExecutor:
                     f"{terminal.target}@{terminal.index}"
                 )
             assert isinstance(terminal.payload, ReloadControlPayload)
-            return {"controls": [control_summary(terminal.ref, terminal.payload)]}
+            return ToolResult(
+                {"controls": [control_summary(terminal.ref, terminal.payload)]}
+            )
 
     def cancel_control(self, *, run_id: str, index: int) -> ControlRecord:
         """Revoke one pending reload, steer, or cancel control."""

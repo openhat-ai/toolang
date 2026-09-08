@@ -395,11 +395,11 @@ def test_interrupted_honor_closes_every_announced_tool_call(
                 "succeeded" if event_type is StepEnd else "canceled"
             )
             assert steps[1].status == "canceled"
-            assert steps[1].noted.summary == "Canceled writing [repo] src/result"
-            if event_type in {PartBegin, StepEnd}:
+            assert steps[1].noted.summary == "Canceled: Writing [repo] src/result"
+            if event_type is StepEnd:
                 assert "[repo] src/AGENTS.md" in steps[0].noted.summary
             else:
-                assert steps[0].noted.summary == "Canceled reloading workspace rules"
+                assert steps[0].noted.summary == "Canceled: Reloading workspace rules"
             messages = harness.store.recent_conversation_messages(
                 thread_id=run.thread.id
             )

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from toolang.base.errors import ToolFailure
-from toolang.base.types.tool import ToolPreparation
+from toolang.base.errors import ToolangError
+from toolang.base.types.tool import ToolResult
 from tests.support.execution_assertions import (
     assert_replayed,
     assert_run_event_integrity,
@@ -30,19 +30,21 @@ from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateWatcher
 
 
-@pytest.mark.parametrize("phase", ["prepare", "invoke"])
-def test_preparation_and_invocation_preserve_the_same_failure_receipt(tmp_path, phase):
-    failure = ToolFailure(
-        "invalid path", output={"path": "/missing", "code": "not_found"}
-    )
+@pytest.mark.parametrize("phase", ["touchpoints", "invoke"])
+def test_touchpoint_errors_and_result_failures_are_recorded(tmp_path, phase):
+    output = {"path": "/missing", "code": "not_found"} if phase == "invoke" else {}
 
     class PreparingTool(RecordingTool):
-        def prepare(self, arguments, context):
-            if phase == "prepare":
-                raise failure
-            return ToolPreparation((), lambda: self.invoke(arguments, context))
+        def touchpoints(self, arguments, context):
+            if phase == "touchpoints":
+                raise ToolangError("invalid path")
+            return {}
 
-    tool = PreparingTool("test__work", output={}, error=failure)
+        async def invoke(self, arguments, context):
+            self.calls.append((dict(arguments), context))
+            return ToolResult(output, error="invalid path")
+
+    tool = PreparingTool("test__work", output={})
     harness = ExecutionHarness.create(
         tmp_path,
         source="agic task() -> Text:\n  context: none\n  user: Task.\n",
@@ -69,7 +71,7 @@ def test_preparation_and_invocation_preserve_the_same_failure_receipt(tmp_path, 
             assert step.output is not None
             assert isinstance(step.output.value, ToolResultPart)
             assert step.output.value.error == "invalid path"
-            assert step.output.value.output == failure.output
+            assert step.output.value.output == output
             results = [
                 p
                 for m in harness.adapter.invocations[1].call.messages
@@ -77,7 +79,7 @@ def test_preparation_and_invocation_preserve_the_same_failure_receipt(tmp_path, 
                 if isinstance(p, ToolResultPart)
             ]
             assert results == [step.output.value]
-            assert len(tool.calls) == (0 if phase == "prepare" else 1)
+            assert len(tool.calls) == (0 if phase == "touchpoints" else 1)
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
@@ -153,7 +155,7 @@ agic task() -> Text:
             assert runtime.output is not None
             assert isinstance(runtime.output.value, ToolResultPart)
             assert runtime.output.value.tool_call_id == "runtime"
-            assert all(context.runtime is None for _, context in tool.calls)
+            assert all(not hasattr(context, "runtime") for _, context in tool.calls)
             second = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="task"), tracer=tracer
             )

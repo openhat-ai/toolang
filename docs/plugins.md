@@ -23,29 +23,58 @@ integration behavior and do not mutate durable runtime truth directly.
 
 ### Toolset
 
-Toolset plugins expose one `Toolset`, which may return one or more
-model-facing `AgentTool` values. `AgentTool.invoke()` is asynchronous.
+`Toolset.tools()` returns a stable mapping of leaf names to `Tool` instances.
+Subclass `Tool` from `toolang.base.protocols.tool`; value types live in
+`toolang.base.types.tool`.
 
-Leaf tools may provide `describe(arguments, status, output=None) -> str | None`;
-function tools use `@tool(describe=...)`. Status is `running`, `succeeded`,
-`failed`, or `canceled`. Return plain lifecycle wording using only these inputs:
-no I/O, styling, markers, or timing. This is separate from the model-facing tool
-definition. The executor supplies isolated data with sensitive arguments masked,
-falls back to generic wording when the hook is absent, empty, or fails, and saves
-the text in existing Step summaries. Progress reads those summaries, not plugins.
-Tool results remain available to the model and inspection, but are not displayed
-as progress blocks. Failed tools show one indented error line.
+```python
+class Tool:
+    name: str
+    def definition(self) -> ToolDefinition: ...
+    async def invoke(self, arguments, context) -> ToolResult: ...
+    def summary(self, arguments, result=None) -> str | None: ...
+    def touchpoints(self, arguments, context) -> Mapping[str, tuple[str, ...]] | None: ...
+```
 
-Path-aware tools may implement `prepare(arguments, context) -> ToolPreparation`.
-Preparation has no requested-operation side effects: it returns authorized
-`ToolPath` values and an async invocation bound to those exact paths. Each path
-keeps its optional workspace name and workspace-relative identity. Runtime owns
-rules discovery, recall visibility, and retry; plugins only depend on base
-contracts. Tools without preparation retain the ordinary invocation path.
-The `@tool(prepare=...)` helper passes defaulted, invocation-local arguments to
-the callback, which may replace path arguments before returning their ToolPaths.
+`ToolResult(output={}, error=None)` has one extensible field: `output`, a JSON
+object. A non-null `error` reports failure and may accompany partial output.
+Raised exceptions become tool errors; cancellation remains executor-owned.
+Call IDs, timing, and execution records are not plugin result fields.
 
-The history toolset receives `ToolContext.history`, a read-only `ToolHistory`
+The two optional methods default to `None`:
+
+- `summary`: plain call wording from arguments/result only, without I/O,
+  styling, markers, or timing. No result means running; `result.error`
+  distinguishes failure from success. This is separate from the static
+  `ToolDefinition.description`. Executor masks sensitive arguments, isolates
+  inputs, falls back on None/empty/failed summaries, and saves the wording.
+  Executor prefixes running wording with `Canceled:` on cancellation, falling
+  back to its generic cancellation wording when no summary is available.
+  Progress reads saved summaries,
+  never plugins, and displays no result blocks.
+- `touchpoints`: workspace names mapped to tuples of normalized root-relative
+  paths, for example `{"repo": ("/src/main.py",)}`. None means unsupported;
+  `{}` means this call has no workspace paths. It must not execute the operation
+  or mutate arguments. Runtime owns rules discovery, recall, and retry; actual
+  path authorization still belongs to the operation. Base path helpers reuse
+  invocation-local resolutions so preflight and execution address the same
+  targets. This is not a sandbox for arbitrary shell commands.
+
+`ToolContext` exposes `home`, `room` (the plugin's private storage directory),
+and an immutable workspace map. It belongs to one invocation, not a whole Run;
+subsequent calls receive newly captured grants. Do not retain it on shared tools.
+Only the corresponding built-in tools receive specialized contexts: runtime
+operations, history access, effective service credentials, or agent management.
+Ordinary tools receive none of those dependencies.
+
+The used function adapter remains available: annotate a sync/async function with
+`@tool(summary=..., touchpoints=...)`, then `create_function_tool(function)`.
+Hooks have exactly the Tool signatures and see the original arguments (including
+omitted defaults). An explicit `context` function parameter is injected. Return
+`ToolResult` directly, or let the adapter wrap a dict, None (empty output), or a
+JSON value (`{"value": value}`). The unused Typer adapter is not provided.
+
+The history toolset receives `HistoryToolContext.history`, a read-only `ToolHistory`
 interface bound by the executor to the current agent Store and caller Thread.
 Its plugin depends only on base contracts, never the Store or executor. Each
 read uses a short-lived read-only Store connection in a worker thread, so it
