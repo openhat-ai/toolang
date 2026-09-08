@@ -14,12 +14,17 @@ from uuid import uuid4
 
 import httpx
 from pydantic import TypeAdapter, ValidationError
+from rich.console import Console, Group
+from rich.markup import escape
+from rich.padding import Padding
 from rich.panel import Panel
+from rich.table import Table
 from rich.text import Text
 import typer
 from typer import rich_utils
 from typer._click import Context, HelpFormatter, Parameter as CliParameter
 from typer._click.exceptions import ClickException, UsageError
+from typer._click.parser import _OptionParser, _ParsingState
 from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 from typer.models import TyperPath
 
@@ -66,12 +71,7 @@ from toolang.lang.ast import (
 )
 from toolang.lang.description import statement_description
 from toolang.lang.includes import resolve_file_include
-from toolang.lang.input import (
-    CallInput,
-    CallInputHeader,
-    capture_call_input,
-    parse_input,
-)
+from toolang.lang.input import CallInput, parse_input
 from toolang.state.runnable_collections import runnable_dataset
 from toolang.setup import SetupWatcher
 from toolang.state.prepare import prepare_agent_state
@@ -87,16 +87,12 @@ from ...common.remote_runtime import inspect_remote_runtime
 from ...common.result_saving import save_result
 from ...common.output import echo_error
 from ...common.help import CliCommand, CliGroup
-from ...common.parameters import SignatureType
 from ...common.execution_progress.config import resolve_progress_max_width
 from ...common.script_progress import ScriptRunPresenter
 
 Runnable = AgicDecl | FlowDecl
 _LINE_INPUT_MARKER = "\ue002"
-_FENCED_INPUT_MARKER = "\ue003"
-_LITERAL_ITEM_PREFIX = "\ue004"
 _UNPERSISTED_THREAD = "<unpersisted-script-thread>"
-_RUNNABLES_PANEL = "Runnables"
 _THREAD_INFO_ADAPTER = TypeAdapter(ThreadInfo)
 _RUN_POLICY_ADAPTER = TypeAdapter(RunPolicy)
 _MODEL_REQUEST_ADAPTER = TypeAdapter(ModelRequest)
@@ -118,16 +114,41 @@ class _HelpArgument(TyperArgument):
         return None, args
 
 
-class _CollectorArgument(TyperArgument):
-    """The hidden variadic parser behind the signature help arguments."""
-
-    def get_usage_pieces(self, ctx: Context) -> list[str]:
-        del ctx
-        return []
-
-
 class _IncompleteRunnableInput(Exception):
     """A dynamic runnable command is missing required input."""
+
+
+class _RunnableParser(_OptionParser):
+    """Parse native options and assignments only until the input boundary."""
+
+    def _process_args_for_options(self, state: _ParsingState) -> None:
+        while state.rargs:
+            item = state.rargs[0]
+            if item == "---":
+                raise UsageError(
+                    "fenced input marker '---' is not supported in script mode; "
+                    "use '-' to read stream input from stdin",
+                    ctx=self.ctx,
+                )
+            if item == "-":
+                if len(state.rargs) != 1:
+                    raise UsageError(
+                        "stdin marker '-' must be the only primary input",
+                        ctx=self.ctx,
+                    )
+                return
+            if item == "--":
+                state.rargs[0] = _LINE_INPUT_MARKER
+                return
+            if item.startswith("-") and len(item) > 1:
+                self._process_opts(state.rargs.pop(0), state)
+                continue
+            name, separator, _value = item.partition("=")
+            if separator and name.isidentifier():
+                state.largs.append(state.rargs.pop(0))
+                continue
+            state.rargs.insert(0, _LINE_INPUT_MARKER)
+            return
 
 
 class _RunnableCommand(CliCommand):
@@ -137,19 +158,39 @@ class _RunnableCommand(CliCommand):
         super().__init__(**kwargs)
         self._flow = flow
 
+    def make_parser(self, ctx: Context) -> _OptionParser:
+        parser = _RunnableParser(ctx)
+        for param in self.get_params(ctx):
+            param.add_to_parser(parser, ctx)
+        return parser
+
+    def collect_usage_pieces(self, ctx: Context) -> list[str]:
+        pieces = [self.options_metavar] if self.options_metavar else []
+        names = {
+            param.name
+            for param in self.get_params(ctx)
+            if isinstance(param, _HelpArgument)
+        }
+        if names - {"_"}:
+            pieces.append("[ARGS]")
+        if "_" in names:
+            pieces.append("INPUT")
+        return pieces
+
     def format_help(self, ctx: Context, formatter: HelpFormatter) -> None:
-        super().format_help(ctx, formatter)
-        if self._flow is not None:
-            console = rich_utils._get_rich_console()
-            console.print(
-                Panel(
-                    _flow_outline(self._flow),
-                    title="Flow outline",
-                    title_align="left",
-                    border_style=rich_utils.STYLE_OPTIONS_PANEL_BORDER,
-                ),
-                highlight=False,
-            )
+        console = rich_utils._get_rich_console()
+        _print_help_header(console, ctx, self, flow=self._flow)
+        params = self.get_params(ctx)
+        arguments = [param for param in params if isinstance(param, _HelpArgument)]
+        if arguments:
+            _print_arguments_panel(console, ctx, arguments)
+        rich_utils._print_options_panel(
+            name="Options",
+            params=[param for param in params if isinstance(param, TyperOption)],
+            ctx=ctx,
+            markup_mode="rich",
+            console=console,
+        )
 
     def invoke(self, ctx: Context) -> Any:
         try:
@@ -157,6 +198,121 @@ class _RunnableCommand(CliCommand):
         except _IncompleteRunnableInput:
             typer.echo(ctx.get_help())
             ctx.exit(2)
+
+
+class _ScriptGroup(CliGroup):
+    """List runnable descriptions before the script's options."""
+
+    def format_help(self, ctx: Context, formatter: HelpFormatter) -> None:
+        console = rich_utils._get_rich_console()
+        _print_help_header(console, ctx, self)
+        commands = [
+            command
+            for name in self.list_commands(ctx)
+            if isinstance(command := self.get_command(ctx, name), _RunnableCommand)
+            and not command.hidden
+        ]
+        _print_runnables_panel(console, commands)
+        rich_utils._print_options_panel(
+            name="Options",
+            params=[
+                param
+                for param in self.get_params(ctx)
+                if isinstance(param, TyperOption)
+            ],
+            ctx=ctx,
+            markup_mode="rich",
+            console=console,
+        )
+        if self.epilog:
+            console.print(Padding(Text(self.epilog), 1))
+
+
+def _print_help_header(
+    console: Console,
+    ctx: Context,
+    command: TyperCommand | TyperGroup,
+    *,
+    flow: FlowDecl | None = None,
+) -> None:
+    console.print(
+        Padding(rich_utils.highlighter(command.get_usage(ctx)), 1),
+        style=rich_utils.STYLE_USAGE_COMMAND,
+    )
+    if command.help:
+        description = rich_utils._get_help_text(obj=command, markup_mode="rich")
+        if flow is not None:
+            description = Group(
+                description,
+                Text(),
+                Text("Flow steps:", style="dim"),
+                Padding(_flow_outline(flow), (0, 2)),
+            )
+        console.print(Padding(description, (0, 1, 1, 1)))
+
+
+def _print_runnables_panel(console: Console, commands: list[_RunnableCommand]) -> None:
+    if not commands:
+        return
+    table = Table.grid(padding=(0, 2), expand=True)
+    table.add_column(
+        style=rich_utils.STYLE_COMMANDS_TABLE_FIRST_COLUMN, overflow="fold"
+    )
+    table.add_column()
+    for command in commands:
+        kind = "flow" if command._flow is not None else "agic"
+        table.add_row(
+            Text(f"{kind}:{command.name}"),
+            rich_utils._make_command_help(
+                help_text=command.short_help or "", markup_mode="rich"
+            ),
+        )
+    console.print(
+        Panel(
+            table,
+            title="Runnables",
+            title_align="left",
+            border_style=rich_utils.STYLE_COMMANDS_PANEL_BORDER,
+        )
+    )
+
+
+def _print_arguments_panel(
+    console: Console,
+    ctx: Context,
+    arguments: list[_HelpArgument],
+) -> None:
+    # Metavars include literal array brackets, e.g. items=TEXT[].
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=rich_utils.STYLE_REQUIRED_SHORT, no_wrap=True)
+    table.add_column(style="bold cyan", overflow="fold")
+    table.add_column(ratio=1)
+    for argument in arguments:
+        table.add_row(
+            "*" if argument.required else "",
+            Text(argument.metavar or argument.name or ""),
+            rich_utils._get_parameter_help(param=argument, ctx=ctx, markup_mode="rich"),
+        )
+    notes: list[str] = []
+    accepts_input = any(argument.name == "_" for argument in arguments)
+    if any(argument.name != "_" for argument in arguments):
+        suffix = " before input" if accepts_input else ""
+        notes.append(f"Arguments may appear in any order{suffix}.")
+    if accepts_input:
+        notes.extend(
+            [
+                "INPUT: TEXT...; -- TEXT... starts it explicitly; - reads stdin to EOF.",
+                "Omit command-line text to read piped or redirected stdin.",
+            ]
+        )
+    console.print(
+        Panel(
+            Group(table, Text(), Text("\n".join(notes))),
+            title="Arguments",
+            title_align="left",
+            border_style=rich_utils.STYLE_OPTIONS_PANEL_BORDER,
+        )
+    )
 
 
 def _flow_outline(flow: FlowDecl) -> Text:
@@ -211,7 +367,7 @@ def dispatch(
         )
         command_args = _typed_runnable_args(program, argv[1:])
         result = command.main(
-            args=_protect_literal_items(command_args or ["--help"]),
+            args=command_args or ["--help"],
             prog_name=f"{prog_name} {argv[0]}",
             standalone_mode=False,
         )
@@ -233,12 +389,13 @@ def _program_command(
     source_label: str,
     stdin: TextIO,
 ) -> TyperGroup:
-    group = CliGroup(
+    group = _ScriptGroup(
         name=source_label,
-        help=f"Run an agic or flow from {source_label}.",
+        help=f"{escape(source_label)} - Run an agic or flow.",
+        epilog="Use RUNNABLE --help for its arguments and input.",
         no_args_is_help=True,
         rich_markup_mode="rich",
-        subcommand_metavar="RUNNABLE [ARGS]...",
+        subcommand_metavar="RUNNABLE",
     )
     for runnable in _public_runnables(program):
         group.add_command(
@@ -291,7 +448,9 @@ def _runnable_command(
             quiet=quiet,
         )
 
-    help_text = runnable.doc.strip() if runnable.doc else None
+    description = (runnable.doc or "").strip() or (
+        "An agic." if isinstance(runnable, AgicDecl) else "A flow."
+    )
     params: list[CliParameter] = [
         TyperOption(
             param_decls=["--allow"],
@@ -331,7 +490,7 @@ def _runnable_command(
             help=DEVELOPMENT_WHEEL_HELP,
         ),
         TyperOption(
-            param_decls=["--save"],
+            param_decls=["save", "--out", "-o"],
             type=str,
             default=None,
             metavar="PATH",
@@ -348,7 +507,7 @@ def _runnable_command(
     if runnable.input is not None:
         params.append(_input_argument(runnable.input))
     params.append(
-        _CollectorArgument(
+        TyperArgument(
             param_decls=["items"],
             type=str,
             nargs=-1,
@@ -363,9 +522,8 @@ def _runnable_command(
         name=runnable.name,
         callback=callback,
         params=params,
-        help=help_text,
-        short_help=None,
-        rich_help_panel=_RUNNABLES_PANEL,
+        help=f"{runnable.name} - {description}",
+        short_help=description,
         rich_markup_mode="rich",
     )
 
@@ -373,10 +531,10 @@ def _runnable_command(
 def _signature_argument(parameter: Parameter) -> TyperArgument:
     return _HelpArgument(
         param_decls=[parameter.name],
-        type=SignatureType(),
+        type=str,
         required=not parameter.optional,
-        metavar=f"{parameter.name}={parameter.type_name or 'Part[]'}",
-        help=None,
+        metavar=f"{parameter.name}={(parameter.type_name or 'Part[]').upper()}",
+        help="Optional." if parameter.optional else None,
         expose_value=False,
     )
 
@@ -384,14 +542,11 @@ def _signature_argument(parameter: Parameter) -> TyperArgument:
 def _input_argument(parameter: Parameter) -> TyperArgument:
     type_name = parameter.type_name or "Part[]"
     return _HelpArgument(
-        param_decls=["input"],
-        type=SignatureType(),
+        param_decls=["_"],
+        type=str,
         required=not parameter.optional,
-        metavar="-- INPUT... | - | ---",
-        help=(
-            f"Primary {type_name} input. Use line, stream, or fenced form; "
-            "omit to read stdin."
-        ),
+        metavar="INPUT",
+        help=escape(type_name.upper()),
         expose_value=False,
     )
 
@@ -437,25 +592,17 @@ def _collect_call(
     params = {parameter.name: parameter for parameter in runnable.params}
     raw_args: dict[str, str] = {}
     input_items: list[str] = []
-    input_started = False
-    for item in items:
-        if input_started:
-            input_items.append(item.removeprefix(_LITERAL_ITEM_PREFIX))
-            continue
-        if item in {_LINE_INPUT_MARKER, "-", _FENCED_INPUT_MARKER}:
-            input_started = True
-            input_items.append(item)
-            continue
-        if item.startswith(_LITERAL_ITEM_PREFIX):
-            input_items.append(item.removeprefix(_LITERAL_ITEM_PREFIX))
-            continue
+    for index, item in enumerate(items):
+        if item in {_LINE_INPUT_MARKER, "-"}:
+            input_items = list(items[index:])
+            break
         name, separator, value = item.partition("=")
         if separator and name in params:
             if name in raw_args:
                 raise typer.BadParameter(f"argument {name} was provided more than once")
             raw_args[name] = value
             continue
-        input_items.append(item)
+        raise UsageError(f"unknown argument: {name}; use '--' to start input")
 
     call_input = _input_source(input_items, stdin=stdin)
     call_source = call_input.get("_", "") if call_input is not None else ""
@@ -502,28 +649,12 @@ def _materialize_script_runnable_override(
 
 def _input_source(items: list[str], *, stdin: TextIO) -> CallInput[str] | None:
     if items and items[0] == _LINE_INPUT_MARKER:
-        if len(items) == 1:
-            raise UsageError("line input marker '--' requires nonempty text")
         value = _join_input_items(items[1:])
         if not value.strip():
-            raise UsageError("line input marker '--' requires nonempty text")
+            raise UsageError("line input requires nonempty text")
         return CallInput({"_": value})
     if items == ["-"]:
         return CallInput({"_": stdin.read()})
-    if items == [_FENCED_INPUT_MARKER]:
-        value, _trailing = capture_call_input(
-            CallInputHeader("", "fenced"),
-            stdin.read(),
-            label="Script runnable call",
-            root=True,
-        )
-        return CallInput({"_": value} if value is not None else {})
-    if "-" in items:
-        raise UsageError("stdin marker '-' must be the only primary input")
-    if _LINE_INPUT_MARKER in items or _FENCED_INPUT_MARKER in items:
-        raise UsageError("call input marker must precede the primary input")
-    if items:
-        raise UsageError("primary input requires '--', '-', or '---'")
     if not stdin.isatty():
         value = stdin.read()
         return CallInput({"_": value}) if value else None
@@ -547,18 +678,6 @@ def _join_input_items(items: list[str]) -> str:
             words.append(item)
     flush_words()
     return "\n".join(lines)
-
-
-def _protect_literal_items(argv: list[str]) -> list[str]:
-    try:
-        separator = argv.index("--")
-    except ValueError:
-        return [_FENCED_INPUT_MARKER if item == "---" else item for item in argv]
-    return [
-        *argv[: separator + 1],
-        _LINE_INPUT_MARKER,
-        *(f"{_LITERAL_ITEM_PREFIX}{item}" for item in argv[separator + 1 :]),
-    ]
 
 
 def _run(

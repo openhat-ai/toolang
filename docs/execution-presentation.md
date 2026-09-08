@@ -512,7 +512,7 @@ separates the divider from the result body.
 ## Surface Behavior
 
 Script writes progress to stderr. It does not copy the durable root result to
-stdout by default. `--save -` writes the result to stdout and `--save PATH`
+stdout by default. `--out -` writes the result to stdout and `--out PATH`
 atomically writes it to a file. Failed and canceled Runs do not write the
 selected destination. Progress is enabled by default for both TTY and non-TTY
 stderr; `-q` or `--quiet` suppresses prepare and execution progress, including

@@ -26,6 +26,9 @@ Use these short names in documentation, authored prose, and CLI help:
 | Named input | Argument | The declared parameter name |
 | Named inputs | Arguments | The declared parameter names |
 
+CLI synopses abbreviate Arguments as `ARGS` and Input as `INPUT`. The
+**Arguments** help panel lists named assignments first and primary input last.
+
 A parameter is a signature declaration; an argument is a value supplied for a
 named parameter. Use the full names when needed to distinguish the two input
 roles. These short names do not rename schema fields: Call Input and an API's
@@ -79,7 +82,8 @@ compatibility adapter or migration is provided.
 
 ## Input Forms
 
-An explicit call header can capture primary text in three forms:
+Chat runnable overrides and prompt calls can capture primary text in three
+forms:
 
 | Form | Marker | Boundary |
 | --- | --- | --- |
@@ -87,9 +91,11 @@ An explicit call header can capture primary text in three forms:
 | stream | `-` | end of the current input stream (EOS) |
 | fenced | `---` | an exact closing `---` line |
 
-Named arguments use `name=value` and precede the marker. Markers are recognized
-only as unquoted standalone tokens. Quoting or escaping a marker keeps it in an
-argument value.
+Named arguments use `name=value` and precede the marker. On these Content
+surfaces, markers are recognized only as unquoted standalone tokens. Quoting
+or escaping a marker keeps it in an argument value. Script command headers
+support only line and stream input, as described below; shell quoting does not
+change a standalone token's role after the shell removes its quotes.
 
 The form is capture syntax, not part of the resulting Call Input. It is used by
 the parser for boundaries and diagnostics and is discarded after capture. An
@@ -184,33 +190,85 @@ not prompt calls nested inside another prompt call.
 
 ## Script Runnable Calls
 
-Script named arguments precede the Call Input marker:
+Runnable help summarizes the available input categories:
+
+```text
+Usage: too app.too demo [OPTIONS] [ARGS] INPUT
+```
+
+`[ARGS]` appears when the signature declares at least one named parameter.
+`INPUT` appears once, without brackets or an ellipsis, when the signature
+requires primary input. This includes the implicit `Part[]` input of a runnable
+without a signature. Empty and named-only signatures omit it. It denotes one
+logical input, which may span multiple shell words or come from stdin.
+Required named arguments remain required despite the `[ARGS]` abbreviation.
+
+Below usage, `name - description` shows the authored doc comment or the fallback
+`An agic.` / `A flow.` For flows, an indented outline follows `Flow steps:` as
+part of the description, before the help panels.
+
+The **Arguments** panel lists named parameters in signature order as `name=TYPE`,
+preserving names and uppercasing types, such as `topic=TEXT` and `items=PART[]`.
+Rows show required or optional status without inventing parameter descriptions.
+The last row is `INPUT`, with its uppercase type and required annotation, when
+primary input is accepted. Arguments may be supplied in any order, interspersed
+with command options, before input. Brief notes explain these input forms:
+
+| Form | Behavior |
+| --- | --- |
+| `TEXT...` | The first ordinary operand starts input; the remaining shell words are its text. |
+| `-- TEXT...` | Explicitly starts input, including text beginning with an option or assignment. |
+| `-` | Reads stdin through EOF, including an empty stream. |
+| Omitted | Reads piped or redirected stdin; an empty stream means input is absent. |
+
+Capture notes are omitted when primary input is forbidden. Empty signatures
+omit Arguments entirely. **Options** follows Arguments. Top-level Script help
+lists **Runnables** before Options, using `agic:NAME` and `flow:NAME` labels with
+the same descriptions, and directs users to `RUNNABLE --help`. Both qualified
+labels and bare names are valid runnable selectors.
+
+Both line forms accept the same text:
 
 ```bash
+toolang agent.too review focus=security Review this API
 toolang agent.too review focus=security -- Review this API
 ```
 
-`--` is both the command-line option boundary and the line-input marker. The
-remaining shell words are joined with spaces, while quoted newlines and include
-items retain their Content boundaries.
+After input starts, all remaining words are content, including `name=value`,
+`--help`, `-`, and `---`. Before input starts, an undeclared `name=value`
+assignment is an error; use `-- name=value` for literal input. Shell quoting
+alone does not make such an assignment literal. Remaining shell words are
+joined with spaces, while quoted newlines and include items retain their
+Content boundaries. An explicit `--` requires nonempty line input.
 
-`-` reads stream input from standard input:
+The standalone `-` marker must be the final command-line token:
 
 ```bash
 toolang agent.too review focus=security - < request.md
 ```
 
-`---` reads fenced input from standard input:
+Omitted input does not read an interactive terminal. Missing required input or
+arguments displays runnable help with exit status 2; explicit `--help` exits
+with status 0. Neither starts a run.
+
+A standalone `---` in the command header is rejected before reading stdin or
+starting a run, with this diagnostic:
+
+```text
+fenced input marker '---' is not supported in script mode; use '-' to read stream input from stdin
+```
+
+Replace the old header marker with `-` and remove the closing fence:
 
 ```bash
-toolang agent.too review focus=security --- <<'EOF'
+toolang agent.too review focus=security - <<'EOF'
 Review this API.
----
 EOF
 ```
 
-Unmarked command-line words are not primary input. Omitted input continues to
-read non-interactive standard input as an implicit stream for compatibility.
+Stream input continues through EOF, including any `---` lines. `---` remains
+literal as a declared argument value, an option value, or part of line input.
+Prompt calls inside Script input retain all three Content capture forms.
 
 ## Prompt Expansion
 
@@ -235,11 +293,15 @@ prompt call returns to the runnable input, where sibling prompt calls may follow
 
 ## Errors
 
-Call Input parsing rejects:
+Chat and prompt Call Input parsing rejects:
 
 - empty line input;
 - `-` or `---` followed by another header token;
 - an unclosed fenced input;
 - non-whitespace content after a root fenced closing line;
-- a prompt call nested inside prompt input or a prompt result;
-- Script command-line primary text without `--`, `-`, or `---`.
+- a prompt call nested inside prompt input or a prompt result.
+
+Script command headers reject empty explicit line input, tokens after the
+standalone `-` marker, the standalone `---` marker, and unknown or duplicate
+argument assignments. Input resolution still validates Content and coerces
+values against the runnable signature.
