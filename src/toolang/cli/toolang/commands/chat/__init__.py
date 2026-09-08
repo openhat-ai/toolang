@@ -9,7 +9,7 @@ import typer
 
 from toolang.cli.common.parameters import (
     AllowOptions,
-    CompactionModelOption,
+    CompactModelOption,
     DefaultOptions,
     LimitOptions,
     TextType,
@@ -46,7 +46,7 @@ def chat_command(
     allows: AllowOptions = None,
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
-    compaction_model: CompactionModelOption = None,
+    compact_model: CompactModelOption = None,
 ) -> None:
     from .main import chat_command as run
 
@@ -56,7 +56,7 @@ def chat_command(
         model_catalog=model_catalog,
         allows=allows,
         defaults=defaults,
-        compaction_model=compaction_model,
+        compact_model=compact_model,
         sandbox=sandbox,
         dev=dev,
         limits=limits,

@@ -50,15 +50,15 @@ def _startup_event(
     [
         (
             ["run", "--help"],
-            ("--sandbox", "--allow", "--limit", "--default", "--compaction-model"),
+            ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
         (
             ["start", "--help"],
-            ("--sandbox", "--allow", "--limit", "--default", "--compaction-model"),
+            ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
         (
             ["chat", "alice", "--help"],
-            ("--sandbox", "--allow", "--limit", "--default", "--compaction-model"),
+            ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
         (["retry", "alice", "--help"], ("--allow", "--limit")),
         (["rerun", "alice", "--help"], ("--allow", "--limit", "--model")),
@@ -78,7 +78,7 @@ def test_policy_options_follow_cli_display_order(
     assert all(match is not None for match in matches)
     positions = tuple(match.start() for match in matches if match is not None)
     assert positions == tuple(sorted(positions))
-    if "--compaction-model" in options:
+    if "--compact-model" in options:
         assert "effort=LEVEL" in output
 
 
@@ -333,7 +333,7 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
             "skills=reviewer",
             "--default",
             "model=openai/gpt-5",
-            "--compaction-model",
+            "--compact-model",
             "openai/gpt-5 effort=low",
             "--limit",
             "tokens=3000",

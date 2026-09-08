@@ -39,21 +39,21 @@ def test_prompt_help_uses_conventional_metavars(main, tmp_path, capsys, monkeypa
     [
         (
             ["a", "run"],
-            ("--sandbox", "--allow", "--limit", "--default", "--compaction-model"),
+            ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
         (
             ["a", "start"],
-            ("--sandbox", "--allow", "--limit", "--default", "--compaction-model"),
+            ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
         (
             ["a", "chat"],
-            ("--sandbox", "--allow", "--limit", "--default", "--compaction-model"),
+            ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
         (["a", "retry"], ("--allow", "--limit")),
         (["a", "rerun"], ("--sandbox", "--allow", "--limit", "--model")),
         (
             ["serve", "a"],
-            ("--allow", "--limit", "--default", "--compaction-model", "--log"),
+            ("--allow", "--limit", "--default", "--compact-model", "--log"),
         ),
     ],
 )
@@ -65,7 +65,7 @@ def test_help_uses_semantic_configuration_metavars(
         "--allow": "RESOURCE=QUERY",
         "--limit": "LIMIT=VALUE",
         "--default": "SETTING=VALUE",
-        "--compaction-model": "MODEL_SPEC",
+        "--compact-model": "MODEL_SPEC",
         "--model": "MODEL_SPEC",
         "--log": "LOG_SPEC",
     }

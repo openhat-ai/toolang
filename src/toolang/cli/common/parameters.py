@@ -58,10 +58,10 @@ DefaultOptions = Annotated[
         help="Set a default model or runnable. Repeat for another setting.",
     ),
 ]
-CompactionModelOption = Annotated[
+CompactModelOption = Annotated[
     str | None,
     typer.Option(
-        "--compaction-model",
+        "--compact-model",
         metavar="MODEL_SPEC",
         help=(
             "Set an exact model (optional effort=LEVEL), or unset, for a new runtime."

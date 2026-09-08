@@ -541,7 +541,7 @@ Both commands accept repeatable `--allow RESOURCE=QUERY`,
 with `TOOLANG_ALLOW_*`, `TOOLANG_DEFAULT_*`, and `TOOLANG_LIMIT_*` into frozen
 field overrides passed to `SetupWatcher`.
 
-`--compaction-model MODEL_SPEC` selects the new runtime's compaction model,
+`--compact-model MODEL_SPEC` selects the new runtime's compaction model,
 using the same model expression as `--model`, without a `model=` prefix.
 
 Setup policy uses the following TOML shape in root and agent-home `config.toml`
@@ -1059,7 +1059,7 @@ does not maintain a second chat event vocabulary.
 The CLI command for interactive chat is `toolang AGENT chat [THREAD]
 [--sandbox SANDBOX_SPEC] [--default SETTING=VALUE]
 [--allow RESOURCE=QUERY] [--limit LIMIT=VALUE]
-[--compaction-model MODEL_SPEC]`.
+[--compact-model MODEL_SPEC]`.
 Without a thread id, the TUI creates a terminal chat thread on first input. With
 a thread id, it continues that thread. A stopped resident, roaming agent, or
 visiting agent uses embedded execution through `LocalRunClient`. A healthy

@@ -466,7 +466,7 @@ model = "provider-b/model effort=low"
   using the existing model-body syntax. It must pass the same authorization and
   capability checks. `unset` disables compaction. Never inherit the normal model
   or parameters; never silently fall back to another model after failure.
-- Precedence: CLI `--compaction-model 'MODEL effort=high'`, environment
+- Precedence: CLI `--compact-model 'MODEL effort=high'`, environment
   `TOOLANG_COMPACT_MODEL`, agent config, root config, automatic selection. These
   are runtime startup settings, not per-run model overrides. Existing runtimes
   must be configured at their own startup. `allow` and `default` keep their

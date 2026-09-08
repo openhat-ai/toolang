@@ -93,7 +93,7 @@ def chat_command(
     sandbox: str | None = None,
     dev: Path | None = None,
     limits: list[str] | None = None,
-    compaction_model: str | None = None,
+    compact_model: str | None = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
     _chat_interactive(
@@ -105,7 +105,7 @@ def chat_command(
         allow_options=allows,
         default_options=defaults,
         limit_options=limits,
-        compaction_model=compaction_model,
+        compact_model=compact_model,
     )
 
 
@@ -119,14 +119,14 @@ def _chat_interactive(
     allow_options: list[str] | None = None,
     default_options: list[str] | None = None,
     limit_options: list[str] | None = None,
-    compaction_model: str | None = None,
+    compact_model: str | None = None,
 ) -> None:
     with _chat_runtime(
         ctx,
         model_catalog=model_catalog,
         sandbox=sandbox,
         dev=dev,
-        compaction_model=compaction_model,
+        compact_model=compact_model,
     ) as client:
         setting = client.initial_setting()
         initial_update, clear_runnable = _chat_session_override(
@@ -164,12 +164,12 @@ def _chat_runtime(
     model_catalog: Path | None = None,
     sandbox: str | None,
     dev: Path | None = None,
-    compaction_model: str | None = None,
+    compact_model: str | None = None,
 ) -> Iterator[ChatClient]:
     """Own one local, attached, or temporary-remote Chat session."""
 
     layout = context_layout(ctx)
-    compact_override = user_call(resolve_compact_override, {}, compaction_model)
+    compact_override = user_call(resolve_compact_override, {}, compact_model)
     try:
         server_context = acquire_agent_server(
             layout,

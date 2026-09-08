@@ -13,7 +13,7 @@ from typer._click.exceptions import ClickException
 
 from toolang.cli.common.parameters import (
     AllowOptions,
-    CompactionModelOption,
+    CompactModelOption,
     DefaultOptions,
     LimitOptions,
     TextType,
@@ -69,7 +69,7 @@ class _RoamingFileOptions:
     inboxes: tuple[Path, ...]
     allows: tuple[str, ...]
     defaults: tuple[str, ...]
-    compaction_model: str | None
+    compact_model: str | None
     limits: tuple[str, ...]
     host: str
     endpoint_host: str | None
@@ -140,7 +140,7 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
                     compact_override=user_call(
                         resolve_compact_override,
                         log_plan.environ,
-                        options.compaction_model,
+                        options.compact_model,
                     ),
                     limit_overrides=limit_overrides,
                     file_inboxes=options.inboxes,
@@ -201,7 +201,7 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
     inboxes: list[Path] = []
     allows: list[str] = []
     defaults: list[str] = []
-    compaction_model: str | None = None
+    compact_model: str | None = None
     limits: list[str] = []
     host = "127.0.0.1"
     endpoint_host: str | None = None
@@ -216,7 +216,7 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
             "--inbox",
             "--allow",
             "--default",
-            "--compaction-model",
+            "--compact-model",
             "--limit",
             "--host",
             "--endpoint-host",
@@ -234,8 +234,8 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
                 allows.append(value)
             elif option == "--default":
                 defaults.append(value)
-            elif option == "--compaction-model":
-                compaction_model = value
+            elif option == "--compact-model":
+                compact_model = value
             elif option == "--limit":
                 limits.append(value)
             elif option == "--host":
@@ -267,7 +267,7 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
         inboxes=tuple(inboxes),
         allows=tuple(allows),
         defaults=tuple(defaults),
-        compaction_model=compaction_model,
+        compact_model=compact_model,
         limits=tuple(limits),
         host=host,
         endpoint_host=endpoint_host,
@@ -302,7 +302,7 @@ def run(
     allows: AllowOptions = None,
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
-    compaction_model: CompactionModelOption = None,
+    compact_model: CompactModelOption = None,
     host: Annotated[
         str,
         typer.Option("--host", metavar="HOST", help="Bind the agent API to this host."),
@@ -354,7 +354,7 @@ def run(
                 sandbox=sandbox,
                 allows=allows,
                 defaults=defaults,
-                compaction_model=compaction_model,
+                compact_model=compact_model,
                 limits=limits,
                 inboxes=inboxes,
                 port=port,
@@ -438,7 +438,7 @@ def start(
     allows: AllowOptions = None,
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
-    compaction_model: CompactionModelOption = None,
+    compact_model: CompactModelOption = None,
     host: Annotated[
         str,
         typer.Option("--host", metavar="HOST", help="Bind the agent API to this host."),
@@ -488,7 +488,7 @@ def start(
                 sandbox=sandbox,
                 allows=allows,
                 defaults=defaults,
-                compaction_model=compaction_model,
+                compact_model=compact_model,
                 limits=limits,
                 inboxes=inboxes,
                 port=port,
@@ -589,7 +589,7 @@ def serve(
     allows: AllowOptions = None,
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
-    compaction_model: CompactionModelOption = None,
+    compact_model: CompactModelOption = None,
     inboxes: Annotated[
         list[Path] | None,
         typer.Option(
@@ -619,7 +619,7 @@ def serve(
         port=port,
         ceiling_overrides=user_call(resolve_ceiling_overrides, {}, allows),
         default_overrides=user_call(resolve_default_overrides, {}, defaults),
-        compact_override=user_call(resolve_compact_override, environ, compaction_model),
+        compact_override=user_call(resolve_compact_override, environ, compact_model),
         limit_overrides=user_call(resolve_limit_overrides, {}, limits),
         file_inboxes=inboxes,
         log_spec=log_spec,
@@ -648,7 +648,7 @@ def resolve_startup(
     endpoint_host: str | None,
     dev: Path | None,
     background: bool,
-    compaction_model: str | None = None,
+    compact_model: str | None = None,
 ) -> RuntimeLaunch:
     from toolang.up import sandbox as sandbox_runtime
 
@@ -695,7 +695,7 @@ def resolve_startup(
             ceiling_overrides=ceiling_overrides,
             default_overrides=default_overrides,
             compact_override=user_call(
-                resolve_compact_override, log_plan.environ, compaction_model
+                resolve_compact_override, log_plan.environ, compact_model
             ),
             limit_overrides=limit_overrides,
             file_inboxes=inboxes,
