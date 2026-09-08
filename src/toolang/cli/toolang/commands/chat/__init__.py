@@ -7,6 +7,8 @@ from typing import Annotated
 
 import typer
 
+from toolang.cli.common.agent_server import DEVELOPMENT_WHEEL_HELP
+from toolang.cli.common.context import ModelCatalogOption
 from toolang.cli.common.parameters import (
     AllowOptions,
     CompactModelOption,
@@ -16,18 +18,19 @@ from toolang.cli.common.parameters import (
 )
 
 
-from toolang.cli.common.context import ModelCatalogOption
-from toolang.cli.common.agent_server import DEVELOPMENT_WHEEL_HELP
-
-
 def chat_command(
     ctx: typer.Context,
     thread: Annotated[
         str | None,
-        typer.Argument(
+        typer.Option(
+            "--thread",
+            "-t",
             click_type=TextType(),
-            help="Thread id to continue. Run id also accepted. Omit to start a new one.",
-            metavar="THREAD",
+            help=(
+                "Continue a thread (run id also accepted). Bare --thread resumes "
+                "the most recently updated thread; omit to start a new one."
+            ),
+            metavar="[THREAD]",
         ),
     ] = None,
     model_catalog: ModelCatalogOption = None,

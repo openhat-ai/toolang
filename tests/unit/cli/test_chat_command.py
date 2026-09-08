@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
+import sqlite3
 
 import pytest
 from typer._click.exceptions import ClickException
+from typer._click.utils import strip_ansi
 
-from toolang.base.types.message import TextPart
+from tests.support.execution_fixtures import project_run_start
+from toolang.base.types.message import Message, TextPart
 from toolang.base.types.model import (
     ModelParameters,
     ModelRequest,
@@ -18,6 +21,7 @@ from toolang.base.types.model import (
 )
 from toolang.base.types.policy import RunPolicy
 from toolang.cli.common.output import shorten_home_path
+from toolang.cli.common.context import context_layout
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.cli.toolang.commands.chat import main as chat
 from toolang.cli.toolang.commands.chat.base import (
@@ -25,9 +29,11 @@ from toolang.cli.toolang.commands.chat.base import (
     ChatResult,
     ChatRunState,
 )
+from toolang.cli.toolang.main import main as too_main
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEnd, RunEvent, StepEnd
 from toolang.execution.policy import apply_session_setting
+from toolang.execution.store import RunStore
 from toolang.execution.schemas import ControlInfo, RunRequest, RunnableRequest
 from toolang.execution.types import (
     Output,
@@ -40,8 +46,214 @@ from toolang.execution.types import (
 )
 from toolang.lang.input import CallInput
 from toolang.up.types import AgentServerRef
+from toolang.up import process as agents
 
 _HOST_DESCRIPTION = "macOS 27.0 arm64"
+
+
+@pytest.fixture
+def chat_layout(tmp_path: Path) -> AgentLayout:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    (layout.home / "agent.too").write_text("agic chat:\n  Reply directly.\n")
+    return layout
+
+
+def _chat_history(layout: AgentLayout) -> None:
+    with closing(RunStore(layout.run_store)) as store:
+        store.create_thread(
+            thread_id="term_existing", created_at="2026-01-01T00:00:00Z"
+        )
+        store.create_thread(thread_id="term_new", created_at="2026-01-02T00:00:00Z")
+        project_run_start(
+            store,
+            run_id="run_existing",
+            thread_id="term_existing",
+            origin="chat",
+            input=Message.user("hello"),
+            created_at="2026-01-01T00:00:00Z",
+        )
+        store.finish_run(run_id="run_existing", finished_at="2026-01-03T00:00:00Z")
+        assert store.list_threads()[0].id == "term_new"
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        ([], None),
+        (["--thread"], "term_existing"),
+        (["-t"], "term_existing"),
+        (["--thread", "term_new"], "term_new"),
+        (["-t", "term_new"], "term_new"),
+        (["--thread=term_new"], "term_new"),
+        (["-tterm_new"], "term_new"),
+        (["--thread", "run_existing"], "term_existing"),
+        (["-t", "run_existing"], "term_existing"),
+        (["-t", "--sandbox", "host"], "term_existing"),
+        (["--thread", "--default", "model=test/model"], "term_existing"),
+        (["--thread", "--"], "term_existing"),
+        (["-t", "term_new", "--thread"], "term_existing"),
+        (["--thread", "-t", "term_new"], "term_new"),
+    ],
+)
+def test_chat_thread_option_resolves_through_the_lazy_entry_point(
+    args, expected, chat_layout, monkeypatch
+):
+    _chat_history(chat_layout)
+    captured = {}
+
+    def interactive(ctx, **kwargs):
+        captured.update(layout=context_layout(ctx), **kwargs)
+
+    monkeypatch.setattr(chat, "_chat_interactive", interactive)
+    assert too_main(["--root", str(chat_layout.root), "alice", "chat", *args]) == 0
+    assert captured["thread_id"] == expected
+    assert captured["layout"] == chat_layout
+    if "--sandbox" in args:
+        assert captured["sandbox"] == "host"
+    if "--default" in args:
+        assert captured["default_options"] == ["model=test/model"]
+    with closing(RunStore(chat_layout.run_store, read_only=True)) as store:
+        assert len(store.list_threads()) == 2
+
+
+@pytest.mark.parametrize("option", ["--thread", "-t"])
+@pytest.mark.parametrize("history", ["missing", "empty", "incompatible"])
+def test_chat_latest_requires_history_without_starting_a_runtime(
+    option, history, chat_layout, monkeypatch, capsys
+):
+    if history != "missing":
+        RunStore(chat_layout.run_store).close()
+    if history == "incompatible":
+        with sqlite3.connect(chat_layout.run_store) as connection:
+            connection.execute("PRAGMA user_version = 99999")
+    before = chat_layout.run_store.read_bytes() if history != "missing" else None
+    monkeypatch.setattr(
+        chat, "_chat_interactive", lambda *_args, **_kwargs: pytest.fail("started Chat")
+    )
+    assert too_main(["--root", str(chat_layout.root), "alice", "chat", option]) == 1
+    error = strip_ansi(capsys.readouterr().err)
+    if history == "incompatible":
+        assert "execution history is incompatible" in error
+    else:
+        assert "no thread to resume" in error
+        assert "omit --thread" in error
+    after = (
+        chat_layout.run_store.read_bytes() if chat_layout.run_store.exists() else None
+    )
+    assert after == before
+
+
+@pytest.mark.parametrize(
+    ("args", "code", "message"),
+    [
+        (["term_existing"], 2, "unexpected extra argument"),
+        (["--thread="], 2, "thread id must not be empty"),
+        (["-t", ""], 2, "thread id must not be empty"),
+        (["--thread", "--unknown"], 2, "No such option"),
+        (["-t", "--", "term_existing"], 2, "unexpected extra argument"),
+        (["--thread", "run_missing"], 1, "run not found: run_missing"),
+        (["--dev"], 2, "requires an argument"),
+    ],
+)
+def test_chat_thread_option_errors_preserve_existing_options(
+    args, code, message, chat_layout, monkeypatch, capsys
+):
+    _chat_history(chat_layout)
+    monkeypatch.setattr(
+        chat, "_chat_interactive", lambda *_args, **_kwargs: pytest.fail("started Chat")
+    )
+    assert too_main(["--root", str(chat_layout.root), "alice", "chat", *args]) == code
+    assert message in capsys.readouterr().err
+
+
+def test_chat_latest_preserves_history_ties_and_includes_nonterminal_threads(
+    chat_layout, monkeypatch
+):
+    with closing(RunStore(chat_layout.run_store)) as store:
+        for thread in ("term_old", "web_new"):
+            store.create_thread(thread_id=thread, created_at="2026-01-01T00:00:00Z")
+        # Equal projected update times retain the history API's existing order.
+        expected = chat.RunHistory(store).list_threads(limit=1)[0].id
+    selected = []
+    monkeypatch.setattr(
+        chat,
+        "_chat_interactive",
+        lambda _ctx, **kwargs: selected.append(kwargs["thread_id"]),
+    )
+    assert too_main(["--root", str(chat_layout.root), "alice", "chat", "--thread"]) == 0
+    assert selected == [expected]
+    with closing(RunStore(chat_layout.run_store)) as store:
+        store.create_thread(thread_id="web_latest", created_at="2026-01-04T00:00:00Z")
+    assert too_main(["--root", str(chat_layout.root), "alice", "chat", "--thread"]) == 0
+    assert selected[-1] == "web_latest"
+
+
+@pytest.mark.parametrize("placement", ["resident", "roaming", "visiting"])
+@pytest.mark.parametrize("remote", [False, True])
+def test_chat_latest_uses_selected_history_for_local_and_remote_sessions(
+    placement, remote, chat_layout, tmp_path, monkeypatch
+):
+    layout = chat_layout
+    selector = "alice"
+    if placement == "roaming":
+        source = tmp_path / "alice.too"
+        source.write_text("agic chat:\n  Reply directly.\n")
+        layout = AgentLayout.roaming(source)
+        selector = str(source)
+    elif placement == "visiting":
+        layout = AgentLayout(
+            root=tmp_path / "visiting", name="alice", placement="visiting"
+        )
+        selector = "owner/alice"
+        monkeypatch.setattr(
+            agents, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
+        )
+    if placement != "resident":
+        with closing(RunStore(chat_layout.run_store)) as store:
+            store.create_thread(
+                thread_id="term_unrelated", created_at="2099-01-01T00:00:00Z"
+            )
+    _chat_history(layout)
+    captured = {}
+
+    class Session(_Client):
+        def __init__(self, *args, **_kwargs):
+            super().__init__()
+            captured["target"] = args[0]
+
+        def close(self):
+            captured["closed"] = True
+
+    @contextmanager
+    def acquire(selected, **_kwargs):
+        assert selected == layout
+        yield (
+            AgentServerRef(sandbox="host", endpoint="http://localhost:7001")
+            if remote
+            else None
+        )
+
+    def open_tui(ctx, **kwargs):
+        captured.update(layout=context_layout(ctx), thread=kwargs["thread_id"])
+        assert kwargs["client"].created == 0
+
+    monkeypatch.setattr(chat, "acquire_agent_server", acquire)
+    monkeypatch.setattr(chat, "LocalChatSession", Session)
+    monkeypatch.setattr(chat, "RemoteChatSession", Session)
+    monkeypatch.setattr(chat, "load_runtime_environ", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(chat, "_chat_interactive_prompt_toolkit", open_tui)
+    monkeypatch.setattr(chat.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(chat.sys.stdout, "isatty", lambda: True)
+    prefix = [] if placement == "roaming" else ["--root", str(chat_layout.root)]
+    monkeypatch.setenv("TOOLANG_ROOT", str(chat_layout.root))
+    assert too_main([*prefix, selector, "chat", "--thread"]) == 0
+    assert captured == {
+        "target": "http://localhost:7001" if remote else layout,
+        "layout": layout,
+        "thread": "term_existing",
+        "closed": True,
+    }
 
 
 def test_chat_default_model_none_clears_the_configured_preference() -> None:

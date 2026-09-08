@@ -55,6 +55,7 @@ from toolang.cli.common.execution_progress.config import (
 from toolang.cli.common.execution_progress.formatting import wrap_display
 from toolang.cli.common.human_values import parts_response_text
 from toolang.cli.common.output import shorten_home_path
+from toolang.cli.common.options import BARE_VALUE
 from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
 from . import slashes as chat_slashes
 from .base import (
@@ -571,6 +572,20 @@ class _ScriptedRunRenderer:
 def _target_thread_id(ctx: typer.Context, target: str | None) -> str | None:
     if target is None:
         return None
+    if target == "":
+        raise typer.BadParameter("thread id must not be empty", param_hint="--thread")
+    if target == BARE_VALUE:
+        with open_execution(ctx) as resources:
+            threads = (
+                RunHistory(resources.store).list_threads(limit=1)
+                if resources is not None
+                else []
+            )
+        if not threads:
+            raise ClickException(
+                "no thread to resume; omit --thread to start a new session"
+            )
+        return threads[0].id
     if target.startswith("run_"):
         with open_execution(ctx, required=True) as resources:
             if resources is None:  # pragma: no cover
