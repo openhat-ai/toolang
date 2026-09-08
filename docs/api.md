@@ -208,7 +208,7 @@ Foreground runtime port selection depends on the agent mode:
 A script run uses one local `.too` source path directly:
 
 ```bash
-toolang SCRIPT RUNNABLE [OPTIONS] [NAME=VALUE]... [-- INPUT... | - | ---]
+toolang SCRIPT RUNNABLE [OPTIONS] [ARGS] INPUT
 ```
 
 Script progress, inspection output, and chat TUI activity use the shared
@@ -220,9 +220,26 @@ Arguments:
 
 - `SCRIPT` is the local Toolang script or agent file
 - `RUNNABLE` is the uniquely named public agic or flow to run
-- `NAME=VALUE` provides one named runnable parameter before Call Input
-- `--`, `-`, and `---` select line, stream, and fenced Call Input; script mode
-  parses policy prefixes but does not accept chat quick commands
+- `ARGS` are `name=value` assignments for named runnable parameters
+- `INPUT` is one logical input, supplied as line text directly or after `--`;
+  `-` reads stdin through EOF, and omitted command-line text reads piped or
+  redirected stdin
+
+The synopsis omits `[ARGS]` when there are no named parameters and
+`INPUT` when the signature forbids primary input. Input is required whenever
+accepted; it has no brackets or ellipsis, even when supplied via stdin. The
+**Arguments** panel lists `name=TYPE` entries with uppercase types and appends
+INPUT last, followed by concise capture notes. Required and optional status is
+explicit; `[ARGS]` does not make required named arguments optional.
+
+Below usage, `name - description` uses the authored doc comment or `An agic.` /
+`A flow.` Flow steps follow as an indented part of the description, without a
+panel. Arguments and **Options** follow. Top-level Script help uses
+`[OPTIONS] RUNNABLE`, lists **Runnables** before Options with `agic:NAME` /
+`flow:NAME` labels and the same descriptions, and points to `RUNNABLE --help`
+for signature-specific details. Both qualified labels and bare names can be
+used to invoke a runnable.
+Script mode parses policy prefixes but does not accept chat quick commands.
 
 Behavior:
 
@@ -230,12 +247,15 @@ Behavior:
 - `agic:NAME`, `flow:NAME`, and `runnable:NAME` explicitly select a runnable
   when its name collides with a top-level command
 - default agics and generated internal agics are not exposed as script commands
-- runnable command descriptions come only from their authored `doc`
-- stdout is reserved for the final runnable result
+- runnable command descriptions use their authored `doc` or an agic/flow fallback
+- stdout is reserved for explicitly requested runnable output
 - progress messages are written to stderr by default
 - TTY progress uses color and live replacement; non-TTY progress is stable,
   append-only, and contains no ANSI control sequences
 - `-q` or `--quiet` suppresses prepare and execution progress
+- `--out PATH` or `-o PATH` writes the Run result to a file; `--out -` or `-o -`
+  writes it to stdout. Without this option, the result remains stored without
+  being copied to stdout. This replaces the removed `--save` option.
 - `--sandbox SANDBOX_SPEC` selects the execution sandbox for this invocation; an
   already-running compatible AgentServer is attached instead
 - `--dev PATH` installs Toolang in a newly started guest from one wheel; a
@@ -262,9 +282,14 @@ Behavior:
 - script run reads one effective Setup and State publication; the executor
   narrows their model, tool, and cap collections with request and runnable
   directives
-- `NAME=VALUE` supplies one named argument and is coerced using its declared
-  parameter type
-- line-input rules after `--`:
+- `name=value` supplies one named argument and is coerced using its declared
+  parameter type; arguments and command options may be interspersed before input
+- the first ordinary operand starts line input; `--` explicitly starts it when
+  the text begins with an option or assignment
+- after line input starts, all remaining words are content, including
+  `name=value`, `--help`, `-`, and `---`; an unknown assignment in the command
+  header is an error, even when shell-quoted
+- line-input rules, with or without `--`:
   - adjacent ordinary shell words are joined with spaces into one text item
   - `TEXT` adds one text part; use `@@TEXT` for literal text beginning with `@`
   - `@PATH` adds one path-based percept part; text-like paths become text parts
@@ -272,14 +297,17 @@ Behavior:
   - `.mp3` and `.wav` infer audio parts
   - supported document extensions infer document parts
   - unsupported video, archive, executable, and binary formats are rejected
-  - unmarked command-line words are not primary input
-- `-` reads stream input through stdin EOF and may be empty
-- `---` reads stdin through an exact closing `---` line and may be empty; only
-  whitespace may follow the closing fence
-- omitting input reads non-interactive stdin as an implicit stream when available
-- `--` ends option parsing and introduces line input
+  - explicit `--` requires nonempty input
+- a standalone `-` must be the final command-line token; it reads stream input
+  through stdin EOF and may be empty
+- a standalone `---` in the command header is rejected with guidance to use
+  `-`; remove the closing fence when migrating, since stdin is read through EOF
+- `---` remains literal in line input, stdin, and argument or option values;
+  prompt calls inside input retain fenced syntax
+- omitting input reads non-interactive stdin as an implicit stream when
+  available; an empty stream means input is absent, and TTY stdin is not read
 - complete Call Input syntax is defined in [call-input.md](./call-input.md)
-- `--option` is reserved for Toolang runtime options
+- `--option` selects Toolang runtime options before input begins
 - `PY_LOG` uses env_logger-style directive formatting and does not affect stdout
 - key execution events are recorded in `runs.db` for script runs just like chat,
   task, and chore runs

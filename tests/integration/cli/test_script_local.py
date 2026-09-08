@@ -109,12 +109,12 @@ def test_local_script_saves_only_to_an_explicit_destination(
     args = [str(source), "echo"]
     destination = tmp_path / "result.txt"
     if save_mode == "stdout":
-        args.extend(("--quiet", "--save", "-"))
+        args.extend(("--quiet", "--out", "-"))
     elif save_mode == "file":
-        args.extend(("--quiet", "--save", str(destination)))
+        args.extend(("--quiet", "-o", str(destination)))
     elif save_mode == "missing-parent":
         destination = tmp_path / "missing" / "result.txt"
-        args.extend(("--save", str(destination)))
+        args.extend(("--out", str(destination)))
     args.extend(("--", "hello"))
     result = script.dispatch([], args, prog_name="toolang")
     output = capsys.readouterr()

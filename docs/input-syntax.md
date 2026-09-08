@@ -215,9 +215,12 @@ its generated CLI. Resolution evaluates each source and coerces it against the
 selected runnable signature. Missing, duplicate, or unknown named inputs are
 rejected before a run is accepted.
 
-Runnable calls use the shared line, stream, and fenced capture syntax defined
-in [call-input.md](./call-input.md). The capture form is parser-only state and
-is not stored in `CallInput[str]`.
+Chat runnable calls use the shared line, stream, and fenced capture syntax
+defined in [call-input.md](./call-input.md). Script command headers accept line
+input directly or after `--`, and stream input through stdin with `-` or
+omitted input. They reject the standalone fenced marker `---`; prompt calls
+inside Script input still support fenced capture. The capture form is
+parser-only state and is not stored in `CallInput[str]`.
 
 Plain run-only parsing permits an empty `CallInput[str]` when the selected
 runnable accepts no primary or named input. A colon override still requires

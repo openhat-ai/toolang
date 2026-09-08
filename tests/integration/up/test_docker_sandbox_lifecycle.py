@@ -281,7 +281,7 @@ def test_docker_script_runs_with_a_temporary_agent_server(
             "--default",
             f"model={_MODEL}",
             "--quiet",
-            "--save",
+            "--out",
             "-",
             "hello from script",
         ),

@@ -86,7 +86,7 @@ def test_script_binds_options_arguments_and_primary_input(
             "docker:python:3.13-slim",
             "--dev",
             str(tmp_path / "dist"),
-            "--save",
+            "--out",
             "-",
             "count=2.5",
             "enabled=true",
@@ -230,122 +230,115 @@ def test_script_supports_explicit_stdin_marker(
     assert input.get("_") == "from stdin"
 
 
-def test_script_supports_fenced_stdin_input(
+class _UnreadableStdin(StringIO):
+    def read(self, size: int | None = -1, /) -> str:
+        raise AssertionError("this invocation must not read stdin")
+
+
+@pytest.mark.parametrize("suffix", [[], ["--", "text"], ["count=2"], ["--help"]])
+@pytest.mark.parametrize("stdin", ["", "body\n---\n", "unclosed"])
+def test_script_rejects_fenced_marker_before_reading_or_running(
     tmp_path: Path,
-    monkeypatch,
-) -> None:
-    source = _write_source(tmp_path)
-    captured: dict[str, object] = {}
-
-    def fake_run(_source_path: Path, **kwargs) -> int:
-        captured.update(kwargs)
-        return 0
-
-    monkeypatch.setattr(script, "_run", fake_run)
-
-    result = script.dispatch(
-        [],
-        [str(source), "demo", "count=2", "---"],
-        prog_name="toolang",
-        stdin=StringIO("from\nstdin\n---\n"),
-    )
-
-    assert result == 0
-    input = captured["input"]
-    assert isinstance(input, CallInput)
-    assert input.get("_") == "from\nstdin\n"
-
-
-@pytest.mark.parametrize(
-    ("stdin", "message"),
-    [
-        ("from stdin", "Unclosed fenced input"),
-        ("from stdin\n---\ntrailing", "cannot be followed"),
-    ],
-)
-def test_script_rejects_invalid_fenced_stdin_input(
-    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     capsys,
+    suffix: list[str],
     stdin: str,
-    message: str,
 ) -> None:
     source = _write_source(tmp_path)
-
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("invalid input must not run"),
+    )
     result = script.dispatch(
         [],
-        [str(source), "demo", "count=2", "---"],
-        prog_name="toolang",
-        stdin=StringIO(stdin),
+        [str(source), "demo", "---", *suffix],
+        prog_name="too",
+        stdin=_UnreadableStdin(stdin),
     )
+    output = capsys.readouterr()
+    assert result == 2
+    error = " ".join(strip_ansi(output.err).replace("│", " ").split())
+    assert (
+        "fenced input marker '---' is not supported in script mode; "
+        "use '-' to read stream input from stdin"
+    ) in error
+    assert "Unclosed" not in error
+    assert "No such option" not in error
 
-    assert result == 1
-    assert message in capsys.readouterr().err
 
-
-@pytest.mark.parametrize(
-    ("marker", "stdin"),
-    [("-", ""), ("---", "---")],
-)
-def test_script_preserves_explicit_empty_call_input(
+def test_script_preserves_explicit_empty_stream_input(
     tmp_path: Path,
-    monkeypatch,
-    marker: str,
-    stdin: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = _write_source(tmp_path)
     captured: dict[str, object] = {}
     monkeypatch.setattr(
-        script,
-        "_run",
-        lambda _source_path, **kwargs: captured.update(kwargs) or 0,
+        script, "_run", lambda _source_path, **kwargs: captured.update(kwargs) or 0
     )
-
     result = script.dispatch(
         [],
-        [str(source), "demo", "count=2", marker],
+        [str(source), "demo", "count=2", "-"],
         prog_name="toolang",
-        stdin=StringIO(stdin),
+        stdin=StringIO(),
     )
-
     assert result == 0
     assert captured["input"] == CallInput({"_": ""})
 
 
 @pytest.mark.parametrize("value", ("", "   "))
+@pytest.mark.parametrize("explicit", [False, True])
 def test_script_rejects_empty_line_input(
     tmp_path: Path,
     capsys,
     value: str,
+    explicit: bool,
 ) -> None:
     source = _write_source(tmp_path)
 
     result = script.dispatch(
         [],
-        [str(source), "demo", "count=2", "--", value],
+        [str(source), "demo", "count=2", *(["--"] if explicit else []), value],
         prog_name="toolang",
-        stdin=StringIO(),
+        stdin=_UnreadableStdin(),
     )
 
     assert result == 2
-    assert "line input marker '--' requires nonempty text" in capsys.readouterr().err
+    assert "line input requires nonempty text" in capsys.readouterr().err
 
 
-def test_script_rejects_unmarked_command_line_primary_input(
+@pytest.mark.parametrize("explicit", [False, True])
+def test_script_accepts_line_input_with_or_without_separator(
     tmp_path: Path,
-    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    explicit: bool,
 ) -> None:
     source = _write_source(tmp_path)
-
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        script, "_run", lambda _source_path, **kwargs: captured.update(kwargs) or 0
+    )
     result = script.dispatch(
         [],
-        [str(source), "demo", "count=2", "Review this"],
+        [
+            str(source),
+            "demo",
+            "count=2",
+            *(["--"] if explicit else []),
+            "Review",
+            "this",
+            "count=3",
+            "--help",
+            "-",
+            "---",
+            "--",
+        ],
         prog_name="toolang",
-        stdin=StringIO(),
+        stdin=_UnreadableStdin(),
     )
-
-    assert result == 2
-    error = " ".join(strip_ansi(capsys.readouterr().err).split())
-    assert "primary input requires '--', '-', or '---'" in error
+    assert result == 0
+    assert captured["input"] == CallInput({"_": "Review this count=3 --help - --- --"})
+    assert captured["raw_named"] == {"count": "2"}
 
 
 def test_script_keeps_assignments_after_separator_as_input(
@@ -432,15 +425,20 @@ def test_script_shows_runnable_help_for_a_missing_required_parameter(
 
     assert result == 2
     assert "Usage:" in output.out
-    assert "count=Number" in output.out
+    assert "count=NUMBER" in output.out
     assert "Run:" not in output.err
 
 
+@pytest.mark.parametrize("color", [False, True])
 def test_script_shows_runnable_help_for_missing_primary_input(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
+    color: bool,
 ) -> None:
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setattr(rich_utils, "FORCE_TERMINAL", True)
+    monkeypatch.setattr(rich_utils, "COLOR_SYSTEM", "standard" if color else None)
     source = _write_source(
         tmp_path,
         """
@@ -464,7 +462,9 @@ agic demo(_: Part[]):
 
     assert result == 2
     assert "Usage:" in output.out
-    assert "Primary Part[] input." in output.out
+    assert "PART[]" in output.out
+    assert ("\x1b[" in output.out) is color
+    assert "─ Arguments " in strip_ansi(output.out)
     assert "requires primary input" not in output.err
     assert "Run:" not in output.err
 
@@ -525,27 +525,30 @@ def test_script_uses_typer_help_and_authored_docs(
     normalized = " ".join(stdout.split())
 
     assert result == 0
-    assert (
-        "Usage: toolang demo.too demo [OPTIONS] "
-        "count=Number [enabled=Boolean] -- INPUT... | - | ---" in normalized
-    )
+    assert "Usage: toolang demo.too demo [OPTIONS] [ARGS] INPUT" in normalized
     assert "Run the documented demo." in stdout
     assert "Arguments" in stdout
-    assert "count=Number" in stdout
-    assert "enabled=Boolean" in stdout
-    assert "[enabled=Boolean]" not in stdout.partition("Arguments")[2]
-    assert "Primary Part[] input." in stdout
+    assert "count=NUMBER" in stdout
+    assert "enabled=BOOLEAN" in stdout
+    assert "Optional." in stdout
+    assert "[required]" in stdout
+    assert "PART[]" in stdout
+    assert "─ Input " not in stdout
     assert "<str>" not in stdout
     for option, metavar in (
         ("--allow", "RESOURCE=QUERY"),
         ("--limit", "LIMIT=VALUE"),
         ("--model", "MODEL_SPEC"),
         ("--sandbox", "SANDBOX_SPEC"),
-        ("--save", "PATH"),
+        ("--out", "PATH"),
     ):
         row = next(line for line in stdout.splitlines() if option in line.split())
         assert metavar in row.split()
-    assert "--save" in stdout
+    output_row = next(
+        line.split() for line in stdout.splitlines() if "--out" in line.split()
+    )
+    assert "-o" in output_row
+    assert "--save" not in stdout
     assert "--sandbox" in stdout
     assert "--dev" in stdout
     assert "Save the Run result to PATH, or use - for stdout." in " ".join(
@@ -559,12 +562,405 @@ def test_script_uses_typer_help_and_authored_docs(
     )
     assert positions == tuple(sorted(positions))
     assert "--default" not in stdout
-    assert "Flow outline" not in stdout
+    assert "Flow steps:" not in stdout
+
+
+def _help_panel(output: str, title: str) -> str:
+    body = output.partition(f"─ {title} ")[2].partition("╰")[0]
+    return " ".join(body.replace("│", " ").split())
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize(
+    ("doc", "description"),
+    [
+        ("", None),
+        ("## Documented runnable.\n", "Documented runnable."),
+        (
+            "## Use [bold]care[/bold].\n## Keep context.\n",
+            "Use care. Keep context.",
+        ),
+    ],
+)
+def test_script_runnable_description_uses_docs_or_kind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+    kind: str,
+    doc: str,
+    description: str | None,
+) -> None:
+    body = "  Unused body text." if kind == "agic" else "  let note = observed"
+    source = _write_source(tmp_path, f"{doc}{kind} demo():\n{body}\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        script, "_run", lambda *_args, **_kwargs: pytest.fail("help must not run")
+    )
+    assert (
+        script.dispatch(
+            [],
+            [source.name, "demo", "--help"],
+            prog_name="too",
+            stdin=_UnreadableStdin(),
+        )
+        == 0
+    )
+    output = strip_ansi(capsys.readouterr().out)
+    summary = f"demo - {description or ('An agic.' if kind == 'agic' else 'A flow.')}"
+    assert " ".join(output.split()).count(summary) == 1
+    assert output.index("Usage:") < output.index("demo -") < output.index("─ Options ")
+    assert "Unused body text." not in output
+    assert "─ Arguments " not in output
+    assert "─ Input " not in output and "─ Flow" not in output
+    if kind == "flow":
+        assert (
+            output.index("demo -")
+            < output.index("Flow steps:")
+            < output.index("─ Options ")
+        )
+        assert _flow_outline_lines(output) == ["[0] Set value to note"]
+    else:
+        assert "Flow steps:" not in output
+
+
+@pytest.mark.parametrize(
+    ("kind", "prog_name", "width"),
+    [
+        ("agic", "too", 80),
+        ("agic", "toolang", 120),
+        ("flow", "toolang", 80),
+        ("flow", "too", 120),
+    ],
+)
+@pytest.mark.parametrize(
+    ("signature", "input_type", "arguments"),
+    [
+        ("", "Part[]", []),
+        ("(_)", "Part[]", []),
+        ("(_: Text)", "Text", []),
+        ("()", None, []),
+        ("(count: Number)", None, [("count", "Number", True)]),
+        ("(enabled?: Boolean)", None, [("enabled", "Boolean", False)]),
+        (
+            "(items: Text[], enabled?: Boolean)",
+            None,
+            [("items", "Text[]", True), ("enabled", "Boolean", False)],
+        ),
+        (
+            "(_: Boolean, input: Text, items?: Part[])",
+            "Boolean",
+            [("input", "Text", True), ("items", "Part[]", False)],
+        ),
+    ],
+)
+def test_script_help_groups_signature_categories(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+    kind: str,
+    prog_name: str,
+    width: int,
+    signature: str,
+    input_type: str | None,
+    arguments: list[tuple[str, str, bool]],
+) -> None:
+    body = "  Describe the result." if kind == "agic" else "  let note = observed"
+    source = _write_source(
+        tmp_path, f"## Documented runnable.\n{kind} demo{signature}:\n{body}\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("COLUMNS", str(width))
+    monkeypatch.setattr(
+        script, "_run", lambda *_args, **_kwargs: pytest.fail("help must not run")
+    )
+    result = script.dispatch(
+        [],
+        [source.name, "demo", "--help"],
+        prog_name=prog_name,
+        stdin=_UnreadableStdin(),
+    )
+    captured = capsys.readouterr()
+    output = strip_ansi(captured.out)
+    assert result == 0 and not captured.err, captured.err
+    usage = next(line.strip() for line in output.splitlines() if "Usage:" in line)
+    expected = f"Usage: {prog_name} demo.too demo [OPTIONS]"
+    if arguments:
+        expected += " [ARGS]"
+    if input_type:
+        expected += " INPUT"
+    assert usage == expected
+    assert "ARGUMENTS" not in usage
+    assert "---" not in output
+    assert all(cell_len(line) <= width for line in output.splitlines())
+    assert "Documented runnable." in output
+    panel = _help_panel(output, "Arguments")
+    assert bool(panel) == bool(arguments or input_type)
+    assert "─ Input " not in output
+    positions = []
+    for name, type_name, required in arguments:
+        label = f"{name}={type_name.upper()}"
+        status = "[required]" if required else "Optional."
+        assert f"{label} {status}" in panel
+        positions.append(panel.index(label))
+    if arguments:
+        suffix = " before input" if input_type else ""
+        assert f"Arguments may appear in any order{suffix}." in panel
+    if input_type:
+        label = f"INPUT {input_type.upper()} [required]"
+        assert label in panel
+        positions.append(panel.index(label))
+        assert (
+            "TEXT...; -- TEXT... starts it explicitly; - reads stdin to EOF." in panel
+        )
+        assert "Omit command-line text to read piped or redirected stdin." in panel
+    else:
+        assert "stdin" not in output and "TEXT..." not in output
+    assert positions == sorted(positions)
+    if panel:
+        assert output.index("demo - Documented runnable.") < output.index(
+            "─ Arguments "
+        )
+        assert output.index("─ Arguments ") < output.index("─ Options ")
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize(
+    ("signature", "tokens", "expected"),
+    [
+        ("()", [], {}),
+        ("(enabled?: Boolean)", [], {}),
+        ("(count: Number)", ["count=2"], {"count": "2"}),
+    ],
+)
+def test_script_without_input_runs_with_satisfied_arguments(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    signature: str,
+    tokens: list[str],
+    expected: dict[str, str],
+) -> None:
+    body = "  Describe the result." if kind == "agic" else "  let note = observed"
+    source = _write_source(tmp_path, f"{kind} demo{signature}:\n{body}\n")
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        script, "_run", lambda _source_path, **kwargs: captured.update(kwargs) or 0
+    )
+    assert (
+        script.dispatch(
+            [], [str(source), "demo", *tokens], prog_name="too", stdin=StringIO()
+        )
+        == 0
+    )
+    assert captured["input"] == CallInput()
+    assert captured["raw_named"] == expected
+
+
+@pytest.mark.parametrize(
+    ("header", "save"),
+    [
+        (["count=2", "--quiet", "enabled=true", "--out", "---"], "---"),
+        (["--out=---", "enabled=true", "-q", "count=2"], "---"),
+        (["--out", "--", "enabled=true", "-q", "count=2"], "--"),
+        (["count=2", "--out", "-", "-q", "enabled=true"], "-"),
+        (["count=2", "-q", "enabled=true", "-o", "result.txt"], "result.txt"),
+        (["count=2", "-q", "enabled=true", "-o-"], "-"),
+        (["count=2", "-q", "enabled=true", "-o", "---"], "---"),
+    ],
+)
+def test_script_options_can_follow_assignments_before_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    header: list[str],
+    save: str,
+) -> None:
+    source = _write_source(tmp_path)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        script, "_run", lambda _source_path, **kwargs: captured.update(kwargs) or 0
+    )
+    assert (
+        script.dispatch(
+            [],
+            [str(source), "demo", *header, "text", "--model", "literal"],
+            prog_name="too",
+            stdin=_UnreadableStdin(),
+        )
+        == 0
+    )
+    assert captured["raw_named"] == {"count": "2", "enabled": "true"}
+    assert captured["quiet"] is True
+    assert captured["save"] == save
+    assert captured["model_body"] is None
+    assert captured["input"] == {"_": "text --model literal"}
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_script_line_input_preserves_includes_and_quoted_newlines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    explicit: bool,
+) -> None:
+    source = _write_source(tmp_path)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        script, "_run", lambda _source_path, **kwargs: captured.update(kwargs) or 0
+    )
+    assert (
+        script.dispatch(
+            [],
+            [
+                str(source),
+                "demo",
+                "count=2",
+                *(["--"] if explicit else []),
+                "Review",
+                "this",
+                "@notes.md",
+                "first\nsecond",
+                "closing",
+                "words",
+            ],
+            prog_name="too",
+            stdin=_UnreadableStdin(),
+        )
+        == 0
+    )
+    assert captured["input"] == {
+        "_": "Review this\n@notes.md\nfirst\nsecond\nclosing words"
+    }
+
+
+@pytest.mark.parametrize(
+    ("tokens", "expected"),
+    [
+        (["count=---", "text"], "text"),
+        (["count=2", "--", "---"], "---"),
+        (["count=2", "text", "---"], "text ---"),
+        (["count=2", "--", "--help"], "--help"),
+        (["count=2", "--", "unknown=value"], "unknown=value"),
+        (["count=2", "equation a=b"], "equation a=b"),
+    ],
+)
+def test_script_markers_and_assignments_can_be_literal_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tokens: list[str],
+    expected: str,
+) -> None:
+    source = _write_source(tmp_path)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        script, "_run", lambda _source_path, **kwargs: captured.update(kwargs) or 0
+    )
+    assert (
+        script.dispatch(
+            [],
+            [str(source), "demo", *tokens],
+            prog_name="too",
+            stdin=_UnreadableStdin(),
+        )
+        == 0
+    )
+    assert captured["input"] == {"_": expected}
+    assert captured["raw_named"] == {"count": tokens[0].partition("=")[2]}
+
+
+@pytest.mark.parametrize("tokens", [["-"], []])
+def test_script_stream_input_keeps_fence_lines_until_eof(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tokens: list[str],
+) -> None:
+    source = _write_source(tmp_path)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        script, "_run", lambda _source_path, **kwargs: captured.update(kwargs) or 0
+    )
+    body = "before\n---\nafter\n"
+    assert (
+        script.dispatch(
+            [],
+            [str(source), "demo", "count=2", *tokens],
+            prog_name="too",
+            stdin=StringIO(body),
+        )
+        == 0
+    )
+    assert captured["input"] == {"_": body}
+
+
+@pytest.mark.parametrize(
+    ("tokens", "message"),
+    [
+        (["unknown=value"], "unknown argument: unknown; use '--' to start input"),
+        (["count=1", "count=2"], "argument count was provided more than once"),
+        (["----"], "No such option: ----"),
+        (["--save", "result.txt"], "No such option: --save"),
+        (["--"], "line input requires nonempty text"),
+        (["-", "--help"], "stdin marker '-' must be the only primary input"),
+        (["-", "hello"], "stdin marker '-' must be the only primary input"),
+        (["-", "count=2"], "stdin marker '-' must be the only primary input"),
+    ],
+)
+def test_script_invalid_headers_fail_before_reading_or_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+    tokens: list[str],
+    message: str,
+) -> None:
+    source = _write_source(tmp_path)
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("invalid input must not run"),
+    )
+    assert (
+        script.dispatch(
+            [],
+            [str(source), "demo", *tokens],
+            prog_name="too",
+            stdin=_UnreadableStdin(),
+        )
+        == 2
+    )
+    error = " ".join(strip_ansi(capsys.readouterr().err).replace("│", " ").split())
+    assert message in error
+
+
+def test_script_omitted_terminal_input_shows_help_without_reading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    source = _write_source(tmp_path)
+    stdin = _UnreadableStdin()
+    monkeypatch.setattr(stdin, "isatty", lambda: True)
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("missing input must not run"),
+    )
+    assert (
+        script.dispatch(
+            [],
+            [str(source), "demo", "count=2"],
+            prog_name="too",
+            stdin=stdin,
+        )
+        == 2
+    )
+    assert "─ Arguments " in strip_ansi(capsys.readouterr().out)
 
 
 def _flow_outline_lines(output: str) -> list[str]:
-    panel = strip_ansi(output).partition("Flow outline")[2]
-    return [line[2:-2].rstrip() for line in panel.splitlines() if line.startswith("│ ")]
+    block = strip_ansi(output).partition("Flow steps:")[2].partition("╭")[0]
+    return [
+        line[3:].rstrip()
+        for line in block.splitlines()
+        if line.startswith("   ") and line.strip()
+    ]
 
 
 @pytest.mark.parametrize("explicit_help", [False, True])
@@ -612,9 +1008,11 @@ agic search:
     assert result == (0 if explicit_help else 2), output.err
     assert output.err == ""
     assert stdout.count("Research a topic from several sources.") == 1
-    assert stdout.index("Research a topic") < stdout.index("Arguments")
-    assert stdout.index("Options") < stdout.index("Flow outline")
-    assert stdout.count("Flow outline") == 1
+    assert "research - Research a topic from several sources." in stdout
+    assert stdout.index("Research a topic") < stdout.index("Flow steps:")
+    assert stdout.index("Flow steps:") < stdout.index("─ Arguments ")
+    assert stdout.count("Flow steps:") == 1
+    assert "─ Flow" not in stdout
     assert _flow_outline_lines(stdout) == [
         "[0] Set value to topic",
         "[1] Broaden [bold]the question[/bold]. Keep diverse perspectives.",
@@ -753,13 +1151,25 @@ def test_script_flow_invocation_does_not_print_the_help_outline(
     )
 
     assert calls == ["flow"]
-    assert "Flow outline" not in capsys.readouterr().out
+    assert "Flow steps:" not in capsys.readouterr().out
 
 
-def test_script_hides_default_and_generated_agics(
+@pytest.mark.parametrize(
+    ("prog_name", "width", "filename"),
+    [
+        ("too", 80, "demo.too"),
+        ("toolang", 80, "demo.too"),
+        ("too", 120, "demo.too"),
+        ("toolang", 120, "demo [v1].too"),
+    ],
+)
+def test_script_top_level_help_lists_descriptions_before_options(
     tmp_path: Path,
     monkeypatch,
     capsys,
+    prog_name: str,
+    width: int,
+    filename: str,
 ) -> None:
     source = _write_source(
         tmp_path,
@@ -771,34 +1181,84 @@ agic:
 agic visible:
   Visible behavior.
 
+agic undocumented:
+  Undocumented behavior.
+
+flow undocumented_flow():
+  let note = observed
+
 ## Run the pipeline.
 flow pipeline:
   run:
     Inline behavior.
 """,
     )
+    source = source.rename(tmp_path / filename)
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("COLUMNS", str(width))
+    monkeypatch.setattr(
+        script, "_run", lambda *_args, **_kwargs: pytest.fail("help must not run")
+    )
 
     result = script.dispatch(
         [],
         [source.name, "--help"],
-        prog_name="toolang",
-        stdin=StringIO(),
+        prog_name=prog_name,
+        stdin=_UnreadableStdin(),
     )
     output = capsys.readouterr()
     stdout = strip_ansi(output.out)
 
     assert result == 0
-    assert "Usage: toolang demo.too [OPTIONS] RUNNABLE [ARGS]..." in stdout
-    assert "Runnables" in stdout
+    assert f"Usage: {prog_name} {filename} [OPTIONS] RUNNABLE" in stdout
+    assert "[ARGS]" not in stdout
+    assert f"{filename} - Run an agic or flow." in stdout
+    assert stdout.index("─ Runnables ") < stdout.index("─ Options ")
+    assert all(cell_len(line) <= width for line in stdout.splitlines())
     assert "Commands" not in stdout
     assert "visible" in stdout
     assert "Run the visible command." in stdout
     assert "pipeline" in stdout
     assert "Run the pipeline." in stdout
+    descriptions = _help_panel(stdout, "Runnables")
+    assert "agic:visible Run the visible command." in descriptions
+    assert "flow:pipeline Run the pipeline." in descriptions
+    assert "agic:undocumented An agic." in descriptions
+    assert "flow:undocumented_flow A flow." in descriptions
+    assert "visible -" not in descriptions
+    assert "Use RUNNABLE --help for its arguments and input." in stdout
     assert "default" not in stdout
     assert "<agic:" not in stdout
-    assert "Flow outline" not in stdout
+    assert "Flow steps:" not in stdout
+
+
+@pytest.mark.parametrize("width", [44, 80])
+def test_script_long_runnable_names_keep_descriptions_visible(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+    width: int,
+) -> None:
+    name = "research_" + "detailed_" * 8 + "topic"
+    source = _write_source(
+        tmp_path,
+        f"## Documented.\nagic {name}():\n  X\nagic brief():\n  X\n",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("COLUMNS", str(width))
+
+    assert (
+        script.dispatch(
+            [], [source.name, "--help"], prog_name="too", stdin=_UnreadableStdin()
+        )
+        == 0
+    )
+    output = strip_ansi(capsys.readouterr().out)
+    panel = _help_panel(output, "Runnables")
+    assert "Documented." in panel
+    assert "An agic." in panel
+    assert "…" not in panel
+    assert all(cell_len(line) <= width for line in output.splitlines())
 
 
 def test_script_formats_an_unknown_runnable_as_a_rich_error(
@@ -831,13 +1291,27 @@ def test_script_formats_an_unknown_runnable_as_a_rich_error(
     assert "\nError: No such command" not in stderr
 
 
-@pytest.mark.parametrize("query", ("agic:demo", "runnable:demo"))
+@pytest.mark.parametrize(
+    ("kind", "query"),
+    [
+        ("agic", "agic:demo"),
+        ("agic", "runnable:demo"),
+        ("flow", "flow:demo"),
+        ("flow", "runnable:demo"),
+    ],
+)
 def test_script_accepts_explicit_runnable_queries(
     tmp_path: Path,
     monkeypatch,
     query: str,
+    kind: str,
 ) -> None:
-    source = _write_source(tmp_path)
+    source = _write_source(
+        tmp_path,
+        _SOURCE
+        if kind == "agic"
+        else "flow demo(_: Part[], count: Number):\n  let note = {{_}}\n",
+    )
     captured: dict[str, object] = {}
     monkeypatch.setattr(
         script,
@@ -860,7 +1334,7 @@ def test_script_accepts_explicit_runnable_queries(
 
     assert result == 0
     assert captured["runnable"] == "demo"
-    assert captured["runnable_kind"] == "agic"
+    assert captured["runnable_kind"] == kind
 
 
 def test_script_rejects_an_explicit_runnable_kind_mismatch(
@@ -1212,50 +1686,6 @@ def test_script_rejects_removed_default_option(
 
     assert result == 2
     assert "No such option: --default" in strip_ansi(output.err)
-
-
-def test_script_rejects_stdin_marker_mixed_with_input(
-    tmp_path: Path,
-    capsys,
-) -> None:
-    source = _write_source(tmp_path)
-
-    result = script.dispatch(
-        [],
-        [str(source), "demo", "count=2", "-", "hello"],
-        prog_name="toolang",
-        stdin=StringIO("stdin"),
-    )
-    output = capsys.readouterr()
-
-    assert result == 2
-    assert "stdin marker '-' must be the only primary input" in output.err
-
-
-@pytest.mark.parametrize(
-    ("marker", "message"),
-    (
-        ("-", "stdin marker '-' must be the only primary input"),
-        ("---", "call input marker must precede the primary input"),
-    ),
-)
-def test_script_rejects_named_input_after_stream_or_fenced_marker(
-    tmp_path: Path,
-    capsys,
-    marker: str,
-    message: str,
-) -> None:
-    source = _write_source(tmp_path)
-
-    result = script.dispatch(
-        [],
-        [str(source), "demo", marker, "count=2"],
-        prog_name="toolang",
-        stdin=StringIO("stdin\n---\n"),
-    )
-
-    assert result == 2
-    assert message in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("status", ("failed", "canceled"))
