@@ -70,7 +70,7 @@ agic target() -> Text:
             ]
             output = steps[1].output
             assert output is not None
-            result = parts_from_local(output)[0]
+            result = parts_from_local(output.local)[0]
             assert isinstance(result, ToolResultPart)
             assert result.error == "database is locked"
             assert result.tool_call_id == "execute"

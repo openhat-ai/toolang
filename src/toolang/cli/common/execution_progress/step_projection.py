@@ -352,7 +352,7 @@ def _flow_output_lines(event: StepEnd) -> list[str]:
     if event.output is None:
         return []
     try:
-        parts = parts_from_local(event.output)
+        parts = parts_from_local(event.output.local)
     except (TypeError, ValueError):
         return []
     lines: list[str] = []

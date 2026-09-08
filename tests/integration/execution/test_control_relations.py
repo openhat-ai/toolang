@@ -366,7 +366,7 @@ def test_retry_removes_emitted_controls_without_reusing_indexes(
             run_id=run.id,
             kind="cancel",
             timing="next_step",
-            input=CallInput({"_": Local.typed("Text", "stop", "_").value}),
+            input=CallInput({"_": Local.typed("Text", "stop").value}),
             request_id="cancel-request",
             created_at="2026-01-01T00:00:04Z",
         )

@@ -37,6 +37,7 @@ from .types import (
     ErrorRef,
     FieldRef,
     Local,
+    Output,
     Pointer,
     RunRef,
     RunStatus,
@@ -255,7 +256,7 @@ class RunHistory:
                 input_parts=self._input_parts(run, controls),
             )
 
-    def get_output(self, run: RunRef | str) -> Local | None:
+    def get_output(self, run: RunRef | str) -> Output | None:
         """Resolve typed output without loading execution details or model calls."""
 
         with self._store.read_transaction():
@@ -263,7 +264,7 @@ class RunHistory:
             if record is None:
                 raise KeyError(str(run))
             return (
-                self._store.resolve_local(record.output)
+                self._store.resolve_output(record.output)
                 if record.output is not None
                 else None
             )

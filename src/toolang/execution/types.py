@@ -880,10 +880,9 @@ _PART_PROTOCOL_TYPES = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class Local:
-    """One runtime value and its local-table binding semantics."""
+    """One runtime value and its flow dimension, independent of its name."""
 
     value: Value | TypedRef
-    name: str | None = None
     dim: Literal[0, 1] = 0
 
     @classmethod
@@ -891,20 +890,16 @@ class Local:
         cls,
         type_name: str,
         value: object,
-        name: str | None = None,
         dim: Literal[0, 1] = 0,
     ) -> Local:
         """Build a local by applying one explicit typed boundary."""
 
         return cls(
             value=value_for_type(type_name, value),
-            name=name,
             dim=dim,
         )
 
     def __post_init__(self) -> None:
-        if self.name is not None and not _LOCAL_NAME_RE.fullmatch(self.name):
-            raise ValueError(f"invalid local name: {self.name!r}")
         if self.dim not in {0, 1}:
             raise ValueError(f"unsupported local dimension: {self.dim!r}")
         if not isinstance(self.value, TypedRef):
@@ -955,9 +950,6 @@ class Local:
             {
                 "type": core_schema.typed_dict_field(core_schema.str_schema()),
                 "value": core_schema.typed_dict_field(core_schema.any_schema()),
-                "name": core_schema.typed_dict_field(
-                    core_schema.nullable_schema(core_schema.str_schema())
-                ),
                 "dim": core_schema.typed_dict_field(core_schema.literal_schema([0, 1])),
             }
         )
@@ -986,8 +978,8 @@ class Local:
 def local_from_protocol_data(payload: Mapping[str, object]) -> Local:
     """Parse one caller-facing local projection."""
 
-    if set(payload) != {"type", "value", "name", "dim"}:
-        raise ValueError("local requires type, value, name, and dim fields")
+    if set(payload) != {"type", "value", "dim"}:
+        raise ValueError("local requires type, value, and dim fields")
     raw_type = payload.get("type")
     if not isinstance(raw_type, str):
         raise ValueError("local type must be text")
@@ -995,13 +987,9 @@ def local_from_protocol_data(payload: Mapping[str, object]) -> Local:
     raw_dim = payload.get("dim")
     if isinstance(raw_dim, bool) or not isinstance(raw_dim, int):
         raise ValueError("local dim must be 0 or 1")
-    raw_name = payload.get("name")
-    if raw_name is not None and not isinstance(raw_name, str):
-        raise ValueError("local name must be text or null")
     return Local.typed(
         type_name,
         value_from_protocol_data(payload.get("value"), type_name),
-        name=raw_name,
         dim=cast(Literal[0, 1], raw_dim),
     )
 
@@ -1012,9 +1000,45 @@ def local_to_protocol_data(local: Local) -> dict[str, object]:
     return {
         "type": local.type,
         "value": _protocol_value_to_data(local.value),
-        "name": local.name,
         "dim": local.dim,
     }
+
+
+@dataclass(frozen=True, slots=True)
+class Output:
+    """One produced local and its optional destination in the local table."""
+
+    local: Local
+    binding: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.local, Local):
+            raise TypeError("output local must be a Local")
+        if self.binding is not None and (
+            not isinstance(self.binding, str)
+            or not _LOCAL_NAME_RE.fullmatch(self.binding)
+        ):
+            raise ValueError(f"invalid output binding: {self.binding!r}")
+
+
+def output_from_protocol_data(payload: Mapping[str, object]) -> Output:
+    """Decode an output while retaining its local value and binding."""
+
+    if set(payload) != {"local", "binding"}:
+        raise ValueError("output requires local and binding fields")
+    value = payload["local"]
+    if not isinstance(value, Mapping):
+        raise ValueError("output local must be a local object")
+    binding = payload["binding"]
+    if binding is not None and not isinstance(binding, str):
+        raise ValueError("output binding must be text or null")
+    return Output(local_from_protocol_data(cast(Mapping[str, object], value)), binding)
+
+
+def output_to_protocol_data(output: Output) -> dict[str, object]:
+    """Encode one output using the shared local projection."""
+
+    return {"local": local_to_protocol_data(output.local), "binding": output.binding}
 
 
 def value_from_protocol_data(data: object, type_name: str) -> Value | TypedRef:

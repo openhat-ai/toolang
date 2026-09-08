@@ -94,13 +94,41 @@ not the resulting input object.
 
 `CallInputHeader` (capture boundaries), `InputResolution` (parts and prompt
 provenance), `RunSpec` (prepared invocation), and `BoundRun` (accepted execution)
-have distinct responsibilities. The two existing `Local` classes likewise
-represent working Flow state and durable values respectively. Their broader
-consolidation is outside this input-shape change. A possible follow-up makes
-`Local` contain only `value` and `dim`, with names in the enclosing mapping.
-That follow-up must preserve the current distinction between an unbound output
-(`name=None`) and one bound to the primary local (`name="_"`); Run and Step
-outputs currently contain one Local, not a local mapping.
+have distinct responsibilities. Working Flow state and durable locals remain
+distinct responsibilities; the durable Local is reused in output values.
+
+### Local Values and Output Bindings
+
+The user extended the refactor to separate output binding from the local value:
+
+```python
+@dataclass(frozen=True, slots=True)
+class Local:
+    value: Value | TypedRef
+    dim: Literal[0, 1] = 0
+
+@dataclass(frozen=True, slots=True)
+class Output:
+    local: Local
+    binding: str | None = None
+```
+
+- Local maps use `{"_": Local(value=input_value, dim=0)}`. Names live in the
+  outer mapping; Local has no `name` field.
+- Run/Step outputs and end events use `Output(local=local, binding=name)`.
+  `binding=None` means unbound, `binding="_"` updates the current local, and
+  other names select named locals. The binding does not carry dimension.
+- Keep `dim` validation and value snapshots in Local. Array values may be one
+  item (`dim=0`) or a collection (`dim=1`), including unbound results.
+- Durable output is `{"local": {"value": ..., "dim": 0}, "binding": "_"}`.
+  HTTP and events reuse Local's typed projection inside the same envelope.
+- `output=None` means no output; `Output(Local(None), binding)` is a supplied
+  JSON null result. Preserve this distinction through serialization.
+- Actual-value references use `output/local/value`. The intermediate
+  `output/local` selects Local; `output/binding` selects its destination. Update
+  retry/rerun, child calls, history, inspection, and message reconstruction
+  together, with no legacy field aliases.
+- Include this output cutover in the same unreleased RunStore schema 43.
 
 ## Presence and Validation
 
@@ -193,8 +221,8 @@ existing empty snapshot (`null` versus `{}`).
   has no value tag, list wrapper, `name`, or per-entry `value` wrapper.
 - Call-entry inputs are individual typed values. Their array-ness belongs to
   the value type, not an input `dim` field. Remove input-only `Local` wrapping;
-  retain `Local` and its binding dimension for Flow/Step/Run outputs, where
-  binding and list-processing semantics still require them.
+  retain Local dimensions and represent Flow/Step/Run outputs with the
+  separate `Output(local=local, binding=name)` envelope.
 - Bind runtime locals from the map, preserving typed references and existing
   call-entry coercion. Reconstruct an empty working `_` local where execution
   requires one even if the call signature accepts no input; it is not an
@@ -207,7 +235,8 @@ existing empty snapshot (`null` versus `{}`).
   read the new maps directly. No runtime fallback reconstructs a primary/named
   object or scans a named-input list.
 - `StepRecord.input` remains a list of dependency references, and output
-  bindings remain `Local` records. Neither represents a complete call input.
+  bindings use `Output` envelopes containing Local values. Neither represents
+  a complete call input.
 
 ## Direct Cutover
 
@@ -240,10 +269,11 @@ records or clients:
   pass maps; preserve independently approved CLI and Chat syntax behavior.
 - `src/toolang/api/{schemas,conversion}.py` and `routers/runs.py`: endpoint
   models, duplicate-input-key detection, decoding, and diagnostics.
-- `src/toolang/execution/{records,store,history,thread_view,runnables}.py`,
+- `src/toolang/execution/{types,events,records,store,history,thread_view,runnables}.py`,
   `executor/`, and `tools/runtime.py`: map persistence, name-based references,
   call binding, control handling, and projections; also update `assembly.py`
-  and `control_messages.py` for primary-value references.
+  and `control_messages.py` for primary-value references. Update CLI output
+  projections and API/event schemas for the output envelope.
 - Existing language, execution, API, CLI, history, and serialization tests;
   focused rejection fixtures for old formats and databases.
 - `docs/{call-input,input-syntax,program,flow-syntax,executor,execution,
@@ -271,7 +301,9 @@ records or clients:
    legacy envelopes, and invalid null containers.
 6. Every input-bearing control round-trips as a name-keyed map. Scalar values
    have no redundant wrappers; typed values/references retain their codecs.
-   Output Local encoding and Step dependency-list semantics remain unchanged.
+   Output envelopes reuse the same Local value and preserve optional bindings,
+   dimensions, and absent versus null results. Step dependency-list semantics
+   remain unchanged.
 7. Exercise execution, child calls, map/scatter/gather arrays, execute, steer,
    cancel, retry/rerun, recall, history, and inspection using new field paths.
    Reordering map members cannot change a field reference's resolved value.

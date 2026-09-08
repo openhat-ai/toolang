@@ -49,6 +49,7 @@ from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import (
+    Output,
     ControlRef,
     ErrorMessage,
     FieldRef,
@@ -158,7 +159,7 @@ def _model_setup() -> AgentSetup:
 
 
 def test_flow_item_transform_normalizes_a_list_result_to_dim_zero() -> None:
-    pointer = FieldRef.from_path(RunRef.parse("run_child"), "output", "value")
+    pointer = FieldRef.from_path(RunRef.parse("run_child"), "output", "local", "value")
     evaluated = Local(
         ["one", "two"],
         "list",
@@ -297,8 +298,8 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     assert [control.index for control in detail.controls] == [0]
     assert detail.controls[0].payload == run_control.payload
     assert [step.kind for step in detail.steps] == ["value"]
-    assert detail.steps[0].output == RecordLocal.typed(
-        "Part[]", (TextPart(text="done"),), "_", 0
+    assert detail.steps[0].output == Output(
+        RecordLocal.typed("Part[]", (TextPart(text="done"),), 0), "_"
     )
     assert not hasattr(detail.steps[0], "message")
     asyncio.run(executor.stop())
@@ -977,11 +978,7 @@ def test_run_control_request_is_unique_across_runs(tmp_path: Path) -> None:
         kind="steer",
         timing="next_step",
         input=CallInput(
-            {
-                "_": RecordLocal.typed(
-                    "Part[]", Message.user("continue").parts, "_", 0
-                ).value
-            }
+            {"_": RecordLocal.typed("Part[]", Message.user("continue").parts, 0).value}
         ),
         request_id="steer-1",
         created_at="2026-01-01T00:00:01Z",
@@ -994,7 +991,7 @@ def test_run_control_request_is_unique_across_runs(tmp_path: Path) -> None:
             input=CallInput(
                 {
                     "_": RecordLocal.typed(
-                        "Part[]", Message.user("continue").parts, "_", 0
+                        "Part[]", Message.user("continue").parts, 0
                     ).value
                 }
             ),
@@ -1448,7 +1445,7 @@ def _accept_controls(db_path: str, run_id: str, offset: int, count: int) -> list
             input=CallInput(
                 {
                     "_": RecordLocal.typed(
-                        "Part[]", Message.user(str(index)).parts, "_", 0
+                        "Part[]", Message.user(str(index)).parts, 0
                     ).value
                 }
             ),
@@ -1495,9 +1492,7 @@ def _accept_remote_cancel(db_path: str, run_id: str) -> None:
         run_id=run_id,
         kind="cancel",
         timing="immediate",
-        input=CallInput(
-            {"_": RecordLocal.typed("Text", "remote cancel", "_", 0).value}
-        ),
+        input=CallInput({"_": RecordLocal.typed("Text", "remote cancel", 0).value}),
         request_id="remote-cancel",
         created_at="2026-01-01T00:00:01Z",
     )
@@ -1794,7 +1789,9 @@ def test_private_event_projector_persists_run_and_step_records(
             step=StepRef.parse("run_test.0"),
             kind="value",
             status="succeeded",
-            output=RecordLocal.typed("Part[]", (TextPart(text="done"),), "_", 0),
+            output=Output(
+                RecordLocal.typed("Part[]", (TextPart(text="done"),), 0), "_"
+            ),
             finished_at="2026-01-01T00:00:03Z",
         )
     )
@@ -1802,11 +1799,15 @@ def test_private_event_projector_persists_run_and_step_records(
         RunEnd(
             run="run_test",
             status="succeeded",
-            output=RecordLocal.typed(
-                "Part[]",
-                FieldRef.from_path(StepRef.parse("run_test.0"), "output", "value"),
+            output=Output(
+                RecordLocal.typed(
+                    "Part[]",
+                    FieldRef.from_path(
+                        StepRef.parse("run_test.0"), "output", "local", "value"
+                    ),
+                    0,
+                ),
                 "_",
-                0,
             ),
             finished_at="2026-01-01T00:00:04Z",
         )
@@ -1854,7 +1855,9 @@ def test_step_queries_use_exact_canonical_run_ids(tmp_path: Path) -> None:
                 step=StepRef.parse(f"{run_id}.0"),
                 kind="value",
                 status="succeeded",
-                output=RecordLocal.typed("Part[]", (TextPart(text=text),), "_", 0),
+                output=Output(
+                    RecordLocal.typed("Part[]", (TextPart(text=text),), 0), "_"
+                ),
                 finished_at="2026-01-01T00:00:03Z",
             )
         )

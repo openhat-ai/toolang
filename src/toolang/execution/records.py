@@ -45,6 +45,7 @@ from .types import (
     ErrorRef,
     FieldRef,
     Local,
+    Output,
     LoopStepNoted,
     ModelAccounting,
     ModelCost,
@@ -98,7 +99,7 @@ class RunRecord:
     thread: ThreadRef
     control: ControlRef
     state: ControlRef
-    output: Local | None
+    output: Output | None
     occur: Occurrence | None = None
     status: RunStatus = "pending"
     error: ErrorMessage | ErrorRef | None = None
@@ -121,8 +122,8 @@ class RunRecord:
             raise TypeError("run state requires a ControlRef")
         if not isinstance(self.state.target, RunRef):
             raise TypeError("run state must be Run-scoped")
-        if self.output is not None and not isinstance(self.output, Local):
-            raise TypeError("run output requires a Local or None")
+        if self.output is not None and not isinstance(self.output, Output):
+            raise TypeError("run output requires an Output or None")
         _validate_record_error(self.error, label="run")
         validate_occurrence(self.occur)
 
@@ -476,7 +477,7 @@ class StepRecord:
     input: tuple[FieldRef, ...]
     given: StoredStepGiven
     state: ControlRef
-    output: Local | None
+    output: Output | None
     preceded_by: tuple[ControlRef, ...] = ()
     aborted_by: ControlRef | None = None
     occur: Occurrence | None = None
@@ -497,8 +498,8 @@ class StepRecord:
             self.state.target, RunRef
         ):
             raise TypeError("step state requires a Run-scoped ControlRef")
-        if self.output is not None and not isinstance(self.output, Local):
-            raise TypeError("step output requires a Local or None")
+        if self.output is not None and not isinstance(self.output, Output):
+            raise TypeError("step output requires an Output or None")
         _validate_record_error(self.error, label="step")
         validate_occurrence(self.occur)
         if isinstance(self.given, StoredModelStepGiven):
@@ -589,19 +590,14 @@ _PART_STORAGE_TYPES = {
 def local_from_data(payload: Mapping[str, object]) -> Local:
     """Parse one local from its private durable representation."""
 
-    if set(payload) != {"value", "name", "dim"}:
-        raise ValueError("stored local requires value, name, and dim fields")
+    if set(payload) != {"value", "dim"}:
+        raise ValueError("stored local requires value and dim fields")
     raw_dim = payload.get("dim")
     if isinstance(raw_dim, bool) or not isinstance(raw_dim, int):
         raise ValueError("local dim must be 0 or 1")
     dim = cast(Literal[0, 1], raw_dim)
-    raw_name = payload.get("name")
-    if raw_name is not None and not isinstance(raw_name, str):
-        raise ValueError("local name must be text or null")
-    name = raw_name
     return Local(
         value=local_value_from_data(payload.get("value")),
-        name=name,
         dim=dim,
     )
 
@@ -611,9 +607,28 @@ def local_to_data(local: Local) -> dict[str, object]:
 
     return {
         "value": local_value_to_data(local.value),
-        "name": local.name,
         "dim": local.dim,
     }
+
+
+def output_from_data(payload: Mapping[str, object]) -> Output:
+    """Decode a stored output with one local value and an optional binding."""
+
+    if set(payload) != {"local", "binding"}:
+        raise ValueError("stored output requires local and binding fields")
+    value = payload["local"]
+    if not isinstance(value, Mapping):
+        raise ValueError("stored output local must be a local object")
+    binding = payload["binding"]
+    if binding is not None and not isinstance(binding, str):
+        raise ValueError("output binding must be text or null")
+    return Output(local_from_data(cast(Mapping[str, object], value)), binding)
+
+
+def output_to_data(output: Output) -> dict[str, object]:
+    """Encode the local value separately from its output binding."""
+
+    return {"local": local_to_data(output.local), "binding": output.binding}
 
 
 def local_value_from_data(data: object) -> Value | TypedRef:

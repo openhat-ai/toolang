@@ -27,6 +27,7 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.events import PartBegin, StepBegin, StepEnd
 from toolang.execution.records import RecallControlPayload, StoredModelStepGiven
 from toolang.execution.types import (
+    Output,
     FieldRef,
     Local,
     RunRef,
@@ -110,11 +111,11 @@ def _recalls(harness, run):
 
 def _results(harness, run):
     return {
-        s.given.call.tool_call_id: s.output.value
+        s.given.call.tool_call_id: s.output.local.value
         for s in harness.store.list_steps(run_id=run.id)
         if isinstance(s.given, ToolStepGiven)
         and s.output is not None
-        and isinstance(s.output.value, ToolResultPart)
+        and isinstance(s.output.local.value, ToolResultPart)
     }
 
 
@@ -412,8 +413,8 @@ def test_pick_uses_the_reloaded_resource_selection(tmp_path: Path):
             if (
                 isinstance(event, StepEnd)
                 and event.output is not None
-                and isinstance(event.output.value, ToolResultPart)
-                and event.output.value.tool_call_id == "before"
+                and isinstance(event.output.local.value, ToolResultPart)
+                and event.output.local.value.tool_call_id == "before"
             ):
                 harness.setup.layout.program.write_text(
                     SOURCE.replace(
@@ -481,11 +482,11 @@ def test_revision_reversal_is_not_reused_across_newer_content(
             if (
                 isinstance(event, StepEnd)
                 and event.output is not None
-                and isinstance(event.output.value, ToolResultPart)
+                and isinstance(event.output.local.value, ToolResultPart)
             ):
-                if event.output.value.tool_call_id == "a":
+                if event.output.local.value.tool_call_id == "a":
                     _write_guidance(skill, b)
-                elif event.output.value.tool_call_id == "b":
+                elif event.output.local.value.tool_call_id == "b":
                     _write_guidance(skill, a)
 
     tracer = Tracer()
@@ -623,8 +624,8 @@ def test_compaction_excludes_old_guidance_even_when_far_mentions_it(
             if (
                 isinstance(event, StepEnd)
                 and event.output is not None
-                and isinstance(event.output.value, ToolResultPart)
-                and event.output.value.tool_call_id == "before"
+                and isinstance(event.output.local.value, ToolResultPart)
+                and event.output.local.value.tool_call_id == "before"
             ):
                 assert horizon is not None
                 harness.store.accept_compact_control(
@@ -657,13 +658,16 @@ def test_compaction_excludes_old_guidance_even_when_far_mentions_it(
             project_run_end(
                 harness.store,
                 run_id=summary.id,
-                output=Local(
-                    {
-                        "thread": thread,
-                        "begin": None,
-                        "end": retained.id,
-                        "summary": f"Earlier guidance: {GUIDANCE}",
-                    }
+                output=Output(
+                    Local(
+                        {
+                            "thread": thread,
+                            "begin": None,
+                            "end": retained.id,
+                            "summary": f"Earlier guidance: {GUIDANCE}",
+                        }
+                    ),
+                    None,
                 ),
             )
             horizon = FieldRef.from_path(RunRef(summary.id), "output")

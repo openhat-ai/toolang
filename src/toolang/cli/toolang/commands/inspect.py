@@ -287,7 +287,7 @@ def _model_step_result_parts(
     output = subject.selection.record.output
     if output is None:
         return None
-    value = local_to_protocol_data(output)["value"]
+    value = local_to_protocol_data(output.local)["value"]
     if not isinstance(value, list):  # pragma: no cover - model output is Part[]
         raise TypeError("model Step output is not a Part array")
     if not all(isinstance(part, Mapping) for part in value):  # pragma: no cover
@@ -335,7 +335,7 @@ def _render_tool_call(
 def _tool_step_result(step: StepRecord) -> Mapping[str, object] | None:
     if step.output is None:
         return None
-    value = local_to_protocol_data(step.output)["value"]
+    value = local_to_protocol_data(step.output.local)["value"]
     candidates = value if isinstance(value, list) else [value]
     for item in candidates:
         if not isinstance(item, Mapping):

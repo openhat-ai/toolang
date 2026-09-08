@@ -45,6 +45,7 @@ from toolang.execution.records import (
 from toolang.execution.schemas import RunDetail
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
+    Output,
     AgentResources,
     AgentToolResource,
     ControlRef,
@@ -581,7 +582,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert record.status == "succeeded"
         steps = store.list_steps(run_id=record.id)
         assert [step.kind for step in steps] == ["model"]
-        assert steps[0].output == RecordLocal.typed("Part[]", (audio,), "_")
+        assert steps[0].output == Output(RecordLocal.typed("Part[]", (audio,)), "_")
         assert store.run_output(run_id=record.id) == (audio,)
         assert len(adapter.requests) == 1
         request_text = message_text(adapter.requests[0].messages[-1].parts)
@@ -604,13 +605,14 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert isinstance(run_payload, RunControlPayload)
         assert run_payload.input == CallInput(
             {
-                "_": RecordLocal.typed("Part[]", (TextPart("hello"), image), "_").value,
-                "focus": RecordLocal.typed("Text", "events", "focus").value,
+                "_": RecordLocal.typed("Part[]", (TextPart("hello"), image)).value,
+                "focus": RecordLocal.typed("Text", "events").value,
             }
         )
-        assert detail.output == RecordLocal.typed(
-            "Part[]",
-            FieldRef.from_path(steps[0].ref, "output", "value"),
+        assert detail.output == Output(
+            RecordLocal.typed(
+                "Part[]", FieldRef.from_path(steps[0].ref, "output", "local", "value")
+            ),
             "_",
         )
         assert detail.steps[0].given == begin.given

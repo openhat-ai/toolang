@@ -31,6 +31,7 @@ from toolang.execution.records import RunControlPayload, SteerControlPayload
 from toolang.execution.schemas import ControlInfo, RunRequest, RunnableRequest
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
+    Output,
     AllowOverride,
     ModelOverride,
     RunOverride,
@@ -59,13 +60,15 @@ def test_latest_chat_output_keeps_one_snapshot_during_retry(
             origin="chat",
             input=Message.user("input"),
         )
-        project_run_end(writer, run_id="run_a", output=Local("original answer"))
+        project_run_end(
+            writer, run_id="run_a", output=Output(Local("original answer"), None)
+        )
         control = writer.get_run_control(run_id="run_a", index=0)
         assert control is not None and isinstance(control.payload, RunControlPayload)
         payload = control.payload
         get_output = session.history.get_output
 
-        def retry_before_output(run: RunRef | str) -> Local | None:
+        def retry_before_output(run: RunRef | str) -> Output | None:
             writer.accept_retry(
                 run_id="run_a",
                 anchor=None,

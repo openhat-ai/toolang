@@ -189,9 +189,9 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
             assert control.payload.input == CallInput(
                 {
                     "_": Local.typed(
-                        "Part[]", Message.user("Review this.").parts, "_"
+                        "Part[]", Message.user("Review this.").parts
                     ).value,
-                    "focus": Local.typed("Text", "security", "focus").value,
+                    "focus": Local.typed("Text", "security").value,
                 }
             )
             created = harness.store.get_thread_control(

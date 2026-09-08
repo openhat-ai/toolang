@@ -40,7 +40,7 @@ def test_cancel_description_is_an_attribute(reason: str | None) -> None:
         str(ControlRef.for_run("run_ab12", 1)),
         "cancel",
         CancelControlPayload(
-            CallInput({"_": Local.typed("Text", reason, "_").value})
+            CallInput({"_": Local.typed("Text", reason).value})
             if reason is not None
             else CallInput({})
         ),

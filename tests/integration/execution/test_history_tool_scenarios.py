@@ -28,6 +28,7 @@ from toolang.execution.records import RunControlPayload
 from toolang.execution.schemas import record_to_data
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
+    Output,
     ControlRef,
     FieldRef,
     Local,
@@ -66,7 +67,7 @@ def step(store, run="run_a", index=0, *, output=None, kind="value", status="succ
         kind=kind,
         status=status,
         input=(),
-        output=output if output is not None else Local("value"),
+        output=output if output is not None else Output(Local("value"), None),
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
@@ -260,13 +261,13 @@ def test_cursors_reject_other_tools_and_agents(store, tmp_path):
 
 def test_steps_resolve_locals_and_keep_dependencies_and_model_refs(store, monkeypatch):
     start(store)
-    source = step(store, output=Local("exact input"))
+    source = step(store, output=Output(Local("exact input"), None))
     steer = store.accept_run_control(
         run_id="run_a",
         kind="steer",
         timing="next_step",
         input=CallInput(
-            {"_": Local.typed("Part[]", (TextPart("exact input"),), "_", 0).value}
+            {"_": Local.typed("Part[]", (TextPart("exact input"),), 0).value}
         ),
         request_id=None,
         created_at="2026-01-01T00:00:03Z",
@@ -283,8 +284,11 @@ def test_steps_resolve_locals_and_keep_dependencies_and_model_refs(store, monkey
         ref=model.ref,
         kind="model",
         status="canceled",
-        output=Local.typed(
-            "Text", FieldRef.from_path(source.ref, "output", "value"), None, 0
+        output=Output(
+            Local.typed(
+                "Text", FieldRef.from_path(source.ref, "output", "local", "value"), 0
+            ),
+            None,
         ),
         noted=None,
         error=None,
@@ -302,7 +306,7 @@ def test_steps_resolve_locals_and_keep_dependencies_and_model_refs(store, monkey
     assert [r["id"] for r in page["entries"]] == [model.id]
     assert page["entries"][0]["given"] == record_to_data(model)["given"]
     assert page["entries"][0]["status"] == "canceled"
-    assert page["entries"][0]["output"]["value"] == "exact input"
+    assert page["entries"][0]["output"]["local"]["value"] == "exact input"
     by_id = {c["id"]: c for c in page["dependencies"]}
     assert by_id[steer.id]["payload"]["input"] == {
         "_": {"?": "Part[]!", "!": [{"?": "TextPart", "text": "exact input"}]}
@@ -312,8 +316,8 @@ def test_steps_resolve_locals_and_keep_dependencies_and_model_refs(store, monkey
         store, "read_steps", read(store, "read_steps", run="run_a", limit=1)
     )
     assert unused.id in [r["id"] for p in all_pages for r in p["entries"]]
-    assert source.output.value == "exact input"
-    assert isinstance(store.get_step(ref=model.ref).output.value, TypedRef)
+    assert source.output.local.value == "exact input"
+    assert isinstance(store.get_step(ref=model.ref).output.local.value, TypedRef)
 
 
 def test_execute_input_is_resolved_in_entries_and_dependencies(store):
@@ -343,9 +347,8 @@ def test_execute_input_is_resolved_in_entries_and_dependencies(store):
                 "_": Local.typed(
                     "Json",
                     FieldRef.from_path(
-                        source.ref, "output", "value", 0, "input", "input", "_"
+                        source.ref, "output", "local", "value", 0, "input", "input", "_"
                     ),
-                    "_",
                     0,
                 ).value
             }
@@ -356,11 +359,14 @@ def test_execute_input_is_resolved_in_entries_and_dependencies(store):
         ref=trigger.ref,
         kind="tool",
         status="succeeded",
-        output=Local.typed(
-            "ToolResultPart",
-            ToolResultPart(
-                "call", "_toolang__execute", "_toolang", {"controls": [control.id]}
+        output=Output(
+            Local.typed(
+                "ToolResultPart",
+                ToolResultPart(
+                    "call", "_toolang__execute", "_toolang", {"controls": [control.id]}
+                ),
             ),
+            None,
         ),
         noted=None,
         error=None,
@@ -406,8 +412,10 @@ def test_tool_exchange_may_span_pages_without_losing_any_part(store):
         "run_a.1",
         "run_a@0",
     ]
-    assert first["entries"][0]["output"]["value"][0]["type"] == "tool_call"
-    assert pages[1]["entries"][0]["output"]["value"][0]["type"] == "tool_result"
+    assert first["entries"][0]["output"]["local"]["value"][0]["type"] == "tool_call"
+    assert (
+        pages[1]["entries"][0]["output"]["local"]["value"][0]["type"] == "tool_result"
+    )
     assert first["dependencies"] == pages[1]["dependencies"]
 
 
@@ -494,13 +502,16 @@ def test_output_preserves_status_and_partial_value_without_model_rebuild(
     store, monkeypatch, status
 ):
     start(store)
-    source = step(store, output=Local("partial"))
+    source = step(store, output=Output(Local("partial"), None))
     project_run_end(
         store,
         run_id="run_a",
         status=status,
-        output=Local.typed(
-            "Text", FieldRef.from_path(source.ref, "output", "value"), None, 0
+        output=Output(
+            Local.typed(
+                "Text", FieldRef.from_path(source.ref, "output", "local", "value"), 0
+            ),
+            None,
         ),
     )
 
@@ -512,7 +523,10 @@ def test_output_preserves_status_and_partial_value_without_model_rebuild(
     assert read(store, "read_output", run="run_a") == {
         "run": "run_a",
         "status": status,
-        "output": {"type": "Text", "value": "partial", "name": None, "dim": 0},
+        "output": {
+            "local": {"type": "Text", "value": "partial", "dim": 0},
+            "binding": None,
+        },
     }
 
 
@@ -522,11 +536,15 @@ def test_absent_output_is_null_and_unresolved_output_fails(store):
     project_run_end(
         store,
         run_id="run_a",
-        output=Local.typed(
-            "Text",
-            FieldRef.from_path(StepRef.parse("run_a.99"), "output", "value"),
+        output=Output(
+            Local.typed(
+                "Text",
+                FieldRef.from_path(
+                    StepRef.parse("run_a.99"), "output", "local", "value"
+                ),
+                0,
+            ),
             None,
-            0,
         ),
     )
     with pytest.raises((KeyError, ValueError)):
@@ -567,7 +585,7 @@ def test_real_history_calls_are_ordinary_steps_and_replay_without_reading_again(
             assert run.status == "succeeded", run.error
             steps = harness.store.list_steps(run_id=run.id)
             assert steps[1].output is not None
-            result = steps[1].output.value
+            result = steps[1].output.local.value
             assert isinstance(result, ToolResultPart)
             if missing:
                 assert result.error is not None
@@ -617,11 +635,16 @@ def test_thread_page_decodes_only_selected_metadata(store, monkeypatch):
 
 def test_value_resolution_uses_the_same_snapshot_as_page_selection(store, monkeypatch):
     start(store)
-    source = step(store, output=Local("original"))
+    source = step(store, output=Output(Local("original"), None))
     step(
         store,
         index=1,
-        output=Local.typed("Text", FieldRef.from_path(source.ref, "output", "value")),
+        output=Output(
+            Local.typed(
+                "Text", FieldRef.from_path(source.ref, "output", "local", "value")
+            ),
+            None,
+        ),
     )
     project_run_end(store, run_id="run_a")
     expected = read(store, "read_steps", run="run_a")
@@ -712,9 +735,12 @@ def test_history_read_can_be_interrupted_without_late_result_delivery(
                 ]
                 assert len(selected) == 1
                 result = selected[0].output
-                assert result is not None and isinstance(result.value, ToolResultPart)
+                assert result is not None and isinstance(
+                    result.local.value, ToolResultPart
+                )
                 assert (
-                    result.value.error is not None and "canceled" in result.value.error
+                    result.local.value.error is not None
+                    and "canceled" in result.local.value.error
                 )
                 assert [
                     c.kind for c in harness.store.list_run_controls(run_id=run.id)

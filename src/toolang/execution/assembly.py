@@ -95,17 +95,17 @@ def tail_delta(
         if (reply := workspace_reply_from_step(step, resolve)) is not None
     }
     result_ids = {reply.tool_call_id for reply in replies.values()} | {
-        step.output.value.tool_call_id
+        step.output.local.value.tool_call_id
         for step in tail
         if step.output is not None
-        and isinstance(step.output.value, ToolResultPart)
+        and isinstance(step.output.local.value, ToolResultPart)
         and isinstance(step.given, ToolStepGiven)
         and step.given.trigger == "model"
     }
     calls: set[str] = set()
     for step in tail:
         if step.output is not None and step.kind == "model":
-            parts = parts_from_local(step.output)
+            parts = parts_from_local(step.output.local)
             segments = []
             for index, part in enumerate(parts):
                 if isinstance(part, ToolCallPart):
@@ -114,7 +114,8 @@ def tail_delta(
                     calls.add(part.tool_call_id)
                 segments.append(
                     TypedRef(
-                        FieldRef.from_path(step.ref, "output", "value", index), "Part"
+                        FieldRef.from_path(step.ref, "output", "local", "value", index),
+                        "Part",
                     )
                 )
             if segments:
@@ -125,17 +126,19 @@ def tail_delta(
                 messages.append(MessageTemplate("tool", (reply,)))
         elif (
             step.output is not None
-            and isinstance(step.output.value, ToolResultPart)
+            and isinstance(step.output.local.value, ToolResultPart)
             and isinstance(step.given, ToolStepGiven)
             and step.given.trigger == "model"
         ):
-            if step.output.value.tool_call_id in calls:
+            if step.output.local.value.tool_call_id in calls:
                 messages.append(
                     MessageTemplate(
                         "tool",
                         (
                             TypedRef(
-                                FieldRef.from_path(step.ref, "output", "value"),
+                                FieldRef.from_path(
+                                    step.ref, "output", "local", "value"
+                                ),
                                 "ToolResultPart",
                             ),
                         ),
@@ -157,8 +160,8 @@ def tail_delta(
         messages.append(
             _local_message(
                 "assistant",
-                FieldRef.from_path(RunRef(run.id), "output", "value"),
-                run.output,
+                FieldRef.from_path(RunRef(run.id), "output", "local", "value"),
+                run.output.local,
                 resolve,
             )
         )
@@ -270,7 +273,9 @@ class MessageHistory:
             summary = ""
             begin = 0
             if horizon is not None:
-                output = self._resolve(TypedRef(horizon.select("value"), "Json"))
+                output = self._resolve(
+                    TypedRef(horizon.select("local", "value"), "Json")
+                )
                 if not isinstance(output, Mapping):
                     raise ValueError("compact output must be an object")
                 value = cast(Mapping[str, object], output)

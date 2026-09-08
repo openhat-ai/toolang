@@ -118,7 +118,7 @@ toolang alice inspect threads
 toolang alice inspect runs
 toolang alice inspect term_3nprht9x runs
 toolang alice inspect run_ppkp9e94 steps
-toolang alice inspect run_ppkp9e94.0/output/value
+toolang alice inspect run_ppkp9e94.0/output/local/value
 toolang alice inspect run_ppkp9e94.0 call
 toolang alice retry run_ppkp9e94 --limit tokens=200000 --limit time=900
 toolang alice rerun run_ppkp9e94 --model 'openai/gpt-5 effort=high'
@@ -360,7 +360,7 @@ run_ab12                          Run record
 run_ab12.0                        Step record
 term_ab12@0                       Thread Control record
 run_ab12@1                        Run Control record
-run_ab12.0/output/value/0         nested field
+run_ab12.0/output/local/value/0         nested field
 run_ab12@1/payload/input/_ nested Control field
 ```
 
@@ -1331,6 +1331,9 @@ This is a breaking format change: sibling `args`, source `named` lists, and
 primary parts arrays as the complete container are no longer accepted. A valid
 declared argument may still be named `primary`, `named`, or `args`. Input-bearing
 control responses likewise use flat maps with self-describing value encodings.
+Run/Step outputs use `{"local": {"type": "Text", "value": "result", "dim": 0},
+"binding": "_"}`. The binding is a name or null; dimension belongs to Local.
+See [run-step-records.md](./run-step-records.md) for output reference paths.
 
 The server reads setup and state once and validates the concrete runnable,
 model parameters, policy, input, prompts, named sources, and file includes

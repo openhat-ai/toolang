@@ -52,7 +52,7 @@ def _accept_remote_steer(db_path: str, run_id: str) -> None:
             input=CallInput(
                 {
                     "_": Local.typed(
-                        "Part[]", Message.user("Use the remote guidance.").parts, "_"
+                        "Part[]", Message.user("Use the remote guidance.").parts
                     ).value
                 }
             ),
@@ -93,7 +93,7 @@ def _accept_duplicate_request(
             kind="steer",
             timing="next_step",
             input=CallInput(
-                {"_": Local.typed("Part[]", Message.user(run_id).parts, "_").value}
+                {"_": Local.typed("Part[]", Message.user(run_id).parts).value}
             ),
             request_id="shared-control-request",
             created_at="2026-01-01T00:00:01Z",
@@ -451,9 +451,7 @@ def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
                 input=CallInput(
                     {
                         "_": Local.typed(
-                            "Part[]",
-                            Message.user("Use the remote guidance.").parts,
-                            "_",
+                            "Part[]", Message.user("Use the remote guidance.").parts
                         ).value
                     }
                 )
@@ -639,7 +637,7 @@ def test_pending_control_has_one_cross_process_cancellation_winner(
             kind="steer",
             timing="next_step",
             input=CallInput(
-                {"_": Local.typed("Part[]", Message.user("updated").parts, "_").value}
+                {"_": Local.typed("Part[]", Message.user("updated").parts).value}
             ),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
@@ -694,7 +692,7 @@ def test_control_claim_and_cross_process_cancellation_are_linearizable(
             kind="steer",
             timing="next_step",
             input=CallInput(
-                {"_": Local.typed("Part[]", Message.user("updated").parts, "_").value}
+                {"_": Local.typed("Part[]", Message.user("updated").parts).value}
             ),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
@@ -747,7 +745,7 @@ def test_only_one_process_can_claim_a_pending_control(tmp_path: Path) -> None:
             kind="steer",
             timing="next_step",
             input=CallInput(
-                {"_": Local.typed("Part[]", Message.user("updated").parts, "_").value}
+                {"_": Local.typed("Part[]", Message.user("updated").parts).value}
             ),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",

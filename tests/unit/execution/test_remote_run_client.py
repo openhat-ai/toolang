@@ -143,13 +143,13 @@ def _detail(run_id: str = "run_remote") -> RunDetail:
 def _control(action: str, run_id: str = "run_remote") -> ControlInfo:
     if action == "cancel":
         payload = CancelControlPayload(
-            CallInput({"_": Local.typed("Text", "finished", "_", 0).value})
+            CallInput({"_": Local.typed("Text", "finished", 0).value})
         )
         kind = "cancel"
         timing = "immediate"
     else:
         payload = SteerControlPayload(
-            CallInput({"_": Local.typed("Part[]", (), "_", 0).value})
+            CallInput({"_": Local.typed("Part[]", (), 0).value})
         )
         kind = "steer"
         timing = "next_step"

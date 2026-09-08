@@ -24,7 +24,7 @@ from .types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
-    Local,
+    Output,
     Occurrence,
     RunStatus,
     StepGiven,
@@ -32,8 +32,8 @@ from .types import (
     StepNoted,
     StepRef,
     StepStatus,
-    local_from_protocol_data,
-    local_to_protocol_data,
+    output_from_protocol_data,
+    output_to_protocol_data,
     validate_occurrence,
     validate_step_given,
     validate_step_noted,
@@ -112,7 +112,7 @@ class StepEnd:
     step: StepRef
     kind: StepKind
     status: StepStatus
-    output: Local | None = None
+    output: Output | None = None
     noted: StepNoted = None
     error: ErrorMessage | ErrorRef | None = None
     aborted_by: ControlRef | None = None
@@ -134,7 +134,7 @@ class RunEnd:
     run: str
     status: RunStatus
     control: ControlRef | None = None
-    output: Local | None = None
+    output: Output | None = None
     error: ErrorMessage | ErrorRef | None = None
     finished_at: str = ""
     type: Literal["run_end"] = field(default="run_end", init=False)
@@ -241,7 +241,7 @@ def run_event_from_data(data: object) -> RunEvent:
     if payload is not None and payload.get("type") in {"step_end", "run_end"}:
         output = payload.get("output")
         if isinstance(output, dict):
-            payload["output"] = local_from_protocol_data(output)
+            payload["output"] = output_from_protocol_data(output)
     if payload is not None and payload.get("type") == "step_end":
         kind = _step_kind(payload.get("kind"))
         if kind is not None:
@@ -271,7 +271,7 @@ def _with_canonical_fields(
     if isinstance(event, StepEnd):
         data["noted"] = step_noted_to_data(event.kind, event.noted)
     if isinstance(event, StepEnd | RunEnd) and event.output is not None:
-        data["output"] = local_to_protocol_data(event.output)
+        data["output"] = output_to_protocol_data(event.output)
     return data
 
 

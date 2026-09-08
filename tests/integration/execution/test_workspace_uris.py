@@ -45,7 +45,7 @@ def _results(harness, run):
             if isinstance(part, ToolResultPart)
         },
         **{
-            s.output.value.tool_call_id: s.output.value
+            s.output.local.value.tool_call_id: s.output.local.value
             for s in _tool_steps(harness, run)
         },
     }

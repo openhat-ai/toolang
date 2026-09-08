@@ -55,6 +55,7 @@ from ..types import (
     ErrorRef,
     FieldRef,
     Local as RecordLocal,
+    Output,
     Occurrence,
     StepKind,
     StepNoted,
@@ -267,7 +268,7 @@ async def execute_step(
             )
         )
         raise _StepFailed(path, exc) from exc
-    output = record_local(result, name=statement.binding)
+    output = output_from_local(result, binding=statement.binding)
     await emit(
         StepEnd(
             step=path,
@@ -287,7 +288,7 @@ async def execute_step(
     return (
         replace(
             result,
-            ref=result.ref or FieldRef.from_path(path, "output", "value"),
+            ref=result.ref or FieldRef.from_path(path, "output", "local", "value"),
         )
         if output is not None
         else result
@@ -520,7 +521,7 @@ def initial_locals(
             "item",
             pointer,
             types[name],
-            RecordLocal.typed(types[name], pointer, name),
+            RecordLocal.typed(types[name], pointer),
         )
     return locals
 
@@ -690,23 +691,25 @@ def _unique_step_inputs(items: Sequence[FieldRef]) -> tuple[FieldRef, ...]:
     return tuple(result)
 
 
-def record_local(local: Local, *, name: str | None) -> RecordLocal | None:
-    """Convert one runtime local into its durable output representation."""
+def output_from_local(local: Local, *, binding: str | None) -> Output | None:
+    """Attach a destination to the durable value of one runtime local."""
 
     if local.shape == "none":
         return None
     if local.record is not None:
-        return replace(local.record, name=name)
+        return Output(local.record, binding)
     item_type = local.type_name or "Json"
-    return RecordLocal.typed(
-        type_name=f"{item_type}[]" if local.shape == "list" else item_type,
-        value=(
-            tuple(local.value)
-            if local.shape == "list" and isinstance(local.value, list)
-            else local.value
+    return Output(
+        RecordLocal.typed(
+            type_name=f"{item_type}[]" if local.shape == "list" else item_type,
+            value=(
+                tuple(local.value)
+                if local.shape == "list" and isinstance(local.value, list)
+                else local.value
+            ),
+            dim=1 if local.shape == "list" else 0,
         ),
-        name=name,
-        dim=1 if local.shape == "list" else 0,
+        binding,
     )
 
 

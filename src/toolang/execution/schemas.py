@@ -50,6 +50,7 @@ from .types import (
     ErrorRef,
     FieldRef,
     Local,
+    Output,
     ModelStepGiven,
     Occurrence,
     RunStatus,
@@ -134,7 +135,7 @@ class CompactionOutput:
     """The selected compact Run's typed output and its stable field reference."""
 
     ref: FieldRef
-    output: Local
+    output: Output
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,8 +312,6 @@ def _select_local_child(
         return local.type, str, "str", "Text"
     if token == "value":
         return local.value, Any, "Value | TypedRef", local.type
-    if token == "name":
-        return local.name, str | None, "str | None", "Text"
     if token == "dim":
         return local.dim, Literal[0, 1], "Literal[0, 1]", "Number"
     raise ValueError(f"field does not exist ({token!r}): {source}")
@@ -689,7 +688,7 @@ class RunInfo:
             None,
         )
         summary = (
-            message_summary(_local_parts(last_message_step.output))
+            message_summary(_output_parts(last_message_step.output))
             if last_message_step is not None
             else input_text
         )
@@ -762,7 +761,7 @@ class StepData:
     input: list[StepInputData]
     given: StepGiven
     state: RunControlRefData
-    output: Local | None
+    output: Output | None
     preceded_by: tuple[ControlRef, ...] = ()
     aborted_by: ControlRef | None = None
     occurrence: Occurrence | None = None
@@ -815,7 +814,7 @@ class RunDetail(RunInfo):
     """One complete run detail schema."""
 
     control: RunControlRefData
-    output: Local | None
+    output: Output | None
     controls: list[ControlInfo]
     steps: list[StepData] = field(default_factory=list)
 
@@ -880,7 +879,7 @@ def _thread_channel(thread_id: str, origin: str) -> str:
     return "terminal"
 
 
-def _local_parts(local: Local | None) -> tuple[Part, ...]:
-    if local is None:
+def _output_parts(output: Output | None) -> tuple[Part, ...]:
+    if output is None:
         return ()
-    return parts_from_local(local)
+    return parts_from_local(output.local)

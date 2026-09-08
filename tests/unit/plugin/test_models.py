@@ -45,7 +45,7 @@ from toolang.execution.executor.runs.agic import _AgicState, _execute
 from toolang.execution.executor._messages import _MessageBuffer
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.execution.records import ControlRecord, SteerControlPayload
-from toolang.execution.types import ControlRef, Local
+from toolang.execution.types import ControlRef, Local, Output
 from toolang.plugin.models.discovery import missing_provider_env_vars
 from toolang.plugin.models.resolution import (
     apply_model_parameters,
@@ -2819,9 +2819,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
             kind="steer",
             timing="next_call",
             payload=SteerControlPayload(
-                CallInput(
-                    {"_": Local.typed("Part[]", tuple(steer.parts), "_", 0).value}
-                )
+                CallInput({"_": Local.typed("Part[]", tuple(steer.parts), 0).value})
             ),
         )
     ]
@@ -2862,7 +2860,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
         ),
     )
     step_end = next(event for event in events if isinstance(event, StepEnd))
-    assert step_end.output == Local.typed("Part[]", (audio,), "_")
+    assert step_end.output == Output(Local.typed("Part[]", (audio,)), "_")
     assert [event.type for event in events] == [
         "step_begin",
         "part_begin",
@@ -2892,7 +2890,7 @@ def test_agic_commits_steer_messages_after_step_begin() -> None:
         kind="steer",
         timing="next_call",
         payload=SteerControlPayload(
-            CallInput({"_": Local.typed("Part[]", tuple(steer.parts), "_", 0).value})
+            CallInput({"_": Local.typed("Part[]", tuple(steer.parts), 0).value})
         ),
     )
     original_messages = list(prepared.messages)

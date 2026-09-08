@@ -26,6 +26,7 @@ from toolang.common.time import utc_now
 from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
+    Output,
     AgentResources,
     ControlRef,
     ControlTiming,
@@ -190,7 +191,7 @@ def project_run_start(
         if runnable_name is not None
         else f"agent${runnable_kind}:test",
         model="test",
-        input=CallInput({"_": Local.typed("Part[]", tuple(input.parts), "_", 0).value}),
+        input=CallInput({"_": Local.typed("Part[]", tuple(input.parts), 0).value}),
         sandbox="host" if parent_path is None else None,
         occurrence=_occurrence_from_context(run_context),
         state=_TEST_STATE if parent_path is None else None,
@@ -241,9 +242,9 @@ def project_run_control(
         run_id=run_id,
         kind=kind,
         timing=timing,
-        input=CallInput({"_": Local.typed("Part[]", tuple(input.parts), "_", 0).value})
+        input=CallInput({"_": Local.typed("Part[]", tuple(input.parts), 0).value})
         if kind == "steer" and input is not None
-        else CallInput({"_": Local.typed("Text", input.content, "_", 0).value})
+        else CallInput({"_": Local.typed("Text", input.content, 0).value})
         if kind == "cancel" and input is not None
         else CallInput({}),
         request_id=request_id,
@@ -261,7 +262,7 @@ def project_step(
     kind: StepKind,
     status: StepStatus,
     input: Sequence[FieldRef],
-    output: Sequence[Part] | Local | None,
+    output: Sequence[Part] | Output | None,
     detail: Mapping[str, Any] | None = None,
     error: str | ErrorMessage | ErrorRef | None = None,
     started_at: str,
@@ -300,8 +301,8 @@ def project_step(
                 status=status,
                 output=(
                     output
-                    if isinstance(output, Local) or output is None
-                    else Local.typed("Part[]", tuple(output), "_", 0)
+                    if isinstance(output, Output) or output is None
+                    else Output(Local.typed("Part[]", tuple(output), 0), "_")
                 ),
                 noted=_step_noted(kind, detail),
                 error=ErrorMessage(error) if isinstance(error, str) else error,
@@ -459,7 +460,7 @@ def project_run_end(
     status: RunStatus = "succeeded",
     error: str | ErrorMessage | ErrorRef | None = None,
     finished_at: str | None = None,
-    output: Local | FieldRef | None = None,
+    output: Output | FieldRef | None = None,
 ) -> RunRecord:
     """Project one terminal run event, returning durable run truth."""
 
@@ -469,7 +470,7 @@ def project_run_end(
             run=run_id,
             status=status,
             output=(
-                Local.typed("Part[]", output, "_", 0)
+                Output(Local.typed("Part[]", output, 0), "_")
                 if isinstance(output, FieldRef)
                 else output
             ),

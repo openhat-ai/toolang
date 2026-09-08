@@ -24,8 +24,8 @@ run_ab12.0.1                           StepRef
 term_ab12@0                            ControlRef
 run_ab12@1                             ControlRef
 sha256_<64 lowercase hex digits>       ContentRef
-run_ab12.0/output/value                FieldRef
-run_ab12.0/output/value:Part[]         TypedRef
+run_ab12.0/output/local/value                FieldRef
+run_ab12.0/output/local/value:Part[]         TypedRef
 ```
 
 Run IDs reserve `run_`; content IDs reserve `sha256_`; Thread IDs may use
@@ -95,8 +95,28 @@ References address `payload/input/_` or `payload/input/argumentName`.
 
 RunStore schema 43 accepts only this format. Older stores are rejected before
 mutation and remain intact for their matching runtime. There is no migration.
-Execution-time local variables and output Local bindings remain distinct from
-call input. `StepRecord.input` remains a dependency-reference list.
+Execution-time locals remain distinct from call input. Their names come from
+the enclosing local table. A durable `Local` contains `value` and `dim`; an
+`Output` contains that Local in `local` and a `binding: str | None`. `"_"` is
+an ordinary binding name for the current local; `None` leaves the result
+unbound. `StepRecord.input` remains a dependency-reference list.
+
+```python
+local = Local(value=input_value, dim=0)
+locals = {"_": local}
+output = Output(local=local, binding="_")
+```
+
+`dim=0` treats the complete value as one item, even when its type is an array.
+`dim=1` treats an array as the current collection. The dimension stays in Local
+for both bound and unbound outputs. An absent output (`None`) differs from an
+output whose Local contains a JSON null value.
+
+The durable output object is `{"local": {"value": ..., "dim": 0}, "binding": "_"}`.
+The HTTP/event Local projection also includes its derived `type`; no Local
+carries a `name` field. Raw-value references use `output/local/value`, while
+`output/local` selects the complete Local and `output/binding` selects the
+destination. These paths have no legacy aliases.
 
 ### RunRecord
 
@@ -116,8 +136,8 @@ finished_at
 ```
 
 `parent` is the calling `StepRef` for a child Run. `thread`, `control`, and `state`
-are typed references. `output` is a Local and may contain a
-`TypedRef` to an explicit `/output/value` field.
+are typed references. `output` is an Output whose `local` is a Local. That
+Local may contain a `TypedRef` to an explicit `/output/local/value` field.
 
 ### StepRecord
 

@@ -37,6 +37,7 @@ from toolang.execution.events import (
     StepEnd,
 )
 from toolang.execution.types import (
+    Output,
     ControlRef,
     ErrorMessage,
     ErrorRef,
@@ -56,8 +57,8 @@ class _TtyStream(StringIO):
         return True
 
 
-def _parts(text: str) -> Local:
-    return Local.typed("Part[]", (TextPart(text),), "_", 0)
+def _parts(text: str) -> Output:
+    return Output(Local.typed("Part[]", (TextPart(text),), 0), "_")
 
 
 def _model() -> ModelStepGiven:
@@ -125,11 +126,15 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
             RunEnd(
                 run="run_one",
                 status="succeeded",
-                output=Local.typed(
-                    "Part[]",
-                    FieldRef.from_path(StepRef.parse("run_one.0"), "output", "value"),
+                output=Output(
+                    Local.typed(
+                        "Part[]",
+                        FieldRef.from_path(
+                            StepRef.parse("run_one.0"), "output", "local", "value"
+                        ),
+                        0,
+                    ),
                     "_",
-                    0,
                 ),
                 finished_at="2026-01-01T00:00:02Z",
             ),
@@ -238,18 +243,20 @@ def test_script_tool_call_only_model_step_clears_live_without_scrollback(
                 step=path,
                 kind="model",
                 status="succeeded",
-                output=Local.typed(
-                    "Part[]",
-                    (
-                        ToolCallPart(
-                            tool_call_id="call_1",
-                            tool_name="web.search",
-                            tool_family="web",
-                            input={"query": "agent runtimes"},
+                output=Output(
+                    Local.typed(
+                        "Part[]",
+                        (
+                            ToolCallPart(
+                                tool_call_id="call_1",
+                                tool_name="web.search",
+                                tool_family="web",
+                                input={"query": "agent runtimes"},
+                            ),
                         ),
+                        0,
                     ),
                     "_",
-                    0,
                 ),
             )
         )
@@ -305,18 +312,20 @@ def test_tool_output_is_not_rendered() -> None:
                 step=StepRef.parse("run_one.0"),
                 kind="tool",
                 status="succeeded",
-                output=Local.typed(
-                    "Part[]",
-                    (
-                        ToolResultPart(
-                            tool_call_id="call_1",
-                            tool_name="web.search",
-                            tool_family="web",
-                            output={"results": [{}, {}, {}]},
+                output=Output(
+                    Local.typed(
+                        "Part[]",
+                        (
+                            ToolResultPart(
+                                tool_call_id="call_1",
+                                tool_name="web.search",
+                                tool_family="web",
+                                output={"results": [{}, {}, {}]},
+                            ),
                         ),
+                        0,
                     ),
                     "_",
-                    0,
                 ),
             ),
             RunEnd(run="run_one", status="succeeded"),

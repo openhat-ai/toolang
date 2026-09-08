@@ -71,8 +71,8 @@ from .records import (
     execution_error_from_data,
     execution_error_to_data,
     step_message_role,
-    local_from_data,
-    local_to_data,
+    output_from_data,
+    output_to_data,
     occurrence_from_data,
     occurrence_to_data,
     field_refs_from_data,
@@ -103,6 +103,7 @@ from .types import (
     StepRef,
     ThreadRef,
     Local,
+    Output,
     ModelStepGiven,
     MessageDelta,
     Occurrence,
@@ -702,7 +703,7 @@ class RunStore:
         source = self.get_run(run_id=str(horizon.record))
         if source is None or source.output is None:
             raise ValueError(f"horizon output is not available: {horizon}")
-        output = self.resolve_local(source.output).value
+        output = self.resolve_local(source.output.local).value
         if (
             not isinstance(output, Mapping)
             or cast(Mapping[str, object], output).get("thread") != thread
@@ -1653,7 +1654,7 @@ class RunStore:
         status: RunStatus = "succeeded",
         error: ErrorMessage | ErrorRef | None = None,
         finished_at: str | None = None,
-        output: Local | None = None,
+        output: Output | None = None,
     ) -> RunRecord:
         now = finished_at or utc_now()
         with self.write_transaction():
@@ -1666,7 +1667,7 @@ class RunStore:
                 (
                     status,
                     _dump_execution_error(error),
-                    _dump_json(local_to_data(output)) if output is not None else None,
+                    _dump_json(output_to_data(output)) if output is not None else None,
                     now,
                     run_id,
                 ),
@@ -1742,7 +1743,12 @@ class RunStore:
             raise ValueError(f"run not found: {run_id}")
         if run.output is None:
             return ()
-        return parts_from_local(self.resolve_local(run.output))
+        return parts_from_local(self.resolve_local(run.output.local))
+
+    def resolve_output(self, output: Output) -> Output:
+        """Resolve an output's local value while retaining its binding."""
+
+        return replace(output, local=self.resolve_local(output.local))
 
     def resolve_local(self, local: Local) -> Local:
         """Resolve and validate every pointer in one durable typed local."""
@@ -1752,7 +1758,6 @@ class RunStore:
         validate_runtime_value(value, type_name)
         return Local(
             value=value,
-            name=local.name,
             dim=local.dim,
         )
 
@@ -2736,7 +2741,7 @@ class RunStore:
         ref: StepRef,
         kind: StepKind,
         status: StepStatus,
-        output: Local | None,
+        output: Output | None,
         noted: StepNoted,
         error: ErrorMessage | ErrorRef | None,
         finished_at: str,
@@ -2762,7 +2767,7 @@ class RunStore:
                     WHERE id = ?
                     """,
                     (
-                        _dump_json(local_to_data(output))
+                        _dump_json(output_to_data(output))
                         if output is not None
                         else None,
                         _dump_json(step_noted_to_data(kind, noted)),
@@ -3761,7 +3766,7 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
         thread=ThreadRef(str(row["thread"])),
         control=ControlRef.parse(str(row["control"])),
         state=ControlRef.parse(str(row["state"])),
-        output=(local_from_data(output_data) if output_data is not None else None),
+        output=(output_from_data(output_data) if output_data is not None else None),
         occur=occurrence_from_data(occurrence_data),
         status=cast(RunStatus, row["status"]),
         error=_load_execution_error(row["error"]),
@@ -3810,7 +3815,7 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
         if raw["aborted_by"] is not None
         else None,
         state=ControlRef.parse(str(raw["state"])),
-        output=(local_from_data(output_data) if output_data is not None else None),
+        output=(output_from_data(output_data) if output_data is not None else None),
         occur=occurrence_from_data(occurrence_data),
         given=stored_step_given_from_data(kind, given_data),
         noted=step_noted_from_data(kind, noted_data),
@@ -3862,7 +3867,7 @@ def _replay_messages_from_step(step: StepRecord) -> list[Message]:
     role = step_message_role(step.kind)
     if role is None or not step.output:
         return []
-    parts = parts_from_local(step.output)
+    parts = parts_from_local(step.output.local)
     return [Message(role=role, parts=parts)] if parts else []
 
 

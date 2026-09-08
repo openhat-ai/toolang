@@ -17,7 +17,7 @@ from toolang.common.ids import IdIssuer
 from toolang.execution.history import RunHistory
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import ControlRef, FieldRef, Local, ThreadPrefix
+from toolang.execution.types import ControlRef, FieldRef, Local, ThreadPrefix, Output
 
 
 def test_run_history_batches_thread_and_run_summaries(
@@ -149,8 +149,13 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
         project_run_end(
             store,
             run_id=run.id,
-            output=Local.typed(
-                "Part", FieldRef.from_path(step.ref, "output", "value", 1), "_", 0
+            output=Output(
+                Local.typed(
+                    "Part",
+                    FieldRef.from_path(step.ref, "output", "local", "value", 1),
+                    0,
+                ),
+                "_",
             ),
         )
 
@@ -160,8 +165,11 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
 
         assert store.run_output(run_id=run.id) == (TextPart("result"),)
         assert detail is not None
-        expected = Local.typed(
-            "Part", FieldRef.from_path(step.ref, "output", "value", 1), "_", 0
+        expected = Output(
+            Local.typed(
+                "Part", FieldRef.from_path(step.ref, "output", "local", "value", 1), 0
+            ),
+            "_",
         )
         assert detail.output == expected
         assert thread is not None
@@ -199,19 +207,27 @@ def test_run_history_resolves_pass_through_control_output(
 
         assert stored is not None
         assert stored.control == ControlRef.for_run(run.id, 0)
-        assert stored.output == Local.typed(
-            "Part[]",
-            FieldRef.from_path(ControlRef.for_run(run.id, 0), "payload", "input", "_"),
+        assert stored.output == Output(
+            Local.typed(
+                "Part[]",
+                FieldRef.from_path(
+                    ControlRef.for_run(run.id, 0), "payload", "input", "_"
+                ),
+                0,
+            ),
             "_",
-            0,
         )
         assert store.run_output(run_id=run.id) == Message.user("unchanged").parts
         assert detail is not None
-        assert detail.output == Local.typed(
-            "Part[]",
-            FieldRef.from_path(ControlRef.for_run(run.id, 0), "payload", "input", "_"),
+        assert detail.output == Output(
+            Local.typed(
+                "Part[]",
+                FieldRef.from_path(
+                    ControlRef.for_run(run.id, 0), "payload", "input", "_"
+                ),
+                0,
+            ),
             "_",
-            0,
         )
     finally:
         store.close()
@@ -230,14 +246,16 @@ def test_resolve_local_rejects_a_pointer_to_a_different_type(tmp_path: Path) -> 
 
         with pytest.raises(TypeError, match="Number"):
             store.resolve_local(
-                Local.typed(
-                    "Number",
-                    FieldRef.from_path(
-                        ControlRef.for_run(run.id, 0), "payload", "input", "_"
+                Output(
+                    Local.typed(
+                        "Number",
+                        FieldRef.from_path(
+                            ControlRef.for_run(run.id, 0), "payload", "input", "_"
+                        ),
+                        0,
                     ),
                     "_",
-                    0,
-                )
+                ).local
             )
     finally:
         store.close()

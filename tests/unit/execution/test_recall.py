@@ -127,7 +127,7 @@ def test_history_recalls_share_cached_selection_and_ignore_far():
         return {root: deltas[root] for root in selected}
 
     def resolve(ref):
-        if ref.ref == horizon.select("value"):
+        if ref.ref == horizon.select("local", "value"):
             return {
                 "thread": "term_test",
                 "begin": None,

@@ -37,7 +37,8 @@ from toolang.lang.types import Array
 
 def reference(type: str) -> TypedRef:
     return TypedRef(
-        FieldRef.from_path(StepRef.parse("run_ab12.0"), "output", "value"), type
+        FieldRef.from_path(StepRef.parse("run_ab12.0"), "output", "local", "value"),
+        type,
     )
 
 
@@ -66,11 +67,11 @@ def test_steer_template_preserves_multimodal_part_boundaries() -> None:
 @pytest.mark.parametrize(
     "value",
     [
-        Local.typed("Text", "a", None),
-        Local.typed("TextPart", TextPart("a"), None),
-        Local.typed("Part", ImagePart(file_id="file-image"), None),
-        Local.typed("TextPart[]", (TextPart("a"), TextPart("b")), None),
-        Local.typed("Part[]", (), None),
+        Local.typed("Text", "a"),
+        Local.typed("TextPart", TextPart("a")),
+        Local.typed("Part", ImagePart(file_id="file-image")),
+        Local.typed("TextPart[]", (TextPart("a"), TextPart("b"))),
+        Local.typed("Part[]", ()),
     ],
 )
 def test_typed_segments_expand_under_one_rule(value: Local) -> None:
@@ -86,7 +87,10 @@ def test_typed_segments_expand_under_one_rule(value: Local) -> None:
 
 
 def test_literal_parts_and_nested_reference_looking_data_round_trip() -> None:
-    tool_data = {"?": "run_ab12.0/output/value:Part[]", "items": [1, {"type": "image"}]}
+    tool_data = {
+        "?": "run_ab12.0/output/local/value:Part[]",
+        "items": [1, {"type": "image"}],
+    }
     messages = (
         Message(
             "user",
@@ -123,7 +127,7 @@ def test_adopted_values_do_not_share_mutable_tool_data() -> None:
     buffer.append_ref(
         "tool",
         reference("ToolResultPart").ref,
-        Local.typed("ToolResultPart", part, None),
+        Local.typed("ToolResultPart", part),
     )
     part.output["items"].append(2)
     adopted = buffer.messages[0].parts[0]
@@ -150,10 +154,10 @@ def test_buffer_only_renders_additions_and_groups_unsaved_tool_results(
     for index in (1, 2):
         part = ToolResultPart(str(index), "tool", "tool")
         ref = FieldRef.from_path(
-            StepRef.from_local("run_ab12", (index,)), "output", "value"
+            StepRef.from_local("run_ab12", (index,)), "output", "local", "value"
         )
         values[TypedRef(ref, "ToolResultPart")] = part
-        buffer.append_ref("tool", ref, Local.typed("ToolResultPart", part, None))
+        buffer.append_ref("tool", ref, Local.typed("ToolResultPart", part))
     buffer.group_tools(0)
     copied = buffer.copy()
     copied.initialize((Message.user("ignored after start"),))

@@ -30,6 +30,7 @@ from toolang.execution.events import RunEnd, RunEvent, StepEnd
 from toolang.execution.policy import apply_session_setting
 from toolang.execution.schemas import ControlInfo, RunRequest, RunnableRequest
 from toolang.execution.types import (
+    Output,
     ErrorMessage,
     Local,
     ModelOverride,
@@ -366,7 +367,7 @@ def test_scripted_renderer_uses_model_step_output_without_deltas(
             step=StepRef.parse("run_success.1"),
             kind="model",
             status="succeeded",
-            output=Local.typed("Part[]", (TextPart("complete answer"),), "_"),
+            output=Output(Local.typed("Part[]", (TextPart("complete answer"),)), "_"),
         )
     )
     renderer.render(RunEnd(run="run_success", status="succeeded"))

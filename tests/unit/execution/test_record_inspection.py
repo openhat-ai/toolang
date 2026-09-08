@@ -33,6 +33,7 @@ from toolang.execution.records import (
 from toolang.execution.schemas import record_to_data
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
+    Output,
     AgentResources,
     ControlRef,
     ErrorMessage,
@@ -212,9 +213,10 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
         project_run_end(
             store,
             run_id=run.id,
-            output=Local.typed(
-                "Part[]",
-                FieldRef.from_path(step.ref, "output", "value"),
+            output=Output(
+                Local.typed(
+                    "Part[]", FieldRef.from_path(step.ref, "output", "local", "value")
+                ),
                 "_",
             ),
         )
@@ -286,10 +288,12 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
         assert control_data["id"] == f"{run.id}@0"
         assert step_data["input"] == [f"{run.id}@0/payload/input/_"]
         assert run_data["output"] == {
-            "type": "Part[]",
-            "value": {"?": f"{step.ref}/output/value:Part[]"},
-            "name": "_",
-            "dim": 0,
+            "local": {
+                "type": "Part[]",
+                "value": {"?": f"{step.ref}/output/local/value:Part[]"},
+                "dim": 0,
+            },
+            "binding": "_",
         }
         assert record_to_data(
             replace(stored_run, error=ErrorRef(FieldRef.from_path(step.ref, "error")))
@@ -402,13 +406,13 @@ def test_record_selection_matches_rfc6901_traversal(tmp_path: Path) -> None:
 
         whole = store.select_pointer(Pointer.parse(str(step.ref)))
         output = store.select_pointer(
-            Pointer(FieldRef.from_path(step.ref, "output", "value", 1))
+            Pointer(FieldRef.from_path(step.ref, "output", "local", "value", 1))
         )
         missing_null = store.select_pointer(
             Pointer(FieldRef.from_path(step.ref, "error"))
         )
 
-        assert output.value == whole.value["output"]["value"][1]  # type: ignore[index]
+        assert output.value == whole.value["output"]["local"]["value"][1]  # type: ignore[index]
         assert output.runtime == TextPart("second")
         assert output.type_name == "Part"
         assert missing_null.value is None
@@ -418,7 +422,7 @@ def test_record_selection_matches_rfc6901_traversal(tmp_path: Path) -> None:
             store.select_pointer(Pointer(FieldRef.from_path(step.ref, "missing")))
         with pytest.raises(ValueError, match="invalid array index"):
             store.select_pointer(
-                Pointer(FieldRef.from_path(step.ref, "output", "value", "01"))
+                Pointer(FieldRef.from_path(step.ref, "output", "local", "value", "01"))
             )
         with pytest.raises(ValueError, match="traverses a scalar"):
             store.select_pointer(
@@ -580,7 +584,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
     revision = "a" * 64
     resources = AgentResources()
     limits = RunLimits()
-    source = FieldRef.parse("run_control.0/output/value/0")
+    source = FieldRef.parse("run_control.0/output/local/value/0")
     cases = (
         (
             "run",
@@ -591,11 +595,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 "agic:test",
                 "test/model",
                 CallInput(
-                    {
-                        "_": Local.typed(
-                            "Json", {"locals": {"input": "unchanged"}}, "_"
-                        ).value
-                    }
+                    {"_": Local.typed("Json", {"locals": {"input": "unchanged"}}).value}
                 ),
             ),
             {
@@ -637,7 +637,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 CallInput(
                     {
                         "_": Local.typed(
-                            "Json", source.select("input", "input", "_"), "_"
+                            "Json", source.select("input", "input", "_")
                         ).value
                     }
                 ),
@@ -647,7 +647,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
         (
             "steer",
             SteerControlPayload(
-                CallInput({"_": Local.typed("Text", "continue", "_").value})
+                CallInput({"_": Local.typed("Text", "continue").value})
             ),
             {"input"},
         ),

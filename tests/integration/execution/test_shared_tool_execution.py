@@ -69,16 +69,16 @@ def test_path_errors_and_result_failures_are_recorded(tmp_path, phase):
             step = harness.store.list_steps(run_id=run.id)[1]
             assert step.status == "failed"
             assert step.output is not None
-            assert isinstance(step.output.value, ToolResultPart)
-            assert step.output.value.error == "invalid path"
-            assert step.output.value.output == output
+            assert isinstance(step.output.local.value, ToolResultPart)
+            assert step.output.local.value.error == "invalid path"
+            assert step.output.local.value.output == output
             results = [
                 p
                 for m in harness.adapter.invocations[1].call.messages
                 for p in m.parts
                 if isinstance(p, ToolResultPart)
             ]
-            assert results == [step.output.value]
+            assert results == [step.output.local.value]
             assert len(tool.calls) == (0 if phase == "paths" else 1)
             assert_run_event_integrity(tracer.events)
 
@@ -153,8 +153,8 @@ agic task() -> Text:
             )
             assert runtime.input == ()
             assert runtime.output is not None
-            assert isinstance(runtime.output.value, ToolResultPart)
-            assert runtime.output.value.tool_call_id == "runtime"
+            assert isinstance(runtime.output.local.value, ToolResultPart)
+            assert runtime.output.local.value.tool_call_id == "runtime"
             assert all(not hasattr(context, "runtime") for _, context in tool.calls)
             second = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="task"), tracer=tracer
@@ -180,8 +180,8 @@ agic task() -> Text:
         assert isinstance(runtime.given, ToolStepGiven)
         assert runtime.given.trigger == "runtime"
         assert runtime.output is not None
-        assert isinstance(runtime.output.value, ToolResultPart)
-        assert runtime.output.value.tool_call_id == "runtime"
+        assert isinstance(runtime.output.local.value, ToolResultPart)
+        assert runtime.output.local.value.tool_call_id == "runtime"
     finally:
         reopened.close()
 
@@ -262,11 +262,11 @@ flow blocked(_: Text) -> Text:
             )
             assert root.status == "succeeded", root.error
             results = {
-                step.given.call.tool_call_id: step.output.value
+                step.given.call.tool_call_id: step.output.local.value
                 for step in harness.store.list_steps(run_id=root.id)
                 if isinstance(step.given, ToolStepGiven)
                 and step.output is not None
-                and isinstance(step.output.value, ToolResultPart)
+                and isinstance(step.output.local.value, ToolResultPart)
             }
             assert (
                 results["blocked"].error

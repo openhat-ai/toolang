@@ -66,7 +66,7 @@ def test_every_reference_kind_round_trips_through_pointer() -> None:
     run_control = ControlRef(run, 4)
     thread_control = ControlRef(thread, 5)
     content = ContentRef("sha256_" + "a" * 64)
-    field = FieldRef(step, JsonPointer("/output/value/0"))
+    field = FieldRef(step, JsonPointer("/output/local/value/0"))
     typed = TypedRef(field, "Part")
     cases = (
         (thread, PointerType.THREAD_REF),

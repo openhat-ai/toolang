@@ -82,6 +82,7 @@ from ..types import (
     FieldRef,
     RecallTarget,
     Local as RecordLocal,
+    Output,
     ControlKind,
     StepRef,
     RunRef,
@@ -1528,7 +1529,7 @@ class _Execution:
         self._retry = retry
         if retry is not None:
             self._restore_model_limits(root.run_id)
-        self._run_outputs: dict[str, RecordLocal] = {}
+        self._run_outputs: dict[str, Output] = {}
         self._active_bindings: dict[str, BoundRun] = {root.run_id: root}
         self._run_lineages: dict[str, tuple[str, ...]] = {
             root.run_id: (_bound_runnable(root),)
@@ -2104,7 +2105,7 @@ class _Execution:
             RunEnd(
                 run=binding.run_id,
                 status="succeeded",
-                output=_run_result_local(result, name=output_name),
+                output=_run_result_output(result, name=output_name),
                 finished_at=utc_now(),
             )
         )
@@ -2152,7 +2153,8 @@ class _Execution:
             if statement.binding == "_":
                 self.record_output(
                     binding.run_id,
-                    local.ref or FieldRef.from_path(step.ref, "output", "value"),
+                    local.ref
+                    or FieldRef.from_path(step.ref, "output", "local", "value"),
                 )
         return current, len(committed)
 
@@ -2164,14 +2166,14 @@ class _Execution:
     ) -> None:
         """Restore one named local produced inside a committed structural step."""
 
-        if step.output is None or step.output.name is None:
+        if step.output is None or step.output.binding is None:
             return
         local = _step_local(step, self.store)
-        current[step.output.name] = local
-        if step.output.name == "_":
+        current[step.output.binding] = local
+        if step.output.binding == "_":
             self.record_output(
                 run_id,
-                local.ref or FieldRef.from_path(step.ref, "output", "value"),
+                local.ref or FieldRef.from_path(step.ref, "output", "local", "value"),
             )
 
     async def execute_child(
@@ -2475,7 +2477,7 @@ class _Execution:
             raise _ExecutionFailed(
                 ErrorRef(FieldRef.from_path(RunRef(binding.run_id), "error")), exc
             ) from exc
-        pointer = FieldRef.from_path(RunRef(binding.run_id), "output", "value")
+        pointer = FieldRef.from_path(RunRef(binding.run_id), "output", "local", "value")
         item_type = result.type_name or "Json"
         source_pointer = (
             result.ref
@@ -2669,13 +2671,14 @@ class _Execution:
             else None
         )
         if record is not None and record.output is not None:
-            self._run_outputs[run_id] = replace(
-                record.output,
-                value=TypedRef(ref, record.output.type),
-                name="_",
+            self._run_outputs[run_id] = Output(
+                replace(
+                    record.output.local, value=TypedRef(ref, record.output.local.type)
+                ),
+                "_",
             )
 
-    def run_output(self, run_id: str) -> RecordLocal | None:
+    def run_output(self, run_id: str) -> Output | None:
         return self._run_outputs.get(run_id)
 
     async def emit(self, event: RunEvent) -> None:
@@ -2758,11 +2761,14 @@ class _Execution:
                     )
                     if isinstance(event.given, ToolStepGiven)
                     else None,
-                    output=RecordLocal.typed(
-                        "ToolResultPart",
-                        canceled_result(
-                            event.given.call, reason="canceled; operation not executed"
-                        ),
+                    output=Output(
+                        RecordLocal.typed(
+                            "ToolResultPart",
+                            canceled_result(
+                                event.given.call,
+                                reason="canceled; operation not executed",
+                            ),
+                        )
                     )
                     if isinstance(event.given, ToolStepGiven)
                     else None,
@@ -2988,14 +2994,14 @@ def _step_local(step: StepRecord, store: RunStore) -> Local:
     if step.output is None:
         return Local()
     return Local(
-        value=store.resolve_value(step.output.value),
-        shape="list" if step.output.dim == 1 else "item",
+        value=store.resolve_value(step.output.local.value),
+        shape="list" if step.output.local.dim == 1 else "item",
         ref=(
-            store.resolve_value_pointer(step.output.value)
-            if isinstance(step.output.value, TypedRef)
-            else FieldRef.from_path(step.ref, "output", "value")
+            store.resolve_value_pointer(step.output.local.value)
+            if isinstance(step.output.local.value, TypedRef)
+            else FieldRef.from_path(step.ref, "output", "local", "value")
         ),
-        type_name=step.output.item_type,
+        type_name=step.output.local.item_type,
     )
 
 
@@ -3208,7 +3214,7 @@ def _execute_locals(
     result: dict[str, Local] = {"_": Local()}
     for name, pointer in records.items():
         result[name] = Local(
-            input[name], "item", pointer.ref, types[name], RecordLocal(pointer, name)
+            input[name], "item", pointer.ref, types[name], RecordLocal(pointer)
         )
     return result
 
@@ -3282,11 +3288,11 @@ def _coerce_execute_output(
     )
 
 
-def _run_result_local(
+def _run_result_output(
     result: Local,
     *,
     name: str | None = "_",
-) -> RecordLocal | None:
+) -> Output | None:
     if result.shape == "none":
         return None
     item_type = result.type_name or "Json"
@@ -3301,9 +3307,11 @@ def _run_result_local(
         if item_type.endswith("[]") and isinstance(result.value, list)
         else result.value
     )
-    return RecordLocal.typed(
-        type_name=f"{item_type}[]" if result.shape == "list" else item_type,
-        value=reference if reference is not None else cast(Value, concrete),
-        name=name,
-        dim=1 if result.shape == "list" else 0,
+    return Output(
+        RecordLocal.typed(
+            type_name=f"{item_type}[]" if result.shape == "list" else item_type,
+            value=reference if reference is not None else cast(Value, concrete),
+            dim=1 if result.shape == "list" else 0,
+        ),
+        name,
     )

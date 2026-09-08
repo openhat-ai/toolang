@@ -95,11 +95,11 @@ agic child(_: Text) -> Text:
             assert isinstance(dynamic.given, ToolStepGiven)
             assert dynamic.given.call.input["runnable"] == "agic:child"
             assert dynamic.input == (
-                FieldRef.from_path(root_steps[0].ref, "output", "value", 0),
+                FieldRef.from_path(root_steps[0].ref, "output", "local", "value", 0),
             )
             dynamic_output = dynamic.output
             assert dynamic_output is not None
-            (persisted_result,) = parts_from_local(dynamic_output)
+            (persisted_result,) = parts_from_local(dynamic_output.local)
             assert isinstance(persisted_result, ToolResultPart)
             assert persisted_result.output["output"] == "child output"
             children = [
@@ -284,7 +284,7 @@ flow check(_: Text, threshold: Number) -> Text:
                 ),
             }
             assert root.output is not None
-            assert harness.store.resolve_value(root.output.value) == (
+            assert harness.store.resolve_value(root.output.local.value) == (
                 "What threshold should I use?"
             )
 
@@ -1458,7 +1458,7 @@ agic target(_: Text) -> Text:
 
             assert root.status == "succeeded", root.error
             assert root.output is not None
-            assert harness.store.resolve_value(root.output.value) == "completed"
+            assert harness.store.resolve_value(root.output.local.value) == "completed"
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
             steps = harness.store.list_steps(run_id=root.id)
             assert [step.kind for step in steps] == [
@@ -1473,7 +1473,7 @@ agic target(_: Text) -> Text:
             execute = controls[0]
             assert execute.status == "applied"
             assert isinstance(execute.payload, ExecuteControlPayload)
-            source = FieldRef.from_path(steps[0].ref, "output", "value", 0)
+            source = FieldRef.from_path(steps[0].ref, "output", "local", "value", 0)
             assert execute.payload.state == harness.state.revision
             assert execute.payload.runnable == "agent$agic:target"
             assert execute.triggered_by == steps[1].ref
@@ -1565,7 +1565,7 @@ agic target(_: Text) -> Boolean:
 
             assert root.status == "succeeded", root.error
             assert root.output is not None
-            assert harness.store.resolve_value(root.output.value) is True
+            assert harness.store.resolve_value(root.output.local.value) is True
             assert harness.adapter.invocations[0].call.output_schema == {}
             assert harness.adapter.invocations[1].call.output_schema == {
                 "type": "boolean"

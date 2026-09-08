@@ -106,6 +106,7 @@ from toolang.execution.schemas import (
     RunRequest,
 )
 from toolang.execution.types import (
+    Output,
     ControlRef,
     ErrorMessage,
     ErrorRef,
@@ -184,12 +185,15 @@ def _cell_attrs(app: tui.ChatTuiApp, screen: Screen, row: int, col: int) -> Attr
     return app.app.style.get_attrs_for_style_str(screen.data_buffer[row][col].style)
 
 
-def _parts(*parts: Part) -> Local:
-    return Local.typed("Part[]", tuple(parts), "_", 0)
+def _parts(*parts: Part) -> Output:
+    return Output(Local.typed("Part[]", tuple(parts), 0), "_")
 
 
-def _output(step: StepRef) -> Local:
-    return Local.typed("Part[]", FieldRef.from_path(step, "output", "value"), "_", 0)
+def _output(step: StepRef) -> Output:
+    return Output(
+        Local.typed("Part[]", FieldRef.from_path(step, "output", "local", "value"), 0),
+        "_",
+    )
 
 
 def _model_given(model: str = "test/model") -> ModelStepGiven:
@@ -5332,7 +5336,7 @@ def _flow_step_end(*, step_index: int = 1) -> StepEnd:
         step=StepRef.parse(f"run_1.{step_index}"),
         kind="par",
         status="succeeded",
-        output=Local.typed("Json[]", (), "_", 1),
+        output=Output(Local.typed("Json[]", (), 1), "_"),
         finished_at="2026-01-01T00:00:02Z",
     )
 
@@ -5585,7 +5589,7 @@ def _steer_control(index: int, *, run_id: str = "run_1") -> ControlInfo:
         request_id=f"request_{index}",
         status="pending",
         payload=SteerControlPayload(
-            CallInput({"_": _parts(*Message.user("adjust").parts).value})
+            CallInput({"_": _parts(*Message.user("adjust").parts).local.value})
         ),
         error=None,
         created_at="2026-01-01T00:00:01Z",

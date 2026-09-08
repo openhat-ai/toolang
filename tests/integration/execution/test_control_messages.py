@@ -93,8 +93,8 @@ agic chat(_: Part[]) -> Part[]:
                 tool = harness.store.list_steps(run_id=record.id)[1]
                 assert tool.aborted_by == control.ref
                 assert tool.output is not None
-                assert isinstance(tool.output.value, ToolResultPart)
-                assert tool.output.value.error is not None
+                assert isinstance(tool.output.local.value, ToolResultPart)
+                assert tool.output.local.value.error is not None
                 if action == "cancel":
                     await harness.executor.run(
                         harness.run_spec(

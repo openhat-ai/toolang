@@ -29,7 +29,7 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.schemas import RunDetail
 from toolang.execution.records import RunControlPayload
 from toolang.execution.store import RunStore
-from toolang.execution.types import FieldRef, Local, RunRef
+from toolang.execution.types import FieldRef, Local, RunRef, Output
 from toolang.execution.values import parts_from_local
 from toolang.state.state import CapSource, StateCap
 from toolang.up import AgentCore, process as agents
@@ -104,12 +104,17 @@ def test_history_response_keeps_one_snapshot_during_retry(
             origin="chat",
             input=Message.user("child input"),
         )
-        project_run_end(writer, run_id="run_b", output=Local("child answer"))
+        project_run_end(
+            writer, run_id="run_b", output=Output(Local("child answer"), None)
+        )
         project_run_end(
             writer,
             run_id="run_a",
-            output=Local.typed(
-                "Part[]", FieldRef.from_path(parent.ref, "output", "value")
+            output=Output(
+                Local.typed(
+                    "Part[]", FieldRef.from_path(parent.ref, "output", "local", "value")
+                ),
+                None,
             ),
         )
         control = writer.get_run_control(run_id="run_a", index=0)
@@ -118,7 +123,7 @@ def test_history_response_keeps_one_snapshot_during_retry(
         get_output = core.history.get_output
         retried = False
 
-        def retry_before_output(run: RunRef | str) -> Local | None:
+        def retry_before_output(run: RunRef | str) -> Output | None:
             nonlocal retried
             if not retried:
                 writer.accept_retry(
@@ -151,10 +156,10 @@ def test_history_response_keeps_one_snapshot_during_retry(
         )
         assert detail.status == "succeeded"
         assert detail.output is not None
-        assert parts_from_local(detail.output) == (TextPart("original answer"),)
+        assert parts_from_local(detail.output.local) == (TextPart("original answer"),)
         if endpoint == "threads/term_a":
             child = TypeAdapter(RunDetail).validate_python(data["runs"][1])
-            assert child.output == Local("child answer")
+            assert child.output == Output(Local("child answer"), None)
         assert writer.get_run(run_id="run_b") is None
         assert get_output("run_a") is None
     finally:
@@ -390,8 +395,8 @@ agic chat(_: Part[]) -> Part[]:
         assert explicit.id == latest.id == run_id
         assert explicit.output is not None
         assert latest.output is not None
-        assert parts_from_local(explicit.output) == (TextPart("remote answer"),)
-        assert parts_from_local(latest.output) == (TextPart("remote answer"),)
+        assert parts_from_local(explicit.output.local) == (TextPart("remote answer"),)
+        assert parts_from_local(latest.output.local) == (TextPart("remote answer"),)
     finally:
         asyncio.run(core.close())
 

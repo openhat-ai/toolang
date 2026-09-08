@@ -36,6 +36,7 @@ from toolang.execution.schemas import RunnableRequest, RunRequest
 from toolang.execution.store import RunStore
 from toolang.execution.trees import build_execution_tree
 from toolang.execution.types import (
+    Output,
     CollectionStepNoted,
     ControlRef,
     ErrorMessage,
@@ -361,8 +362,8 @@ flow retained(_: Text) -> Text:
             assert harness.store.run_output_text(run_id=root.id) == "original"
             step = harness.store.list_steps(run_id=root.id)[0]
             assert step.output is not None
-            assert step.output.name is None
-            assert harness.store.resolve_value(step.output.value) == "temporary"
+            assert step.output.binding is None
+            assert harness.store.resolve_value(step.output.local.value) == "temporary"
 
     asyncio.run(scenario())
 
@@ -454,8 +455,8 @@ flow staged(_: Part[]) -> Part[]:
                 (1, "succeeded"),
             ]
             assert active[0].output is not None
-            assert isinstance(active[0].output.value, Array)
-            assert tuple(active[0].output.value) == (TextPart("committed"),)
+            assert isinstance(active[0].output.local.value, Array)
+            assert tuple(active[0].output.local.value) == (TextPart("committed"),)
             retry = harness.store.list_run_controls(run_id=retried.id)[-1]
             run_control = harness.store.get_run_control(run_id=retried.id, index=0)
             assert run_control is not None
@@ -1909,7 +1910,8 @@ flow repeated(_: Text) -> Text:
             ]
             assert len(until_runs) == 2
             assert all(
-                run.output is not None and run.output.name is None for run in until_runs
+                run.output is not None and run.output.binding is None
+                for run in until_runs
             )
             assert harness.adapter.pending_responses == 0
             tree = build_execution_tree(
@@ -2204,7 +2206,7 @@ flow relay(_: Text) -> Number:
             assert run_control is not None
             assert isinstance(run_control.payload, RunControlPayload)
             assert run_control.payload.input == CallInput(
-                {"_": Local.typed("Number", 42, "_", 0).value}
+                {"_": Local.typed("Number", 42, 0).value}
             )
             assert harness.store.resolve_value(run_control.payload.input["_"]) == 42
             assert harness.store.run_output_text(run_id=root.id) == "7"
@@ -2241,8 +2243,8 @@ flow number(_: Text) -> Number:
                 )
             )
 
-            assert root.output == Local.typed("Number", 7, "_", 0)
+            assert root.output == Output(Local.typed("Number", 7, 0), "_")
             assert root.output is not None
-            assert harness.store.resolve_local(root.output).value == 7
+            assert harness.store.resolve_local(root.output.local).value == 7
 
     asyncio.run(scenario())

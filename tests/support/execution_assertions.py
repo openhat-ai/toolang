@@ -153,7 +153,7 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
                 )
                 if parts:
                     assert event.output is not None
-                    output_value = event.output.value
+                    output_value = event.output.local.value
                     assert (
                         tuple(output_value)
                         if isinstance(output_value, Array | tuple | list)
@@ -168,15 +168,17 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
         assert not any(step.run_id == event.run for step in active_steps), (
             f"run ended with active steps at {where}"
         )
-        if event.output is not None and isinstance(event.output.value, TypedRef):
-            pointer = event.output.value.ref
+        if event.output is not None and isinstance(event.output.local.value, TypedRef):
+            pointer = event.output.local.value.ref
             if isinstance(pointer.record, StepRef):
                 assert any(
-                    FieldRef.from_path(step, "output", "value") == pointer
+                    FieldRef.from_path(step, "output", "local", "value") == pointer
                     for step in ended_steps
                 ), f"run output references an incomplete step at {where}"
             elif isinstance(pointer.record, RunRef):
-                assert pointer == FieldRef.from_path(pointer.record, "output", "value")
+                assert pointer == FieldRef.from_path(
+                    pointer.record, "output", "local", "value"
+                )
                 assert str(pointer.record) in ended_runs, (
                     f"run output references an incomplete child run at {where}"
                 )

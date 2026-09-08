@@ -24,7 +24,7 @@ from ..run_view import RunView
 from ..schemas import HistoryToolCursor, Record, record_to_data
 from ..store import RunStore
 from ..thread_view import ThreadView
-from ..types import RunRef, StepRef, ThreadRef, local_to_protocol_data
+from ..types import RunRef, StepRef, ThreadRef, output_to_protocol_data
 
 
 _CURSOR = TypeAdapter(HistoryToolCursor)
@@ -130,7 +130,7 @@ class _ToolHistory(ToolHistory):
             return {
                 "run": str(target),
                 "status": record.status,
-                "output": local_to_protocol_data(output)
+                "output": output_to_protocol_data(output)
                 if output is not None
                 else None,
             }
@@ -160,7 +160,7 @@ class _ToolHistory(ToolHistory):
 def _record_data(store: RunStore, record: Record) -> dict[str, object]:
     data = record_to_data(record)
     if isinstance(record, StepRecord) and record.output is not None:
-        data["output"] = local_to_protocol_data(store.resolve_local(record.output))
+        data["output"] = output_to_protocol_data(store.resolve_output(record.output))
     elif isinstance(record, ControlRecord) and isinstance(
         record.payload,
         (
