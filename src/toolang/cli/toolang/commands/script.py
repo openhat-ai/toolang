@@ -282,8 +282,9 @@ def _print_help_header(
             description = Group(
                 description,
                 Text(),
-                Text("This flow executes the following steps:"),
-                Padding(_flow_outline(flow), (0, 2)),
+                Text("The flow proceeds as follows:"),
+                Text(),
+                _flow_outline(flow),
             )
         console.print(Padding(description, (0, 1, 1, 1)))
 

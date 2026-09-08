@@ -652,7 +652,7 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "-v" not in stdout
     _assert_common_options(stdout)
     assert "--default" not in stdout
-    assert "This flow executes the following steps:" not in stdout
+    assert "The flow proceeds as follows:" not in stdout
 
 
 def _help_panel(output: str, title: str) -> str:
@@ -770,12 +770,12 @@ def test_script_runnable_description_uses_docs_or_kind(
     if kind == "flow":
         assert (
             output.index(f"Run {kind} demo")
-            < output.index("This flow executes the following steps:")
+            < output.index("The flow proceeds as follows:")
             < output.index("─ Options ")
         )
         assert _flow_outline_lines(output) == ["[0] Set value to note"]
     else:
-        assert "This flow executes the following steps:" not in output
+        assert "The flow proceeds as follows:" not in output
 
 
 @pytest.mark.parametrize(
@@ -1113,13 +1113,11 @@ def test_script_omitted_terminal_input_shows_help_without_reading(
 def _flow_outline_lines(output: str) -> list[str]:
     block = (
         strip_ansi(output)
-        .partition("This flow executes the following steps:")[2]
+        .partition("The flow proceeds as follows:")[2]
         .partition("╭")[0]
     )
     return [
-        line[3:].rstrip()
-        for line in block.splitlines()
-        if line.startswith("   ") and line.strip()
+        line.removeprefix(" ").rstrip() for line in block.splitlines() if line.strip()
     ]
 
 
@@ -1170,12 +1168,13 @@ agic search:
     assert stdout.count("Research a topic from several sources.") == 1
     assert "research - Research a topic from several sources." in stdout
     assert stdout.index("Research a topic") < stdout.index(
-        "This flow executes the following steps:"
+        "The flow proceeds as follows:"
     )
-    assert stdout.index("This flow executes the following steps:") < stdout.index(
-        "─ Arguments "
-    )
-    assert stdout.count("This flow executes the following steps:") == 1
+    assert stdout.index("The flow proceeds as follows:") < stdout.index("─ Arguments ")
+    assert stdout.count("The flow proceeds as follows:") == 1
+    outline_start = stdout.partition("The flow proceeds as follows:")[2].splitlines()
+    assert not outline_start[1].strip()
+    assert outline_start[2].strip() == "[0] Set value to topic"
     assert "─ Flow" not in stdout
     assert _flow_outline_lines(stdout) == [
         "[0] Set value to topic",
@@ -1262,7 +1261,7 @@ agic score_{"x" * 100} -> Number:
     assert rows[0].startswith("[0] Evidence 証拠 ")
     assert rows[1].startswith("    Sort items by score_")
     assert rows[0].endswith("…") and rows[1].endswith("…")
-    assert all(cell_len(row) <= width - 4 for row in rows), rows
+    assert all(cell_len(row) <= width - 2 for row in rows), rows
     assert rows[2] == "[1] Keep the first item"
 
 
@@ -1337,7 +1336,7 @@ def test_script_flow_invocation_does_not_print_the_help_outline(
     )
 
     assert calls == ["flow"]
-    assert "This flow executes the following steps:" not in capsys.readouterr().out
+    assert "The flow proceeds as follows:" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -1416,7 +1415,7 @@ flow pipeline:
     assert "Use RUNNABLE --help" not in stdout
     assert "default" not in stdout
     assert "<agic:" not in stdout
-    assert "This flow executes the following steps:" not in stdout
+    assert "The flow proceeds as follows:" not in stdout
 
 
 @pytest.mark.parametrize("width", [44, 80])

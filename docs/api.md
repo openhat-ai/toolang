@@ -237,8 +237,9 @@ optional.
 
 Below usage, runnable descriptions use `Run KIND NAME.` or
 `Run KIND NAME - DESCRIPTION` when a doc comment exists. Flows continue with
-`This flow executes the following steps:` and an indented outline in normal
-style, with blank lines between sibling steps. Arguments and **Options** follow.
+`The flow proceeds as follows:`, a blank line, and an outline aligned with the
+description text, in normal style with blank lines between sibling steps.
+Arguments and **Options** follow.
 Top-level Script help uses `[OPTIONS] RUNNABLE` and
 `Run runnables from SCRIPT.` It lists **Runnables** before Options, with
 `agic:NAME` / `flow:NAME` labels and authored descriptions or `Agic NAME.` /

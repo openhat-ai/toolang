@@ -205,9 +205,10 @@ Required named arguments remain required despite the `[ARGS]` abbreviation.
 
 Below usage, `Run KIND NAME.` describes execution. An authored doc comment
 changes this to `Run KIND NAME - DESCRIPTION`. Flows continue with
-`This flow executes the following steps:` and an indented outline before the
-help panels. All outline text uses normal style, with one blank line between
-sibling steps; each step's doc and operation description remain adjacent.
+`The flow proceeds as follows:`, a blank line, and an outline aligned with the
+description text before the help panels. All outline text uses normal style,
+with one blank line between sibling steps; each step's doc and operation
+description remain adjacent.
 
 The **Arguments** panel uses Typer's native parameter rendering. Named
 parameters appear in signature order as `name=ARGUMENT`, with uppercase authored

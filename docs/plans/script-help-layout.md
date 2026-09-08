@@ -61,9 +61,10 @@ Use `Run agic NAME.` or `Run flow NAME.` without an authored description.
 Otherwise use `Run agic NAME - DESCRIPTION` or
 `Run flow NAME - DESCRIPTION`, preserving authored paragraphs and formatting.
 
-For flows, continue naturally with `This flow executes the following steps:`
-and the existing indented outline before Arguments. Retain statement docs,
-nesting, ordinals, literal text, and truncation. Agics have no step section.
+For flows, continue naturally with `The flow proceeds as follows:`, a blank line,
+and an outline aligned with the description text before Arguments. Retain
+statement docs, nesting, ordinals, literal text, and truncation. Agics have no
+step section.
 
 Render all outline text in normal terminal style, including ordinals, authored
 statement descriptions, and generated operation descriptions. Do not dim or
@@ -72,13 +73,15 @@ line, including within nested blocks. Keep a step's authored description and
 operation description adjacent, and retain indentation for nested steps.
 
 ```text
-  [0] Set value to topic
+The flow proceeds as follows:
 
-  [1] Expand the research question into diverse search queries
-      Scatter into 6 items with expand_queries
+[0] Set value to topic
 
-  [2] Search the web for each query
-      Map each item with search_web, up to 4 at once
+[1] Expand the research question into diverse search queries
+    Scatter into 6 items with expand_queries
+
+[2] Search the web for each query
+    Map each item with search_web, up to 4 at once
 ```
 
 ## Arguments Panel
