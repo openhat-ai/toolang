@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from io import StringIO
 import re
+from typing import Literal
 
 import pytest
 
@@ -80,12 +81,13 @@ def _execute_step(
                     "_toolang__execute",
                     {"runnable": runnable},
                 ),
+                summary=f"Executing {runnable}...",
             ),
         )
     )
     assert starting.committed == ()
     assert starting.live[0].rows == (
-        ProgressRow(f"• Executing {runnable}...", "active"),
+        ProgressRow(f"• Executing {runnable}...", "active", surface="tool_summary"),
     )
     assert len(starting.live) == 1
     result = ToolResultPart(
@@ -102,7 +104,9 @@ def _execute_step(
             status="failed" if error else "succeeded",
             output=Local.typed("ToolResultPart", result, None, 0),
             error=ErrorMessage(error) if error else None,
-            noted=ToolStepNoted(summary="_toolang__execute"),
+            noted=ToolStepNoted(
+                summary=f"Failed to execute {runnable}" if error else "Transferred"
+            ),
         )
     )
 
@@ -284,7 +288,9 @@ def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
     assert starting.committed == ()
     assert starting.live == ()
 
-    assert _execute_step(projector).committed == ()
+    transferred = _execute_step(projector)
+    assert transferred.committed == ()
+    assert transferred.live == ()
     header = projector.handle(
         StepBegin(step=target, kind="model", given=_model_given())
     )
@@ -301,6 +307,105 @@ def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
         r"╟ handoff to agic:abc ─+",
         _render_progress(header.committed[0], width=72),
     )
+
+
+def test_execute_uses_its_persisted_running_description() -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef.for_run("run_root", 0),
+            runnable="agent$agic:caller",
+        )
+    )
+    starting = projector.handle(
+        StepBegin(
+            step=StepRef.parse("run_root.0"),
+            kind="tool",
+            given=ToolStepGiven(
+                plugin="_toolang",
+                call=ToolCall(
+                    "execute-1", "execute-1", "_toolang__execute", {"runnable": "next"}
+                ),
+                summary="Transferring to next...",
+            ),
+        )
+    )
+    assert starting.live[0].rows == (
+        ProgressRow("• Transferring to next...", "active", surface="tool_summary"),
+    )
+
+
+@pytest.mark.parametrize("status", ["canceled", "failed"])
+def test_uncommitted_execute_uses_its_tool_outcome(
+    status: Literal["canceled", "failed"],
+) -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef.for_run("run_root", 0),
+            runnable="agent$agic:caller",
+        )
+    )
+    step = StepRef.parse("run_root.0")
+    projector.handle(
+        StepBegin(
+            step=step,
+            kind="tool",
+            given=ToolStepGiven(
+                plugin="_toolang",
+                call=ToolCall(
+                    "execute-1", "execute-1", "_toolang__execute", {"runnable": "next"}
+                ),
+            ),
+        )
+    )
+    summary = "Canceled transfer to next" if status == "canceled" else "Transfer failed"
+    ended = projector.handle(
+        StepEnd(
+            step=step,
+            kind="tool",
+            status=status,
+            error=ErrorMessage("Execution stopped:\nreason"),
+            noted=ToolStepNoted(summary=summary),
+        )
+    )
+    expected = (
+        ProgressRow(
+            f"• {summary}",
+            "warning" if status == "canceled" else "error",
+            surface="tool_summary",
+        ),
+    )
+    if status == "failed":
+        expected += (
+            ProgressRow("  Execution stopped: reason", "error", surface="tool_error"),
+        )
+    assert ended.committed[0].rows == expected
+    assert ended.live == ()
+
+
+@pytest.mark.parametrize("status", ["succeeded", "canceled", "failed"])
+def test_confirmed_execute_without_target_step_is_not_reported_as_failed(
+    status: Literal["succeeded", "canceled", "failed"],
+) -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef.for_run("run_root", 0),
+            runnable="agent$agic:caller",
+        )
+    )
+    assert _execute_step(projector).committed == ()
+    ended = projector.handle(RunEnd(run="run_root", status=status))
+    rows = tuple(row for block in ended.committed for row in block.rows)
+    assert rows == (
+        ProgressRow("---  handoff to agic:abc", leader="handoff"),
+        ProgressRow(""),
+    )
+    assert not projector._broken
 
 
 def test_execute_prestart_failure_uses_a_correlated_trace_marker() -> None:

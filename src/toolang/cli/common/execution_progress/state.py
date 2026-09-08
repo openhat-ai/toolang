@@ -93,7 +93,6 @@ class PendingExecute:
 
     tool_call_id: str
     runnable: str
-    sequence: int
     ready: bool = False
 
 
