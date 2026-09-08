@@ -21,9 +21,9 @@ from toolang.plugin.toolsets.shell import ShellToolset
 @pytest.mark.parametrize(
     "status,expected",
     [
-        ("running", "Reading [repo] src/file.txt..."),
-        ("succeeded", "Read [repo] src/file.txt"),
-        ("failed", "Failed to read [repo] src/file.txt"),
+        ("running", "Reading repo:/src/file.txt..."),
+        ("succeeded", "Read repo:/src/file.txt"),
+        ("failed", "Failed to read repo:/src/file.txt"),
     ],
 )
 def test_workspace_descriptions_do_not_resolve_paths(
@@ -53,11 +53,11 @@ def test_workspace_descriptions_do_not_resolve_paths(
     "arguments,target",
     [
         ({"path": "workspace://"}, "workspaces"),
-        ({"path": "workspace://repo"}, "[repo] /"),
-        ({"path": "workspace://repo/"}, "[repo] /"),
-        ({"workspace": "repo"}, "[repo] /"),
-        ({"workspace": "repo", "path": "."}, "[repo] /"),
-        ({"path": "workspace://repo/a%20file"}, "[repo] a file"),
+        ({"path": "workspace://repo"}, "repo:/"),
+        ({"path": "workspace://repo/"}, "repo:/"),
+        ({"workspace": "repo"}, "repo:/"),
+        ({"workspace": "repo", "path": "."}, "repo:/"),
+        ({"path": "workspace://repo/a%20file"}, "repo:/a file"),
     ],
 )
 def test_workspace_root_and_catalog_descriptions(arguments, target):
@@ -68,12 +68,12 @@ def test_workspace_root_and_catalog_descriptions(arguments, target):
 @pytest.mark.parametrize(
     "name,expected",
     [
-        ("write", "Wrote [repo] file"),
-        ("append", "Appended to [repo] file"),
-        ("glob", "Matched *.py in [repo] file"),
-        ("stat", "Inspected [repo] file"),
-        ("mkdir", "Created directory [repo] file"),
-        ("remove", "Removed [repo] file"),
+        ("write", "Wrote repo:/file"),
+        ("append", "Appended to repo:/file"),
+        ("glob", "Matched *.py in repo:/file"),
+        ("stat", "Inspected repo:/file"),
+        ("mkdir", "Created directory repo:/file"),
+        ("remove", "Removed repo:/file"),
     ],
 )
 def test_fs_verbs(name, expected):
@@ -116,11 +116,8 @@ def test_shell_describes_command_not_output_or_exit_status(status, prefix):
 def test_honor_only_describes_rule_files_when_result_supplies_them():
     tool = RuntimeToolset().tools()["honor"]
     arguments = {"paths": [{"workspace": "repo", "path": "/src/file"}]}
-    assert tool.summary(arguments) == "Reloading workspace rules..."
-    assert (
-        tool.summary(arguments, ToolResult(error="failed"))
-        == "Failed to reload workspace rules"
-    )
+    assert tool.summary(arguments) == "Loading rules..."
+    assert tool.summary(arguments, ToolResult(error="failed")) == "Failed to load rules"
     output = {
         "controls": [
             {
@@ -136,5 +133,39 @@ def test_honor_only_describes_rule_files_when_result_supplies_them():
     }
     assert (
         tool.summary(arguments, ToolResult(output))
-        == "Reloaded workspace rules: [repo] src/AGENTS.md"
+        == "Loaded rules: repo:/src/AGENTS.md"
+    )
+
+
+@pytest.mark.parametrize("kind", ["skill", "service"])
+@pytest.mark.parametrize("scope", ["root", "home", "here", "inline"])
+@pytest.mark.parametrize("status", ["running", "succeeded", "failed"])
+def test_pick_uses_a_display_label_without_changing_the_resource_ref(
+    kind, scope, status, monkeypatch
+):
+    def no_io(*args, **kwargs):
+        raise AssertionError("summary must not read resource files")
+
+    monkeypatch.setattr(Path, "read_bytes", no_io)
+    arguments = {"kind": kind, "ref": f"{scope}://{kind}s/testing"}
+    result = (
+        None
+        if status == "running"
+        else ToolResult(error="unavailable" if status == "failed" else None)
+    )
+    wording = {
+        "running": f"Loading guidance: {kind}/testing...",
+        "succeeded": f"Loaded guidance: {kind}/testing",
+        "failed": f"Failed to load guidance: {kind}/testing",
+    }
+    assert (
+        RuntimeToolset().tools()["pick"].summary(arguments, result) == wording[status]
+    )
+    assert arguments == {"kind": kind, "ref": f"{scope}://{kind}s/testing"}
+
+
+def test_pick_keeps_remote_resource_identity_in_its_label():
+    arguments = {"kind": "skill", "ref": "https://example.com/team/testing"}
+    assert RuntimeToolset().tools()["pick"].summary(arguments, ToolResult()) == (
+        "Loaded guidance: skill/https://example.com/team/testing"
     )

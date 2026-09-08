@@ -42,7 +42,7 @@ provider data as zero.
 The complete compact facts bar is:
 
 ```text
-1m21s · 26 runs 37 models 13 tools · ↑72.5k(33.5%) ↓14.1k(8.6k) · ≈$0.01
+1m21s · 26 runs 37 models 13 tools · ↑72.5k(33.5%) ↓14.1k(8.6k) ≈$0.01
 ```
 
 Duration omits internal spaces. The count group retains the readable `runs`,

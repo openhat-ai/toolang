@@ -297,5 +297,5 @@ class Metrics:
             if include_cost and self.cost_known
             else ""
         )
-        facts.extend(value for value in (usage, cost) if value)
+        facts.append(" ".join(value for value in (usage, cost) if value))
         return [fact for fact in facts if fact]

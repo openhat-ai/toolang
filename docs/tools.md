@@ -209,11 +209,19 @@ running form is `Executing NAME ARG ...`; its succeeded and failed forms are
 
 Fs, shell, and runtime helpers supply wording through the same hook. Progress
 owns markers, color, timing, and layout; it reads saved summaries without calling
-plugins. Runtime helper descriptions use cyan and an unstyled `✧`; ordinary
-tools use an unstyled `•`. Compact elapsed time refreshes once per second in
-TTY/Chat; non-TTY prints start/end only. Tool traces show one summary line, plus
+plugins. Tool summaries and markers are dim: `✧` for runtime helpers
+and `›` for ordinary tools. Model and Flow markers remain unstyled `•`.
+Compact elapsed time refreshes once per second in TTY/Chat; non-TTY prints
+start/end only.
+Tool traces show one summary line, plus
 an indented error line on failure, and no result blocks. Long lines are truncated.
 Run/execute retain their child and handoff hierarchy.
+
+Workspace display paths use `repo:/src/file.py`, independently of the URI tool
+protocol. Honor says `Loading rules...` / `Loaded rules: repo:/AGENTS.md`.
+Pick says `Loaded guidance: skill/name` or `service/name`; local catalog refs
+are shortened for display, while remote refs retain their full identity.
+Reload continues to say `Reloaded agent state`.
 
 ### Pick guidance
 

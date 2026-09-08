@@ -23,4 +23,4 @@ def workspace_label(name: str, path: str) -> str:
     """Display a logical workspace path, without resolving its host location."""
 
     relative = path.lstrip("/")
-    return f"[{name}] {relative if relative not in {'', '.'} else '/'}"
+    return f"{name}:/" + (relative if relative != "." else "")

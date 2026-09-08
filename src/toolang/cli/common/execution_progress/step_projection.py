@@ -66,10 +66,8 @@ def live_row(
             elapsed := elapsed_fact(begin.started_at, now or begin.started_at)
         ):
             summary += f" · {elapsed}"
-        text = f"{'✧' if name else '•'} {summary}"
-        return ProgressRow(
-            text, "runtime" if name else "active", surface="tool_summary"
-        )
+        text = f"{'✧' if name else '›'} {summary}"
+        return ProgressRow(text, "progress", surface="tool_summary")
     else:
         text = f"• running {begin.kind}"
     return ProgressRow(text, "active")
@@ -139,9 +137,8 @@ def trace_terminal_rows(
     label = tool_label(begin.given)
     summary = event.noted.summary if isinstance(event.noted, ToolStepNoted) else ""
     name = runtime_tool_name(begin)
-    if name:
-        tone = "runtime"
-    marker = "✧" if name else "•"
+    tone = "progress"
+    marker = "✧" if name else "›"
     if name == "compact" and (
         elapsed := elapsed_fact(begin.started_at, event.finished_at)
     ):

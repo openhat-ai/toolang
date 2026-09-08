@@ -715,10 +715,11 @@ class StatusBar:
             self.active_runnable_label or self.runnable_label
             if self.running
             else self.runnable_label
-        )
+        ).rpartition("$")[2]
+        default_runnable = self.runnable_label.rpartition("$")[2]
         default_runnable = (
-            self.runnable_label
-            if self.running and displayed_runnable != self.runnable_label
+            default_runnable
+            if self.running and displayed_runnable != default_runnable
             else None
         )
         activity_label = (

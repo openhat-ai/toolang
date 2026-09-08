@@ -147,20 +147,19 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
         if line.startswith("∎ ") and "run_one succeeded" in line
     )
     assert footer.startswith("∎ run_one succeeded  ")
-    assert footer.endswith("2s · 1 model · ↑3.4k ↓86 · ≈$0.01")
+    assert footer.endswith("2s · 1 model · ↑3.4k ↓86 ≈$0.01")
     assert "succeeded ·" not in footer
     assert display_width(footer) == 120
     assert "┌" not in output
     assert "└" not in output
-    assert "2s · 1 model · ↑3.4k ↓86 · ≈$0.01" in output
+    assert "2s · 1 model · ↑3.4k ↓86 ≈$0.01" in output
 
 
 def test_run_footer_right_aligns_long_facts_and_indents_narrow_facts() -> None:
     facts = [
         "1m25s",
         "26 runs 32 models 10 tools",
-        "↑42.3k(17.5%) ↓14.7k(8.6k)",
-        "≈$0.01",
+        "↑42.3k(17.5%) ↓14.7k(8.6k) ≈$0.01",
     ]
 
     wide_stream = StringIO()
@@ -195,7 +194,7 @@ def test_run_footer_right_aligns_long_facts_and_indents_narrow_facts() -> None:
 
     assert narrow_lines == [
         "∎ run_rm5pxy5e succeeded",
-        "  1m25s · 26 runs 32 models 10 tools · ↑42.3k(17.5%) ↓14.7k(8.6k) · ≈$0.01",
+        "  1m25s · 26 runs 32 models 10 tools · ↑42.3k(17.5%) ↓14.7k(8.6k) ≈$0.01",
     ]
     assert all(display_width(line) <= 80 for line in narrow_lines)
 
@@ -324,7 +323,7 @@ def test_tool_output_is_not_rendered() -> None:
         ]
     )
 
-    assert "• executed web.search" in output
+    assert "› executed web.search" in output
     assert '"results"' not in output
     assert "run_one.0" not in output
 
@@ -412,7 +411,7 @@ def test_step_error_and_ownerless_run_error_use_bullet_rows() -> None:
     )
 
     assert [line.strip() for line in step_error.splitlines()][1:3] == [
-        "• failed web.search",
+        "› failed web.search",
         "provider returned status 429",
     ]
     assert step_error.count("provider returned status 429") == 1

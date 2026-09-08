@@ -784,6 +784,27 @@ def test_progress_marks_partial_reasoning_as_a_lower_bound() -> None:
     ]
 
 
+@pytest.mark.parametrize("include_cost", [False, True])
+def test_progress_groups_tokens_and_cost_in_one_fact(include_cost: bool) -> None:
+    metrics = Metrics(
+        model_calls=2,
+        tool_calls=1,
+        input_tokens=12200,
+        output_tokens=528,
+        cache_read_tokens=11248,
+        reasoning_tokens=25,
+        reasoning_known_calls=2,
+        cost=Decimal("0.0003"),
+        cost_known=True,
+        cost_approximate=True,
+    )
+    usage = "↑12.2k(92.2%) ↓528(25)" + (" ≈$0.0003" if include_cost else "")
+
+    assert metrics.facts(
+        duration="12s", include_runs=False, include_cost=include_cost
+    ) == ["12s", "2 models 1 tool", usage]
+
+
 def test_chat_root_footer_keeps_short_facts_inline() -> None:
     block = blocks.RunSummaryBlock.create(_run_begin(run_id="run_pmqv7gfc"))
     block.update(_run_end(run_id="run_pmqv7gfc", status="succeeded"))
@@ -821,19 +842,23 @@ def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> No
     assert all("─" not in line for line in lines)
 
 
-def test_chat_tool_step_has_normal_marker_and_dim_running_description() -> None:
+def test_chat_tool_step_has_dim_marker_and_running_description() -> None:
     block = blocks.ExecutionProgressBlock(
         ProgressBlock(
             "step:run_1.1",
-            (ProgressRow("• Running a command...", "active", surface="tool_summary"),),
+            (
+                ProgressRow(
+                    "› Running a command...", "progress", surface="tool_summary"
+                ),
+            ),
         ),
         live=True,
         max_width=32,
     )
     segments = list(rendering.render_segments(block.render(), width=80))
-    marker = next(segment for segment in segments if "•" in segment.text)
+    marker = next(segment for segment in segments if "›" in segment.text)
     content = next(segment for segment in segments if "Running" in segment.text)
-    assert marker.style is None or not marker.style.dim
+    assert marker.style is not None and marker.style.dim
     assert content.style is not None and content.style.dim
     assert all(
         segment.style is None or segment.style.bgcolor is None for segment in segments
@@ -847,7 +872,7 @@ def test_chat_tool_failure_stays_two_lines_without_result_surfaces(width: int) -
             "step:run_1.1",
             (
                 ProgressRow(
-                    "• Failed to read a-very-long-document-name.md",
+                    "› Failed to read a-very-long-document-name.md",
                     surface="tool_summary",
                 ),
                 ProgressRow(
@@ -867,7 +892,9 @@ def test_chat_tool_failure_stays_two_lines_without_result_surfaces(width: int) -
     lines.pop()
     assert len(lines) == 2
     assert all(len(line) <= width for line in lines)
-    assert lines[0].startswith("• ")
+    assert lines[0].startswith("› ")
+    marker = next(segment for segment in segments if "›" in segment.text)
+    assert marker.style is not None and marker.style.dim
     assert lines[1].startswith("  ")
     assert lines[1].endswith("…")
     assert all(
@@ -3027,14 +3054,16 @@ def test_chat_model_label_preserves_explicit_reasoning_values(
     assert slashes.chat_model_label({"items": []}, setting) == expected
 
 
+@pytest.mark.parametrize("module", ["", "agent$"])
 def test_chat_status_bar_right_aligns_the_model_without_hotkeys(
     monkeypatch: Any,
+    module: str,
 ) -> None:
     monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 80))
     text = "".join(
         fragment
         for _style, fragment in widgets.StatusBar(
-            "agic:chat", "runtime model"
+            f"{module}agic:chat", "runtime model"
         )._render()
     )
 
@@ -3077,14 +3106,16 @@ def test_chat_status_bar_shows_running_and_elapsed_time_without_a_marker() -> No
     assert status._render() == idle
 
 
+@pytest.mark.parametrize("module", ["", "agent$"])
 def test_chat_status_bar_keeps_the_default_model_at_the_right_edge(
     monkeypatch: Any,
+    module: str,
 ) -> None:
     monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 80))
-    status = widgets.StatusBar("flow:research", "openai/gpt-5")
+    status = widgets.StatusBar(f"{module}flow:research", "openai/gpt-5")
     idle = "".join(text for _style, text in status._render())
 
-    status.set_active_runnable("agic:chat")
+    status.set_active_runnable(f"{module}agic:chat")
     status.set_running(True)
     status.set_elapsed_seconds(18)
     running = "".join(text for _style, text in status._render())
@@ -3094,16 +3125,29 @@ def test_chat_status_bar_keeps_the_default_model_at_the_right_edge(
     assert running.endswith("flow:research · openai/gpt-5")
     assert idle.rindex("openai/gpt-5") == running.rindex("openai/gpt-5")
     assert get_cwidth(idle) == get_cwidth(running) == 80
+    assert status.runnable_label == f"{module}flow:research"
+    assert status.active_runnable_label == f"{module}agic:chat"
 
 
-def test_chat_status_bar_omits_the_matching_default_runnable() -> None:
-    status = widgets.StatusBar("agic:chat", "openai/gpt-5")
-    status.set_active_runnable("agic:chat")
+@pytest.mark.parametrize(
+    ("default", "active"),
+    [
+        ("agic:chat", "agic:chat"),
+        ("agent$agic:chat", "agent$agic:chat"),
+        ("agic:chat", "agent$agic:chat"),
+    ],
+)
+def test_chat_status_bar_omits_the_matching_default_runnable(
+    default: str, active: str
+) -> None:
+    status = widgets.StatusBar(default, "openai/gpt-5")
+    status.set_active_runnable(active)
     status.set_running(True)
 
     text = "".join(fragment for _style, fragment in status._render())
 
     assert text.count("agic:chat") == 1
+    assert "$" not in text
     assert text.endswith("openai/gpt-5")
 
 
@@ -3112,10 +3156,10 @@ def test_chat_status_bar_truncates_labels_without_moving_the_model_edge(
 ) -> None:
     monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 40))
     status = widgets.StatusBar(
-        "flow:a_very_long_default_runnable",
+        "agent$flow:a_very_long_default_runnable",
         "openai/gpt-5",
     )
-    status.set_active_runnable("agic:a_very_long_active_runnable")
+    status.set_active_runnable("agent$agic:a_very_long_active_runnable")
     status.set_running(True)
     status.set_elapsed_seconds(18)
 
@@ -3152,10 +3196,10 @@ def test_chat_status_bar_never_overflows_exceptionally_narrow_terminals(
         staticmethod(lambda: terminal_width),
     )
     status = widgets.StatusBar(
-        "flow:a_very_long_default_runnable",
+        "agent$flow:a_very_long_default_runnable",
         "openai/a-very-long-model · high",
     )
-    status.set_active_runnable("agic:a_very_long_active_runnable")
+    status.set_active_runnable("agent$agic:a_very_long_active_runnable")
     status.set_running(True)
     status.set_elapsed_seconds(3661)
 
@@ -5750,19 +5794,29 @@ def test_chat_recovered_controls_determine_terminal_corner(control_status: Any) 
         ),
     ],
 )
+@pytest.mark.parametrize("module", ["", "agent$"])
 def test_chat_root_context_uses_request_and_authoritative_runnable(
     model: ModelRequest | None,
     model_label: str,
+    module: str,
 ) -> None:
     request = RunRequest(
         thread_id="term_1",
         request_id="one",
-        runnable=RunnableRequest("agic:provisional", RunnableInputRaw(_="hello")),
+        runnable=RunnableRequest(
+            f"{module}agic:provisional", RunnableInputRaw(_="hello")
+        ),
         model=model,
         policy=RunPolicy(),
     )
     block = blocks.RunControlBlock.create("hello", request=request)
-    block.update(_run_begin(runnable_name="research"))
+    assert block.runnable == f"{module}agic:provisional"
+    assert (
+        _render_text(block.render(), width=80).splitlines()[-1].strip()
+        == "agic:provisional · " + model_label
+    )
+    block.update(replace(_run_begin(), runnable=f"{module}agic:research"))
+    assert block.runnable == f"{module}agic:research"
     expected = "agic:research · " + model_label
     lines = _render_text(block.render(), width=80).splitlines()
     assert len(lines) == 3
@@ -5780,7 +5834,7 @@ def test_chat_context_and_steer_corners_fit_without_losing_padding(width: int) -
         thread_id="term_1",
         request_id="one",
         runnable=RunnableRequest(
-            "agic:研究研究研究研究研究", RunnableInputRaw(_="hello")
+            "agent$agic:研究研究研究研究研究", RunnableInputRaw(_="hello")
         ),
         model=ModelRequest(
             "provider/a-very-long-model",

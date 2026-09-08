@@ -96,12 +96,12 @@ def _end(begin, status="succeeded", output=None):
         (
             "pick",
             {"kind": "skill", "ref": "home://skills/testing"},
-            "Loaded skill guidance: home://skills/testing",
+            "Loaded guidance: skill/testing",
         ),
         (
             "pick",
             {"kind": "service", "ref": "home://services/github"},
-            "Loaded service guidance: home://services/github",
+            "Loaded guidance: service/github",
         ),
         ("reload", {}, "Reloaded agent state"),
         ("compact", {}, "Compacted thread history in 1m20s"),
@@ -113,6 +113,8 @@ def test_runtime_tools_use_owned_wording_and_progress_marker(name, arguments, te
     rows = trace_terminal_rows(begin, _end(begin), error="")
     assert [row.text for row in rows] == [f"✧ {text}"]
     assert rows[0].surface == "tool_summary"
+    assert rows[0].tone == "progress"
+    assert trace_live_rows(begin, "")[0].tone == "progress"
 
 
 def test_honor_lists_every_rules_file_in_script_and_chat_without_store_reads():
@@ -129,7 +131,7 @@ def test_honor_lists_every_rules_file_in_script_and_chat_without_store_reads():
         ]
     }
     end = _end(begin, output=output)
-    assert trace_live_rows(begin, "")[0].text == "✧ Reloading workspace rules..."
+    assert trace_live_rows(begin, "")[0].text == "✧ Loading rules..."
     for rows in (trace_live_rows(begin, ""), trace_terminal_rows(begin, end, error="")):
         assert len(rows) == 1
         block = ProgressBlock("honor", rows)
@@ -145,10 +147,9 @@ def test_honor_lists_every_rules_file_in_script_and_chat_without_store_reads():
         )
         for rendered in (stream.getvalue(), rendered_chat):
             compact = "".join(rendered.split())
-            if "Reloaded" in rendered:
+            if "Loaded" in rendered:
                 assert all(
-                    f"[{workspace}]{path.lstrip('/')}" in compact
-                    for workspace, path in files
+                    f"{workspace}:{path}" in compact for workspace, path in files
                 )
             else:
                 assert "AGENTS.md" not in rendered
@@ -166,6 +167,8 @@ def test_runtime_tool_failure_details_and_cancellation_remain_visible(name, stat
     assert [row.text.strip() for row in rows[1:]] == ([error] if error else [])
     if error:
         assert rows[1].surface == "tool_error"
+        assert rows[1].tone == "error"
+    assert rows[0].tone == "progress"
 
 
 @pytest.mark.parametrize(
@@ -200,9 +203,9 @@ def test_tool_results_remain_in_events_but_not_in_progress(plugin, name):
         ),
     )
     rows = trace_terminal_rows(begin, end, error="")
-    assert rows[0].text.startswith("• ")
+    assert rows[0].text.startswith("› ")
     assert len(rows) == 1
-    assert rows[0].text == f"• Executed {name}"
+    assert rows[0].text == f"› Executed {name}"
     assert end.output is not None and isinstance(end.output.value, ToolResultPart)
     assert end.output.value.output == {"value": "Result is still available"}
 

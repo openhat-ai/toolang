@@ -21,7 +21,6 @@ _STYLES: dict[ProgressTone, str] = {
     "progress": "dim",
     "normal": "none",
     "active": "none",
-    "runtime": "cyan",
     "error": "red",
     "warning": "yellow",
 }
@@ -292,13 +291,7 @@ class _PlainRow:
         console: Console,
         options: ConsoleOptions,
     ) -> RenderResult:
-        style = (
-            "dim"
-            if self.live
-            and self.row.surface == "tool_summary"
-            and self.row.tone != "runtime"
-            else _STYLES[self.row.tone]
-        )
+        style = _STYLES[self.row.tone]
         width = max(1, min(options.max_width, self.max_width))
         if self.row.surface in {"tool_summary", "tool_error"} or (
             self.live and not self.row.wrap_live
@@ -336,12 +329,12 @@ class _PlainRow:
 
 
 def _plain_text(value: str, style: str) -> Text:
-    """Style content while keeping the Step marker in its prefix normal."""
+    """Style rows while keeping Model and Flow markers normal."""
 
     text = Text(no_wrap=True)
     prefix, content = split_hanging_prefix(value)
     for char in prefix:
-        text.append(char, style="none" if char in {"•", "✧"} else style)
+        text.append(char, style="none" if char == "•" else style)
     text.append(content, style=style)
     return text
 
