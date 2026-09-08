@@ -27,7 +27,7 @@ from toolang.execution.types import (
     RunStatus,
     ThreadRef,
 )
-from toolang.lang.input import NamedInputSource, RunnableInputRaw
+from toolang.lang.input import CallInput
 from toolang.lang.ast import FlowDecl, RunStmt, Span
 from toolang.up.types import AgentServerRef
 from tests.support.execution_harness import ExecutionHarness
@@ -119,13 +119,10 @@ def test_script_binds_options_arguments_and_primary_input(
         "cost=2.5",
         "time=60",
     )
-    assert captured["raw_named"] == (
-        NamedInputSource("count", "2.5"),
-        NamedInputSource("enabled", "true"),
-    )
+    assert captured["raw_named"] == {"count": "2.5", "enabled": "true"}
     input = captured["input"]
-    assert isinstance(input, RunnableInputRaw)
-    assert input._ == "hello world"
+    assert isinstance(input, CallInput)
+    assert input.get("_") == "hello world"
 
 
 def test_script_model_body_builds_one_invocation_session_layer() -> None:
@@ -164,8 +161,8 @@ def test_script_reads_primary_input_from_stdin(
 
     assert result == 0
     input = captured["input"]
-    assert isinstance(input, RunnableInputRaw)
-    assert input._ == "from stdin"
+    assert isinstance(input, CallInput)
+    assert input.get("_") == "from stdin"
 
 
 def test_script_stdin_can_override_the_cli_runnable(
@@ -202,9 +199,9 @@ agic alternate(_: Part[]):
         runnable="agic:alternate",
     )
     input = captured["input"]
-    assert isinstance(input, RunnableInputRaw)
-    assert input._ == "from stdin"
-    assert captured["raw_named"] == ()
+    assert isinstance(input, CallInput)
+    assert input.get("_") == "from stdin"
+    assert captured["raw_named"] == {}
 
 
 def test_script_supports_explicit_stdin_marker(
@@ -229,8 +226,8 @@ def test_script_supports_explicit_stdin_marker(
 
     assert result == 0
     input = captured["input"]
-    assert isinstance(input, RunnableInputRaw)
-    assert input._ == "from stdin"
+    assert isinstance(input, CallInput)
+    assert input.get("_") == "from stdin"
 
 
 def test_script_supports_fenced_stdin_input(
@@ -255,8 +252,8 @@ def test_script_supports_fenced_stdin_input(
 
     assert result == 0
     input = captured["input"]
-    assert isinstance(input, RunnableInputRaw)
-    assert input._ == "from\nstdin\n"
+    assert isinstance(input, CallInput)
+    assert input.get("_") == "from\nstdin\n"
 
 
 @pytest.mark.parametrize(
@@ -311,7 +308,7 @@ def test_script_preserves_explicit_empty_call_input(
     )
 
     assert result == 0
-    assert captured["input"] == RunnableInputRaw(_="")
+    assert captured["input"] == CallInput({"_": ""})
 
 
 @pytest.mark.parametrize("value", ("", "   "))
@@ -378,10 +375,10 @@ agic demo(_: Part[], count?: Number):
     )
 
     assert result == 0
-    assert captured["raw_named"] == ()
+    assert captured["raw_named"] == {}
     input = captured["input"]
-    assert isinstance(input, RunnableInputRaw)
-    assert input._ == "count=2"
+    assert isinstance(input, CallInput)
+    assert input.get("_") == "count=2"
 
 
 def test_script_includes_an_image(
@@ -409,8 +406,8 @@ def test_script_includes_an_image(
 
     assert result == 0
     input = captured["input"]
-    assert isinstance(input, RunnableInputRaw)
-    assert input._ == "@sample.png"
+    assert isinstance(input, CallInput)
+    assert input.get("_") == "@sample.png"
 
 
 def test_script_shows_runnable_help_for_a_missing_required_parameter(
@@ -497,7 +494,7 @@ def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> Non
                     runnable="demo",
                     override=override,
                     input=input,
-                    raw_named=(NamedInputSource("count", "1"),),
+                    raw_named=CallInput({"count": "1"}),
                     session_override=RunOverride(),
                     quiet=True,
                 )
@@ -955,8 +952,8 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
         runnable="demo",
         runnable_kind="agic",
         override=RunOverride(),
-        input=RunnableInputRaw(_="hello"),
-        raw_named=(NamedInputSource("count", "2"),),
+        input=CallInput({"_": "hello"}),
+        raw_named=CallInput({"count": "2"}),
         allow_options=(),
         model_body=None,
         limit_options=(),
@@ -1016,8 +1013,8 @@ def test_embedded_script_prepare_failure_uses_the_operational_failure_block(
         runnable="demo",
         runnable_kind="agic",
         override=RunOverride(),
-        input=RunnableInputRaw(_="hello"),
-        raw_named=(NamedInputSource("count", "2"),),
+        input=CallInput({"_": "hello"}),
+        raw_named=CallInput({"count": "2"}),
         allow_options=(),
         model_body=None,
         limit_options=(),
@@ -1111,8 +1108,8 @@ def test_remote_script_cancellation_cancels_the_accepted_run(
                 sandbox="docker:python:3.13-slim",
                 runnable="agic:demo",
                 override=RunOverride(),
-                input=RunnableInputRaw(_="hello"),
-                raw_named=(NamedInputSource("count", "2"),),
+                input=CallInput({"_": "hello"}),
+                raw_named=CallInput({"count": "2"}),
                 session_override=RunOverride(),
                 quiet=True,
             )
@@ -1167,8 +1164,8 @@ def test_remote_script_rejects_mixed_named_input_sources() -> None:
         match="named inputs cannot be supplied by both source and surface",
     ):
         script._remote_script_input(
-            RunnableInputRaw(named=(NamedInputSource("count", "1"),)),
-            raw_named=(NamedInputSource("enabled", "true"),),
+            CallInput({"count": "1"}),
+            raw_named=CallInput({"enabled": "true"}),
         )
 
 

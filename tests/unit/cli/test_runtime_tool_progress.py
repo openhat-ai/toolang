@@ -22,6 +22,7 @@ from toolang.cli.toolang.commands.chat import blocks, rendering
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from toolang.execution.tools.runtime import RuntimeToolset
 from toolang.execution.types import (
+    Output,
     ControlRef,
     StepRef,
     ToolStepGiven,
@@ -76,16 +77,18 @@ def _end(begin, status="succeeded", output=None):
         status=status,
         finished_at=FINISH,
         noted=ToolStepNoted(summary=summary),
-        output=Local.typed(
-            "ToolResultPart",
-            ToolResultPart(
-                call.tool_call_id,
-                call.name,
-                call.name,
-                output=output or {"controls": []},
+        output=Output(
+            Local.typed(
+                "ToolResultPart",
+                ToolResultPart(
+                    call.tool_call_id,
+                    call.name,
+                    call.name,
+                    output=output or {"controls": []},
+                ),
+                0,
             ),
             None,
-            0,
         ),
     )
 
@@ -192,22 +195,25 @@ def test_tool_results_remain_in_events_but_not_in_progress(plugin, name):
         status="succeeded",
         finished_at=FINISH,
         noted=ToolStepNoted(summary=f"Executed {name}"),
-        output=Local.typed(
-            "ToolResultPart",
-            ToolResultPart(
-                call.tool_call_id,
-                call.name,
-                call.name,
-                output={"value": "Result is still available"},
+        output=Output(
+            Local.typed(
+                "ToolResultPart",
+                ToolResultPart(
+                    call.tool_call_id,
+                    call.name,
+                    call.name,
+                    output={"value": "Result is still available"},
+                ),
             ),
+            None,
         ),
     )
     rows = trace_terminal_rows(begin, end, error="")
     assert rows[0].text.startswith("› ")
     assert len(rows) == 1
     assert rows[0].text == f"› Executed {name}"
-    assert end.output is not None and isinstance(end.output.value, ToolResultPart)
-    assert end.output.value.output == {"value": "Result is still available"}
+    assert end.output is not None and isinstance(end.output.local.value, ToolResultPart)
+    assert end.output.local.value.output == {"value": "Result is still available"}
 
 
 @pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])

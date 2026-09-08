@@ -39,7 +39,7 @@ def valid_output(
     roots: Sequence[RunRef],
     expected: Mapping[str, object] | None = None,
 ) -> bool:
-    raw: object = output.output.value
+    raw: object = output.output.local.value
     if not isinstance(raw, Mapping):
         return False
     value = cast(Mapping[str, object], raw)
@@ -161,7 +161,7 @@ async def execute(
                     bindings=RunBindings(model=request.ref, runnable="flow:compact"),
                     limits=frame.run.limits,
                     model_request=request,
-                    input=RunnableInput(named=expected),
+                    input=RunnableInput(expected),
                 )
             )
             try:

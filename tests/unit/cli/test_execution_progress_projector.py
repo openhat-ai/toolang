@@ -25,6 +25,7 @@ from toolang.execution.events import (
     StepEnd,
 )
 from toolang.execution.types import (
+    Output,
     CollectionStepNoted,
     ControlRef,
     ErrorMessage,
@@ -79,12 +80,12 @@ def _tool(name: str = "web.search", *, summary: str = "") -> ToolStepGiven:
     )
 
 
-def _parts(text: str) -> Local:
-    return Local.typed("Part[]", (TextPart(text),), "_", 0)
+def _parts(text: str) -> Output:
+    return Output(Local.typed("Part[]", (TextPart(text),), 0), "_")
 
 
-def _part_output(*parts: Part) -> Local:
-    return Local.typed("Part[]", parts, "_", 0)
+def _part_output(*parts: Part) -> Output:
+    return Output(Local.typed("Part[]", parts, 0), "_")
 
 
 def _tool_call_part() -> ToolCallPart:
@@ -812,18 +813,20 @@ def test_tool_output_is_not_projected(
             step=StepRef.parse("run_root.0"),
             kind="tool",
             status="succeeded",
-            output=Local.typed(
-                "Part[]",
-                (
-                    ToolResultPart(
-                        tool_call_id="call_1",
-                        tool_name="web.search",
-                        tool_family="web",
-                        output=output,
+            output=Output(
+                Local.typed(
+                    "Part[]",
+                    (
+                        ToolResultPart(
+                            tool_call_id="call_1",
+                            tool_name="web.search",
+                            tool_family="web",
+                            output=output,
+                        ),
                     ),
+                    0,
                 ),
                 "_",
-                0,
             ),
         )
     )
@@ -929,7 +932,7 @@ def test_flow_scalar_output_is_displayed_in_its_normal_output_slot() -> None:
             step=StepRef.parse("run_root.0"),
             kind="value",
             status="succeeded",
-            output=Local.typed("Text", "agent runtimes", "topic", 0),
+            output=Output(Local.typed("Text", "agent runtimes", 0), "topic"),
         )
     )
 
@@ -962,11 +965,8 @@ def test_flow_list_output_uses_presentation_data_without_storage_tags() -> None:
             step=path,
             kind="value",
             status="succeeded",
-            output=Local.typed(
-                "Text[]",
-                ("query one", "query two"),
-                "queries",
-                1,
+            output=Output(
+                Local.typed("Text[]", ("query one", "query two"), 1), "queries"
             ),
         )
     )
@@ -997,16 +997,18 @@ def test_flow_pointer_backed_output_is_not_displayed() -> None:
             step=path,
             kind="value",
             status="succeeded",
-            output=Local.typed(
-                "Text",
-                TypedRef(
-                    FieldRef.from_path(
-                        StepRef.parse("run_source.0"), "output", "value"
-                    ),
+            output=Output(
+                Local.typed(
                     "Text",
+                    TypedRef(
+                        FieldRef.from_path(
+                            StepRef.parse("run_source.0"), "output", "local", "value"
+                        ),
+                        "Text",
+                    ),
+                    0,
                 ),
                 "topic",
-                0,
             ),
         )
     )
@@ -1685,18 +1687,20 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
             step=StepRef.parse("run_fetch.0"),
             kind="tool",
             status="succeeded",
-            output=Local.typed(
-                "Part[]",
-                (
-                    ToolResultPart(
-                        tool_call_id="call_1",
-                        tool_name="fetch_page",
-                        tool_family="web",
-                        output={"results": [{}, {}]},
+            output=Output(
+                Local.typed(
+                    "Part[]",
+                    (
+                        ToolResultPart(
+                            tool_call_id="call_1",
+                            tool_name="fetch_page",
+                            tool_family="web",
+                            output={"results": [{}, {}]},
+                        ),
                     ),
+                    0,
                 ),
                 "_",
-                0,
             ),
         )
     )
@@ -1738,7 +1742,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
             step=par,
             kind="par",
             status="succeeded",
-            output=Local.typed("Part[]", (TextPart("done"),), "_", 1),
+            output=Output(Local.typed("Part[]", (TextPart("done"),), 1), "_"),
         )
     )
 

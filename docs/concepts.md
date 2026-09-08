@@ -267,7 +267,7 @@ part of a local.
 Toolang uses six operations at runnable boundaries:
 
 - override parsing produces one aggregate `RunOverride`
-- runnable-input parsing produces `RunnableInputRaw(_, named)`
+- runnable-input parsing produces `CallInput[str]`
 - setting and runnable resolution materialize one `RunRequest`, then one
   immutable `RunSpec` containing a resolved `RunnableInput`
 - content evaluation produces one ordered canonical `Percept`

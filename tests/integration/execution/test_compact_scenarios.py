@@ -127,7 +127,7 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
             tool, model = steps
             start = harness.store.list_run_controls(run_id=current.id)[0]
             assert model.input == (
-                FieldRef.from_path(start.ref, "payload", "input", 0, "value"),
+                FieldRef.from_path(start.ref, "payload", "input", "_"),
             )
             assert (
                 isinstance(tool.given, ToolStepGiven)
@@ -142,9 +142,9 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
             control = controls[0]
             assert isinstance(control.payload, CompactControlPayload)
             assert tool.output is not None and isinstance(
-                tool.output.value, ToolResultPart
+                tool.output.local.value, ToolResultPart
             )
-            assert tool.output.value.output == {
+            assert tool.output.local.value.output == {
                 "controls": [
                     {"ref": str(control.ref), "horizon": str(control.payload.horizon)}
                 ]
@@ -258,7 +258,9 @@ def test_compact_between_model_calls_preserves_now_and_prior_call(tmp_path):
             steps = harness.store.list_steps(run_id=root.id)
             assert [step.kind for step in steps] == ["model", "tool", "tool", "model"]
             first, lookup, compact, last = steps
-            assert last.input == (FieldRef.from_path(lookup.ref, "output", "value"),)
+            assert last.input == (
+                FieldRef.from_path(lookup.ref, "output", "local", "value"),
+            )
             assert isinstance(lookup.given, ToolStepGiven)
             assert lookup.given.trigger == "model"
             assert isinstance(compact.given, ToolStepGiven)
@@ -407,7 +409,7 @@ def test_compact_flow_carries_progress_across_real_history_pages(tmp_path):
                         model="test/scripted", runnable="flow:compact"
                     ),
                     input=RunnableInput(
-                        named={"thread": thread, "begin": None, "end": last.id}
+                        {"thread": thread, "begin": None, "end": last.id}
                     ),
                 )
             )
@@ -415,7 +417,7 @@ def test_compact_flow_carries_progress_across_real_history_pages(tmp_path):
             history = RunHistory(harness.store)
             result = history.get_output(compact.id)
             assert result is not None
-            assert local_to_protocol_data(result)["value"] == output
+            assert local_to_protocol_data(result.local)["value"] == output
             second_page_request = harness.adapter.invocations[7].call
             assert "first page" in str(
                 [m.to_data() for m in second_page_request.messages]
@@ -786,8 +788,8 @@ def test_interrupting_compact_owner_cancels_its_independent_run(tmp_path, action
                 assert retried.status == "succeeded" and retried.kind == "tool"
                 start = harness.store.list_run_controls(run_id=current.id)[0]
                 assert model.input == (
-                    FieldRef.from_path(start.ref, "payload", "input", 0, "value"),
-                    FieldRef.from_path(steer.ref, "payload", "input", 0, "value"),
+                    FieldRef.from_path(start.ref, "payload", "input", "_"),
+                    FieldRef.from_path(steer.ref, "payload", "input", "_"),
                 )
                 assert "adjusted request" in str(
                     [m.to_data() for m in harness.adapter.invocations[-1].call.messages]

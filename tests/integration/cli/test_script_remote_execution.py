@@ -15,7 +15,7 @@ from toolang.catalog import CapsManager, JobsManager
 from toolang.cli.toolang.commands import script
 from toolang.execution.records import RunControlPayload
 from toolang.execution.types import RunOverride
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import CallInput
 from toolang.up import AgentCore, process as agents
 from tests.support.execution_harness import ExecutionHarness
 
@@ -72,8 +72,8 @@ def test_remote_script_uses_a_script_thread_and_native_progress(
                 sandbox="host",
                 runnable="agic:echo",
                 override=RunOverride(),
-                input=RunnableInputRaw(_="hello"),
-                raw_named=(),
+                input=CallInput({"_": "hello"}),
+                raw_named=CallInput({}),
                 session_override=RunOverride(),
                 quiet=False,
                 transport=httpx.ASGITransport(app=app),

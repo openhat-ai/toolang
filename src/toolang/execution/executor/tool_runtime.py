@@ -162,7 +162,7 @@ class _ToolRuntime(ToolRuntime):
             record is None
             or not isinstance(target, TypedRef)
             or not isinstance(target.ref.record, RunRef)
-            or target.ref.tokens != ("output", "value")
+            or target.ref.tokens != ("output", "local", "value")
         ):
             raise RuntimeError("runtime run result is missing its child run reference")
         state.output = target.ref

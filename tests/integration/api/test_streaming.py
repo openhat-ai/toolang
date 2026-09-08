@@ -39,7 +39,7 @@ from toolang.execution.records import (
     ThreadPeer,
 )
 from toolang.execution.schemas import RunDetail, ThreadDetail
-from toolang.execution.types import ControlRef, FieldRef, Local, StepRef
+from toolang.execution.types import ControlRef, FieldRef, Local, StepRef, Output
 from toolang.lang.ast import LetStmt, RunStmt, Span
 from toolang.state.prepare import prepare_agent_state
 from toolang.up import AgentCore
@@ -58,8 +58,7 @@ def _direct_request(
         "request_id": request_id,
         "runnable": {
             "ref": runnable if ":" in runnable else f"agic:{runnable}",
-            "input": input or [],
-            "args": None,
+            "input": {"_": input} if input else {},
         },
         "model": {"ref": TEST_MODEL_REF, "parameters": {}},
         "policy": {"allow": [], "limits": limits or {}},
@@ -334,8 +333,8 @@ agic chat(_: Part[]) -> Part[]:
             for event, data in events
             if event.startswith("step_") or event.startswith("part_")
         )
-        assert run_detail.output == Local.typed(
-            "Part[]", (TextPart("chat reply"),), "_", 0
+        assert run_detail.output == Output(
+            Local.typed("Part[]", (TextPart("chat reply"),), 0), "_"
         )
         assert thread_detail.runs[0].output == run_detail.output
         threads = core.store.list_threads()
@@ -375,8 +374,7 @@ def test_stream_validation_fails_before_sse_headers(tmp_path: Path) -> None:
                 json=_direct_request(thread_id, "missing"),
             )
             missing_thread = client.post(
-                "/api/v1/runs/stream",
-                json={"runnable": {"ref": "answer", "input": []}},
+                "/api/v1/runs/stream", json={"runnable": {"ref": "answer", "input": {}}}
             )
 
         assert created.status_code == 201
@@ -682,7 +680,7 @@ def test_child_run_stream_redirects_client_to_root_run(tmp_path: Path) -> None:
         status="running",
         input=(
             FieldRef.from_path(
-                ControlRef.for_run("run_root", 0), "payload", "input", 0, "value"
+                ControlRef.for_run("run_root", 0), "payload", "input", "_"
             ),
         ),
         output=(),

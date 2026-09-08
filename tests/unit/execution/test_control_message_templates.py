@@ -18,15 +18,18 @@ from toolang.execution.records import (
     RetryControlPayload,
     RewindControlPayload,
     RunControlPayload,
+    SteerControlPayload,
 )
 from toolang.execution.types import (
     AgentResources,
     ControlRef,
-    Local,
+    FieldRef,
     MessageDelta,
     RunRef,
     ThreadRef,
+    TypedRef,
 )
+from toolang.lang.input import CallInput
 
 
 @pytest.mark.parametrize("reason", [None, "Please stop."])
@@ -35,7 +38,7 @@ def test_cancel_description_is_an_attribute(reason: str | None) -> None:
         str(ControlRef.for_run("run_ab12", 1)),
         "cancel",
         CancelControlPayload(
-            (Local.typed("Text", reason, "_"),) if reason is not None else (),
+            CallInput({"_": reason}) if reason is not None else CallInput({})
         ),
     )
     template = control_message(control)
@@ -56,12 +59,17 @@ def test_cancel_description_is_an_attribute(reason: str | None) -> None:
         (
             "run",
             RunControlPayload(
-                AgentResources(), RunLimits(), None, "agent$agic:chat", "test/model", ()
+                AgentResources(),
+                RunLimits(),
+                None,
+                "agent$agic:chat",
+                "test/model",
+                CallInput({}),
             ),
         ),
         ("retry", RetryControlPayload(AgentResources(), RunLimits(), None)),
         ("reload", ReloadControlPayload("a" * 64)),
-        ("execute", ExecuteControlPayload("a" * 64, "agent$agic:chat", ())),
+        ("execute", ExecuteControlPayload("a" * 64, "agent$agic:chat", CallInput({}))),
         ("create", CreateControlPayload()),
         (
             "fork",
@@ -88,3 +96,21 @@ def test_other_controls_add_no_lifecycle_message(kind, payload) -> None:
         else ControlRef.for_run("run_ab12", 1)
     )
     assert control_message(ControlRecord(str(ref), kind, payload)) is None
+
+
+@pytest.mark.parametrize("payload_type", [SteerControlPayload, CancelControlPayload])
+def test_control_message_retains_referenced_input_type(payload_type) -> None:
+    source = TypedRef(
+        FieldRef.from_path(ControlRef.for_run("run_ab12", 0), "payload", "input", "_"),
+        "Part[]",
+    )
+    control = ControlRecord(
+        str(ControlRef.for_run("run_ab12", 1)),
+        "steer" if payload_type is SteerControlPayload else "cancel",
+        payload_type(CallInput({"_": source})),
+    )
+    template = control_message(control)
+    assert template is not None
+    assert template.segments[1] == TypedRef(
+        FieldRef.from_path(control.ref, "payload", "input", "_"), "Part[]"
+    )

@@ -22,6 +22,7 @@ from toolang.cli.common.script_progress.console import ProgressConsole
 from toolang.cli.toolang.commands.chat import blocks, rendering
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from toolang.execution.types import (
+    Output,
     ControlRef,
     ErrorMessage,
     Local,
@@ -102,7 +103,7 @@ def _execute_step(
             step=step,
             kind="tool",
             status="failed" if error else "succeeded",
-            output=Local.typed("ToolResultPart", result, None, 0),
+            output=Output(Local.typed("ToolResultPart", result, 0), None),
             error=ErrorMessage(error) if error else None,
             noted=ToolStepNoted(
                 summary=f"Failed to execute {runnable}" if error else "Transferred"
@@ -188,7 +189,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
             step=child_model,
             kind="model",
             status="succeeded",
-            output=Local.typed("Part[]", (TextPart("summary"),), "_", 0),
+            output=Output(Local.typed("Part[]", (TextPart("summary"),), 0), "_"),
             noted=ModelStepNoted(tokens=ModelTokenCount(input=4, output=2)),
             finished_at="2026-01-01T00:00:01Z",
         )
@@ -281,7 +282,7 @@ def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
             step=caller,
             kind="model",
             status="succeeded",
-            output=Local.typed("Part[]", (_execute_part(),), "_", 0),
+            output=Output(Local.typed("Part[]", (_execute_part(),), 0), "_"),
         )
     )
 
@@ -517,7 +518,9 @@ def test_execute_prestart_failure_uses_a_correlated_trace_marker() -> None:
             step=caller,
             kind="model",
             status="succeeded",
-            output=Local.typed("Part[]", (_execute_part("flow:missing"),), "_", 0),
+            output=Output(
+                Local.typed("Part[]", (_execute_part("flow:missing"),), 0), "_"
+            ),
         )
     )
 
@@ -556,11 +559,8 @@ def test_handoff_to_flow_keeps_the_first_run_statement_flow_owned() -> None:
             step=caller,
             kind="model",
             status="succeeded",
-            output=Local.typed(
-                "Part[]",
-                (_execute_part("flow:delegate"),),
-                "_",
-                0,
+            output=Output(
+                Local.typed("Part[]", (_execute_part("flow:delegate"),), 0), "_"
             ),
         )
     )
@@ -948,18 +948,20 @@ def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> No
             step=model,
             kind="model",
             status="succeeded",
-            output=Local.typed(
-                "Part[]",
-                (
-                    ToolCallPart(
-                        tool_call_id="runtime-call",
-                        tool_name="_internal_run_action",
-                        tool_family="runtime",
-                        input={"runnable": "agic:child"},
+            output=Output(
+                Local.typed(
+                    "Part[]",
+                    (
+                        ToolCallPart(
+                            tool_call_id="runtime-call",
+                            tool_name="_internal_run_action",
+                            tool_family="runtime",
+                            input={"runnable": "agic:child"},
+                        ),
                     ),
+                    0,
                 ),
                 "_",
-                0,
             ),
         )
     )
@@ -978,18 +980,20 @@ def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> No
             step=dynamic,
             kind="run",
             status="succeeded",
-            output=Local.typed(
-                "Part[]",
-                (
-                    ToolResultPart(
-                        tool_call_id="runtime-call",
-                        tool_name="_internal_run_action",
-                        tool_family="runtime",
-                        output={"run": "run_child"},
+            output=Output(
+                Local.typed(
+                    "Part[]",
+                    (
+                        ToolResultPart(
+                            tool_call_id="runtime-call",
+                            tool_name="_internal_run_action",
+                            tool_family="runtime",
+                            output={"run": "run_child"},
+                        ),
                     ),
+                    0,
                 ),
                 "_",
-                0,
             ),
         )
     )

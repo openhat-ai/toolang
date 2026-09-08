@@ -1,8 +1,11 @@
 """Convert public HTTP schemas into core runtime values."""
 
+from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
+from typing import Any
 
 from fastapi import HTTPException
+from pydantic import TypeAdapter
 
 from toolang.base.types.message import Message, Part
 from toolang.execution.schemas import RerunRequest, RetryRequest, RunRequest
@@ -15,6 +18,9 @@ from .schemas import (
     InputPart,
     RunOverridePayload as RunCommandPayload,
 )
+
+
+_INPUT_PART_ADAPTER = TypeAdapter(InputPart)
 
 
 def parse_authored_run(payload: AuthoredRunRequest) -> RunRequest:
@@ -95,6 +101,12 @@ def parse_parts(parts: list[InputPart]) -> tuple[Part, ...]:
         ).parts
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def parse_input_part(payload: Mapping[str, Any]) -> Part:
+    """Validate one HTTP input part before the shared signature decoder adopts it."""
+
+    return parse_parts([_INPUT_PART_ADAPTER.validate_python(payload)])[0]
 
 
 def _parse_run_command(payload: RunCommandPayload) -> RunCommand:

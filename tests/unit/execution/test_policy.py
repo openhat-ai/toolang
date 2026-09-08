@@ -28,7 +28,7 @@ from toolang.execution.types import (
     RunOverride,
     SessionSetting,
 )
-from toolang.lang.input import CallInput, NamedInputSource
+from toolang.lang.input import CallInput
 from toolang.setup import AgentSetup, ModelCollection, ToolCollection
 
 
@@ -84,17 +84,14 @@ def test_parse_run_override_forms(source: str, expected: RunOverride) -> None:
     override, named = parse_run_override(source)
 
     assert override == expected
-    assert named == ()
+    assert named == {}
 
 
 def test_runnable_override_returns_named_input_sources() -> None:
     override, named = parse_run_override(':agic review focus="security review" count=2')
 
     assert override == RunOverride(runnable="agic:review")
-    assert named == (
-        NamedInputSource("focus", "security review"),
-        NamedInputSource("count", "2"),
-    )
+    assert named == {"focus": "security review", "count": "2"}
 
 
 def test_prefix_merges_allow_lines_and_multiple_fields() -> None:
@@ -110,7 +107,7 @@ def test_prefix_merges_allow_lines_and_multiple_fields() -> None:
             AllowOverride("skills", ("reviewer",)),
         )
     )
-    assert call_input == CallInput(_="Run this.")
+    assert call_input == CallInput({"_": "Run this."})
 
 
 @pytest.mark.parametrize(
@@ -173,7 +170,7 @@ def test_repeated_allow_sentinels_are_idempotent(
         f":allow models={sentinel}\n:allow models={sentinel}\n\nRun"
     )
     assert override == expected
-    assert call_input == CallInput(_="Run")
+    assert call_input == CallInput({"_": "Run"})
 
 
 @pytest.mark.parametrize("sentinel", ["all", "none"])

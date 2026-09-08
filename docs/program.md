@@ -188,7 +188,9 @@ instead bound from the filename as described above.
 ### Primary Input
 
 `_` is the primary input parameter. It aligns the runnable signature with
-the primary runtime local used by flows.
+the primary runtime local used by flows. Primary input is shortened to
+**input**; values supplied for named parameters are **arguments**. See
+[input terminology and flat mappings](./call-input.md#terminology).
 
 ```too
 agic chat:                         # implicit _: Part[]
@@ -597,7 +599,8 @@ file    file, else default
 ```
 
 Every run surface must resolve one `RunnableInput`, including all required named
-inputs, before execution. Text surfaces first parse `RunnableInputRaw`. Script
+inputs, before execution. Text surfaces first parse `CallInput[str]`; `RunnableInput` is an alias for
+`CallInput[Value]`. Both use `_` and argument names as sibling keys. Script
 derives its CLI from the selected
 signature; chat, task, and chore input may begin with `RunOverride` lines,
 and runnable shortcuts may carry `name=value` named sources.

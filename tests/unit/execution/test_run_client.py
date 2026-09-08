@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import fields, replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -31,8 +32,8 @@ from toolang.execution.schemas import (
     RunnableRequest,
 )
 from toolang.execution.types import ErrorMessage, RunCommand, StepRef, ThreadPrefix
-from toolang.execution.values import parts_from_local
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.types import Array
+from toolang.lang.input import CallInput
 from toolang.setup import AgentSetup
 
 
@@ -62,7 +63,7 @@ def _request(
     *,
     commands: tuple[RunCommand, ...] = (),
     session_commands: tuple[RunCommand, ...] = (),
-    input: RunnableInputRaw = RunnableInputRaw(_="hello"),
+    input: CallInput[str] = CallInput({"_": "hello"}),
     runnable_fallbacks: tuple[str, ...] = ("missing", "chat", "default"),
     request_id: str = "request_1",
 ) -> RunRequest:
@@ -105,7 +106,7 @@ def test_run_request_contains_only_materialized_caller_values() -> None:
     assert request == RunRequest(
         thread_id="term_test",
         request_id="request_1",
-        runnable=RunnableRequest("agic:chat", RunnableInputRaw(_="hello")),
+        runnable=RunnableRequest("agic:chat", CallInput({"_": "hello"})),
         model=ModelRequest(TEST_MODEL_REF),
         policy=RunPolicy(),
     )
@@ -135,7 +136,7 @@ def test_run_request_rejects_invalid_field_shapes(
     values: dict[str, object] = {
         "thread_id": "term_test",
         "request_id": "request_1",
-        "runnable": RunnableRequest("agic:chat", RunnableInputRaw(_="hello")),
+        "runnable": RunnableRequest("agic:chat", CallInput({"_": "hello"})),
         "model": ModelRequest(TEST_MODEL_REF),
         "policy": RunPolicy(),
     }
@@ -242,7 +243,7 @@ def test_local_client_resolves_fallback_input_and_policy_precedence(
         fallback_handle = await client.run(
             _request(
                 thread,
-                input=RunnableInputRaw(_="@note.md"),
+                input=CallInput({"_": "@note.md"}),
                 request_id="fallback_request",
             ),
             tracer=tracer,
@@ -404,9 +405,9 @@ prompt rewrite:
             await client.run(
                 _request(
                     thread,
-                    input=RunnableInputRaw(_="$rewrite style=brief -- hello"),
+                    input=CallInput({"_": "$rewrite style=brief -- hello"}),
                     request_id="source_request",
-                ),
+                )
             )
         ).wait()
         assert source.status == "failed"
@@ -436,7 +437,7 @@ prompt rewrite:
             await client.run(
                 _request(
                     thread,
-                    input=RunnableInputRaw(_="$rewrite style=brief -- hello"),
+                    input=CallInput({"_": "$rewrite style=brief -- hello"}),
                     request_id="resubmit_request",
                 )
             )
@@ -477,7 +478,7 @@ prompt rewrite:
         assert (
             rerun_control.payload.authored_input
             == source_control.payload.authored_input
-            == RunnableInputRaw(_="$rewrite style=brief -- hello")
+            == CallInput({"_": "$rewrite style=brief -- hello"})
         )
         assert (
             rerun_control.payload.prompt_invocations
@@ -694,14 +695,16 @@ def test_local_client_returns_caller_facing_steer_and_cancel_controls(
             "steer_request",
         )
         assert isinstance(steer.payload, SteerControlPayload)
-        assert parts_from_local(steer.payload.input[0]) == (TextPart("new direction"),)
+        assert tuple(cast(Array, steer.payload.input["_"])) == (
+            TextPart("new direction"),
+        )
         assert (cancellation.kind, cancellation.timing, cancellation.request_id) == (
             "cancel",
             "immediate",
             "cancel_request",
         )
         assert isinstance(cancellation.payload, CancelControlPayload)
-        assert parts_from_local(cancellation.payload.input[0]) == (
+        assert (TextPart(cast(str, cancellation.payload.input["_"])),) == (
             TextPart("user canceled"),
         )
         assert detail.status == "canceled"

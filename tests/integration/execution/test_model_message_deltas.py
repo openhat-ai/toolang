@@ -307,7 +307,7 @@ def test_interruption_during_cleanup_still_persists_adopted_output(
             assert step.status == "canceled"
             assert step.aborted_by == second.ref
             assert step.output is not None
-            assert parts_from_local(step.output) == tuple(
+            assert parts_from_local(step.output.local) == tuple(
                 event.data
                 for event in tracer.events
                 if isinstance(event, PartEnd) and event.step == step.ref
@@ -394,7 +394,7 @@ def test_interrupted_model_end_preserves_referenced_output(
             assert step.status == ("canceled" if at_commit else "succeeded")
             assert step.aborted_by == (control.ref if at_commit else None)
             assert step.output is not None
-            parts = parts_from_local(step.output)
+            parts = parts_from_local(step.output.local)
             assert parts[0] == TextPart("draft")
             assert len(parts) == 1 + len(requests)
             assert all(isinstance(part, ToolCallPart) for part in parts[1:])
@@ -683,7 +683,8 @@ def test_missing_message_dependency_fails_without_a_snapshot_fallback(
     store = RunStore(tmp_path / "runs.db")
     try:
         missing = TypedRef(
-            FieldRef.from_path(StepRef.parse("run_dead.0"), "output", "value"), "Part[]"
+            FieldRef.from_path(StepRef.parse("run_dead.0"), "output", "local", "value"),
+            "Part[]",
         )
         step = store.begin_step(
             ref=StepRef.parse("run_ab12.0"),

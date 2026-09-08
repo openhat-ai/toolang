@@ -107,7 +107,7 @@ def latest_thread_result(core: AgentCoreDep, thread_id: str) -> RunDetail:
             if run.status != "succeeded" or run.output is None:
                 continue
             output = core.history.get_output(run.id)
-            if output is not None and parts_from_local(output):
+            if output is not None and parts_from_local(output.local):
                 detail = core.history.get_run(run.id)
                 if detail is not None:
                     return replace(detail, output=output)

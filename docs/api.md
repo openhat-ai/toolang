@@ -5,7 +5,7 @@ This document defines the public CLI and local agent HTTP API.
 Interactive CLI, TUI, and WebUI surfaces may parse the `ChatInput` forms
 defined by [input-syntax.md](./input-syntax.md). Quick commands remain local to
 the interaction surface. Execution surfaces resolve `RunOverride` and
-`RunnableInputRaw` values into the structured run request described here.
+`CallInput[str]` values into the structured run request described here.
 
 
 ## CLI
@@ -118,7 +118,7 @@ toolang alice inspect threads
 toolang alice inspect runs
 toolang alice inspect term_3nprht9x runs
 toolang alice inspect run_ppkp9e94 steps
-toolang alice inspect run_ppkp9e94.0/output/value
+toolang alice inspect run_ppkp9e94.0/output/local/value
 toolang alice inspect run_ppkp9e94.0 call
 toolang alice retry run_ppkp9e94 --limit tokens=200000 --limit time=900
 toolang alice rerun run_ppkp9e94 --model 'openai/gpt-5 effort=high'
@@ -360,8 +360,8 @@ run_ab12                          Run record
 run_ab12.0                        Step record
 term_ab12@0                       Thread Control record
 run_ab12@1                        Run Control record
-run_ab12.0/output/value/0         nested field
-run_ab12@1/payload/input/0/value nested Control field
+run_ab12.0/output/local/value/0   nested field
+run_ab12@1/payload/input/_        nested Control field
 ```
 
 `.` enters the Step hierarchy, `@` selects a Control index, and `/` enters a
@@ -1280,8 +1280,8 @@ these thread operations starts a follow-up run.
 - `thread_id`: required existing thread id
 - `request_id`: required globally unique caller-supplied control identifier
 - `runnable.ref`: required concrete agic or flow ref
-- `runnable.input`: canonical percept-part array
-- `runnable.args`: optional resolved runnable argument mapping
+- `runnable.input`: flat input-value object; `_` holds primary input and other
+  keys hold arguments, for example `{"_": "Summarize", "count": 2}`
 - `model`: a concrete `ModelRequest`, or `null` for a model-free runnable
 - `policy`: materialized `allow` ceilings and complete `limits`
 
@@ -1300,7 +1300,7 @@ shape:
     "ref": "agic:chat",
     "input": {
       "_": "Summarize\n@notes.md",
-      "named": [{"name": "audience", "source": "maintainers"}]
+      "audience": "maintainers"
     }
   },
   "model": {
@@ -1319,6 +1319,21 @@ shape:
   }
 }
 ```
+
+Both endpoints use the same object shape. Authored values must be strings
+evaluated as Content; direct values are decoded against the runnable signature
+without Content evaluation. A direct parts array belongs under `_`, for example
+`{"_": [{"type": "text", "text": "Summarize"}]}`. Omitted `input` means `{}`;
+`input: null` and primary null are invalid. Missing `_` and explicit empty input
+remain distinct. Duplicate input keys are rejected before accepting a run.
+
+This is a breaking format change: sibling `args`, source `named` lists, and
+primary parts arrays as the complete container are no longer accepted. A valid
+declared argument may still be named `primary`, `named`, or `args`. Input-bearing
+control responses likewise use flat maps with self-describing value encodings.
+Run/Step outputs use `{"local": {"type": "Text", "value": "result", "dim": 0},
+"binding": "_"}`. The binding is a name or null; dimension belongs to Local.
+See [run-step-records.md](./run-step-records.md) for output reference paths.
 
 The server reads setup and state once and validates the concrete runnable,
 model parameters, policy, input, prompts, named sources, and file includes

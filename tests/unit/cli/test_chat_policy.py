@@ -24,7 +24,7 @@ from toolang.execution.types import (
     RunOverride,
     SessionSetting,
 )
-from toolang.lang.input import NamedInputSource, RunnableInputRaw
+from toolang.lang.input import CallInput
 
 
 def _surface() -> SessionSetting:
@@ -49,10 +49,7 @@ def test_build_run_request_materializes_a_session_snapshot_without_mutation() ->
     request = build_run_request(
         thread_id="term_test",
         request_id="term_request",
-        input=RunnableInputRaw(
-            _="hello",
-            named=(NamedInputSource("tone", "brief"),),
-        ),
+        input=CallInput({"_": "hello", "tone": "brief"}),
         override=RunOverride(
             runnable="flow:review",
             allow=(AllowOverride("tools", ("shell/*",)),),
@@ -68,26 +65,17 @@ def test_build_run_request_materializes_a_session_snapshot_without_mutation() ->
         thread_id="term_test",
         request_id="term_request",
         runnable=RunnableRequest(
-            "flow:review",
-            RunnableInputRaw(
-                _="hello",
-                named=(NamedInputSource("tone", "brief"),),
-            ),
+            "flow:review", CallInput({"_": "hello", "tone": "brief"})
         ),
         model=ModelRequest(
-            "openai/gpt-5",
-            ModelParameters(ReasoningParameters(effort="high")),
+            "openai/gpt-5", ModelParameters(ReasoningParameters(effort="high"))
         ),
         policy=RunPolicy(
             allow=(
                 AgentCeiling(models=("openai/*",)),
                 AgentCeiling(tools=("shell/*",)),
             ),
-            limits=RunLimits(
-                tokens=2000,
-                cost=Decimal("1.50"),
-                time=60,
-            ),
+            limits=RunLimits(tokens=2000, cost=Decimal("1.50"), time=60),
         ),
     )
 
@@ -182,12 +170,11 @@ def test_input_local_effort_change_reuses_session_model_identity() -> None:
     request = build_run_request(
         thread_id="term_test",
         request_id="term_request",
-        input=RunnableInputRaw(_="hello"),
+        input=CallInput({"_": "hello"}),
         override=RunOverride(model=ModelOverride(effort="low")),
         setting=SessionSetting(
             model=ModelRequest(
-                "openai/gpt-5",
-                ModelParameters(ReasoningParameters(effort="high")),
+                "openai/gpt-5", ModelParameters(ReasoningParameters(effort="high"))
             ),
             runnable="agic:chat",
             limits=RunLimits(),
@@ -213,10 +200,9 @@ def test_input_local_unset_removes_only_the_run_model() -> None:
     request = build_run_request(
         thread_id="term_test",
         request_id="term_request",
-        input=RunnableInputRaw(_="hello"),
+        input=CallInput({"_": "hello"}),
         override=RunOverride(
-            model=ModelOverride(identity="unset"),
-            runnable="flow:review",
+            model=ModelOverride(identity="unset"), runnable="flow:review"
         ),
         setting=setting,
         surface=_surface(),
@@ -232,7 +218,7 @@ def test_build_run_request_materializes_unqualified_runnable_to_exact_ref() -> N
     request = build_run_request(
         thread_id="term_test",
         request_id="term_request",
-        input=RunnableInputRaw(_="hello"),
+        input=CallInput({"_": "hello"}),
         override=RunOverride(runnable="review"),
         setting=_surface(),
         surface=_surface(),

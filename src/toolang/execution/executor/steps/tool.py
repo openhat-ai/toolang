@@ -41,6 +41,7 @@ from ...types import (
     ErrorRef,
     FieldRef,
     Local,
+    Output,
     StepRef,
     ToolStepGiven,
     ToolStepNoted,
@@ -191,6 +192,7 @@ def _call_source(state: _AgicState, call: ToolCall) -> FieldRef | None:
         FieldRef.from_path(
             StepRef.from_local(state.prepared.run.run_id, (source[0],)),
             "output",
+            "local",
             "value",
             source[1],
         )
@@ -226,6 +228,7 @@ async def _execute(
             FieldRef.from_path(
                 StepRef.from_local(run.run_id, (state.last_step,)),
                 "output",
+                "local",
                 "value",
             ),
         )
@@ -438,11 +441,11 @@ async def _finish(
 ) -> None:
     """Persist a tool result even if its delivery is interrupted."""
 
-    output = Local.typed("ToolResultPart", part, None, 0)
+    output = Local.typed("ToolResultPart", part)
     # The result already exists, even if an interrupt prevents its delivery.
     if trigger == "model":
         state.messages.append_ref(
-            "tool", FieldRef.from_path(step, "output", "value"), output
+            "tool", FieldRef.from_path(step, "output", "local", "value"), output
         )
         state.last_step = step.index
     end = PartEnd(step=step, part=0, data=part)
@@ -467,7 +470,7 @@ async def _finish(
                 step=step,
                 kind="tool",
                 status=status,
-                output=output,
+                output=Output(output),
                 noted=noted,
                 error=error,
                 finished_at=utc_now(),
@@ -495,8 +498,8 @@ async def _cancel(
     if trigger == "model":
         state.messages.append_ref(
             "tool",
-            FieldRef.from_path(step, "output", "value"),
-            Local.typed("ToolResultPart", part, None, 0),
+            FieldRef.from_path(step, "output", "local", "value"),
+            Local.typed("ToolResultPart", part),
         )
         state.last_step = step.index
     await state.end_step(
@@ -504,7 +507,7 @@ async def _cancel(
             step=step,
             kind="tool",
             status="canceled",
-            output=Local.typed("ToolResultPart", part, None, 0),
+            output=Output(Local.typed("ToolResultPart", part)),
             noted=ToolStepNoted(summary=summary),
             aborted_by=aborted_by,
             finished_at=utc_now(),
@@ -567,6 +570,7 @@ async def skip(
                         FieldRef.from_path(
                             StepRef.from_local(step.run_id, (source[0],)),
                             "output",
+                            "local",
                             "value",
                             source[1],
                         ),
@@ -599,7 +603,7 @@ async def skip(
                 # is being recorded. Close the remaining calls before exiting.
                 interruption = exc
                 canceled = True
-        inputs.append(FieldRef.from_path(step, "output", "value"))
+        inputs.append(FieldRef.from_path(step, "output", "local", "value"))
         state.last_step = step.index
     if inputs:
         state.next_model_inputs = tuple(inputs)

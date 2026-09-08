@@ -349,7 +349,7 @@ def test_reload_refreshes_the_next_step_of_an_active_agic(tmp_path: Path) -> Non
                 "type": "number"
             }
             assert root.output is not None
-            assert harness.store.resolve_value(root.output.value) == 7
+            assert harness.store.resolve_value(root.output.local.value) == 7
 
     asyncio.run(scenario())
 
@@ -386,7 +386,7 @@ def test_parallel_steps_record_the_state_on_their_boundary_side(
             name: str,
             occurrence: Occurrence | None,
             *,
-            output_name: str | None = "_",
+            output_binding: str | None = "_",
         ) -> Local:
             nonlocal started_children
             started_children += 1
@@ -400,7 +400,7 @@ def test_parallel_steps_record_the_state_on_their_boundary_side(
                 step,
                 name,
                 occurrence,
-                output_name=output_name,
+                output_binding=output_binding,
             )
 
         monkeypatch.setattr(_Execution, "execute_child", gate_second_child)

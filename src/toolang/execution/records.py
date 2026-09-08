@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from functools import cached_property
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import BeforeValidator, TypeAdapter, ValidationInfo
+from pydantic import BeforeValidator, PlainSerializer, TypeAdapter, ValidationInfo
 
 from toolang.base.types.message import (
     AudioPart,
@@ -24,7 +24,12 @@ from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelCall, ModelContinuation, ToolCall
 from toolang.lang.ast import FlowStmt, flow_stmt_from_data, to_data as ast_to_data
-from toolang.lang.input import PromptInvocation, RunnableInputRaw, parse_input
+from toolang.lang.input import (
+    PromptInvocation,
+    CallInput,
+    parse_input,
+    validate_runnable_input_names,
+)
 from toolang.lang.types import Array, Struct, Value, validate_type, value_type
 from .message_delta import delta_from_data, delta_to_data
 from .types import (
@@ -40,6 +45,7 @@ from .types import (
     ErrorRef,
     FieldRef,
     Local,
+    Output,
     LoopStepNoted,
     ModelAccounting,
     ModelCost,
@@ -67,9 +73,9 @@ from .types import (
     ToolStepNoted,
     TypedRef,
     RunCommand,
-    local_from_protocol_data,
     validate_occurrence,
     validate_runtime_value,
+    value_for_type,
     valid_run_id,
     valid_thread_id,
     validate_step_given,
@@ -93,7 +99,7 @@ class RunRecord:
     thread: ThreadRef
     control: ControlRef
     state: ControlRef
-    output: Local | None
+    output: Output | None
     occur: Occurrence | None = None
     status: RunStatus = "pending"
     error: ErrorMessage | ErrorRef | None = None
@@ -116,8 +122,8 @@ class RunRecord:
             raise TypeError("run state requires a ControlRef")
         if not isinstance(self.state.target, RunRef):
             raise TypeError("run state must be Run-scoped")
-        if self.output is not None and not isinstance(self.output, Local):
-            raise TypeError("run output requires a Local or None")
+        if self.output is not None and not isinstance(self.output, Output):
+            raise TypeError("run output requires an Output or None")
         _validate_record_error(self.error, label="run")
         validate_occurrence(self.occur)
 
@@ -165,22 +171,25 @@ class RunControlPayload:
     state: str | None
     runnable: str
     model: str
-    input: tuple[Local, ...]
+    input: Annotated[
+        CallInput[Value | TypedRef],
+        PlainSerializer(lambda value: call_input_to_data(value)),
+    ]
     model_request: ModelRequest | None = None
     sandbox: str | None = None
-    authored_input: RunnableInputRaw | None = None
+    authored_input: CallInput[str] | None = None
     authored_commands: tuple[RunCommand, ...] = ()
     authored_session_commands: tuple[RunCommand, ...] = ()
     prompt_invocations: tuple[PromptInvocation, ...] = ()
     horizon: FieldRef | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "input", _snapshot_control_input(self.input))
         _validate_run_payload(
             self.state,
             self.runnable,
             self.model,
             self.model_request,
-            self.input,
             self.sandbox,
         )
         _validate_authored_facts(
@@ -228,18 +237,21 @@ class ExecuteControlPayload:
 
     state: str
     runnable: str
-    input: tuple[Local, ...]
+    input: Annotated[
+        CallInput[Value | TypedRef],
+        PlainSerializer(lambda value: call_input_to_data(value)),
+    ]
 
     def __post_init__(self) -> None:
         _validate_state_revision(self.state, label="execute payload State")
         if not self.runnable or self.runnable != self.runnable.strip():
             raise ValueError("execute payload requires a canonical runnable")
-        _validate_control_input(self.input)
-        for local in self.input:
-            if local.type != "Json":
-                raise TypeError("execute payload input must use raw Json values")
-            if not isinstance(local.value, TypedRef):
-                raise TypeError("execute payload input must point to model input")
+        object.__setattr__(self, "input", _snapshot_control_input(self.input))
+        for value in self.input.values():
+            if not isinstance(value, TypedRef) or value.type != "Json":
+                raise TypeError(
+                    "execute payload input must point to raw Json model input"
+                )
 
 
 _RECALL_TARGET_ADAPTER = TypeAdapter(RecallTarget)
@@ -258,20 +270,26 @@ class RecallControlPayload:
 class SteerControlPayload:
     """Values injected at one agic model boundary."""
 
-    input: tuple[Local, ...]
+    input: Annotated[
+        CallInput[Value | TypedRef],
+        PlainSerializer(lambda value: call_input_to_data(value)),
+    ]
 
     def __post_init__(self) -> None:
-        _validate_control_input(self.input)
+        object.__setattr__(self, "input", _snapshot_control_input(self.input))
 
 
 @dataclass(frozen=True, slots=True)
 class CancelControlPayload:
     """Optional run cancellation reason values."""
 
-    input: tuple[Local, ...] = ()
+    input: Annotated[
+        CallInput[Value | TypedRef],
+        PlainSerializer(lambda value: call_input_to_data(value)),
+    ] = field(default_factory=CallInput)
 
     def __post_init__(self) -> None:
-        _validate_control_input(self.input)
+        object.__setattr__(self, "input", _snapshot_control_input(self.input))
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,7 +371,7 @@ def _control_payload_variant(value: object, info: ValidationInfo) -> object:
         raise ValueError(f"unknown control kind: {kind}")
     expected = _CONTROL_PAYLOAD_TYPES[kind]
     if isinstance(value, Mapping):
-        return control_payload_from_protocol_data(cast(ControlKind, kind), value)
+        return control_payload_from_data(cast(ControlKind, kind), value)
     if not isinstance(value, expected):
         raise ValueError(f"{kind} control has an invalid payload")
     return value
@@ -459,7 +477,7 @@ class StepRecord:
     input: tuple[FieldRef, ...]
     given: StoredStepGiven
     state: ControlRef
-    output: Local | None
+    output: Output | None
     preceded_by: tuple[ControlRef, ...] = ()
     aborted_by: ControlRef | None = None
     occur: Occurrence | None = None
@@ -480,8 +498,8 @@ class StepRecord:
             self.state.target, RunRef
         ):
             raise TypeError("step state requires a Run-scoped ControlRef")
-        if self.output is not None and not isinstance(self.output, Local):
-            raise TypeError("step output requires a Local or None")
+        if self.output is not None and not isinstance(self.output, Output):
+            raise TypeError("step output requires an Output or None")
         _validate_record_error(self.error, label="step")
         validate_occurrence(self.occur)
         if isinstance(self.given, StoredModelStepGiven):
@@ -572,19 +590,14 @@ _PART_STORAGE_TYPES = {
 def local_from_data(payload: Mapping[str, object]) -> Local:
     """Parse one local from its private durable representation."""
 
-    if set(payload) != {"value", "name", "dim"}:
-        raise ValueError("stored local requires value, name, and dim fields")
+    if set(payload) != {"value", "dim"}:
+        raise ValueError("stored local requires value and dim fields")
     raw_dim = payload.get("dim")
     if isinstance(raw_dim, bool) or not isinstance(raw_dim, int):
         raise ValueError("local dim must be 0 or 1")
     dim = cast(Literal[0, 1], raw_dim)
-    raw_name = payload.get("name")
-    if raw_name is not None and not isinstance(raw_name, str):
-        raise ValueError("local name must be text or null")
-    name = raw_name
     return Local(
         value=local_value_from_data(payload.get("value")),
-        name=name,
         dim=dim,
     )
 
@@ -594,9 +607,28 @@ def local_to_data(local: Local) -> dict[str, object]:
 
     return {
         "value": local_value_to_data(local.value),
-        "name": local.name,
         "dim": local.dim,
     }
+
+
+def output_from_data(payload: Mapping[str, object]) -> Output:
+    """Decode a stored output with one local value and an optional binding."""
+
+    if set(payload) != {"local", "binding"}:
+        raise ValueError("stored output requires local and binding fields")
+    local_data = payload["local"]
+    if not isinstance(local_data, Mapping):
+        raise ValueError("stored output local must be a local object")
+    binding = payload["binding"]
+    if binding is not None and not isinstance(binding, str):
+        raise ValueError("output binding must be text or null")
+    return Output(local_from_data(cast(Mapping[str, object], local_data)), binding)
+
+
+def output_to_data(output: Output) -> dict[str, object]:
+    """Encode the local value separately from its output binding."""
+
+    return {"local": local_to_data(output.local), "binding": output.binding}
 
 
 def local_value_from_data(data: object) -> Value | TypedRef:
@@ -728,29 +760,27 @@ def _boxed_value_from_data(type_name: str, data: object) -> Value | TypedRef:
     raise ValueError(f"invalid boxed {type_name} value")
 
 
-def control_payload_from_data(
-    kind: ControlKind,
-    data: object,
-) -> ControlPayload:
-    """Parse one typed control payload from durable data."""
+def call_input_to_data(input: CallInput[Value | TypedRef]) -> dict[str, object]:
+    """Encode input entries using the shared self-describing value codec."""
 
-    return _control_payload_from_data(kind, data, local_from_data)
+    return {name: local_value_to_data(value) for name, value in input.items()}
 
 
-def control_payload_from_protocol_data(
-    kind: ControlKind,
-    data: object,
-) -> ControlPayload:
-    """Parse one typed control payload from its caller-facing projection."""
+def call_input_from_data(data: object) -> CallInput[Value | TypedRef]:
+    """Decode a flat input object; old local arrays are not accepted."""
 
-    return _control_payload_from_data(kind, data, local_from_protocol_data)
+    if not isinstance(data, Mapping):
+        raise ValueError('control input must be a flat object, such as {"_": "text"}')
+    return CallInput(
+        {
+            name: local_value_from_data(value)
+            for name, value in cast(Mapping[str, object], data).items()
+        }
+    )
 
 
-def _control_payload_from_data(
-    kind: ControlKind,
-    data: object,
-    local_decoder: Callable[[Mapping[str, object]], Local],
-) -> ControlPayload:
+def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload:
+    """Parse one typed control payload from its canonical data."""
 
     if not isinstance(data, Mapping):
         raise ValueError("control payload must be an object")
@@ -805,21 +835,7 @@ def _control_payload_from_data(
         if model_request is not None and model_request.ref != model:
             raise ValueError("preparation model request must match model")
         sandbox = _optional_payload_text(payload, "sandbox")
-        raw_input = payload.get("input")
-        if raw_input is None:
-            input_value = None
-        elif isinstance(raw_input, Sequence) and not isinstance(
-            raw_input, (str, bytes, bytearray)
-        ):
-            if not all(isinstance(item, Mapping) for item in raw_input):
-                raise ValueError(f"{kind} payload contains an invalid local")
-            input_value = tuple(
-                local_decoder(cast(Mapping[str, object], item)) for item in raw_input
-            )
-        else:
-            raise ValueError(f"{kind} payload input must be an array or null")
-        if input_value is None:
-            raise ValueError(f"{kind} payload requires input")
+        input_value = call_input_from_data(payload.get("input"))
         authored_input = _authored_input_from_data(payload.get("authored_input"))
         authored_commands = _run_commands_from_data(
             payload.get("authored_commands", ()),
@@ -858,33 +874,13 @@ def _control_payload_from_data(
             horizon=FieldRef.parse(_required_payload_text(payload, "horizon")),
         )
     if kind == "execute":
-        raw_input = payload.get("input")
-        if not isinstance(raw_input, Sequence) or isinstance(
-            raw_input, (str, bytes, bytearray)
-        ):
-            raise ValueError("execute payload input must be an array")
-        if not all(isinstance(item, Mapping) for item in raw_input):
-            raise ValueError("execute payload contains an invalid local")
         return ExecuteControlPayload(
             state=_required_payload_text(payload, "state"),
             runnable=_required_payload_text(payload, "runnable"),
-            input=tuple(
-                local_decoder(cast(Mapping[str, object], item)) for item in raw_input
-            ),
+            input=call_input_from_data(payload.get("input")),
         )
     if kind in {"steer", "cancel"}:
-        raw_input = payload.get("input", ())
-        if not isinstance(raw_input, Sequence) or isinstance(
-            raw_input, (str, bytes, bytearray)
-        ):
-            raise ValueError(f"{kind} payload input must be an array")
-        input_value = tuple(
-            local_decoder(cast(Mapping[str, object], item))
-            for item in raw_input
-            if isinstance(item, Mapping)
-        )
-        if len(input_value) != len(raw_input):
-            raise ValueError(f"{kind} payload contains an invalid local")
+        input_value = call_input_from_data(payload.get("input", {}))
         return (
             SteerControlPayload(input_value)
             if kind == "steer"
@@ -941,10 +937,10 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
         return {
             "state": payload.state,
             "runnable": payload.runnable,
-            "input": [local_to_data(local) for local in payload.input],
+            "input": call_input_to_data(payload.input),
         }
     if isinstance(payload, SteerControlPayload | CancelControlPayload):
-        return {"input": [local_to_data(local) for local in payload.input]}
+        return {"input": call_input_to_data(payload.input)}
     if isinstance(payload, CreateControlPayload):
         return {}
     if isinstance(payload, ForkControlPayload):
@@ -1726,7 +1722,7 @@ def _run_payload_data(
             if payload.model_request is not None
             else None
         ),
-        "input": [local_to_data(local) for local in payload.input],
+        "input": call_input_to_data(payload.input),
     }
     if payload.state is not None:
         data["state"] = payload.state
@@ -1735,13 +1731,7 @@ def _run_payload_data(
     if payload.sandbox is not None:
         data["sandbox"] = payload.sandbox
     if payload.authored_input is not None:
-        data["authored_input"] = {
-            "primary": payload.authored_input._,
-            "named": [
-                {"name": item.name, "source": item.source}
-                for item in payload.authored_input.named
-            ],
-        }
+        data["authored_input"] = dict(payload.authored_input)
     if payload.authored_commands:
         data["authored_commands"] = [
             _run_command_to_data(command) for command in payload.authored_commands
@@ -1759,38 +1749,12 @@ def _run_payload_data(
     return data
 
 
-def _authored_input_from_data(value: object) -> RunnableInputRaw | None:
+def _authored_input_from_data(value: object) -> CallInput[str] | None:
     if value is None:
         return None
     if not isinstance(value, Mapping):
         raise ValueError("preparation authored_input must be an object or null")
-    payload = cast(Mapping[str, object], value)
-    primary = payload.get("primary")
-    if primary is not None and not isinstance(primary, str):
-        raise ValueError("preparation authored input primary must be text or null")
-    raw_named = payload.get("named", ())
-    if not isinstance(raw_named, Sequence) or isinstance(
-        raw_named, (str, bytes, bytearray)
-    ):
-        raise ValueError("preparation authored input named sources must be an array")
-    named: list[tuple[str, str]] = []
-    for item in raw_named:
-        if isinstance(item, Mapping):
-            source_item = cast(Mapping[str, object], item)
-            name = source_item.get("name")
-            source = source_item.get("source")
-        elif (
-            isinstance(item, Sequence)
-            and not isinstance(item, (str, bytes, bytearray))
-            and len(item) == 2
-        ):
-            name, source = item
-        else:
-            raise ValueError("preparation authored input contains an invalid source")
-        if not isinstance(name, str) or not isinstance(source, str):
-            raise ValueError("preparation authored input sources require text fields")
-        named.append((name, source))
-    return parse_input(primary, named=tuple(named))
+    return parse_input(cast(Mapping[str, str], value))
 
 
 def _run_commands_from_data(value: object, *, label: str) -> tuple[RunCommand, ...]:
@@ -1887,7 +1851,6 @@ def _validate_run_payload(
     runnable: str,
     model: str,
     model_request: ModelRequest | None,
-    input: tuple[Local, ...] | None,
     sandbox: str | None,
 ) -> None:
     if state is not None:
@@ -1904,18 +1867,18 @@ def _validate_run_payload(
         not isinstance(sandbox, str) or not sandbox or sandbox != sandbox.strip()
     ):
         raise ValueError("preparation payload requires a canonical sandbox")
-    if input is not None:
-        _validate_control_input(input)
 
 
 def _validate_authored_facts(
-    input: RunnableInputRaw | None,
+    input: CallInput[str] | None,
     commands: tuple[RunCommand, ...],
     session_commands: tuple[RunCommand, ...],
     invocations: tuple[PromptInvocation, ...],
 ) -> None:
-    if input is not None and not isinstance(input, RunnableInputRaw):
-        raise TypeError("preparation authored input must be RunnableInputRaw or none")
+    if input is not None and not isinstance(input, CallInput):
+        raise TypeError("preparation authored input must be CallInput[str] or none")
+    if input is not None:
+        parse_input(input)
     for label, values in (
         ("commands", commands),
         ("session commands", session_commands),
@@ -1945,11 +1908,17 @@ def _validate_state_revision(state: object, *, label: str) -> str:
     return state
 
 
-def _validate_control_input(input: tuple[Local, ...]) -> None:
-    if not all(isinstance(local, Local) for local in input):
-        raise TypeError("control input must contain Local values")
-    names = tuple(local.name for local in input)
-    if any(name is None for name in names):
-        raise ValueError("control input must be named")
-    if len(names) != len(set(names)):
-        raise ValueError("control local names must be unique")
+def _snapshot_control_input(
+    input: CallInput[Value | TypedRef],
+) -> CallInput[Value | TypedRef]:
+    if not isinstance(input, CallInput):
+        raise TypeError("control input must be CallInput")
+    validate_runnable_input_names(input)
+    return CallInput(
+        {
+            name: value_for_type(
+                value.type if isinstance(value, TypedRef) else value_type(value), value
+            )
+            for name, value in input.items()
+        }
+    )

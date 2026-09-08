@@ -31,6 +31,7 @@ from toolang.execution.records import RunControlPayload, SteerControlPayload
 from toolang.execution.schemas import ControlInfo, RunRequest, RunnableRequest
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
+    Output,
     AllowOverride,
     ModelOverride,
     RunOverride,
@@ -38,7 +39,7 @@ from toolang.execution.types import (
     Local,
     RunRef,
 )
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import CallInput
 from toolang.state.watcher import StateRefresh
 
 
@@ -59,13 +60,15 @@ def test_latest_chat_output_keeps_one_snapshot_during_retry(
             origin="chat",
             input=Message.user("input"),
         )
-        project_run_end(writer, run_id="run_a", output=Local("original answer"))
+        project_run_end(
+            writer, run_id="run_a", output=Output(Local("original answer"), None)
+        )
         control = writer.get_run_control(run_id="run_a", index=0)
         assert control is not None and isinstance(control.payload, RunControlPayload)
         payload = control.payload
         get_output = session.history.get_output
 
-        def retry_before_output(run: RunRef | str) -> Local | None:
+        def retry_before_output(run: RunRef | str) -> Output | None:
             writer.accept_retry(
                 run_id="run_a",
                 anchor=None,
@@ -188,7 +191,7 @@ def test_local_chat_run_request_materializes_chat_runnable() -> None:
             RunRequest(
                 thread_id="term_test",
                 request_id="term_request",
-                runnable=RunnableRequest("agic:chat", RunnableInputRaw(_="hello")),
+                runnable=RunnableRequest("agic:chat", CallInput({"_": "hello"})),
                 model=ModelRequest("test/scripted"),
                 policy=RunPolicy(allow=(AgentCeiling(models=("test/*",)),)),
             ),
@@ -344,7 +347,7 @@ def test_local_chat_owner_loop_control_does_not_wait_on_itself(steer: bool) -> N
         timing="next_step",
         request_id="request_steer",
         status="pending",
-        payload=SteerControlPayload(()),
+        payload=SteerControlPayload(CallInput({})),
         error=None,
         created_at="2026-01-01T00:00:01Z",
         finished_at=None,
@@ -487,7 +490,7 @@ agic chat(_: Part[]) -> Part[]:
         request = session.build_request(
             thread_id,
             RunOverride(),
-            RunnableInputRaw(_="hello"),
+            CallInput({"_": "hello"}),
             session.initial_setting(),
         )
         session.run(

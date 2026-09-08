@@ -12,13 +12,13 @@ from toolang.base.types.run import ModelCallResult
 from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.catalog.types import JobKind
 from toolang.execution.records import CreateControlPayload, RunControlPayload
-from toolang.execution.types import Local
+from toolang.lang.input import CallInput
+from toolang.lang.types import Array
 from toolang.work.authoring import new_job_file
 from toolang.work.records import JobRecord
 from toolang.work.scheduler import JobScheduler
 from toolang.work.state import load_ready_jobs
 from toolang.work.store import JobStore
-from toolang.lang.types import Array
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -184,9 +184,11 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
             assert control is not None
             assert isinstance(control.payload, RunControlPayload)
             assert control.payload.runnable == "agent$agic:review"
-            assert control.payload.input == (
-                Local.typed("Part[]", Message.user("Review this.").parts, "_"),
-                Local.typed("Text", "security", "focus"),
+            assert control.payload.input == CallInput(
+                {
+                    "_": Array("Part[]", Message.user("Review this.").parts),
+                    "focus": "security",
+                }
             )
             created = harness.store.get_thread_control(
                 thread_id="task_review",
@@ -235,11 +237,11 @@ agic review(_: Part[], focus: Text):
         (job,) = load_ready_jobs(harness.setup.layout)
         spec = scheduler._build_spec(job)
 
-        assert spec.input.primary == Array(
+        assert spec.input["_"] == Array(
             "Part[]",
             (TextPart("Before\n<target>\nAfter\n"),),
         )
-        assert spec.input.named == {"focus": "nested"}
+        assert spec.input["focus"] == "nested"
         assert [invocation.name for invocation in spec.prompt_invocations] == ["wrap"]
     finally:
         harness.store.close()

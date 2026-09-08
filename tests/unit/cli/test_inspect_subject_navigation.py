@@ -217,7 +217,7 @@ def test_model_call_human_view_restores_review_content_presentation() -> None:
     assert '{\n  "type": "boolean"\n}' in output
     assert "cursor: next" in output
     assert "Result " in output
-    assert "run_123.4/output/value" not in output
+    assert "run_123.4/output/local/value" not in output
     assert "[=] assistant" in output
     assert "Final answer." in output_lines
     assert by_text["[3] user"].style == "dim"

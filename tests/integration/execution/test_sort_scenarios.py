@@ -88,26 +88,31 @@ def test_sort_and_selection_commit_typed_results_without_extra_model_calls(
             assert isinstance(sort.given, SortStmt)
             assert sort.given.order == order
             assert sort.output is not None
-            assert (sort.output.type, sort.output.dim) == ("Text[]", 1)
-            assert isinstance(sort.output.value, Array)
+            assert (sort.output.local.type, sort.output.local.dim) == ("Text[]", 1)
+            assert isinstance(sort.output.local.value, Array)
             source_output = steps[0].output
             assert source_output is not None
-            assert isinstance(source_output.value, TypedRef)
-            source_ref = source_output.value.ref
-            assert tuple(sort.output.value) == tuple(
+            assert isinstance(source_output.local.value, TypedRef)
+            source_ref = source_output.local.value.ref
+            assert tuple(sort.output.local.value) == tuple(
                 TypedRef(source_ref.select(index), "Text")
                 for index in ([2, 0, 1] if order == "ascending" else [0, 1, 2])
             )
             if selection:
                 selected = steps[2]
                 assert selected.output is not None
-                assert (selected.output.type, selected.output.dim) == ("Text[]", 1)
-                selected_value = harness.store.resolve_value(selected.output.value)
+                assert (selected.output.local.type, selected.output.local.dim) == (
+                    "Text[]",
+                    1,
+                )
+                selected_value = harness.store.resolve_value(
+                    selected.output.local.value
+                )
                 assert isinstance(selected_value, Array)
                 assert list(selected_value) == (
                     ["c", "a"] if selection.startswith("let ") else expected
                 )
-                assert selected.output.name == (
+                assert selected.output.binding == (
                     "best"
                     if selection.startswith("let best")
                     else None
@@ -322,7 +327,7 @@ def test_invalid_score_fails_before_sort_binding(tmp_path: Path, result: str) ->
             assert [step.kind for step in steps] == ["run", "par"]
             assert steps[1].output is None
             assert steps[0].output is not None
-            resolved = harness.store.resolve_value(steps[0].output.value)
+            resolved = harness.store.resolve_value(steps[0].output.local.value)
             assert isinstance(resolved, Array)
             assert list(resolved) == ["a", "b", "c"]
             assert harness.adapter.pending_responses > 0

@@ -7,6 +7,8 @@ from dataclasses import dataclass, field, fields, is_dataclass
 import re
 from types import UnionType
 from typing import (
+    Generic,
+    TypeVar,
     Annotated,
     Any,
     Literal,
@@ -23,7 +25,7 @@ from toolang.base.types.message import Part, message_summary
 from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import RunPolicy
 from toolang.base.types.run import ModelCall
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import CallInput, validate_runnable_input_names
 from toolang.lang.types import Array, Struct
 from .records import (
     ControlPayloadField,
@@ -48,6 +50,7 @@ from .types import (
     ErrorRef,
     FieldRef,
     Local,
+    Output,
     ModelStepGiven,
     Occurrence,
     RunStatus,
@@ -62,6 +65,7 @@ from .types import (
     RunRef,
     RunCommand,
     TypedRef,
+    value_type,
     validate_occurrence,
     validate_step_given,
     validate_step_noted,
@@ -131,7 +135,7 @@ class CompactionOutput:
     """The selected compact Run's typed output and its stable field reference."""
 
     ref: FieldRef
-    output: Local
+    output: Output
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,9 +258,16 @@ def _select_runtime_child(
 ) -> tuple[object, object, str, str]:
     if isinstance(runtime, Local):
         return _select_local_child(runtime, token, data, source=source)
+    if isinstance(runtime, CallInput):
+        child = runtime[token]
+        name = child.type if isinstance(child, TypedRef) else value_type(child)
+        return child, Any, name, name
     if isinstance(runtime, Array | Sequence) and not isinstance(
         runtime, (str, bytes, bytearray)
     ):
+        if token == "!" and isinstance(data, list):
+            name = runtime.type if isinstance(runtime, Array) else "Json"
+            return runtime, annotation, name, name
         if not _canonical_array_index(token):
             return data, Any, "Json", "Json"
         index = int(token)
@@ -301,8 +312,6 @@ def _select_local_child(
         return local.type, str, "str", "Text"
     if token == "value":
         return local.value, Any, "Value | TypedRef", local.type
-    if token == "name":
-        return local.name, str | None, "str | None", "Text"
     if token == "dim":
         return local.dim, Literal[0, 1], "Literal[0, 1]", "Number"
     raise ValueError(f"field does not exist ({token!r}): {source}")
@@ -400,20 +409,24 @@ class RunControlRefData:
 StepInputData = FieldRef
 
 
+T = TypeVar("T")
+
+
 @dataclass(frozen=True, slots=True)
-class RunnableRequest:
-    """One concrete runnable ref and its unresolved authored input."""
+class RunnableRequest(Generic[T]):
+    """One concrete runnable ref and its complete input."""
 
     ref: str
-    input: RunnableInputRaw
+    input: CallInput[T] = field(default_factory=CallInput)
 
     def __post_init__(self) -> None:
         if not isinstance(self.ref, str):
             raise TypeError("runnable request ref must be a string")
         if not self.ref or self.ref != self.ref.strip():
             raise ValueError("runnable request requires a canonical ref")
-        if not isinstance(self.input, RunnableInputRaw):
-            raise TypeError("runnable request input must be RunnableInputRaw")
+        if not isinstance(self.input, CallInput):
+            raise TypeError("runnable request input must be CallInput")
+        validate_runnable_input_names(self.input)
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,7 +435,7 @@ class RunRequest:
 
     thread_id: str
     request_id: str
-    runnable: RunnableRequest
+    runnable: RunnableRequest[str]
     model: ModelRequest | None
     policy: RunPolicy
 
@@ -675,7 +688,7 @@ class RunInfo:
             None,
         )
         summary = (
-            message_summary(_local_parts(last_message_step.output))
+            message_summary(_output_parts(last_message_step.output))
             if last_message_step is not None
             else input_text
         )
@@ -748,7 +761,7 @@ class StepData:
     input: list[StepInputData]
     given: StepGiven
     state: RunControlRefData
-    output: Local | None
+    output: Output | None
     preceded_by: tuple[ControlRef, ...] = ()
     aborted_by: ControlRef | None = None
     occurrence: Occurrence | None = None
@@ -801,7 +814,7 @@ class RunDetail(RunInfo):
     """One complete run detail schema."""
 
     control: RunControlRefData
-    output: Local | None
+    output: Output | None
     controls: list[ControlInfo]
     steps: list[StepData] = field(default_factory=list)
 
@@ -866,7 +879,7 @@ def _thread_channel(thread_id: str, origin: str) -> str:
     return "terminal"
 
 
-def _local_parts(local: Local | None) -> tuple[Part, ...]:
-    if local is None:
+def _output_parts(output: Output | None) -> tuple[Part, ...]:
+    if output is None:
         return ()
-    return parts_from_local(local)
+    return parts_from_local(output.local)

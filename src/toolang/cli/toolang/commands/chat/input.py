@@ -8,7 +8,7 @@ from typing import TypeAlias, TypeGuard
 
 from toolang.execution.policy import parse_policy_prefix
 from toolang.execution.types import RunOverride
-from toolang.lang.input import RunnableInputRaw, parse_input
+from toolang.lang.input import CallInput, parse_input
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,7 +25,7 @@ class RunOverrideHelp:
 
 
 ChatInput: TypeAlias = (
-    QuickCommand | RunOverrideHelp | tuple[RunOverride, RunnableInputRaw]
+    QuickCommand | RunOverrideHelp | tuple[RunOverride, CallInput[str]]
 )
 
 _LEADING_BLANK_LINES_RE = re.compile(r"\A(?:[ \t]*(?:\r\n|\n))+")
@@ -58,16 +58,13 @@ def parse_chat_input(chat_input: str) -> ChatInput:
         return quick
 
     override, call_input = parse_policy_prefix(body)
-    primary_source = call_input._ or ""
+    primary_source = call_input.get("_") or ""
     if primary_source.startswith("/") and not primary_source.startswith("//"):
         combined = _parse_slash(primary_source.splitlines()[0])
         if combined is not None:
             raise ValueError("slash command cannot be combined with other input")
-    runnable_input = parse_input(
-        call_input._,
-        named=call_input.named,
-    )
-    if runnable_input._ is None and not runnable_input.named:
+    runnable_input = parse_input(call_input)
+    if not runnable_input:
         if not override.empty:
             raise ValueError("colon override requires runnable input")
         raise ValueError("chat input is empty")
@@ -76,14 +73,14 @@ def parse_chat_input(chat_input: str) -> ChatInput:
 
 def is_runnable_input(
     value: ChatInput,
-) -> TypeGuard[tuple[RunOverride, RunnableInputRaw]]:
+) -> TypeGuard[tuple[RunOverride, CallInput[str]]]:
     """Return whether a chat input contains one runnable invocation."""
 
     return (
         isinstance(value, tuple)
         and len(value) == 2
         and isinstance(value[0], RunOverride)
-        and isinstance(value[1], RunnableInputRaw)
+        and isinstance(value[1], CallInput)
     )
 
 

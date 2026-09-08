@@ -25,6 +25,7 @@ from toolang.execution.records import (
     StoredModelStepGiven,
 )
 from toolang.execution.types import (
+    Output,
     FieldRef,
     Local,
     RunRef,
@@ -60,13 +61,9 @@ def _summary(harness, thread, end, *, summary="Earlier facts.", begin=None):
     project_run_end(
         harness.store,
         run_id=run.id,
-        output=Local(
-            {
-                "thread": thread,
-                "begin": begin,
-                "end": end,
-                "summary": summary,
-            }
+        output=Output(
+            Local({"thread": thread, "begin": begin, "end": end, "summary": summary}),
+            None,
         ),
     )
     return FieldRef.from_path(RunRef(run.id), "output")

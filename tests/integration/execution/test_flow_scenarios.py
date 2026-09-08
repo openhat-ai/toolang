@@ -36,6 +36,7 @@ from toolang.execution.schemas import RunnableRequest, RunRequest
 from toolang.execution.store import RunStore
 from toolang.execution.trees import build_execution_tree
 from toolang.execution.types import (
+    Output,
     CollectionStepNoted,
     ControlRef,
     ErrorMessage,
@@ -51,7 +52,7 @@ from toolang.execution.types import (
     ThreadPrefix,
     TypedRef,
 )
-from toolang.lang.input import RunnableInputRaw, resolve_input_parts
+from toolang.lang.input import CallInput, resolve_input_parts
 from toolang.lang.types import Array
 from toolang.state.prepare import prepare_agent_state
 
@@ -69,6 +70,143 @@ def _root_step_kinds(
         for step in harness.store.list_steps(run_id=run_id)
         if step.parent is None
     ]
+
+
+@pytest.mark.parametrize("value", ["hello", 'quoted "text"'])
+def test_flow_json_arguments_retain_concrete_types_in_content(
+    tmp_path: Path, value: str
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+flow render(_: Text, argument: Json) -> Text:
+  let note =
+    {{argument}}
+""",
+        responses=[],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="flow:render",
+                    primary=(TextPart("input"),),
+                    named={"argument": json.dumps(value)},
+                )
+            )
+            assert run.status == "succeeded", run.error
+            step = harness.store.list_steps(run_id=run.id)[0]
+            assert step.output is not None
+            assert harness.store.resolve_output(step.output).local.value == Array(
+                "Part[]", (TextPart(value),)
+            )
+
+    asyncio.run(scenario())
+
+
+def test_child_input_retains_reference_when_json_contains_text(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+flow child(_: Text, argument: Text) -> Text:
+  let note =
+    {{argument}}
+
+flow parent(_: Text, argument: Json) -> Text:
+  run child
+""",
+        responses=[],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="flow:parent",
+                    primary=(TextPart("input"),),
+                    named={"argument": '"hello"'},
+                )
+            )
+            assert root.status == "succeeded", root.error
+            child = next(
+                run
+                for run in harness.store.list_runs(thread_id=thread, limit=None)
+                if run.parent is not None
+            )
+            control = harness.store.get_run_control(run_id=child.id, index=0)
+            assert control is not None and isinstance(
+                control.payload, RunControlPayload
+            )
+            assert control.payload.input["argument"] == TypedRef(
+                FieldRef.from_path(
+                    ControlRef.for_run(root.id, 0), "payload", "input", "argument"
+                ),
+                "Text",
+            )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("supplied", [False, True])
+def test_child_input_distinguishes_missing_input_from_json_null(
+    tmp_path: Path, supplied: bool
+) -> None:
+    source = """
+agic produce() -> Json:
+  recall = none
+  context: none
+  instruct: none
+  user: Return null.
+
+flow child(_: Json) -> Json:
+  let note =
+    observed
+
+flow parent() -> Json:
+"""
+    if supplied:
+        source += "  run produce\n"
+    source += "  run child\n"
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        responses=[ModelCallResult(message=Message.assistant("null"))]
+        if supplied
+        else [],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="flow:parent")
+            )
+            assert root.status == "failed"
+            assert root.error is not None
+            error = harness.store.resolve_error(root.error)
+            assert error == (
+                "primary input cannot be null; omit '_' for no input"
+                if supplied
+                else "child requires primary input"
+            )
+            children = [
+                run
+                for run in harness.store.list_runs(thread_id=thread, limit=None)
+                if run.parent is not None
+            ]
+            assert len(children) == int(supplied)
+            if supplied:
+                assert children[0].output is not None
+                assert (
+                    harness.store.resolve_output(children[0].output).local.value is None
+                )
+
+    asyncio.run(scenario())
 
 
 def test_model_free_flow_retry_preserves_an_absent_model_request(
@@ -235,10 +373,7 @@ flow relay(_: Part[]) -> Part[]:
                 RunRequest(
                     thread_id=thread,
                     request_id="term_first",
-                    runnable=RunnableRequest(
-                        "flow:relay",
-                        RunnableInputRaw(_="hello"),
-                    ),
+                    runnable=RunnableRequest("flow:relay", CallInput({"_": "hello"})),
                     model=ModelRequest("test/scripted"),
                     policy=RunPolicy(),
                 )
@@ -250,10 +385,7 @@ flow relay(_: Part[]) -> Part[]:
                 RunRequest(
                     thread_id=thread,
                     request_id="term_second",
-                    runnable=RunnableRequest(
-                        "agic:echo",
-                        RunnableInputRaw(_="hello"),
-                    ),
+                    runnable=RunnableRequest("agic:echo", CallInput({"_": "hello"})),
                     model=ModelRequest("test/scripted"),
                     policy=RunPolicy(),
                 )
@@ -367,8 +499,8 @@ flow retained(_: Text) -> Text:
             assert harness.store.run_output_text(run_id=root.id) == "original"
             step = harness.store.list_steps(run_id=root.id)[0]
             assert step.output is not None
-            assert step.output.name is None
-            assert harness.store.resolve_value(step.output.value) == "temporary"
+            assert step.output.binding is None
+            assert harness.store.resolve_value(step.output.local.value) == "temporary"
 
     asyncio.run(scenario())
 
@@ -414,7 +546,7 @@ flow staged(_: Part[]) -> Part[]:
             ]
             assert before[1].input == (
                 FieldRef.from_path(
-                    ControlRef.for_run(failed.id, 0), "payload", "input", 0, "value"
+                    ControlRef.for_run(failed.id, 0), "payload", "input", "_"
                 ),
             )
             previous_child = next(
@@ -460,8 +592,8 @@ flow staged(_: Part[]) -> Part[]:
                 (1, "succeeded"),
             ]
             assert active[0].output is not None
-            assert isinstance(active[0].output.value, Array)
-            assert tuple(active[0].output.value) == (TextPart("committed"),)
+            assert isinstance(active[0].output.local.value, Array)
+            assert tuple(active[0].output.local.value) == (TextPart("committed"),)
             retry = harness.store.list_run_controls(run_id=retried.id)[-1]
             run_control = harness.store.get_run_control(run_id=retried.id, index=0)
             assert run_control is not None
@@ -1915,7 +2047,8 @@ flow repeated(_: Text) -> Text:
             ]
             assert len(until_runs) == 2
             assert all(
-                run.output is not None and run.output.name is None for run in until_runs
+                run.output is not None and run.output.binding is None
+                for run in until_runs
             )
             assert harness.adapter.pending_responses == 0
             tree = build_execution_tree(
@@ -2151,22 +2284,20 @@ flow relay(_: Text, suffix: Text) -> Text:
             run_control = harness.store.get_run_control(run_id=child.id, index=0)
             assert run_control is not None
             assert isinstance(run_control.payload, RunControlPayload)
-            suffix = next(
-                local for local in run_control.payload.input if local.name == "suffix"
-            )
-            assert suffix.value == TypedRef(
+            suffix = run_control.payload.input["suffix"]
+            assert suffix == TypedRef(
                 FieldRef.from_path(
-                    ControlRef.for_run(root.id, 0), "payload", "input", 1, "value"
+                    ControlRef.for_run(root.id, 0), "payload", "input", "suffix"
                 ),
                 "Text",
             )
             parent_step = harness.store.list_steps(run_id=root.id)[0]
             assert parent_step.input == (
                 FieldRef.from_path(
-                    ControlRef.for_run(root.id, 0), "payload", "input", 0, "value"
+                    ControlRef.for_run(root.id, 0), "payload", "input", "_"
                 ),
                 FieldRef.from_path(
-                    ControlRef.for_run(root.id, 0), "payload", "input", 1, "value"
+                    ControlRef.for_run(root.id, 0), "payload", "input", "suffix"
                 ),
             )
             assert harness.store.run_output_text(run_id=root.id) == "hello!"
@@ -2211,8 +2342,8 @@ flow relay(_: Text) -> Number:
             run_control = harness.store.get_run_control(run_id=child.id, index=0)
             assert run_control is not None
             assert isinstance(run_control.payload, RunControlPayload)
-            assert run_control.payload.input == (Local.typed("Number", 42, "_", 0),)
-            assert harness.store.resolve_local(run_control.payload.input[0]).value == 42
+            assert run_control.payload.input == CallInput({"_": 42})
+            assert harness.store.resolve_value(run_control.payload.input["_"]) == 42
             assert harness.store.run_output_text(run_id=root.id) == "7"
 
     asyncio.run(scenario())
@@ -2247,8 +2378,8 @@ flow number(_: Text) -> Number:
                 )
             )
 
-            assert root.output == Local.typed("Number", 7, "_", 0)
+            assert root.output == Output(Local.typed("Number", 7, 0), "_")
             assert root.output is not None
-            assert harness.store.resolve_local(root.output).value == 7
+            assert harness.store.resolve_local(root.output.local).value == 7
 
     asyncio.run(scenario())

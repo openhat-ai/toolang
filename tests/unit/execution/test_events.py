@@ -24,6 +24,7 @@ from toolang.execution.events import (
 from toolang.execution.records import StepRecord
 from toolang.execution.schemas import RunControlRefData, StepData
 from toolang.execution.types import (
+    Output,
     CollectionStepNoted,
     ControlRef,
     ControlStatus,
@@ -61,9 +62,9 @@ _EVENTS: tuple[RunEvent, ...] = (
         given=ModelStepGiven(model="test/model", call=ModelCall("", [])),
         input=(
             FieldRef.from_path(
-                ControlRef.for_run("run_root", 0), "payload", "input", 0, "value"
+                ControlRef.for_run("run_root", 0), "payload", "input", "_"
             ),
-            FieldRef.from_path(StepRef.parse("run_root.1"), "output", "value"),
+            FieldRef.from_path(StepRef.parse("run_root.1"), "output", "local", "value"),
         ),
         started_at="2026-01-01T00:00:01Z",
     ),
@@ -87,7 +88,11 @@ _EVENTS: tuple[RunEvent, ...] = (
     StepBegin(
         step=StepRef.parse("run_root.3"),
         kind="run",
-        input=(FieldRef.from_path(StepRef.parse("run_root.0"), "output", "value", 1),),
+        input=(
+            FieldRef.from_path(
+                StepRef.parse("run_root.0"), "output", "local", "value", 1
+            ),
+        ),
         given=RunStmt(
             binding="_",
             runnable="flow:research",
@@ -101,18 +106,22 @@ _EVENTS: tuple[RunEvent, ...] = (
         step=StepRef.parse("run_root.0"),
         kind="model",
         status="succeeded",
-        output=Local.typed("Part[]", (TextPart("hello"),), "_", 0),
+        output=Output(Local.typed("Part[]", (TextPart("hello"),), 0), "_"),
         noted=ModelStepNoted(tokens=ModelTokenCount(input=4, output=2)),
         finished_at="2026-01-01T00:00:02Z",
     ),
     RunEnd(
         run="run_root",
         status="succeeded",
-        output=Local.typed(
-            "Part[]",
-            FieldRef.from_path(StepRef.parse("run_root.0"), "output", "value"),
+        output=Output(
+            Local.typed(
+                "Part[]",
+                FieldRef.from_path(
+                    StepRef.parse("run_root.0"), "output", "local", "value"
+                ),
+                0,
+            ),
             "_",
-            0,
         ),
         finished_at="2026-01-01T00:00:03Z",
     ),
@@ -424,7 +433,7 @@ def test_run_event_codec_round_trips_struct_output() -> None:
         step=StepRef.parse("run_root.0"),
         kind="run",
         status="succeeded",
-        output=Local.typed("Review", {"score": 1}, "_"),
+        output=Output(Local.typed("Review", {"score": 1}), "_"),
     )
 
     assert run_event_from_data(run_event_to_data(event)) == event

@@ -41,6 +41,7 @@ from ...assembly import assemble_messages
 from ...records import ControlRecord
 from ...types import (
     Local,
+    Output,
     ModelStepGiven,
     ModelStepNoted,
     ModelTokenCount,
@@ -53,7 +54,7 @@ from ...types import (
 )
 from .._messages import _MessageBuffer
 from ..budget import InputEstimate, message_tokens
-from ..common import _StepFailed, control_local_pointer
+from ..common import _StepFailed, control_input_pointer
 from ..diagnostics import log_model_request, log_model_result, log_model_target
 from ..limits import _ModelAccounting
 from . import tool as tool_step
@@ -229,7 +230,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             state=state_ref,
             input=(
                 *_step_input(state),
-                *(control_local_pointer(item, "_") for item in state.claimed_inputs),
+                *(control_input_pointer(item, "_") for item in state.claimed_inputs),
             ),
             preceded_by=tuple(item.ref for item in preceding),
             started_at=utc_now(),
@@ -433,12 +434,15 @@ async def _apply_response(
     duration_ms: int,
 ) -> ModelCallResult:
     run = state.prepared.run
-    local = Local.typed("Part[]", output, "_", 0)
+    local = Local.typed("Part[]", output)
     if output:
         state.messages.append_ref(
             "assistant",
             FieldRef.from_path(
-                StepRef.from_local(run.run_id, (step_index,)), "output", "value"
+                StepRef.from_local(run.run_id, (step_index,)),
+                "output",
+                "local",
+                "value",
             ),
             local,
         )
@@ -451,7 +455,7 @@ async def _apply_response(
                 step=StepRef.from_local(run.run_id, (step_index,)),
                 kind="model",
                 status="succeeded",
-                output=local,
+                output=Output(local, "_") if local is not None else None,
                 noted=_model_step_noted(
                     accounting,
                     continuation=current.continuation,
@@ -656,6 +660,7 @@ def _step_input(state: _AgicState) -> tuple[FieldRef, ...]:
         FieldRef.from_path(
             StepRef.from_local(state.prepared.run.run_id, (state.last_step,)),
             "output",
+            "local",
             "value",
         ),
     )
@@ -734,7 +739,7 @@ async def _end_incomplete(
         if index in stream.completed_parts or isinstance(part, TextPart)
     )
     step = StepRef.from_local(state.prepared.run.run_id, (stream.step,))
-    local = Local.typed("Part[]", output, "_", 0) if output else None
+    local = Local.typed("Part[]", output) if output else None
     calls = tuple(
         ToolCall(
             part.tool_call_id,
@@ -747,7 +752,7 @@ async def _end_incomplete(
     )
     if local is not None:
         state.messages.append_ref(
-            "assistant", FieldRef.from_path(step, "output", "value"), local
+            "assistant", FieldRef.from_path(step, "output", "local", "value"), local
         )
         state.last_step = stream.step
         for index, part in enumerate(output):
@@ -768,7 +773,7 @@ async def _end_incomplete(
                     step=step,
                     kind="model",
                     status="failed" if error is not None else "canceled",
-                    output=local,
+                    output=Output(local, "_") if local is not None else None,
                     error=error,
                     finished_at=utc_now(),
                 )

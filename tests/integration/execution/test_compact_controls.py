@@ -22,7 +22,7 @@ from toolang.execution.records import (
 )
 from toolang.execution.store import RunStore
 from toolang.execution.schemas import record_to_data
-from toolang.execution.types import FieldRef, Local, ModelStepGiven, StepRef
+from toolang.execution.types import FieldRef, Local, ModelStepGiven, StepRef, Output
 
 
 def _compact_output(store: RunStore, *, indirect: bool = False) -> FieldRef:
@@ -42,13 +42,16 @@ def _compact_output(store: RunStore, *, indirect: bool = False) -> FieldRef:
         origin="test",
         input=Message.user("compact"),
     )
-    output = Local(
-        {
-            "thread": "term_target",
-            "begin": None,
-            "end": "run_near",
-            "summary": "Earlier facts.",
-        }
+    output = Output(
+        Local(
+            {
+                "thread": "term_target",
+                "begin": None,
+                "end": "run_near",
+                "summary": "Earlier facts.",
+            }
+        ),
+        None,
     )
     if indirect:
         step = project_step(
@@ -62,7 +65,12 @@ def _compact_output(store: RunStore, *, indirect: bool = False) -> FieldRef:
             started_at="2026-09-06T00:00:00Z",
             finished_at="2026-09-06T00:00:01Z",
         )
-        output = Local.typed("Json", FieldRef.from_path(step.ref, "output", "value"))
+        output = Output(
+            Local.typed(
+                "Json", FieldRef.from_path(step.ref, "output", "local", "value")
+            ),
+            None,
+        )
     project_run_end(store, run_id=source.id, output=output)
     return FieldRef.parse("run_summary/output")
 
@@ -100,7 +108,7 @@ def test_initial_horizon_payload_roundtrip(tmp_path: Path, indirect: bool) -> No
             state=payload.state,
             runnable=payload.runnable,
             model=payload.model,
-            locals=payload.input,
+            input=payload.input,
             sandbox=payload.sandbox,
             horizon=horizon,
             occurrence=None,
@@ -220,15 +228,18 @@ def test_compact_rejects_inactive_run_without_writing_a_control(tmp_path: Path) 
 @pytest.mark.parametrize(
     ("reference", "output"),
     (
-        ("run_missing/output", Local({"thread": "term_target"})),
+        ("run_missing/output", Output(Local({"thread": "term_target"}), None)),
         ("run_summary/output", None),
-        ("run_summary/control", Local({"thread": "term_target"})),
-        ("term_target/id", Local({"thread": "term_target"})),
-        ("run_summary/output", Local({"thread": "term_other"})),
-        ("run_summary/output", Local("not a compact result")),
+        ("run_summary/control", Output(Local({"thread": "term_target"}), None)),
+        ("term_target/id", Output(Local({"thread": "term_target"}), None)),
+        ("run_summary/output", Output(Local({"thread": "term_other"}), None)),
+        ("run_summary/output", Output(Local("not a compact result"), None)),
         (
             "run_summary/output",
-            Local.typed("Json", FieldRef.parse("run_missing/output/value")),
+            Output(
+                Local.typed("Json", FieldRef.parse("run_missing/output/local/value")),
+                None,
+            ),
         ),
     ),
 )
@@ -236,7 +247,7 @@ def test_invalid_horizon_is_rejected_before_any_records_change(
     tmp_path: Path,
     kind: str,
     reference: str,
-    output: Local | None,
+    output: Output | None,
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
@@ -277,7 +288,7 @@ def test_invalid_horizon_is_rejected_before_any_records_change(
                     state=payload.state,
                     runnable=payload.runnable,
                     model=payload.model,
-                    locals=payload.input,
+                    input=payload.input,
                     sandbox=payload.sandbox,
                     horizon=FieldRef.parse(reference),
                     occurrence=None,

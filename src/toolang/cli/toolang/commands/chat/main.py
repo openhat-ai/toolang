@@ -530,7 +530,7 @@ class _ScriptedRunRenderer:
         if isinstance(event, StepEnd):
             if event.kind != "model" or event.step in self._text_delta_steps:
                 return
-            value = event.output.value if event.output is not None else ()
+            value = event.output.local.value if event.output is not None else ()
             parts = value if isinstance(value, Array | tuple | list) else ()
             text = message_text(
                 tuple(part for part in parts if isinstance(part, TextPart))

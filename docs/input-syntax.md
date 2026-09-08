@@ -8,15 +8,15 @@ shared `Content` syntax, and runnable-boundary coercion.
 The layers are independent values with separate parsers:
 
 ```text
-CallInput = PrimaryInput? + NamedInput*
-RunnableInputRaw : CallInput
+CallInput[T] = {"_": Input?, argumentName: Argument, ...}
+RunnableInput = CallInput[Value]
 
-ChatInput = QuickCommand | RunOverrideHelp | RunOverride + RunnableInputRaw
+ChatInput = QuickCommand | RunOverrideHelp | RunOverride + CallInput[str]
 ```
 
-- `CallInput` is language-owned syntax-valid input with one optional primary
-  source and zero or more named sources. `RunnableInputRaw` preserves the
-  public runnable boundary; prompt calls use `CallInput` directly.
+- `CallInput[str]` contains source text under `_` and argument names. Prompt,
+  script, and runnable input share the same structure. The value specialization
+  holds evaluated input; see [Call Input](./call-input.md).
 - `SessionSetting` is Chat's concrete model, runnable, allow, and limit default
   for subsequent runs in the current session.
 - `RunOverride` is a sparse model, runnable, allow, and limit change attached to
@@ -32,11 +32,11 @@ ChatInput = QuickCommand | RunOverrideHelp | RunOverride + RunnableInputRaw
   run.
 
 Script, task, and chore surfaces parse the run-only pair of `RunOverride` and
-`RunnableInputRaw`; they do not parse `QuickCommand`. Agic, flow, and prompt
+`CallInput[str]`; they do not parse `QuickCommand`. Agic, flow, and prompt
 bodies are `Content` sources rather than caller-input envelopes.
 
 Parsing and resolution are separate. Parsing produces `RunOverride` and
-`RunnableInputRaw` without loading an agent. Chat overlays the immutable surface
+`CallInput[str]` without loading an agent. Chat overlays the immutable surface
 baseline, `SessionSetting`, and `RunOverride` into a self-contained `RunRequest`.
 Execution then validates the concrete model and runnable, evaluates content,
 coerces named inputs, and constructs `RunSpec`.
@@ -207,8 +207,9 @@ such as `:models`, and positional `/model REF EFFORT` are invalid.
 
 ## Runnable Input
 
-`RunnableInputRaw._` is an optional `Content` source.
-`RunnableInputRaw.named` is an ordered set of unique `Name=Content` sources.
+`CallInput[str]` stores an optional `Content` source under `_` and each
+argument source under its parameter name. Source order is preserved; argument
+binding uses names.
 Chat obtains named sources from runnable shortcuts; script obtains them from
 its generated CLI. Resolution evaluates each source and coerces it against the
 selected runnable signature. Missing, duplicate, or unknown named inputs are
@@ -216,9 +217,9 @@ rejected before a run is accepted.
 
 Runnable calls use the shared line, stream, and fenced capture syntax defined
 in [call-input.md](./call-input.md). The capture form is parser-only state and
-is not stored in `RunnableInputRaw`.
+is not stored in `CallInput[str]`.
 
-Plain run-only parsing permits an empty `RunnableInputRaw` when the selected
+Plain run-only parsing permits an empty `CallInput[str]` when the selected
 runnable accepts no primary or named input. A colon override still requires
 primary or named runnable input. Parsing is atomic: any invalid run override,
 named input, include, prompt, or coerced value rejects the complete input.
@@ -306,7 +307,7 @@ run starts. Output uses the same declared-type validation; structured model
 output may also be one Markdown code block labeled `json`.
 
 Run preparation persists both authored and effective facts. The authored
-policy and `RunnableInputRaw` sources retain `$prompt` syntax for transcript and
+policy and `CallInput[str]` sources retain `$prompt` syntax for transcript and
 history views. Ordered prompt provenance records canonical arguments, cap ref,
 and definition hash. Resolved locals drive conversation recall and retry/rerun,
 while model steps retain the exact normalized `ModelCall` sent to the adapter.

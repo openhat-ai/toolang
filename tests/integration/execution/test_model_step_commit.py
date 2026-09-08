@@ -329,10 +329,10 @@ def test_reprepared_tool_loop_preserves_messages_and_input_dependencies(
                 assert steer is not None
                 assert steps[-1].input == (
                     *(
-                        FieldRef.from_path(step.ref, "output", "value")
+                        FieldRef.from_path(step.ref, "output", "local", "value")
                         for step in steps[1:3]
                     ),
-                    FieldRef.from_path(steer.ref, "payload", "input", 0, "value"),
+                    FieldRef.from_path(steer.ref, "payload", "input", "_"),
                 )
 
     asyncio.run(scenario())

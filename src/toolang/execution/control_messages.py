@@ -10,7 +10,7 @@ from .records import (
     RecallControlPayload,
     SteerControlPayload,
 )
-from .types import FieldRef, MessageTemplate, RulesRecallTarget, TypedRef
+from .types import FieldRef, MessageTemplate, RulesRecallTarget, TypedRef, value_type
 
 
 def control_message(control: ControlRecord) -> MessageTemplate | None:
@@ -38,21 +38,12 @@ def control_message(control: ControlRecord) -> MessageTemplate | None:
         )
     if not isinstance(payload, SteerControlPayload | CancelControlPayload):
         return None
-    primary = next(
-        (
-            (index, value)
-            for index, value in enumerate(payload.input)
-            if value.name == "_"
-        ),
-        None,
-    )
+    primary = payload.input.get("_")
     content = (
         (
             TypedRef(
-                FieldRef.from_path(
-                    control.ref, "payload", "input", primary[0], "value"
-                ),
-                primary[1].type,
+                FieldRef.from_path(control.ref, "payload", "input", "_"),
+                primary.type if isinstance(primary, TypedRef) else value_type(primary),
             ),
         )
         if primary is not None

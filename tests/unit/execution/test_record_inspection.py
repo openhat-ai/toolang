@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from toolang.lang.input import CallInput
+from toolang.lang.types import Array
+
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 
@@ -29,6 +33,7 @@ from toolang.execution.records import (
 from toolang.execution.schemas import record_to_data
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
+    Output,
     AgentResources,
     ControlRef,
     ErrorMessage,
@@ -39,6 +44,7 @@ from toolang.execution.types import (
     RunRef,
     StepRef,
     ThreadRef,
+    TypedRef,
 )
 from tests.support.execution_fixtures import (
     project_run_end,
@@ -197,7 +203,7 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
             status="succeeded",
             input=(
                 FieldRef.from_path(
-                    ControlRef.for_run(run.id, 0), "payload", "input", 0, "value"
+                    ControlRef.for_run(run.id, 0), "payload", "input", "_"
                 ),
             ),
             output=(TextPart("result"),),
@@ -207,9 +213,10 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
         project_run_end(
             store,
             run_id=run.id,
-            output=Local.typed(
-                "Part[]",
-                FieldRef.from_path(step.ref, "output", "value"),
+            output=Output(
+                Local.typed(
+                    "Part[]", FieldRef.from_path(step.ref, "output", "local", "value")
+                ),
                 "_",
             ),
         )
@@ -279,18 +286,64 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
         }
         assert "scope" not in control_data
         assert control_data["id"] == f"{run.id}@0"
-        assert step_data["input"] == [f"{run.id}@0/payload/input/0/value"]
+        assert step_data["input"] == [f"{run.id}@0/payload/input/_"]
         assert run_data["output"] == {
-            "type": "Part[]",
-            "value": {"?": f"{step.ref}/output/value:Part[]"},
-            "name": "_",
-            "dim": 0,
+            "local": {
+                "type": "Part[]",
+                "value": {"?": f"{step.ref}/output/local/value:Part[]"},
+                "dim": 0,
+            },
+            "binding": "_",
         }
         assert record_to_data(
             replace(stored_run, error=ErrorRef(FieldRef.from_path(step.ref, "error")))
         )["error"] == {"type": "ref", "ref": f"{step.ref}/error"}
     finally:
         store.close()
+
+
+def test_flat_input_references_survive_reordering_and_reopening(tmp_path: Path) -> None:
+    path = tmp_path / "runs.db"
+    input = CallInput(
+        {"parts": Array("Part[]", (TextPart("nested"),)), "argument": "value", "_": ""}
+    )
+    with closing(RunStore(path)) as store:
+        store.create_thread(thread_id="term_flat")
+        store.accept_run(
+            run_id="run_flat",
+            parent=None,
+            thread="term_flat",
+            resources=AgentResources(),
+            limits=RunLimits(),
+            state="0" * 64,
+            runnable="agent$flow:demo",
+            model="none",
+            input=CallInput(dict(reversed(tuple(input.items())))),
+            sandbox="host",
+            occurrence=None,
+            request_id=None,
+            created_at="2026-09-08T00:00:00Z",
+        )
+    with closing(RunStore(path)) as store:
+        control = store.get_run_control(run_id="run_flat", index=0)
+        assert control is not None and isinstance(control.payload, RunControlPayload)
+        assert control.payload.input == input
+        root = FieldRef.from_path(control.ref, "payload", "input")
+        assert store.resolve_value(TypedRef(root.select("_"), "Text")) == ""
+        assert store.resolve_value(TypedRef(root.select("argument"), "Text")) == "value"
+        assert (
+            store.resolve_value(TypedRef(root.select("parts"), "Part[]"))
+            == input["parts"]
+        )
+        assert store.resolve_value(
+            TypedRef(root.select("parts", "!", 0), "Part")
+        ) == TextPart("nested")
+        assert (
+            store.resolve_value(TypedRef(root.select("parts", "!", 0, "text"), "Text"))
+            == "nested"
+        )
+        with pytest.raises(ValueError):
+            store.select_pointer(Pointer.parse("run_flat@0/payload/input/0/value"))
 
 
 def test_model_step_record_serializes_compact_noted_cont_key(tmp_path: Path) -> None:
@@ -353,13 +406,13 @@ def test_record_selection_matches_rfc6901_traversal(tmp_path: Path) -> None:
 
         whole = store.select_pointer(Pointer.parse(str(step.ref)))
         output = store.select_pointer(
-            Pointer(FieldRef.from_path(step.ref, "output", "value", 1))
+            Pointer(FieldRef.from_path(step.ref, "output", "local", "value", 1))
         )
         missing_null = store.select_pointer(
             Pointer(FieldRef.from_path(step.ref, "error"))
         )
 
-        assert output.value == whole.value["output"]["value"][1]  # type: ignore[index]
+        assert output.value == whole.value["output"]["local"]["value"][1]  # type: ignore[index]
         assert output.runtime == TextPart("second")
         assert output.type_name == "Part"
         assert missing_null.value is None
@@ -369,7 +422,7 @@ def test_record_selection_matches_rfc6901_traversal(tmp_path: Path) -> None:
             store.select_pointer(Pointer(FieldRef.from_path(step.ref, "missing")))
         with pytest.raises(ValueError, match="invalid array index"):
             store.select_pointer(
-                Pointer(FieldRef.from_path(step.ref, "output", "value", "01"))
+                Pointer(FieldRef.from_path(step.ref, "output", "local", "value", "01"))
             )
         with pytest.raises(ValueError, match="traverses a scalar"):
             store.select_pointer(
@@ -531,7 +584,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
     revision = "a" * 64
     resources = AgentResources()
     limits = RunLimits()
-    source = FieldRef.parse("run_control.0/output/value/0")
+    source = FieldRef.parse("run_control.0/output/local/value/0")
     cases = (
         (
             "run",
@@ -541,7 +594,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 revision,
                 "agic:test",
                 "test/model",
-                (Local.typed("Json", {"locals": {"input": "unchanged"}}, "_"),),
+                CallInput({"_": {"locals": {"input": "unchanged"}}}),
             ),
             {
                 "resources",
@@ -579,13 +632,15 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
             ExecuteControlPayload(
                 revision,
                 "agent$agic:next",
-                (Local.typed("Json", source.select("input", "input", "_"), "_"),),
+                CallInput(
+                    {"_": TypedRef(source.select("input", "input", "_"), "Json")}
+                ),
             ),
             {"state", "runnable", "input"},
         ),
         (
             "steer",
-            SteerControlPayload((Local.typed("Text", "continue", "_"),)),
+            SteerControlPayload(CallInput({"_": "continue"})),
             {"input"},
         ),
         ("cancel", CancelControlPayload(), {"input"}),

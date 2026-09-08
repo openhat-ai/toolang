@@ -112,7 +112,7 @@ class RunSpec:
     limits: RunLimits
     model_request: ModelRequest | None = None
     ceilings: tuple[AgentCeiling, ...] = ()
-    input: RunnableInput = RunnableInput()
+    input: RunnableInput = field(default_factory=CallInput)
 ```
 
 `bindings.runnable` is required and resolves to exactly one public agic or flow
@@ -124,14 +124,14 @@ The spec does not carry an origin, run identity, request identity, or arbitrary
 transport context. Each item in `ceilings` is one independently applied
 collection-query restriction over the effective resources already published by
 Setup and State. Retaining separate session and run restrictions preserves
-intersection semantics when queries use OR matching. `input.primary` is the
-primary multimodal input;
-`input.named` contains typed values for the runnable's declared `params`.
+intersection semantics when queries use OR matching. `input["_"]`, when
+present, holds the typed primary input. Other keys hold values for the
+runnable's declared `params`.
+`RunnableInput` is the `CallInput[Value]` alias; absent `_` means no input.
 The executor validates both before
 accepting the run and constructs the user message internally. It
-keeps the original canonical `Percept` for the run control and durable
-history, while language-owned input coercion initializes `_` with the
-runnable's declared primary type.
+stores the accepted typed values in the run control and durable history.
+Language-owned coercion supplies `_` with the runnable's declared input type.
 
 `AgentSetup.limits` is the captured default for a new run. Policy resolution
 produces the effective `RunSpec.limits` before `run()`. Config, CLI, chat, and

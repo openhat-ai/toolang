@@ -32,7 +32,7 @@ from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.runnables import parse_runnable_ref
 from toolang.execution.schemas import ControlInfo, RunDetail, RunRequest, ThreadInfo
 from toolang.execution.types import RunOverride, SessionSetting
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import CallInput
 from toolang.execution.values import parts_from_local
 from toolang.plugin.sandboxes.host import host_sandbox_description
 
@@ -206,7 +206,7 @@ class RemoteChatSession:
         self,
         thread_id: str,
         override: RunOverride,
-        input: RunnableInputRaw,
+        input: CallInput[str],
         setting: SessionSetting,
     ) -> RunRequest:
         return cast(
@@ -576,7 +576,9 @@ class RemoteChatSession:
             raise _RemoteChatProtocolError(
                 "remote chat run result returned mismatched identity"
             )
-        output = parts_from_local(detail.output) if detail.output is not None else ()
+        output = (
+            parts_from_local(detail.output.local) if detail.output is not None else ()
+        )
         if not output:
             raise ValueError(f"Run has no result: {detail.id}")
         return ChatResult(run_id=detail.id, output=output)
@@ -585,7 +587,7 @@ class RemoteChatSession:
         self,
         thread_id: str,
         override: RunOverride,
-        input: RunnableInputRaw,
+        input: CallInput[str],
         setting: SessionSetting,
     ) -> RunRequest:
         request = build_run_request(

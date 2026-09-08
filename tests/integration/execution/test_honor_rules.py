@@ -159,7 +159,7 @@ def test_honor_precedes_blocked_batch_and_retry_executes_once(
             if isinstance(event, StepEnd) and event.step.index < 4:
                 early_effects.append((repo / "src/result").exists())
                 if event.kind == "tool":
-                    for summary in event.output.value.output["controls"]:
+                    for summary in event.output.local.value.output["controls"]:
                         ref = ControlRef.parse(summary["ref"])
                         assert (
                             harness.store.get_run_control(
@@ -198,8 +198,8 @@ def test_honor_precedes_blocked_batch_and_retry_executes_once(
             )
             assert first.output == duplicate.output == {}
             assert (
-                steps[0].output.value.output
-                == steps[1].output.value.output
+                steps[0].output.local.value.output
+                == steps[1].output.local.value.output
                 == {
                     "controls": [
                         {
@@ -225,11 +225,11 @@ def test_honor_precedes_blocked_batch_and_retry_executes_once(
                 {"first", "duplicate"}
             )
             assert all(c.triggered_by == steps[0].ref for c in controls)
-            assert steps[-1].output.value.error is None
+            assert steps[-1].output.local.value.error is None
             if name != "fs__read":
                 assert (repo / "src/result").read_text() == "done"
             else:
-                assert steps[-1].output.value.output["text"] == "Scoped rules."
+                assert steps[-1].output.local.value.output["text"] == "Scoped rules."
             call = harness.adapter.invocations[1].call
             assert "_toolang__honor" not in {t.name for t in call.tools}
             messages = call.messages
@@ -299,7 +299,7 @@ def test_honor_rechecks_changes_including_empty_and_removed_rules(tmp_path, chan
             assert last.revision == (
                 "0" if change == "remove" else sha256(last.content.encode()).hexdigest()
             )
-            assert _tool_steps(harness, run)[-1].output.value.error is None
+            assert _tool_steps(harness, run)[-1].output.local.value.error is None
             assert (repo / "src/result").read_text() == "done"
             assert_run_event_integrity(tracer.events)
 
@@ -390,7 +390,7 @@ def test_interrupted_honor_closes_every_announced_tool_call(
             ), run.error
             steps = _tool_steps(harness, run)
             assert [s.given.trigger for s in steps] == ["runtime", "model"]
-            assert steps[1].output.value.tool_call_id == "second"
+            assert steps[1].output.local.value.tool_call_id == "second"
             assert steps[0].status == (
                 "succeeded" if event_type is StepEnd else "canceled"
             )
@@ -443,8 +443,8 @@ def test_model_cannot_call_honor_and_unscoped_fs_is_rejected(tmp_path):
             assert run.status == "succeeded", run.error
             steps = _tool_steps(harness, run)
             assert len(steps) == 2 and all(s.given.trigger == "model" for s in steps)
-            assert "unknown tool call" in steps[0].output.value.error
-            assert "agent home is not accessible" in steps[1].output.value.error
+            assert "unknown tool call" in steps[0].output.local.value.error
+            assert "agent home is not accessible" in steps[1].output.local.value.error
             assert not (repo.parent / "notes").exists()
             assert not _recalls(harness, run)
 
@@ -652,7 +652,8 @@ def test_overlapping_anchors_remain_independent_in_honor(tmp_path):
             ]
             assert controls[1].payload.content == controls[2].payload.content
             assert (
-                "specify workspace" in _tool_steps(harness, run)[-1].output.value.error
+                "specify workspace"
+                in _tool_steps(harness, run)[-1].output.local.value.error
             )
             assert not (repo / "src/result").exists()
 
@@ -722,7 +723,7 @@ def test_pending_revisions_follow_a_b_a_order_and_deleted_rules_can_return(tmp_p
                 "Restored",
             ]
             assert scoped[3].revision == "0"
-            assert _tool_steps(harness, run)[-1].output.value.error is None
+            assert _tool_steps(harness, run)[-1].output.local.value.error is None
             assert (repo / "src/result").read_text() == "done"
             assert_run_event_integrity(tracer.events)
 
@@ -804,7 +805,7 @@ def test_honor_and_invocation_agree_after_symlink_parent_traversal(tmp_path):
                 _results(harness.adapter.invocations[1].call.messages)[0].error
                 == RETRY_MESSAGE
             )
-            assert retried.output.value.error is None
+            assert retried.output.local.value.error is None
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
@@ -840,8 +841,8 @@ def test_honor_preserves_a_prepared_directory_name_with_trailing_space(tmp_path)
                 _results(harness.adapter.invocations[1].call.messages)[0].error
                 == RETRY_MESSAGE
             )
-            assert retried.output.value.error is None
-            assert retried.output.value.output["path"] == "workspace://repo/link"
+            assert retried.output.local.value.error is None
+            assert retried.output.local.value.output["path"] == "workspace://repo/link"
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())

@@ -21,7 +21,7 @@ from toolang.base.types.message import (
 )
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.run import ModelCall
-from toolang.lang.input import PromptInvocation, RunnableInputRaw
+from toolang.lang.input import PromptInvocation, CallInput
 from toolang.lang.types import Array, Struct, Value
 from toolang.base.types.tool import ToolDefinition
 from toolang.base.types.policy import RunLimits
@@ -71,8 +71,8 @@ from .records import (
     execution_error_from_data,
     execution_error_to_data,
     step_message_role,
-    local_from_data,
-    local_to_data,
+    output_from_data,
+    output_to_data,
     occurrence_from_data,
     occurrence_to_data,
     field_refs_from_data,
@@ -103,6 +103,7 @@ from .types import (
     StepRef,
     ThreadRef,
     Local,
+    Output,
     ModelStepGiven,
     MessageDelta,
     Occurrence,
@@ -118,7 +119,7 @@ from .schemas import Record, RecordSelection, select_record
 from .thread_view import ThreadView, _ThreadProjection
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 42
+_SCHEMA_VERSION = 43
 _SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -287,14 +288,14 @@ class RunStore:
         runnable: str,
         model: str,
         model_request: ModelRequest | None = None,
-        locals: tuple[Local, ...],
+        input: CallInput[Value | TypedRef],
         sandbox: str | None,
         occurrence: Occurrence | None,
         request_id: str | None,
         created_at: str,
         state_ref: ControlRef | None = None,
         horizon: FieldRef | None = None,
-        authored_input: RunnableInputRaw | None = None,
+        authored_input: CallInput[str] | None = None,
         authored_commands: tuple[RunCommand, ...] = (),
         authored_session_commands: tuple[RunCommand, ...] = (),
         prompt_invocations: tuple[PromptInvocation, ...] = (),
@@ -398,7 +399,7 @@ class RunStore:
                     runnable=runnable,
                     model=model,
                     model_request=model_request,
-                    input=locals,
+                    input=input,
                     horizon=horizon,
                     sandbox=sandbox,
                     authored_input=authored_input,
@@ -519,7 +520,7 @@ class RunStore:
         state: str,
         runnable: str,
         triggered_by: StepRef,
-        locals: tuple[Local, ...],
+        input: CallInput[Value | TypedRef],
         created_at: str,
     ) -> ControlRecord:
         """Atomically record one applied same-Run runnable replacement."""
@@ -529,7 +530,7 @@ class RunStore:
         payload = ExecuteControlPayload(
             state=state,
             runnable=runnable,
-            input=locals,
+            input=input,
         )
         if triggered_by.run_id != run_id:
             raise ValueError("execute trigger must belong to its run")
@@ -702,7 +703,7 @@ class RunStore:
         source = self.get_run(run_id=str(horizon.record))
         if source is None or source.output is None:
             raise ValueError(f"horizon output is not available: {horizon}")
-        output = self.resolve_local(source.output).value
+        output = self.resolve_local(source.output.local).value
         if (
             not isinstance(output, Mapping)
             or cast(Mapping[str, object], output).get("thread") != thread
@@ -715,7 +716,7 @@ class RunStore:
         run_id: str,
         kind: ControlKind,
         timing: ControlTiming,
-        locals: tuple[Local, ...],
+        input: CallInput[Value | TypedRef],
         request_id: str | None,
         created_at: str,
     ) -> ControlRecord:
@@ -727,29 +728,17 @@ class RunStore:
             raise ValueError(f"unsupported run control kind: {kind}")
         if timing not in {"immediate", "next_step", "next_call"}:
             raise ValueError(f"unsupported run control timing: {timing}")
+        primary = input.get("_")
         if kind == "steer":
-            if len(locals) != 1:
-                raise ValueError("steer control requires one primary local")
-            primary = locals[0]
             if (
-                primary.name != "_"
+                set(input) != {"_"}
+                or not isinstance(primary, Array)
                 or primary.type != "Part[]"
-                or primary.dim != 0
-                or isinstance(primary.value, TypedRef)
-                or not isinstance(primary.value, Array)
-                or not all(isinstance(item, Part) for item in primary.value)
+                or not all(isinstance(item, Part) for item in primary)
             ):
                 raise ValueError("steer control requires a concrete primary Part[]")
-        elif len(locals) > 1 or (
-            locals
-            and (
-                locals[0].name != "_"
-                or locals[0].type != "Text"
-                or locals[0].dim != 0
-                or not isinstance(locals[0].value, str)
-            )
-        ):
-            raise ValueError("cancel control accepts only one primary Text local")
+        elif set(input) - {"_"} or ("_" in input and not isinstance(primary, str)):
+            raise ValueError("cancel control accepts only one primary Text input")
         _validate_request_id(request_id)
 
         with self._lock:
@@ -800,9 +789,9 @@ class RunStore:
                 ).fetchone()
                 index = int(row["next_index"]) if row is not None else 0
                 payload = (
-                    SteerControlPayload(locals)
+                    SteerControlPayload(input)
                     if kind == "steer"
-                    else CancelControlPayload(locals)
+                    else CancelControlPayload(input)
                 )
                 control_ref = ControlRef(RunRef(run_id), index)
                 self._insert_control(
@@ -1665,7 +1654,7 @@ class RunStore:
         status: RunStatus = "succeeded",
         error: ErrorMessage | ErrorRef | None = None,
         finished_at: str | None = None,
-        output: Local | None = None,
+        output: Output | None = None,
     ) -> RunRecord:
         now = finished_at or utc_now()
         with self.write_transaction():
@@ -1678,7 +1667,7 @@ class RunStore:
                 (
                     status,
                     _dump_execution_error(error),
-                    _dump_json(local_to_data(output)) if output is not None else None,
+                    _dump_json(output_to_data(output)) if output is not None else None,
                     now,
                     run_id,
                 ),
@@ -1754,7 +1743,12 @@ class RunStore:
             raise ValueError(f"run not found: {run_id}")
         if run.output is None:
             return ()
-        return parts_from_local(self.resolve_local(run.output))
+        return parts_from_local(self.resolve_local(run.output.local))
+
+    def resolve_output(self, output: Output) -> Output:
+        """Resolve an output's local value while retaining its binding."""
+
+        return replace(output, local=self.resolve_local(output.local))
 
     def resolve_local(self, local: Local) -> Local:
         """Resolve and validate every pointer in one durable typed local."""
@@ -1764,7 +1758,6 @@ class RunStore:
         validate_runtime_value(value, type_name)
         return Local(
             value=value,
-            name=local.name,
             dim=local.dim,
         )
 
@@ -2748,7 +2741,7 @@ class RunStore:
         ref: StepRef,
         kind: StepKind,
         status: StepStatus,
-        output: Local | None,
+        output: Output | None,
         noted: StepNoted,
         error: ErrorMessage | ErrorRef | None,
         finished_at: str,
@@ -2774,7 +2767,7 @@ class RunStore:
                     WHERE id = ?
                     """,
                     (
-                        _dump_json(local_to_data(output))
+                        _dump_json(output_to_data(output))
                         if output is not None
                         else None,
                         _dump_json(step_noted_to_data(kind, noted)),
@@ -3144,12 +3137,11 @@ class RunStore:
                 and initial.status == "applied"
                 and isinstance(initial.payload, RunControlPayload)
             ):
-                primary = next(
-                    (value for value in initial.payload.input if value.name == "_"),
-                    None,
-                )
+                primary = initial.payload.input.get("_")
                 if primary is not None:
-                    parts = parts_from_local(self.resolve_local(primary))
+                    parts = parts_from_local(
+                        Local(value=cast(Value, self.resolve_value(primary)))
+                    )
                     if parts:
                         results.append(Message("user", parts))
                 emitted.add(initial.ref)
@@ -3774,7 +3766,7 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
         thread=ThreadRef(str(row["thread"])),
         control=ControlRef.parse(str(row["control"])),
         state=ControlRef.parse(str(row["state"])),
-        output=(local_from_data(output_data) if output_data is not None else None),
+        output=(output_from_data(output_data) if output_data is not None else None),
         occur=occurrence_from_data(occurrence_data),
         status=cast(RunStatus, row["status"]),
         error=_load_execution_error(row["error"]),
@@ -3823,7 +3815,7 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
         if raw["aborted_by"] is not None
         else None,
         state=ControlRef.parse(str(raw["state"])),
-        output=(local_from_data(output_data) if output_data is not None else None),
+        output=(output_from_data(output_data) if output_data is not None else None),
         occur=occurrence_from_data(occurrence_data),
         given=stored_step_given_from_data(kind, given_data),
         noted=step_noted_from_data(kind, noted_data),
@@ -3875,7 +3867,7 @@ def _replay_messages_from_step(step: StepRecord) -> list[Message]:
     role = step_message_role(step.kind)
     if role is None or not step.output:
         return []
-    parts = parts_from_local(step.output)
+    parts = parts_from_local(step.output.local)
     return [Message(role=role, parts=parts)] if parts else []
 
 

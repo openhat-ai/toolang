@@ -321,6 +321,7 @@ async def _execute(state: _AgicState) -> Message | None:
         ref = FieldRef.from_path(
             StepRef.from_local(state.prepared.run.run_id, (state.last_step,)),
             "output",
+            "local",
             "value",
         )
         state.output = ref

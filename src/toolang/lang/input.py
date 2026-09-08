@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from hashlib import sha256
 import json
 import math
 import re
 import shlex
 from types import MappingProxyType
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Generic, Literal, TypeAlias, TypeVar, cast, get_args
+
+from pydantic import GetCoreSchemaHandler
+from pydantic_core import core_schema
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import (
@@ -38,68 +41,70 @@ _JSON_OUTPUT_FENCE_RE = re.compile(
 )
 
 
-@dataclass(frozen=True, slots=True)
-class NamedInputSource:
-    """One unresolved named runnable-input source."""
-
-    name: str
-    source: str
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.name, str) or not _ARGUMENT_NAME_RE.fullmatch(self.name):
-            raise ValueError("named input must use a canonical name")
-        if not isinstance(self.source, str):
-            raise TypeError("named input source must be a string")
-
-
-NamedInputSources: TypeAlias = tuple[NamedInputSource, ...]
+T = TypeVar("T", covariant=True)
 CallInputForm = Literal["line", "stream", "fenced"]
 
 
-@dataclass(frozen=True, slots=True)
-class CallInput:
-    """Structured primary and named source text supplied to one call."""
+class CallInput(Mapping[str, T], Generic[T]):
+    """Immutable complete input: `_` holds input, other keys hold arguments."""
 
-    _: str | None = None
-    named: NamedInputSources = ()
+    __slots__ = ("_entries",)
+    _entries: Mapping[str, T]
 
-    def __post_init__(self) -> None:
-        if self._ is not None and not isinstance(self._, str):
-            raise TypeError("primary input source must be a string or none")
-        if not isinstance(self.named, tuple) or not all(
-            isinstance(item, NamedInputSource) for item in self.named
-        ):
-            raise TypeError("named input sources must be NamedInputSource values")
-        names = tuple(item.name for item in self.named)
-        if len(names) != len(set(names)):
-            raise ValueError("named input sources must be unique")
+    def __init__(self, values: Mapping[str, T] = MappingProxyType({})) -> None:
+        if not isinstance(values, Mapping):
+            raise TypeError('call input must be a flat object, such as {"_": "text"}')
+        for name, value in values.items():
+            if not isinstance(name, str) or not _PROMPT_NAME_RE.fullmatch(name):
+                raise ValueError("input keys must use canonical names")
+            if name == "_" and value is None:
+                raise ValueError("primary input cannot be null; omit '_' for no input")
+        object.__setattr__(self, "_entries", MappingProxyType(dict(values)))
 
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("CallInput is immutable")
 
-@dataclass(frozen=True, slots=True)
-class RunnableInputRaw(CallInput):
-    """Unresolved Call Input supplied to one runnable."""
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("CallInput is immutable")
 
+    def __getitem__(self, name: str) -> T:
+        return self._entries[name]
 
-@dataclass(frozen=True, slots=True)
-class RunnableInput:
-    """Resolved primary and named inputs adopted by one run."""
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._entries)
 
-    primary: Value | None = None
-    named: Mapping[str, Value] = field(default_factory=dict)
+    def __len__(self) -> int:
+        return len(self._entries)
 
-    def __post_init__(self) -> None:
-        primary = (
-            _require_input_value(self.primary) if self.primary is not None else None
+    def __repr__(self) -> str:
+        return f"CallInput({dict(self)!r})"
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source: Any, handler: GetCoreSchemaHandler
+    ) -> core_schema.CoreSchema:
+        arguments = get_args(source)
+        value_schema = (
+            core_schema.str_schema(strict=True)
+            if arguments and arguments[0] is str
+            else handler.generate_schema(arguments[0] if arguments else Any)
         )
-        if not isinstance(self.named, Mapping):
-            raise TypeError("run named inputs must be a mapping")
-        named: dict[str, Value] = {}
-        for name, value in sorted(self.named.items()):
-            if not isinstance(name, str) or not _ARGUMENT_NAME_RE.fullmatch(name):
-                raise ValueError("run input value requires a canonical name")
-            named[name] = _require_input_value(value)
-        object.__setattr__(self, "primary", primary)
-        object.__setattr__(self, "named", MappingProxyType(named))
+        mapping_schema = core_schema.dict_schema(
+            core_schema.str_schema(strict=True), value_schema, strict=True
+        )
+        return core_schema.no_info_after_validator_function(
+            cls,
+            core_schema.no_info_before_validator_function(
+                lambda value: dict(value) if isinstance(value, cls) else value,
+                mapping_schema,
+            ),
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                dict, return_schema=mapping_schema
+            ),
+        )
+
+
+RunnableInput: TypeAlias = CallInput[Value]
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,18 +239,27 @@ def capture_call_input(
     return captured, trailing
 
 
+def validate_runnable_input_names(input: Mapping[str, object]) -> None:
+    """Apply runnable argument naming rules without narrowing prompt parameters."""
+
+    if any(
+        not isinstance(name, str) or not _ARGUMENT_NAME_RE.fullmatch(name)
+        for name in input
+    ):
+        raise ValueError("input keys must use canonical names")
+
+
 def resolve_runnable_input(
     runnable: AgicDecl | FlowDecl,
+    input: Mapping[str, object],
     *,
-    primary: object | None = None,
-    named: Mapping[str, object] | None = None,
     structs: Mapping[str, StructDecl] | None = None,
 ) -> RunnableInput:
     """Resolve caller values once against one runnable signature."""
 
+    validate_runnable_input_names(input)
     parameters = {parameter.name: parameter for parameter in runnable.params}
-    arguments = dict(named or {})
-    unknown = sorted(set(arguments) - set(parameters))
+    unknown = sorted(set(input) - set(parameters) - {"_"})
     if unknown:
         raise ValueError(
             f"unknown named inputs for {runnable.name}: {', '.join(unknown)}"
@@ -253,66 +267,74 @@ def resolve_runnable_input(
     missing = sorted(
         name
         for name, parameter in parameters.items()
-        if not parameter.optional and name not in arguments
+        if not parameter.optional and name not in input
     )
     if missing:
         raise ValueError(
             f"missing named inputs for {runnable.name}: {', '.join(missing)}"
         )
-    if runnable.input is None and primary is not None:
+    if runnable.input is None and "_" in input:
         raise ValueError(f"{runnable.name} does not accept primary input")
-    if runnable.input is not None and not runnable.input.optional and primary is None:
-        raise ValueError(f"{runnable.name} requires primary input")
-
-    declared_structs = structs or {}
-    resolved_primary = (
-        coerce_input(
-            primary,
-            runnable.input.type_name or "Part[]",
-            structs=declared_structs,
-        )
-        if runnable.input is not None and primary is not None
-        else None
+    if runnable.input is not None:
+        parameters["_"] = runnable.input
+        if not runnable.input.optional and "_" not in input:
+            raise ValueError(f"{runnable.name} requires primary input")
+    supplied = CallInput(input)
+    return CallInput(
+        {
+            name: coerce_input(
+                _require_input_value(value),
+                parameters[name].type_name or "Part[]",
+                structs=structs or {},
+            )
+            for name, value in supplied.items()
+        }
     )
-    resolved_named = {
-        name: coerce_input(
-            value,
-            parameters[name].type_name or "Part[]",
-            structs=declared_structs,
-        )
-        for name, value in arguments.items()
-    }
-    return RunnableInput(primary=resolved_primary, named=resolved_named)
 
 
-def parse_input(
-    source: str | None,
+def decode_runnable_input(
+    runnable: AgicDecl | FlowDecl,
+    input: Mapping[str, object],
     *,
-    named: Sequence[NamedInputSource | tuple[str, str]] = (),
-) -> RunnableInputRaw:
-    """Parse runnable input without resolving includes or declared types."""
+    structs: Mapping[str, StructDecl] | None = None,
+    part_decoder: Callable[[Mapping[str, Any]], Part] = part_from_data,
+) -> RunnableInput:
+    """Decode direct JSON values with the same signature as runtime calls."""
 
-    primary = source
+    parameters = {parameter.name: parameter for parameter in runnable.params}
+    if runnable.input is not None:
+        parameters["_"] = runnable.input
+    supplied = CallInput(input)
+    return resolve_runnable_input(
+        runnable,
+        {
+            name: decode_json_input(
+                value,
+                parameters[name].type_name or "Part[]",
+                structs=structs or {},
+                part_decoder=part_decoder,
+            )
+            if name in parameters
+            else value
+            for name, value in supplied.items()
+        },
+        structs=structs,
+    )
+
+
+def parse_input(input: Mapping[str, str]) -> CallInput[str]:
+    """Validate collected source text without resolving Content or types."""
+
+    validate_runnable_input_names(input)
+    supplied = CallInput(input)
+    if not all(isinstance(value, str) for value in supplied.values()):
+        raise TypeError("input sources must be strings")
+    primary = supplied.get("_")
     if primary:
         first = primary.splitlines()[0]
         if first.startswith(":") and not first.startswith("::"):
             raise ValueError("primary input must escape a leading colon as ::")
-
-    parsed_named: list[NamedInputSource] = []
-    names: set[str] = set()
-    for item in named:
-        if isinstance(item, NamedInputSource):
-            name, value = item.name, item.source
-        elif isinstance(item, tuple) and len(item) == 2:
-            name, value = item
-        else:
-            raise TypeError("named input sources must be name/source pairs")
-        parsed = NamedInputSource(name, value)
-        if name in names:
-            raise ValueError(f"duplicate named input: {name}")
-        names.add(name)
-        parsed_named.append(parsed)
-    return RunnableInputRaw(_=primary, named=tuple(parsed_named))
+    return supplied
 
 
 def resolve_input_parts(
@@ -381,10 +403,13 @@ def decode_json_input(
     type_name: str,
     *,
     structs: Mapping[str, StructDecl] | None = None,
+    part_decoder: Callable[[Mapping[str, Any]], Part] = part_from_data,
 ) -> object:
     """Decode one JSON-compatible caller value for a declared input type."""
 
-    return _decode_input_value(value, type_name, structs=structs or {})
+    return _decode_input_value(
+        value, type_name, structs=structs or {}, part_decoder=part_decoder
+    )
 
 
 def coerce_output(
@@ -674,7 +699,7 @@ def _expand_prompt_text(
 
         rendered_prompt = render_text_template(
             prompt.body,
-            {"_": prompt_text, **prompt_bindings},
+            CallInput({"_": prompt_text, **prompt_bindings}),
         ).strip()
         _reject_nested_prompt_call(
             rendered_prompt,
@@ -1048,6 +1073,7 @@ def _decode_input_value(
     type_name: str,
     *,
     structs: Mapping[str, StructDecl],
+    part_decoder: Callable[[Mapping[str, Any]], Part],
 ) -> object:
     """Decode JSON-compatible part values against one declared input type."""
 
@@ -1055,16 +1081,21 @@ def _decode_input_value(
         if isinstance(value, str):
             return (TextPart(value),)
         if isinstance(value, Array | tuple | list):
-            return tuple(_decode_input_part(item) for item in value)
+            return tuple(
+                _decode_input_part(item, part_decoder=part_decoder) for item in value
+            )
         return value
     if type_name == "Part":
-        return _decode_input_part(value)
+        return _decode_input_part(value, part_decoder=part_decoder)
     if type_name.endswith("[]"):
         if not isinstance(value, Array | tuple | list):
             return value
         item_type = type_name[:-2]
         return tuple(
-            _decode_input_value(item, item_type, structs=structs) for item in value
+            _decode_input_value(
+                item, item_type, structs=structs, part_decoder=part_decoder
+            )
+            for item in value
         )
     struct = structs.get(type_name)
     if struct is None or not isinstance(value, Mapping):
@@ -1073,7 +1104,12 @@ def _decode_input_value(
     mapping = cast(Mapping[str, object], value)
     return {
         name: (
-            _decode_input_value(item, fields[name].type_name, structs=structs)
+            _decode_input_value(
+                item,
+                fields[name].type_name,
+                structs=structs,
+                part_decoder=part_decoder,
+            )
             if name in fields
             else item
         )
@@ -1081,14 +1117,16 @@ def _decode_input_value(
     }
 
 
-def _decode_input_part(value: object) -> object:
+def _decode_input_part(
+    value: object, *, part_decoder: Callable[[Mapping[str, Any]], Part]
+) -> object:
     if _is_part(value):
         return value
     if isinstance(value, str):
         return TextPart(value)
     if isinstance(value, Mapping):
         try:
-            return part_from_data(cast(Mapping[str, Any], value))
+            return part_decoder(cast(Mapping[str, Any], value))
         except (TypeError, ValueError) as exc:
             raise ToolangError(str(exc) or type(exc).__name__) from exc
     return value

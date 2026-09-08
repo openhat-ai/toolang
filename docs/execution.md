@@ -237,16 +237,17 @@ executor must own the active run tree and retain the concrete durable
 `AgentState`. A child run ID is normalized to its root. There is no HTTP, CLI,
 Chat, scheduler, or model-facing reload endpoint.
 
-Every newly accepted preparation control stores top-level `RunBindings`,
-`RunLimits`, `RunnableInput`, and final `AgentResources` snapshots. Steer stores a
-`Message`; cancel stores an optional reason. Root preparation controls also store
-the canonical sandbox in which the executor accepted them. Nested runs omit
-that redundant value, while its absence on a legacy root means unknown rather
-than `host`. Root `run` and `rerun` controls store the State revision; new
-child `run` and `retry` controls omit it. A `reload` control stores only the new
-revision. These values are not duplicated in the control context. A durable
-run is a root exactly when `parent is None`; callers that need a root run ID
-derive it by following parent-run ownership.
+Every Run entry control stores its concrete runnable and model bindings,
+limits, resources, and a flat `CallInput[Value | TypedRef]`. Optional
+`authored_input` records the corresponding `CallInput[str]` source snapshot.
+Steer stores a primary `Part[]` value under `_`; cancel stores optional primary
+Text under `_`. Execute stores input references keyed by parameter name. Retry
+inherits input from the entry control and records its effective settings.
+
+Root Run entry controls store the State revision and accepted sandbox. Child
+entries refer to the inherited State and omit the redundant sandbox. Reload
+stores the new State revision. A durable run is a root exactly when
+`parent is None`; callers derive its root by following parent-run ownership.
 
 Every run-control insert or status change receives a monotonically increasing
 SQLite revision. Each executor remembers the latest revision it observed and
@@ -313,10 +314,10 @@ workspace grants and effective per-module cap collections. Setup and State apply
 their owned `[allow]` fields before publication; session and run policy only
 narrow those bases.
 Execution uses that layout directly for the agent identity, home, and runtime
-rooms. `RunSpec.input.primary` is one protocol-level `Percept`;
-after runnable resolution, input coercion exposes that value as `Part[]` or
-another explicitly declared primary type. Output coercion validates the final
-run value against the runnable's declared output type. Setup and State remain
+rooms. `RunSpec.input` is a flat `CallInput[Value]`; `_`, when present, contains
+`Part[]` or the explicitly declared input type, and other keys hold arguments.
+Output coercion validates the final run value against the runnable's declared
+output type. Setup and State remain
 complete snapshots; the executor computes concrete `AgentResources` instead of
 receiving filtered copies. A root starts from the State supplied in `RunSpec`.
 An explicit reload changes the State/ref pair at a serialized execution

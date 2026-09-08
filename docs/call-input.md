@@ -1,18 +1,81 @@
 # Call Input
 
-Call Input is the unresolved primary text and named arguments supplied to one
-call. Runnable calls retain their existing public raw-input name, while prompt
-calls use the shared value directly:
+`CallInput[T]` is the complete input supplied to a prompt, script invocation,
+or runnable. It uses one immutable flat mapping throughout parsing, execution,
+HTTP, and persistence. `_` holds primary input; other keys hold arguments.
 
-```text
-CallInput = PrimaryText? + NamedArgument*
-
-RunnableInputRaw : CallInput
+```python
+CallInput[str]({"_": "Review this change.", "count": "2"})
+CallInput[Value]({"_": "Review this change.", "count": 2})
+RunnableInput: TypeAlias = CallInput[Value]
 ```
 
-Runnable resolution later evaluates Content and coerces values against a
-runnable signature. A prompt instead binds textual placeholders and expands to
-Text. A separate prompt-input type would add no behavior or stored information.
+`CallInput[str]` contains unresolved Content sources. Resolution evaluates
+Content once and coerces values against the runnable signature. `RunnableInput`
+is only an alias for evaluated values, with no separate class or serialization.
+Direct-value calls never interpret strings as Content. Prompt expansion binds
+textual placeholders using the same flat input shape.
+
+## Terminology
+
+Use these short names in documentation, authored prose, and CLI help:
+
+| Full name | Short name | Binding name |
+| --- | --- | --- |
+| Primary input | Input | `_` |
+| Named input | Argument | The declared parameter name |
+| Named inputs | Arguments | The declared parameter names |
+
+A parameter is a signature declaration; an argument is a value supplied for a
+named parameter. Use the full names when needed to distinguish the two input
+roles. These short names do not rename schema fields: Call Input and an API's
+`input` container can still refer to the complete input-and-arguments bundle.
+
+## Flat Input Mappings
+
+Locals and APIs that accept an input-value dictionary use sibling keys: `_`
+for input and each declared name for its argument. For a runnable with the
+signature `demo(_: Text, arg1: Text, arg2: Number)`, the dictionary is:
+
+```json
+{
+  "_": "Review this change.",
+  "arg1": "security",
+  "arg2": 2
+}
+```
+
+The `_toolang/run` and `_toolang/execute` tools accept this flat dictionary in
+their `input` field. Omit `_` when the signature forbids primary input, and
+omit unsupplied optional arguments. Supplied values must satisfy the target
+signature; arguments do not sit inside a nested `arguments` or `named` object.
+
+Runtime locals use the same flat names, with `Local` values carrying type and
+provenance metadata. They can also contain other flow bindings and reserved
+runtime context. The `_` local can be empty when no input was supplied and can
+later hold a flow statement's result; it is not always the original call input.
+
+The constructor accepts one mapping, with no `primary`/`named` compartments.
+Omit `_` for absent input; `"_": ""` and empty typed arrays are supplied values.
+Primary `null` is invalid. Optional arguments are omitted when not supplied;
+argument nullability follows the target signature. Collectors reject duplicate
+assignments before constructing a mapping; HTTP rejects duplicate input keys.
+Canonical names, required arguments, unknown arguments, and type checks remain
+enforced at their input boundaries. Prompt parameter names may contain hyphens;
+runnable boundaries retain their stricter identifier rule.
+
+Execution records use `CallInput[Value | TypedRef]`. Each stored entry retains
+the self-describing value codec, without an input-only `Local` wrapper. Input
+references use `payload/input/_` or `payload/input/argumentName`. Nested paths
+follow the value codec: a boxed array item uses `payload/input/items/!/0`.
+Outputs use `Output(local=Local(value=..., dim=0), binding="_")`. `Local`
+contains only the value and dimension; the enclosing local map or output
+binding supplies its name. `binding=None` leaves a result unbound.
+
+This format replaces the old source compartments, resolved compartments, HTTP
+`args` sibling, and persisted local arrays. RunStore schema 43 rejects older
+stores without modifying them. HTTP clients must send the flat format; no
+compatibility adapter or migration is provided.
 
 ## Input Forms
 
@@ -33,9 +96,9 @@ the parser for boundaries and diagnostics and is discarded after capture. An
 absent primary input and an explicitly empty primary input remain distinct:
 
 ```text
-no Call Input primary       -> no primary input
-CallInput(primary="")       -> explicit empty primary input
-CallInput(primary="text")   -> nonempty primary input
+CallInput()              -> no primary input
+CallInput({"_": ""})       -> explicit empty primary input
+CallInput({"_": "text"})   -> nonempty primary input
 ```
 
 ## Line Input

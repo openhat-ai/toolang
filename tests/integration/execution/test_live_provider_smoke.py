@@ -99,7 +99,7 @@ class _LiveExecution:
                     limits=self.setup.limits,
                     input=resolve_runnable_input(
                         declaration,
-                        primary=resolve_input_parts(marker),
+                        {"_": resolve_input_parts(marker)},
                         structs={
                             item.name: item
                             for item in self.state.modules["agent"].structs

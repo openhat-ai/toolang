@@ -41,9 +41,10 @@ from toolang.execution.executor.common import BoundRun
 from toolang.execution.executor.prepare import _AgicFrame
 from toolang.execution.executor.runs.agic import _AgicState, _execute
 from toolang.execution.executor._messages import _MessageBuffer
+from toolang.lang.types import Array
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.execution.records import ControlRecord, SteerControlPayload
-from toolang.execution.types import ControlRef, Local
+from toolang.execution.types import ControlRef, Local, Output
 from toolang.plugin.models.discovery import missing_provider_env_vars
 from toolang.plugin.models.resolution import (
     apply_model_parameters,
@@ -67,7 +68,7 @@ from toolang.plugin.models.adapters import messages as messages_models
 from toolang.plugin.models.adapters import responses as responses_models
 from toolang.plugin.models.adapters.responses import encode_message, response_payload
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
-from toolang.lang.input import RunnableInput
+from toolang.lang.input import CallInput, RunnableInput
 from toolang.plugin.models.config import parse_provider_configs
 
 
@@ -2817,7 +2818,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
             kind="steer",
             timing="next_call",
             payload=SteerControlPayload(
-                (Local.typed("Part[]", tuple(steer.parts), "_", 0),)
+                CallInput({"_": Array("Part[]", tuple(steer.parts))})
             ),
         )
     ]
@@ -2858,7 +2859,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
         ),
     )
     step_end = next(event for event in events if isinstance(event, StepEnd))
-    assert step_end.output == Local.typed("Part[]", (audio,), "_")
+    assert step_end.output == Output(Local.typed("Part[]", (audio,)), "_")
     assert [event.type for event in events] == [
         "step_begin",
         "part_begin",
@@ -2888,7 +2889,7 @@ def test_agic_commits_steer_messages_after_step_begin() -> None:
         kind="steer",
         timing="next_call",
         payload=SteerControlPayload(
-            (Local.typed("Part[]", tuple(steer.parts), "_", 0),)
+            CallInput({"_": Array("Part[]", tuple(steer.parts))})
         ),
     )
     original_messages = list(prepared.messages)
@@ -3221,7 +3222,7 @@ def _prepared_agic(
             thread="thread-1",
             bindings=RunBindings(runnable="agic:main"),
             input=RunnableInput(),
-            control_locals=(),
+            control_input=CallInput({}),
             state=cast(Any, state),
             state_ref=ControlRef.for_run("run_1", 0),
             setup=AgentSetup(
@@ -3239,10 +3240,7 @@ def _prepared_agic(
             input=Parameter(name="_", span=Span(1)),
             messages=(
                 AstMessage(
-                    role="user",
-                    content="Reply directly.",
-                    explicit=False,
-                    span=Span(1),
+                    role="user", content="Reply directly.", explicit=False, span=Span(1)
                 ),
             ),
             span=Span(1),

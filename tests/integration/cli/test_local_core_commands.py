@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
+
 import pytest
 import typer
 from typer._click.utils import strip_ansi
@@ -19,6 +20,7 @@ import toolang.cli.toolang.commands.agent as agent_commands
 import toolang.cli.toolang.commands.plugin as plugin_commands
 import toolang.cli.toolang.commands.thread as thread_commands
 import toolang.cli.toolang.main as cli
+from toolang.lang.input import CallInput
 from tests.support.execution_fixtures import (
     project_run_control,
     project_run_end,
@@ -46,6 +48,7 @@ from toolang.execution.records import (
 from toolang.execution.schemas import RerunRequest, RetryRequest, ThreadInfo
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
+    Output,
     ControlRef,
     FieldRef,
     Local,
@@ -57,6 +60,7 @@ from toolang.execution.types import (
     ToolStepGiven,
 )
 from toolang.lang.input import resolve_input_parts
+from toolang.lang.types import Array
 from toolang.setup import AgentSetup, ModelCollection, ToolCollection
 from toolang.up import process as agents
 from toolang.up.types import AgentServerRef
@@ -355,7 +359,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
             status="succeeded",
             input=(
                 FieldRef.from_path(
-                    ControlRef.for_run(run.id, 0), "payload", "input", 0, "value"
+                    ControlRef.for_run(run.id, 0), "payload", "input", "_"
                 ),
             ),
             output=(TextPart(text="prepared"),),
@@ -387,10 +391,12 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
         "iteration": None,
     }
     assert document["output"] == {
-        "type": "Part[]",
-        "value": [{"text": "prepared", "type": "text"}],
-        "name": "_",
-        "dim": 0,
+        "local": {
+            "type": "Part[]",
+            "value": [{"text": "prepared", "type": "text"}],
+            "dim": 0,
+        },
+        "binding": "_",
     }
     assert "target" not in document
     assert "run" not in document
@@ -400,7 +406,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
         root,
         "alice",
         "inspect",
-        "run_inspect.0/output/value/0",
+        "run_inspect.0/output/local/value/0",
         "--json",
     )
     raw_pointer = _invoke(
@@ -431,7 +437,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
         root,
         "alice",
         "inspect",
-        "run_inspect.0/output/value",
+        "run_inspect.0/output/local/value",
         "--human",
     )
 
@@ -487,7 +493,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     assert resolved_row.split()[:2] == ["/0", "FieldRef"]
     assert "→" not in resolved.stdout
     assert "run_inspect.0/input/0" not in resolved.stdout
-    assert "run_inspect@0/payload/input/0/value" in resolved.stdout
+    assert "run_inspect@0/payload/input/_" in resolved.stdout
     assert "Inspect this" not in resolved.stdout
     assert resolved_value.exit_code == 0
     assert "resolves to" not in resolved_value.stdout
@@ -496,7 +502,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     assert status.exit_code == 0
     assert status.stdout == "succeeded\n"
     assert response.exit_code == 0
-    assert "run_inspect.0/output/value" not in response.stdout
+    assert "run_inspect.0/output/local/value" not in response.stdout
     assert "prepared" in response.stdout
     assert "• prepared" not in response.stdout
 
@@ -995,12 +1001,7 @@ def test_inspect_projects_complete_persisted_model_call(
             ref=StepRef.from_local(run.id, (0,)),
             kind="model",
             status="succeeded",
-            output=Local.typed(
-                "Part[]",
-                (TextPart(result_text),),
-                "_",
-                0,
-            ),
+            output=Output(Local.typed("Part[]", (TextPart(result_text),), 0), "_"),
             noted=None,
             error=None,
             finished_at="2026-01-01T00:00:01Z",
@@ -1089,7 +1090,7 @@ def test_inspect_projects_complete_persisted_model_call(
     assert "Output Contract" in human_output
     assert json.dumps(output_schema, ensure_ascii=False, indent=2) in human_output
     assert "Result " in human_output
-    assert "Result run_model_call.0/output/value" not in human_output
+    assert "Result run_model_call.0/output/local/value" not in human_output
     assert "Continuation" in human_output
     assert "provider_cursor: next" in human_output
     assert '"instructions":' not in human_output
@@ -1358,21 +1359,19 @@ def test_inspect_projects_exact_tool_call_and_persisted_result(
             ref=path,
             kind="tool",
             status="succeeded",
-            output=Local.typed(
-                "Part",
-                ToolResultPart(
-                    tool_call_id=call.tool_call_id,
-                    call_id=call.call_id,
-                    tool_name=call.name,
-                    tool_family="web",
-                    output={
-                        "status": "ok",
-                        "results": 3,
-                        "detail": result_detail,
-                    },
+            output=Output(
+                Local.typed(
+                    "Part",
+                    ToolResultPart(
+                        tool_call_id=call.tool_call_id,
+                        call_id=call.call_id,
+                        tool_name=call.name,
+                        tool_family="web",
+                        output={"status": "ok", "results": 3, "detail": result_detail},
+                    ),
+                    0,
                 ),
                 "_",
-                0,
             ),
             noted=None,
             error=None,
@@ -1406,7 +1405,7 @@ def test_inspect_projects_exact_tool_call_and_persisted_result(
     assert "Tool-call ID provider-tool-1" in human.stdout
     assert "Invocation " in human.stdout
     assert "Result " in human.stdout
-    assert f"Result {path}/output/value" not in human.stdout
+    assert f"Result {path}/output/local/value" not in human.stdout
     assert query in human.stdout
     assert "results: 3" in human.stdout
     assert result_detail in human.stdout
@@ -1746,7 +1745,10 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
     assert "--focus" not in help_text
 
 
-def test_inspect_human_reports_pointer_resolution_errors(tmp_path: Path) -> None:
+def test_inspect_human_reports_pointer_resolution_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COLUMNS", "160")
     root = tmp_path / "toolang"
     _create_agent(root)
     store = RunStore(AgentLayout.resident(root, "alice").run_store)
@@ -1767,8 +1769,11 @@ def test_inspect_human_reports_pointer_resolution_errors(tmp_path: Path) -> None
             kind="value",
             status="succeeded",
             input=(),
-            output=Local.typed(
-                "Text", FieldRef.from_path(second, "output", "value"), "_"
+            output=Output(
+                Local.typed(
+                    "Text", FieldRef.from_path(second, "output", "local", "value")
+                ),
+                "_",
             ),
             started_at="2026-01-01T00:00:00Z",
             finished_at="2026-01-01T00:00:01Z",
@@ -1780,8 +1785,11 @@ def test_inspect_human_reports_pointer_resolution_errors(tmp_path: Path) -> None
             kind="value",
             status="succeeded",
             input=(),
-            output=Local.typed(
-                "Text", FieldRef.from_path(first, "output", "value"), "_"
+            output=Output(
+                Local.typed(
+                    "Text", FieldRef.from_path(first, "output", "local", "value")
+                ),
+                "_",
             ),
             started_at="2026-01-01T00:00:01Z",
             finished_at="2026-01-01T00:00:02Z",
@@ -1793,9 +1801,8 @@ def test_inspect_human_reports_pointer_resolution_errors(tmp_path: Path) -> None
             kind="value",
             status="succeeded",
             input=(),
-            output=Local.typed(
-                "Text",
-                FieldRef.parse("run_missing/output/value"),
+            output=Output(
+                Local.typed("Text", FieldRef.parse("run_missing/output/local/value")),
                 "_",
             ),
             started_at="2026-01-01T00:00:02Z",
@@ -1808,10 +1815,12 @@ def test_inspect_human_reports_pointer_resolution_errors(tmp_path: Path) -> None
             kind="value",
             status="succeeded",
             input=(),
-            output=Local.typed(
-                "Text",
-                FieldRef.from_path(
-                    StepRef.from_local(run.id, (4,)), "output", "value", 0
+            output=Output(
+                Local.typed(
+                    "Text",
+                    FieldRef.from_path(
+                        StepRef.from_local(run.id, (4,)), "output", "local", "value", 0
+                    ),
                 ),
                 "_",
             ),
@@ -1839,33 +1848,33 @@ def test_inspect_human_reports_pointer_resolution_errors(tmp_path: Path) -> None
         root,
         "alice",
         "inspect",
-        f"{first}/output/value",
+        f"{first}/output/local/value",
     )
     missing = _invoke(
         root,
         "alice",
         "inspect",
-        f"{run.id}.2/output/value",
+        f"{run.id}.2/output/local/value",
     )
     mismatch = _invoke(
         root,
         "alice",
         "inspect",
-        f"{run.id}.3/output/value",
+        f"{run.id}.3/output/local/value",
     )
 
     for fields in (cycle_fields, missing_fields, mismatch_fields):
         assert fields.exit_code == 0, fields.stderr
         assert "FIELD" in fields.stdout
         assert "/output" in fields.stdout
-        assert "Local?" in fields.stdout
-    assert f"{second}/output/value" in cycle_fields.stdout
-    assert "run_missing/output/value" in missing_fields.stdout
-    assert f"{run.id}.4/output/value/" in mismatch_fields.stdout
+        assert "Output?" in fields.stdout
+    assert f"{second}/output/local/value" in cycle_fields.stdout
+    assert "run_missing/output/local/value" in missing_fields.stdout
+    assert f"{run.id}.4/output/local/value/" in mismatch_fields.stdout
     assert cycle.exit_code == 1
     assert "Pointer cycle" in cycle.stderr
-    assert f"{first}/output/value" in cycle.stderr
-    assert f"{second}/output/value" in cycle.stderr
+    assert f"{first}/output/local/value" in cycle.stderr
+    assert f"{second}/output/local/value" in cycle.stderr
     assert missing.exit_code == 1
     assert "record not found: run_missing" in missing.stderr
     assert mismatch.exit_code == 1
@@ -1975,10 +1984,12 @@ def test_roaming_source_reads_inspect_collections_and_records(
     document = json.loads(inspect_output.out)
     assert document["id"] == "run_roaming.0"
     assert document["output"] == {
-        "type": "Part[]",
-        "value": [{"text": "ready", "type": "text"}],
-        "name": "_",
-        "dim": 0,
+        "local": {
+            "type": "Part[]",
+            "value": [{"text": "ready", "type": "text"}],
+            "dim": 0,
+        },
+        "binding": "_",
     }
 
 
@@ -2030,10 +2041,12 @@ def test_visiting_selector_reads_inspection_without_fetching(
     document = json.loads(output.out)
     assert document["id"] == "run_visiting.0"
     assert document["output"] == {
-        "type": "Part[]",
-        "value": [{"text": "cached", "type": "text"}],
-        "name": "_",
-        "dim": 0,
+        "local": {
+            "type": "Part[]",
+            "value": [{"text": "cached", "type": "text"}],
+            "dim": 0,
+        },
+        "binding": "_",
     }
 
 
@@ -2071,8 +2084,8 @@ def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> Non
         ("cancel", "immediate", "pending"),
     ]
     assert isinstance(controls[1].payload, SteerControlPayload)
-    assert controls[1].payload.input == (
-        Local.typed("Part[]", Message.user("Focus on tests").parts, "_", 0),
+    assert controls[1].payload.input == CallInput(
+        {"_": Array("Part[]", Message.user("Focus on tests").parts)}
     )
 
 

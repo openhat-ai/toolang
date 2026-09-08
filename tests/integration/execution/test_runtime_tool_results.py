@@ -91,9 +91,11 @@ def test_runtime_result_survives_restart_without_followup_model(
             model, tool = history.run_view(root.id).steps()
             assert isinstance(tool.given, ToolStepGiven)
             assert tool.given.call == request
-            assert tool.input == (FieldRef.from_path(model.ref, "output", "value", 0),)
+            assert tool.input == (
+                FieldRef.from_path(model.ref, "output", "local", "value", 0),
+            )
             assert tool.output is not None
-            (part,) = parts_from_local(tool.output)
+            (part,) = parts_from_local(tool.output.local)
             assert isinstance(part, ToolResultPart)
             assert part.tool_call_id == request.tool_call_id
             assert part.call_id == request.call_id
@@ -121,7 +123,8 @@ def test_runtime_result_survives_restart_without_followup_model(
                 assert part.output["output"] == "child output"
                 assert root_record.output is not None
                 assert (
-                    reopened.resolve_value(root_record.output.value) == "child output"
+                    reopened.resolve_value(root_record.output.local.value)
+                    == "child output"
                 )
                 assert all(
                     step.ref.run_id == root.id
@@ -192,8 +195,8 @@ def test_steer_during_result_delivery_preserves_result_once(
             assert [step.kind for step in steps] == ["model", "tool", "tool", "model"]
             first, skipped = steps[1:3]
             assert first.output is not None and skipped.output is not None
-            (first_part,) = parts_from_local(first.output)
-            (skipped_part,) = parts_from_local(skipped.output)
+            (first_part,) = parts_from_local(first.output.local)
+            (skipped_part,) = parts_from_local(skipped.output.local)
             assert isinstance(first_part, ToolResultPart)
             assert first_part.error != "canceled by steer"
             expected_status = (
@@ -292,7 +295,7 @@ def test_interruption_before_result_commit_preserves_completed_result(
                 for event in tracer.events
                 if isinstance(event, PartEnd) and event.step == step.ref
             )
-            assert parts_from_local(step.output) == (completed,)
+            assert parts_from_local(step.output.local) == (completed,)
             if interruption == "steer":
                 assert [
                     part
@@ -353,13 +356,13 @@ def test_interrupting_runtime_child_terminates_owning_tool_step(
             assert child.status == "canceled"
             if interruption == "steer":
                 assert tool_step.output is not None
-                assert parts_from_local(tool_step.output) == (
+                assert parts_from_local(tool_step.output.local) == (
                     harness.adapter.invocations[-1].call.messages[-2].parts[0],
                 )
             else:
                 assert tool_step.output is not None
-                assert isinstance(tool_step.output.value, ToolResultPart)
-                assert tool_step.output.value.error == "canceled"
+                assert isinstance(tool_step.output.local.value, ToolResultPart)
+                assert tool_step.output.local.value.error == "canceled"
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
@@ -404,7 +407,7 @@ def test_retry_replaces_runtime_results_and_owned_child(tmp_path: Path) -> None:
             ]
             result = view.steps()[1].output
             assert result is not None
-            (part,) = parts_from_local(result)
+            (part,) = parts_from_local(result.local)
             assert isinstance(part, ToolResultPart) and part.tool_call_id == "new"
             assert part.output["output"] == "new output"
             assert part.output["run_id"] != old_child.id
@@ -467,7 +470,7 @@ def test_skipped_batch_is_durable_and_does_not_consume_call_budget(
                 )
                 assert step.aborted_by == steer.ref
                 assert step.output is not None
-                (part,) = parts_from_local(step.output)
+                (part,) = parts_from_local(step.output.local)
                 assert isinstance(part, ToolResultPart)
                 assert part.tool_call_id == request.tool_call_id
                 assert part.error == "canceled by steer"
@@ -532,7 +535,7 @@ def test_steer_during_execute_delivery_keeps_committed_transfer(tmp_path: Path) 
             assert followup[-1] == steer_message("extra requirement")
             steps = harness.store.list_steps(run_id=root.id)
             assert steps[1].output is not None
-            (part,) = parts_from_local(steps[1].output)
+            (part,) = parts_from_local(steps[1].output.local)
             assert isinstance(part, ToolResultPart)
             execute = next(
                 c
@@ -632,7 +635,7 @@ def test_steer_at_tool_begin_closes_the_started_step(
             assert step.status == "canceled" and step.aborted_by == steer.ref
             assert step.output is not None
             assert (
-                parts_from_local(step.output)
+                parts_from_local(step.output.local)
                 == harness.adapter.invocations[-1].call.messages[-2].parts
             )
             assert tool.calls == []
@@ -715,7 +718,7 @@ def test_immediate_steer_during_skipped_batch_preserves_all_results(
                     part
                     for step in steps[1:4]
                     if step.output is not None
-                    for part in parts_from_local(step.output)
+                    for part in parts_from_local(step.output.local)
                 )
                 == parts
             )

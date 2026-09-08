@@ -10,10 +10,9 @@ from toolang.base.types.message import Part
 from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.lang.input import (
-    NamedInputSources,
     PromptDefinitionIdentity,
     PromptInvocation,
-    RunnableInputRaw,
+    CallInput,
     parse_input,
     prompt_definition_identity,
     resolve_input_parts_with_provenance,
@@ -59,13 +58,13 @@ class RestartSpec:
     limits: RunLimits
 
 
-def parse_call(source: str) -> tuple[RunOverride, RunnableInputRaw]:
+def parse_call(source: str) -> tuple[RunOverride, CallInput[str]]:
     """Parse one run-only source into an aggregate override and runnable input."""
 
     body = _strip_final_line_break(source)
     override, call_input = parse_policy_prefix(body)
-    input = parse_input(call_input._, named=call_input.named)
-    if not override.empty and input._ is None and not input.named:
+    input = parse_input(call_input)
+    if not override.empty and not input:
         raise ValueError("colon override requires runnable input")
     return override, input
 
@@ -171,7 +170,7 @@ def _rerun_model_request(
 
 def resolve_spec(
     override: RunOverride,
-    input: RunnableInputRaw,
+    input: CallInput[str],
     *,
     setup: AgentSetup,
     state: AgentState,
@@ -181,7 +180,7 @@ def resolve_spec(
     session_commands: Sequence[RunCommand] = (),
     session_override: RunOverride = RunOverride(),
     surface_named: Mapping[str, object] | None = None,
-    surface_named_sources: NamedInputSources = (),
+    surface_named_sources: Mapping[str, str] | None = None,
     include: IncludeResolver | None = None,
 ) -> RunSpec:
     """Resolve structured caller input against current immutable snapshots."""
@@ -295,7 +294,7 @@ def require_exact_model_request(
 
 
 def _resolve_concrete_spec(
-    input: RunnableInputRaw,
+    input: CallInput[str],
     *,
     setup: AgentSetup,
     state: AgentState,
@@ -305,7 +304,7 @@ def _resolve_concrete_spec(
     ceilings: tuple[AgentCeiling, ...],
     limits: RunLimits,
     surface_named: Mapping[str, object] | None = None,
-    surface_named_sources: NamedInputSources = (),
+    surface_named_sources: Mapping[str, str] | None = None,
     include: IncludeResolver | None = None,
     authored_commands: tuple[RunCommand, ...] = (),
     authored_session_commands: tuple[RunCommand, ...] = (),
@@ -330,53 +329,43 @@ def _resolve_concrete_spec(
     program = state.modules[module]
     if surface_named and surface_named_sources:
         raise ValueError("surface named inputs cannot be both bound and sourced")
-    if input.named and (surface_named or surface_named_sources):
+    arguments = set(input) - {"_"}
+    if arguments and (surface_named or surface_named_sources):
         raise ValueError("named inputs cannot be supplied by both source and surface")
-    raw_named = input.named or surface_named_sources
+    if "_" in (surface_named or {}) or "_" in (surface_named_sources or {}):
+        raise ValueError("surface arguments cannot supply primary input")
+    authored_input = parse_input({**input, **(surface_named_sources or {})})
     definitions = prompt_definitions(state, module=module, program=program)
     invocations: list[PromptInvocation] = []
-    if input._ is not None:
-        primary_resolution = resolve_input_parts_with_provenance(
-            input._,
+    values: dict[str, object] = dict(surface_named or {})
+    # Preserve primary-before-arguments Content evaluation and provenance order.
+    names = (
+        *(("_",) if "_" in authored_input else ()),
+        *(name for name in authored_input if name != "_"),
+    )
+    for name in names:
+        resolution = resolve_input_parts_with_provenance(
+            authored_input[name],
             program=program,
             include=include,
             prompt_definitions=definitions,
         )
-        primary = primary_resolution.parts
-        _extend_invocations(invocations, primary_resolution.prompts)
-    else:
-        primary = None
-    if raw_named:
-        named = _resolve_named_sources(
-            raw_named,
-            program=program,
-            include=include,
-            prompt_definitions=definitions,
-            invocations=invocations,
-        )
-    else:
-        named = dict(surface_named or {})
+        values[name] = resolution.parts
+        _extend_invocations(invocations, resolution.prompts)
     return RunSpec(
         setup=setup,
         state=state,
         thread=thread,
-        bindings=RunBindings(
-            model=bindings.model,
-            runnable=resolved_runnable.ref,
-        ),
+        bindings=RunBindings(model=bindings.model, runnable=resolved_runnable.ref),
         model_request=model_request,
         limits=limits,
         ceilings=ceilings,
         input=resolve_runnable_input(
             runnable,
-            primary=primary,
-            named=named,
+            values,
             structs={struct.name: struct for struct in program.structs},
         ),
-        authored_input=RunnableInputRaw(
-            _=input._,
-            named=raw_named,
-        ),
+        authored_input=authored_input,
         authored_commands=authored_commands,
         authored_session_commands=authored_session_commands,
         prompt_invocations=tuple(invocations),
@@ -460,27 +449,6 @@ def validate_session_commands(
             runnable_fallbacks,
         ),
     )
-
-
-def _resolve_named_sources(
-    sources: NamedInputSources,
-    *,
-    program: Program,
-    include: IncludeResolver | None,
-    prompt_definitions: Mapping[str, PromptDefinitionIdentity],
-    invocations: list[PromptInvocation],
-) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for item in sources:
-        resolution = resolve_input_parts_with_provenance(
-            item.source,
-            program=program,
-            include=include,
-            prompt_definitions=prompt_definitions,
-        )
-        result[item.name] = resolution.parts
-        _extend_invocations(invocations, resolution.prompts)
-    return result
 
 
 def prompt_definitions(

@@ -87,8 +87,8 @@ def workspace_reply_from_step(
     if not isinstance(source, ToolCallPart):
         raise TypeError("honor input must reference the original ToolCallPart")
     error = None
-    if step.output is not None and isinstance(step.output.value, ToolResultPart):
-        error = step.output.value.error
+    if step.output is not None and isinstance(step.output.local.value, ToolResultPart):
+        error = step.output.local.value.error
     elif isinstance(step.error, ErrorMessage):
         error = step.error.message
     elif isinstance(step.error, ErrorRef):

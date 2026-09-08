@@ -30,6 +30,7 @@ from toolang.execution.events import RunEnd, RunEvent, StepEnd
 from toolang.execution.policy import apply_session_setting
 from toolang.execution.schemas import ControlInfo, RunRequest, RunnableRequest
 from toolang.execution.types import (
+    Output,
     ErrorMessage,
     Local,
     ModelOverride,
@@ -37,7 +38,7 @@ from toolang.execution.types import (
     SessionSetting,
     StepRef,
 )
-from toolang.lang.input import RunnableInputRaw
+from toolang.lang.input import CallInput
 from toolang.up.types import AgentServerRef
 
 _HOST_DESCRIPTION = "macOS 27.0 arm64"
@@ -115,7 +116,7 @@ class _Client:
         self,
         thread_id: str,
         override: RunOverride,
-        input: RunnableInputRaw,
+        input: CallInput[str],
         setting: SessionSetting,
     ) -> RunRequest:
         del override
@@ -151,7 +152,7 @@ class _Client:
     ) -> None:
         del on_event, on_error, on_state
         self.starts.append(
-            (request.thread_id, request.runnable.input._ or "", request.model)
+            (request.thread_id, request.runnable.input.get("_") or "", request.model)
         )
 
     def cancel(self, run_id: str, on_error: Callable[[str], None]) -> None:
@@ -177,7 +178,7 @@ class _FailedRunClient(_Client):
     ) -> None:
         del on_error, on_state
         self.starts.append(
-            (request.thread_id, request.runnable.input._ or "", request.model)
+            (request.thread_id, request.runnable.input.get("_") or "", request.model)
         )
         on_event(
             RunEnd(
@@ -366,7 +367,7 @@ def test_scripted_renderer_uses_model_step_output_without_deltas(
             step=StepRef.parse("run_success.1"),
             kind="model",
             status="succeeded",
-            output=Local.typed("Part[]", (TextPart("complete answer"),), "_"),
+            output=Output(Local.typed("Part[]", (TextPart("complete answer"),)), "_"),
         )
     )
     renderer.render(RunEnd(run="run_success", status="succeeded"))

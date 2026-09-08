@@ -65,7 +65,7 @@ def test_implicit_pointer_projector_preserves_existing_browsing_rules(
 def test_human_table_never_truncates_a_pointer_in_a_narrow_terminal() -> None:
     output = StringIO()
     console = Console(file=output, width=20, force_terminal=False)
-    pointer = f"run_{'x' * 80}/output/value"
+    pointer = f"run_{'x' * 80}/output/local/value"
 
     _print_human_table(console, ((pointer, "Text", "complete"),))
 

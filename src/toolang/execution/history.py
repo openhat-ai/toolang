@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
+from typing import cast
 from pydantic import TypeAdapter
 
+from toolang.lang.types import Value
 from toolang.base.types.message import Part, TextPart
 from toolang.base.types.run import ModelCall
 from .records import (
@@ -35,6 +37,7 @@ from .types import (
     ErrorRef,
     FieldRef,
     Local,
+    Output,
     Pointer,
     RunRef,
     RunStatus,
@@ -253,7 +256,7 @@ class RunHistory:
                 input_parts=self._input_parts(run, controls),
             )
 
-    def get_output(self, run: RunRef | str) -> Local | None:
+    def get_output(self, run: RunRef | str) -> Output | None:
         """Resolve typed output without loading execution details or model calls."""
 
         with self._store.read_transaction():
@@ -261,7 +264,7 @@ class RunHistory:
             if record is None:
                 raise KeyError(str(run))
             return (
-                self._store.resolve_local(record.output)
+                self._store.resolve_output(record.output)
                 if record.output is not None
                 else None
             )
@@ -467,20 +470,12 @@ class RunHistory:
             ):
                 continue
             authored = control.payload.authored_input
-            if authored is not None and authored._ is not None:
-                return (TextPart(authored._),)
-            locals_value = control.payload.input
-            if locals_value is None:
-                continue
-            primary = next(
-                (local for local in locals_value if local.name == "_"),
-                None,
-            )
-            return (
-                parts_from_local(self._store.resolve_local(primary))
-                if primary is not None
-                else ()
-            )
+            if authored is not None and "_" in authored:
+                return (TextPart(authored["_"]),)
+            if "_" in control.payload.input:
+                value = self._store.resolve_value(control.payload.input["_"])
+                return parts_from_local(Local(cast(Value, value)))
+            return ()
         return ()
 
 

@@ -36,7 +36,7 @@ def _reject_keys(value: object, allowed: set[str], location: str) -> None:
         raise ValueError(f"unknown {location} fields: {joined}")
 
 
-def _reject_materialized_run_unknowns(value: object, *, direct: bool) -> None:
+def _reject_materialized_run_unknowns(value: object) -> None:
     """Keep nested standard-dataclass request schemas closed at the HTTP edge."""
 
     if not isinstance(value, Mapping):
@@ -50,7 +50,7 @@ def _reject_materialized_run_unknowns(value: object, *, direct: bool) -> None:
     runnable = data.get("runnable")
     _reject_keys(
         runnable,
-        {"ref", "input", "args"} if direct else {"ref", "input"},
+        {"ref", "input"},
         "runnable request",
     )
     if isinstance(runnable, Mapping):
@@ -59,15 +59,6 @@ def _reject_materialized_run_unknowns(value: object, *, direct: bool) -> None:
             _name, kind = parse_public_runnable_ref(runnable_ref)
             if kind is None:
                 raise ValueError("runnable request requires a kind-qualified ref")
-    if not direct and isinstance(runnable, Mapping):
-        runnable_data = cast(Mapping[str, object], runnable)
-        raw_input = runnable_data.get("input")
-        _reject_keys(raw_input, {"_", "named"}, "runnable input")
-        if isinstance(raw_input, Mapping):
-            named = cast(Mapping[str, object], raw_input).get("named")
-            if isinstance(named, list | tuple):
-                for item in named:
-                    _reject_keys(item, {"name", "source"}, "named input")
     model = data.get("model")
     _reject_keys(model, {"ref", "parameters"}, "model request")
     if isinstance(model, Mapping):
@@ -285,27 +276,19 @@ class RunLimitsPayload(ApiRequest):
         return replace(base, **self.model_dump(exclude_unset=True))
 
 
-class DirectRunnableRequest(ApiRequest):
-    """One direct runnable ref grouped with its resolved input representation."""
-
-    ref: str = Field(min_length=1)
-    input: list[InputPart] = Field(default_factory=list)
-    args: dict[str, object] | None = None
-
-
 class RunCreateRequest(ApiRequest):
     """One non-interactive agic or flow execution request."""
 
     thread_id: str = Field(min_length=1)
     request_id: str = Field(min_length=1)
-    runnable: DirectRunnableRequest
+    runnable: RunnableRequest[object]
     model: ModelRequest | None
     policy: RunPolicy
 
     @model_validator(mode="before")
     @classmethod
     def reject_unknown_request_fields(cls, value: object) -> object:
-        _reject_materialized_run_unknowns(value, direct=True)
+        _reject_materialized_run_unknowns(value)
         return value
 
 
@@ -322,14 +305,14 @@ class AuthoredRunRequest(ApiRequest):
 
     thread_id: StrictText
     request_id: StrictText
-    runnable: RunnableRequest
+    runnable: RunnableRequest[str]
     model: ModelRequest | None
     policy: RunPolicy
 
     @model_validator(mode="before")
     @classmethod
     def reject_unknown_request_fields(cls, value: object) -> object:
-        _reject_materialized_run_unknowns(value, direct=False)
+        _reject_materialized_run_unknowns(value)
         return value
 
 
