@@ -4,7 +4,7 @@ import pytest
 from typer._click import Context
 from typer.core import TyperArgument, TyperCommand
 
-from toolang.cli.common.runnable_parameters import runnable_parameters
+from toolang.cli.common.runnable_parameters import RunnableArgument, runnable_parameters
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program, Span
 
 
@@ -79,3 +79,28 @@ def test_runnable_parameters_are_native_arguments_with_raw_values() -> None:
     )
     result = command.main(["12", "Evidence"], standalone_mode=False)
     assert result == {"class": "12", "_": "Evidence"}
+
+
+def test_runnable_help_leaves_arguments_to_the_command_collector() -> None:
+    program = Program.from_source(
+        "agic demo(topic: Text, enabled?: Boolean):\n  Describe.\n"
+    )
+    parameters = runnable_parameters(program.agics[0], help_only=True)
+    command = TyperCommand(
+        "demo",
+        params=[
+            *parameters,
+            TyperArgument(param_decls=["items"], nargs=-1, hidden=True),
+        ],
+        callback=lambda **values: values,
+    )
+    assert all(isinstance(param, RunnableArgument) for param in parameters)
+    assert [(param.name, param.required) for param in parameters] == [
+        ("topic", True),
+        ("enabled", False),
+    ]
+    assert all(param.get_usage_pieces(Context(command)) == [] for param in parameters)
+    items = ["enabled=true", "topic=History"]
+    assert command.main(items, standalone_mode=False) == {"items": tuple(items)}
+    # The caller, not the display metadata, validates missing required inputs.
+    assert command.main([], standalone_mode=False) == {"items": ()}

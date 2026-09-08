@@ -22,6 +22,7 @@ from toolang.execution.executor.compact import compact_state, compact_tools, per
 from toolang.execution.history import RunHistory
 from toolang.execution.store import RunStore
 from toolang.execution.types import FieldRef, RunRef, ThreadRef, local_to_protocol_data
+from toolang.lang.ast import AgicDecl
 from toolang.lang.input import (
     CallInput,
     RunnableInput,
@@ -51,14 +52,23 @@ from ...common.script_progress import ScriptRunPresenter
 from .script import await_script_run, collect_named_arguments
 
 
+def compact_runnable() -> AgicDecl:
+    """The public signature used by both argument collection and help."""
+    runnable = compact_state().modules["agent"].find_agic("compact")
+    assert runnable is not None
+    return replace(
+        runnable, params=tuple(p for p in runnable.params if p.name != "previous")
+    )
+
+
 def compact_command(
     ctx: typer.Context,
     arguments: Annotated[
         list[str],
         typer.Argument(
-            metavar="NAME=VALUE...",
+            metavar="[ARGS]",
             click_type=TextType(),
-            help="Script inputs: thread (required), begin, end, bare (default false).",
+            hidden=True,
         ),
     ],
     model: Annotated[
@@ -73,13 +83,8 @@ def compact_command(
     model_catalog: ModelCatalogOption = None,
 ) -> None:
     """Compact local history with thread=THREAD [begin=RUN] [end=RUN] [bare=true]."""
-    state = compact_state()
-    runnable = state.modules["agent"].find_agic("compact")
-    assert runnable is not None
     # The same declaration drives CLI input and execution; previous is supplied here.
-    public = replace(
-        runnable, params=tuple(p for p in runnable.params if p.name != "previous")
-    )
+    public = compact_runnable()
     authored, extra = collect_named_arguments(public, items=tuple(arguments))
     if extra:
         raise typer.BadParameter(f"unexpected compact input: {extra[0]}")

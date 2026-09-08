@@ -66,10 +66,10 @@ _CONTROL_PANEL_COMMAND_ORDER = (
     "steer",
     "cancel",
     "retry",
-    "compact",
     "rerun",
     "rewind",
     "fork",
+    "compact",
 )
 _INSPECTION_PANEL_COMMAND_ORDER = (
     "inspect",
@@ -95,6 +95,15 @@ _REGISTERED_COMMANDS: dict[str, Callable[[], LazyCommand]] = {}
 
 class _ChatCommand(OptionalValueCommand, RequiredPrefixAgentCommand):
     optional_values = {"thread": BARE_VALUE}
+
+
+class _CompactCommand(RequiredPrefixAgentCommand):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        from ..common.runnable_parameters import runnable_parameters
+        from .commands.compact import compact_runnable
+
+        self.params[:0] = runnable_parameters(compact_runnable(), help_only=True)
 
 
 class _ToolangGroup(CliGroup):
@@ -355,9 +364,9 @@ _registered_command(
 _registered_command(
     "compact",
     "toolang.cli.toolang.commands.compact:compact_command",
-    help="Compact a thread's history.",
+    help="Compact a thread.",
     no_args_is_help=True,
-    cls=RequiredPrefixAgentCommand,
+    cls=_CompactCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
 )
 _registered_command(

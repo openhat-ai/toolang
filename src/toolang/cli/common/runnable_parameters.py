@@ -1,7 +1,8 @@
 """Map authored runnable signatures to native Typer parameter metadata."""
 
+from collections.abc import Mapping
 from inspect import Parameter as SignatureParameter, Signature
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from typer._click import Context, Parameter as CliParameter
@@ -23,20 +24,55 @@ class _InputType(StringParamType):
         return self.name
 
 
+class RunnableArgument(TyperArgument):
+    """Signature metadata for help; the command's collector owns parsing."""
+
+    def __init__(self, argument: TyperArgument) -> None:
+        super().__init__(
+            param_decls=argument.opts,
+            type=argument.type,
+            required=argument.required,
+            metavar=argument.metavar,
+            help=argument.help,
+            show_default=argument.show_default,
+            expose_value=False,
+        )
+
+    def add_to_parser(self, parser: Any, ctx: Context) -> None:
+        del parser, ctx
+
+    def handle_parse_result(
+        self,
+        ctx: Context,
+        opts: Mapping[str, Any],
+        args: list[str],
+    ) -> tuple[None, list[str]]:
+        del ctx, opts
+        return None, args
+
+    def get_usage_pieces(self, ctx: Context) -> list[str]:
+        # The command describes its capture syntax, independently of the rows.
+        return []
+
+
 def runnable_parameters(
     runnable: AgicDecl | FlowDecl,
     *,
     input_help: str | None = None,
+    help_only: bool = False,
 ) -> list[TyperArgument]:
     """Build named arguments in signature order, followed by accepted input.
 
     Names, authored types, requiredness, and docs come from the runnable.
     Missing docs fall back to the input/argument terminology.
     Commands supply any input-capture help and own capture and coercion.
+    Use help_only when a collector parses NAME=VALUE rather than positional values.
     """
     arguments = [_argument(parameter) for parameter in runnable.params]
     if runnable.input is not None:
         arguments.append(_argument(runnable.input, input_help=input_help))
+    if help_only:
+        return [RunnableArgument(argument) for argument in arguments]
     return arguments
 
 

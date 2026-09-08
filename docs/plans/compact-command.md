@@ -12,7 +12,9 @@ too a compact thread=THREAD
 too a compact thread=THREAD begin=RUN3 end=RUN6 bare=true --model MODEL
 ```
 
-Reuse script argument collection, type resolution, cancellation, and progress.
+Reuse script argument collection, signature help, type resolution, cancellation,
+and progress. List public named inputs in signature order with their requiredness;
+help-only metadata must not consume the collector's arguments.
 The script declares the inputs; the command supplies the internal `previous`
 reference. Do not maintain a second synthetic runnable signature in Python.
 
