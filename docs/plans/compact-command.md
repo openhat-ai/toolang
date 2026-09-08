@@ -40,6 +40,15 @@ permit. Persist authored and resolved input through normal Run records.
 Recheck the frozen range after admission and completion. Never hold a database
 transaction while waiting or executing a model.
 
+Carry typed `{summary, position, complete}` progress between child Runs. Preserve
+active task constraints and corrections across pages; keep traversal bookkeeping
+in `position`. The final summary contains task notes, not an execution report.
+History tools cache opaque cursors in existing `contents` and return fixed-length
+content references. Execution facts remain read-only; existing self-contained
+cursors remain accepted. No new table or pagination algorithm is needed.
+For DeepSeek object output contracts, enable its JSON-object mode and retain
+schema instructions and validation. Non-object contracts keep the prompt fallback.
+
 ## Results and selection
 
 ```text
@@ -68,8 +77,9 @@ null. Cancellation uses ordinary Run cancellation and releases the permit.
 CLI: a dedicated `commands/compact.py`, registration/routing, and small shared
 script input/cancellation helpers. Program: optional Text bounds and the fixed
 previous reference; adapt the existing automatic caller's optional input only.
-Read side: applicable compact selection. `executor.py`, API/client, records,
-and event definitions remain unchanged.
+Read side: applicable compact selection and history-tool cursor transport.
+Adapter: DeepSeek JSON-object output mapping.
+`executor.py`, API/client, records, and event definitions remain unchanged.
 
 Offline checks: default/incremental/bare ranges, earlier/equal/later begin,
 malformed arguments/output, partial-result fallback, model/effort/limit defaults,
@@ -78,5 +88,7 @@ ordinary script and automatic-preflight regressions. Run the full default suite.
 
 Live summary quality remains a separate acceptance: compact eight of ten Runs,
 retain the last two, then verify a new Run before testing automatic preflight.
+The opt-in `test_compact_live.py` checks retained constraints, corrections, recent
+facts, unknown values, horizon adoption, and persisted-call replay.
 Risks are probabilistic summary loss and confusing execution success with an
 applicable summary. No remote-only history access is added by this command.

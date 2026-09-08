@@ -27,6 +27,7 @@ from toolang.execution.schemas import record_to_data
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     Output,
+    ContentRef,
     ControlRef,
     FieldRef,
     Local,
@@ -255,8 +256,30 @@ def test_cursors_reject_other_tools_and_agents(store, tmp_path):
         with pytest.raises(ValueError, match="another agent or tool"):
             read(store, tool, cursor=cursor)
     with closing(RunStore(tmp_path / "other.db")) as other:
-        with pytest.raises(ValueError, match="another agent or tool"):
+        with pytest.raises(ValueError, match="unavailable for this agent"):
             read(other, "read_runs", cursor=cursor)
+
+
+def test_tool_cursors_are_content_refs_and_survive_restart(store):
+    for index in range(10):
+        name = f"run_{index:08x}"
+        start(store, name)
+        project_run_end(store, run_id=name)
+
+    first = read(store, "read_runs", limit=1)
+    cursor = first["cursor"]
+    assert len(cursor) == len("sha256_") + 64
+    saved = store.get_content(ContentRef.parse(cursor))
+    assert saved is not None
+    # Already-persisted, self-contained cursors remain usable after an upgrade.
+    assert read(store, "read_runs", cursor=saved.decode()) == read(
+        store, "read_runs", cursor=cursor
+    )
+    with closing(RunStore(store.db_path, read_only=True)) as reopened:
+        pages = collect(reopened, "read_runs", first)
+    assert [r["id"] for page in pages for r in page["runs"]] == [
+        f"run_{index:08x}" for index in range(10)
+    ]
 
 
 def test_steps_resolve_locals_and_keep_dependencies_and_model_refs(store, monkeypatch):

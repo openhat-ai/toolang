@@ -24,7 +24,7 @@ from ..run_view import RunView
 from ..schemas import HistoryToolCursor, Record, record_to_data
 from ..store import RunStore
 from ..thread_view import ThreadView
-from ..types import RunRef, StepRef, ThreadRef, output_to_protocol_data
+from ..types import ContentRef, RunRef, StepRef, ThreadRef, output_to_protocol_data
 
 
 _CURSOR = TypeAdapter(HistoryToolCursor)
@@ -138,7 +138,14 @@ class _ToolHistory(ToolHistory):
     def _decode(self, tool: str, cursor: str | None) -> str | None:
         if cursor is None:
             return None
-        saved = _CURSOR.validate_json(cursor)
+        # Existing tool results may still hold a self-contained cursor.
+        data: bytes | str | None = cursor
+        if not cursor.startswith("{"):
+            with closing(RunStore(self._db_path, read_only=True)) as store:
+                data = store.get_content(ContentRef.parse(cursor))
+        if data is None:
+            raise ValueError("history cursor is unavailable for this agent")
+        saved = _CURSOR.validate_json(data)
         if saved.store != str(self._db_path) or saved.tool != tool:
             raise ValueError("history cursor belongs to another agent or tool")
         return saved.cursor
@@ -148,13 +155,13 @@ class _ToolHistory(ToolHistory):
         tool: Literal["read_threads", "read_runs", "read_steps"],
         cursor: str | None,
     ) -> str | None:
-        return (
-            _CURSOR.dump_json(
-                HistoryToolCursor(str(self._db_path), tool, cursor)
-            ).decode()
-            if cursor is not None
-            else None
-        )
+        if cursor is None:
+            return None
+        data = _CURSOR.dump_json(HistoryToolCursor(str(self._db_path), tool, cursor))
+        # Cache the immutable snapshot, not execution facts. Models copy a short
+        # reference; continuations do not depend on process-local reader state.
+        with closing(RunStore(self._db_path)) as cache:
+            return str(cache.put_content(data))
 
 
 def _record_data(store: RunStore, record: Record) -> dict[str, object]:
