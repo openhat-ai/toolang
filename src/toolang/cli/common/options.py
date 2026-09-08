@@ -26,7 +26,9 @@ class _OptionalValueParser(_OptionParser):
             and option.dest in self.optional_values
             and (
                 not state.rargs
-                or (state.rargs[0].startswith("-") and state.rargs[0] != "-")
+                or (
+                    len(state.rargs[0]) > 1 and state.rargs[0][:1] in self._opt_prefixes
+                )
             )
         ):
             return self.optional_values[option.dest]

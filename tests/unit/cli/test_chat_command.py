@@ -10,6 +10,7 @@ import sqlite3
 
 import pytest
 from typer._click.exceptions import ClickException
+from typer._click.utils import strip_ansi
 
 from tests.support.execution_fixtures import project_run_start
 from toolang.base.types.message import Message, TextPart
@@ -131,7 +132,7 @@ def test_chat_latest_requires_history_without_starting_a_runtime(
         chat, "_chat_interactive", lambda *_args, **_kwargs: pytest.fail("started Chat")
     )
     assert too_main(["--root", str(chat_layout.root), "alice", "chat", option]) == 1
-    error = capsys.readouterr().err
+    error = strip_ansi(capsys.readouterr().err)
     if history == "incompatible":
         assert "execution history is incompatible" in error
     else:

@@ -7,6 +7,7 @@ import pytest
 import typer
 from typer._click import Context
 from typer._click.core import ParameterSource
+from typer._click.utils import strip_ansi
 from typer.core import TyperArgument, TyperCommand, TyperOption
 from typer.testing import CliRunner
 
@@ -98,6 +99,50 @@ def test_optional_values_preserve_aliases_boundaries_and_native_values(args, exp
     assert expected.items() <= captured.items()
 
 
+@pytest.mark.parametrize("prefix", ["+", "/"])
+@pytest.mark.parametrize("selector", ["--model", "-m"])
+@pytest.mark.parametrize("following", ["v", "verbose", "unknown"])
+def test_optional_values_respect_registered_option_prefixes(
+    prefix, selector, following
+):
+    class ModelCommand(OptionalValueCommand):
+        optional_values = {"model": "auto"}
+
+    app = typer.Typer(add_completion=False)
+    captured = []
+
+    @app.command(cls=ModelCommand)
+    def probe(
+        model: Annotated[str | None, typer.Option("--model", "-m")] = None,
+        verbose: Annotated[
+            bool, typer.Option(f"{prefix}verbose", f"{prefix}v")
+        ] = False,
+    ):
+        captured.append((model, verbose))
+
+    result = CliRunner().invoke(app, [selector, f"{prefix}{following}"])
+    if following == "unknown":
+        assert result.exit_code == 2, result.output
+        assert not captured
+    else:
+        assert result.exit_code == 0, result.output
+        assert captured == [("auto", True)]
+
+    # Attached input and single-character prefixes remain explicit values.
+    for args in [[f"--model={prefix}v"], [f"-m{prefix}v"], [selector, prefix]]:
+        result = CliRunner().invoke(app, args)
+        assert result.exit_code == 0, result.output
+        assert captured[-1] == (prefix if args[-1] == prefix else f"{prefix}v", False)
+
+
+@pytest.mark.parametrize("value", ["+v", "/tmp"])
+def test_optional_values_do_not_treat_unregistered_prefixes_as_options(value):
+    app, captured = _app()
+    result = CliRunner().invoke(app, ["--model", value])
+    assert result.exit_code == 0, result.output
+    assert captured["model"] == value
+
+
 @pytest.mark.parametrize(
     "args",
     [
@@ -185,7 +230,8 @@ def test_optional_value_help_does_not_convert_or_execute(rich, args, monkeypatch
     )
     result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.output
-    assert "[TEXT]" in result.output and "[PATH]" in result.output
+    output = strip_ansi(result.output)
+    assert "[TEXT]" in output and "[PATH]" in output
     assert not captured
 
 
