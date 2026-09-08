@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from toolang.base.types.message import Message
@@ -11,6 +11,7 @@ from toolang.execution.executor import LocalRunHandle, RunExecutor
 from toolang.execution.history import RunHistory
 from toolang.execution.records import ControlRecord
 from toolang.execution.schemas import (
+    CompactRequest,
     ControlInfo,
     RerunRequest,
     RetryRequest,
@@ -35,6 +36,10 @@ class RunClient(Protocol):
     """Connectable caller operations for running and controlling runs."""
 
     async def connect(self) -> None: ...
+
+    async def compact(
+        self, request: CompactRequest, *, tracer: RunTracer | None = None
+    ) -> RunHandle: ...
 
     async def run(
         self,
@@ -89,7 +94,7 @@ class _LocalRunClientHandle:
         detail = self._history.get_run(self.run_id)
         if detail is None:
             raise RuntimeError(f"run detail missing after completion: {self.run_id}")
-        return detail
+        return replace(detail, output=self._history.get_output(self.run_id))
 
 
 class LocalRunClient:
@@ -102,6 +107,12 @@ class LocalRunClient:
 
     async def connect(self) -> None:
         self._connected = True
+
+    async def compact(
+        self, request: CompactRequest, *, tracer: RunTracer | None = None
+    ) -> RunHandle:
+        self._require_connected()
+        return self._handle(self._executor.compact(request, tracer=tracer))
 
     async def run(
         self,

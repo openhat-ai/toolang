@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from decimal import Decimal
 import json
 from pathlib import Path
@@ -35,6 +36,7 @@ from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import CallInput
 from toolang.lang.types import Array, Struct
 from toolang.up import AgentCore
+from toolang.plugin.models.collections import ModelCollection
 from tests.support.execution_harness import ExecutionHarness, TEST_MODEL_REF
 
 
@@ -54,6 +56,87 @@ class _Snapshot:
 
     async def refresh(self) -> object:
         raise AssertionError("run request boundaries must not refresh publications")
+
+
+@pytest.mark.parametrize("invalid_output", [False, True])
+def test_compact_stream_is_an_independent_validated_run(tmp_path, invalid_output):
+    source = "agic chat(_: Part[]) -> Text:\n  context: none\n  user: {{_}}\n"
+    h = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        responses=[ModelCallResult(message=Message.assistant("ACK")) for _ in range(3)],
+    )
+    setup = replace(
+        h.setup,
+        models=ModelCollection(
+            tuple(
+                replace(entry, target=replace(entry.target, structured_output=True))
+                for entry in h.setup.models.entries
+            )
+        ),
+    )
+    h.store.close()
+    core = AgentCore(h.setup.layout)
+    core.setup = _Snapshot(setup)
+    core.state = _Snapshot(h.state)
+    app = create_app(core, CapsManager(core.layout), JobsManager(core.layout))
+    with TestClient(app) as client:
+        thread = client.post("/api/v1/threads", json={"client": "script"}).json()[
+            "thread"
+        ]["id"]
+        roots = []
+        for index in range(3):
+            response = client.post(
+                "/api/v1/runs/authored/stream",
+                json=_authored_request(thread, f"seed-{index}"),
+            )
+            assert response.status_code == 200
+            roots.append(response.headers["X-Toolang-Run-ID"])
+        value = {
+            "thread": thread,
+            "begin": "" if invalid_output else None,
+            "end": roots[1],
+            "summary": "Remembered facts",
+        }
+        for item in [
+            {"summary": "", "position": None, "complete": False},
+            {"summary": "Remembered facts", "position": None, "complete": True},
+            True,
+            value,
+        ]:
+            h.adapter._responses.append(
+                ModelCallResult(message=Message.assistant(json.dumps(item)))
+            )
+        response = client.post(
+            "/api/v1/runs/compact/stream",
+            json={
+                "thread_id": thread,
+                "request_id": "manual",
+                "end": roots[1],
+                "commands": [{"group": "limit", "field": "time", "value": 60}],
+            },
+        )
+        assert response.status_code == 200, response.text
+        compact_id = response.headers["X-Toolang-Run-ID"]
+        result = client.get(f"/api/v1/runs/{compact_id}").json()
+        assert result["thread_id"] == f"compact_{thread}"
+        assert result["status"] == ("failed" if invalid_output else "succeeded")
+        assert "run_end" in response.text
+        if not invalid_output:
+            assert result["output"]["local"]["value"] == value
+        assert len(core.history.thread_view(thread).roots) == 3
+        payload = core.store.list_run_controls(run_id=compact_id)[0].payload
+        assert isinstance(payload, RunControlPayload) and payload.limits.time == 60
+        before = len(h.adapter.invocations)
+        invalid = client.post(
+            "/api/v1/runs/compact/stream",
+            json={
+                "thread_id": thread,
+                "request_id": "bad",
+                "end": roots[0],
+            },
+        )
+        assert invalid.status_code == 422 and len(h.adapter.invocations) == before
 
 
 def _authored_request(

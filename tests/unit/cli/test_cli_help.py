@@ -50,6 +50,7 @@ def test_prompt_help_uses_conventional_metavars(main, tmp_path, capsys, monkeypa
             ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
         (["a", "retry"], ("--allow", "--limit")),
+        (["a", "compact"], ("--model", "--limit")),
         (["a", "rerun"], ("--sandbox", "--allow", "--limit", "--model")),
         (
             ["serve", "a"],

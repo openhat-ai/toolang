@@ -8,9 +8,15 @@ from fastapi import HTTPException
 from pydantic import TypeAdapter
 
 from toolang.base.types.message import Message, Part
-from toolang.execution.schemas import RerunRequest, RetryRequest, RunRequest
+from toolang.execution.schemas import (
+    CompactRequest,
+    RerunRequest,
+    RetryRequest,
+    RunRequest,
+)
 from toolang.execution.types import RunCommand
 from .schemas import (
+    RunCompactRequest,
     AuthoredRunRequest,
     AuthoredRerunRequest,
     AuthoredRetryRequest,
@@ -21,6 +27,20 @@ from .schemas import (
 
 
 _INPUT_PART_ADAPTER = TypeAdapter(InputPart)
+
+
+def parse_compact(payload: RunCompactRequest) -> CompactRequest:
+    """Convert the human compact request at the HTTP boundary."""
+    try:
+        return CompactRequest(
+            thread_id=payload.thread_id,
+            request_id=payload.request_id,
+            end=payload.end,
+            model=payload.model,
+            commands=tuple(_parse_run_command(item) for item in payload.commands),
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def parse_authored_run(payload: AuthoredRunRequest) -> RunRequest:

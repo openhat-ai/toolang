@@ -31,6 +31,7 @@ from toolang.execution.records import SteerControlPayload, CancelControlPayload
 from toolang.execution import remote
 from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.schemas import (
+    CompactRequest,
     ControlInfo,
     RerunRequest,
     RetryRequest,
@@ -39,7 +40,7 @@ from toolang.execution.schemas import (
     RunRequest,
     RunnableRequest,
 )
-from toolang.execution.types import ControlRef, RunCommand, StepRef
+from toolang.execution.types import ControlRef, RunCommand, RunRef, StepRef
 from toolang.lang.types import Array
 from toolang.lang.input import CallInput
 
@@ -187,6 +188,44 @@ def _stream_response(
         },
         stream=stream or _event_stream(*events),
     )
+
+
+def test_remote_compact_uses_the_normal_run_stream_and_request_parameters():
+    async def scenario():
+        async def handler(request):
+            if request.method == "POST":
+                return _stream_response(_begin(), _end())
+            return httpx.Response(
+                200, json=_DETAIL_ADAPTER.dump_python(_detail(), mode="json")
+            )
+
+        transport = _Transport(handler)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+            client = RemoteRunClient("http://runtime.test", client=http)
+            await client.connect()
+            request = CompactRequest(
+                "term_test",
+                "compact_request",
+                RunRef("run_end"),
+                ModelOverride("test/model", effort="high"),
+                (RunCommand("limit", "cost", Decimal("0.5")),),
+            )
+            handle = await client.compact(request)
+            assert await handle.wait() == _detail()
+            assert transport.requests[0] == (
+                "POST",
+                "http://runtime.test/api/v1/runs/compact/stream",
+                {
+                    "thread_id": "term_test",
+                    "request_id": "compact_request",
+                    "end": "run_end",
+                    "model": {"identity": "test/model", "effort": "high"},
+                    "commands": [{"group": "limit", "field": "cost", "value": "0.5"}],
+                },
+            )
+            await client.disconnect()
+
+    asyncio.run(scenario())
 
 
 def test_remote_client_runs_traces_and_waits_for_detail() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from pathlib import Path
 import sys
@@ -30,12 +31,17 @@ from toolang.execution.records import (
     RunControlPayload,
 )
 from toolang.execution.schemas import (
+    CompactRequest,
     RerunRequest,
     RetryRequest,
     RunDetail,
 )
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import (
+    ErrorMessage,
+    FieldRef,
+    local_to_protocol_data,
+    RunRef,
     RunCommand,
     StepRef,
 )
@@ -57,6 +63,100 @@ from ...common.agent_server import (
 from ...common.execution_progress.config import resolve_progress_max_width
 from ...common.run_client import acquire_run_client
 from ...common.script_progress import ScriptRunPresenter
+
+
+def compact_command(
+    ctx: typer.Context,
+    thread: Annotated[
+        str,
+        typer.Argument(
+            metavar="THREAD",
+            click_type=TextType(),
+            help="Thread whose history to compact.",
+        ),
+    ],
+    end: Annotated[
+        str | None,
+        typer.Option(
+            "--end",
+            metavar="RUN",
+            help="Exclusive root Run boundary; default retains the latest terminal root.",
+        ),
+    ] = None,
+    model: Annotated[
+        str | None,
+        typer.Option(
+            "--model",
+            metavar="MODEL_SPEC",
+            help="Compact model and parameters, e.g. MODEL effort=low.",
+        ),
+    ] = None,
+    limit: LimitOptions = None,
+    model_catalog: ModelCatalogOption = None,
+    dev: Annotated[
+        Path | None, typer.Option("--dev", metavar="PATH", help=DEVELOPMENT_WHEEL_HELP)
+    ] = None,
+) -> None:
+    """Explicitly compact a full history prefix, independent of input budget."""
+    layout = context_layout(ctx)
+    request = user_call(
+        CompactRequest,
+        thread_id=thread,
+        request_id=f"term_{uuid4().hex}",
+        end=user_call(RunRef.parse, end) if end is not None else None,
+        model=user_call(parse_model_body, model) if model is not None else None,
+        commands=user_call(_restart_commands, allow_options=None, limit_options=limit),
+    )
+    catalog = resolve_model_catalog_option(model_catalog)
+    try:
+        with acquire_agent_server(
+            layout,
+            sandbox=None,
+            dev=dev,
+            model_catalog=catalog,
+            show_progress=sys.stderr.isatty(),
+        ) as server:
+            result = asyncio.run(_execute_compact(layout, server, request, catalog))
+    except (OSError, ToolangError, KeyError, ValueError, RuntimeError) as exc:
+        raise ClickException(str(exc)) from exc
+    if result.status != "succeeded" or result.output is None:
+        detail = (
+            f": {result.error.message}"
+            if isinstance(result.error, ErrorMessage)
+            else ""
+        )
+        raise ClickException(f"compact Run {result.id} {result.status}{detail}")
+    typer.echo(
+        json.dumps(
+            {
+                "run": result.id,
+                "horizon": str(FieldRef.from_path(RunRef(result.id), "output")),
+                "output": local_to_protocol_data(result.output.local)["value"],
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
+async def _execute_compact(
+    layout: AgentLayout,
+    server: AgentServerRef | None,
+    request: CompactRequest,
+    model_catalog: Path | None,
+) -> RunDetail:
+    tracer = ScriptRunPresenter(run_id=None, operation="compact")
+    try:
+        async with acquire_run_client(
+            layout, server, model_catalog=model_catalog
+        ) as client:
+            handle = await client.compact(request, tracer=tracer)
+            try:
+                return await handle.wait()
+            except BaseException:
+                await _cancel_restart(client, handle, operation="compact")
+                raise
+    finally:
+        tracer.close()
 
 
 def steer_command(

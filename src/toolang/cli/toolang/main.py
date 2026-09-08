@@ -65,6 +65,7 @@ _CONTROL_PANEL_COMMAND_ORDER = (
     "steer",
     "cancel",
     "retry",
+    "compact",
     "rerun",
     "rewind",
     "fork",
@@ -342,6 +343,14 @@ _registered_command(
     "retry",
     "toolang.cli.toolang.commands.thread:retry_command",
     help="Retry a run from a failed step.",
+    no_args_is_help=True,
+    cls=RequiredPrefixAgentCommand,
+    rich_help_panel=CONTROL_COMMAND_PANEL,
+)
+_registered_command(
+    "compact",
+    "toolang.cli.toolang.commands.thread:compact_command",
+    help="Compact a thread's history.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,

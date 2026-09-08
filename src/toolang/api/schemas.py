@@ -18,7 +18,7 @@ from toolang.execution.schemas import (
     RunDetail,
     ThreadInfo,
 )
-from toolang.execution.types import StepRef
+from toolang.execution.types import RunRef, StepRef
 from toolang.lang.types import parse_public_runnable_ref
 
 
@@ -314,6 +314,16 @@ class AuthoredRunRequest(ApiRequest):
     def reject_unknown_request_fields(cls, value: object) -> object:
         _reject_materialized_run_unknowns(value)
         return value
+
+
+class RunCompactRequest(ApiRequest):
+    """Human-only compact invocation, resolved by the owning agent server."""
+
+    thread_id: StrictText
+    request_id: StrictText
+    end: RunRef | None = None
+    model: ModelOverride | None = None
+    commands: list[RunOverridePayload] = Field(default_factory=list)
 
 
 class AuthoredRerunRequest(ApiRequest):

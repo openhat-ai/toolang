@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 import logging
@@ -71,7 +72,8 @@ from ..records import (
 )
 from ..store import RunStore
 from ..tool_results import control_summary
-from ..schemas import RerunRequest, RetryRequest, RunRequest
+from ..schemas import CompactRequest, RerunRequest, RetryRequest, RunRequest
+from ..policy import resolve_commands
 from ..types import (
     value_for_type,
     ControlTiming,
@@ -118,7 +120,7 @@ from .common import (
     value_parts,
     value_text,
 )
-from .compact import available_horizon
+from .compact import CompactRun, available_horizon, start_compact
 from .resources import (
     apply_agent_ceiling,
     resource_caps,
@@ -166,6 +168,7 @@ class _ActiveRun:
     root_run_id: str
     root_setup: AgentSetup
     loop: asyncio.AbstractEventLoop = field(repr=False)
+    compact: CompactRun | None = None
     interruption: ControlRecord | None = None
     controls: dict[str, dict[int, ControlRecord]] = field(
         default_factory=dict,
@@ -328,6 +331,7 @@ class RunExecutor:
         run_id: str | None = None,
         request_id: str | None = None,
         tracer: RunTracer | None = None,
+        _compact: CompactRun | None = None,
     ) -> LocalRunHandle:
         """Accept one top-level run and immediately return its local handle."""
 
@@ -381,7 +385,25 @@ class RunExecutor:
             prompt_invocations=spec.prompt_invocations,
             horizon=bound.horizon,
         )
-        return self._launch(bound, runnable, loop=loop, tracer=tracer)
+        return self._launch(bound, runnable, loop=loop, tracer=tracer, compact=_compact)
+
+    def compact(
+        self, request: CompactRequest, *, tracer: RunTracer | None = None
+    ) -> LocalRunHandle:
+        """Accept human-requested compaction without consulting the input budget."""
+        self._require_available()
+        setup, _state = self._current_snapshots()
+        _ceilings, _bindings, limits = resolve_commands(setup, run=request.commands)
+        return start_compact(
+            self,
+            setup=setup,
+            thread=request.thread_id,
+            end=request.end,
+            limits=limits,
+            model=request.model,
+            request_id=request.request_id,
+            tracer=tracer,
+        )
 
     def rerun(
         self,
@@ -735,6 +757,7 @@ class RunExecutor:
         loop: asyncio.AbstractEventLoop,
         tracer: RunTracer | None,
         retry: ControlRecord | None = None,
+        compact: CompactRun | None = None,
     ) -> LocalRunHandle:
         task = asyncio.create_task(
             self._execute_owned(bound, runnable, tracer=tracer, retry=retry),
@@ -746,6 +769,7 @@ class RunExecutor:
             root_run_id=bound.root_run_id,
             root_setup=bound.setup,
             loop=loop,
+            compact=compact,
         )
         with self._active_lock:
             self._active[bound.run_id] = active
@@ -787,10 +811,10 @@ class RunExecutor:
         self._schedule_reload_application(active)
         timeout = execution.schedule_time_limit(task)
         try:
-            await execution.execute(
-                bound,
-                runnable,
-            )
+            async with (
+                active.compact.guard(self.store) if active.compact else nullcontext()
+            ):
+                await execution.execute(bound, runnable)
         except asyncio.CancelledError:
             await self._ensure_terminal(bound.run_id, emit=emit, status="canceled")
         except Exception as exc:
@@ -1066,6 +1090,16 @@ class RunExecutor:
         event_run = _run_event_id(event)
         if event_run in active.ended:
             return
+        if (
+            isinstance(event, RunEnd)
+            and event.run == active.root_run_id
+            and event.status == "succeeded"
+            and active.compact is not None
+        ):
+            try:
+                active.compact.validate_output(self.store, event.output)
+            except (ToolangError, KeyError, ValueError) as exc:
+                event = replace(event, status="failed", error=ErrorMessage(str(exc)))
         if (
             isinstance(event, StepEnd)
             and event.status == "canceled"

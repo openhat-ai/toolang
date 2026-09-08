@@ -21,6 +21,7 @@ from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.execution.client import RunHandle
 from toolang.execution.events import RunBegin, RunEnd, RunTracer, run_event_from_data
 from toolang.execution.schemas import (
+    CompactRequest,
     ControlInfo,
     RerunRequest,
     RetryRequest,
@@ -117,6 +118,26 @@ class RemoteRunClient:
             operation="run",
             path="/api/v1/runs/authored/stream",
             payload=_run_request_data(request),
+            request_id=request.request_id,
+            source_run_id=None,
+            tracer=tracer,
+        )
+
+    async def compact(
+        self, request: CompactRequest, *, tracer: RunTracer | None = None
+    ) -> RunHandle:
+        return await self._submit_stream(
+            operation="compact",
+            path="/api/v1/runs/compact/stream",
+            payload={
+                "thread_id": request.thread_id,
+                "request_id": request.request_id,
+                "end": str(request.end) if request.end is not None else None,
+                "model": _MODEL_OVERRIDE_ADAPTER.dump_python(request.model, mode="json")
+                if request.model is not None
+                else None,
+                "commands": [_run_command_data(item) for item in request.commands],
+            },
             request_id=request.request_id,
             source_run_id=None,
             tracer=tracer,

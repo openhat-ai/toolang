@@ -430,6 +430,28 @@ class RunnableRequest(Generic[T]):
 
 
 @dataclass(frozen=True, slots=True)
+class CompactRequest:
+    """Human request for a fresh full-prefix compaction."""
+
+    thread_id: str
+    request_id: str
+    end: RunRef | None = None
+    model: ModelOverride | None = None
+    commands: tuple[RunCommand, ...] = ()
+
+    def __post_init__(self) -> None:
+        ThreadRef.parse(self.thread_id)
+        if not self.request_id or self.request_id != self.request_id.strip():
+            raise ValueError("compact request requires a canonical request ID")
+        if self.end is not None and not isinstance(self.end, RunRef):
+            raise TypeError("compact end must be a RunRef")
+        if self.model is not None and not isinstance(self.model, ModelOverride):
+            raise TypeError("compact model must be a ModelOverride")
+        if any(command.group != "limit" for command in self.commands):
+            raise ValueError("compact commands may only set run limits")
+
+
+@dataclass(frozen=True, slots=True)
 class RunRequest:
     """One self-contained caller request for a new root run."""
 

@@ -236,6 +236,7 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "steer",
             "cancel",
             "retry",
+            "compact",
             "rerun",
             "rewind",
             "fork",

@@ -11,6 +11,7 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from toolang.api.app import AgentCoreDep, LiveEventRelayDep
 from toolang.api.common import RUN_ID_HEADER, EventSubscription, sse_stream
 from toolang.api.conversion import (
+    parse_compact,
     parse_authored_rerun,
     parse_authored_run,
     parse_authored_retry,
@@ -18,6 +19,7 @@ from toolang.api.conversion import (
     parse_user_message,
 )
 from toolang.api.schemas import (
+    RunCompactRequest,
     AuthoredRerunRequest,
     AuthoredRunRequest,
     AuthoredRetryRequest,
@@ -125,6 +127,27 @@ async def _run_stream(
         subscription.close()
 
 
+async def _compact_stream(
+    core: AgentCoreDep,
+    live: LiveEventRelayDep,
+    response: Response,
+    payload: RunCompactRequest,
+) -> AsyncIterator[_AcceptedRunStream]:
+    compact_request = parse_compact(payload)
+    try:
+        handle = core.executor.compact(
+            compact_request,
+            tracer=live.trace(thread_id=f"compact_{payload.thread_id}"),
+        )
+    except (OSError, KeyError, ToolangError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    subscription = _subscribe_accepted_run(live, response, handle)
+    try:
+        yield handle, subscription
+    finally:
+        subscription.close()
+
+
 async def _run_authored_stream(
     core: AgentCoreDep,
     live: LiveEventRelayDep,
@@ -224,6 +247,26 @@ async def _subscribe_root_run(
         yield subscription
     finally:
         subscription.close()
+
+
+@router.post(
+    "/compact/stream",
+    summary="Compact Thread History",
+    response_class=EventSourceResponse,
+)
+async def compact_thread_stream(
+    core: AgentCoreDep,
+    request: Request,
+    accepted: Annotated[_AcceptedRunStream, Depends(_compact_stream)],
+) -> AsyncIterator[ServerSentEvent]:
+    handle, subscription = accepted
+    async for event in sse_stream(
+        request,
+        subscription,
+        terminal_run_id=handle.run_id,
+        stopped=lambda: _run_terminal(core, handle.run_id),
+    ):
+        yield event
 
 
 @router.get("", summary="List Runs", response_model=list[RunInfo])
