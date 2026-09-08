@@ -428,12 +428,12 @@ def _typed_runnable_args(program: Program, args: list[str]) -> list[str]:
     return [name, *args[1:]]
 
 
-def _collect_call(
+def collect_named_arguments(
     runnable: Runnable,
     *,
     items: tuple[str, ...],
-    stdin: TextIO,
-) -> tuple[RunOverride, CallInput[str], CallInput[str]]:
+) -> tuple[CallInput[str], list[str]]:
+    """Collect signature arguments, leaving primary input to its caller."""
     params = {parameter.name: parameter for parameter in runnable.params}
     raw_args: dict[str, str] = {}
     input_items: list[str] = []
@@ -457,6 +457,16 @@ def _collect_call(
             continue
         input_items.append(item)
 
+    return CallInput(raw_args), input_items
+
+
+def _collect_call(
+    runnable: Runnable,
+    *,
+    items: tuple[str, ...],
+    stdin: TextIO,
+) -> tuple[RunOverride, CallInput[str], CallInput[str]]:
+    raw_args, input_items = collect_named_arguments(runnable, items=items)
     call_input = _input_source(input_items, stdin=stdin)
     call_source = call_input.get("_", "") if call_input is not None else ""
     override, input = parse_call(call_source)

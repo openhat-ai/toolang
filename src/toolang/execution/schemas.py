@@ -431,20 +431,19 @@ class RunnableRequest(Generic[T]):
 
 @dataclass(frozen=True, slots=True)
 class CompactRequest:
-    """Human request for a fresh full-prefix compaction."""
+    """Authored inputs and execution options for the built-in compact script."""
 
-    thread_id: str
+    input: Mapping[str, str]
     request_id: str
-    end: RunRef | None = None
     model: ModelOverride | None = None
     commands: tuple[RunCommand, ...] = ()
 
     def __post_init__(self) -> None:
-        ThreadRef.parse(self.thread_id)
         if not self.request_id or self.request_id != self.request_id.strip():
             raise ValueError("compact request requires a canonical request ID")
-        if self.end is not None and not isinstance(self.end, RunRef):
-            raise TypeError("compact end must be a RunRef")
+        object.__setattr__(self, "input", CallInput(self.input))
+        if any(not isinstance(value, str) for value in self.input.values()):
+            raise TypeError("compact input must contain authored strings")
         if self.model is not None and not isinstance(self.model, ModelOverride):
             raise TypeError("compact model must be a ModelOverride")
         if any(command.group != "limit" for command in self.commands):

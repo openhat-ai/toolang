@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 import json
 import os
 from pathlib import Path
@@ -26,6 +27,7 @@ from toolang.cli.common.policy import (
 from toolang.common.layout import AgentLayout
 from toolang.execution.client import RunClient, RunHandle
 from toolang.execution.executor import RunExecutor
+from toolang.execution.executor.compact import compact_input, compact_signature
 from toolang.execution.history import RunHistory
 from toolang.execution.records import (
     RunControlPayload,
@@ -63,26 +65,19 @@ from ...common.agent_server import (
 from ...common.execution_progress.config import resolve_progress_max_width
 from ...common.run_client import acquire_run_client
 from ...common.script_progress import ScriptRunPresenter
+from .script import collect_named_arguments
 
 
 def compact_command(
     ctx: typer.Context,
-    thread: Annotated[
-        str,
+    arguments: Annotated[
+        list[str],
         typer.Argument(
-            metavar="THREAD",
+            metavar="NAME=VALUE...",
             click_type=TextType(),
-            help="Thread whose history to compact.",
+            help="Script inputs: thread (required), begin, end, bare (default false).",
         ),
     ],
-    end: Annotated[
-        str | None,
-        typer.Option(
-            "--end",
-            metavar="RUN",
-            help="Exclusive root Run boundary; default retains the latest terminal root.",
-        ),
-    ] = None,
     model: Annotated[
         str | None,
         typer.Option(
@@ -97,13 +92,18 @@ def compact_command(
         Path | None, typer.Option("--dev", metavar="PATH", help=DEVELOPMENT_WHEEL_HELP)
     ] = None,
 ) -> None:
-    """Explicitly compact a full history prefix, independent of input budget."""
+    """Run compact with thread=THREAD [begin=RUN] [end=RUN] [bare=true]."""
     layout = context_layout(ctx)
+    input, remaining = collect_named_arguments(
+        compact_signature(), items=tuple(arguments)
+    )
+    if remaining:
+        raise typer.BadParameter(f"unexpected compact input: {remaining[0]}")
+    user_call(compact_input, input)
     request = user_call(
         CompactRequest,
-        thread_id=thread,
+        input=input,
         request_id=f"term_{uuid4().hex}",
-        end=user_call(RunRef.parse, end) if end is not None else None,
         model=user_call(parse_model_body, model) if model is not None else None,
         commands=user_call(_restart_commands, allow_options=None, limit_options=limit),
     )
@@ -126,12 +126,17 @@ def compact_command(
             else ""
         )
         raise ClickException(f"compact Run {result.id} {result.status}{detail}")
+    output = cast(
+        Mapping[str, object], local_to_protocol_data(result.output.local)["value"]
+    )
     typer.echo(
         json.dumps(
             {
                 "run": result.id,
-                "horizon": str(FieldRef.from_path(RunRef(result.id), "output")),
-                "output": local_to_protocol_data(result.output.local)["value"],
+                "horizon": str(FieldRef.from_path(RunRef(result.id), "output"))
+                if output["begin"] is None
+                else None,
+                "output": output,
             },
             ensure_ascii=False,
         )

@@ -130,9 +130,8 @@ class RemoteRunClient:
             operation="compact",
             path="/api/v1/runs/compact/stream",
             payload={
-                "thread_id": request.thread_id,
+                "input": dict(request.input),
                 "request_id": request.request_id,
-                "end": str(request.end) if request.end is not None else None,
                 "model": _MODEL_OVERRIDE_ADAPTER.dump_python(request.model, mode="json")
                 if request.model is not None
                 else None,

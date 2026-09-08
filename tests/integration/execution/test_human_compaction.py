@@ -23,6 +23,7 @@ from toolang.execution.executor.compact import available_horizon, permit
 from toolang.execution.history import RunHistory
 from toolang.execution.records import RunControlPayload
 from toolang.execution.schemas import CompactRequest
+from toolang.execution.store import RunStore
 from toolang.execution.types import RunCommand, RunRef, ThreadPrefix
 from toolang.plugin.models.collections import ModelCollection
 from toolang.lang.types import Struct
@@ -108,9 +109,8 @@ def test_manual_compact_and_next_root_adoption(tmp_path: Path, explicit: bool):
             await client.connect()
             handle = await client.compact(
                 CompactRequest(
-                    thread,
+                    {"thread": thread, **({"end": str(end)} if explicit else {})},
                     "manual",
-                    end=end if explicit else None,
                     model=ModelOverride(h.setup.defaults.model.ref, effort="low"),
                     commands=(RunCommand("limit", "time", 60),),
                 )
@@ -175,15 +175,18 @@ def test_invalid_output_fails_without_shadowing_previous_horizon(tmp_path: Path)
         async with h:
             thread, runs = await seed(h)
             h.adapter._responses.extend(compact_replies(thread, runs[-1].id))
-            first = await h.executor.compact(CompactRequest(thread, "first"))
+            first = await h.executor.compact(
+                CompactRequest({"thread": thread}, "first")
+            )
             original = available_horizon(h.store, thread)
             assert first.status == "succeeded" and original is not None
             h.adapter._responses.extend(compact_replies(thread, runs[-1].id, begin=""))
             second = await h.executor.compact(
-                CompactRequest(thread, "second"), tracer=tracer
+                CompactRequest({"thread": thread, "begin": runs[0].id}, "second"),
+                tracer=tracer,
             )
             assert second.id != first.id and second.status == "failed"
-            assert "echo its full range" in second.error.message
+            assert "match its coverage" in second.error.message
             assert available_horizon(h.store, thread) == original
             assert isinstance(tracer.events[-1], RunEnd)
             assert tracer.events[-1].status == "failed"
@@ -205,11 +208,15 @@ def test_manual_compact_leaves_active_root_binding_unchanged(tmp_path: Path):
             await gate.wait_until_entered()
             with pytest.raises(ToolangError, match="retain a terminal root"):
                 h.executor.compact(
-                    CompactRequest(thread, "active-boundary", end=RunRef(active.run_id))
+                    CompactRequest(
+                        {"thread": thread, "end": active.run_id}, "active-boundary"
+                    )
                 )
             before = h.store.list_run_controls(run_id=active.run_id)
             h.adapter._responses.extend(compact_replies(thread, runs[-1].id))
-            compact = await h.executor.compact(CompactRequest(thread, "manual"))
+            compact = await h.executor.compact(
+                CompactRequest({"thread": thread}, "manual")
+            )
             assert compact.status == "succeeded", compact.error
             assert h.store.list_run_controls(run_id=active.run_id) == before
             assert before[0].payload.horizon is None
@@ -230,7 +237,9 @@ def test_append_while_waiting_preserves_requested_boundary(tmp_path: Path):
                 f"{h.store.db_path.name}.{thread}.compact.lock"
             )
             async with permit(lock):
-                handle = h.executor.compact(CompactRequest(thread, "waiting"))
+                handle = h.executor.compact(
+                    CompactRequest({"thread": thread}, "waiting")
+                )
                 h.adapter._responses.append(reply("appended"))
                 appended = await h.executor.run(
                     h.run_spec(
@@ -257,15 +266,18 @@ def test_reject_before_starting_compact(tmp_path: Path, invalid: str):
         async with h:
             thread, runs = await seed(h)
             kwargs = {}
+            input = {}
             if invalid == "first":
-                kwargs["end"] = RunRef(runs[0].id)
+                input["end"] = runs[0].id
             if invalid == "unknown":
-                kwargs["end"] = RunRef("run_unknown")
+                input["end"] = "run_unknown"
             if invalid == "model":
                 kwargs["model"] = ModelOverride("outside/model")
             target = f"compact_{thread}" if invalid == "compact" else thread
             with pytest.raises(ToolangError):
-                h.executor.compact(CompactRequest(target, "invalid", **kwargs))
+                h.executor.compact(
+                    CompactRequest({"thread": target, **input}, "invalid", **kwargs)
+                )
             assert len(h.adapter.invocations) == 3
             assert h.store.get_thread(thread_id=f"compact_{thread}") is None
 
@@ -280,9 +292,9 @@ def test_manual_compactions_serialize_and_cancel_waiter_only(tmp_path: Path):
         async with h:
             thread, runs = await seed(h)
             h.adapter._responses.extend(compact_replies(thread, runs[-1].id, gate=gate))
-            first = h.executor.compact(CompactRequest(thread, "first"))
+            first = h.executor.compact(CompactRequest({"thread": thread}, "first"))
             await gate.wait_until_entered()
-            second = h.executor.compact(CompactRequest(thread, "second"))
+            second = h.executor.compact(CompactRequest({"thread": thread}, "second"))
             await asyncio.sleep(0.02)
             assert len(h.adapter.invocations) == 4
             second.cancel()
@@ -292,7 +304,9 @@ def test_manual_compactions_serialize_and_cancel_waiter_only(tmp_path: Path):
             assert (await first).status == "succeeded"
             h.adapter._responses.extend(compact_replies(thread, runs[-1].id))
             assert (
-                await h.executor.compact(CompactRequest(thread, "third"))
+                await h.executor.compact(
+                    CompactRequest({"thread": thread, "begin": runs[0].id}, "third")
+                )
             ).status == "succeeded"
 
     asyncio.run(scenario())
@@ -308,12 +322,191 @@ def test_rewind_while_waiting_invalidates_frozen_range(tmp_path: Path):
                 f"{h.store.db_path.name}.{thread}.compact.lock"
             )
             async with permit(lock):
-                handle = h.executor.compact(CompactRequest(thread, "waiting"))
+                handle = h.executor.compact(
+                    CompactRequest({"thread": thread}, "waiting")
+                )
                 await asyncio.sleep(0)
                 h.threads.rewind(thread_id=thread, run_id=runs[-1].id)
             result = await handle
             assert result.status == "failed"
             assert "range changed" in result.error.message
             assert len(h.adapter.invocations) == 3
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "begin,bare,end,expected_begin,reuse",
+    [
+        (None, False, 5, 2, True),
+        (None, True, 5, 2, False),
+        (2, False, 5, 2, True),
+        (2, True, 5, 2, False),
+        (0, False, 5, None, False),
+        (0, True, 5, None, False),
+        (1, False, 5, 1, False),
+        (3, False, 5, 3, False),
+        (None, False, 1, None, False),
+        (0, False, 2, None, False),
+    ],
+)
+def test_incremental_and_independent_ranges(
+    tmp_path, begin, bare, end, expected_begin, reuse
+):
+    h = harness_for(tmp_path)
+
+    async def scenario():
+        async with h:
+            thread, runs = await seed(h)
+            h.adapter._responses.extend(compact_replies(thread, runs[2].id))
+            first = await h.executor.compact(
+                CompactRequest({"thread": thread}, "first")
+            )
+            assert first.status == "succeeded", first.error
+            original = available_horizon(h.store, thread)
+            assert original is not None
+            for i in range(3):
+                h.adapter._responses.append(reply("ACK"))
+                runs.append(
+                    await h.executor.run(
+                        h.run_spec(
+                            thread=thread,
+                            runnable="chat",
+                            primary=(TextPart(f"more {i}"),),
+                        )
+                    )
+                )
+            input = {"thread": thread, "end": runs[end].id, "bare": str(bare).lower()}
+            if begin is not None:
+                input["begin"] = runs[begin].id
+            start = runs[expected_begin].id if expected_begin is not None else None
+            coverage = None if reuse else start
+            h.adapter._responses.extend(
+                compact_replies(thread, runs[end].id, begin=coverage)
+            )
+            second = await h.executor.compact(CompactRequest(input, "second"))
+            assert second.status == "succeeded", h.store.resolve_error(second.error)
+            payload = h.store.list_run_controls(run_id=second.id)[0].payload
+            assert payload.input["thread"] == thread
+            assert payload.input.get("begin") == start
+            assert payload.input["end"] == runs[end].id
+            assert payload.input.get("previous") == (str(original) if reuse else None)
+            assert dict(payload.authored_input) == input
+            selected = available_horizon(h.store, thread)
+            latest = RunHistory(h.store).get_compaction(thread)
+            assert latest is not None
+            assert selected == (latest.ref if coverage is None else original)
+            # A following root freezes exactly the applicable selection, not the latest test.
+            h.adapter._responses.append(reply("new"))
+            new = await h.executor.run(
+                h.run_spec(thread=thread, runnable="chat", primary=(TextPart("now"),))
+            )
+            assert (
+                h.store.list_run_controls(run_id=new.id)[0].payload.horizon == selected
+            )
+            call = h.adapter.invocations[-1].call
+            model = next(
+                s for s in h.store.list_steps(run_id=new.id) if s.kind == "model"
+            )
+            assert RunHistory(h.store).get_model_call(model.ref) == call
+            reopened = RunStore(h.store.db_path, read_only=True)
+            try:
+                assert available_horizon(reopened, thread) == selected
+                assert RunHistory(reopened).get_model_call(model.ref) == call
+            finally:
+                reopened.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("input_kind", ["equal", "reversed", "unknown", "child"])
+def test_invalid_begin_creates_no_compact_run(tmp_path, input_kind):
+    h = harness_for(tmp_path)
+
+    async def scenario():
+        async with h:
+            thread, runs = await seed(h)
+            h.adapter._responses.extend(compact_replies(thread, runs[2].id))
+            first = await h.executor.compact(
+                CompactRequest({"thread": thread}, "first")
+            )
+            input = {"thread": thread}
+            if input_kind == "reversed":
+                input.update(begin=runs[2].id, end=runs[1].id)
+            elif input_kind == "unknown":
+                input["begin"] = "run_unknown"
+            elif input_kind == "child":
+                child = next(
+                    r
+                    for r in RunHistory(h.store)
+                    .thread_view(f"compact_{thread}")
+                    .members
+                    if r.id != first.id
+                )
+                input["begin"] = child.id
+            before = len(h.adapter.invocations)
+            with pytest.raises(ToolangError):
+                h.executor.compact(CompactRequest(input, "invalid"))
+            assert len(h.adapter.invocations) == before
+            assert len(RunHistory(h.store).thread_view(f"compact_{thread}").roots) == 1
+
+    asyncio.run(scenario())
+
+
+def test_previous_selection_is_frozen_before_waiting(tmp_path):
+    h = harness_for(tmp_path)
+    gate = AsyncGate()
+
+    async def scenario():
+        async with h:
+            thread, runs = await seed(h)
+            h.adapter._responses.extend(compact_replies(thread, runs[1].id))
+            first = await h.executor.compact(
+                CompactRequest({"thread": thread, "end": runs[1].id}, "first")
+            )
+            assert first.status == "succeeded"
+            original = available_horizon(h.store, thread)
+            h.adapter._responses.extend(compact_replies(thread, runs[2].id, gate=gate))
+            second = h.executor.compact(CompactRequest({"thread": thread}, "second"))
+            await gate.wait_until_entered()
+            third = h.executor.compact(CompactRequest({"thread": thread}, "third"))
+            gate.release()
+            assert (await second).status == "succeeded"
+            h.adapter._responses.extend(compact_replies(thread, runs[2].id))
+            result = await third
+            assert result.status == "succeeded", result.error
+            assert h.store.list_run_controls(run_id=result.id)[0].payload.input[
+                "previous"
+            ] == str(original)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("reuse", [False, True])
+def test_compact_rejects_misrepresented_coverage(tmp_path, reuse):
+    h = harness_for(tmp_path)
+
+    async def scenario():
+        async with h:
+            thread, runs = await seed(h)
+            if reuse:
+                h.adapter._responses.extend(compact_replies(thread, runs[1].id))
+                assert (
+                    await h.executor.compact(
+                        CompactRequest({"thread": thread, "end": runs[1].id}, "first")
+                    )
+                ).status == "succeeded"
+            original = available_horizon(h.store, thread)
+            # An interval cannot claim a prefix; a cumulative output must include its prefix.
+            h.adapter._responses.extend(
+                compact_replies(thread, runs[2].id, begin=runs[1].id if reuse else None)
+            )
+            result = await h.executor.compact(
+                CompactRequest(
+                    {"thread": thread, "begin": runs[1].id}, "wrong-coverage"
+                )
+            )
+            assert result.status == "failed"
+            assert available_horizon(h.store, thread) == original
 
     asyncio.run(scenario())

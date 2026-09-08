@@ -382,10 +382,6 @@ def test_compact_flow_carries_progress_across_real_history_pages(tmp_path):
             }
             harness.adapter._responses.extend(
                 [
-                    call(
-                        "history__read_runs",
-                        {"thread": compact_thread, "limit": 1, "from_end": True},
-                    ),
                     reply({"summary": "", "position": None, "complete": False}),
                     call("history__read_steps", {"run": first.id, "limit": 1}),
                     reply(progress),
@@ -409,7 +405,10 @@ def test_compact_flow_carries_progress_across_real_history_pages(tmp_path):
                         model="test/scripted", runnable="flow:compact"
                     ),
                     input=RunnableInput(
-                        {"thread": thread, "begin": None, "end": last.id}
+                        {
+                            "thread": thread,
+                            "end": last.id,
+                        }
                     ),
                 )
             )
@@ -418,7 +417,7 @@ def test_compact_flow_carries_progress_across_real_history_pages(tmp_path):
             result = history.get_output(compact.id)
             assert result is not None
             assert local_to_protocol_data(result.local)["value"] == output
-            second_page_request = harness.adapter.invocations[7].call
+            second_page_request = harness.adapter.invocations[6].call
             assert "first page" in str(
                 [m.to_data() for m in second_page_request.messages]
             )
@@ -428,7 +427,7 @@ def test_compact_flow_carries_progress_across_real_history_pages(tmp_path):
                 for step in harness.store.list_steps(run_id=run.id)
             ]
             reads = [s for s in steps if isinstance(s.given, ToolStepGiven)]
-            assert len(reads) == 3 and all(s.status == "succeeded" for s in reads)
+            assert len(reads) == 2 and all(s.status == "succeeded" for s in reads)
             assert [
                 history.get_model_call(s.ref) for s in steps if s.kind == "model"
             ] == [invocation.call for invocation in harness.adapter.invocations[2:]]

@@ -1,165 +1,144 @@
 # Human-triggered compaction
 
-Design updated on 2026-09-08. The CLI foundation is implemented in PR1;
-`--begin`, `--bare`, incremental defaults, and applicable-result lookup below
-are the agreed target, not implemented behavior. Summary fixes remain in PR2.
-
 ## Goal and scope
 
-Default compaction produces a cumulative summary usable by future root Runs.
-Manual requests may also produce independent interval summaries for testing;
-execution success does not imply suitability as far. Keep compact human/runtime
-only, reject `compact_…` target Threads, and preserve model-call replay.
+Execute the built-in compact script manually, independent of the input budget.
+Defaults produce a cumulative summary usable by future root Runs; explicit
+ranges may produce independent summaries for testing.
 
-No chat slash command, model-triggered compact, Step-level bounds, record schema
-change, multi-summary assembly, or memory plugin work.
+No model-triggered compact, recursive compact, Step-level bounds, new record
+schema, Thread horizon field, or ModelCall assembly changes.
 
-## CLI
+## Invocation
 
 ```sh
-too <agent> compact THREAD [--begin RUN] [--end RUN] [--bare] \
-  [--model MODEL_SPEC] [--limit LIMIT=VALUE]...
-
-# Continue from the previous applicable summary with configured model/limits.
-too a compact THREAD
-
-# Summarize only [RUN3, RUN6), without a previous summary.
-too a compact THREAD --begin RUN3 --end RUN6 --bare
+too a compact thread=THREAD
+too a compact thread=THREAD begin=RUN3 end=RUN6 bare=true --model MODEL
+too a compact thread=THREAD --model "MODEL effort=low" --limit time=120
 ```
 
-Keep the command in Control commands, beside retry/rerun/fork/rewind.
+The fixed public signature is `compact(thread, begin?, end?, bare=false)`.
+Use script-style named arguments and ordinary runnable type resolution.
+CLI/API transport one authored `input` mapping, not per-parameter fields.
+`--model` and `--limit` remain execution options; changing a script input
+does not require transport changes. Keep the entry in Control commands.
 
-| Argument | Meaning and default |
+| Input | Meaning and default |
 | --- | --- |
-| `THREAD` | Required normal Thread. |
-| `--begin RUN` | Inclusive reading start; default is the latest applicable compact output's `end`, or Thread start when unavailable. |
-| `--end RUN` | Exclusive boundary; default is the latest terminal historical root, retaining it. |
-| `--bare` | Do not reuse a previous compaction summary. Does not change range defaults. |
-| `--model MODEL_SPEC` | Replace compact-model selection for this request, including parameters such as `effort=low`. |
-| `--limit LIMIT=VALUE` | Override individual effective runtime limits using existing parsing. |
+| `thread: Text` | Required normal Thread; reject `compact_…`. |
+| `begin?: Text` | Inclusive root Run; default is the latest applicable summary's end, or Thread start. |
+| `end?: Text` | Exclusive root Run; default retains the latest terminal root. |
+| `bare?: Boolean` | Default false. True excludes the prior summary without changing range defaults. |
 
 Without `--model`, use the runtime's resolved `compact.model`: runtime override
-(including `TOOLANG_COMPACT_MODEL`), then agent config, then root config. When
-unconfigured, select the first eligible model in the effective allowed order,
-requiring tool calls and structured output. Never inherit the normal Run model
-or change config. An attached server uses its own loaded configuration and
-startup environment, not new environment variables in the client shell.
+(including `TOOLANG_COMPACT_MODEL`), agent config, then root config. If unset,
+select the first eligible model in the effective allowed order, requiring tool
+calls and structured output. Do not inherit the normal Run model. An attached
+server uses its loaded configuration/environment, not new client-shell values.
+Limits inherit effective runtime defaults, with per-field overrides.
 
 ## Range and reuse
 
-Bounds refer to root Runs in the target Thread's logical order, not lexical ID
-order. `begin=null` denotes Thread start. Require `begin < end`, no active Run
-inside the interval, and at least one terminal root at or after `end`. Reject
-unknown/nonmember/child bounds and empty or reversed ranges before provider work.
+Use root Runs in logical Thread order, not lexical ID order. Require a nonempty
+`[begin, end)`, no active root inside it, and a terminal root at or after end.
+Reject unknown, child, nonmember, empty, and reversed bounds before execution.
 
-Let `P` be the latest applicable compact output's `end`. If an explicit `end`
-precedes `P`, an omitted `begin` falls back to Thread start. If the defaults
-leave no new history (`begin == end`), report `nothing to compact` with nonzero
-exit and create no Run; an explicit earlier `begin` can request recomputation.
+Let `P` be the newest applicable summary's end:
 
-| Effective begin relative to P | Reuse without `--bare` | Result coverage |
-| --- | --- | --- |
-| `begin == P` | Reuse the previous summary. | Complete prefix extended through `end`. |
-| `begin < P` | Do not reuse or attempt to slice the old summary. | Exactly the requested interval. |
-| `begin > P` | Do not reuse across the gap. | Exactly the requested interval. |
+| Requested range | Selection |
+| --- | --- |
+| Begin omitted, end at/after P | Begin at P. |
+| Begin omitted, end before P | Begin at Thread start. |
+| Effective begin == P | Reuse the prior summary unless bare=true. |
+| Effective begin < P or > P | Summarize the interval independently; do not slice, bridge gaps, or seek another old summary. |
 
-`--bare` always disables reuse, including equality. Less/greater cases remain
-legal requests; do not search for a different old summary just to enable reuse.
-A bare request starting at Thread start can still produce an applicable result.
+If default begin equals end, report `nothing to compact`, exit nonzero, and
+create no Run. An explicit earlier begin permits recomputation.
+A bare request beginning at Thread start can still produce an applicable result.
 
-## Input and output
+## Execution inputs and output
 
-Resolve defaults once, freeze the bounds and selected previous-output reference,
-and persist them in the compact Run input. The compact program receives this
-selection; it must not independently discover a newer previous summary.
+The coordinator resolves the public inputs into the script's concrete internal
+inputs before creating its independent Run:
 
 ```text
-input:  {thread, begin, end, previous}
-output: {thread, begin, end, summary}
+authored_input: {thread, begin?, end?, bare?}
+input:         {thread, begin?, end, previous?}
+output:        {thread, begin, end, summary}
 
-previous = fixed compact-output reference, or null
-input.begin  = start of newly read history
-output.begin = previous.begin when reusing, otherwise input.begin
-output.end   = input.end
+previous = fixed compact Run output reference; absent when not reused
+input.begin = new-history reading start; absent means Thread start
+output.begin = null when reusing a full prefix, otherwise the reading start
+output.end = input.end
 
-previous.summary + [input.begin, input.end) -> cumulative output.summary
+previous.summary + [input.begin, input.end) -> output.summary
 ```
 
-Retain the existing output shape. Validate the target Thread, expected coverage
-start, exact end, and nonempty summary before recording success. Do not require
-input/output `begin` equality when reusing. Invalid or incomplete output fails
-the Run; a correctly produced partial-interval summary succeeds.
+Normalize the first root to Thread start. Bounds and references are optional
+Text inputs, not Json sources; output retains JSON null for Thread start.
+This gives full-prefix output a canonical `begin=null`.
+
+The script reads only the supplied previous output; it never discovers a newer
+one. Preserve authored input separately from resolved input. Validate exact
+target, expected coverage, end, and nonempty summary before recording success.
+Invalid/incomplete output fails; a correct partial-interval summary succeeds.
+
+Both CLI and automatic preflight use isolated `compact_<thread>` execution,
+authorized models, read-only history tools, ordinary Run lifecycle/cancellation,
+and a per-target cross-process permit. Freeze the range and previous reference
+before waiting. Revalidate the frozen prefix after admission and before success:
+rewind can invalidate it; ordinary appends do not. Do not wait in a transaction.
 
 ## Applicability and horizon
 
-An output is applicable only when its Run succeeded, its summary is nonempty,
-its Thread matches, and it covers a complete prefix of the current logical
-history with a valid end that retains a historical root. Derive applicability
-when selecting; do not persist a flag or judge it from `--bare` alone.
+Select successful compact outputs newest first, skipping outputs that do not
+cover a complete current prefix with matching Thread, nonempty summary, and a
+valid exclusive end. A newer successful interval test must not hide an older
+usable result. Derive applicability; do not persist a flag.
 
-Search successful compact outputs newest first, skipping inapplicable results
-until an applicable one is found. A newer successful interval test must not
-hide an older usable summary. Failure/cancellation likewise cannot replace it.
+- Manual compact creates its own Run/output only, never a compact control in an
+  existing target Run.
+- A new root freezes the selected output reference in its initial
+  `RunControlPayload.horizon`.
+- Automatic preflight retains budget/reuse checks and adopts output through a
+  compact control. `Step.preceded_by` records adoption.
+- Replay follows recorded references/controls, never a latest-output lookup.
 
-- **Manual compact:** only persists its independent Run and output. It does not
-  change existing target Runs or add compact controls to them.
-- **New root Run:** executor selects an applicable output and persists its
-  `FieldRef` as the initial run control's `payload.horizon`.
-- **Automatic preflight:** retains budget checks/reuse, then adopts a result
-  through the calling Run's compact control. Step `preceded_by` fixes adoption
-  order. Replay follows these records, never a latest-result lookup.
+## Presentation
 
-No Thread horizon field, duplicated summaries, or new persistence mechanism.
-
-## Execution and presentation
-
-CLI and preflight share isolated `compact_<thread>` execution, authorized model
-selection, read-only history tools, the per-target cross-process permit,
-cancellation, and validation. Use the existing agent-server/client path.
-Revalidate the frozen range after admission and before accepting output; rewind
-may invalidate it, ordinary appends do not. Never wait inside a Store transaction.
-
-Run manual requests even below the model input budget. Show ordinary script
-progress on stderr: flow/child steps, model/tool activity and outputs, timing,
-tokens, and cost. Successful stdout is JSON:
+Reuse script progress on stderr: flow/child Steps, model/tool activity, outputs,
+timing, tokens, and cost. Successful stdout:
 
 ```text
 {run, horizon, output: {thread, begin, end, summary}}
 ```
 
-`horizon` refers to this output only if applicable, otherwise null; returning
-it does not mutate any Run binding. Successful partial summaries exit zero.
-Failures/cancellation exit nonzero and identify the Run when available. Do not
-change events or add a separate test mode.
+A validated full-prefix result returns its output reference as horizon; an
+interval result returns null. This reports the result, not a mutation of a
+target Run. Partial success exits zero; failure/cancellation exits nonzero and
+identifies the Run when available. Events are unchanged.
 
-## Delivery and acceptance
+## Touchpoints and acceptance
 
-- **PR1 foundation, implemented:** CLI/API/client entry points, shared execution,
-  limits/model overrides, frozen ranges, cancellation, and invalid-output failure.
-  Actual DeepSeek CLI execution over the first eight of ten fresh Runs returned
-  `begin: ""` for null (`run_tc2fgb31`); exit 1 and no adopted horizon confirmed
-  failure handling, not successful live compaction.
-- **PR1 remaining CLI behavior:** implement `--begin`/`--bare`, fixed previous
-  input and incremental defaults, expected output coverage, partial success,
-  applicable-output selection, and CLI horizon reporting. Touchpoints: CLI
-  `commands/thread.py`, execution/API request transport, `executor/compact.py`,
-  `history.py`, and compact program inputs.
-- **PR2 correctness and live acceptance:** fix null rendering and cumulative
-  summarization in `executor/prompts/compact.too`; keep facts/corrections separate
-  from traversal bookkeeping. Then verify successful CLI use before preflight.
+PR1: CLI/API/client input transport, `executor/compact.py`, applicable-output
+selection in `RunHistory`, and `prompts/compact.too` inputs/coverage contract.
 
-Offline acceptance must cover defaults, all three begin/P relations, `--bare`
-with omitted/explicit begin, earlier/equal end, invalid bounds, model/effort and
-environment precedence, appends/rewind, cancellation, exact output coverage,
-partial success without shadowing, active-Run isolation, and restart/replay.
+Offline acceptance covers:
 
-For live acceptance, compact Runs 01–08, retain 09–10, then probe a new Run:
-require adopted far, no raw 01–08 inputs, exact 09–10 inputs, preserved facts and
-corrections, and dispatched/reconstructed ModelCall equality. Also exercise a
-second cumulative compact and a bare interval test. Repeat through automatic
-preflight only after CLI acceptance; verify Tool Step -> compact control ->
-Model Step, no recursion, and no compact tool result in model conversation.
+- Script argument collection, Boolean/type/name errors, model/effort and limits.
+- Incremental defaults, begin before/equal/after P, bare with omitted/explicit
+  begin, earlier/equal end, and explicit first-root normalization.
+- Partial success without shadowing; incorrect coverage fails.
+- Frozen selection during permit waits, append/rewind, cancellation, active-Run
+  isolation, restart lookup, and dispatched/reconstructed ModelCall equality.
+- Ordinary script parsing and automatic compact regression tests.
 
-Default tests stay offline. Run Ruff check/format, ty, and full pytest before
-commits. Risks: probabilistic summary loss, gaps mistaken for prefix coverage,
-and a successful local test hiding an older applicable result.
+PR2: verify summary quality and live acceptance. Compact Runs 01–08, retain
+09–10, and probe a new Run: require adopted far, no raw 01–08 inputs, exact
+09–10 inputs, preserved facts/corrections, and replay equality. Exercise a
+second cumulative compact and a bare interval. Verify CLI success before
+automatic preflight, including Tool Step → compact control → Model Step.
+
+The prior live attempt returned an empty string for null and was correctly
+rejected; it does not establish successful live compaction. Default tests stay
+offline. Run Ruff check/format, ty, and full pytest before commits.

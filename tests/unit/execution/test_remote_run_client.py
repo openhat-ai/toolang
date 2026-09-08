@@ -40,7 +40,7 @@ from toolang.execution.schemas import (
     RunRequest,
     RunnableRequest,
 )
-from toolang.execution.types import ControlRef, RunCommand, RunRef, StepRef
+from toolang.execution.types import ControlRef, RunCommand, StepRef
 from toolang.lang.types import Array
 from toolang.lang.input import CallInput
 
@@ -204,9 +204,13 @@ def test_remote_compact_uses_the_normal_run_stream_and_request_parameters():
             client = RemoteRunClient("http://runtime.test", client=http)
             await client.connect()
             request = CompactRequest(
-                "term_test",
+                {
+                    "thread": "term_test",
+                    "begin": "run_begin",
+                    "end": "run_end",
+                    "bare": "true",
+                },
                 "compact_request",
-                RunRef("run_end"),
                 ModelOverride("test/model", effort="high"),
                 (RunCommand("limit", "cost", Decimal("0.5")),),
             )
@@ -216,9 +220,13 @@ def test_remote_compact_uses_the_normal_run_stream_and_request_parameters():
                 "POST",
                 "http://runtime.test/api/v1/runs/compact/stream",
                 {
-                    "thread_id": "term_test",
+                    "input": {
+                        "thread": "term_test",
+                        "begin": "run_begin",
+                        "end": "run_end",
+                        "bare": "true",
+                    },
                     "request_id": "compact_request",
-                    "end": "run_end",
                     "model": {"identity": "test/model", "effort": "high"},
                     "commands": [{"group": "limit", "field": "cost", "value": "0.5"}],
                 },

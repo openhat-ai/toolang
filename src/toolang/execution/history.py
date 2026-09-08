@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import cast
 from pydantic import TypeAdapter
@@ -281,8 +281,13 @@ class RunHistory:
                 raise ValueError(f"not a model step: {ref}")
             return self._store.rebuild_model_calls((record,))[ref]
 
-    def get_compaction(self, thread: ThreadRef | str) -> CompactionOutput | None:
-        """Locate the paired compact Thread's latest successful output; never run it."""
+    def get_compaction(
+        self,
+        thread: ThreadRef | str,
+        *,
+        accept: Callable[[CompactionOutput], bool] | None = None,
+    ) -> CompactionOutput | None:
+        """Find the newest successful output satisfying the caller's selection."""
 
         target = ThreadRef.parse(thread)
         with self._store.read_transaction():
@@ -299,9 +304,11 @@ class RunHistory:
                 if run.status == "succeeded" and run.output is not None:
                     output = self.get_output(run.id)
                     assert output is not None
-                    return CompactionOutput(
+                    candidate = CompactionOutput(
                         FieldRef.from_path(RunRef(run.id), "output"), output
                     )
+                    if accept is None or accept(candidate):
+                        return candidate
             return None
 
     def thread_view(

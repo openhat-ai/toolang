@@ -110,9 +110,8 @@ def test_compact_stream_is_an_independent_validated_run(tmp_path, invalid_output
         response = client.post(
             "/api/v1/runs/compact/stream",
             json={
-                "thread_id": thread,
+                "input": {"thread": thread, "end": roots[1]},
                 "request_id": "manual",
-                "end": roots[1],
                 "commands": [{"group": "limit", "field": "time", "value": 60}],
             },
         )
@@ -131,9 +130,8 @@ def test_compact_stream_is_an_independent_validated_run(tmp_path, invalid_output
         invalid = client.post(
             "/api/v1/runs/compact/stream",
             json={
-                "thread_id": thread,
+                "input": {"thread": thread, "end": roots[0]},
                 "request_id": "bad",
-                "end": roots[0],
             },
         )
         assert invalid.status_code == 422 and len(h.adapter.invocations) == before

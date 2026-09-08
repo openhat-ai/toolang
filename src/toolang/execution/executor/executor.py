@@ -120,7 +120,7 @@ from .common import (
     value_parts,
     value_text,
 )
-from .compact import CompactRun, available_horizon, start_compact
+from .compact import CompactRun, available_horizon, compact_input, start_compact
 from .resources import (
     apply_agent_ceiling,
     resource_caps,
@@ -394,11 +394,15 @@ class RunExecutor:
         self._require_available()
         setup, _state = self._current_snapshots()
         _ceilings, _bindings, limits = resolve_commands(setup, run=request.commands)
+        input = compact_input(request.input)
         return start_compact(
             self,
             setup=setup,
-            thread=request.thread_id,
-            end=request.end,
+            thread=cast(str, input["thread"]),
+            begin=cast(str | None, input.get("begin")),
+            end=RunRef.parse(cast(str, input["end"])) if "end" in input else None,
+            bare=cast(bool, input.get("bare", False)),
+            authored_input=request.input,
             limits=limits,
             model=request.model,
             request_id=request.request_id,

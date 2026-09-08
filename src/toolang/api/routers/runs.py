@@ -137,7 +137,9 @@ async def _compact_stream(
     try:
         handle = core.executor.compact(
             compact_request,
-            tracer=live.trace(thread_id=f"compact_{payload.thread_id}"),
+            tracer=live.trace(
+                thread_id=f"compact_{compact_request.input.get('thread', '')}"
+            ),
         )
     except (OSError, KeyError, ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

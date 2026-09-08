@@ -33,9 +33,8 @@ def parse_compact(payload: RunCompactRequest) -> CompactRequest:
     """Convert the human compact request at the HTTP boundary."""
     try:
         return CompactRequest(
-            thread_id=payload.thread_id,
+            input=payload.input,
             request_id=payload.request_id,
-            end=payload.end,
             model=payload.model,
             commands=tuple(_parse_run_command(item) for item in payload.commands),
         )

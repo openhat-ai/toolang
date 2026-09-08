@@ -16,7 +16,13 @@ from toolang.base.types.model import ModelOverride
 from toolang.base.types.policy import RunBindings, RunLimits
 from toolang.common.time import utc_now
 from toolang.common.files import file_write_lock
-from toolang.lang.input import RunnableInput
+from toolang.lang.ast import FlowDecl, Parameter, Span
+from toolang.lang.input import (
+    CallInput,
+    RunnableInput,
+    resolve_input_parts,
+    resolve_runnable_input,
+)
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.setup.models import select_compact_model
@@ -68,14 +74,36 @@ def available_horizon(store: RunStore, thread: str) -> FieldRef | None:
     if thread.startswith("compact_"):
         return None
     history = RunHistory(store)
-    output = history.get_compaction(thread)
-    if output is None:
-        return None
     roots = tuple(
         RunRef(run.id)
         for run in history.thread_view(thread, include_children=False).roots
     )
-    return output.ref if valid_output(output, thread, roots) else None
+    output = history.get_compaction(
+        thread, accept=lambda item: valid_output(item, thread, roots)
+    )
+    return output.ref if output is not None else None
+
+
+def compact_signature() -> FlowDecl:
+    """The human entry's fixed signature; execution supplies resolved internal input."""
+    return FlowDecl(
+        span=Span(0),
+        name="compact",
+        params=(
+            Parameter(span=Span(0), name="thread", type_name="Text"),
+            Parameter(span=Span(0), name="begin", type_name="Text", optional=True),
+            Parameter(span=Span(0), name="end", type_name="Text", optional=True),
+            Parameter(span=Span(0), name="bare", type_name="Boolean", optional=True),
+        ),
+    )
+
+
+def compact_input(input: Mapping[str, str]) -> RunnableInput:
+    """Use ordinary runnable argument resolution at the authored input boundary."""
+    return resolve_runnable_input(
+        compact_signature(),
+        {name: resolve_input_parts(value) for name, value in input.items()},
+    )
 
 
 @asynccontextmanager
@@ -112,11 +140,29 @@ class CompactRun:
     thread: str
     roots: tuple[RunRef, ...]
     begin: str | None = None
+    previous: FieldRef | None = None
     permit_held: bool = False
 
     @property
-    def input(self) -> dict[str, str | None]:
-        return {"thread": self.thread, "begin": self.begin, "end": str(self.roots[-1])}
+    def input(self) -> dict[str, str]:
+        return {
+            key: value
+            for key, value in {
+                "thread": self.thread,
+                "begin": self.begin,
+                "end": str(self.roots[-1]),
+                "previous": str(self.previous) if self.previous is not None else None,
+            }.items()
+            if value is not None
+        }
+
+    @property
+    def coverage(self) -> dict[str, str | None]:
+        return {
+            "thread": self.thread,
+            "begin": None if self.previous is not None else self.begin,
+            "end": str(self.roots[-1]),
+        }
 
     def validate_range(self, store: RunStore) -> None:
         current = (
@@ -146,12 +192,12 @@ class CompactRun:
         value = cast(Mapping[str, object], raw) if isinstance(raw, Mapping) else {}
         summary = value.get("summary")
         if (
-            any(value.get(key) != item for key, item in self.input.items())
+            any(value.get(key) != item for key, item in self.coverage.items())
             or not isinstance(summary, str)
             or not summary.strip()
         ):
             raise ToolangError(
-                "compact output must echo its full range and contain a nonempty summary"
+                "compact output must match its coverage and contain a nonempty summary"
             )
 
 
@@ -164,6 +210,8 @@ def start_compact(
     limits: RunLimits,
     model: ModelOverride | None = None,
     begin: str | None = None,
+    bare: bool = False,
+    authored_input: Mapping[str, str] | None = None,
     request_id: str | None = None,
     tracer: RunTracer | None = None,
     permit_held: bool = False,
@@ -173,7 +221,9 @@ def start_compact(
 
     if thread.startswith("compact_"):
         raise ToolangError("cannot compact a compact Thread")
-    roots = RunHistory(executor.store).thread_view(thread, include_children=False).roots
+    ThreadRef.parse(thread)
+    history = RunHistory(executor.store)
+    roots = history.thread_view(thread, include_children=False).roots
     terminal = [run for run in roots if run.status not in {"pending", "running"}]
     if len(terminal) < 2:
         raise ToolangError(
@@ -184,15 +234,38 @@ def start_compact(
     if end not in ids or ids.index(end) == 0:
         raise ToolangError("compact end must be a visible root after the first root")
     index = ids.index(end)
-    if any(run.status in {"pending", "running"} for run in roots[:index]) or not any(
-        run.status not in {"pending", "running"} for run in roots[index:]
-    ):
+    previous = history.get_compaction(
+        thread, accept=lambda item: valid_output(item, thread, ids)
+    )
+    prior = (
+        cast(Mapping[str, object], previous.output.local.value)
+        if previous is not None
+        else {}
+    )
+    prior_end = RunRef(cast(str, prior["end"])) if previous is not None else None
+    if begin is None and prior_end is not None and ids.index(prior_end) <= index:
+        begin = str(prior_end)
+    begin_ref = RunRef.parse(begin) if begin is not None else ids[0]
+    if begin_ref not in ids:
+        raise ToolangError("compact begin must be a visible root")
+    start = ids.index(begin_ref)
+    if start >= index:
+        raise ToolangError("nothing to compact: begin must precede end")
+    if any(
+        run.status in {"pending", "running"} for run in roots[start:index]
+    ) or not any(run.status not in {"pending", "running"} for run in roots[index:]):
         raise ToolangError(
             "compact must exclude active roots and retain a terminal root"
         )
-    if begin not in (None, str(ids[0])):
-        raise ToolangError("compact must summarize a full prefix")
-    work = CompactRun(thread, ids[: index + 1], begin, permit_held)
+    work = CompactRun(
+        thread=thread,
+        roots=ids[: index + 1],
+        begin=str(begin_ref) if start else None,
+        previous=previous.ref
+        if previous is not None and begin_ref == prior_end and not bare
+        else None,
+        permit_held=permit_held,
+    )
     request = select_compact_model(
         setup.models, model if model is not None else setup.compact_model
     )
@@ -211,6 +284,9 @@ def start_compact(
             limits=limits,
             model_request=request,
             input=RunnableInput(work.input),
+            authored_input=CallInput(authored_input)
+            if authored_input is not None
+            else None,
         ),
         request_id=request_id,
         tracer=tracer,
@@ -250,12 +326,14 @@ async def execute(
         if boundary != end_ref:
             raise ToolangError("compact range changed while waiting; retry required")
         reader = RunHistory(store)
-        output = reader.get_compaction(target)
-        expected = {"thread": str(target), "begin": begin, "end": end}
-        if not (
-            output is not None
-            and valid_output(output, str(target), history.roots, expected)
-        ):
+        expected = {"thread": str(target), "end": end}
+        output = reader.get_compaction(
+            target,
+            accept=lambda item: valid_output(
+                item, str(target), history.roots, expected
+            ),
+        )
+        if output is None:
             frame = state.frame_for_step(*execution.state_snapshot())
             resources = frame.run.agent_resources
             if resources is None:
@@ -265,7 +343,6 @@ async def execute(
                 execution.executor,
                 setup=replace(frame.run.setup, models=models),
                 thread=str(target),
-                begin=begin,
                 end=end_ref,
                 limits=frame.run.limits,
                 permit_held=True,
