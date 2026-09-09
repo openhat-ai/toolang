@@ -16,7 +16,7 @@ from typer.core import TyperGroup
 
 from toolang.common.typer.ui import HelpFormatter, run
 from toolang.cli.common.parameters import RootOption
-from toolang.common.typer.options import BARE_VALUE, OptionalValueCommand
+from toolang.common.typer.options import BARE_VALUE, OptionalValue, OptionalValueCommand
 
 from ...catalog.agent import LocalAgents
 from ...common.layout import AgentLayout
@@ -93,8 +93,23 @@ _VISIBLE_COMMAND_ORDER = (
 _REGISTERED_COMMANDS: dict[str, Callable[[], LazyCommand]] = {}
 
 
-class _ChatCommand(OptionalValueCommand, RequiredPrefixAgentCommand):
-    optional_values = {"thread": BARE_VALUE}
+class _RunCommand(OptionalValueCommand, RunAgentCommand):
+    optional_values = {"dev": OptionalValue(bare_value=".")}
+
+
+class _StartCommand(OptionalValueCommand, StartAgentCommand):
+    optional_values = {"dev": OptionalValue(bare_value=".")}
+
+
+class _ThreadRunCommand(OptionalValueCommand, RequiredPrefixAgentCommand):
+    optional_values = {"dev": OptionalValue(bare_value=".")}
+
+
+class _ChatCommand(_ThreadRunCommand):
+    optional_values = {
+        "thread": OptionalValue(bare_value=BARE_VALUE, show_bare="latest thread"),
+        "dev": OptionalValue(bare_value="."),
+    }
 
 
 class _CompactCommand(RequiredPrefixAgentCommand):
@@ -274,7 +289,7 @@ _registered_command(
     "toolang.cli.toolang.commands.runtime:run",
     help="Run an agent in the foreground",
     no_args_is_help=True,
-    cls=RunAgentCommand,
+    cls=_RunCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_command(
@@ -282,7 +297,7 @@ _registered_command(
     "toolang.cli.toolang.commands.runtime:start",
     help="Start an agent",
     no_args_is_help=True,
-    cls=StartAgentCommand,
+    cls=_StartCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_command(
@@ -344,7 +359,7 @@ _registered_command(
     "toolang.cli.toolang.commands.thread:retry_command",
     help="Retry a run from a failed step",
     no_args_is_help=True,
-    cls=RequiredPrefixAgentCommand,
+    cls=_ThreadRunCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
 )
 _registered_command(
@@ -360,7 +375,7 @@ _registered_command(
     "toolang.cli.toolang.commands.thread:rerun_command",
     help="Rerun an earlier run as a new one",
     no_args_is_help=True,
-    cls=RequiredPrefixAgentCommand,
+    cls=_ThreadRunCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
 )
 _registered_command(

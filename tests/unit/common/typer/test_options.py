@@ -1,21 +1,29 @@
 """Reusable optional values retain native Typer behavior outside bare options."""
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 import pytest
 import typer
 from typer._click import Context
 from typer._click.core import ParameterSource
 from typer._click.utils import strip_ansi
-from typer.core import TyperArgument, TyperCommand, TyperOption
+from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 from typer.testing import CliRunner
 
-from toolang.common.typer.options import OptionalValueCommand
+from toolang.common.typer.options import (
+    OptionalValue,
+    OptionalValueCommand,
+    OptionalValueGroup,
+)
 
 
 class _ProbeCommand(OptionalValueCommand):
-    optional_values = {"model": "auto", "budget": "10", "artifact": "."}
+    optional_values = {
+        "model": OptionalValue(bare_value="auto", show_bare="automatic selection"),
+        "budget": OptionalValue(bare_value="10"),
+        "artifact": OptionalValue(bare_value="."),
+    }
 
 
 def _app(*, rich: bool = True) -> tuple[typer.Typer, dict[str, object]]:
@@ -256,20 +264,35 @@ def test_optional_value_completion_retains_native_completer():
     assert [item.value for item in model.shell_complete(context, "ac")] == ["accurate"]
 
 
-def test_nested_commands_and_unconfigured_siblings_keep_native_parsing():
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [([], None), (["--model", "explicit"], "explicit"), (["--model", "--"], "auto")],
+)
+def test_nested_commands_and_unconfigured_siblings_keep_native_parsing(
+    options, expected
+):
     child, captured = _app()
     child.callback()(lambda: None)
-    root = typer.Typer(add_completion=False)
+
+    class ModelGroup(OptionalValueGroup):
+        optional_values = {"model": "auto"}
+
+    root = typer.Typer(cls=ModelGroup, add_completion=False)
     root.add_typer(child, name="child")
+
+    @root.callback()
+    def configure(model: Annotated[str | None, typer.Option("--model")] = None):
+        captured["root_model"] = model
 
     @root.command()
     def ordinary(model: str | None = None) -> None:
         typer.echo(model)
 
     runner = CliRunner()
-    result = runner.invoke(root, ["child", "probe", "-vm"])
+    result = runner.invoke(root, [*options, "child", "probe", "-vm"])
     assert result.exit_code == 0, result.output
     assert captured["model"] == "auto" and captured["verbose"] is True
+    assert captured["root_model"] == expected
     assert runner.invoke(root, ["ordinary", "--model"]).exit_code == 2
     assert (
         runner.invoke(root, ["ordinary", "--model", "value"]).output.strip() == "value"
@@ -287,17 +310,37 @@ def test_nested_commands_and_unconfigured_siblings_keep_native_parsing():
         TyperOption(param_decls=["--value"], nargs=2),
     ],
 )
-def test_optional_value_configuration_requires_a_scalar_option(parameter):
-    class InvalidCommand(OptionalValueCommand):
+@pytest.mark.parametrize("base", [OptionalValueCommand, OptionalValueGroup])
+def test_optional_value_configuration_requires_a_scalar_option(parameter, base):
+    class InvalidCommand(base):
         optional_values = {"value": "bare"}
 
     with pytest.raises(TypeError, match="value: expected a scalar value option"):
         InvalidCommand(name="invalid", params=[] if parameter is None else [parameter])
 
 
-def test_unconfigured_command_uses_native_parser():
-    command = OptionalValueCommand(name="ordinary")
-    native = TyperCommand(name="ordinary")
+@pytest.mark.parametrize(
+    "base, native_base",
+    [(OptionalValueCommand, TyperCommand), (OptionalValueGroup, TyperGroup)],
+)
+def test_unconfigured_command_uses_native_parser(base, native_base):
+    command = base(name="ordinary")
+    native = native_base(name="ordinary")
     assert type(command.make_parser(Context(command))) is type(
         native.make_parser(Context(native))
     )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        OptionalValue(bare_value=cast(Any, None)),
+        OptionalValue(bare_value="auto", show_bare=cast(Any, None)),
+    ],
+)
+def test_optional_value_definition_requires_raw_text_and_help_metadata(value):
+    class InvalidCommand(OptionalValueCommand):
+        optional_values = {"model": value}
+
+    with pytest.raises(TypeError, match="expected a scalar value option"):
+        InvalidCommand(name="invalid", params=[TyperOption(param_decls=["--model"])])

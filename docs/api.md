@@ -271,8 +271,8 @@ Behavior:
   being copied to stdout. This replaces the removed `--save` option.
 - `--sandbox SANDBOX_SPEC` selects the execution sandbox for this invocation; an
   already-running compatible AgentServer is attached instead
-- `--dev PATH` installs Toolang in a newly started guest from one wheel; a
-  directory selects its newest Toolang wheel recursively
+- `--dev [PATH]` installs Toolang in a newly started guest from one wheel; a
+  directory selects its newest Toolang wheel recursively. Bare `--dev` uses `.`
 - `--model MODEL_SPEC` supplies an invocation model identity and typed
   parameters, for example `--model 'openai/gpt-5 effort=high'`
 - `--limit LIMIT=VALUE` overrides one run limit; it may be repeated
@@ -612,12 +612,15 @@ Chat uses the same explicit/configured/host selection when no AgentServer is
 active. `host` stays embedded in the CLI; another selector starts a temporary
 AgentServer that Chat stops on exit. If an AgentServer is already running, Chat
 attaches to it and rejects an explicit incompatible selector without executing
-or restarting the server. `chat --dev PATH` installs a local Toolang wheel in a
-new temporary non-host runtime. It is rejected for embedded host execution or
-when Chat attaches to an existing AgentServer.
+or restarting the server. `chat --dev [PATH]` installs a local Toolang wheel in a
+new temporary non-host runtime; bare `--dev` searches the working directory. It
+is rejected for embedded host execution or when Chat attaches to an existing
+AgentServer.
 
-Commands that start a new guest accept `--dev PATH`. This includes `run`,
-`start`, `chat`, script runs, `retry`, and `rerun`.
+Commands that start a new guest accept `--dev [PATH]`. This includes `run`,
+`start`, `chat`, script runs, `retry`, and `rerun`. Omitting `--dev` keeps the
+existing package selection. Bare `--dev` uses `.` (the process working directory,
+not the script directory or agent home). An explicit `PATH` selects that path.
 `PATH` is either one Toolang `.whl` file or a directory to search recursively
 for Toolang wheels. Directory selection uses the most recent file modification
 time and breaks equal-time ties by absolute path. The selected concrete wheel
@@ -626,8 +629,21 @@ wheel and select it with:
 
 ```sh
 uv build --wheel
-too alice run --sandbox docker --dev dist
+too alice run --sandbox docker --dev
 ```
+
+A following non-option token is consumed as PATH. Before a runnable selector or
+input, use `--dev=.` or terminate options with `--dev --`. For example,
+`too demo.too --dev=. summarize hello` and
+`too demo.too summarize --dev -- hello` both select from the working directory.
+Use `--dev=PATH` or a `./` prefix for paths beginning with `-`. Repeated `--dev`
+options use the last value; a runnable-level occurrence overrides the script
+root value. Explicit empty paths (`--dev=` or `--dev ""`) also resolve to `.`.
+
+Help displays environment, default, and bare-option metadata as separate tags:
+`[env: NAME=] [default: VALUE] [bare: VALUE]`. Only applicable tags are shown.
+For `--dev`, `[bare: .]` describes the value used when PATH is omitted; it does
+not change the default when the entire option is absent.
 
 `--dev` does not treat a directory as a source project and does not rebuild
 after launch. It applies only while starting a new guest: host execution uses

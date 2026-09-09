@@ -92,6 +92,8 @@ def _chat_history(layout: AgentLayout) -> None:
         (["-t", "--sandbox", "host"], "term_existing"),
         (["--thread", "--default", "model=test/model"], "term_existing"),
         (["--thread", "--"], "term_existing"),
+        (["--thread", "--dev"], "term_existing"),
+        (["--dev", "--thread"], "term_existing"),
         (["-t", "term_new", "--thread"], "term_existing"),
         (["--thread", "-t", "term_new"], "term_new"),
     ],
@@ -109,6 +111,8 @@ def test_chat_thread_option_resolves_through_the_lazy_entry_point(
     assert too_main(["--root", str(chat_layout.root), "alice", "chat", *args]) == 0
     assert captured["thread_id"] == expected
     assert captured["layout"] == chat_layout
+    if "--dev" in args:
+        assert captured["dev"] == Path(".")
     if "--sandbox" in args:
         assert captured["sandbox"] == "host"
     if "--default" in args:
@@ -153,7 +157,6 @@ def test_chat_latest_requires_history_without_starting_a_runtime(
         (["--thread", "--unknown"], 2, "No such option"),
         (["-t", "--", "term_existing"], 2, "unexpected extra argument"),
         (["--thread", "run_missing"], 1, "run not found: run_missing"),
-        (["--dev"], 2, "requires an argument"),
     ],
 )
 def test_chat_thread_option_errors_preserve_existing_options(

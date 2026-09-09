@@ -480,6 +480,17 @@ def _parameter_help(param: TyperArgument | TyperOption, ctx: Context) -> Text:
         if default:
             fields.append(f"default: {default}")
 
+    # Optional-value extensions may provide declarative display values without
+    # coupling this standalone formatter to their parser implementation.
+    get_bare_help = getattr(ctx.command, "get_bare_help", None)
+    if (
+        isinstance(param, TyperOption)
+        and param.name is not None
+        and callable(get_bare_help)
+    ):
+        if (bare := get_bare_help(param.name)) is not None:
+            fields.append(f"bare: {bare}")
+
     if isinstance(param, TyperOption) and isinstance(
         param.type, (IntRange, FloatRange)
     ):
@@ -490,7 +501,7 @@ def _parameter_help(param: TyperArgument | TyperOption, ctx: Context) -> Text:
     if fields:
         if text:
             text.append("  ")
-        text.append("[" + "; ".join(fields) + "]", style="cli.meta")
+        text.append(" ".join(f"[{field}]" for field in fields), style="cli.meta")
     return text
 
 

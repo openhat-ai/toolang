@@ -9,10 +9,7 @@ from typer._click.types import StringParamType
 from typer.models import TyperPath
 
 
-DEVELOPMENT_WHEEL_HELP = (
-    "Install Toolang in a new guest from a wheel; directories select the newest "
-    "Toolang wheel recursively"
-)
+DEVELOPMENT_WHEEL_HELP = "Use a local Toolang wheel"
 
 
 class TextType(StringParamType):

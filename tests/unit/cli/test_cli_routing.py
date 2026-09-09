@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from functools import wraps
+from importlib import import_module
 from pathlib import Path
 import subprocess
 import sys
@@ -739,7 +741,7 @@ def test_cli_routes_local_script_to_script_command(
         (["--quiet"], ["--", "text", "--inbox", "literal"], "text --inbox literal"),
         (["--sandbox", "host"], ["text", "--inbox=literal"], "text --inbox=literal"),
         (["--out", "--inbox"], ["text"], "text"),
-        (["--dev", "--inbox"], ["text"], "text"),
+        (["--dev=--inbox"], ["text"], "text"),
     ],
 )
 def test_cli_script_root_options_preserve_literal_inbox_tokens(
@@ -760,7 +762,7 @@ def test_cli_script_root_options_preserve_literal_inbox_tokens(
     assert captured["input"] == {"_": expected_input}
     if options[0] == "--out":
         assert captured["save"] == "--inbox"
-    if options[0] == "--dev":
+    if options[0].startswith("--dev="):
         assert captured["dev"] == Path("--inbox")
 
 
@@ -1247,3 +1249,61 @@ def test_cli_typed_runnable_prefix_escapes_a_roaming_command_name(
         "runnable:steer",
         "change direction",
     ]
+
+
+@pytest.mark.parametrize(
+    ("command", "module", "callback", "operands"),
+    [
+        ("run", "runtime", "run", []),
+        ("start", "runtime", "start", []),
+        ("chat", "chat", "chat_command", []),
+        ("retry", "thread", "retry_command", ["run_example"]),
+        ("rerun", "thread", "rerun_command", ["run_example"]),
+    ],
+)
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ([], None),
+        (["--dev"], Path(".")),
+        (["--dev", "wheels"], Path("wheels")),
+        (["--dev=wheels"], Path("wheels")),
+        (
+            ["--dev", "wheel directory/toolang-1.whl"],
+            Path("wheel directory/toolang-1.whl"),
+        ),
+        (["--dev=--wheel"], Path("--wheel")),
+        (["--dev", "./--wheel"], Path("./--wheel")),
+        (["--dev="], Path(".")),
+        (["--dev", ""], Path(".")),
+        (["--dev", "first", "--dev"], Path(".")),
+        (["--dev", "--dev=last"], Path("last")),
+        (["--dev", "--allow", "tools=fs/*"], Path(".")),
+        (["--dev", "--"], Path(".")),
+    ],
+)
+def test_cli_dev_states_reach_each_lazy_command(
+    command, module, callback, operands, options, expected, tmp_path, monkeypatch
+):
+    owner = import_module(f"toolang.cli.toolang.commands.{module}")
+    captured = {}
+
+    @wraps(getattr(owner, callback))
+    def invoke(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(owner, callback, invoke)
+    assert (
+        cli.main(["--root", str(tmp_path), "alice", command, *operands, *options]) == 0
+    )
+    assert captured["dev"] == expected
+    if expected is not None:
+        assert isinstance(captured["dev"], Path)
+
+
+@pytest.mark.parametrize("command", ["run", "start", "chat", "retry", "rerun"])
+def test_cli_bare_dev_keeps_unknown_option_errors(command, tmp_path, capsys):
+    assert (
+        cli.main(["--root", str(tmp_path), "alice", command, "--dev", "--unknown"]) == 2
+    )
+    assert "No such option: --unknown" in strip_ansi(capsys.readouterr().err)

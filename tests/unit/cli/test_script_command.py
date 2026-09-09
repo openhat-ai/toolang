@@ -679,6 +679,8 @@ def _assert_common_options(output: str) -> None:
     positions = [panel.index(option) for option in options]
     assert positions == sorted(positions)
     assert "-o" in panel and "-q" in panel
+    assert "--dev [PATH]" in panel
+    assert "Use a local Toolang wheel [bare: .]" in panel
 
 
 @pytest.mark.parametrize("child", [False, True])
@@ -1417,7 +1419,7 @@ flow pipeline:
     assert "flow:undocumented_flow Flow undocumented_flow" in descriptions
     assert "visible -" not in descriptions
     assert "Use RUNNABLE --help" not in stdout
-    assert "default" not in stdout
+    assert "default" not in descriptions
     assert "<agic:" not in stdout
     assert "The flow proceeds as follows:" not in stdout
 
@@ -1940,3 +1942,73 @@ def test_quiet_unsuccessful_run_reports_fallback_error(
 
     assert result == 1
     assert "provider unavailable" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("root_options", "child_options", "expected"),
+    [
+        ([], [], None),
+        ([], ["--dev"], Path(".")),
+        ([], ["--dev", "--quiet"], Path(".")),
+        ([], ["--dev", "wheel directory"], Path("wheel directory")),
+        ([], ["--dev=wheels"], Path("wheels")),
+        ([], ["--dev=--wheel"], Path("--wheel")),
+        ([], ["--dev="], Path(".")),
+        ([], ["--dev", ""], Path(".")),
+        ([], ["--dev", "first", "--dev"], Path(".")),
+        ([], ["--dev", "--dev=last"], Path("last")),
+        (["--dev", "--quiet"], [], Path(".")),
+        (["--dev", "--"], [], Path(".")),
+        (["--dev=."], [], Path(".")),
+        (["--dev", "wheel directory"], [], Path("wheel directory")),
+        (["--dev="], [], Path(".")),
+        (["--dev", ""], [], Path(".")),
+        (["--dev", "first", "--dev", "--quiet"], [], Path(".")),
+        (["--dev=parent"], ["--dev"], Path(".")),
+        (["--dev=parent"], ["--dev=child"], Path("child")),
+        (["--dev", "--quiet"], ["--dev=child"], Path("child")),
+    ],
+)
+def test_script_dev_states_preserve_inheritance_and_input(
+    root_options, child_options, expected, tmp_path, monkeypatch
+):
+    from toolang.cli.toolang.main import main
+
+    source = _write_source(tmp_path)
+    captured = {}
+    monkeypatch.setattr(
+        script, "_run", lambda _source, **kwargs: captured.update(kwargs) or 0
+    )
+    assert (
+        main(
+            [
+                str(source),
+                *root_options,
+                "demo",
+                "count=2",
+                *child_options,
+                "--",
+                "hello",
+                "--dev",
+                "literal",
+            ]
+        )
+        == 0
+    )
+    assert captured["dev"] == expected
+    assert captured["input"] == {"_": "hello --dev literal"}
+    assert captured["raw_named"] == {"count": "2"}
+
+
+@pytest.mark.parametrize("child", [False, True])
+def test_script_bare_dev_help_never_discovers_wheels_or_runs(
+    child, tmp_path, monkeypatch, capsys
+):
+    from toolang.cli.toolang.main import main
+
+    source = _write_source(tmp_path)
+    monkeypatch.setattr(
+        script, "_run", lambda *_args, **_kwargs: pytest.fail("ran script")
+    )
+    assert main([str(source), *(["demo"] if child else []), "--dev", "--help"]) == 0
+    _assert_common_options(strip_ansi(capsys.readouterr().out))

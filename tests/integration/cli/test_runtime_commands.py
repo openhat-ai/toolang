@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from decimal import Decimal
 from pathlib import Path
+import os
 import re
 from types import SimpleNamespace
 from typing import Any, cast
@@ -434,9 +435,8 @@ def test_runtime_dev_help_describes_wheel_selection() -> None:
 
         assert result.exit_code == 0
         output = " ".join(strip_ansi(result.stdout).replace("│", " ").split())
-        assert "Install Toolang in a new guest from a wheel" in output
-        assert "directories select the newest Toolang wheel" in output
-        assert "recursively" in output
+        assert "--dev [PATH]" in output
+        assert "Use a local Toolang wheel [bare: .]" in output
 
 
 @pytest.mark.parametrize(
@@ -822,3 +822,101 @@ def test_remove_deletes_stopped_agent_home_without_authored_source(
     assert removed.exit_code == 0, removed.stderr
     assert removed.stdout.strip() == "Agent alice removed"
     assert not layout.home.exists()
+
+
+@pytest.mark.parametrize("command", ["run", "start"])
+@pytest.mark.parametrize(
+    "options",
+    [
+        [],
+        ["--dev"],
+        ["--dev", "."],
+        ["--dev", "nested"],
+        ["--dev=nested/toolang-2.whl"],
+    ],
+)
+def test_dev_selects_a_wheel_from_the_invocation_directory(
+    command, options, tmp_path, monkeypatch
+):
+    layout = _create_agent(tmp_path / "root")
+    cwd = tmp_path / "current"
+    nested = cwd / "nested"
+    nested.mkdir(parents=True)
+    old = cwd / "toolang-1.whl"
+    latest = nested / "toolang-2.whl"
+    old.touch()
+    latest.touch()
+    os.utime(old, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(latest, ns=(2_000_000_000, 2_000_000_000))
+    monkeypatch.chdir(cwd)
+    captured = []
+
+    async def execute(spec, **_kwargs):
+        captured.append(spec)
+        if command == "run":
+            return 0
+        return SimpleNamespace(
+            state=SimpleNamespace(
+                ref=SandboxRef(
+                    runtime_id="guest",
+                    endpoint=spec.serve.endpoint,
+                )
+            )
+        )
+
+    monkeypatch.setattr(sandbox_runtime, "run", execute)
+    monkeypatch.setattr(sandbox_runtime, "launch", execute)
+    assert (
+        cli.main(
+            [
+                "--root",
+                str(layout.root),
+                "alice",
+                command,
+                "--sandbox",
+                "docker",
+                *options,
+            ]
+        )
+        == 0
+    )
+    assert len(captured) == 1
+    assert captured[0].dev_artifact == (latest if options else None)
+    assert captured[0].serve.layout == layout
+
+
+@pytest.mark.parametrize("command", ["run", "start"])
+@pytest.mark.parametrize("sandbox", ["host", "docker"])
+def test_bare_dev_preserves_host_and_missing_wheel_errors(
+    command, sandbox, tmp_path, monkeypatch, capsys
+):
+    layout = _create_agent(tmp_path / "root")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sandbox_runtime, "run", lambda *_args, **_kwargs: pytest.fail("ran guest")
+    )
+    monkeypatch.setattr(
+        sandbox_runtime,
+        "launch",
+        lambda *_args, **_kwargs: pytest.fail("launched guest"),
+    )
+    assert (
+        cli.main(
+            [
+                "--root",
+                str(layout.root),
+                "alice",
+                command,
+                "--sandbox",
+                sandbox,
+                "--dev",
+            ]
+        )
+        == 1
+    )
+    error = strip_ansi(capsys.readouterr().err)
+    assert (
+        "only applies to guest sandboxes"
+        if sandbox == "host"
+        else "No Toolang wheels found"
+    ) in error
