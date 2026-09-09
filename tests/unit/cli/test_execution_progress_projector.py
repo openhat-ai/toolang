@@ -216,27 +216,57 @@ def test_positional_collection_steps_describe_the_transform(
         (
             MapStmt(span=SPAN, runnable="map_item"),
             CollectionStepNoted(6, 6),
-            "• Mapped all 6 items in parallel",
+            "• Mapped 6 items",
+        ),
+        (
+            MapStmt(span=SPAN, runnable="map_item", lanes=1),
+            CollectionStepNoted(1, 1),
+            "• Mapped 1 item",
+        ),
+        (
+            MapStmt(span=SPAN, runnable="map_item"),
+            CollectionStepNoted(0, 0),
+            "• Mapped 0 items",
         ),
         (
             StormStmt(span=SPAN, count=6, runnable="brainstorm"),
             CollectionStepNoted(6, 6),
-            "• Brainstormed 6 items in parallel",
+            "• Generated 6 items",
         ),
         (
             KeepStmt(span=SPAN, runnable="accept"),
             CollectionStepNoted(6, 6),
-            "• Evaluated 6 items in parallel, kept all 6",
+            "• Kept all 6 items",
+        ),
+        (
+            KeepStmt(span=SPAN, runnable="accept"),
+            CollectionStepNoted(6, 4),
+            "• Kept 4 of 6 items",
+        ),
+        (
+            KeepStmt(span=SPAN, runnable="accept"),
+            CollectionStepNoted(1, 1),
+            "• Kept the item",
         ),
         (
             DropStmt(span=SPAN, runnable="reject"),
             CollectionStepNoted(6, 4),
-            "• Evaluated 6 items in parallel, dropped 2, leaving 4",
+            "• Dropped 2 of 6 items; 4 remaining",
+        ),
+        (
+            DropStmt(span=SPAN, runnable="reject"),
+            CollectionStepNoted(6, 0),
+            "• Dropped all 6 items",
+        ),
+        (
+            DropStmt(span=SPAN, runnable="reject"),
+            CollectionStepNoted(6, 6),
+            "• Dropped 0 of 6 items; 6 remaining",
         ),
         (
             SortStmt(span=SPAN, runnable="score", order="ascending"),
             CollectionStepNoted(6, 6),
-            "• Scored 6 items in parallel, sorted 6 items ascending",
+            "• Sorted 6 items ascending",
         ),
         (
             SortStmt(
@@ -245,11 +275,11 @@ def test_positional_collection_steps_describe_the_transform(
                 order="descending",
             ),
             CollectionStepNoted(10, 10),
-            "• Scored 10 items in parallel, sorted 10 items descending",
+            "• Sorted 10 items descending",
         ),
     ],
 )
-def test_parallel_collection_steps_describe_execution_and_transform(
+def test_parallel_collection_steps_describe_the_result(
     statement: MapStmt | StormStmt | KeepStmt | DropStmt | SortStmt,
     noted: CollectionStepNoted,
     expected: str,
@@ -265,6 +295,7 @@ def test_parallel_collection_steps_describe_execution_and_transform(
     )
     live = projector.handle(StepBegin(step=path, kind="par", given=statement))
 
+    assert _rows(live.live) == [["• 0 succeeded"]]
     assert live.live[0].rows[0].tone == "active"
 
     terminal = projector.handle(
@@ -708,7 +739,7 @@ def test_parallel_lane_tool_call_only_model_hands_activity_to_tool_step() -> Non
 
     assert _rows(tool.live) == [
         [
-            "• running · 0/1 succeeded · 1 active",
+            "• 0/1 succeeded · 1 running",
             "  0 | #0 | › executing web.search",
         ]
     ]
@@ -1203,7 +1234,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
     )
     assert _rows(streamed.live) == [
         [
-            "• running · 0/8 succeeded · 2 active",
+            "• 0/8 succeeded · 2 running · 6 queued",
             "  0 | #4 | › executing fetch_page",
             "  1 | #5 | • first lane line second lane line",
         ]
@@ -1219,7 +1250,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
     )
     assert _rows(failed.live) == [
         [
-            "• running · 0/8 succeeded · 2 active",
+            "• 0/8 succeeded · 2 running · 6 queued",
             "  0 | #4 | › failed fetch_page · provider returned status 429",
             "  1 | #5 | • first lane line second lane line",
         ]
@@ -1233,7 +1264,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
     )
     assert _rows(child_failed.live) == [
         [
-            "• running · 0/8 succeeded · 1 failed · 1 canceling",
+            "• 0/8 succeeded · 1 failed · 1 canceling · 6 not started",
             "  0 | #4 | › failed fetch_page · provider returned status 429",
             "  1 | #5 | • canceling",
         ]
@@ -1264,7 +1295,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
     assert terminal.live == ()
     assert _rows(terminal.committed) == [
         [
-            "• Parallel execution stopped: 0/8 succeeded, 1 failed, and 1 was canceled",
+            "• Stopped · 0/8 succeeded · 1 failed · 1 canceled · 6 not started",
             "  0 | #4 | › failed fetch_page",
             "             provider returned status 429",
             "",
@@ -1276,6 +1307,48 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
     assert terminal.committed[0].rows[-2].right_text == "run_root.0"
     assert terminal.committed[0].rows[1].tone == "progress"
     assert terminal.committed[0].rows[2].tone == "error"
+
+
+def test_parallel_cancellation_accounts_for_items_that_never_started() -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    par = StepRef.parse("run_root.0")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef.for_run("run_root", 0),
+            runnable="flow:work",
+        )
+    )
+    projector.handle(
+        StepBegin(
+            step=par,
+            kind="par",
+            given=MapStmt(span=SPAN, runnable="search", lanes=2),
+        )
+    )
+    for item in range(2):
+        projector.handle(
+            RunBegin(
+                run=f"run_child_{item}",
+                parent=par,
+                control=ControlRef.for_run(f"run_child_{item}", 0),
+                runnable="agic:search",
+                occurrence=Occurrence(
+                    item=OccurrencePosition(index=item, count=4),
+                    lane=OccurrencePosition(index=item, count=2),
+                ),
+            )
+        )
+    live = projector.handle(RunEnd(run="run_child_0", status="succeeded"))
+    assert live.live[0].rows[0].text == "• 1/4 succeeded · 1 running · 2 queued"
+
+    projector.handle(RunEnd(run="run_child_1", status="canceled"))
+    terminal = projector.handle(StepEnd(step=par, kind="par", status="canceled"))
+    assert _rows(terminal.committed) == [
+        ["• Canceled · 1/4 succeeded · 1 canceled · 2 not started", "  2 runs", ""]
+    ]
+    assert terminal.committed[0].rows[0].tone == "warning"
+    assert terminal.live == ()
 
 
 def test_parent_error_pointers_are_silent_but_ownerless_run_errors_are_visible() -> (
@@ -1678,7 +1751,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
     )
     assert _rows(live.live) == [
         [
-            "• running · 0/2 succeeded · 1 active",
+            "• 0/2 succeeded · 1 running · 1 queued",
             "  0 | #0 | › executing fetch_page",
         ]
     ]
@@ -1732,7 +1805,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
 
     assert _rows(reused.live) == [
         [
-            "• running · 1/2 succeeded · 1 active",
+            "• 1/2 succeeded · 1 running",
             "  0 | #1 | • starting",
         ]
     ]
@@ -1748,7 +1821,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
 
     assert _rows(terminal.committed) == [
         [
-            "• Mapped all 2 items in parallel",
+            "• Mapped 2 items",
             "  3 runs 1 tool",
             "",
         ]
@@ -2097,7 +2170,7 @@ def test_nested_parallel_direct_error_is_preserved_by_the_outer_lane() -> None:
 
     assert _rows(terminal.committed) == [
         [
-            "• Parallel execution stopped: 0/1 succeeded and 1 failed",
+            "• Stopped · 0/1 succeeded · 1 failed",
             "  0 | #0 | • input must be a list",
             "",
             "• parallel step stopped because lane 0 (#0) failed",

@@ -409,8 +409,8 @@ def test_chat_flow_keeps_one_blank_row_at_each_finalized_boundary() -> None:
     assert "[1] Map each item with summarize, up to 2 at once\n\n• Mapped" in (
         transcript
     )
-    assert "items in parallel\n\n∎ run_1 succeeded" in transcript
-    assert "items in parallel\n\n\n∎ run_1 succeeded" not in transcript
+    assert "items\n\n∎ run_1 succeeded" in transcript
+    assert "items\n\n\n∎ run_1 succeeded" not in transcript
 
 
 def test_chat_moves_stable_markdown_to_scrollback_while_the_tail_stays_live() -> None:
@@ -537,9 +537,7 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
 
     assert [block.type for block in app.live_blocks] == ["RunSummaryBlock"]
     finalized = _render_text(app.finalized[-1].render())
-    assert (
-        "• Parallel execution stopped: 0/2 succeeded, 1 failed, and 1 was canceled"
-    ) in finalized
+    assert "• Stopped · 0/2 succeeded · 1 failed · 1 canceled" in finalized
     assert "parallel step stopped because lane 0 (#0) failed" in finalized
     assert "0 | #0 | • failed model unavailable" in finalized
 

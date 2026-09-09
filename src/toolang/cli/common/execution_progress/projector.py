@@ -944,9 +944,7 @@ class ProgressProjector:
         )
 
     def _par_live_rows(self, state: StepState) -> tuple[ProgressRow, ...]:
-        rows = [
-            ProgressRow(f"• running · {self._par_counts(state, live=True)}", "active")
-        ]
+        rows = [ProgressRow(f"• {self._par_counts(state, live=True)}", "active")]
         if not state.par.lanes:
             return tuple(rows)
         lane_width = len(str(max(state.par.lanes)))
@@ -964,40 +962,26 @@ class ProgressProjector:
         return tuple(rows)
 
     def _par_counts(self, state: StepState, *, live: bool) -> str:
-        facts = []
-        par = state.par
-        if par.total_items is not None or par.succeeded_children or not par.child_count:
-            succeeded = str(par.succeeded_children)
-            if par.total_items is not None:
-                succeeded = f"{succeeded}/{par.total_items}"
-            facts.append(f"{succeeded} succeeded")
-        if par.failed_children:
-            facts.append(f"{par.failed_children} failed")
-        if live and par.active_children:
-            status = "canceling" if par.terminating else "active"
-            facts.append(f"{par.active_children} {status}")
-        if par.canceled_children:
-            facts.append(f"{par.canceled_children} canceled")
-        return " · ".join(facts) or "0 succeeded"
-
-    def _par_terminal_text(self, state: StepState, event: StepEnd) -> str:
         par = state.par
         succeeded = str(par.succeeded_children)
         if par.total_items is not None:
             succeeded = f"{succeeded}/{par.total_items}"
-        clauses = [f"{succeeded} succeeded"]
+        facts = [f"{succeeded} succeeded"]
         if par.failed_children:
-            clauses.append(f"{par.failed_children} failed")
+            facts.append(f"{par.failed_children} failed")
+        if live and par.active_children:
+            status = "canceling" if par.terminating else "running"
+            facts.append(f"{par.active_children} {status}")
         if par.canceled_children:
-            verb = "was" if par.canceled_children == 1 else "were"
-            clauses.append(f"{par.canceled_children} {verb} canceled")
-        detail = _sentence_list(clauses)
-        action = (
-            "Parallel execution was canceled"
-            if event.status == "canceled"
-            else "Parallel execution stopped"
-        )
-        return f"{action}: {detail}"
+            facts.append(f"{par.canceled_children} canceled")
+        if par.total_items is not None and par.total_items > par.child_count:
+            status = "queued" if live and not par.terminating else "not started"
+            facts.append(f"{par.total_items - par.child_count} {status}")
+        return " · ".join(facts)
+
+    def _par_terminal_text(self, state: StepState, event: StepEnd) -> str:
+        action = "Canceled" if event.status == "canceled" else "Stopped"
+        return f"{action} · {self._par_counts(state, live=False)}"
 
     def _flow_facts(self, state: StepState, event: StepEnd) -> list[str]:
         if not state.metrics.has_activity:
@@ -1445,11 +1429,3 @@ class ProgressProjector:
             rows,
             gap_before=not self._ends_with_blank,
         )
-
-
-def _sentence_list(values: list[str]) -> str:
-    if len(values) < 2:
-        return "".join(values)
-    if len(values) == 2:
-        return " and ".join(values)
-    return f"{', '.join(values[:-1])}, and {values[-1]}"

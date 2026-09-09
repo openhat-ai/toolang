@@ -153,7 +153,9 @@ an inline facts separator.
   a separate red error line on failure.
 - Flow activity and terminal output use `•` and normal text.
 - Model and Flow failures use red; cancellation uses yellow.
-- Parallel lanes place the Step marker after the lane columns.
+- Parallel lanes place the Step marker after the lane columns. The lane number
+  and both `|` separators are dim; the item identity `#N` has normal intensity.
+  These styles remain independent of the activity's dim or error styling.
 - Headers and facts are dim.
 
 Model and Flow markers remain unstyled, independently of their following content.
@@ -257,6 +259,31 @@ synthetic success row. Absence of an error means success. Direct values are
 displayed as values; output shapes such as `1 item` or `6-item list` are not
 displayed.
 
+Headers describe intent, live rows report current activity, and final rows
+report actual results. Authored headers can explain the domain-specific purpose
+without changing the operation's result vocabulary:
+
+| Statement | Live content | Final content |
+| --- | --- | --- |
+| content `let` | No synthetic activity | Actual value |
+| `run`, `scatter`, `gather` | Child Model or Tool activity | Child output, without a duplicate wrapper summary |
+| `seek`, `ask` | No synthetic activity | Currently fail with a missing execution/input bridge error |
+| `map` | Item counts and lane activity | `Mapped 6 items` |
+| `storm` | Item counts and lane activity | `Generated 6 items` |
+| predicate `keep` | Item counts and lane activity | `Kept all 6 items` or `Kept 4 of 6 items` |
+| predicate `drop` | Item counts and lane activity | `Dropped all 6 items` or `Dropped 2 of 6 items; 4 remaining` |
+| positional `keep`, `drop` | No synthetic activity | Actual selection, for example `Kept the first 4 items out of 6` |
+| `sort` | Item counts and lane activity | `Sorted 6 items descending` |
+| `repeat` | Iteration/condition boundaries and child activity | Completed iterations and the termination cause |
+| `settle` | Iteration boundaries and child activity | `Settled all 6 items in 6 iterations` |
+
+For example, `Search the web for each query` ends with `Mapped 6 items`,
+`Keep evidence bundles that answer the research task` with `Kept all 6 items`,
+and `Prioritize the strongest evidence` with `Sorted 6 items descending`.
+`Keep the first 8 items` may also end with `Kept all 6 items` when only six
+items exist. Result summaries do not claim parallel execution: the same
+operations can run with the header suffix `one at a time`.
+
 ## Model and Tool Trace
 
 Outside parallel work, every leaf Step leaves a complete trace. Model text is
@@ -354,7 +381,7 @@ A Flow Step that owns child execution may append one dim footer:
 ```text
 [2] Search the web for each query
 
-• Mapped all 6 items in parallel
+• Mapped 6 items
   31s · 6 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) ≈$0.01        run_root.2
 ```
 
@@ -386,24 +413,35 @@ still separates the completed Flow Step from the next Step or root footer.
 
 ## Parallel Work
 
-Parallel work keeps one aggregate live row and one physical row per active
-lane. Lane rows are truncated rather than wrapped:
+Parallel work keeps one aggregate live row and one physical row per observed
+lane. A lane retains its latest activity until reuse or Step closure. Lane rows
+are truncated rather than wrapped:
 
 ```text
-• running · 4/18 succeeded · 3 active
+• 4/18 succeeded · 3 running · 11 queued
   0 | #4 | • Thinking...
-  1 | #5 | • executing web.search
+  1 | #5 | › Executing search ...
   2 | #6 | • Source summary prepared
 ```
+
+Counts describe items across all lane reuse. `succeeded` counts successful child
+Runs, `running` counts active children, and `queued` counts items that have not
+started. A known total is the denominator; an unknown total is omitted. Before
+any child starts, the summary is `0 succeeded`.
+
+Failure changes active children to `canceling` and queued items to `not started`.
+Finished failures and cancellations are counted separately. Zero-valued states
+are omitted except for the success count. A terminal summary never labels
+unstarted items as canceled.
 
 On success, the live lanes are cleared and one natural-language result remains:
 
 ```text
-• Mapped all 7 items in parallel
-• Brainstormed 7 items in parallel
-• Evaluated 7 items in parallel, kept 5
-• Evaluated 7 items in parallel, dropped 2, leaving 5
-• Scored 10 items in parallel, sorted 10 items descending
+• Mapped 7 items
+• Generated 7 items
+• Kept 5 of 7 items
+• Dropped 2 of 7 items; 5 remaining
+• Sorted 10 items descending
 ```
 
 On failure, successful, active, and canceled lanes are cleared. Each failed
@@ -411,12 +449,18 @@ lane retains its causal error, followed by the parallel Step's distinct
 boundary error:
 
 ```text
-• Parallel execution stopped: 4/18 succeeded, 1 failed, and 2 were canceled
-  1 | #5 | • failed fetch_page
+• Stopped · 4/18 succeeded · 1 failed · 2 canceled · 11 not started
+  1 | #5 | › failed fetch_page
              provider returned status 429
 
 • parallel step stopped because lane 1 (#5) failed
   31s · 7 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) ≈$0.01
+```
+
+Cancellation uses the same counts without inventing a failure:
+
+```text
+• Canceled · 4/18 succeeded · 3 canceled · 11 not started
 ```
 
 ## Repeat and Settle
