@@ -351,11 +351,11 @@ def test_workspace_commands_follow_the_public_order() -> None:
 def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
     group = typer.main.get_command(cli.app)
     expected_help = {
-        "inspect": "Inspect execution subjects",
-        "caps": "List caps",
-        "models": "List models",
-        "providers": "List model providers",
-        "tools": "List tools",
+        "inspect": "Inspect agent run history",
+        "caps": "List available caps",
+        "models": "List available models",
+        "providers": "List available model providers",
+        "tools": "List available tools",
         "catalogs": "List installed model catalogs",
         "adapters": "List installed model adapters",
         "toolsets": "List installed toolsets",

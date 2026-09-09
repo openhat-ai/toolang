@@ -33,7 +33,7 @@ def test_model_catalog_override_is_scoped_to_consuming_commands() -> None:
     assert "adapters" in stdout
     assert "--catalog" not in stdout
     assert "--models" not in stdout
-    assert "List models" in stdout
+    assert "List available models" in stdout
     assert "--model-catalog" not in stdout
 
     for command in (

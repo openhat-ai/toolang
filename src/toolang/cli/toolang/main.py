@@ -314,7 +314,7 @@ _registered_command(
 _registered_command(
     "inspect",
     "toolang.cli.toolang.commands.inspect:inspect_command",
-    help="Inspect execution subjects",
+    help="Inspect agent run history",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
@@ -379,14 +379,14 @@ _registered_command(
 _registered_command(
     "models",
     "toolang.cli.toolang.commands.model_catalog:models_command",
-    help="List models",
+    help="List available models",
     cls=OptionalPrefixAgentModelsCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_command(
     "providers",
     "toolang.cli.toolang.commands.model_catalog:providers_command",
-    help="List model providers",
+    help="List available model providers",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_group(
@@ -399,7 +399,7 @@ _registered_group(
 _registered_command(
     "tools",
     "toolang.cli.toolang.commands.plugin:list_tools",
-    help="List tools",
+    help="List available tools",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_command(
@@ -458,7 +458,7 @@ _registered_group(
 _registered_command(
     "caps",
     "toolang.cli.caps.commands:list_caps",
-    help="List caps",
+    help="List available caps",
     cls=OptionalPrefixAgentListCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
