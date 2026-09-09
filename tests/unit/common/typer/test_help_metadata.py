@@ -154,14 +154,18 @@ class HelpMetadataTest(unittest.TestCase):
             self.assertIn(label, result.stdout)
 
     def test_literal_choices_datetime_formats_and_explicit_metavars_keep_case(self):
+        class ChoiceCommand(OptionalValueCommand):
+            optional_values = {"bare_choice": OptionalValue("safe", show_bare=False)}
+
         date_format = "%Y-%m-%dT%H:%M"
         app = typer.Typer(add_completion=False)
 
-        @app.command()
+        @app.command(cls=ChoiceCommand)
         def show(
             mode: Annotated[Mode, typer.Argument()],
             date: Annotated[datetime, typer.Argument(formats=[date_format])],
             choice: Annotated[Mode, typer.Option()] = Mode.safe,
+            bare_choice: Annotated[Mode, typer.Option()] = Mode.safe,
             hidden_choices: Annotated[
                 Mode, typer.Option(show_choices=False)
             ] = Mode.safe,
@@ -185,6 +189,7 @@ class HelpMetadataTest(unittest.TestCase):
             if isinstance(param, TyperOption)
         }
         self.assertEqual(_value_label(options["--choice"], ctx), "<safe>")
+        self.assertEqual(_value_label(options["--bare-choice"], ctx), "[safe]")
         self.assertEqual(
             _parameter_help(options["--choice"], ctx).plain, "[default: safe]"
         )
@@ -464,6 +469,7 @@ class HelpMetadataTest(unittest.TestCase):
                 _parameter_help(option, ctx).plain,
                 "Set budget  [env: ABC_DEF=] [default: 4] [bare: 8] [1<=x<=10]",
             )
+            self.assertEqual(_value_label(option, ctx), "[INT RANGE]")
             for theme in (PLAIN, UV):
                 for width in (44, 120):
                     with self.subTest(theme=theme, width=width):
@@ -513,7 +519,7 @@ class HelpMetadataTest(unittest.TestCase):
         @app.command(cls=SelectionCommand)
         def show(
             dynamic: Annotated[str, typer.Option(default_factory=default_factory)],
-            selected: str | None = None,
+            selected: Annotated[str | None, typer.Option(metavar="THREAD")] = None,
             private: str | None = None,
             empty: str | None = None,
             literal: str | None = None,
@@ -549,6 +555,14 @@ class HelpMetadataTest(unittest.TestCase):
             ):
                 self.assertEqual(
                     _parameter_help(param, ctx).plain, expected[param.name]
+                )
+                self.assertEqual(
+                    _value_label(param, ctx),
+                    {
+                        "dynamic": "<STR>",
+                        "path": "[PATH]",
+                        "selected": "[THREAD]",
+                    }.get(param.name, "[STR]"),
                 )
         result = invoke(
             app,

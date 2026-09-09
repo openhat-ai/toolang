@@ -180,6 +180,8 @@ class ArgumentUsageTest(unittest.TestCase):
             ("entry=<ENTRY>", True, 1, "entry=<ENTRY>"),
             ("entry=<ENTRY>", False, 1, "[entry=<ENTRY>]"),
             ("<NAME>.json", True, 1, "<NAME>.json"),
+            ("<NAME[INDEX]>", True, 1, "<NAME[INDEX]>"),
+            ("<NAME[INDEX]>", True, -1, "<NAME[INDEX]>..."),
             ("[NAME].json", True, 1, "[NAME].json"),
             ("Part[]", True, 1, "<PART[]>"),
             ("FILES...", True, -1, "<FILES>..."),

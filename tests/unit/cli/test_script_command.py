@@ -622,7 +622,7 @@ def test_script_uses_typer_help_and_authored_docs(
 
     assert result == 0
     assert (
-        "Usage: toolang demo.too demo [OPTIONS] [ARGUMENTS] [-- <INPUT> | -]"
+        "Usage: toolang demo.too demo [OPTIONS] [NAME=VALUE...] [-- <INPUT> | -]"
         in normalized
     )
     assert "Run the documented demo." in stdout
@@ -670,12 +670,12 @@ def _help_panel(output: str, title: str) -> str:
 def _assert_common_options(output: str) -> None:
     panel = _help_panel(output, "Options")
     options = (
+        "--quiet",
+        "--out",
+        "--sandbox",
         "--allow",
         "--limit",
         "--model",
-        "--sandbox",
-        "--out",
-        "--quiet",
         "--dev",
         "--help",
     )
@@ -852,7 +852,7 @@ def test_script_help_groups_signature_categories(
     usage = next(line.strip() for line in output.splitlines() if "Usage:" in line)
     expected = f"Usage: {prog_name} demo.too demo [OPTIONS]"
     if arguments:
-        expected += " [ARGUMENTS]"
+        expected += " [NAME=VALUE...]"
     if input_type:
         expected += " [-- <INPUT> | -]"
     assert usage == expected
@@ -873,10 +873,10 @@ def test_script_help_groups_signature_categories(
     assert "Arguments may appear" not in panel
     if input_type:
         label = "INPUT"
-        assert f"{label} Primary input;" in panel
-        positions.append(panel.index(f"{label} Primary input;"))
+        assert f"{label} Primary input ({input_type});" in panel
+        positions.append(panel.index(f"{label} Primary input ({input_type});"))
         assert f"* {label}" in panel
-        assert "text after --, or stdin with - or a pipe" in panel
+        assert "use - to read stdin, or omit for piped input" in panel
     else:
         assert "stdin" not in output and "TEXT..." not in output
     assert positions == sorted(positions)
@@ -1403,7 +1403,7 @@ flow pipeline:
 
     assert result == 0
     assert f"Usage: {prog_name} {filename} [OPTIONS] <RUNNABLE>" in stdout
-    assert "[ARGUMENTS]" not in stdout
+    assert "[NAME=VALUE...]" not in stdout
     assert f"Run runnables from {filename}" in stdout
     assert stdout.index("Runnables:") < stdout.index("Options:")
     _assert_common_options(stdout)

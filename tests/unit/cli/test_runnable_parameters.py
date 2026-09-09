@@ -41,7 +41,9 @@ def test_runnable_parameters_follow_the_authored_signature(
     ] == expected
     assert all(type(param) is TyperArgument for param in parameters)
     assert [param.help for param in parameters] == [
-        "Primary input" if name == "_" else f"Named input ({type_name.title()})"
+        f"Primary input ({type_name.title()})"
+        if name == "_"
+        else f"Named input ({type_name.title()})"
         for name, _, type_name, _ in expected
     ]
     assert all(not param.show_default for param in parameters)

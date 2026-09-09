@@ -71,6 +71,7 @@ def compact_command(
             hidden=True,
         ),
     ],
+    limit: LimitOptions = None,
     model: Annotated[
         str | None,
         typer.Option(
@@ -79,7 +80,6 @@ def compact_command(
             help="Override compact.model, including model parameters",
         ),
     ] = None,
-    limit: LimitOptions = None,
     model_catalog: ModelCatalogOption = None,
 ) -> None:
     """Compact local history with thread=THREAD [begin=RUN] [end=RUN] [bare=true]."""

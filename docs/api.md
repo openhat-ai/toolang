@@ -206,8 +206,8 @@ Foreground runtime port selection depends on the agent mode:
 
 A script run uses one local `.too` source path directly:
 
-```bash
-toolang <SCRIPT> <RUNNABLE> [OPTIONS] [ARGUMENTS] [-- <INPUT> | -]
+```text
+toolang <SCRIPT> <RUNNABLE> [OPTIONS] [NAME=VALUE...] [-- <INPUT> | -]
 ```
 
 Script progress, inspection output, and chat TUI activity use the shared
@@ -219,32 +219,33 @@ Arguments:
 
 - `SCRIPT` is the local Toolang script or agent file
 - `RUNNABLE` is the uniquely named public agic or flow to run
-- `ARGUMENTS` are `name=value` assignments for named runnable parameters
+- `NAME=VALUE` supplies a named runnable parameter; repeat for other parameters
 - `INPUT` is one logical input, supplied as line text directly or after `--`;
   `-` reads stdin through EOF, and omitted command-line text reads piped or
   redirected stdin
 
-The synopsis omits `[ARGUMENTS]` when there are no named parameters and
+The synopsis omits `[NAME=VALUE...]` when there are no named parameters and
 `[-- <INPUT> | -]` when the signature forbids primary input. The input group is
 optional on the command line because piped or redirected stdin can supply it.
 The **Arguments** panel shows per-name metavars such as `begin=<BEGIN>`, without a
 separate type label, with parameter doc comments or `Named input (Text)` using
-the authored type. INPUT is last, with an authored description or `Primary input`,
-followed by `text after --, or stdin with - or a pipe`. A `*` marks required
+the authored type. INPUT is last, with an authored description or a typed fallback
+such as `Primary input (Part[])`, followed by
+`use - to read stdin, or omit for piped input`. A `*` marks required
 parameters; brackets in Usage do not make required signature inputs optional.
 
-Below usage, runnable descriptions use `Run KIND NAME.` or
-`Run KIND NAME - DESCRIPTION` when a doc comment exists. Flows continue with
-`The flow proceeds as follows:`, a blank line, and an outline aligned with the
-description text, in normal style with blank lines between sibling steps.
-Arguments and **Options** follow.
+Runnable descriptions use `Run KIND NAME.` or `Run KIND NAME - DESCRIPTION`
+when a doc comment exists, followed by Usage, **Arguments**, and **Options**.
+Flows end with an epilog: `The flow proceeds as follows:`, a blank line, and an
+outline in normal style with blank lines between sibling steps.
 Top-level Script help uses `[OPTIONS] <RUNNABLE>` and
 `Run runnables from SCRIPT.` It lists **Runnables** before Options, with
 `agic:NAME` / `flow:NAME` labels and authored descriptions or `Agic NAME.` /
 `Flow NAME.` fallbacks. Both qualified labels and bare names invoke a runnable.
 
-Both levels show the same common options, ordered as `--allow`, `--limit`,
-`--model`, `--sandbox`, `--out` / `-o`, `--quiet` / `-q`, `--dev`, then `--help`.
+Both levels show the same common options, ordered as `-q` / `--quiet`,
+`-o` / `--out`, `--sandbox`, `--allow`, `--limit`, `--model`, `--dev`, then
+`-h` / `--help`.
 Common options may appear before or after RUNNABLE, before input. Explicit
 runnable-level scalar values override root values; repeated `--allow` and
 `--limit` values accumulate in command-line order. Quiet mode is enabled at

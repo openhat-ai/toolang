@@ -26,7 +26,7 @@ Use these short names in documentation, authored prose, and CLI help:
 | Named input | Argument | The declared parameter name |
 | Named inputs | Arguments | The declared parameter names |
 
-CLI synopses use `ARGUMENTS` for named inputs and `INPUT` for primary input. The
+CLI synopses use `NAME=VALUE` for named inputs and `INPUT` for primary input. The
 **Arguments** help panel lists named assignments first and primary input last.
 
 A parameter is a signature declaration; an argument is a value supplied for a
@@ -193,31 +193,30 @@ not prompt calls nested inside another prompt call.
 Runnable help summarizes the available input categories:
 
 ```text
-Usage: too app.too demo [OPTIONS] [ARGUMENTS] [-- <INPUT> | -]
+Usage: too app.too demo [OPTIONS] [NAME=VALUE...] [-- <INPUT> | -]
 ```
 
-`[ARGUMENTS]` appears when the signature declares at least one named parameter.
+`[NAME=VALUE...]` appears when the signature declares at least one named parameter.
 `[-- <INPUT> | -]` appears when the signature requires primary input. This includes
 the implicit `Part[]` input of a runnable without a signature. Empty and named-only
 signatures omit it. It denotes one logical input, which may span multiple shell
 words or come from stdin. The command-line group is optional because piped or
 redirected stdin can supply the input. Required named arguments remain required
-despite the optional `[ARGUMENTS]` group.
+despite the optional `[NAME=VALUE...]` group.
 
-Below usage, `Run KIND NAME.` describes execution. An authored doc comment
-changes this to `Run KIND NAME - DESCRIPTION`. Flows continue with
-`The flow proceeds as follows:`, a blank line, and an outline aligned with the
-description text before the help panels. All outline text uses normal style,
-with one blank line between sibling steps; each step's doc and operation
-description remain adjacent.
+The opening description uses `Run KIND NAME.` or `Run KIND NAME - DESCRIPTION`
+when an authored doc comment exists. Usage and the help panels follow. Flows
+end with an epilog: `The flow proceeds as follows:`, a blank line, and an outline
+in normal style with one blank line between sibling steps; each step's doc and
+operation description remain adjacent.
 
 The **Arguments** panel lists named parameters in signature order with per-name
 metavars such as `begin=<BEGIN>`, without a separate type label. A `*` marks required
 parameters, and parameter doc comments appear in the help column. Missing docs use
-`Named input (Text)` with the authored type for named parameters and `Primary input`
-for INPUT. The INPUT row is last when primary input is accepted, and appends
-`text after --, or stdin with - or a pipe` to its description. Arguments may be supplied
-in any order, interspersed with command options, before input.
+the authored type, for example `Named input (Text)` or `Primary input (Part[])`.
+The INPUT row is last when primary input is accepted, and appends
+`use - to read stdin, or omit for piped input` to its description. Arguments may be
+supplied in any order, interspersed with command options, before input.
 
 | Form | Behavior |
 | --- | --- |
@@ -233,8 +232,9 @@ Options, using `agic:NAME` and `flow:NAME` labels with authored descriptions or
 `Agic NAME.` / `Flow NAME.` fallbacks. Both qualified labels and bare names are
 valid runnable selectors.
 
-Root and runnable help show the same common options, with `--dev` immediately
-before `--help`. Common options may appear on either side of RUNNABLE, before
+Root and runnable help show the same common options, ordered as `-q` / `--quiet`,
+`-o` / `--out`, `--sandbox`, `--allow`, `--limit`, `--model`, `--dev`, then
+`-h` / `--help`. Common options may appear on either side of RUNNABLE, before
 input. Runnable-level scalar values override root values when explicitly set;
 repeated `--allow` and `--limit` values accumulate in command-line order.
 `--quiet` at either level enables quiet mode, and `--help` describes that level.

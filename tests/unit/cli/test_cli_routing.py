@@ -269,9 +269,15 @@ def test_compact_help_lists_the_public_runnable_signature(
     captured = capsys.readouterr()
     assert not captured.err
     output = strip_ansi(captured.out)
-    assert "Compact a thread" in output and "NAME=VALUE" not in output
+    assert "Compact a thread" in output
     assert "previous" not in output
-    assert "Usage: pytest <AGENT> compact [OPTIONS] [ARGUMENTS]" in output.splitlines()
+    assert (
+        "Usage: pytest <AGENT> compact [OPTIONS] [NAME=VALUE...]" in output.splitlines()
+    )
+    options = [
+        output.index(name) for name in ("--limit", "--model", "--catalog", "--help")
+    ]
+    assert options == sorted(options)
     positions = [
         output.index(f"{param.name}=<{param.name.upper()}>")
         for param in runnable.params

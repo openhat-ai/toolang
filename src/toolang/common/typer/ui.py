@@ -414,13 +414,14 @@ def argument_usage(param: TyperArgument) -> str:
     label = param.metavar or param.name or ""
     if param.nargs != 1:
         label = label.removesuffix("...")
-    if _BRACKETED_METAVAR.fullmatch(label):
+    bracketed = _BRACKETED_METAVAR.fullmatch(label) is not None
+    if bracketed:
         label = label[1:-1]
         if param.nargs != 1:
             label = label.removesuffix("...")
     elif not _BRACKETED_METAVAR.search(label):
         label = label.upper()
-    if param.required and not _BRACKETED_METAVAR.search(label):
+    if param.required and (bracketed or not _BRACKETED_METAVAR.search(label)):
         label = f"<{label}>"
     if param.nargs == -1:
         label += "..."
@@ -527,6 +528,14 @@ def _value_label(param: TyperOption, ctx: Context) -> str | None:
     ):
         # Only generated type names are uppercased, not literal choices or formats.
         label = label.upper()
+    is_optional_value = getattr(ctx.command, "is_optional_value", None)
+    if (
+        (param.metavar is None or not _BRACKETED_METAVAR.search(label))
+        and callable(is_optional_value)
+        and is_optional_value(param.name)
+    ):
+        value = label[1:-1] if _BRACKETED_METAVAR.fullmatch(label) else label
+        return f"[{value}]"
     value = label.removesuffix("...")
     # Bracketed values may have literal prefixes or suffixes, as in <NAME>.json.
     if _BRACKETED_METAVAR.search(value):

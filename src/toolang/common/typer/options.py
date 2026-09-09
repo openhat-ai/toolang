@@ -110,6 +110,10 @@ class _OptionalValueSupport(Command):
 
             self._optional_values[name] = definition
 
+    def is_optional_value(self, name: str) -> bool:
+        """Whether this option accepts a bare invocation, regardless of help visibility."""
+        return name in self._optional_values
+
     def get_bare_help(self, name: str) -> str | None:
         """Read the declared display value without resolving the parser's input."""
         definition = self._optional_values.get(name)

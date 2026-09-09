@@ -304,14 +304,19 @@ def _runnable_command(
 ) -> TyperCommand:
     def callback(
         ctx: typer.Context,
-        allow: AllowOptions = None,
-        limit: LimitOptions = None,
-        model: Annotated[
+        quiet: Annotated[
+            bool,
+            typer.Option(
+                "--quiet", "-q", help="Suppress prepare and execution progress"
+            ),
+        ] = False,
+        save: Annotated[
             str | None,
             typer.Option(
-                "--model",
-                metavar="MODEL_SPEC",
-                help="Set the model identity and parameters for this run",
+                "--out",
+                "-o",
+                metavar="PATH",
+                help="Save the Run result to PATH, or use - for stdout",
             ),
         ] = None,
         sandbox: Annotated[
@@ -322,21 +327,16 @@ def _runnable_command(
                 help="Execute this run in the selected sandbox",
             ),
         ] = None,
-        save: Annotated[
+        allow: AllowOptions = None,
+        limit: LimitOptions = None,
+        model: Annotated[
             str | None,
             typer.Option(
-                "--out",
-                "-o",
-                metavar="PATH",
-                help="Save the Run result to PATH, or use - for stdout",
+                "--model",
+                metavar="MODEL_SPEC",
+                help="Set the model identity and parameters for this run",
             ),
         ] = None,
-        quiet: Annotated[
-            bool,
-            typer.Option(
-                "--quiet", "-q", help="Suppress prepare and execution progress"
-            ),
-        ] = False,
         dev: Annotated[
             Path | None,
             typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
@@ -397,7 +397,7 @@ def _runnable_command(
         command._flow = runnable if isinstance(runnable, FlowDecl) else None
         arguments = runnable_parameters(
             runnable,
-            input_help="text after --, or stdin with - or a pipe",
+            input_help="use - to read stdin, or omit for piped input",
             help_only=True,
         )
         command.params[-1:-1] = arguments
