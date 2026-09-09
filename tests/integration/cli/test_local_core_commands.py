@@ -2554,9 +2554,14 @@ def test_tools_uses_tool_only_snapshot(tmp_path: Path, monkeypatch) -> None:
     result = _invoke(root, "tools")
 
     assert result.exit_code == 0
-    assert "shell" in result.stdout
-    assert "echo" in result.stdout
+    assert "shell/echo" in result.stdout
+    header = next(line for line in result.stdout.splitlines() if "DESCRIPTION" in line)
+    assert header.split() == ["TOOL", "DESCRIPTION", "SOURCE"]
     assert "Echo text." in result.stdout
+
+    selected = _invoke(root, "tools", "--query", '"shell/echo"')
+    assert selected.exit_code == 0
+    assert selected.stdout == result.stdout
 
 
 @pytest.mark.parametrize(

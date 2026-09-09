@@ -47,11 +47,9 @@ TOOL_SCHEMA = CollectionSchema.from_type(
     ),
     exclude=("model_name", "record"),
     columns=(
-        ColumnSpec("TOOLSET", ("toolset",), "identity-component"),
-        ColumnSpec("TOOL", ("name",), "identity-component"),
-        ColumnSpec("PLUGIN", ("plugin",)),
-        ColumnSpec("SOURCE", ("source",)),
+        ColumnSpec("TOOL", ("toolset", "name"), "identity"),
         ColumnSpec("DESCRIPTION", ("description",), "truncate"),
+        ColumnSpec("SOURCE", ("source",)),
     ),
 )
 TOOL_DEFINITION = CollectionDefinition(TOOL_SCHEMA)

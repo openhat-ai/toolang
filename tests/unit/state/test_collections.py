@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
+
 import toolang.state.collections as collections
 from toolang.state.collections import (
     cap_kind_definition,
@@ -133,21 +137,51 @@ def test_combined_caps_without_a_query_preserves_aggregate_order() -> None:
     ]
 
 
-def test_caps_is_not_a_schema_and_existing_tables_stay_unchanged() -> None:
+@pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
+@pytest.mark.parametrize("description", [None, "Review changes", "x" * 140])
+def test_cap_tables_share_columns_and_copyable_identities(
+    kind: EntryKind, description: str | None
+) -> None:
     views = query_cap_views(
-        (_cap("skill", "reviewer"),),
+        (replace(_cap(kind, "reviewer"), meta={"description": description}),),
         agent_name="default",
         queries=None,
     )
 
     assert not hasattr(collections, "CAP_SCHEMA")
-    assert cap_kind_definition("skill").schema.name == "skills"
-    assert cap_kind_definition("skill").schema.identity.bound == ("skill",)
-    assert cap_table(views) == (
-        ("KIND", "CAP", "ORIGIN", "FORM", "SCOPE", "SOURCE"),
-        (("skill", "reviewer", "local", "authored", "root", "skills/reviewer"),),
+    definition = cap_kind_definition(kind)
+    assert definition.schema.name == f"{kind}s"
+    assert definition.schema.identity.bound == (kind,)
+    expected_description = (
+        "x" * 117 + "..." if description == "x" * 140 else description or "-"
     )
-    assert cap_table(views, kind="skill") == (
-        ("SKILL", "ORIGIN", "FORM", "SCOPE", "SOURCE"),
-        (("reviewer", "local", "authored", "root", "skills/reviewer"),),
+    expected = (
+        ("CAP", "DESCRIPTION", "SCOPE", "FORM", "SOURCE"),
+        (
+            (
+                f"{kind}/reviewer",
+                expected_description,
+                "root",
+                "authored",
+                f"{kind}s/reviewer",
+            ),
+        ),
     )
+    assert cap_table(views) == expected
+    assert cap_table(views, kind=kind) == expected
+    assert definition.dataset(views).query(f'"{expected[1][0][0]}"') == views
+
+
+def test_combined_cap_table_preserves_interleaved_kind_order() -> None:
+    entries = (
+        _cap("prompt", "first"),
+        _cap("skill", "reviewer"),
+        _cap("prompt", "last"),
+    )
+    views = query_cap_views(entries, agent_name="default", queries=None)
+    assert [row[0] for row in cap_table(views)[1]] == [
+        "prompt/first",
+        "skill/reviewer",
+        "prompt/last",
+    ]
+    assert cap_table(()) == (("CAP", "DESCRIPTION", "SCOPE", "FORM", "SOURCE"), ())
