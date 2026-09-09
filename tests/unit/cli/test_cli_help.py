@@ -160,6 +160,7 @@ def test_hidden_commands_keep_theme_and_root_invocation_hint(capsys, monkeypatch
     assert "Usage: too hidden [OPTIONS]" in plain.splitlines()
     assert "Run 'too COMMAND --help' for details." in plain
     assert "QUERY = MATCH" not in plain
+    assert "serve Run an agent server." in " ".join(plain.split())
 
 
 @pytest.mark.parametrize(
@@ -197,10 +198,16 @@ def test_virtual_agent_usage_keeps_position_and_normal_weight(
         ).bold
 
 
-@pytest.mark.parametrize("command", ["run", "serve"])
+@pytest.mark.parametrize(
+    ("command", "description", "argument_help"),
+    [
+        ("run", "Run an agent in the foreground.", "Agent name, reference, or URL."),
+        ("serve", "Run an agent server.", "Agent name."),
+    ],
+)
 @pytest.mark.parametrize("args", [[], ["--help"], ["-h"], ["--unknown"]])
 def test_real_and_virtual_agent_arguments_share_usage(
-    command, args, tmp_path, capsys, monkeypatch
+    command, description, argument_help, args, tmp_path, capsys, monkeypatch
 ):
     monkeypatch.setattr("sys.argv", ["too"])
     status = 2 if "--unknown" in args else 0
@@ -208,6 +215,9 @@ def test_real_and_virtual_agent_arguments_share_usage(
     captured = capsys.readouterr()
     output = strip_ansi(captured.err if status else captured.out)
     assert f"Usage: too {command} [OPTIONS] AGENT" in output.splitlines()
+    if status == 0:
+        assert output.startswith(description + "\n")
+        assert f"* AGENT TEXT {argument_help}" in " ".join(output.split())
 
 
 @pytest.mark.parametrize("args", [["--help"], ["--thread", "--help"], ["-t", "--help"]])

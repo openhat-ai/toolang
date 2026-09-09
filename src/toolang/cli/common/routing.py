@@ -257,7 +257,7 @@ class RuntimeAgentCommand(CliCommand):
 
 
 class RunAgentCommand(RuntimeAgentCommand):
-    argument_help = "Existing local agent name, remote agent ref, or URL."
+    argument_help = "Agent name, reference, or URL."
 
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
         pieces = [self.options_metavar] if self.options_metavar else []

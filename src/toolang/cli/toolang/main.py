@@ -486,7 +486,7 @@ _registered_command(
 _registered_command(
     "serve",
     "toolang.cli.toolang.commands.runtime:serve",
-    help="Run an AgentServer process.",
+    help="Run an agent server.",
     hidden=True,
     no_args_is_help=True,
 )

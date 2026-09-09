@@ -68,10 +68,9 @@ def run(
     ctx: typer.Context,
     agent: str | None = typer.Argument(
         None,
-        help="Existing local agent name, remote agent ref, or URL.",
+        help="Agent name, reference, or URL.",
         hidden=True,
     ),
-    model_catalog: ModelCatalogOption = None,
     sandbox: Annotated[
         str | None,
         typer.Option(
@@ -84,6 +83,7 @@ def run(
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
     compact_model: CompactModelOption = None,
+    model_catalog: ModelCatalogOption = None,
     host: Annotated[
         str,
         typer.Option("--host", metavar="HOST", help="Bind the agent API to this host."),
@@ -198,7 +198,6 @@ def start(
     agent: str | None = typer.Argument(
         None, help="Existing local agent name.", hidden=True
     ),
-    model_catalog: ModelCatalogOption = None,
     sandbox: Annotated[
         str | None,
         typer.Option(
@@ -211,6 +210,7 @@ def start(
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
     compact_model: CompactModelOption = None,
+    model_catalog: ModelCatalogOption = None,
     host: Annotated[
         str,
         typer.Option("--host", metavar="HOST", help="Bind the agent API to this host."),
@@ -336,6 +336,10 @@ def serve(
     agent: Annotated[
         str, typer.Argument(metavar="AGENT", click_type=TextType(), help="Agent name.")
     ],
+    allows: AllowOptions = None,
+    limits: LimitOptions = None,
+    defaults: DefaultOptions = None,
+    compact_model: CompactModelOption = None,
     model_catalog: ModelCatalogOption = None,
     host: Annotated[
         str, typer.Option("--host", metavar="HOST", help="API bind host.")
@@ -349,10 +353,6 @@ def serve(
     port: Annotated[
         int, typer.Option("--port", metavar="PORT", help="API bind port.")
     ] = 7001,
-    allows: AllowOptions = None,
-    limits: LimitOptions = None,
-    defaults: DefaultOptions = None,
-    compact_model: CompactModelOption = None,
     log_spec: Annotated[
         str | None,
         typer.Option("--log", metavar="LOG_SPEC", help="Python logging specification."),
