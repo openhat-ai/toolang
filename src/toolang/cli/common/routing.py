@@ -213,9 +213,10 @@ class RequiredPrefixAgentCommand(PrefixAgentCommand):
         state = ctx.obj
         if not isinstance(state, CliContext):
             raise TypeError("missing CLI context")
-        if not state.agent and not any(name in args for name in ctx.help_option_names):
+        remaining = PrefixAgentCommand.parse_args(self, ctx, args)
+        if not state.agent:
             show_help(ctx)
-        return PrefixAgentCommand.parse_args(self, ctx, args)
+        return remaining
 
 
 class RuntimeAgentCommand(CliCommand):

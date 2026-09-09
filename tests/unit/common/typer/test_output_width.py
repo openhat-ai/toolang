@@ -89,6 +89,23 @@ class OutputWidthTest(unittest.TestCase):
         self.assertEqual(console.width, 180)
         self.assertEqual(error_console.width, 160)
 
+    def test_context_width_settings_apply_to_help_and_error_usage(self):
+        app = typer.Typer(add_completion=False, help=DESCRIPTION)
+
+        @app.command(help=DESCRIPTION)
+        def show(value: str = ""):
+            pass
+
+        for settings in ({"terminal_width": 40}, {"max_content_width": 40}):
+            for args in (["--help"], ["--unknown-option-with-a-long-name"]):
+                with self.subTest(settings=settings, args=args):
+                    result = invoke(app, args, ui=dict(theme=PLAIN), **settings)
+                    output = result.stderr if result.exit_code else result.stdout
+                    self.assertIn("Usage:", output)
+                    self.assertTrue(
+                        all(cell_len(line) <= 40 for line in output.splitlines())
+                    )
+
     def test_command_summaries_keep_first_paragraph_and_explicit_summaries(
         self,
     ):

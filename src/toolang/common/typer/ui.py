@@ -22,7 +22,7 @@ from typer._click.exceptions import (
 from typer._click.formatting import HelpFormatter as TyperHelpFormatter
 from typer._click.types import FloatRange, IntRange
 from typer._types import TyperChoice
-from typer.core import TyperArgument, TyperGroup, TyperOption
+from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 from typer.main import get_command
 
 _PREPARE = f"{__name__}.prepare"
@@ -69,7 +69,11 @@ def run(
     debug: bool = False,
     **context_settings: Any,
 ) -> int:
-    """Run a Typer app with uv formatting and the UV theme by default."""
+    """Run an existing Typer app with uv help and the UV theme by default.
+
+    Command format_help hooks and HelpFormatter subclasses are preserved.
+    Consoles control help and errors; command output remains with the application.
+    """
     if not isinstance(theme, Theme):
         raise TypeError("theme must be a Rich Theme")
     console = console if console is not None else _default_console()
@@ -86,7 +90,7 @@ def run(
 
     def show_error(message: str, ctx: Context | None = None) -> None:
         with error_console.use_theme(theme):
-            formatter = HelpFormatter(console=error_console)
+            formatter = _make_formatter(ctx, error_console)
             formatter.write_error(message, ctx)
         error_console.print(Text.from_ansi(formatter.getvalue()), soft_wrap=True)
 
@@ -133,9 +137,27 @@ def run(
 def _format_help(ctx: Context, *, theme: Theme, console: Console | None = None) -> str:
     console = console if console is not None else _default_console()
     with console.use_theme(theme):
-        formatter = HelpFormatter(console=console)
-        formatter.write_help(ctx)
-        return formatter.getvalue()
+        formatter = _make_formatter(ctx, console)
+        if type(ctx.command).format_help in (
+            Command.format_help,
+            TyperCommand.format_help,
+            TyperGroup.format_help,
+        ):
+            formatter.write_help(ctx)
+        else:
+            ctx.command.format_help(ctx, formatter)
+        return formatter.getvalue().rstrip("\n")
+
+
+def _make_formatter(ctx: Context | None, console: Console) -> HelpFormatter:
+    formatter_class = HelpFormatter
+    if ctx is not None and issubclass(ctx.formatter_class, HelpFormatter):
+        formatter_class = ctx.formatter_class
+    return formatter_class(
+        width=ctx.terminal_width if ctx is not None else None,
+        max_width=ctx.max_content_width if ctx is not None else None,
+        console=console,
+    )
 
 
 def inherit_ui(command: Command, parent: Context | None) -> Command:
@@ -162,8 +184,10 @@ class HelpFormatter(TyperHelpFormatter):
             raise ValueError("Layout spacing must be nonnegative.")
         if console is None:
             console = _default_console()
-            console.width = min(width or console.width, max_width or 120)
-        super().__init__(indent_increment=indent_increment, width=console.width)
+        width = width or console.width
+        super().__init__(
+            indent_increment=indent_increment, width=min(width, max_width or width)
+        )
         self.column_gap = column_gap
         self.description_gap = description_gap
         self.console = console
@@ -510,7 +534,7 @@ def _prepare(
     """Adapt help and parsing on this run's command tree, preserving native classes.
 
     Typer's Rich path bypasses HelpFormatter and has no per-app renderer hook.
-    The help callback prints once; format_help keeps the string-returning API.
+    The help callback prints once; get_help keeps the string-returning API.
     """
     native_parse = command.parse_args
     native_help_option = command.get_help_option
@@ -519,9 +543,6 @@ def _prepare(
         if value and not ctx.resilient_parsing:
             show_help(ctx)
             ctx.exit()
-
-    def format_help(ctx: Context, formatter: TyperHelpFormatter) -> None:
-        formatter.write(render_help(ctx))
 
     def get_help_option(ctx: Context) -> TyperOption | None:
         option = native_help_option(ctx)
@@ -541,7 +562,7 @@ def _prepare(
         with augment_usage_errors(ctx):
             return native_parse(ctx, args)
 
-    command.format_help: Callable[[Context, TyperHelpFormatter], None] = format_help
+    command.get_help: Callable[[Context], str] = render_help
     command.get_help_option: Callable[[Context], TyperOption | None] = get_help_option
     command.parse_args: Callable[[Context, list[str]], list[str]] = parse_args
     if isinstance(command, TyperGroup):

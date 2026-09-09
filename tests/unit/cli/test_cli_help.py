@@ -31,6 +31,8 @@ from toolang.common.typer.ui import PLAIN, UV, run
         (["prompt", "--help"], 0),
         (["prompt", "new", "--help"], 0),
         (["prompt", "new", "--template", "default"], 0),
+        (["run", "--port", "1234"], 0),
+        (["workspace", "list"], 0),
         (["prompt", "new", "--unknown"], 2),
     ],
 )
@@ -136,6 +138,19 @@ def test_unknown_option_during_command_resolution_keeps_usage(capsys, monkeypatc
     assert "Try '" not in output
 
 
+@pytest.mark.parametrize("command", ["retry", "inspect", "chat"])
+def test_unknown_option_is_not_hidden_by_a_missing_agent(
+    command, tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr("sys.argv", ["too"])
+    assert too_main(["--root", str(tmp_path), command, "--unknown"]) == 2
+    output = capsys.readouterr()
+    assert not output.out
+    assert strip_ansi(output.err).startswith(
+        f"Error: No such option: --unknown\n\nUsage: too AGENT {command} [OPTIONS]"
+    )
+
+
 @pytest.mark.parametrize(
     ("main", "arguments"),
     [
@@ -185,6 +200,29 @@ def test_hidden_commands_keep_theme_and_root_invocation_hint(capsys, monkeypatch
     assert "Run 'too COMMAND --help' for details." in plain
     assert "QUERY = MATCH" not in plain
     assert "serve Run an agent server" in " ".join(plain.split())
+
+
+@pytest.mark.parametrize("theme", [PLAIN, UV])
+@pytest.mark.parametrize("args", [["hidden"], ["hidden", "--help"]])
+def test_hidden_directory_uses_selected_help_output(theme, args, capsys):
+    stdout = StringIO()
+    console = Console(
+        file=stdout,
+        width=44,
+        force_terminal=True,
+        color_system="standard",
+        _environ={},
+    )
+    assert run(app, args=args, prog_name="too", theme=theme, console=console) == 0
+    captured = capsys.readouterr()
+    assert not captured.out and not captured.err
+    output = Text.from_ansi(stdout.getvalue())
+    assert "Hidden Commands:" in output.plain
+    assert "Usage: too hidden [OPTIONS]" in output.plain
+    assert all(len(line) <= 44 for line in output.plain.splitlines())
+    style = output.get_style_at_offset(console, output.plain.index("Hidden Commands:"))
+    assert style.bold
+    assert (style.color is not None) is (theme is UV)
 
 
 @pytest.mark.parametrize(

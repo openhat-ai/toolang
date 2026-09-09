@@ -90,6 +90,42 @@ class TyperUITest(unittest.TestCase):
             output = self.stderr if status else self.stdout
             self.assertIn("Usage: demo [SCOPE] show [OPTIONS]", output.getvalue())
 
+    def test_native_help_hook_and_formatter_subclass_are_preserved(self):
+        class CustomFormatter(HelpFormatter):
+            def write_description(self, ctx):
+                self.write_text("Custom description.")
+                self.write_paragraph()
+
+        class CustomContext(typer.Context):
+            formatter_class = CustomFormatter
+
+        class CustomCommand(TyperCommand):
+            context_class = CustomContext
+
+            def format_help(self, ctx, formatter):
+                formatter.write_help(ctx)
+                formatter.write_paragraph()
+                formatter.write_text("Custom footer.")
+
+        app = typer.Typer(add_completion=False)
+        returned = []
+
+        @app.command(cls=CustomCommand)
+        def show(ctx: typer.Context, name: str):
+            returned.append(ctx.get_help())
+
+        for args, status in ((["--help"], 0), ([], 2)):
+            self.reset_output()
+            self.assertEqual(self.run_app(app, args), status)
+            output = (self.stderr if status else self.stdout).getvalue()
+            self.assertTrue(output.startswith("Custom description.\n\nUsage:"))
+            self.assertTrue(output.endswith("Custom footer.\n"))
+        self.reset_output()
+        self.assertEqual(self.run_app(app, ["example"]), 0)
+        self.assertTrue(returned[0].startswith("Custom description."))
+        self.assertTrue(returned[0].endswith("Custom footer."))
+        self.assertEqual(self.stdout.getvalue(), "")
+
     def test_empty_group_and_explicit_help_are_identical(self):
         app = sample_app()
         self.assertEqual(self.run_app(app, []), 0)

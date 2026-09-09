@@ -10,7 +10,7 @@ import sys
 from typing import Annotated, Any
 
 import typer
-from typer._click import Context
+from typer._click import Context, HelpFormatter as NativeHelpFormatter
 from typer._click.exceptions import ClickException
 from typer.core import TyperGroup
 
@@ -22,7 +22,7 @@ from ...catalog.agent import LocalAgents
 from ...common.layout import AgentLayout
 from ...common import version as _version
 from ..common.context import CliContext, resolve_root
-from ..common.help import CliGroup
+from ..common.help import CliCommand, CliGroup, show_help
 from ..common.lazy import LazyCommand, lazy_typer_command, lazy_typer_group
 from ..common.output import echo_error
 from ..common.routing import (
@@ -191,28 +191,31 @@ def callback(
     )
 
 
+class _HiddenCommandsCommand(CliCommand):
+    def format_help(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
+        group = typer.main.get_command(app)
+        assert isinstance(group, TyperGroup)
+        commands = {}
+        for name in _HIDDEN_COMMAND_ORDER:
+            if name in group.commands:
+                command = group.commands[name]
+                assert isinstance(command, LazyCommand)
+                command.hidden = False
+                command.rich_help_panel = "Hidden Commands"
+                commands[name] = command
+        group.commands = commands
+        assert isinstance(formatter, HelpFormatter)
+        formatter.write_description(ctx)
+        formatter.write_usage(ctx)
+        formatter.write_commands(Context(group))
+        formatter.write_paragraph()
+        formatter.write_text(
+            f"Run '{ctx.find_root().info_name} COMMAND --help' for details."
+        )
+
+
 def hidden_commands(ctx: typer.Context) -> None:
-    group = typer.main.get_command(app)
-    assert isinstance(group, TyperGroup)
-    commands = {}
-    for name in _HIDDEN_COMMAND_ORDER:
-        if name in group.commands:
-            command = group.commands[name]
-            assert isinstance(command, LazyCommand)
-            command.hidden = False
-            command.rich_help_panel = "Hidden Commands"
-            commands[name] = command
-    group.commands = commands
-    formatter = ctx.make_formatter()
-    assert isinstance(formatter, HelpFormatter)
-    formatter.write_description(ctx)
-    formatter.write_usage(ctx)
-    formatter.write_commands(Context(group))
-    formatter.write_paragraph()
-    formatter.write_text(
-        f"Run '{ctx.find_root().info_name} COMMAND --help' for details."
-    )
-    typer.echo(formatter.getvalue(), nl=False, color=ctx.color)
+    show_help(ctx)
 
 
 _registered_command(
@@ -220,6 +223,7 @@ _registered_command(
     "toolang.cli.toolang.main:hidden_commands",
     help="Show commands hidden from the main help",
     hidden=True,
+    cls=_HiddenCommandsCommand,
 )
 
 
