@@ -139,7 +139,10 @@ class _ScriptHelpFormatter(UIHelpFormatter):
         if not isinstance(command, _RunnableCommand):
             return super().write_description(ctx)
         if command.help:
-            self.write_text(Text.from_markup(command.help))
+            description = Text.from_markup(command.help)
+            if not description.plain.endswith("."):
+                description.append(".")
+            self.write_text(description)
             self.write_paragraph()
         if command._flow is not None:
             self.write_text("The flow proceeds as follows:")

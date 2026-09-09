@@ -240,10 +240,11 @@ def test_real_and_virtual_agent_arguments_share_usage(
     output = strip_ansi(captured.err if status else captured.out)
     assert f"Usage: too {command} [OPTIONS] AGENT" in output.splitlines()
     if status == 0:
-        assert output.startswith(description + "\n")
+        assert output.startswith(description + ".\n")
         assert f"* AGENT TEXT {argument_help}" in [
             " ".join(line.split()) for line in output.splitlines()
         ]
+        assert output.endswith("Show this message and exit\n")
 
 
 @pytest.mark.parametrize("args", [["--help"], ["--thread", "--help"], ["-t", "--help"]])

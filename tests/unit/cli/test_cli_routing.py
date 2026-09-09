@@ -603,7 +603,7 @@ def test_cli_bare_resident_target_shows_its_command_help(
     )
 
     assert result == 0
-    assert stdout.startswith("Run and manage agent alice\n")
+    assert stdout.startswith("Run and manage agent alice.\n")
     assert "steer" in stdout
     assert "models" in stdout
     assert tuple(stdout.index(panel) for panel in panels) == tuple(
@@ -623,7 +623,7 @@ def test_cli_explicit_resident_target_preserves_selector_but_labels_the_agent(
 
     assert result == 0
     assert "Usage: pytest agent:alice" in stdout
-    assert stdout.startswith("Run and manage agent alice\n")
+    assert stdout.startswith("Run and manage agent alice.\n")
     assert "agent agent:alice" not in stdout
 
 
@@ -641,7 +641,7 @@ def test_cli_bare_visiting_target_shows_help_without_resolving_it(
     output = capsys.readouterr()
 
     assert result == 0
-    assert strip_ansi(output.out).startswith("Run and manage agent briceyan/dev\n")
+    assert strip_ansi(output.out).startswith("Run and manage agent briceyan/dev.\n")
     assert "chat" in output.out
     assert "No such command" not in output.err
 

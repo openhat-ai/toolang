@@ -197,6 +197,8 @@ class HelpFormatter(TyperHelpFormatter):
 
     def write_description(self, ctx: Context) -> None:
         if description := _command_description(ctx.command, short=False):
+            if not description.endswith("."):
+                description += "."
             self.write_text(description)
             self.write_paragraph()
 
@@ -417,7 +419,10 @@ def _usage(ctx: Context) -> Text:
 
 
 def _parameter_help(param: TyperArgument | TyperOption, ctx: Context) -> Text:
-    text = Text(param.help or "", justify="left", overflow="fold")
+    description = param.help or ""
+    if isinstance(param, TyperOption) and "--help" in param.opts:
+        description = description.rstrip().removesuffix(".")
+    text = Text(description, justify="left", overflow="fold")
     fields = []
     if param.show_envvar:
         declared = param.envvar

@@ -729,6 +729,7 @@ def test_script_without_public_runnables_still_shows_common_options(
     [
         ("", None),
         ("## Documented runnable.\n", "Documented runnable."),
+        ("## Use [bold]care[/bold]\n", "Use care."),
         (
             "## Use [bold]care[/bold].\n## Keep context.\n",
             "Use care. Keep context.",
@@ -759,7 +760,8 @@ def test_script_runnable_description_uses_docs_or_kind(
         == 0
     )
     output = strip_ansi(capsys.readouterr().out)
-    summary = f"Run {kind} demo - {description}" if description else f"Run {kind} demo"
+    summary = f"Run {kind} demo - {description}" if description else f"Run {kind} demo."
+    assert " ".join(output.split("\n\n", 1)[0].split()) == summary
     assert " ".join(output.split()).count(summary) == 1
     assert (
         output.index(f"Run {kind} demo")

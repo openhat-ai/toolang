@@ -1,4 +1,4 @@
-"""Help derives from parameter metadata and never rewrites authored text."""
+"""Help formats descriptions and metadata without changing declarations."""
 
 import unittest
 from datetime import datetime
@@ -26,6 +26,48 @@ class Mode(str, Enum):
 
 
 class HelpMetadataTest(unittest.TestCase):
+    def test_top_description_gets_a_period_without_changing_command_summaries(self):
+        for description, expected in (
+            ("Run the task", "Run the task."),
+            ("Run the task.", "Run the task."),
+            ("More...", "More..."),
+        ):
+            with self.subTest(description=description):
+                child = TyperCommand("run", help=description)
+                parent = TyperGroup(name="demo", commands={"run": child})
+                ctx = typer.Context(child, info_name="run")
+                output = _format_help(ctx, theme=PLAIN)
+                self.assertTrue(output.startswith(expected + "\n\nUsage:"))
+                listing = _format_help(typer.Context(parent), theme=PLAIN)
+                self.assertIn(
+                    f"run {description}",
+                    [" ".join(line.split()) for line in listing.splitlines()],
+                )
+                self.assertEqual(child.help, description)
+
+    def test_only_help_option_loses_its_final_period_before_metadata(self):
+        for names, expected in (
+            (["--help", "-h"], "First sentence. Last sentence"),
+            (["--value"], "First sentence. Last sentence."),
+            (["--help-file"], "First sentence. Last sentence."),
+        ):
+            with self.subTest(names=names):
+                description = "First sentence. Last sentence."
+                option = TyperOption(
+                    param_decls=names,
+                    help=description,
+                    default="value.",
+                    show_default=True,
+                )
+                argument = TyperArgument(param_decls=["name"], help=description)
+                ctx = typer.Context(TyperCommand("demo", params=[argument, option]))
+                self.assertEqual(
+                    _parameter_help(option, ctx).plain,
+                    expected + "  [default: value.]",
+                )
+                self.assertEqual(_parameter_help(argument, ctx).plain, description)
+                self.assertEqual(option.help, description)
+
     def test_command_help_keeps_full_description_and_deprecation_notice(self):
         for deprecated in (True, "Use replacement."):
             command = TyperCommand(
