@@ -5,7 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from rich.text import Text
-from typer._click import Context, Parameter, HelpFormatter as NativeHelpFormatter
+from typer._click import (
+    Command,
+    Context,
+    Parameter,
+    HelpFormatter as NativeHelpFormatter,
+)
+from typer._click.exceptions import ClickException, UsageError
 from typer.core import TyperArgument, TyperCommand, TyperGroup
 
 from toolang.common.typer.ui import HelpFormatter
@@ -82,6 +88,25 @@ class CliGroup(TyperGroup):
             ),
             **kwargs,
         )
+
+    def resolve_command(
+        self, ctx: Context, args: list[str]
+    ) -> tuple[str | None, Command | None, list[str]]:
+        try:
+            return super().resolve_command(ctx, args)
+        except UsageError as exc:
+            # Resolution uses plain UsageError; parameter errors have their own types.
+            if type(exc) is not UsageError:
+                raise
+            message = exc.format_message()
+            if help_option := self.get_help_option(ctx):
+                option = (
+                    "--help" if "--help" in help_option.opts else help_option.opts[0]
+                )
+                message += f"\n\nTry '{ctx.command_path} {option}' for help."
+            error = ClickException(message)
+            error.exit_code = exc.exit_code
+            raise error from exc
 
     def format_help(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
         _format_help(ctx, formatter)

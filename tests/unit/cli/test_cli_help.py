@@ -22,6 +22,42 @@ from toolang.cli.toolang.main import app, main as too_main
 
 
 @pytest.mark.parametrize(
+    ("arguments", "command", "message"),
+    [
+        (["help"], "too", "No such command 'help'."),
+        (["prompt", "missing"], "too prompt", "No such command 'missing'."),
+        (
+            ["a", "workspace", "missing"],
+            "too workspace",
+            "No such command 'missing'.",
+        ),
+        (["stat"], "too", "Did you mean 'start'?"),
+    ],
+)
+def test_unknown_command_points_to_group_help(
+    arguments, command, message, tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr("sys.argv", ["too"])
+    assert too_main(["--root", str(tmp_path), *arguments]) == 2
+    captured = capsys.readouterr()
+    output = strip_ansi(captured.err)
+    assert not captured.out
+    assert output.startswith("Error: No such command")
+    assert message in output
+    assert f"\n\nTry '{command} --help' for help.\n" in output
+    assert "Usage:" not in output
+
+
+def test_unknown_option_during_command_resolution_keeps_usage(capsys, monkeypatch):
+    monkeypatch.setattr("sys.argv", ["too"])
+    assert too_main(["--", "--missing"]) == 2
+    output = strip_ansi(capsys.readouterr().err)
+    assert output.startswith("Error: No such option: --missing")
+    assert "\n\nUsage: too [OPTIONS] COMMAND [ARGS]\n" in output
+    assert "Try '" not in output
+
+
+@pytest.mark.parametrize(
     ("main", "arguments"),
     [
         (too_main, []),

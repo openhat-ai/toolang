@@ -1447,7 +1447,7 @@ def test_script_long_runnable_names_keep_descriptions_visible(
     assert all(cell_len(line) <= width for line in output.splitlines())
 
 
-def test_script_formats_an_unknown_runnable_with_error_before_usage(
+def test_script_formats_an_unknown_runnable_with_a_help_hint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
@@ -1468,7 +1468,8 @@ def test_script_formats_an_unknown_runnable_with_error_before_usage(
     assert result == 2
     assert lines[0].startswith("Error: No such command")
     assert lines[1] == ""
-    assert lines[2].startswith("Usage: toolang ")
+    assert lines[2] == f"Try 'toolang {source.name} --help' for help."
+    assert "Usage:" not in stderr
     assert "╭" not in stderr
     assert lines[-1].strip()
     assert "No such command 'missing'." in stderr
