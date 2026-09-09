@@ -211,7 +211,7 @@ def test_cli_no_args_still_shows_root_help(
     stdout = strip_ansi(output.out)
 
     assert result == 0
-    assert "Usage: pytest [OPTIONS] COMMAND [ARGS]..." in stdout
+    assert "Usage: pytest [OPTIONS] COMMAND [ARGS]" in stdout.splitlines()
     assert "Run and manage Toolang agents." in stdout
     assert output.err == ""
 

@@ -180,7 +180,7 @@ class OptionalPrefixAgentGroup(CliGroup):
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
         prefix_path = _prefix_usage_path(ctx, self.prefix_agent_metavar)
         pieces = [self.options_metavar] if self.options_metavar else []
-        pieces.append(self.subcommand_metavar or "[COMMAND] [ARGS]...")
+        pieces.append(self.subcommand_metavar or "[COMMAND] [ARGS]")
         write_usage(formatter, prefix_path, " ".join(pieces))
 
 
@@ -215,7 +215,7 @@ class RequiredPrefixAgentCommand(PrefixAgentCommand):
         state = ctx.obj
         if not isinstance(state, CliContext):
             raise TypeError("missing CLI context")
-        if not state.agent and "--help" not in args:
+        if not state.agent and not any(name in args for name in ctx.help_option_names):
             typer.echo(ctx.get_help())
             ctx.exit()
         return PrefixAgentCommand.parse_args(self, ctx, args)

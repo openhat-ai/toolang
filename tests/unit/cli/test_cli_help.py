@@ -21,6 +21,41 @@ from toolang.cli.common.parameters import PathType
 from toolang.cli.toolang.main import app, main as too_main
 
 
+@pytest.mark.parametrize(
+    ("main", "arguments"),
+    [
+        (too_main, []),
+        (too_main, ["prompt"]),
+        (too_main, ["a", "prompt", "new"]),
+        (too_main, ["start"]),
+        (caps_main, []),
+        (caps_main, ["a", "prompt", "new"]),
+    ],
+)
+def test_short_help_alias_matches_long_help(main, arguments, tmp_path, capsys):
+    outputs = []
+    for flag in ("--help", "-h"):
+        assert main(["--root", str(tmp_path), *arguments, flag]) == 0
+        captured = capsys.readouterr()
+        assert not captured.err
+        outputs.append(strip_ansi(captured.out))
+    assert outputs[0] == outputs[1]
+    assert "-h, --help" in outputs[0]
+
+
+@pytest.mark.parametrize("main", [too_main, caps_main])
+def test_short_version_alias_matches_long_version(main, capsys):
+    outputs = []
+    for flag in ("--version", "-V"):
+        assert main([flag]) == 0
+        captured = capsys.readouterr()
+        assert not captured.err
+        outputs.append(captured.out)
+    assert outputs[0] == outputs[1]
+    assert main(["--help"]) == 0
+    assert "-V, --version" in strip_ansi(capsys.readouterr().out)
+
+
 def test_hidden_commands_keep_theme_and_root_invocation_hint(capsys, monkeypatch):
     monkeypatch.setattr("sys.argv", ["too"])
     monkeypatch.setenv("TERM", "xterm-256color")
@@ -38,7 +73,7 @@ def test_hidden_commands_keep_theme_and_root_invocation_hint(capsys, monkeypatch
     [
         (["a", "chat"], "too AGENT chat [OPTIONS]"),
         (["a", "prompt", "new"], "too [AGENT] prompt new [OPTIONS] NAME"),
-        (["a", "workspace"], "too AGENT workspace [OPTIONS] COMMAND [ARGS]..."),
+        (["a", "workspace"], "too AGENT workspace [OPTIONS] COMMAND [ARGS]"),
         (["run"], "too run [OPTIONS] AGENT"),
     ],
 )

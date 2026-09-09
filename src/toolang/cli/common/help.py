@@ -32,6 +32,8 @@ class HelpContext(Context):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        if self.parent is None and kwargs.get("help_option_names") is None:
+            self.help_option_names = ["-h", "--help"]
         if self.color is None:
             formatter = self.make_formatter()
             assert isinstance(formatter, HelpFormatter)
@@ -72,6 +74,14 @@ class CliGroup(TyperGroup):
     """Apply the same help conventions to command groups."""
 
     context_class = HelpContext
+
+    def __init__(self, *, subcommand_metavar: str | None = None, **kwargs: Any) -> None:
+        super().__init__(
+            subcommand_metavar=(
+                "COMMAND [ARGS]" if subcommand_metavar is None else subcommand_metavar
+            ),
+            **kwargs,
+        )
 
     def format_help(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
         _format_help(ctx, formatter)
