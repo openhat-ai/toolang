@@ -54,12 +54,12 @@ def models_command(
             "--query",
             "-q",
             metavar="QUERY",
-            help="Query models. Repeat to add matches; see 'too query models'.",
+            help="Query models. Repeat to add matches; see 'too query models'",
         ),
     ] = None,
     json_: Annotated[
         bool,
-        typer.Option("--json", help="Write filtered models as JSON."),
+        typer.Option("--json", help="Write filtered models as JSON"),
     ] = False,
 ) -> None:
     """List or export model catalog entries."""
@@ -108,7 +108,7 @@ def providers_command(
     model_catalog: ModelCatalogOption = None,
     json_: Annotated[
         bool,
-        typer.Option("--json", help="Write catalog providers as JSON."),
+        typer.Option("--json", help="Write catalog providers as JSON"),
     ] = False,
 ) -> None:
     """List catalog providers and runtime availability."""
@@ -176,7 +176,7 @@ def providers_command(
 def adapters_command(
     json_: Annotated[
         bool,
-        typer.Option("--json", help="Write adapter metadata as JSON."),
+        typer.Option("--json", help="Write adapter metadata as JSON"),
     ] = False,
 ) -> None:
     """List installed protocol adapters."""

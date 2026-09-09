@@ -14,19 +14,13 @@ from uuid import uuid4
 
 import httpx
 from pydantic import TypeAdapter, ValidationError
-from rich.console import Console, Group
-from rich.markup import escape
-from rich.padding import Padding
-from rich.panel import Panel
-from rich.table import Table
 from rich.text import Text
 import typer
-from typer import rich_utils
 from typer._click import Context, HelpFormatter
 from typer._click.core import ParameterSource
 from typer._click.exceptions import ClickException, UsageError
 from typer._click.parser import _OptionParser, _ParsingState
-from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
+from typer.core import TyperCommand, TyperGroup, TyperOption
 from typer.main import get_command_from_info
 from typer.models import CommandInfo
 
@@ -36,6 +30,7 @@ from toolang.base.types.policy import RunBindings, RunPolicy
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
+from toolang.common.typer.ui import HelpFormatter as UIHelpFormatter
 from toolang.cli.common.policy import (
     resolve_default_overrides,
     resolve_compact_override,
@@ -87,7 +82,7 @@ from ...common.progress import make_cli_progress
 from ...common.remote_runtime import inspect_remote_runtime
 from ...common.result_saving import save_result
 from ...common.output import echo_error
-from ...common.help import CliCommand, CliGroup
+from ...common.help import CliCommand, CliGroup, HelpContext
 from ...common.parameters import AllowOptions, LimitOptions
 from ...common.runnable_parameters import RunnableArgument, runnable_parameters
 from ...common.execution_progress.config import resolve_progress_max_width
@@ -138,8 +133,50 @@ class _RunnableParser(_OptionParser):
             return
 
 
+class _ScriptHelpFormatter(UIHelpFormatter):
+    def write_description(self, ctx: Context) -> None:
+        command = ctx.command
+        if not isinstance(command, _RunnableCommand):
+            return super().write_description(ctx)
+        if command.help:
+            description = Text.from_markup(command.help)
+            if not description.plain.endswith("."):
+                description.append(".")
+            self.write_text(description)
+            self.write_paragraph()
+        if command._flow is not None:
+            self.write_text("The flow proceeds as follows:")
+            self.write_paragraph()
+            for line in _flow_outline(command._flow).split("\n"):
+                line.truncate(max(1, self.width - 2), overflow="ellipsis")
+                self._write_line(line)
+            self.write_paragraph()
+
+    def _command_rows(self, ctx: Context):
+        if not isinstance(ctx.command, TyperGroup):
+            return
+        for _title, (marker, label, _description) in super()._command_rows(ctx):
+            command = ctx.command.get_command(ctx, label.plain)
+            if isinstance(command, _RunnableCommand):
+                kind = "flow" if command._flow is not None else "agic"
+                yield (
+                    "Runnables",
+                    (
+                        marker,
+                        Text(f"{kind}:{label.plain}", style="cli.command.name"),
+                        Text.from_markup(command.short_help or ""),
+                    ),
+                )
+
+
+class _ScriptHelpContext(HelpContext):
+    formatter_class = _ScriptHelpFormatter
+
+
 class _RunnableCommand(CliCommand):
     """Show runnable help when its collected call is incomplete."""
+
+    context_class = _ScriptHelpContext
 
     def __init__(self, *, flow: FlowDecl | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -164,38 +201,23 @@ class _RunnableCommand(CliCommand):
             pieces.append("INPUT")
         return pieces
 
-    def format_help(self, ctx: Context, formatter: HelpFormatter) -> None:
-        console = rich_utils._get_rich_console()
-        _print_help_header(console, ctx, self, flow=self._flow)
-        params = self.get_params(ctx)
-        arguments: list[TyperArgument] = [
-            param for param in params if isinstance(param, RunnableArgument)
-        ]
-        rich_utils._print_options_panel(
-            name="Arguments",
-            params=arguments,
-            ctx=ctx,
-            markup_mode="rich",
-            console=console,
-        )
-        rich_utils._print_options_panel(
-            name="Options",
-            params=[param for param in params if isinstance(param, TyperOption)],
-            ctx=ctx,
-            markup_mode="rich",
-            console=console,
+    def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
+        formatter.write_usage(
+            ctx.command_path, " ".join(self.collect_usage_pieces(ctx))
         )
 
     def invoke(self, ctx: Context) -> Any:
         try:
             return TyperCommand.invoke(self, ctx)
         except _IncompleteRunnableInput:
-            typer.echo(ctx.get_help())
+            typer.echo(ctx.get_help(), color=ctx.color)
             ctx.exit(2)
 
 
 class _ScriptGroup(CliGroup):
     """List runnable descriptions before the script's options."""
+
+    context_class = _ScriptHelpContext
 
     def resolve_command(
         self, ctx: Context, args: list[str]
@@ -214,78 +236,6 @@ class _ScriptGroup(CliGroup):
                 raise ValueError(f"runnable is not a flow: {name}")
             args = [name, *args[1:]]
         return super().resolve_command(ctx, args)
-
-    def format_help(self, ctx: Context, formatter: HelpFormatter) -> None:
-        console = rich_utils._get_rich_console()
-        _print_help_header(console, ctx, self)
-        commands = [
-            command
-            for name in self.list_commands(ctx)
-            if isinstance(command := self.get_command(ctx, name), _RunnableCommand)
-            and not command.hidden
-        ]
-        _print_runnables_panel(console, commands)
-        rich_utils._print_options_panel(
-            name="Options",
-            params=[
-                param
-                for param in self.get_params(ctx)
-                if isinstance(param, TyperOption)
-            ],
-            ctx=ctx,
-            markup_mode="rich",
-            console=console,
-        )
-
-
-def _print_help_header(
-    console: Console,
-    ctx: Context,
-    command: TyperCommand | TyperGroup,
-    *,
-    flow: FlowDecl | None = None,
-) -> None:
-    console.print(
-        Padding(rich_utils.highlighter(command.get_usage(ctx)), 1),
-        style=rich_utils.STYLE_USAGE_COMMAND,
-    )
-    if command.help:
-        description = rich_utils._get_help_text(obj=command, markup_mode="rich")
-        if flow is not None:
-            description = Group(
-                description,
-                Text(),
-                Text("The flow proceeds as follows:"),
-                Text(),
-                _flow_outline(flow),
-            )
-        console.print(Padding(description, (0, 1, 1, 1)))
-
-
-def _print_runnables_panel(console: Console, commands: list[_RunnableCommand]) -> None:
-    if not commands:
-        return
-    table = Table.grid(padding=(0, 2), expand=True)
-    table.add_column(
-        style=rich_utils.STYLE_COMMANDS_TABLE_FIRST_COLUMN, overflow="fold"
-    )
-    table.add_column()
-    for command in commands:
-        kind = "flow" if command._flow is not None else "agic"
-        table.add_row(
-            Text(f"{kind}:{command.name}"),
-            rich_utils._make_command_help(
-                help_text=command.short_help or "", markup_mode="rich"
-            ),
-        )
-    console.print(
-        Panel(
-            table,
-            title="Runnables",
-            title_align="left",
-            border_style=rich_utils.STYLE_COMMANDS_PANEL_BORDER,
-        )
-    )
 
 
 def _flow_outline(flow: FlowDecl) -> Text:
@@ -369,7 +319,7 @@ def _program_command(
     group = _ScriptGroup(
         name=source_label,
         params=[param for param in options if isinstance(param, TyperOption)],
-        help=f"Run runnables from {escape(source_label)}.",
+        help=f"Run runnables from {source_label}",
         no_args_is_help=True,
         rich_markup_mode="rich",
         subcommand_metavar="RUNNABLE",
@@ -402,7 +352,7 @@ def _runnable_command(
             typer.Option(
                 "--model",
                 metavar="MODEL_SPEC",
-                help="Set the model identity and parameters for this run.",
+                help="Set the model identity and parameters for this run",
             ),
         ] = None,
         sandbox: Annotated[
@@ -410,7 +360,7 @@ def _runnable_command(
             typer.Option(
                 "--sandbox",
                 metavar="SANDBOX_SPEC",
-                help="Execute this run in the selected sandbox.",
+                help="Execute this run in the selected sandbox",
             ),
         ] = None,
         save: Annotated[
@@ -419,13 +369,13 @@ def _runnable_command(
                 "--out",
                 "-o",
                 metavar="PATH",
-                help="Save the Run result to PATH, or use - for stdout.",
+                help="Save the Run result to PATH, or use - for stdout",
             ),
         ] = None,
         quiet: Annotated[
             bool,
             typer.Option(
-                "--quiet", "-q", help="Suppress prepare and execution progress."
+                "--quiet", "-q", help="Suppress prepare and execution progress"
             ),
         ] = False,
         dev: Annotated[
@@ -477,8 +427,8 @@ def _runnable_command(
             name=name,
             cls=_RunnableCommand,
             callback=callback,
-            help=f"Run {kind} {name} - {doc}" if doc else f"Run {kind} {name}.",
-            short_help=doc or f"{kind.capitalize()} {name}.",
+            help=f"Run {kind} {name} - {doc}" if doc else f"Run {kind} {name}",
+            short_help=doc or f"{kind.capitalize()} {name}",
         ),
         pretty_exceptions_short=True,
         rich_markup_mode="rich",

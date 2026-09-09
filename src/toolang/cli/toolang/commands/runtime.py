@@ -68,29 +68,29 @@ def run(
     ctx: typer.Context,
     agent: str | None = typer.Argument(
         None,
-        help="Existing local agent name, remote agent ref, or URL.",
+        help="Agent name, reference, or URL",
         hidden=True,
     ),
-    model_catalog: ModelCatalogOption = None,
     sandbox: Annotated[
         str | None,
         typer.Option(
             "--sandbox",
             metavar="SANDBOX_SPEC",
-            help="Run in this sandbox; defaults to agent config or host.",
+            help="Run in this sandbox; defaults to agent config or host",
         ),
     ] = None,
     allows: AllowOptions = None,
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
     compact_model: CompactModelOption = None,
+    model_catalog: ModelCatalogOption = None,
     host: Annotated[
         str,
-        typer.Option("--host", metavar="HOST", help="Bind the agent API to this host."),
+        typer.Option("--host", metavar="HOST", help="Bind the agent API to this host"),
     ] = "127.0.0.1",
     port: Annotated[
         int | None,
-        typer.Option("--port", metavar="PORT", help="Bind the agent API to this port."),
+        typer.Option("--port", metavar="PORT", help="Bind the agent API to this port"),
     ] = None,
     dev: Annotated[
         Path | None,
@@ -98,7 +98,7 @@ def run(
     ] = None,
     endpoint_host: Annotated[
         str | None,
-        typer.Option("--endpoint-host", help="Endpoint host name.", hidden=True),
+        typer.Option("--endpoint-host", help="Endpoint host name", hidden=True),
     ] = None,
 ) -> None:
     from toolang.up import sandbox as sandbox_runtime
@@ -196,28 +196,28 @@ def _report_foreground_ready(
 def start(
     ctx: typer.Context,
     agent: str | None = typer.Argument(
-        None, help="Existing local agent name.", hidden=True
+        None, help="Existing local agent name", hidden=True
     ),
-    model_catalog: ModelCatalogOption = None,
     sandbox: Annotated[
         str | None,
         typer.Option(
             "--sandbox",
             metavar="SANDBOX_SPEC",
-            help="Run in this sandbox; defaults to agent config or host.",
+            help="Run in this sandbox; defaults to agent config or host",
         ),
     ] = None,
     allows: AllowOptions = None,
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
     compact_model: CompactModelOption = None,
+    model_catalog: ModelCatalogOption = None,
     host: Annotated[
         str,
-        typer.Option("--host", metavar="HOST", help="Bind the agent API to this host."),
+        typer.Option("--host", metavar="HOST", help="Bind the agent API to this host"),
     ] = "127.0.0.1",
     port: Annotated[
         int | None,
-        typer.Option("--port", metavar="PORT", help="Bind the agent API to this port."),
+        typer.Option("--port", metavar="PORT", help="Bind the agent API to this port"),
     ] = None,
     dev: Annotated[
         Path | None,
@@ -225,7 +225,7 @@ def start(
     ] = None,
     endpoint_host: Annotated[
         str | None,
-        typer.Option("--endpoint-host", help="Endpoint host name.", hidden=True),
+        typer.Option("--endpoint-host", help="Endpoint host name", hidden=True),
     ] = None,
 ) -> None:
     from toolang.up import sandbox as sandbox_runtime
@@ -300,7 +300,7 @@ def stop(
     agent: str | None = typer.Argument(None, help="Agent name", hidden=True),
     force: Annotated[
         bool,
-        typer.Option(help="Force-stop when graceful shutdown does not complete."),
+        typer.Option(help="Force-stop when graceful shutdown does not complete"),
     ] = False,
 ) -> None:
     from toolang.up import sandbox as sandbox_runtime
@@ -334,28 +334,28 @@ def stop(
 def serve(
     ctx: typer.Context,
     agent: Annotated[
-        str, typer.Argument(metavar="AGENT", click_type=TextType(), help="Agent name.")
+        str, typer.Argument(metavar="AGENT", click_type=TextType(), help="Agent name")
     ],
-    model_catalog: ModelCatalogOption = None,
-    host: Annotated[
-        str, typer.Option("--host", metavar="HOST", help="API bind host.")
-    ] = "127.0.0.1",
-    endpoint_host: Annotated[
-        str | None,
-        typer.Option(
-            "--endpoint-host", metavar="HOST", help="Externally visible endpoint host."
-        ),
-    ] = None,
-    port: Annotated[
-        int, typer.Option("--port", metavar="PORT", help="API bind port.")
-    ] = 7001,
     allows: AllowOptions = None,
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
     compact_model: CompactModelOption = None,
+    model_catalog: ModelCatalogOption = None,
+    host: Annotated[
+        str, typer.Option("--host", metavar="HOST", help="API bind host")
+    ] = "127.0.0.1",
+    endpoint_host: Annotated[
+        str | None,
+        typer.Option(
+            "--endpoint-host", metavar="HOST", help="Externally visible endpoint host"
+        ),
+    ] = None,
+    port: Annotated[
+        int, typer.Option("--port", metavar="PORT", help="API bind port")
+    ] = 7001,
     log_spec: Annotated[
         str | None,
-        typer.Option("--log", metavar="LOG_SPEC", help="Python logging specification."),
+        typer.Option("--log", metavar="LOG_SPEC", help="Python logging specification"),
     ] = None,
 ) -> None:
     """Run the internal AgentServer entrypoint."""

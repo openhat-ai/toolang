@@ -18,6 +18,7 @@ from ...common.config import resolve_ui_base_url
 from ...common.layout import AgentLayout
 from ..config import load_config
 from ...catalog.errors import CatalogError
+from .help import show_help
 
 
 @dataclass(slots=True)
@@ -29,7 +30,7 @@ class CliContext:
 
 ModelCatalogOption = Annotated[
     Path | None,
-    typer.Option("--catalog", metavar="PATH", help="Use a specified model catalog."),
+    typer.Option("--catalog", metavar="PATH", help="Use a specified model catalog"),
 ]
 
 
@@ -64,8 +65,7 @@ def context_agent(ctx: typer.Context) -> str | None:
 def require_prefix_agent(ctx: typer.Context) -> str:
     if agent := context_agent(ctx):
         return agent
-    typer.echo(ctx.get_help())
-    raise typer.Exit()
+    show_help(ctx)
 
 
 def context_layout(ctx: typer.Context) -> AgentLayout:
@@ -81,8 +81,7 @@ def require_runtime_agent(ctx: typer.Context, agent: str | None) -> str:
     selected = agent or context_agent(ctx)
     if selected:
         return selected
-    typer.echo(ctx.get_help())
-    raise typer.Exit()
+    show_help(ctx)
 
 
 def resolve_root(

@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 from threading import Barrier
-from typing import Any, cast
+from typing import Any
 
 import pytest
 import typer
@@ -68,7 +68,7 @@ def test_lazy_command_completes_options_using_typer_parameters() -> None:
         completions = command.shell_complete(ctx, "--tab")
 
     assert [item.value for item in completions] == ["--tab-size"]
-    assert completions[0].help == "Number of spaces per indentation level."
+    assert completions[0].help == "Number of spaces per indentation level"
 
 
 def test_thread_option_registration_keeps_chat_runtime_imports_lazy() -> None:
@@ -188,7 +188,7 @@ def test_cli_normalize_rejects_an_invalid_target_order() -> None:
         normalize(["alice", "remove"])
 
 
-def test_cli_formats_a_routing_error_as_a_rich_panel(
+def test_cli_formats_a_routing_error_without_a_panel(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     result = _call_main(["alice", "remove"])
@@ -197,9 +197,9 @@ def test_cli_formats_a_routing_error_as_a_rich_panel(
     lines = stderr.splitlines()
 
     assert result == 2
-    assert lines[0].strip() == ""
-    assert lines[1].startswith("╭─ Error ")
-    assert lines[-1].strip() == ""
+    assert lines[0].startswith("Error: ")
+    assert lines[-1].strip()
+    assert "╭" not in stderr
     assert "remove requires TARGET after the command" in stderr
 
 
@@ -210,23 +210,23 @@ def test_cli_no_args_still_shows_root_help(
     output = capsys.readouterr()
     stdout = strip_ansi(output.out)
 
-    assert result == 2
-    assert "Usage: pytest [OPTIONS] COMMAND [ARGS]..." in stdout
-    assert "Run and manage Toolang agents." in stdout
+    assert result == 0
+    assert "Usage: pytest [OPTIONS] COMMAND [ARGS]" in stdout.splitlines()
+    assert "Run and manage Toolang agents" in stdout
     assert output.err == ""
 
 
 def test_cli_control_commands_have_consistent_order_and_descriptions() -> None:
     group = typer.main.get_command(cli.app)
     expected = {
-        "chat": "Start an interactive TUI.",
-        "steer": "Steer an active run.",
-        "cancel": "Cancel an active run.",
-        "retry": "Retry a run from a failed step.",
-        "rerun": "Rerun an earlier run as a new one.",
-        "rewind": "Rewind a thread to an earlier run.",
-        "fork": "Fork a thread from an earlier run.",
-        "compact": "Compact a thread.",
+        "chat": "Start an interactive TUI",
+        "steer": "Steer an active run",
+        "cancel": "Cancel an active run",
+        "retry": "Retry a run from a failed step",
+        "rerun": "Rerun an earlier run as a new one",
+        "fork": "Fork a thread from an earlier run",
+        "rewind": "Rewind a thread to an earlier run",
+        "compact": "Compact a thread",
     }
 
     assert isinstance(group, TyperGroup)
@@ -267,7 +267,7 @@ def test_compact_help_lists_the_public_runnable_signature(
     captured = capsys.readouterr()
     assert not captured.err
     output = strip_ansi(captured.out)
-    assert "Compact a thread." in output and "NAME=VALUE" not in output
+    assert "Compact a thread" in output and "NAME=VALUE" not in output
     assert "previous" not in output
     positions = [output.index(f"{param.name}=ARGUMENT") for param in runnable.params]
     assert positions == sorted(positions)
@@ -307,8 +307,8 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "cancel",
             "retry",
             "rerun",
-            "rewind",
             "fork",
+            "rewind",
             "compact",
         ),
         "Inspection Commands": (
@@ -351,15 +351,15 @@ def test_workspace_commands_follow_the_public_order() -> None:
 def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
     group = typer.main.get_command(cli.app)
     expected_help = {
-        "inspect": "Inspect execution subjects.",
-        "caps": "List caps.",
-        "models": "List models.",
-        "providers": "List model providers.",
-        "tools": "List tools.",
-        "catalogs": "List installed model catalogs.",
-        "adapters": "List installed model adapters.",
-        "toolsets": "List installed toolsets.",
-        "sandboxes": "List installed sandboxes.",
+        "inspect": "Inspect agent run history",
+        "caps": "List available caps",
+        "models": "List available models",
+        "providers": "List available model providers",
+        "tools": "List available tools",
+        "catalogs": "List installed model catalogs",
+        "adapters": "List installed model adapters",
+        "toolsets": "List installed toolsets",
+        "sandboxes": "List installed sandboxes",
     }
 
     assert isinstance(group, TyperGroup)
@@ -389,7 +389,7 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
         ),
         (
             ["fmt"],
-            "Usage: pytest fmt [OPTIONS] [PATH]...",
+            "Usage: pytest fmt [OPTIONS] [PATH...]",
             "PATH",
             "PATH",
             "[PATH]...",
@@ -428,7 +428,9 @@ def test_cli_argument_panels_separate_names_types_and_usage_syntax(
     result = _call_main([*arguments, "--help"])
     stdout = strip_ansi(capsys.readouterr().out)
     row = next(
-        line for line in stdout.splitlines() if "│" in line and argument in line.split()
+        line
+        for line in stdout.splitlines()
+        if line.startswith("  ") and argument in line.split()
     )
 
     assert result == 0
@@ -526,7 +528,7 @@ def test_caps_cli_uses_command_priority_and_explicit_agent_prefix() -> None:
     assert (agent_args, agent) == (["skill", "list"], "skill")
 
 
-def test_caps_cli_formats_a_pre_dispatch_error_as_a_rich_panel(
+def test_caps_cli_formats_a_pre_dispatch_error_without_a_panel(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     result = caps_cli.main(["agent:", "skill"])
@@ -534,7 +536,8 @@ def test_caps_cli_formats_a_pre_dispatch_error_as_a_rich_panel(
     stderr = strip_ansi(output.err)
 
     assert result == 2
-    assert "╭─ Error " in stderr
+    assert stderr.startswith("Error: ")
+    assert "╭" not in stderr
     assert "invalid resident agent target: agent:" in stderr
 
 
@@ -555,8 +558,8 @@ def test_cli_incomplete_command_shows_help_before_target_validation(
     _call_main(["--root", str(tmp_path), *arguments])
     output = capsys.readouterr()
 
-    assert "Usage:" in output.out
-    assert "Steer an active run." in output.out
+    assert "Usage:" in output.out + output.err
+    assert "Steer an active run" in output.out + output.err
     assert "Agent alice not found" not in output.err
 
 
@@ -600,7 +603,7 @@ def test_cli_bare_resident_target_shows_its_command_help(
     )
 
     assert result == 0
-    assert "Commands for resident agent alice." in stdout
+    assert stdout.startswith("Run and manage agent alice.\n")
     assert "steer" in stdout
     assert "models" in stdout
     assert tuple(stdout.index(panel) for panel in panels) == tuple(
@@ -620,7 +623,7 @@ def test_cli_explicit_resident_target_preserves_selector_but_labels_the_agent(
 
     assert result == 0
     assert "Usage: pytest agent:alice" in stdout
-    assert "Commands for resident agent alice." in stdout
+    assert stdout.startswith("Run and manage agent alice.\n")
     assert "agent agent:alice" not in stdout
 
 
@@ -638,7 +641,7 @@ def test_cli_bare_visiting_target_shows_help_without_resolving_it(
     output = capsys.readouterr()
 
     assert result == 0
-    assert "Commands for visiting agent briceyan/dev." in output.out
+    assert strip_ansi(output.out).startswith("Run and manage agent briceyan/dev.\n")
     assert "chat" in output.out
     assert "No such command" not in output.err
 
@@ -659,7 +662,7 @@ def test_cli_missing_local_source_syntax_reports_a_script_error(
     assert result == 1
     assert f"script not found: {target}" in stderr
     assert "No such command" not in stderr
-    assert "Commands for visiting agent" not in output.out
+    assert "Run and manage agent" not in output.out
 
 
 def test_cli_prefix_agent_context_is_isolated_between_threads(
@@ -668,11 +671,12 @@ def test_cli_prefix_agent_context_is_isolated_between_threads(
     barrier = Barrier(2)
     seen: list[str | None] = []
 
-    def fake_app(**_kwargs: Any) -> None:
+    def fake_run(_app: typer.Typer, **_kwargs: Any) -> int:
         barrier.wait()
         seen.append(cli._PREFIX_AGENT.get())
+        return 0
 
-    monkeypatch.setattr(cli, "app", cast(Any, fake_app))
+    monkeypatch.setattr(cli, "run", fake_run)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = tuple(

@@ -11,6 +11,8 @@ from typer._click import Command, Context
 from typer.core import TyperCommand, TyperGroup
 from typer.models import CompletionItem
 
+from toolang.common.typer.ui import inherit_ui
+
 from .help import CliCommand
 
 
@@ -23,12 +25,14 @@ class LazyCommand(TyperCommand):
         *,
         loader: Callable[[], Command],
         help: str,
+        short_help: str | None = None,
         hidden: bool = False,
         rich_help_panel: str | None = None,
     ) -> None:
         super().__init__(
             name=name,
             help=help,
+            short_help=short_help,
             hidden=hidden,
             rich_help_panel=rich_help_panel,
         )
@@ -57,7 +61,8 @@ class LazyCommand(TyperCommand):
     ) -> Context:
         """Parse one invocation with the real command."""
 
-        return self.load().make_context(info_name, args, parent=parent, **extra)
+        command = inherit_ui(self.load(), parent)
+        return command.make_context(info_name, args, parent=parent, **extra)
 
     def shell_complete(
         self,
@@ -102,6 +107,7 @@ def _lazy_command(
         name,
         loader=loader,
         help=help_text,
+        short_help=kwargs.get("short_help"),
         hidden=bool(kwargs.get("hidden", False)),
         rich_help_panel=kwargs.get("rich_help_panel"),
     )

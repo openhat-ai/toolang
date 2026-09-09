@@ -34,7 +34,7 @@ from .progress import (
 
 DEVELOPMENT_WHEEL_HELP = (
     "Install Toolang in a new guest from a wheel; directories select the newest "
-    "Toolang wheel recursively."
+    "Toolang wheel recursively"
 )
 
 

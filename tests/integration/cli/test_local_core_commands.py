@@ -931,7 +931,7 @@ def test_inspect_static_subjects_are_reserved_and_missing_scopes_fail(
     missing_run = _invoke(root, "alice", "inspect", "run_missing", "steps")
 
     assert reserved.exit_code == 2
-    assert "allowed: threads, runs, controls" in reserved.stderr
+    assert "allowed: threads, runs, controls" in " ".join(reserved.stderr.split())
     assert missing_thread.exit_code == 1
     assert "record not found: custom_missing" in missing_thread.stderr
     assert missing_run.exit_code == 1
@@ -1727,7 +1727,7 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
     assert "No such option: --limit" in strip_ansi(removed.stderr)
     assert help_code == 0
     assert "POINTER" in help_text
-    assert "Inspect execution subjects." in help_text
+    assert "Inspect agent run history" in help_text
     assert "Subject chain." in help_text
     assert "Root subjects: threads, runs, controls" in compact_help
     assert "THREAD runs" in compact_help
@@ -1738,7 +1738,7 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
     assert "RUN tree" in compact_help
     assert "Run tree is a durable structural snapshot" in compact_help
     assert "Step-owned historical call" in compact_help
-    assert "Render human-readable output (default)." in help_text
+    assert "Render human-readable output (default)" in help_text
     assert "--human" in help_text
     assert "--json" in help_text
     assert "--type" not in help_text

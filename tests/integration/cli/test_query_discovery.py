@@ -24,6 +24,7 @@ def test_query_is_hidden_but_direct_help_explains_the_grammar() -> None:
     assert "query" not in strip_ansi(root.stdout)
     assert hidden.exit_code == 0, hidden.stderr
     assert "query" in strip_ansi(hidden.stdout)
+    assert "QUERY = MATCH" not in strip_ansi(hidden.stdout)
     assert query.exit_code == 0, query.stderr
     assert 'QUERY = MATCH ("," MATCH)*' in strip_ansi(query.stdout)
     assert "models, tools, psyches, skills, services, prompts" in strip_ansi(
@@ -164,7 +165,7 @@ def test_each_query_enabled_list_points_to_query_help() -> None:
         result = runner.invoke(app, command)
         assert result.exit_code == 0, result.stderr
         output = " ".join(strip_ansi(result.stdout).replace("│", "").split())
-        assert f"'{expected}'." in output
+        assert f"'{expected}'" in output
 
 
 def test_allow_help_uses_resource_query_vocabulary() -> None:

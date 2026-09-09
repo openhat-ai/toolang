@@ -22,7 +22,7 @@ from toolang.setup.tools import load_setup_tools
 from toolang.plugin.loading import list_plugin_infos
 
 channel_app = typer.Typer(
-    help="List available channels.",
+    help="List available channels",
     add_completion=False,
     no_args_is_help=True,
     pretty_exceptions_enable=False,
@@ -38,7 +38,7 @@ def list_tools(
             "--query",
             "-q",
             metavar="QUERY",
-            help="Query tools. Repeat to add matches; see 'too query tools'.",
+            help="Query tools. Repeat to add matches; see 'too query tools'",
         ),
     ] = None,
 ) -> None:
@@ -57,7 +57,7 @@ def list_tools(
     )
 
 
-@channel_app.command("list", help="List installed channels.")
+@channel_app.command("list", help="List installed channels")
 def list_channels() -> None:
     _list_plugins(
         group="toolang.channel",

@@ -24,12 +24,12 @@ def query_command(
         typer.Argument(
             metavar="COLLECTION",
             click_type=TextType(),
-            help="Base collection whose query fields to show.",
+            help="Base collection whose query fields to show",
         ),
     ] = None,
     json_: Annotated[
         bool,
-        typer.Option("--json", help="Write the query schema as JSON."),
+        typer.Option("--json", help="Write the query schema as JSON"),
     ] = False,
 ) -> None:
     """Show generic or collection-specific query help."""

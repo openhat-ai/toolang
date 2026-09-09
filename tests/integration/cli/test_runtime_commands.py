@@ -50,11 +50,48 @@ def _startup_event(
     [
         (
             ["run", "--help"],
-            ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
+            (
+                "--sandbox",
+                "--allow",
+                "--limit",
+                "--default",
+                "--compact-model",
+                "--catalog",
+                "--host",
+                "--port",
+                "--dev",
+                "--help",
+            ),
         ),
         (
             ["start", "--help"],
-            ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
+            (
+                "--sandbox",
+                "--allow",
+                "--limit",
+                "--default",
+                "--compact-model",
+                "--catalog",
+                "--host",
+                "--port",
+                "--dev",
+                "--help",
+            ),
+        ),
+        (
+            ["serve", "--help"],
+            (
+                "--allow",
+                "--limit",
+                "--default",
+                "--compact-model",
+                "--catalog",
+                "--host",
+                "--endpoint-host",
+                "--port",
+                "--log",
+                "--help",
+            ),
         ),
         (
             ["chat", "alice", "--help"],
@@ -399,7 +436,7 @@ def test_runtime_dev_help_describes_wheel_selection() -> None:
         output = " ".join(strip_ansi(result.stdout).replace("│", " ").split())
         assert "Install Toolang in a new guest from a wheel" in output
         assert "directories select the newest Toolang wheel" in output
-        assert "recursively." in output
+        assert "recursively" in output
 
 
 @pytest.mark.parametrize(

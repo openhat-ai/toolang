@@ -5,15 +5,14 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 
-import typer
-from typer import rich_utils
+from rich.text import Text
 from typer._click import Context, HelpFormatter, Parameter
 from typer._click.exceptions import MissingParameter
 from typer.core import TyperArgument, TyperCommand, TyperGroup
 
 from .context import CliContext
 from .parameters import TextType
-from .help import CliCommand, CliGroup, parameter_usage
+from .help import CliCommand, CliGroup, parameter_usage, show_help, write_usage
 
 
 def extract_root_args(
@@ -78,16 +77,20 @@ def explicit_agent(token: str) -> str | None:
     return name
 
 
-# Typer renders command help text dim by default. Normal weight keeps usage
-# notes readable across terminal themes.
-setattr(rich_utils, "STYLE_HELPTEXT", "")
+def _prefix_usage_path(ctx: Context, metavar: str) -> Text:
+    root, _, remainder = ctx.command_path.partition(" ")
+    return Text.assemble(
+        (root, "cli.command.name"),
+        (f" {metavar}", "cli.usage"),
+        (f" {remainder}" if remainder else "", "cli.command.name"),
+    )
 
 
 class PrefixAgentCommand(CliCommand):
     """Render one virtual prefix-agent argument in help output."""
 
     prefix_agent_metavar = "[AGENT]"
-    argument_help = "Apply to this agent's home caps instead of root caps."
+    argument_help = "Apply to this agent's home caps instead of root caps"
 
     def _real_params(self, ctx: Context) -> list[Parameter]:
         return TyperCommand.get_params(self, ctx)
@@ -110,21 +113,14 @@ class PrefixAgentCommand(CliCommand):
         try:
             return TyperCommand.parse_args(self, ctx, args)
         except MissingParameter:
-            typer.echo(ctx.get_help())
-            ctx.exit()
+            show_help(ctx)
 
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        command_path = ctx.command_path
-        root_name, _, remainder = command_path.partition(" ")
-        prefix_path = (
-            f"{root_name} {self.prefix_agent_metavar} {remainder}"
-            if remainder
-            else f"{root_name} {self.prefix_agent_metavar}"
-        )
+        prefix_path = _prefix_usage_path(ctx, self.prefix_agent_metavar)
         pieces = [self.options_metavar] if self.options_metavar else []
         for param in self._real_params(ctx):
             pieces.extend(parameter_usage(param, ctx))
-        formatter.write_usage(prefix_path, " ".join(pieces))
+        write_usage(formatter, prefix_path, " ".join(pieces))
 
 
 class RequiredPrefixAgentGroup(CliGroup):
@@ -139,23 +135,17 @@ class RequiredPrefixAgentGroup(CliGroup):
             type=TextType(),
             required=True,
             expose_value=False,
-            help="Agent name.",
+            help="Agent name",
         )
         return [agent, *super().get_params(ctx)]
 
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        command_path = ctx.command_path
-        root_name, _, remainder = command_path.partition(" ")
-        prefix_path = (
-            f"{root_name} {self.prefix_agent_metavar} {remainder}"
-            if remainder
-            else f"{root_name} {self.prefix_agent_metavar}"
-        )
+        prefix_path = _prefix_usage_path(ctx, self.prefix_agent_metavar)
         pieces = [self.options_metavar] if self.options_metavar else []
         pieces.append(self.subcommand_metavar or "[SUBCOMMAND]")
         for param in self.get_params(ctx):
             pieces.extend(parameter_usage(param, ctx))
-        formatter.write_usage(prefix_path, " ".join(pieces))
+        write_usage(formatter, prefix_path, " ".join(pieces))
 
 
 class PrefixAgentJobGroup(RequiredPrefixAgentGroup):
@@ -166,7 +156,7 @@ class OptionalPrefixAgentGroup(CliGroup):
     """Render optional AGENT between the runnable and command path."""
 
     prefix_agent_metavar = "[AGENT]"
-    argument_help = "Apply to this agent's home caps instead of root caps."
+    argument_help = "Apply to this agent's home caps instead of root caps"
 
     def _real_params(self, ctx: Context) -> list[Parameter]:
         return TyperGroup.get_params(self, ctx)
@@ -186,16 +176,10 @@ class OptionalPrefixAgentGroup(CliGroup):
         return [self._prefix_agent_argument(), *self._real_params(ctx)]
 
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        command_path = ctx.command_path
-        root_name, _, remainder = command_path.partition(" ")
-        prefix_path = (
-            f"{root_name} {self.prefix_agent_metavar} {remainder}"
-            if remainder
-            else f"{root_name} {self.prefix_agent_metavar}"
-        )
+        prefix_path = _prefix_usage_path(ctx, self.prefix_agent_metavar)
         pieces = [self.options_metavar] if self.options_metavar else []
-        pieces.append(self.subcommand_metavar or "[COMMAND] [ARGS]...")
-        formatter.write_usage(prefix_path, " ".join(pieces))
+        pieces.append(self.subcommand_metavar or "[COMMAND] [ARGS]")
+        write_usage(formatter, prefix_path, " ".join(pieces))
 
 
 class OptionalPrefixAgentCommand(PrefixAgentCommand):
@@ -203,16 +187,16 @@ class OptionalPrefixAgentCommand(PrefixAgentCommand):
 
 
 class OptionalPrefixAgentListCommand(OptionalPrefixAgentCommand):
-    argument_help = "Also include this agent's home caps."
+    argument_help = "Also include this agent's home caps"
 
 
 class OptionalPrefixAgentModelsCommand(OptionalPrefixAgentCommand):
-    argument_help = "Use this agent's model catalog and configuration."
+    argument_help = "Use this agent's model catalog and configuration"
 
 
 class RequiredPrefixAgentCommand(PrefixAgentCommand):
     prefix_agent_metavar = "AGENT"
-    argument_help = "Agent name."
+    argument_help = "Agent name"
 
     def _prefix_agent_argument(self) -> TyperArgument:
         return _HelpOnlyTyperArgument(
@@ -229,17 +213,17 @@ class RequiredPrefixAgentCommand(PrefixAgentCommand):
         state = ctx.obj
         if not isinstance(state, CliContext):
             raise TypeError("missing CLI context")
-        if not state.agent and "--help" not in args:
-            typer.echo(ctx.get_help())
-            ctx.exit()
-        return PrefixAgentCommand.parse_args(self, ctx, args)
+        remaining = PrefixAgentCommand.parse_args(self, ctx, args)
+        if not state.agent:
+            show_help(ctx)
+        return remaining
 
 
 class RuntimeAgentCommand(CliCommand):
     """Render one required agent argument before the command name in help."""
 
     usage_agent_metavar = "AGENT"
-    argument_help = "Agent name."
+    argument_help = "Agent name"
 
     def _real_params(self, ctx: Context) -> list[Parameter]:
         return TyperCommand.get_params(self, ctx)
@@ -266,20 +250,15 @@ class RuntimeAgentCommand(CliCommand):
         return [self._help_agent_argument(), *self._real_params(ctx)]
 
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        root_name, _, remainder = ctx.command_path.partition(" ")
-        prefix_path = (
-            f"{root_name} {self.usage_agent_metavar} {remainder}"
-            if remainder
-            else f"{root_name} {self.usage_agent_metavar}"
-        )
+        prefix_path = _prefix_usage_path(ctx, self.usage_agent_metavar)
         pieces = [self.options_metavar] if self.options_metavar else []
         for param in self._visible_real_params(ctx):
             pieces.extend(parameter_usage(param, ctx))
-        formatter.write_usage(prefix_path, " ".join(pieces))
+        write_usage(formatter, prefix_path, " ".join(pieces))
 
 
 class RunAgentCommand(RuntimeAgentCommand):
-    argument_help = "Existing local agent name, remote agent ref, or URL."
+    argument_help = "Agent name, reference, or URL"
 
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
         pieces = [self.options_metavar] if self.options_metavar else []
@@ -290,7 +269,7 @@ class RunAgentCommand(RuntimeAgentCommand):
 
 
 class StartAgentCommand(RuntimeAgentCommand):
-    argument_help = "Existing local agent name."
+    argument_help = "Existing local agent name"
 
 
 class OptionalPrefixAgentTemplateCommand(OptionalPrefixAgentCommand):
@@ -302,7 +281,7 @@ class OptionalPrefixAgentTemplateCommand(OptionalPrefixAgentCommand):
             required=False,
             default=None,
             expose_value=False,
-            help="Template name.",
+            help="Template name",
         )
 
     def get_params(self, ctx: Context) -> list[Parameter]:

@@ -10,8 +10,9 @@ import sys
 from typing import Annotated
 
 import typer
-from typer._click.exceptions import ClickException, NoArgsIsHelpError
+from typer._click.exceptions import ClickException
 
+from toolang.common.typer.ui import run
 from toolang.cli.common.parameters import RootOption
 
 from ...up.logging import configure_logging
@@ -33,7 +34,7 @@ CAP_TOP_LEVEL_COMMANDS = frozenset({"list", *commands.CAP_KINDS})
 
 app = typer.Typer(
     name="caps",
-    help="Manage composable agent primitives.",
+    help="Manage composable agent primitives",
     cls=OptionalPrefixAgentGroup,
     add_completion=False,
     invoke_without_command=True,
@@ -51,8 +52,9 @@ def callback(
         bool,
         typer.Option(
             "--version",
+            "-V",
             callback=_version_callback,
-            help="Show current version and exit.",
+            help="Show current version and exit",
             is_eager=True,
         ),
     ] = False,
@@ -69,7 +71,7 @@ def callback(
 
 app.command(
     "list",
-    help="Inspect available caps.",
+    help="Inspect available caps",
     cls=OptionalPrefixAgentListCommand,
 )(commands.list_caps)
 _cap_apps = commands.create_cap_apps(group_cls=OptionalPrefixAgentGroup)
@@ -89,24 +91,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     token = _PREFIX_AGENT.set(prefix_agent)
     try:
-        result = app(
+        return run(
+            app,
             args=[*global_args, *rewritten_body],
             prog_name=_prog_name(sys.argv[0] if sys.argv else ""),
-            standalone_mode=False,
         )
-    except typer.Exit as exc:
-        return exc.exit_code
-    except NoArgsIsHelpError as exc:
-        return exc.exit_code
-    except ClickException as exc:
-        echo_error(exc)
-        return exc.exit_code
-    except (FileExistsError, FileNotFoundError, ValueError) as exc:
-        echo_error(str(exc))
-        return 1
     finally:
         _PREFIX_AGENT.reset(token)
-    return result if isinstance(result, int) else 0
 
 
 def _rewrite_agent_shortcuts(body: list[str]) -> tuple[list[str], str | None]:

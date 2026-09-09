@@ -10,7 +10,6 @@ import pytest
 from rich.console import Console
 from rich.text import Text
 
-from typer import rich_utils
 from typer._click.utils import strip_ansi
 from typer.testing import CliRunner
 
@@ -34,7 +33,7 @@ def test_model_catalog_override_is_scoped_to_consuming_commands() -> None:
     assert "adapters" in stdout
     assert "--catalog" not in stdout
     assert "--models" not in stdout
-    assert "List models." in stdout
+    assert "List available models" in stdout
     assert "--model-catalog" not in stdout
 
     for command in (
@@ -81,12 +80,12 @@ def test_models_is_a_leaf_command_without_file_output_options() -> None:
     assert "--query-help" not in models_help
     assert "--query-schema" not in models_help
     assert "too query" in models_help
-    assert "models'." in models_help
+    assert "models'" in models_help
     assert "--json" in models_help
-    assert "Write filtered models as JSON." in models_help
+    assert "Write filtered models as JSON" in models_help
     assert "--output" not in models_help
     assert "--force" not in models_help
-    assert "Write catalog providers as JSON." in strip_ansi(providers_result.stdout)
+    assert "Write catalog providers as JSON" in strip_ansi(providers_result.stdout)
 
     for subcommand in ("inspect", "update"):
         result = runner.invoke(cli.app, ["models", subcommand])
@@ -629,8 +628,11 @@ def test_models_help_describes_optional_agent_without_loading(
     monkeypatch.setattr(
         model_catalog_commands, "load_matching_catalog_inspection", unexpected_load
     )
-    monkeypatch.setattr(rich_utils, "FORCE_TERMINAL", colored)
-    monkeypatch.setattr(rich_utils, "COLOR_SYSTEM", "standard" if colored else None)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    if colored:
+        monkeypatch.setenv("FORCE_COLOR", "1")
+    else:
+        monkeypatch.delenv("FORCE_COLOR", raising=False)
     monkeypatch.delenv("NO_COLOR", raising=False)
 
     result = cli.main(["--root", str(tmp_path), *target, "models", "--help"])

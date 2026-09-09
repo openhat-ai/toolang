@@ -177,7 +177,7 @@ def test_cli_package_is_executable_as_a_module(module: str, prefix: str) -> None
 @pytest.mark.parametrize(
     ("name", "app"), (("toolang", toolang_app), ("caps", caps_app))
 )
-def test_version_option_has_no_short_alias(name: str, app: typer.Typer) -> None:
+def test_version_option_has_uppercase_short_alias(name: str, app: typer.Typer) -> None:
     runner = CliRunner()
     help_result = runner.invoke(app, ["--help"], prog_name=name)
     short_result = runner.invoke(app, ["-V"], prog_name=name)
@@ -185,10 +185,9 @@ def test_version_option_has_no_short_alias(name: str, app: typer.Typer) -> None:
     short_output = strip_ansi(short_result.output)
 
     assert help_result.exit_code == 0, help_result.output
-    assert "--version" in help_output
-    assert "-V" not in help_output
-    assert short_result.exit_code == 2
-    assert "No such option: -V" in short_output
+    assert "-V, --version" in help_output
+    assert short_result.exit_code == 0, short_result.output
+    assert short_output.startswith(f"{name} ")
 
 
 def test_inspect_help_is_concise_and_consistent() -> None:
@@ -202,7 +201,7 @@ def test_inspect_help_is_concise_and_consistent() -> None:
     assert inspect_result.exit_code == 0, inspect_result.output
     for result in (root_result, inspect_result):
         output = strip_ansi(result.output)
-        assert "Inspect execution subjects." in output
+        assert "Inspect agent run history" in output
         assert "Inspect run records." not in output
         assert "Inspect a historical record or one of its fields." not in output
 

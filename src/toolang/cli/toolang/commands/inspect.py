@@ -651,7 +651,7 @@ def _inspect_subject_help() -> str:
         f"Subject chain. Root subjects: {roots}, or POINTER. "
         f"Relations: {relations}. Projectors: {projectors}. "
         "Run tree is a durable structural snapshot; Step call is the "
-        "Step-owned historical call."
+        "Step-owned historical call"
     )
 
 
@@ -665,10 +665,10 @@ def inspect_command(
     ],
     human: Annotated[
         bool,
-        typer.Option("--human", help="Render human-readable output (default)."),
+        typer.Option("--human", help="Render human-readable output (default)"),
     ] = False,
     json_view: Annotated[
-        bool, typer.Option("--json", help="Render exact canonical JSON.")
+        bool, typer.Option("--json", help="Render exact canonical JSON")
     ] = False,
 ) -> None:
     """Inspect execution subjects."""

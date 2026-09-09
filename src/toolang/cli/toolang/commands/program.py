@@ -20,24 +20,24 @@ def fmt(
         typer.Argument(
             metavar="PATH",
             click_type=PathType(),
-            help="File or directory paths to format.",
+            help="File or directory paths to format",
         ),
     ] = None,
     check: Annotated[
         bool,
-        typer.Option("--check", help="Exit non-zero if any file is not formatted."),
+        typer.Option("--check", help="Exit non-zero if any file is not formatted"),
     ] = False,
     tab_size: Annotated[
         int,
         typer.Option(
             "--tab-size",
             metavar="INTEGER",
-            help="Number of spaces per indentation level.",
+            help="Number of spaces per indentation level",
         ),
     ] = 2,
     stdin_filepath: Annotated[
         Path | None,
-        typer.Option("--stdin-filepath", metavar="PATH", help="Path label for stdin."),
+        typer.Option("--stdin-filepath", metavar="PATH", help="Path label for stdin"),
     ] = None,
 ) -> None:
     from ....lang.format import ToolangFormatError, format_source
@@ -143,16 +143,16 @@ def parse_program(
         typer.Argument(
             metavar="SOURCE",
             click_type=PathType(),
-            help="Toolang source file to parse, or '-' for stdin.",
+            help="Toolang source file to parse, or '-' for stdin",
         ),
     ],
     compact: Annotated[
         bool,
-        typer.Option("--compact", help="Emit compact JSON."),
+        typer.Option("--compact", help="Emit compact JSON"),
     ] = False,
     stdin_filepath: Annotated[
         Path | None,
-        typer.Option("--stdin-filepath", metavar="PATH", help="Path label for stdin."),
+        typer.Option("--stdin-filepath", metavar="PATH", help="Path label for stdin"),
     ] = None,
 ) -> None:
     from ....common.errors import ToolangError
