@@ -67,8 +67,8 @@ _CONTROL_PANEL_COMMAND_ORDER = (
     "cancel",
     "retry",
     "rerun",
-    "rewind",
     "fork",
+    "rewind",
     "compact",
 )
 _INSPECTION_PANEL_COMMAND_ORDER = (

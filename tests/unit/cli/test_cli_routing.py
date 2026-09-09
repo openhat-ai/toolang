@@ -224,8 +224,8 @@ def test_cli_control_commands_have_consistent_order_and_descriptions() -> None:
         "cancel": "Cancel an active run",
         "retry": "Retry a run from a failed step",
         "rerun": "Rerun an earlier run as a new one",
-        "rewind": "Rewind a thread to an earlier run",
         "fork": "Fork a thread from an earlier run",
+        "rewind": "Rewind a thread to an earlier run",
         "compact": "Compact a thread",
     }
 
@@ -307,8 +307,8 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "cancel",
             "retry",
             "rerun",
-            "rewind",
             "fork",
+            "rewind",
             "compact",
         ),
         "Inspection Commands": (
