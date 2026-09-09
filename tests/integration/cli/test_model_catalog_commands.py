@@ -697,7 +697,7 @@ def test_models_help_describes_optional_agent_without_loading(
     assert result == 0
     assert ("\x1b[" in output.out) is colored
     assert "[AGENT] models [OPTIONS]" in stdout
-    assert "model catalog and configuration" in stdout
+    assert "Local agent name; omit for root configuration" in stdout
     assert "--catalog" in stdout
     assert "--query" in stdout
     assert "--json" in stdout

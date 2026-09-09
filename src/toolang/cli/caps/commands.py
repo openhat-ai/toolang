@@ -21,12 +21,12 @@ from toolang.catalog.types import CAP_KINDS, CapKind
 from toolang.state import state as cap_state
 from toolang.state.prepare import prepare_agent_state
 from ..common.context import context_agent, context_root, user_call
+from ..common.help import CliCommand
 from ..common.output import echo_block, echo_table
 from ..common.query import query_items
 from ..common.routing import (
     OptionalPrefixAgentCommand,
     OptionalPrefixAgentListCommand,
-    OptionalPrefixAgentTemplateCommand,
 )
 
 if TYPE_CHECKING:
@@ -51,9 +51,7 @@ def _kind_command_cls(label: str) -> type[OptionalPrefixAgentCommand]:
     return type(
         f"{label.title().replace(' ', '')}ScopeCommand",
         (OptionalPrefixAgentCommand,),
-        {
-            "argument_help": f"Apply to this agent's home {label} instead of root {label}"
-        },
+        {"argument_help": f"Modify the agent's home {label}; omit for root {label}"},
     )
 
 
@@ -61,31 +59,7 @@ def _kind_list_command_cls(label: str) -> type[OptionalPrefixAgentListCommand]:
     return type(
         f"{label.title().replace(' ', '')}ListScopeCommand",
         (OptionalPrefixAgentListCommand,),
-        {"argument_help": f"Also include this agent's home {label}"},
-    )
-
-
-def _kind_template_command_cls(label: str) -> type[OptionalPrefixAgentTemplateCommand]:
-    return type(
-        f"{label.title().replace(' ', '')}TemplateScopeCommand",
-        (OptionalPrefixAgentTemplateCommand,),
-        {
-            "argument_help": f"Apply to this agent's home {label} instead of root {label}"
-        },
-    )
-
-
-def _kind_group_cls(
-    group_cls: type[TyperGroup] | None, label: str
-) -> type[TyperGroup] | None:
-    if group_cls is None:
-        return None
-    return type(
-        f"{label.title().replace(' ', '')}ScopeGroup",
-        (group_cls,),
-        {
-            "argument_help": f"Apply to this agent's home {label} instead of root {label}"
-        },
+        {"argument_help": f"Local agent name; omit for root {label} only"},
     )
 
 
@@ -174,10 +148,9 @@ def create_cap_apps(
         label = cap_labels[kind]
         command_cls = _kind_command_cls(label)
         list_command_cls = _kind_list_command_cls(label)
-        template_command_cls = _kind_template_command_cls(label)
         cap_app = typer.Typer(
             help=cap_group_help[kind],
-            cls=_kind_group_cls(group_cls, label),
+            cls=group_cls,
             add_completion=False,
             no_args_is_help=True,
             pretty_exceptions_enable=False,
@@ -189,7 +162,7 @@ def create_cap_apps(
                 help=spec.help(kind),
                 no_args_is_help=spec.no_args_is_help,
                 cls=(
-                    template_command_cls
+                    CliCommand
                     if spec.name == "template"
                     else list_command_cls
                     if spec.name == "list"
@@ -485,7 +458,7 @@ def _make_template_command(kind: CapKind, title: str) -> Callable[..., None]:
     def template(
         name: Annotated[
             str | None,
-            typer.Argument(help="Template name", metavar="NAME", hidden=True),
+            typer.Argument(help="Template name", metavar="NAME"),
         ] = None,
     ) -> None:
         if name is not None:

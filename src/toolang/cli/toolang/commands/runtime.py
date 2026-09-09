@@ -68,7 +68,7 @@ def run(
     ctx: typer.Context,
     agent: str | None = typer.Argument(
         None,
-        help="Agent name, reference, or URL",
+        help="Agent name, .too file, reference, or URL",
         hidden=True,
     ),
     sandbox: Annotated[
@@ -195,9 +195,7 @@ def _report_foreground_ready(
 
 def start(
     ctx: typer.Context,
-    agent: str | None = typer.Argument(
-        None, help="Existing local agent name", hidden=True
-    ),
+    agent: str | None = typer.Argument(None, help="Local agent name", hidden=True),
     sandbox: Annotated[
         str | None,
         typer.Option(
@@ -297,7 +295,7 @@ def start(
 
 def stop(
     ctx: typer.Context,
-    agent: str | None = typer.Argument(None, help="Agent name", hidden=True),
+    agent: str | None = typer.Argument(None, help="Local agent name", hidden=True),
     force: Annotated[
         bool,
         typer.Option(help="Force-stop when graceful shutdown does not complete"),
@@ -334,7 +332,8 @@ def stop(
 def serve(
     ctx: typer.Context,
     agent: Annotated[
-        str, typer.Argument(metavar="AGENT", click_type=TextType(), help="Agent name")
+        str,
+        typer.Argument(metavar="AGENT", click_type=TextType(), help="Local agent name"),
     ],
     allows: AllowOptions = None,
     limits: LimitOptions = None,

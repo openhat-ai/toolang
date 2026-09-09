@@ -129,7 +129,7 @@ class ArgumentUsageTest(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.exception)
         self.assertEqual(received, [(Mode.fast, (1, 2), (3, 4))])
 
-    def test_usage_renders_native_context_without_formatted_argument_strings(self):
+    def test_usage_renders_native_context_without_reparsing_argument_strings(self):
         app = typer.Typer(add_completion=False, options_metavar="[GLOBAL OPTIONS]")
 
         @app.callback()
@@ -160,7 +160,7 @@ class ArgumentUsageTest(unittest.TestCase):
             patch.object(
                 TyperArgument,
                 "get_usage_pieces",
-                side_effect=AssertionError("formatted argument"),
+                return_value=["ignored formatted argument"],
             ),
         ):
             self.assertEqual(
@@ -172,6 +172,26 @@ class ArgumentUsageTest(unittest.TestCase):
         self.assertEqual(child.params[0].metavar, "entry")
         self.assertFalse(child.params[0].required)
         self.assertEqual(child.params[0].nargs, -1)
+
+    def test_usage_respects_arguments_with_no_usage_pieces(self):
+        class HelpOnlyArgument(TyperArgument):
+            def get_usage_pieces(self, ctx):
+                return []
+
+        parent = TyperGroup(
+            name="demo", params=[HelpOnlyArgument(param_decls=["scope"])]
+        )
+        command = TyperCommand(
+            name="show",
+            params=[
+                HelpOnlyArgument(param_decls=["context"]),
+                TyperArgument(param_decls=["name"], required=True),
+            ],
+        )
+        ctx = typer.Context(
+            command, info_name="show", parent=typer.Context(parent, info_name="demo")
+        )
+        self.assertEqual(_usage(ctx).plain, "Usage: demo show [OPTIONS] <NAME>")
 
     def test_usage_preserves_bracketed_literals_and_normalizes_item_repetition(self):
         for metavar, required, nargs, expected in (

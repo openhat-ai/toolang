@@ -48,7 +48,10 @@ from . import plugin
 def new_agent(
     ctx: typer.Context,
     agent: Annotated[
-        str, typer.Argument(metavar="AGENT", click_type=TextType(), help="Agent name")
+        str,
+        typer.Argument(
+            metavar="AGENT", click_type=TextType(), help="New local agent name"
+        ),
     ],
     template: Annotated[
         str,
@@ -74,7 +77,9 @@ def clone_agent(
     source: Annotated[
         str,
         typer.Argument(
-            metavar="SOURCE", click_type=TextType(), help="Agent source selector"
+            metavar="SOURCE",
+            click_type=TextType(),
+            help="Agent name, reference, or URL",
         ),
     ],
     target: Annotated[
@@ -119,7 +124,8 @@ def clone_agent(
 def remove_agent(
     ctx: typer.Context,
     agent: Annotated[
-        str, typer.Argument(metavar="AGENT", click_type=TextType(), help="Agent name")
+        str,
+        typer.Argument(metavar="AGENT", click_type=TextType(), help="Local agent name"),
     ],
 ) -> None:
     from toolang.up import sandbox as sandbox_runtime
@@ -165,7 +171,9 @@ def list_agents(ctx: typer.Context) -> None:
 
 def info_agent(
     ctx: typer.Context,
-    agent: str | None = typer.Argument(None, help="Agent name", hidden=True),
+    agent: str | None = typer.Argument(
+        None, help="Agent name, .too file, reference, or URL", hidden=True
+    ),
     model_catalog: ModelCatalogOption = None,
 ) -> None:
     agent_name = require_runtime_agent(ctx, agent)

@@ -447,10 +447,12 @@ def _usage(ctx: Context) -> Text:
         if current is ctx and command.options_metavar:
             text.append(" " + command.options_metavar)
         for param in command.get_params(current):
+            pieces = param.get_usage_pieces(current)
             if isinstance(param, TyperArgument):
-                text.append(" " + argument_usage(param))
+                if pieces:
+                    text.append(" " + argument_usage(param))
             else:
-                for part in param.get_usage_pieces(current):
+                for part in pieces:
                     text.append(" " + part)
         if current is ctx and isinstance(command, TyperGroup):
             text.append(" " + command.subcommand_metavar)
