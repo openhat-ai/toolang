@@ -70,7 +70,7 @@ fs = "toolang.plugin.toolsets.filesystem:create_toolset"
 history = "toolang.plugin.toolsets.history:create_toolset"
 service = "toolang.plugin.toolsets.service_use:create_toolset"
 shell = "toolang.plugin.toolsets.shell:create_toolset"
-web = "toolang.plugin.toolsets.web_search:create_toolset"
+web = "toolang.plugin.toolsets.web:create_toolset"
 me = "toolang.execution.tools.agent_state:create_toolset"
 
 [project.entry-points."toolang.model_adapter"]

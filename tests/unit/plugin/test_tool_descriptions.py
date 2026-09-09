@@ -7,7 +7,9 @@ import pytest
 from toolang.base.types.tool import ToolResult
 from toolang.execution.tools.runtime import RuntimeToolset
 from toolang.plugin.toolsets.filesystem import FilesystemToolset
+from toolang.plugin.toolsets.history import HistoryToolset
 from toolang.plugin.toolsets.shell import ShellToolset
+from toolang.plugin.toolsets.web import WebToolset
 
 
 @pytest.mark.parametrize(
@@ -111,6 +113,65 @@ def test_shell_describes_command_not_output_or_exit_status(status, prefix):
         )
     )
     assert text == f"{prefix} “echo hello”" + ("..." if status == "running" else "")
+
+
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        ("running", "Searching for “abc”..."),
+        ("succeeded", "Searched for “abc”"),
+        ("failed", "Failed to search for “abc”"),
+    ],
+)
+def test_web_search_describes_query_without_running_search(
+    status, expected, monkeypatch
+):
+    def no_search(*args, **kwargs):
+        raise AssertionError("summary must not perform a search")
+
+    monkeypatch.setattr("toolang.plugin.toolsets.web._run_search", no_search)
+    tool = WebToolset({}).tools()["search"]
+    result = (
+        None
+        if status == "running"
+        else ToolResult(
+            {"results": [{"title": "Do not display result content"}]},
+            error="unavailable" if status == "failed" else None,
+        )
+    )
+    assert tool.summary({"query": "abc", "top_k": 5}, result) == expected
+
+
+@pytest.mark.parametrize(
+    "name,arguments,target",
+    [
+        ("read_threads", {}, "threads"),
+        ("read_runs", {}, "runs"),
+        ("read_runs", {"thread": "thread_abc"}, "runs from thread_abc"),
+        ("read_steps", {"run": "run_abc"}, "steps from run_abc"),
+        ("read_output", {"run": "run_abc"}, "output from run_abc"),
+        ("read_threads", {"cursor": "opaque-token"}, "more threads"),
+        ("read_runs", {"cursor": "opaque-token"}, "more runs"),
+        ("read_steps", {"cursor": "opaque-token"}, "more steps"),
+    ],
+)
+@pytest.mark.parametrize(
+    "status,prefix",
+    [("running", "Reading"), ("succeeded", "Read"), ("failed", "Failed to read")],
+)
+def test_history_describes_the_target_without_displaying_cursors_or_records(
+    name, arguments, target, status, prefix
+):
+    result = (
+        None
+        if status == "running"
+        else ToolResult(
+            {"records": ["Do not display history contents"]},
+            error="unavailable" if status == "failed" else None,
+        )
+    )
+    summary = HistoryToolset().tools()[name].summary(arguments, result)
+    assert summary == f"{prefix} {target}" + ("..." if status == "running" else "")
 
 
 def test_honor_only_describes_rule_files_when_result_supplies_them():

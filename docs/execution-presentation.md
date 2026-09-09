@@ -153,7 +153,9 @@ an inline facts separator.
   a separate red error line on failure.
 - Flow activity and terminal output use `•` and normal text.
 - Model and Flow failures use red; cancellation uses yellow.
-- Parallel lanes place the Step marker after the lane columns.
+- Parallel lanes place the Step marker after the lane columns. The lane number
+  and both `|` separators are dim; the item identity `#N` has normal intensity.
+  These styles remain independent of the activity's dim or error styling.
 - Headers and facts are dim.
 
 Model and Flow markers remain unstyled, independently of their following content.
@@ -214,6 +216,17 @@ and complete status-plus-ID field. Long captions and identities fold by display
 cells without truncation. Exactly one blank row follows the header, precedes the
 footer, and follows the footer; adjacent child-owned gaps coalesce.
 
+A confirmed `execute` transfer displays one dim boundary before the target's
+first Step:
+
+```text
+---  execute agic:delegate ---------------------------------------------
+```
+
+Its prefix is three ASCII hyphens and two spaces. The right-hand ASCII hyphens
+fill the available width. Long target names wrap under a five-cell indent
+without truncation. Script and Chat use the same rendering.
+
 ## Flow Headers
 
 A Flow Step uses its non-empty authored doc comment as the header. Without a
@@ -257,6 +270,31 @@ synthetic success row. Absence of an error means success. Direct values are
 displayed as values; output shapes such as `1 item` or `6-item list` are not
 displayed.
 
+Headers describe intent, live rows report current activity, and final rows
+report actual results. Authored headers can explain the domain-specific purpose
+without changing the operation's result vocabulary:
+
+| Statement | Live content | Final content |
+| --- | --- | --- |
+| content `let` | No synthetic activity | Actual value |
+| `run`, `scatter`, `gather` | Child Model or Tool activity | Child output, without a duplicate wrapper summary |
+| `seek`, `ask` | No synthetic activity | Currently fail with a missing execution/input bridge error |
+| `map` | Item counts and lane activity | `Mapped 6 items` |
+| `storm` | Item counts and lane activity | `Generated 6 items` |
+| predicate `keep` | Item counts and lane activity | `Kept all 6 items` or `Kept 4 of 6 items` |
+| predicate `drop` | Item counts and lane activity | `Dropped all 6 items` or `Dropped 2 of 6 items; 4 remaining` |
+| positional `keep`, `drop` | No synthetic activity | Actual selection, for example `Kept the first 4 items out of 6` |
+| `sort` | Item counts and lane activity | `Sorted 6 items descending` |
+| `repeat` | Iteration/condition boundaries and child activity | Completed iterations and the termination cause |
+| `settle` | Iteration boundaries and child activity | `Settled all 6 items in 6 iterations` |
+
+For example, `Search the web for each query` ends with `Mapped 6 items`,
+`Keep evidence bundles that answer the research task` with `Kept all 6 items`,
+and `Prioritize the strongest evidence` with `Sorted 6 items descending`.
+`Keep the first 8 items` may also end with `Kept all 6 items` when only six
+items exist. Result summaries do not claim parallel execution: the same
+operations can run with the header suffix `one at a time`.
+
 ## Model and Tool Trace
 
 Outside parallel work, every leaf Step leaves a complete trace. Model text is
@@ -284,8 +322,8 @@ and Step closure does not repeat the final output.
 Tool activity uses the persisted running description, replaced at completion:
 
 ```text
-› Executing search “Toolang plugin protocol” ...
-› Executed search “Toolang plugin protocol”
+› Searching for “Toolang plugin protocol”...
+› Searched for “Toolang plugin protocol”
 ```
 
 Completed traces contain the terminal description only. Tool-owned descriptions
@@ -296,9 +334,15 @@ can provide clearer wording and logical workspace labels:
 ✧ Loaded rules: repo:/src/AGENTS.md
 ✧ Loaded guidance: skill/python-testing
 › Wrote repo:/src/example.py
+› Read steps from run_abc
+› Read more steps
 › Failed to read repo:/missing.txt
   File not found
 ```
+
+History summaries name the requested threads, runs, steps, or output and any
+explicit thread/run reference. Cursor-only requests say `more threads`, `more
+runs`, or `more steps`; summaries neither decode nor display the cursor.
 
 Every Step begins after one unpainted blank line, including model output that
 follows a Tool Step. A preceding statement, iteration, or condition header can
@@ -354,7 +398,7 @@ A Flow Step that owns child execution may append one dim footer:
 ```text
 [2] Search the web for each query
 
-• Mapped all 6 items in parallel
+• Mapped 6 items
   31s · 6 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) ≈$0.01        run_root.2
 ```
 
@@ -386,24 +430,40 @@ still separates the completed Flow Step from the next Step or root footer.
 
 ## Parallel Work
 
-Parallel work keeps one aggregate live row and one physical row per active
-lane. Lane rows are truncated rather than wrapped:
+Parallel work keeps one aggregate live row and one physical row per observed
+lane. A lane retains its latest activity until reuse or Step closure. Lane rows
+are truncated rather than wrapped:
 
 ```text
-• running · 4/18 succeeded · 3 active
+• Running · 3 active · 4/18 succeeded
   0 | #4 | • Thinking...
-  1 | #5 | • executing web.search
+  1 | #5 | › Searching for “agent runtimes”...
   2 | #6 | • Source summary prepared
 ```
+
+Counts describe items across all lane reuse. Running summaries contain only
+`failed`, `active`, and `succeeded`, in that order. Active children include those
+still canceling; their individual lane activity can say `canceling`. Queued and
+canceled counts do not appear in the running summary. For example:
+
+```text
+• Running · 1 failed · 2 active · 2/6 succeeded
+```
+
+Terminal summaries contain `failed`, `canceled`, `not started`, and `succeeded`,
+in that order. Only the success count includes the known total, and it always
+appears last. Zero-valued counts are omitted except for `succeeded`. Before any
+child starts, the summary is `Running · 0 succeeded`, without an invented total.
+A terminal summary never labels unstarted items as canceled.
 
 On success, the live lanes are cleared and one natural-language result remains:
 
 ```text
-• Mapped all 7 items in parallel
-• Brainstormed 7 items in parallel
-• Evaluated 7 items in parallel, kept 5
-• Evaluated 7 items in parallel, dropped 2, leaving 5
-• Scored 10 items in parallel, sorted 10 items descending
+• Mapped 7 items
+• Generated 7 items
+• Kept 5 of 7 items
+• Dropped 2 of 7 items; 5 remaining
+• Sorted 10 items descending
 ```
 
 On failure, successful, active, and canceled lanes are cleared. Each failed
@@ -411,12 +471,18 @@ lane retains its causal error, followed by the parallel Step's distinct
 boundary error:
 
 ```text
-• Parallel execution stopped: 4/18 succeeded, 1 failed, and 2 were canceled
-  1 | #5 | • failed fetch_page
+• Stopped · 1 failed · 2 canceled · 11 not started · 4/18 succeeded
+  1 | #5 | › failed fetch_page
              provider returned status 429
 
 • parallel step stopped because lane 1 (#5) failed
   31s · 7 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) ≈$0.01
+```
+
+Cancellation uses the same counts without inventing a failure:
+
+```text
+• Canceled · 3 canceled · 11 not started · 4/18 succeeded
 ```
 
 ## Repeat and Settle
@@ -427,14 +493,15 @@ normal trace-or-lane rule for its child statement:
 ```text
 --- iteration 1 of 3 ---
 
-<?> completion_check
+<?> Run completion_check to check whether to break
 
 • Thinking...
 • true
 ```
 
 The condition is a child Run, not a synthetic `executed completion_check`
-Step. Terminal loop output identifies the actual cause:
+Step. Generated condition names use `<?> Check whether to break` instead of
+exposing an internal name. Terminal loop output identifies the actual cause:
 
 ```text
 • Completed all 3 iterations

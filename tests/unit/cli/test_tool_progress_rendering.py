@@ -4,6 +4,7 @@ from io import StringIO
 
 import pytest
 from rich.console import Console
+from rich.style import Style
 
 from toolang.cli.common.execution_progress import ProgressBlock, ProgressRow
 from toolang.cli.common.execution_progress.formatting import display_width
@@ -63,3 +64,45 @@ def test_model_marker_remains_normal_without_changing_content_style(tone, markdo
     marker = next(s for s in segments if "•" in s.text)
     assert marker.style is None or (marker.style.color is None and not marker.style.dim)
     assert "Model response" in "".join(s.text for s in segments)
+
+
+@pytest.mark.parametrize("live", [False, True])
+@pytest.mark.parametrize("width", [8, 16, 80])
+@pytest.mark.parametrize(
+    ("marker", "tone", "surface"),
+    [
+        ("›", "progress", "tool_summary"),
+        ("✧", "progress", "tool_summary"),
+        ("•", "active", "none"),
+        ("•", "error", "none"),
+    ],
+)
+def test_lane_identity_styles_are_independent_of_activity(
+    live, width, marker, tone, surface
+):
+    row = ProgressRow(f"  1 | #2 | {marker} Activity continues", tone, surface=surface)
+    console = Console(width=width, force_terminal=True, _environ={})
+    segments = list(
+        console.render(
+            progress_block_renderable(
+                ProgressBlock("lane", (row,)), live=live, max_width=width
+            )
+        )
+    )
+    characters = [
+        (char, segment.style or Style.null())
+        for segment in segments
+        for char in segment.text
+    ]
+    for index in (2, 4):
+        assert characters[index][1].dim is True
+        assert characters[index][1].color is None
+    assert characters[6][0] == "#"
+    assert characters[6][1].dim is False
+    assert characters[6][1].color is None
+    if width >= 16:
+        assert characters[7][1].dim is False
+        assert characters[9][1].dim is True
+        body = next(style for char, style in characters if char == "A")
+        assert bool(body.dim) is (tone == "progress")
+        assert (body.color is not None) is (tone == "error")

@@ -756,7 +756,7 @@ def test_tty_hides_cursor_for_the_lifetime_of_parallel_live_output() -> None:
     stream = _TtyStream()
     console = ProgressConsole(stream, width=40)
     rows = [
-        ProgressRow("• running · 1 active", "active"),
+        ProgressRow("• Running · 1 active · 0/1 succeeded", "active"),
         ProgressRow("  0 | #0 | • Thinking...", "active"),
     ]
 

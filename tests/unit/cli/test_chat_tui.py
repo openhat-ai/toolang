@@ -409,8 +409,8 @@ def test_chat_flow_keeps_one_blank_row_at_each_finalized_boundary() -> None:
     assert "[1] Map each item with summarize, up to 2 at once\n\n• Mapped" in (
         transcript
     )
-    assert "items in parallel\n\n∎ run_1 succeeded" in transcript
-    assert "items in parallel\n\n\n∎ run_1 succeeded" not in transcript
+    assert "items\n\n∎ run_1 succeeded" in transcript
+    assert "items\n\n\n∎ run_1 succeeded" not in transcript
 
 
 def test_chat_moves_stable_markdown_to_scrollback_while_the_tail_stays_live() -> None:
@@ -537,9 +537,7 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
 
     assert [block.type for block in app.live_blocks] == ["RunSummaryBlock"]
     finalized = _render_text(app.finalized[-1].render())
-    assert (
-        "• Parallel execution stopped: 0/2 succeeded, 1 failed, and 1 was canceled"
-    ) in finalized
+    assert "• Stopped · 1 failed · 1 canceled · 0/2 succeeded" in finalized
     assert "parallel step stopped because lane 0 (#0) failed" in finalized
     assert "0 | #0 | • failed model unavailable" in finalized
 
@@ -1106,7 +1104,7 @@ def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() ->
         ProgressBlock(
             "par:run_1.2",
             (
-                ProgressRow("• 5 succeeded · 1 canceled", "warning"),
+                ProgressRow("• Canceled · 1 canceled · 5/6 succeeded", "warning"),
                 ProgressRow(
                     "  27.0s · 5 runs",
                     "progress",
@@ -1118,7 +1116,7 @@ def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() ->
 
     rendered = _render_text(block.render())
 
-    assert "• 5 succeeded · 1 canceled" in rendered
+    assert "• Canceled · 1 canceled · 5/6 succeeded" in rendered
     assert "statement failed" not in rendered
     assert "  27.0s · 5 runs" in rendered
     assert "run_1.2" in rendered

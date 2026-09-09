@@ -553,7 +553,7 @@ def test_steer_during_execute_delivery_keeps_committed_transfer(tmp_path: Path) 
                 for row in block.rows
             ]
             assert not projector._broken
-            assert any(row.text == "---  handoff to agic:child" for row in rows)
+            assert any(row.text == "---  execute agic:child" for row in rows)
             assert not any("Failed to execute" in row.text for row in rows)
 
     asyncio.run(scenario())

@@ -161,7 +161,7 @@ later presentation policy.
 | Old toolset | New toolset | Source module |
 | --- | --- | --- |
 | `filesystem` | `fs` | `toolang.plugin.toolsets.filesystem` |
-| `web_search` | `web` | `toolang.plugin.toolsets.web_search` |
+| `web_search` | `web` | `toolang.plugin.toolsets.web` |
 | `shell` | `shell` | `toolang.plugin.toolsets.shell` |
 | `service_use` | `service` | `toolang.plugin.toolsets.service_use` |
 | `agent_state` | `_me` | `toolang.execution.tools.agent_state` |
@@ -249,7 +249,7 @@ adapter-specific name rewrites.
 - `src/toolang/plugin/toolsets/loading.py`: pass source provenance into every
   tool registration.
 - `pyproject.toml`: canonical built-in entry-point names.
-- `src/toolang/plugin/toolsets/{filesystem,web_search,shell,service_use}.py`:
+- `src/toolang/plugin/toolsets/{filesystem,web,shell,service_use}.py`:
   runtime toolset and leaf identities.
 - `src/toolang/execution/tools/agent_state.py`: `_me` toolset and verb-first
   leaves.

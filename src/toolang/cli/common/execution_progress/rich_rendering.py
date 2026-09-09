@@ -296,20 +296,26 @@ class _PlainRow:
         if self.row.surface in {"tool_summary", "tool_error"} or (
             self.live and not self.row.wrap_live
         ):
-            yield _plain_text(truncate(self.row.text, width), style)
+            text = _plain_text(self.row.text, style)
+            shortened = truncate(self.row.text, width)
+            if shortened != self.row.text:
+                text = text[: len(shortened) - 1]
+                text.append("…", style=style)
+            yield text
             return
 
         prefix, content = split_hanging_prefix(self.row.text)
         prefix_width = display_width(prefix)
         if prefix_width >= width:
-            lines = Text(self.row.text, style=style).wrap(
+            lines = _plain_text(self.row.text, style).wrap(
                 console,
                 width,
                 overflow="fold",
+                no_wrap=False,
             )
             for line in lines:
                 line.rstrip()
-                yield _plain_text(line.plain, style)
+                yield line
             return
 
         lines = Text(content, style=style).wrap(
@@ -329,10 +335,17 @@ class _PlainRow:
 
 
 def _plain_text(value: str, style: str) -> Text:
-    """Style rows while keeping Model and Flow markers normal."""
+    """Style lane identities and activity independently, keeping bullets normal."""
 
     text = Text(no_wrap=True)
     prefix, content = split_hanging_prefix(value)
+    lane, separator, rest = prefix.partition(" | ")
+    item, closing, marker = rest.partition(" | ")
+    if separator and closing and lane.strip().isdigit() and item.startswith("#"):
+        text.append(lane + separator, style="dim")
+        text.append(item, style="not dim")
+        text.append(closing, style="dim")
+        prefix = marker
     for char in prefix:
         text.append(char, style="none" if char == "•" else style)
     text.append(content, style=style)
@@ -399,7 +412,7 @@ class _TwoEndedPlainRow:
 
 @dataclass(frozen=True, slots=True)
 class _HyphenDividerRow:
-    """Render one dynamic Run boundary with an elastic box-drawing border."""
+    """Render Run and execute boundaries with elastic borders."""
 
     row: ProgressRow
     max_width: int
@@ -420,7 +433,8 @@ class _HyphenDividerRow:
         caption = self.row.text.removeprefix("---  ")
         yield from self._left_boundary(
             width,
-            marker="╟" if self.row.leader == "handoff" else "╓",
+            prefix="---  " if self.row.leader == "handoff" else "╓ ",
+            character="-" if self.row.leader == "handoff" else "─",
             content=caption,
             border_style="dim",
         )
@@ -429,34 +443,29 @@ class _HyphenDividerRow:
     def _left_boundary(
         width: int,
         *,
-        marker: str,
+        prefix: str,
+        character: str,
         content: str,
         border_style: str,
     ) -> RenderResult:
-        prefix = f"{marker} "
         prefix_width = display_width(prefix)
         minimum = 3
         gap = " "
         available = width - prefix_width - display_width(content) - display_width(gap)
         if available >= minimum:
             line = Text(no_wrap=True)
-            line.append(marker, style=border_style)
-            line.append(" ", style="dim")
+            line.append(prefix, style=border_style)
             line.append(content, style="dim")
             line.append(gap, style="dim")
-            line.append("─" * available, style=border_style)
+            line.append(character * available, style=border_style)
             yield line
             return
 
         if width <= prefix_width:
-            line = Text(no_wrap=True)
-            line.append(marker, style=border_style)
-            if width > 1:
-                line.append(" ", style="dim")
-            yield line
+            yield Text(prefix[:width], style=border_style, no_wrap=True)
             for content_line in wrap_display(content, width):
                 yield Text(content_line, style="dim", no_wrap=True)
-            yield Text("─" * width, style=border_style, no_wrap=True)
+            yield Text(character * width, style=border_style, no_wrap=True)
             return
 
         indent = " " * prefix_width
@@ -468,19 +477,17 @@ class _HyphenDividerRow:
                 if remaining >= minimum:
                     line = Text(no_wrap=True)
                     if index == 0:
-                        line.append(marker, style=border_style)
-                        line.append(" ", style="dim")
+                        line.append(prefix, style=border_style)
                     else:
                         line.append(indent, style="dim")
                     line.append(content_line, style="dim")
                     line.append(" ", style="dim")
-                    line.append("─" * remaining, style=border_style)
+                    line.append(character * remaining, style=border_style)
                     yield line
                     return
             line = Text(no_wrap=True)
             if index == 0:
-                line.append(marker, style=border_style)
-                line.append(" ", style="dim")
+                line.append(prefix, style=border_style)
             else:
                 line.append(indent, style="dim")
             line.append(content_line, style="dim")
@@ -488,7 +495,7 @@ class _HyphenDividerRow:
         leader_width = max(0, width - display_width(indent))
         if leader_width:
             line = Text(indent, style="dim", no_wrap=True)
-            line.append("─" * leader_width, style=border_style)
+            line.append(character * leader_width, style=border_style)
             yield line
 
     def _footer(self, width: int) -> RenderResult:

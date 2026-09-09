@@ -408,17 +408,16 @@ def _collection_success_text(
     output: int | None,
 ) -> str:
     if isinstance(statement, MapStmt):
-        return f"Mapped {_all_items(total)} in parallel"
+        return f"Mapped {_count(total, 'item')}"
     if isinstance(statement, StormStmt):
-        return f"Brainstormed {_count(output if output is not None else total, 'item')} in parallel"
+        return f"Generated {_count(output if output is not None else total, 'item')}"
     if isinstance(statement, KeepStmt):
         kept = output if output is not None else total
         if statement.position is not None:
             return _positional_keep_text(statement.position, total, kept)
-        return (
-            f"Evaluated {_count(total, 'item')} in parallel, "
-            f"kept {_selected_items(kept, total)}"
-        )
+        if kept == total:
+            return f"Kept {_all_items(total)}"
+        return f"Kept {kept} of {_count(total, 'item')}"
     if isinstance(statement, DropStmt):
         remaining = output if output is not None else total
         dropped = total - remaining
@@ -429,15 +428,12 @@ def _collection_success_text(
                 dropped,
                 remaining,
             )
-        return (
-            f"Evaluated {_count(total, 'item')} in parallel, "
-            f"dropped {_selected_items(dropped, total)}, "
-            f"leaving {_remaining_items(remaining, total)}"
-        )
+        if dropped == total:
+            return f"Dropped {_all_items(total)}"
+        return f"Dropped {dropped} of {_count(total, 'item')}; {remaining} remaining"
     if isinstance(statement, SortStmt):
         selected = output if output is not None else total
-        lead = f"Scored {_count(total, 'item')} in parallel"
-        return f"{lead}, sorted {_count(selected, 'item')} {statement.order}"
+        return f"Sorted {_count(selected, 'item')} {statement.order}"
     return ""
 
 
@@ -520,22 +516,6 @@ def _all_items(value: int) -> str:
     if value == 1:
         return "the item"
     return f"all {value} items"
-
-
-def _selected_items(value: int, total: int) -> str:
-    if value == 0:
-        return "none"
-    if value == total:
-        return f"all {total}"
-    return str(value)
-
-
-def _remaining_items(value: int, total: int) -> str:
-    if value == 0:
-        return "none"
-    if value == total:
-        return f"all {total}"
-    return str(value)
 
 
 def _tone(status: str) -> ProgressTone:

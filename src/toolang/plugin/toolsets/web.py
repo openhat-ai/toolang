@@ -1,4 +1,4 @@
-"""Web-search toolset plugin."""
+"""Web toolset plugin."""
 
 from __future__ import annotations
 
@@ -12,14 +12,16 @@ from anyio import to_process
 
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import Tool, Toolset
+from toolang.base.types.tool import ToolResult
 from toolang.base.utils.function_tools import create_function_tool, tool
+from toolang.base.utils.tool_descriptions import action_summary
 
 DEFAULT_TOP_K = 5
 DEFAULT_TIMEOUT = 15
 
 
 @dataclass(slots=True)
-class WebSearchToolset:
+class WebToolset:
     """Public-web search tools."""
 
     config: dict[str, Any]
@@ -43,7 +45,7 @@ class WebSearchToolset:
         return dict(self._tools)
 
     def _build_tools(self) -> dict[str, Tool]:
-        @tool(name="search", description="Search the public web.")
+        @tool(name="search", description="Search the public web.", summary=_summary)
         async def search(
             query: str,
             top_k: int = self._top_k,
@@ -89,10 +91,22 @@ class WebSearchToolset:
         return {"search": create_function_tool(search)}
 
 
+def _summary(
+    arguments: Mapping[str, Any],
+    result: ToolResult | None = None,
+) -> str | None:
+    query = arguments.get("query")
+    if not isinstance(query, str):
+        return None
+    return action_summary(
+        result, ("search for", "Searching for", "Searched for"), f"“{query}”"
+    )
+
+
 def create_toolset(config: Mapping[str, Any]) -> Toolset:
     """Create the web toolset plugin."""
 
-    return WebSearchToolset(config=dict(config))
+    return WebToolset(config=dict(config))
 
 
 async def _run_search(

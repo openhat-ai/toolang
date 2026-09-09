@@ -13,6 +13,7 @@ from toolang.base.types.tool import (
     ToolResult,
     HistoryToolContext,
 )
+from toolang.base.utils.tool_descriptions import action_summary
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +24,25 @@ class HistoryTool(Tool):
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(self.name, self.description, dict(self.parameters))
+
+    def summary(
+        self,
+        arguments: Mapping[str, Any],
+        result: ToolResult | None = None,
+    ) -> str:
+        target, reference_key = {
+            "read_threads": ("threads", None),
+            "read_runs": ("runs", "thread"),
+            "read_steps": ("steps", "run"),
+            "read_output": ("output", "run"),
+        }[self.name]
+        if self.name != "read_output" and arguments.get("cursor"):
+            target = f"more {target}"
+        elif reference_key and isinstance(
+            reference := arguments.get(reference_key), str
+        ):
+            target += f" from {reference}"
+        return action_summary(result, ("read", "Reading", "Read"), target)
 
     async def invoke(
         self, arguments: Mapping[str, Any], context: ToolContext
