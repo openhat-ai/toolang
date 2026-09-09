@@ -405,11 +405,9 @@ def _usage(ctx: Context) -> Text:
                 name = (param.metavar or param.name or "").upper()
                 if param.nargs == -1:
                     name += "..."
+                name = " ".join([name] * max(1, param.nargs))
                 text.append(" ")
-                if param.required:
-                    text.append(" ".join([f"<{name}>"] * max(1, param.nargs)))
-                else:
-                    text.append("[" + " ".join([name] * max(1, param.nargs)) + "]")
+                text.append(name if param.required else f"[{name}]")
             else:
                 for part in param.get_usage_pieces(current):
                     text.append(" " + part)

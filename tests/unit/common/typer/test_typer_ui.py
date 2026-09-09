@@ -624,7 +624,7 @@ class TyperUITest(unittest.TestCase):
                         self.assertTrue(
                             decoded.get_style_at_offset(console, offset).bold
                         )
-                    for placeholder in ("[OPTIONS]", "<NAME>"):
+                    for placeholder in ("[OPTIONS]", "NAME"):
                         if placeholder in decoded.plain[start:]:
                             offset = decoded.plain.index(placeholder, start)
                             self.assertFalse(

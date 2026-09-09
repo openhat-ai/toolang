@@ -38,7 +38,7 @@ class ArgumentUsageTest(unittest.TestCase):
         result = invoke(app, ui=ui, args=["groups", "--help"], prog_name="demo")
         self.assertEqual(result.exit_code, 0, result.exception)
         self.assertIn(
-            "Usage: demo groups [OPTIONS] <SOURCE> <DESTINATION> [LABEL] [TAG...]\n",
+            "Usage: demo groups [OPTIONS] SOURCE DESTINATION [LABEL] [TAG...]\n",
             result.stdout,
         )
         self.assertIn("tag <STR>", result.stdout)
@@ -48,7 +48,7 @@ class ArgumentUsageTest(unittest.TestCase):
     def test_help_missing_arguments_and_input_errors_use_the_same_usage(self):
         app = create_app()
         ui = make_ui()
-        _usage = "Usage: demo groups [OPTIONS] <SOURCE> <DESTINATION> [LABEL] [TAG...]"
+        _usage = "Usage: demo groups [OPTIONS] SOURCE DESTINATION [LABEL] [TAG...]"
         for args, code in (
             (["groups", "--help"], 0),
             (["groups"], 2),
@@ -92,7 +92,7 @@ class ArgumentUsageTest(unittest.TestCase):
         root.add_typer(child, name="data")
         ui = make_ui()
         prefix = ["my-workspace", "data", "my-dataset", "read"]
-        _usage = "Usage: demo <WORKSPACE> data <DATASET> read [OPTIONS] <ENTRY...>"
+        _usage = "Usage: demo WORKSPACE data DATASET read [OPTIONS] ENTRY..."
         for args in ([*prefix, "--help"], [*prefix, "--unknown"]):
             result = invoke(root, ui=ui, args=args, prog_name="demo")
             self.assertEqual(result.exit_code, 2 if "--unknown" in args else 0)
@@ -122,7 +122,7 @@ class ArgumentUsageTest(unittest.TestCase):
         result = invoke(app, ui=ui, args=["--help"], prog_name="demo")
         self.assertEqual(result.exit_code, 0, result.exception)
         self.assertIn(
-            "Usage: demo [OPTIONS] <STATUS> <COORDINATE> <COORDINATE> [DESTINATION DESTINATION]\n",
+            "Usage: demo [OPTIONS] STATUS COORDINATE COORDINATE [DESTINATION DESTINATION]\n",
             result.stdout,
         )
         result = invoke(app, ui=ui, args=["fast", "1", "2", "3", "4"])

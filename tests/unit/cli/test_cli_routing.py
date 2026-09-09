@@ -375,7 +375,7 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
     (
         (
             ["clone"],
-            "Usage: pytest clone [OPTIONS] <SOURCE> [TARGET]",
+            "Usage: pytest clone [OPTIONS] SOURCE [TARGET]",
             "TARGET",
             "TEXT",
             "[TARGET]",

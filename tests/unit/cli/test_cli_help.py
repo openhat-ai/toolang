@@ -197,6 +197,19 @@ def test_virtual_agent_usage_keeps_position_and_normal_weight(
         ).bold
 
 
+@pytest.mark.parametrize("command", ["run", "serve"])
+@pytest.mark.parametrize("args", [[], ["--help"], ["-h"], ["--unknown"]])
+def test_real_and_virtual_agent_arguments_share_usage(
+    command, args, tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr("sys.argv", ["too"])
+    status = 2 if "--unknown" in args else 0
+    assert too_main(["--root", str(tmp_path), command, *args]) == status
+    captured = capsys.readouterr()
+    output = strip_ansi(captured.err if status else captured.out)
+    assert f"Usage: too {command} [OPTIONS] AGENT" in output.splitlines()
+
+
 @pytest.mark.parametrize("args", [["--help"], ["--thread", "--help"], ["-t", "--help"]])
 def test_chat_help_uses_the_canonical_optional_thread_option(
     args, tmp_path, capsys, monkeypatch
