@@ -9,6 +9,12 @@ from typer._click.types import StringParamType
 from typer.models import TyperPath
 
 
+DEVELOPMENT_WHEEL_HELP = (
+    "Install Toolang in a new guest from a wheel; directories select the newest "
+    "Toolang wheel recursively"
+)
+
+
 class TextType(StringParamType):
     """A native string parameter displayed as TEXT."""
 

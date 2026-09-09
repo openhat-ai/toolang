@@ -9,11 +9,9 @@ import json
 import os
 from pathlib import Path
 import sys
-from typing import Annotated, Any, TextIO, cast
+from typing import TYPE_CHECKING, Annotated, Any, TextIO, cast
 from uuid import uuid4
 
-import httpx
-from pydantic import TypeAdapter, ValidationError
 from rich.text import Text
 import typer
 from typer._click import Context, HelpFormatter
@@ -24,40 +22,8 @@ from typer.core import TyperCommand, TyperGroup, TyperOption
 from typer.main import get_command_from_info
 from typer.models import CommandInfo
 
-from toolang.base.model_settings import parse_model_body
-from toolang.base.types.model import ModelRequest
-from toolang.base.types.policy import RunBindings, RunPolicy
 from toolang.common.errors import ToolangError
-from toolang.common.ids import IdIssuer
-from toolang.common.layout import AgentLayout
 from toolang.common.typer.ui import HelpFormatter as UIHelpFormatter
-from toolang.cli.common.policy import (
-    resolve_default_overrides,
-    resolve_compact_override,
-    resolve_ceiling_overrides,
-    resolve_limit_overrides,
-)
-from toolang.cli.common.model_selection import (
-    is_concrete_model_ref,
-    materialize_model_selection,
-)
-from toolang.execution.calls import parse_call, resolve_spec
-from toolang.execution.policy import apply_session_setting, materialize_run_setting
-from toolang.execution.executor import LocalRunHandle, RunExecutor
-from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
-from toolang.execution.records import RunRecord
-from toolang.execution.schemas import RunRequest, RunnableRequest, ThreadInfo
-from toolang.execution.store import RunStore
-from toolang.execution.threads import ThreadManager
-from toolang.execution.types import (
-    AllowField,
-    AllowOverride,
-    LimitField,
-    LimitOverride,
-    RunOverride,
-    SessionSetting,
-    ThreadPrefix,
-)
 from toolang.lang.ast import (
     AgicDecl,
     FlowDecl,
@@ -66,34 +32,29 @@ from toolang.lang.ast import (
     RepeatStmt,
 )
 from toolang.lang.description import statement_description
-from toolang.lang.includes import resolve_file_include
 from toolang.lang.input import CallInput, parse_input
-from toolang.state.runnable_collections import runnable_dataset
-from toolang.setup import SetupWatcher
-from toolang.state.prepare import prepare_agent_state
-from toolang.state.state import AgentState
-from toolang.state.watcher import StateWatcher
-from toolang.up import process as agents
-from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 
 from ...common.context import load_runtime_environ
-from ...common.agent_server import DEVELOPMENT_WHEEL_HELP, acquire_agent_server
-from ...common.progress import make_cli_progress
-from ...common.remote_runtime import inspect_remote_runtime
-from ...common.result_saving import save_result
 from ...common.output import echo_error
 from ...common.help import CliCommand, CliGroup, HelpContext
-from ...common.parameters import AllowOptions, LimitOptions
+from ...common.parameters import DEVELOPMENT_WHEEL_HELP, AllowOptions, LimitOptions
 from ...common.runnable_parameters import RunnableArgument, runnable_parameters
-from ...common.execution_progress.config import resolve_progress_max_width
-from ...common.script_progress import ScriptRunPresenter
+
+if TYPE_CHECKING:
+    import httpx
+
+    from toolang.common.ids import IdIssuer
+    from toolang.common.layout import AgentLayout
+    from toolang.execution.executor import LocalRunHandle
+    from toolang.execution.remote import RemoteRunClient
+    from toolang.execution.records import RunRecord
+    from toolang.execution.store import RunStore
+    from toolang.execution.types import RunOverride, SessionSetting
+    from toolang.state.state import AgentState
 
 Runnable = AgicDecl | FlowDecl
 _LINE_INPUT_MARKER = "\ue002"
 _UNPERSISTED_THREAD = "<unpersisted-script-thread>"
-_THREAD_INFO_ADAPTER = TypeAdapter(ThreadInfo)
-_RUN_POLICY_ADAPTER = TypeAdapter(RunPolicy)
-_MODEL_REQUEST_ADAPTER = TypeAdapter(ModelRequest)
 
 
 class _IncompleteRunnableInput(Exception):
@@ -489,17 +450,24 @@ def _collect_call(
 ) -> tuple[RunOverride, CallInput[str], CallInput[str]]:
     raw_args, input_items = collect_named_arguments(runnable, items=items)
     call_input = _input_source(input_items, stdin=stdin)
+    missing = [
+        parameter.name
+        for parameter in runnable.params
+        if not parameter.optional and parameter.name not in raw_args
+    ]
+    if call_input is None and (
+        missing or (runnable.input is not None and not runnable.input.optional)
+    ):
+        raise _IncompleteRunnableInput
+
+    from toolang.execution.calls import parse_call
+
     call_source = call_input.get("_", "") if call_input is not None else ""
     override, input = parse_call(call_source)
     if call_input is not None and override.empty and set(input) <= {"_"}:
         input = parse_input(call_input)
     has_runnable_override = override.runnable is not None
     if not has_runnable_override:
-        missing = [
-            parameter.name
-            for parameter in runnable.params
-            if not parameter.optional and parameter.name not in raw_args
-        ]
         if missing:
             raise _IncompleteRunnableInput
         if (
@@ -524,6 +492,8 @@ def _materialize_script_runnable_override(
 
     if override.runnable in {None, "default"}:
         return override
+    from toolang.state.runnable_collections import runnable_dataset
+
     dataset = runnable_dataset(program)
     matches = dataset.query(override.runnable)
     if len(matches) != 1:
@@ -580,6 +550,15 @@ def _run(
     save: str | None,
     quiet: bool,
 ) -> int:
+    from toolang.common.ids import IdIssuer
+    from toolang.execution.store import RunStore
+    from toolang.state.prepare import prepare_agent_state
+    from toolang.up import process as agents
+    from toolang.up.logging import configure_logging_plan, resolve_agent_logging
+
+    from ...common.agent_server import acquire_agent_server
+    from ...common.progress import make_cli_progress
+
     progress = make_cli_progress(enabled=not quiet)
     layout: AgentLayout | None = None
     store: RunStore | None = None
@@ -693,6 +672,17 @@ def _script_session_override(
     allow_options: tuple[str, ...],
     limit_options: tuple[str, ...],
 ) -> RunOverride:
+    from toolang.base.model_settings import parse_model_body
+    from toolang.execution.types import (
+        AllowField,
+        AllowOverride,
+        LimitField,
+        LimitOverride,
+        RunOverride,
+    )
+
+    from ...common.policy import resolve_ceiling_overrides, resolve_limit_overrides
+
     ceilings = resolve_ceiling_overrides({}, allow_options)
     limits = resolve_limit_overrides({}, limit_options)
     return RunOverride(
@@ -723,6 +713,21 @@ async def _execute_remote(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> RunRecord:
     """Execute one script request through a validated AgentServer."""
+
+    import httpx
+
+    from toolang.base.types.policy import RunPolicy
+    from toolang.execution.policy import apply_session_setting, materialize_run_setting
+    from toolang.execution.remote import RemoteRunClient
+    from toolang.execution.schemas import RunRequest, RunnableRequest
+
+    from ...common.model_selection import (
+        is_concrete_model_ref,
+        materialize_model_selection,
+    )
+    from ...common.remote_runtime import inspect_remote_runtime
+    from ...common.execution_progress.config import resolve_progress_max_width
+    from ...common.script_progress import ScriptRunPresenter
 
     environ = load_runtime_environ(layout, base_environ=os.environ)
     request_input = _remote_script_input(input, raw_named=raw_named)
@@ -839,6 +844,11 @@ async def _create_remote_script_thread(
     client: httpx.AsyncClient,
     endpoint: str,
 ) -> str:
+    import httpx
+    from pydantic import TypeAdapter, ValidationError
+
+    from toolang.execution.schemas import ThreadInfo
+
     try:
         response = await client.post(
             f"{endpoint}/api/v1/threads",
@@ -865,7 +875,7 @@ async def _create_remote_script_thread(
         payload = response.json()
         if not isinstance(payload, Mapping) or set(payload) != {"thread"}:
             raise ValueError
-        thread = _THREAD_INFO_ADAPTER.validate_python(payload["thread"])
+        thread = TypeAdapter(ThreadInfo).validate_python(payload["thread"])
     except (
         UnicodeDecodeError,
         json.JSONDecodeError,
@@ -884,6 +894,13 @@ async def _remote_script_defaults(
     client: httpx.AsyncClient,
     endpoint: str,
 ) -> SessionSetting:
+    import httpx
+    from pydantic import TypeAdapter, ValidationError
+
+    from toolang.base.types.model import ModelRequest
+    from toolang.base.types.policy import RunPolicy
+    from toolang.execution.types import SessionSetting
+
     try:
         response = await client.get(f"{endpoint}/api/v1/runs/defaults")
         response.raise_for_status()
@@ -899,9 +916,11 @@ async def _remote_script_defaults(
         if not isinstance(runnable, str):
             raise ValueError
         model_request = (
-            _MODEL_REQUEST_ADAPTER.validate_python(model) if model is not None else None
+            TypeAdapter(ModelRequest).validate_python(model)
+            if model is not None
+            else None
         )
-        policy = _RUN_POLICY_ADAPTER.validate_python(payload.get("policy"))
+        policy = TypeAdapter(RunPolicy).validate_python(payload.get("policy"))
         return SessionSetting(
             model=model_request,
             runnable=runnable,
@@ -922,6 +941,8 @@ async def _remote_script_models(
     endpoint: str,
 ) -> Mapping[str, Any]:
     """Load one effective model list for request-ref materialization."""
+
+    import httpx
 
     try:
         response = await client.get(f"{endpoint}/api/v1/models")
@@ -948,6 +969,8 @@ async def _cancel_remote_script_run(
     *,
     reason: str,
 ) -> None:
+    from toolang.execution.remote import RemoteRunClientError
+
     try:
         await client.cancel(
             run_id,
@@ -968,6 +991,8 @@ def _stored_run(
     *,
     store: RunStore | None = None,
 ) -> RunRecord | None:
+    from toolang.execution.store import RunStore
+
     if store is not None:
         return store.get_run(run_id=run_id)
     opened = RunStore(layout.run_store)
@@ -992,6 +1017,24 @@ async def _execute(
     session_override: RunOverride,
     quiet: bool,
 ) -> RunRecord:
+    from toolang.base.types.policy import RunBindings
+    from toolang.execution.calls import resolve_spec
+    from toolang.execution.executor import RunExecutor
+    from toolang.execution.threads import ThreadManager
+    from toolang.execution.types import ThreadPrefix
+    from toolang.lang.includes import resolve_file_include
+    from toolang.setup import SetupWatcher
+    from toolang.state.watcher import StateWatcher
+
+    from ...common.policy import (
+        resolve_ceiling_overrides,
+        resolve_compact_override,
+        resolve_default_overrides,
+        resolve_limit_overrides,
+    )
+    from ...common.execution_progress.config import resolve_progress_max_width
+    from ...common.script_progress import ScriptRunPresenter
+
     environ = load_runtime_environ(layout, base_environ=os.environ)
     allow_overrides = resolve_ceiling_overrides(environ)
     setup_watcher = SetupWatcher(
@@ -1097,6 +1140,10 @@ def _emit_result(
     save: str | None = None,
     error_reported: bool = False,
 ) -> int:
+    from toolang.execution.store import RunStore
+
+    from ...common.result_saving import save_result
+
     if result.status != "succeeded":
         store = RunStore(store_path)
         try:
