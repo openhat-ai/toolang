@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 from threading import Barrier
-from typing import Any, cast
+from typing import Any
 
 import pytest
 import typer
@@ -188,7 +188,7 @@ def test_cli_normalize_rejects_an_invalid_target_order() -> None:
         normalize(["alice", "remove"])
 
 
-def test_cli_formats_a_routing_error_as_a_rich_panel(
+def test_cli_formats_a_routing_error_without_a_panel(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     result = _call_main(["alice", "remove"])
@@ -197,9 +197,9 @@ def test_cli_formats_a_routing_error_as_a_rich_panel(
     lines = stderr.splitlines()
 
     assert result == 2
-    assert lines[0].strip() == ""
-    assert lines[1].startswith("╭─ Error ")
-    assert lines[-1].strip() == ""
+    assert lines[0].startswith("Error: ")
+    assert lines[-1].strip()
+    assert "╭" not in stderr
     assert "remove requires TARGET after the command" in stderr
 
 
@@ -210,7 +210,7 @@ def test_cli_no_args_still_shows_root_help(
     output = capsys.readouterr()
     stdout = strip_ansi(output.out)
 
-    assert result == 2
+    assert result == 0
     assert "Usage: pytest [OPTIONS] COMMAND [ARGS]..." in stdout
     assert "Run and manage Toolang agents." in stdout
     assert output.err == ""
@@ -375,7 +375,7 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
     (
         (
             ["clone"],
-            "Usage: pytest clone [OPTIONS] SOURCE [TARGET]",
+            "Usage: pytest clone [OPTIONS] <SOURCE> [TARGET]",
             "TARGET",
             "TEXT",
             "[TARGET]",
@@ -389,7 +389,7 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
         ),
         (
             ["fmt"],
-            "Usage: pytest fmt [OPTIONS] [PATH]...",
+            "Usage: pytest fmt [OPTIONS] [PATH...]",
             "PATH",
             "PATH",
             "[PATH]...",
@@ -428,7 +428,9 @@ def test_cli_argument_panels_separate_names_types_and_usage_syntax(
     result = _call_main([*arguments, "--help"])
     stdout = strip_ansi(capsys.readouterr().out)
     row = next(
-        line for line in stdout.splitlines() if "│" in line and argument in line.split()
+        line
+        for line in stdout.splitlines()
+        if line.startswith("  ") and argument in line.split()
     )
 
     assert result == 0
@@ -526,7 +528,7 @@ def test_caps_cli_uses_command_priority_and_explicit_agent_prefix() -> None:
     assert (agent_args, agent) == (["skill", "list"], "skill")
 
 
-def test_caps_cli_formats_a_pre_dispatch_error_as_a_rich_panel(
+def test_caps_cli_formats_a_pre_dispatch_error_without_a_panel(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     result = caps_cli.main(["agent:", "skill"])
@@ -534,7 +536,8 @@ def test_caps_cli_formats_a_pre_dispatch_error_as_a_rich_panel(
     stderr = strip_ansi(output.err)
 
     assert result == 2
-    assert "╭─ Error " in stderr
+    assert stderr.startswith("Error: ")
+    assert "╭" not in stderr
     assert "invalid resident agent target: agent:" in stderr
 
 
@@ -555,8 +558,8 @@ def test_cli_incomplete_command_shows_help_before_target_validation(
     _call_main(["--root", str(tmp_path), *arguments])
     output = capsys.readouterr()
 
-    assert "Usage:" in output.out
-    assert "Steer an active run." in output.out
+    assert "Usage:" in output.out + output.err
+    assert "Steer an active run." in output.out + output.err
     assert "Agent alice not found" not in output.err
 
 
@@ -668,11 +671,12 @@ def test_cli_prefix_agent_context_is_isolated_between_threads(
     barrier = Barrier(2)
     seen: list[str | None] = []
 
-    def fake_app(**_kwargs: Any) -> None:
+    def fake_run(_app: typer.Typer, **_kwargs: Any) -> int:
         barrier.wait()
         seen.append(cli._PREFIX_AGENT.get())
+        return 0
 
-    monkeypatch.setattr(cli, "app", cast(Any, fake_app))
+    monkeypatch.setattr(cli, "run", fake_run)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = tuple(

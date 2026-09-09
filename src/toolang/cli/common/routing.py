@@ -6,14 +6,14 @@ from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 
 import typer
-from typer import rich_utils
+from rich.text import Text
 from typer._click import Context, HelpFormatter, Parameter
 from typer._click.exceptions import MissingParameter
 from typer.core import TyperArgument, TyperCommand, TyperGroup
 
 from .context import CliContext
 from .parameters import TextType
-from .help import CliCommand, CliGroup, parameter_usage
+from .help import CliCommand, CliGroup, parameter_usage, write_usage
 
 
 def extract_root_args(
@@ -78,9 +78,13 @@ def explicit_agent(token: str) -> str | None:
     return name
 
 
-# Typer renders command help text dim by default. Normal weight keeps usage
-# notes readable across terminal themes.
-setattr(rich_utils, "STYLE_HELPTEXT", "")
+def _prefix_usage_path(ctx: Context, metavar: str) -> Text:
+    root, _, remainder = ctx.command_path.partition(" ")
+    return Text.assemble(
+        (root, "cli.command.name"),
+        (f" {metavar}", "cli.usage"),
+        (f" {remainder}" if remainder else "", "cli.command.name"),
+    )
 
 
 class PrefixAgentCommand(CliCommand):
@@ -114,17 +118,11 @@ class PrefixAgentCommand(CliCommand):
             ctx.exit()
 
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        command_path = ctx.command_path
-        root_name, _, remainder = command_path.partition(" ")
-        prefix_path = (
-            f"{root_name} {self.prefix_agent_metavar} {remainder}"
-            if remainder
-            else f"{root_name} {self.prefix_agent_metavar}"
-        )
+        prefix_path = _prefix_usage_path(ctx, self.prefix_agent_metavar)
         pieces = [self.options_metavar] if self.options_metavar else []
         for param in self._real_params(ctx):
             pieces.extend(parameter_usage(param, ctx))
-        formatter.write_usage(prefix_path, " ".join(pieces))
+        write_usage(formatter, prefix_path, " ".join(pieces))
 
 
 class RequiredPrefixAgentGroup(CliGroup):
@@ -144,18 +142,12 @@ class RequiredPrefixAgentGroup(CliGroup):
         return [agent, *super().get_params(ctx)]
 
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        command_path = ctx.command_path
-        root_name, _, remainder = command_path.partition(" ")
-        prefix_path = (
-            f"{root_name} {self.prefix_agent_metavar} {remainder}"
-            if remainder
-            else f"{root_name} {self.prefix_agent_metavar}"
-        )
+        prefix_path = _prefix_usage_path(ctx, self.prefix_agent_metavar)
         pieces = [self.options_metavar] if self.options_metavar else []
         pieces.append(self.subcommand_metavar or "[SUBCOMMAND]")
         for param in self.get_params(ctx):
             pieces.extend(parameter_usage(param, ctx))
-        formatter.write_usage(prefix_path, " ".join(pieces))
+        write_usage(formatter, prefix_path, " ".join(pieces))
 
 
 class PrefixAgentJobGroup(RequiredPrefixAgentGroup):
@@ -186,16 +178,10 @@ class OptionalPrefixAgentGroup(CliGroup):
         return [self._prefix_agent_argument(), *self._real_params(ctx)]
 
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        command_path = ctx.command_path
-        root_name, _, remainder = command_path.partition(" ")
-        prefix_path = (
-            f"{root_name} {self.prefix_agent_metavar} {remainder}"
-            if remainder
-            else f"{root_name} {self.prefix_agent_metavar}"
-        )
+        prefix_path = _prefix_usage_path(ctx, self.prefix_agent_metavar)
         pieces = [self.options_metavar] if self.options_metavar else []
         pieces.append(self.subcommand_metavar or "[COMMAND] [ARGS]...")
-        formatter.write_usage(prefix_path, " ".join(pieces))
+        write_usage(formatter, prefix_path, " ".join(pieces))
 
 
 class OptionalPrefixAgentCommand(PrefixAgentCommand):
@@ -266,16 +252,11 @@ class RuntimeAgentCommand(CliCommand):
         return [self._help_agent_argument(), *self._real_params(ctx)]
 
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        root_name, _, remainder = ctx.command_path.partition(" ")
-        prefix_path = (
-            f"{root_name} {self.usage_agent_metavar} {remainder}"
-            if remainder
-            else f"{root_name} {self.usage_agent_metavar}"
-        )
+        prefix_path = _prefix_usage_path(ctx, self.usage_agent_metavar)
         pieces = [self.options_metavar] if self.options_metavar else []
         for param in self._visible_real_params(ctx):
             pieces.extend(parameter_usage(param, ctx))
-        formatter.write_usage(prefix_path, " ".join(pieces))
+        write_usage(formatter, prefix_path, " ".join(pieces))
 
 
 class RunAgentCommand(RuntimeAgentCommand):

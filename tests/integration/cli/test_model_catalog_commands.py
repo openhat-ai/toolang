@@ -10,7 +10,6 @@ import pytest
 from rich.console import Console
 from rich.text import Text
 
-from typer import rich_utils
 from typer._click.utils import strip_ansi
 from typer.testing import CliRunner
 
@@ -629,8 +628,11 @@ def test_models_help_describes_optional_agent_without_loading(
     monkeypatch.setattr(
         model_catalog_commands, "load_matching_catalog_inspection", unexpected_load
     )
-    monkeypatch.setattr(rich_utils, "FORCE_TERMINAL", colored)
-    monkeypatch.setattr(rich_utils, "COLOR_SYSTEM", "standard" if colored else None)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    if colored:
+        monkeypatch.setenv("FORCE_COLOR", "1")
+    else:
+        monkeypatch.delenv("FORCE_COLOR", raising=False)
     monkeypatch.delenv("NO_COLOR", raising=False)
 
     result = cli.main(["--root", str(tmp_path), *target, "models", "--help"])

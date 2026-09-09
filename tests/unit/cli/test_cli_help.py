@@ -6,6 +6,8 @@ from typing import Annotated
 
 import pytest
 import typer
+from rich.console import Console
+from rich.text import Text
 from typer._click import Context
 from typer._click.utils import strip_ansi
 from typer.core import TyperArgument, TyperCommand, TyperGroup
@@ -19,6 +21,53 @@ from toolang.cli.common.parameters import PathType
 from toolang.cli.toolang.main import app, main as too_main
 
 
+def test_hidden_commands_keep_theme_and_root_invocation_hint(capsys, monkeypatch):
+    monkeypatch.setattr("sys.argv", ["too"])
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    assert too_main(["hidden"]) == 0
+    output = capsys.readouterr().out
+    assert "\x1b[1;32m" in output
+    assert "Advanced Commands:" in strip_ansi(output)
+    assert "Run with: too COMMAND [OPTIONS]" in strip_ansi(output)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "usage"),
+    [
+        (["a", "chat"], "too AGENT chat [OPTIONS]"),
+        (["a", "prompt", "new"], "too [AGENT] prompt new [OPTIONS] NAME"),
+        (["a", "workspace"], "too AGENT workspace [OPTIONS] COMMAND [ARGS]..."),
+        (["run"], "too run [OPTIONS] AGENT"),
+    ],
+)
+def test_virtual_agent_usage_keeps_position_and_normal_weight(
+    arguments, usage, tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr("sys.argv", ["too"])
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setenv("COLUMNS", "120")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    for flag, status in (("--help", 0), ("--unknown", 2)):
+        assert too_main(["--root", str(tmp_path), *arguments, flag]) == status
+        captured = capsys.readouterr()
+        rendered = captured.err if status else captured.out
+        assert rendered.endswith("\n")
+        output = Text.from_ansi(rendered)
+        assert f"Usage: {usage}" in output.plain.splitlines()
+        start = output.plain.index("Usage:")
+        usage_line = output.plain[start:].splitlines()[0]
+        assert usage_line.count("AGENT") == 1
+        for placeholder in ("AGENT", "[OPTIONS]"):
+            offset = output.plain.index(placeholder, start)
+            assert not output.get_style_at_offset(Console(), offset).bold
+        assert output.get_style_at_offset(
+            Console(), output.plain.index("too", start)
+        ).bold
+
+
 @pytest.mark.parametrize("args", [["--help"], ["--thread", "--help"], ["-t", "--help"]])
 def test_chat_help_uses_the_canonical_optional_thread_option(
     args, tmp_path, capsys, monkeypatch
@@ -30,7 +79,7 @@ def test_chat_help_uses_the_canonical_optional_thread_option(
     assert usage == "too AGENT chat [OPTIONS]"
     row = next(line for line in output.splitlines() if "[THREAD]" in line)
     assert "--thread" in row and "-t" in row
-    assert row.index("--thread") < row.index("-t", row.index("--thread") + 8)
+    assert "-t, --thread [THREAD]" in row
     assert "most recently updated thread" in " ".join(output.split())
 
 
@@ -43,7 +92,9 @@ def test_prompt_help_uses_conventional_metavars(main, tmp_path, capsys, monkeypa
     assert "<str>" not in output
     for name in ("AGENT", "NAME"):
         row = next(
-            line for line in output.splitlines() if "│" in line and name in line.split()
+            line
+            for line in output.splitlines()
+            if line.startswith("  ") and name in line.split()
         )
         assert "TEXT" in row
     assert "NAME" in next(line for line in output.splitlines() if "--template" in line)
@@ -92,13 +143,16 @@ def test_help_uses_semantic_configuration_metavars(
 
 
 @pytest.mark.parametrize("main", [too_main, caps_main])
-def test_error_help_path_excludes_virtual_arguments(
+def test_error_usage_preserves_the_virtual_agent_position(
     main, tmp_path, capsys, monkeypatch
 ):
     monkeypatch.setattr("sys.argv", ["too"])
     assert main(["--root", str(tmp_path), "a", "prompt", "new", "--unknown"]) == 2
     output = strip_ansi(capsys.readouterr().err)
-    assert "Try 'too prompt new --help'" in output
+    assert output.startswith(
+        "Error: No such option: --unknown\n\nUsage: too [AGENT] prompt new "
+    )
+    assert output.count("AGENT") == 1
     assert "TEXT" not in output
 
 
@@ -110,11 +164,12 @@ def test_required_group_agent_is_documented(group, tmp_path: Path, capsys):
         (
             line
             for line in output.splitlines()
-            if "│" in line and "AGENT" in line.split()
+            if line.startswith("  ") and "AGENT" in line.split()
         ),
         "",
     )
-    assert "TEXT" in row and "[required]" in row
+    assert "TEXT" in row and row.lstrip().startswith("* AGENT")
+    assert "[required]" not in row
 
 
 class _Mode(str, Enum):
@@ -213,7 +268,7 @@ def test_repeated_explicit_metavar_is_not_duplicated(required):
         ],
     )
     usage = command.get_usage(Context(command, info_name="demo"))
-    assert usage == f"Usage: demo [OPTIONS] {'FILES...' if required else '[FILES]...'}"
+    assert usage == f"Usage: demo [OPTIONS] {'FILES...' if required else '[FILES...]'}"
 
 
 @pytest.mark.parametrize("command", ["run", "start", "serve"])
@@ -238,7 +293,7 @@ def test_explicit_metavars_keep_lowercase_runtime_flags(command, capsys):
     )
     if command in ("run", "start"):
         assert "--sandbox" in options
-    loaded.get_help(Context(loaded, info_name=command))
-    help_text = strip_ansi(capsys.readouterr().out)
+    help_text = strip_ansi(loaded.get_help(Context(loaded, info_name=command)))
+    assert capsys.readouterr().out == ""
     port_row = next(line for line in help_text.splitlines() if "--port" in line.split())
     assert "PORT" in port_row.split()

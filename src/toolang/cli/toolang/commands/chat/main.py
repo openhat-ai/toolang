@@ -55,7 +55,7 @@ from toolang.cli.common.execution_progress.config import (
 from toolang.cli.common.execution_progress.formatting import wrap_display
 from toolang.cli.common.human_values import parts_response_text
 from toolang.cli.common.output import shorten_home_path
-from toolang.cli.common.options import BARE_VALUE
+from toolang.common.typer.options import BARE_VALUE
 from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
 from . import slashes as chat_slashes
 from .base import (

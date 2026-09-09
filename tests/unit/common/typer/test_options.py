@@ -11,7 +11,7 @@ from typer._click.utils import strip_ansi
 from typer.core import TyperArgument, TyperCommand, TyperOption
 from typer.testing import CliRunner
 
-from toolang.cli.common.options import OptionalValueCommand
+from toolang.common.typer.options import OptionalValueCommand
 
 
 class _ProbeCommand(OptionalValueCommand):

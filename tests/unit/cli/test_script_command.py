@@ -10,7 +10,6 @@ from typing import cast
 import pytest
 from rich.cells import cell_len
 
-from typer import rich_utils
 from typer._click.utils import strip_ansi
 
 from toolang.base.errors import ToolangError
@@ -530,8 +529,10 @@ def test_script_shows_runnable_help_for_missing_primary_input(
     color: bool,
 ) -> None:
     monkeypatch.delenv("NO_COLOR", raising=False)
-    monkeypatch.setattr(rich_utils, "FORCE_TERMINAL", True)
-    monkeypatch.setattr(rich_utils, "COLOR_SYSTEM", "standard" if color else None)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setenv("FORCE_COLOR", "1") if color else monkeypatch.delenv(
+        "FORCE_COLOR", raising=False
+    )
     source = _write_source(
         tmp_path,
         """
@@ -557,7 +558,7 @@ agic demo(_: Part[]):
     assert "Usage:" in output.out
     assert "PART[]" in strip_ansi(output.out)
     assert ("\x1b[" in output.out) is color
-    assert "─ Arguments " in strip_ansi(output.out)
+    assert "Arguments:" in strip_ansi(output.out)
     assert "requires primary input" not in output.err
     assert "Run:" not in output.err
 
@@ -624,9 +625,10 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "count=ARGUMENT" in stdout
     assert "enabled=ARGUMENT" in stdout
     assert "Optional." not in stdout
-    assert "[required]" in stdout
+    assert "* count=ARGUMENT" in stdout
+    assert "[required]" not in stdout
     assert "PART[]" in stdout
-    assert "─ Input " not in stdout
+    assert "Input:" not in stdout
     assert "<str>" not in stdout
     for option, metavar in (
         ("--allow", "RESOURCE=QUERY"),
@@ -640,7 +642,7 @@ def test_script_uses_typer_help_and_authored_docs(
     output_row = next(
         line.split() for line in stdout.splitlines() if "--out" in line.split()
     )
-    assert "-o" in output_row
+    assert "-o," in output_row
     assert "--save" not in stdout
     assert "--sandbox" in stdout
     assert "--dev" in stdout
@@ -656,8 +658,8 @@ def test_script_uses_typer_help_and_authored_docs(
 
 
 def _help_panel(output: str, title: str) -> str:
-    body = output.partition(f"─ {title} ")[2].partition("╰")[0]
-    return " ".join(body.replace("│", " ").split())
+    body = output.partition(f"{title}:\n")[2].split("\n\n", 1)[0]
+    return " ".join(body.split())
 
 
 def _assert_common_options(output: str) -> None:
@@ -701,8 +703,8 @@ def test_script_help_after_common_options_never_reads_or_runs(
         == 0
     )
     output = strip_ansi(capsys.readouterr().out)
-    assert ("─ Arguments " in output) is child
-    assert ("─ Runnables " in output) is not child
+    assert ("Arguments:" in output) is child
+    assert ("Runnables:" in output) is not child
     _assert_common_options(output)
 
 
@@ -717,7 +719,7 @@ def test_script_without_public_runnables_still_shows_common_options(
         == 0
     )
     output = strip_ansi(capsys.readouterr().out)
-    assert "─ Runnables " not in output
+    assert "Runnables:" not in output
     _assert_common_options(output)
 
 
@@ -760,18 +762,18 @@ def test_script_runnable_description_uses_docs_or_kind(
     summary = f"Run {kind} demo - {description}" if description else f"Run {kind} demo."
     assert " ".join(output.split()).count(summary) == 1
     assert (
-        output.index("Usage:")
-        < output.index(f"Run {kind} demo")
-        < output.index("─ Options ")
+        output.index(f"Run {kind} demo")
+        < output.index("Usage:")
+        < output.index("Options:")
     )
     assert "Unused body text." not in output
-    assert "─ Arguments " not in output
-    assert "─ Input " not in output and "─ Flow" not in output
+    assert "Arguments:" not in output
+    assert "Input:" not in output and "─ Flow" not in output
     if kind == "flow":
         assert (
             output.index(f"Run {kind} demo")
             < output.index("The flow proceeds as follows:")
-            < output.index("─ Options ")
+            < output.index("Options:")
         )
         assert _flow_outline_lines(output) == ["[0] Set value to note"]
     else:
@@ -851,31 +853,29 @@ def test_script_help_groups_signature_categories(
     assert "Documented runnable." in output
     panel = _help_panel(output, "Arguments")
     assert bool(panel) == bool(arguments or input_type)
-    assert "─ Input " not in output
+    assert "Input:" not in output
     positions = []
     for name, type_name, required in arguments:
         label = f"{name}=ARGUMENT"
-        # Typer suppresses the Boolean metavar in its native renderer.
-        row = label if type_name == "Boolean" else f"{label} {type_name.upper()}"
+        row = f"{label} {type_name.upper()}"
         row += " Named input, or simply argument"
         assert row in panel
-        assert (f"{row} [required]" in panel) is required
+        assert (f"* {row}" in panel) is required
         positions.append(panel.index(label))
     assert "Optional." not in panel
     assert "Arguments may appear" not in panel
     if input_type:
-        label = "INPUT" if input_type == "Boolean" else f"INPUT {input_type.upper()}"
+        label = f"INPUT {input_type.upper()}"
         assert f"{label} Primary input, or simply input;" in panel
         positions.append(panel.index(label))
-        assert "- from stdin, -- starts input [required]" in panel
+        assert f"* {label}" in panel
+        assert "- from stdin, -- starts input" in panel
     else:
         assert "stdin" not in output and "TEXT..." not in output
     assert positions == sorted(positions)
     if panel:
-        assert output.index("demo - Documented runnable.") < output.index(
-            "─ Arguments "
-        )
-        assert output.index("─ Arguments ") < output.index("─ Options ")
+        assert output.index("demo - Documented runnable.") < output.index("Arguments:")
+        assert output.index("Arguments:") < output.index("Options:")
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
@@ -1107,18 +1107,16 @@ def test_script_omitted_terminal_input_shows_help_without_reading(
         )
         == 2
     )
-    assert "─ Arguments " in strip_ansi(capsys.readouterr().out)
+    assert "Arguments:" in strip_ansi(capsys.readouterr().out)
 
 
 def _flow_outline_lines(output: str) -> list[str]:
     block = (
         strip_ansi(output)
         .partition("The flow proceeds as follows:")[2]
-        .partition("╭")[0]
+        .partition("Usage:")[0]
     )
-    return [
-        line.removeprefix(" ").rstrip() for line in block.splitlines() if line.strip()
-    ]
+    return [line.rstrip() for line in block.splitlines() if line.strip()]
 
 
 @pytest.mark.parametrize("explicit_help", [False, True])
@@ -1170,7 +1168,7 @@ agic search:
     assert stdout.index("Research a topic") < stdout.index(
         "The flow proceeds as follows:"
     )
-    assert stdout.index("The flow proceeds as follows:") < stdout.index("─ Arguments ")
+    assert stdout.index("The flow proceeds as follows:") < stdout.index("Arguments:")
     assert stdout.count("The flow proceeds as follows:") == 1
     outline_start = stdout.partition("The flow proceeds as follows:")[2].splitlines()
     assert not outline_start[1].strip()
@@ -1247,7 +1245,9 @@ agic score_{"x" * 100} -> Number:
     )
     monkeypatch.setenv("COLUMNS", str(width))
     monkeypatch.setenv("TERM", "xterm-256color")
-    monkeypatch.setattr(rich_utils, "FORCE_TERMINAL", tty)
+    monkeypatch.setenv("FORCE_COLOR", "1") if tty else monkeypatch.delenv(
+        "FORCE_COLOR", raising=False
+    )
 
     assert (
         script.dispatch(
@@ -1398,7 +1398,7 @@ flow pipeline:
     assert f"Usage: {prog_name} {filename} [OPTIONS] RUNNABLE" in stdout
     assert "[ARGS]" not in stdout
     assert f"Run runnables from {filename}." in stdout
-    assert stdout.index("─ Runnables ") < stdout.index("─ Options ")
+    assert stdout.index("Runnables:") < stdout.index("Options:")
     _assert_common_options(stdout)
     assert all(cell_len(line) <= width for line in stdout.splitlines())
     assert "Commands" not in stdout
@@ -1447,7 +1447,7 @@ def test_script_long_runnable_names_keep_descriptions_visible(
     assert all(cell_len(line) <= width for line in output.splitlines())
 
 
-def test_script_formats_an_unknown_runnable_as_a_rich_error(
+def test_script_formats_an_unknown_runnable_with_error_before_usage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
@@ -1466,13 +1466,11 @@ def test_script_formats_an_unknown_runnable_as_a_rich_error(
     lines = stderr.splitlines()
 
     assert result == 2
-    assert lines[0].strip() == ""
-    assert lines[1].startswith(" Usage: toolang ")
-    assert lines[2].strip() == ""
-    assert lines[3].startswith(" Try '")
-    assert lines[4].strip() == ""
-    assert lines[5].startswith("╭─ Error ")
-    assert lines[-1].strip() == ""
+    assert lines[0].startswith("Error: No such command")
+    assert lines[1] == ""
+    assert lines[2].startswith("Usage: toolang ")
+    assert "╭" not in stderr
+    assert lines[-1].strip()
     assert "No such command 'missing'." in stderr
     assert "\nError: No such command" not in stderr
 

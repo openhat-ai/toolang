@@ -931,7 +931,7 @@ def test_inspect_static_subjects_are_reserved_and_missing_scopes_fail(
     missing_run = _invoke(root, "alice", "inspect", "run_missing", "steps")
 
     assert reserved.exit_code == 2
-    assert "allowed: threads, runs, controls" in reserved.stderr
+    assert "allowed: threads, runs, controls" in " ".join(reserved.stderr.split())
     assert missing_thread.exit_code == 1
     assert "record not found: custom_missing" in missing_thread.stderr
     assert missing_run.exit_code == 1

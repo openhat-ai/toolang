@@ -10,13 +10,13 @@ import sys
 from typing import Annotated, Any
 
 import typer
-from typer import rich_utils
 from typer._click import Context
-from typer._click.exceptions import ClickException, NoArgsIsHelpError
+from typer._click.exceptions import ClickException
 from typer.core import TyperGroup
 
+from toolang.common.typer.ui import run
 from toolang.cli.common.parameters import RootOption
-from toolang.cli.common.options import BARE_VALUE, OptionalValueCommand
+from toolang.common.typer.options import BARE_VALUE, OptionalValueCommand
 
 from ...catalog.agent import LocalAgents
 from ...common.layout import AgentLayout
@@ -191,46 +191,25 @@ def callback(
 
 
 def hidden_commands(ctx: typer.Context) -> None:
-    console = rich_utils._get_rich_console()
-    console.print(
-        rich_utils.Padding(rich_utils.highlighter(ctx.get_usage()), 1),
-        style=rich_utils.STYLE_USAGE_COMMAND,
-    )
     group = typer.main.get_command(app)
-    if not isinstance(group, TyperGroup):
-        typer.echo("No hidden commands.")
-        return
-    hidden_order = {name: index for index, name in enumerate(_HIDDEN_COMMAND_ORDER)}
-    hidden_commands = sorted(
-        (
-            command
-            for name, command in group.commands.items()
-            if command.hidden and name != "hidden"
-        ),
-        key=lambda command: hidden_order.get(
-            command.name or "", len(_HIDDEN_COMMAND_ORDER)
-        ),
+    assert isinstance(group, TyperGroup)
+    commands = {}
+    for name in _HIDDEN_COMMAND_ORDER:
+        if name in group.commands:
+            command = group.commands[name]
+            assert isinstance(command, LazyCommand)
+            command.hidden = False
+            command.rich_help_panel = "Advanced Commands"
+            commands[name] = command
+    hidden = CliGroup(
+        name="hidden",
+        commands=commands,
+        help="Show commands hidden from the main help.",
+        epilog=f"Run with: {ctx.find_root().info_name} COMMAND [OPTIONS]",
+        add_help_option=False,
     )
-    if not hidden_commands:
-        typer.echo("No hidden commands.")
-        return
-    command_name = ctx.command_path.split()[0] if ctx.command_path else "toolang"
-    console.print(
-        rich_utils.Padding(
-            (
-                "Show commands hidden from the main help.\n\n"
-                f"Run with: {command_name} COMMAND [OPTIONS]"
-            ),
-            (0, 1, 1, 1),
-        )
-    )
-    rich_utils._print_commands_panel(
-        name="Advanced Commands",
-        commands=hidden_commands,
-        markup_mode="rich",
-        console=console,
-        cmd_len=max(len(command.name or "") for command in hidden_commands),
-    )
+    help_ctx = hidden.context_class(hidden, info_name=ctx.command_path)
+    typer.echo(hidden.get_help(help_ctx), color=help_ctx.color)
 
 
 _registered_command(
@@ -560,13 +539,14 @@ def _run_target_help(
     root_command = typer.main.get_command(app)
     if not isinstance(root_command, TyperGroup):
         raise TypeError("Toolang CLI root must be a command group")
-    commands = {
-        name: command
-        for name, command in root_command.commands.items()
-        if not command.hidden
-        and routing.command_spec(name).accepts("before", target.placement)
-    }
-    group = _ToolangGroup(
+    commands = {}
+    for name in root_command.list_commands(Context(root_command)):
+        command = root_command.commands[name]
+        if not command.hidden and routing.command_spec(name).accepts(
+            "before", target.placement
+        ):
+            commands[name] = command
+    group = CliGroup(
         name=target.selector,
         commands=commands,
         help=f"Commands for {target.placement} agent {target.label}.",
@@ -594,25 +574,10 @@ def _run_app(
     agent_token = _PREFIX_AGENT.set(prefix_agent)
     layout_token = _SELECTED_LAYOUT.set(layout)
     try:
-        result = app(
-            args=args,
-            prog_name=prog_name,
-            standalone_mode=False,
-        )
-    except typer.Exit as exc:
-        return exc.exit_code
-    except NoArgsIsHelpError as exc:
-        return exc.exit_code
-    except ClickException as exc:
-        echo_error(exc)
-        return exc.exit_code
-    except (FileExistsError, FileNotFoundError, ValueError) as exc:
-        echo_error(str(exc))
-        return 1
+        return run(app, args=args, prog_name=prog_name)
     finally:
         _SELECTED_LAYOUT.reset(layout_token)
         _PREFIX_AGENT.reset(agent_token)
-    return result if isinstance(result, int) else 0
 
 
 def _prog_name(argv0: str) -> str:
