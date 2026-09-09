@@ -120,6 +120,12 @@ class _CompactCommand(RequiredPrefixAgentCommand):
 
         self.params[:0] = runnable_parameters(compact_runnable(), help_only=True)
 
+    def collect_usage_pieces(self, ctx: Context) -> list[str]:
+        from ..common.runnable_parameters import runnable_usage
+
+        pieces = [self.options_metavar] if self.options_metavar else []
+        return [*pieces, *runnable_usage(self.params)]
+
 
 class _ToolangGroup(CliGroup):
     def __init__(self, *args: Any, **kwargs: Any) -> None:

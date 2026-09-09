@@ -117,16 +117,13 @@ class PrefixAgentCommand(CliCommand):
 
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
         prefix_path = _prefix_usage_path(ctx, self.prefix_agent_metavar)
-        pieces = [self.options_metavar] if self.options_metavar else []
-        for param in self._real_params(ctx):
-            pieces.extend(parameter_usage(param, ctx))
-        write_usage(formatter, prefix_path, " ".join(pieces))
+        write_usage(formatter, prefix_path, " ".join(self.collect_usage_pieces(ctx)))
 
 
 class RequiredPrefixAgentGroup(CliGroup):
     """Render required AGENT between the CLI root and a command group."""
 
-    prefix_agent_metavar = "AGENT"
+    prefix_agent_metavar = "<AGENT>"
 
     def get_params(self, ctx: Context) -> list[Parameter]:
         agent = _HelpOnlyTyperArgument(
@@ -178,7 +175,7 @@ class OptionalPrefixAgentGroup(CliGroup):
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
         prefix_path = _prefix_usage_path(ctx, self.prefix_agent_metavar)
         pieces = [self.options_metavar] if self.options_metavar else []
-        pieces.append(self.subcommand_metavar or "[COMMAND] [ARGS]")
+        pieces.append(self.subcommand_metavar or "[COMMAND] [ARGUMENTS]")
         write_usage(formatter, prefix_path, " ".join(pieces))
 
 
@@ -195,7 +192,7 @@ class OptionalPrefixAgentModelsCommand(OptionalPrefixAgentCommand):
 
 
 class RequiredPrefixAgentCommand(PrefixAgentCommand):
-    prefix_agent_metavar = "AGENT"
+    prefix_agent_metavar = "<AGENT>"
     argument_help = "Agent name"
 
     def _prefix_agent_argument(self) -> TyperArgument:
@@ -222,7 +219,7 @@ class RequiredPrefixAgentCommand(PrefixAgentCommand):
 class RuntimeAgentCommand(CliCommand):
     """Render one required agent argument before the command name in help."""
 
-    usage_agent_metavar = "AGENT"
+    usage_agent_metavar = "<AGENT>"
     argument_help = "Agent name"
 
     def _real_params(self, ctx: Context) -> list[Parameter]:

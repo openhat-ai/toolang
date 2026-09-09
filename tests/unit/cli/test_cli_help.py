@@ -134,7 +134,7 @@ def test_unknown_option_during_command_resolution_keeps_usage(capsys, monkeypatc
     assert too_main(["--", "--missing"]) == 2
     output = strip_ansi(capsys.readouterr().err)
     assert output.startswith("Error: No such option: --missing")
-    assert "\n\nUsage: too [OPTIONS] COMMAND [ARGS]\n" in output
+    assert "\n\nUsage: too [OPTIONS] <COMMAND> [ARGUMENTS]\n" in output
     assert "Try '" not in output
 
 
@@ -147,7 +147,7 @@ def test_unknown_option_is_not_hidden_by_a_missing_agent(
     output = capsys.readouterr()
     assert not output.out
     assert strip_ansi(output.err).startswith(
-        f"Error: No such option: --unknown\n\nUsage: too AGENT {command} [OPTIONS]"
+        f"Error: No such option: --unknown\n\nUsage: too <AGENT> {command} [OPTIONS]"
     )
 
 
@@ -225,13 +225,24 @@ def test_hidden_directory_uses_selected_help_output(theme, args, capsys):
     assert (style.color is not None) is (theme is UV)
 
 
+@pytest.mark.parametrize("args, status", [([], 0), (["--help"], 0), (["--unknown"], 2)])
+def test_channel_usage_spells_out_arguments(
+    args, status, tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr("sys.argv", ["too"])
+    assert too_main(["--root", str(tmp_path), "channel", *args]) == status
+    captured = capsys.readouterr()
+    output = strip_ansi(captured.err if status else captured.out)
+    assert "Usage: too channel [OPTIONS] <COMMAND> [ARGUMENTS]" in output.splitlines()
+
+
 @pytest.mark.parametrize(
     ("arguments", "usage"),
     [
-        (["a", "chat"], "too AGENT chat [OPTIONS]"),
-        (["a", "prompt", "new"], "too [AGENT] prompt new [OPTIONS] NAME"),
-        (["a", "workspace"], "too AGENT workspace [OPTIONS] COMMAND [ARGS]"),
-        (["run"], "too run [OPTIONS] AGENT"),
+        (["a", "chat"], "too <AGENT> chat [OPTIONS]"),
+        (["a", "prompt", "new"], "too [AGENT] prompt new [OPTIONS] <NAME>"),
+        (["a", "workspace"], "too <AGENT> workspace [OPTIONS] <COMMAND> [ARGUMENTS]"),
+        (["run"], "too run [OPTIONS] <AGENT>"),
     ],
 )
 def test_virtual_agent_usage_keeps_position_and_normal_weight(
@@ -276,10 +287,10 @@ def test_real_and_virtual_agent_arguments_share_usage(
     assert too_main(["--root", str(tmp_path), command, *args]) == status
     captured = capsys.readouterr()
     output = strip_ansi(captured.err if status else captured.out)
-    assert f"Usage: too {command} [OPTIONS] AGENT" in output.splitlines()
+    assert f"Usage: too {command} [OPTIONS] <AGENT>" in output.splitlines()
     if status == 0:
         assert output.startswith(description + ".\n")
-        assert f"* AGENT TEXT {argument_help}" in [
+        assert f"* AGENT {argument_help}" in [
             " ".join(line.split()) for line in output.splitlines()
         ]
         assert output.endswith("Show this message and exit\n")
@@ -293,7 +304,7 @@ def test_chat_help_uses_the_canonical_optional_thread_option(
     assert too_main(["--root", str(tmp_path), "a", "chat", *args]) == 0
     output = strip_ansi(capsys.readouterr().out)
     usage = output.partition("Usage:")[2].splitlines()[0].strip()
-    assert usage == "too AGENT chat [OPTIONS]"
+    assert usage == "too <AGENT> chat [OPTIONS]"
     row = next(line for line in output.splitlines() if "[THREAD]" in line)
     assert "--thread" in row and "-t" in row
     assert "-t, --thread [THREAD]" in row
@@ -308,7 +319,7 @@ def test_prompt_help_uses_conventional_metavars(main, tmp_path, capsys, monkeypa
     monkeypatch.setattr("sys.argv", ["too"])
     assert main(["--root", str(tmp_path), "a", "prompt", "new", "--help"]) == 0
     output = strip_ansi(capsys.readouterr().out)
-    assert "Usage: too [AGENT] prompt new [OPTIONS] NAME" in " ".join(output.split())
+    assert "Usage: too [AGENT] prompt new [OPTIONS] <NAME>" in " ".join(output.split())
     assert "<str>" not in output
     for name in ("AGENT", "NAME"):
         row = next(
@@ -316,8 +327,10 @@ def test_prompt_help_uses_conventional_metavars(main, tmp_path, capsys, monkeypa
             for line in output.splitlines()
             if line.startswith("  ") and name in line.split()
         )
-        assert "TEXT" in row
-    assert "NAME" in next(line for line in output.splitlines() if "--template" in line)
+        assert "TEXT" not in row
+    assert "<NAME>" in next(
+        line for line in output.splitlines() if "--template" in line
+    )
 
 
 @pytest.mark.parametrize(
@@ -347,13 +360,13 @@ def test_help_uses_semantic_configuration_metavars(
     arguments, options, tmp_path, capsys
 ):
     metavars = {
-        "--sandbox": "SANDBOX_SPEC",
-        "--allow": "RESOURCE=QUERY",
-        "--limit": "LIMIT=VALUE",
-        "--default": "SETTING=VALUE",
-        "--compact-model": "MODEL_SPEC",
-        "--model": "MODEL_SPEC",
-        "--log": "LOG_SPEC",
+        "--sandbox": "<SANDBOX_SPEC>",
+        "--allow": "<RESOURCE>=<QUERY>",
+        "--limit": "<LIMIT>=<VALUE>",
+        "--default": "<SETTING>=<VALUE>",
+        "--compact-model": "<MODEL_SPEC>",
+        "--model": "<MODEL_SPEC>",
+        "--log": "<LOG_SPEC>",
     }
     assert too_main(["--root", str(tmp_path), *arguments, "--help"]) == 0
     output = strip_ansi(capsys.readouterr().out)
@@ -388,7 +401,7 @@ def test_required_group_agent_is_documented(group, tmp_path: Path, capsys):
         ),
         "",
     )
-    assert "TEXT" in row and row.lstrip().startswith("* AGENT")
+    assert "TEXT" not in row and row.lstrip().startswith("* AGENT")
     assert "[required]" not in row
 
 
@@ -488,7 +501,9 @@ def test_repeated_explicit_metavar_is_not_duplicated(required):
         ],
     )
     usage = command.get_usage(Context(command, info_name="demo"))
-    assert usage == f"Usage: demo [OPTIONS] {'FILES...' if required else '[FILES...]'}"
+    assert (
+        usage == f"Usage: demo [OPTIONS] {'<FILES>...' if required else '[FILES...]'}"
+    )
 
 
 @pytest.mark.parametrize("command", ["run", "start", "serve"])
@@ -516,4 +531,4 @@ def test_explicit_metavars_keep_lowercase_runtime_flags(command, capsys):
     help_text = strip_ansi(loaded.get_help(Context(loaded, info_name=command)))
     assert capsys.readouterr().out == ""
     port_row = next(line for line in help_text.splitlines() if "--port" in line.split())
-    assert "PORT" in port_row.split()
+    assert "<PORT>" in port_row.split()

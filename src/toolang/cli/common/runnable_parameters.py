@@ -1,6 +1,6 @@
 """Map authored runnable signatures to native Typer parameter metadata."""
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from inspect import Parameter as SignatureParameter, Signature
 from typing import Annotated, Any
 
@@ -64,7 +64,7 @@ def runnable_parameters(
     """Build named arguments in signature order, followed by accepted input.
 
     Names, authored types, requiredness, and docs come from the runnable.
-    Missing docs fall back to the input/argument terminology.
+    Missing docs fall back to the input role and authored type.
     Commands supply any input-capture help and own capture and coercion.
     Use help_only when a collector parses NAME=VALUE rather than positional values.
     """
@@ -76,21 +76,29 @@ def runnable_parameters(
     return arguments
 
 
+def runnable_usage(parameters: Iterable[CliParameter]) -> list[str]:
+    """Describe named assignments and primary input accepted by the collector."""
+    names = {param.name for param in parameters if isinstance(param, RunnableArgument)}
+    pieces = ["[NAME=VALUE...]"] if names - {"_"} else []
+    if "_" in names:
+        pieces.append("[-- <INPUT> | -]")
+    return pieces
+
+
 def _argument(parameter: Parameter, *, input_help: str | None = None) -> TyperArgument:
     primary = parameter.name == "_"
     doc = (parameter.doc or "").strip()
-    help_text = doc or (
-        "Primary input, or simply input"
-        if primary
-        else "Named input, or simply argument"
-    )
+    role = "Primary" if primary else "Named"
+    help_text = doc or f"{role} input ({parameter.type_name or 'Part[]'})"
     if primary and input_help:
         separator = " " if doc else "; "
         help_text = f"{help_text}{separator}{input_help}"
     annotation = Annotated[
         str,
         typer.Argument(
-            metavar="INPUT" if primary else f"{parameter.name}=ARGUMENT",
+            metavar="INPUT"
+            if primary
+            else f"{parameter.name}=<{parameter.name.upper()}>",
             click_type=_InputType(parameter.type_name or "Part[]"),
             help=help_text,
             show_default=False,

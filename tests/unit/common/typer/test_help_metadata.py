@@ -112,7 +112,7 @@ class HelpMetadataTest(unittest.TestCase):
         self.assertEqual(tuple(command.params), params)
         self.assertEqual(command.commands, commands)
 
-    def test_generated_argument_and_option_types_use_uppercase_item_labels(self):
+    def test_arguments_show_only_metavars_and_options_use_uppercase_type_labels(self):
         app = typer.Typer(add_completion=False)
 
         @app.command()
@@ -132,14 +132,6 @@ class HelpMetadataTest(unittest.TestCase):
 
         command = get_command(app)
         ctx = typer.Context(command, info_name="demo")
-        self.assertEqual(
-            [
-                _value_label(param, ctx)
-                for param in command.params
-                if isinstance(param, TyperArgument)
-            ],
-            ["<PATH>", "<STR>", "<INT>", "<FLOAT>", "<STR>"],
-        )
         options = {
             param.opts[0]: _value_label(param, ctx)
             for param in command.params
@@ -153,18 +145,27 @@ class HelpMetadataTest(unittest.TestCase):
         ui = dict(theme=PLAIN, console=Console(width=120))
         result = invoke(app, ui=ui, args=["--help"])
         self.assertEqual(result.exit_code, 0, result.exception)
-        for label in ("source <PATH>", "tag <STR>", "--model <STR>", "--limit <INT>"):
+        arguments = result.stdout.split("Arguments:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertEqual(
+            [line.strip() for line in arguments.splitlines()],
+            ["* source", "* label", "* count", "* score", "tag"],
+        )
+        for label in ("--model <STR>", "--limit <INT>"):
             self.assertIn(label, result.stdout)
 
     def test_literal_choices_datetime_formats_and_explicit_metavars_keep_case(self):
+        class ChoiceCommand(OptionalValueCommand):
+            optional_values = {"bare_choice": OptionalValue("safe", show_bare=False)}
+
         date_format = "%Y-%m-%dT%H:%M"
         app = typer.Typer(add_completion=False)
 
-        @app.command()
+        @app.command(cls=ChoiceCommand)
         def show(
             mode: Annotated[Mode, typer.Argument()],
             date: Annotated[datetime, typer.Argument(formats=[date_format])],
             choice: Annotated[Mode, typer.Option()] = Mode.safe,
+            bare_choice: Annotated[Mode, typer.Option()] = Mode.safe,
             hidden_choices: Annotated[
                 Mode, typer.Option(show_choices=False)
             ] = Mode.safe,
@@ -177,22 +178,24 @@ class HelpMetadataTest(unittest.TestCase):
 
         command = get_command(app)
         ctx = typer.Context(command, info_name="demo")
-        assert isinstance(command.params[0], TyperArgument)
-        assert isinstance(command.params[1], TyperArgument)
-        self.assertEqual(_value_label(command.params[0], ctx), "<safe>")
-        self.assertEqual(_value_label(command.params[1], ctx), f"<{date_format}>")
+        output = _format_help(ctx, theme=PLAIN)
+        arguments = output.split("Arguments:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertEqual(
+            [line.strip() for line in arguments.splitlines()], ["* mode", "* date"]
+        )
         options = {
             param.opts[0]: param
             for param in command.params
             if isinstance(param, TyperOption)
         }
         self.assertEqual(_value_label(options["--choice"], ctx), "<safe>")
+        self.assertEqual(_value_label(options["--bare-choice"], ctx), "[safe]")
         self.assertEqual(
             _parameter_help(options["--choice"], ctx).plain, "[default: safe]"
         )
         self.assertEqual(_value_label(options["--hidden-choices"], ctx), "<STR>")
         self.assertEqual(_value_label(options["--when"], ctx), f"<{date_format}>")
-        self.assertEqual(_value_label(options["--custom"], ctx), "key=VALUE")
+        self.assertEqual(_value_label(options["--custom"], ctx), "<key=VALUE>")
 
     def test_native_panel_metadata_includes_mounts_and_excludes_hidden_entries(self):
         app = typer.Typer(add_completion=False)
@@ -255,8 +258,8 @@ class HelpMetadataTest(unittest.TestCase):
         self.assertNotIn("hidden-command", result.stdout)
         self.assertIn("execute", result.stdout)
         self.assertIn("nested", result.stdout)
-        self.assertIn("\n  source <STR>", result.stdout)
-        self.assertIn("\n  destination <STR>", result.stdout)
+        self.assertIn("\n  source\n", result.stdout)
+        self.assertIn("\n  destination\n", result.stdout)
         self.assertIn("\n  --help", result.stdout)
         self.assertIn("\n  --cache", result.stdout)
         self.assertIn("\n  --offline", result.stdout)
@@ -398,13 +401,43 @@ class HelpMetadataTest(unittest.TestCase):
         ui = dict(theme=PLAIN, console=Console(width=140))
         result = invoke(app, ui=ui, args=["--help"], prog_name="demo")
         self.assertEqual(result.exit_code, 0, result.exception)
-        self.assertIn("Usage: demo [OPTIONS] NAME [TAGS...]", result.stdout)
-        self.assertIn("* NAME <STR>", result.stdout)
-        self.assertIn("tags <STR>", result.stdout)
+        self.assertIn("Usage: demo [OPTIONS] <NAME> [TAGS...]", result.stdout)
+        arguments = result.stdout.split("Arguments:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertEqual(
+            [line.strip() for line in arguments.splitlines()], ["* NAME", "tags"]
+        )
         self.assertIn("-t,", result.stdout)
-        self.assertIn("--target PATH", result.stdout)
+        self.assertIn("--target <PATH>", result.stdout)
         self.assertIn("[required]", result.stdout)
         self.assertIn("-c / -C, --color / --no-color", result.stdout)
+
+    def test_option_metavars_keep_value_brackets_independently_of_required_option(self):
+        for required in (False, True):
+            for metavar, expected in (
+                (None, "<STR>"),
+                ("MODEL_SPEC", "<MODEL_SPEC>"),
+                ("<PATH>", "<PATH>"),
+                ("[THREAD]", "[THREAD]"),
+                ("key=VALUE", "<key=VALUE>"),
+                ("<FIELD>=<VALUE>", "<FIELD>=<VALUE>"),
+                ("key=<VALUE>", "key=<VALUE>"),
+                ("<NAME>.json", "<NAME>.json"),
+                ("[NAME].json", "[NAME].json"),
+                ("prefix-<NAME>.json", "prefix-<NAME>.json"),
+                ("PART[]", "<PART[]>"),
+                ("ITEM...", "<ITEM>..."),
+                ("<ITEM>...", "<ITEM>..."),
+            ):
+                with self.subTest(required=required, metavar=metavar):
+                    option = TyperOption(
+                        param_decls=["--value"], metavar=metavar, required=required
+                    )
+                    command = TyperCommand("demo", params=[option])
+                    ctx = typer.Context(command, info_name="demo")
+                    output = _format_help(ctx, theme=PLAIN)
+                    self.assertIn(f"--value {expected}", output)
+                    self.assertIn("Usage: demo [OPTIONS]\n", output)
+                    self.assertEqual(option.metavar, metavar)
 
     def test_optional_value_metadata_is_separate_and_does_not_resolve_values(self):
         class BudgetCommand(OptionalValueCommand):
@@ -436,6 +469,7 @@ class HelpMetadataTest(unittest.TestCase):
                 _parameter_help(option, ctx).plain,
                 "Set budget  [env: ABC_DEF=] [default: 4] [bare: 8] [1<=x<=10]",
             )
+            self.assertEqual(_value_label(option, ctx), "[INT RANGE]")
             for theme in (PLAIN, UV):
                 for width in (44, 120):
                     with self.subTest(theme=theme, width=width):
@@ -485,7 +519,7 @@ class HelpMetadataTest(unittest.TestCase):
         @app.command(cls=SelectionCommand)
         def show(
             dynamic: Annotated[str, typer.Option(default_factory=default_factory)],
-            selected: str | None = None,
+            selected: Annotated[str | None, typer.Option(metavar="THREAD")] = None,
             private: str | None = None,
             empty: str | None = None,
             literal: str | None = None,
@@ -521,6 +555,14 @@ class HelpMetadataTest(unittest.TestCase):
             ):
                 self.assertEqual(
                     _parameter_help(param, ctx).plain, expected[param.name]
+                )
+                self.assertEqual(
+                    _value_label(param, ctx),
+                    {
+                        "dynamic": "<STR>",
+                        "path": "[PATH]",
+                        "selected": "[THREAD]",
+                    }.get(param.name, "[STR]"),
                 )
         result = invoke(
             app,

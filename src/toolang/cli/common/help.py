@@ -15,7 +15,7 @@ from typer._click import (
 from typer._click.exceptions import ClickException, UsageError
 from typer.core import TyperArgument, TyperCommand, TyperGroup
 
-from toolang.common.typer.ui import HelpFormatter
+from toolang.common.typer.ui import HelpFormatter, argument_usage
 
 
 def parameter_usage(param: Parameter, ctx: Context) -> list[str]:
@@ -23,15 +23,7 @@ def parameter_usage(param: Parameter, ctx: Context) -> list[str]:
     pieces = param.get_usage_pieces(ctx)
     if not pieces or not isinstance(param, TyperArgument):
         return pieces
-    label = param.metavar or (param.name or "")
-    repeated = param.nargs != 1
-    if repeated and label.endswith("..."):
-        label = label[:-3]
-    if repeated:
-        label += "..."
-    if not param.required and not label.startswith("["):
-        label = f"[{label}]"
-    return [label]
+    return [argument_usage(param)]
 
 
 class HelpContext(Context):
@@ -94,7 +86,9 @@ class CliGroup(TyperGroup):
     def __init__(self, *, subcommand_metavar: str | None = None, **kwargs: Any) -> None:
         super().__init__(
             subcommand_metavar=(
-                "COMMAND [ARGS]" if subcommand_metavar is None else subcommand_metavar
+                "<COMMAND> [ARGUMENTS]"
+                if subcommand_metavar is None
+                else subcommand_metavar
             ),
             **kwargs,
         )

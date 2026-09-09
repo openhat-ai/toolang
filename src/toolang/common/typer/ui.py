@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Sequence
 from inspect import cleandoc
 from itertools import zip_longest
+import re
 from typing import Any
 
 import typer
@@ -26,13 +27,13 @@ from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 from typer.main import get_command
 
 _PREPARE = f"{__name__}.prepare"
+_BRACKETED_METAVAR = re.compile(r"<[^<>]+>|\[[^\[\]]+\]")
 
 PLAIN = Theme(
     {
         "cli.heading": "bold",
         "cli.usage": "",
         "cli.argument.name": "bold",
-        "cli.argument.type": "dim",
         "cli.option.name": "bold",
         "cli.option.metavar": "dim",
         "cli.command.name": "bold",
@@ -48,7 +49,6 @@ UV = Theme(
         "cli.heading": "bold green",
         "cli.usage": "cyan",
         "cli.argument.name": "bold cyan",
-        "cli.argument.type": "cyan",
         "cli.option.name": "bold cyan",
         "cli.option.metavar": "cyan",
         "cli.command.name": "bold cyan",
@@ -348,11 +348,7 @@ class HelpFormatter(TyperHelpFormatter):
         self, param: TyperArgument, ctx: Context
     ) -> tuple[Text, Text, Text]:
         marker = Text("*" if param.required else "", style="cli.required")
-        label = Text()
-        label.append(param.metavar or param.name or "", style="cli.argument.name")
-        if metavar := _value_label(param, ctx):
-            label.append(" ")
-            label.append(metavar, style="cli.argument.type")
+        label = Text(param.metavar or param.name or "", style="cli.argument.name")
         return marker, label, _parameter_help(param, ctx)
 
     def _option_row(self, param: TyperOption, ctx: Context) -> tuple[Text, Text, Text]:
@@ -413,6 +409,27 @@ def _command_description(command: Command, *, short: bool = True) -> str:
     return description
 
 
+def argument_usage(param: TyperArgument) -> str:
+    """Bracket argument operands without changing declared literal syntax."""
+    label = param.metavar or param.name or ""
+    if param.nargs != 1:
+        label = label.removesuffix("...")
+    bracketed = _BRACKETED_METAVAR.fullmatch(label) is not None
+    if bracketed:
+        label = label[1:-1]
+        if param.nargs != 1:
+            label = label.removesuffix("...")
+    elif not _BRACKETED_METAVAR.search(label):
+        label = label.upper()
+    if param.required and (bracketed or not _BRACKETED_METAVAR.search(label)):
+        label = f"<{label}>"
+    if param.nargs == -1:
+        label += "..."
+    else:
+        label = " ".join([label] * param.nargs)
+    return label if param.required else f"[{label}]"
+
+
 def _usage(ctx: Context) -> Text:
     contexts = []
     current: Context | None = ctx
@@ -431,12 +448,7 @@ def _usage(ctx: Context) -> Text:
             text.append(" " + command.options_metavar)
         for param in command.get_params(current):
             if isinstance(param, TyperArgument):
-                name = (param.metavar or param.name or "").upper()
-                if param.nargs == -1:
-                    name += "..."
-                name = " ".join([name] * max(1, param.nargs))
-                text.append(" ")
-                text.append(name if param.required else f"[{name}]")
+                text.append(" " + argument_usage(param))
             else:
                 for part in param.get_usage_pieces(current):
                     text.append(" " + part)
@@ -505,26 +517,30 @@ def _parameter_help(param: TyperArgument | TyperOption, ctx: Context) -> Text:
     return text
 
 
-def _value_label(param: TyperArgument | TyperOption, ctx: Context) -> str | None:
-    is_option = isinstance(param, TyperOption)
-    if isinstance(param, TyperOption):
-        if param.is_flag or param.count:
-            return None
-        if param.metavar is not None:
-            return param.metavar
-
-    label = param.type.get_metavar(param=param, ctx=ctx)
-    if label is None:
-        name = param.type.name.upper()
-        if not name:
-            return None
-        label = name if name.startswith("<") and name.endswith(">") else f"<{name}>"
-    elif is_option and isinstance(param.type, TyperChoice) and not param.show_choices:
-        # Hidden choices expose type names; visible choices are literal inputs.
+def _value_label(param: TyperOption, ctx: Context) -> str | None:
+    if param.is_flag or param.count:
+        return None
+    label = param.make_metavar(ctx)
+    if param.metavar is None and (
+        param.type.get_metavar(param=param, ctx=ctx) is None
+        or isinstance(param.type, TyperChoice)
+        and not param.show_choices
+    ):
+        # Only generated type names are uppercased, not literal choices or formats.
         label = label.upper()
-    if is_option and param.nargs != 1:
-        label += "..."
-    return label
+    is_optional_value = getattr(ctx.command, "is_optional_value", None)
+    if (
+        (param.metavar is None or not _BRACKETED_METAVAR.search(label))
+        and callable(is_optional_value)
+        and is_optional_value(param.name)
+    ):
+        value = label[1:-1] if _BRACKETED_METAVAR.fullmatch(label) else label
+        return f"[{value}]"
+    value = label.removesuffix("...")
+    # Bracketed values may have literal prefixes or suffixes, as in <NAME>.json.
+    if _BRACKETED_METAVAR.search(value):
+        return label
+    return f"<{value}>{label[len(value) :]}"
 
 
 def _width(values: Iterable[Text]) -> int:

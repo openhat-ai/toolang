@@ -103,7 +103,7 @@ class GroupedLayoutTest(unittest.TestCase):
                     width,
                 )
                 for output, offset in ((required, 2), (optional, 0)):
-                    for name in ("source", "destination", "tag <STR>"):
+                    for name in ("source", "destination", "tag"):
                         self.assertEqual(column(output, name), base + offset)
                     self.assertEqual(
                         len(
@@ -177,7 +177,7 @@ class GroupedLayoutTest(unittest.TestCase):
                         fragments.append(line[start:end].strip())
                 self.assertEqual(
                     "".join(fragments).replace(" ", ""),
-                    "--client-authentication-certificatePATH",
+                    "--client-authentication-certificate<PATH>",
                 )
 
     def test_no_short_options_removes_prefix_across_every_group(self):

@@ -41,7 +41,7 @@ AllowOptions = Annotated[
     list[str] | None,
     typer.Option(
         "--allow",
-        metavar="RESOURCE=QUERY",
+        metavar="<RESOURCE>=<QUERY>",
         help="Set RESOURCE=QUERY. Repeat by resource category",
     ),
 ]
@@ -49,7 +49,7 @@ LimitOptions = Annotated[
     list[str] | None,
     typer.Option(
         "--limit",
-        metavar="LIMIT=VALUE",
+        metavar="<LIMIT>=<VALUE>",
         help="Set a run limit, e.g. tokens=10000. Repeat for another limit",
     ),
 ]
@@ -57,7 +57,7 @@ DefaultOptions = Annotated[
     list[str] | None,
     typer.Option(
         "--default",
-        metavar="SETTING=VALUE",
+        metavar="<SETTING>=<VALUE>",
         help="Set a default model or runnable. Repeat for another setting",
     ),
 ]

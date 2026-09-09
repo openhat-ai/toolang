@@ -519,7 +519,7 @@ def test_script_shows_runnable_help_for_a_missing_required_parameter(
 
     assert result == 2
     assert "Usage:" in output.out
-    assert "count=ARGUMENT" in output.out
+    assert "count=<COUNT>" in output.out
     assert "Run:" not in output.err
 
 
@@ -558,7 +558,7 @@ agic demo(_: Part[]):
 
     assert result == 2
     assert "Usage:" in output.out
-    assert "PART[]" in strip_ansi(output.out)
+    assert "* INPUT Primary input" in " ".join(strip_ansi(output.out).split())
     assert ("\x1b[" in output.out) is color
     assert "Arguments:" in strip_ansi(output.out)
     assert "requires primary input" not in output.err
@@ -621,23 +621,26 @@ def test_script_uses_typer_help_and_authored_docs(
     normalized = " ".join(stdout.split())
 
     assert result == 0
-    assert "Usage: toolang demo.too demo [OPTIONS] [ARGS] INPUT" in normalized
+    assert (
+        "Usage: toolang demo.too demo [OPTIONS] [NAME=VALUE...] [-- <INPUT> | -]"
+        in normalized
+    )
     assert "Run the documented demo." in stdout
     assert "Arguments" in stdout
-    assert "count=ARGUMENT" in stdout
-    assert "enabled=ARGUMENT" in stdout
+    assert "count=<COUNT>" in stdout
+    assert "enabled=<ENABLED>" in stdout
     assert "Optional." not in stdout
-    assert "* count=ARGUMENT" in stdout
+    assert "* count=<COUNT>" in stdout
     assert "[required]" not in stdout
-    assert "PART[]" in stdout
+    assert "PART[]" not in stdout
     assert "Input:" not in stdout
     assert "<str>" not in stdout
     for option, metavar in (
-        ("--allow", "RESOURCE=QUERY"),
-        ("--limit", "LIMIT=VALUE"),
-        ("--model", "MODEL_SPEC"),
-        ("--sandbox", "SANDBOX_SPEC"),
-        ("--out", "PATH"),
+        ("--allow", "<RESOURCE>=<QUERY>"),
+        ("--limit", "<LIMIT>=<VALUE>"),
+        ("--model", "<MODEL_SPEC>"),
+        ("--sandbox", "<SANDBOX_SPEC>"),
+        ("--out", "<PATH>"),
     ):
         row = next(line for line in stdout.splitlines() if option in line.split())
         assert metavar in row.split()
@@ -667,12 +670,12 @@ def _help_panel(output: str, title: str) -> str:
 def _assert_common_options(output: str) -> None:
     panel = _help_panel(output, "Options")
     options = (
+        "--quiet",
+        "--out",
+        "--sandbox",
         "--allow",
         "--limit",
         "--model",
-        "--sandbox",
-        "--out",
-        "--quiet",
         "--dev",
         "--help",
     )
@@ -849,11 +852,10 @@ def test_script_help_groups_signature_categories(
     usage = next(line.strip() for line in output.splitlines() if "Usage:" in line)
     expected = f"Usage: {prog_name} demo.too demo [OPTIONS]"
     if arguments:
-        expected += " [ARGS]"
+        expected += " [NAME=VALUE...]"
     if input_type:
-        expected += " INPUT"
+        expected += " [-- <INPUT> | -]"
     assert usage == expected
-    assert "ARGUMENTS" not in usage
     assert "---" not in output
     assert all(cell_len(line) <= width for line in output.splitlines())
     assert "Documented runnable." in output
@@ -862,20 +864,19 @@ def test_script_help_groups_signature_categories(
     assert "Input:" not in output
     positions = []
     for name, type_name, required in arguments:
-        label = f"{name}=ARGUMENT"
-        row = f"{label} {type_name.upper()}"
-        row += " Named input, or simply argument"
+        label = f"{name}=<{name.upper()}>"
+        row = f"{label} Named input ({type_name})"
         assert row in panel
         assert (f"* {row}" in panel) is required
         positions.append(panel.index(label))
     assert "Optional." not in panel
     assert "Arguments may appear" not in panel
     if input_type:
-        label = f"INPUT {input_type.upper()}"
-        assert f"{label} Primary input, or simply input;" in panel
-        positions.append(panel.index(label))
+        label = "INPUT"
+        assert f"{label} Primary input ({input_type});" in panel
+        positions.append(panel.index(f"{label} Primary input ({input_type});"))
         assert f"* {label}" in panel
-        assert "- from stdin, -- starts input" in panel
+        assert "reads stdin with - or when input is omitted" in panel
     else:
         assert "stdin" not in output and "TEXT..." not in output
     assert positions == sorted(positions)
@@ -1401,8 +1402,8 @@ flow pipeline:
     stdout = strip_ansi(output.out)
 
     assert result == 0
-    assert f"Usage: {prog_name} {filename} [OPTIONS] RUNNABLE" in stdout
-    assert "[ARGS]" not in stdout
+    assert f"Usage: {prog_name} {filename} [OPTIONS] <RUNNABLE>" in stdout
+    assert "[NAME=VALUE...]" not in stdout
     assert f"Run runnables from {filename}" in stdout
     assert stdout.index("Runnables:") < stdout.index("Options:")
     _assert_common_options(stdout)
